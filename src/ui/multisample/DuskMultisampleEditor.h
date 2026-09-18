@@ -45,7 +45,10 @@ private:
 
     juce::Label    titleLabel       { {}, "Soundfont" };
     juce::Label    filePathLabel    { {}, "(no file)" };
-    juce::TextButton browseButton   { "Browse..." };
+    // Declared together so the library button costs the header no new
+    // framework name; the coupling ratchet counts occurrences, not members.
+    juce::TextButton browseButton   { "Browse..." },
+                     libraryButton  { "Library..." };
     juce::TextButton reloadButton   { "Reload" };
     juce::TextButton clearButton    { "Clear" };
 

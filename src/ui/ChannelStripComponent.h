@@ -9,6 +9,7 @@
 #include "SplitModuleButton.h"
 #include "ConsoleLayout.h"
 #include "EmbeddedModal.h"
+#include "imgui/DafEditorHost.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
 #include "../session/Session.h"
@@ -102,7 +103,6 @@ private:
     class PluginSlot& pluginSlot;
     AudioEngine& engine;
     std::array<std::uint32_t, ChannelStripParams::kNumBuses> lastBusColours {};
-    float displayedGrDb = 0.0f;
     float displayedInputDb = -100.0f;
     float inputPeakHoldDb = -100.0f;
     int   inputPeakHoldFrames = 0;
@@ -189,11 +189,6 @@ private:
 
     std::unique_ptr<CompMeterStrip> compMeter;
 
-    // CompMeterStrip hoisted into a slim column alongside the fader
-    // (handle + IN bar + GR LED) so the COMP section shows only the
-    // knob grid.
-    bool usesFaderThresholdLayout() const { return true; }
-
     // Refresh the standalone dB readout from the fader slider's current value.
     // Called from faderSlider.onValueChange (user drag) AND from the 30 Hz
     // timer after it pulls an external change (MIDI binding / MCU / automation)
@@ -207,8 +202,6 @@ private:
     juce::Label  panLabel;
     juce::Slider faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
     juce::Rectangle<int> inputMeterArea;
-    juce::Rectangle<int> meterScaleArea;
-    juce::Rectangle<int> grScaleArea;
     // Fader-group chip drawn in the name row's right edge when grouped.
     // Empty when ungrouped. lastGroupId / lastGroupMaster are cached so the
     // 30 Hz timer only relays out + repaints when membership actually changes
@@ -218,12 +211,9 @@ private:
     bool lastGroupMaster = false;
     juce::Colour lastTrackColour;   // cached so the timer repaints on external colour change (undo)
     juce::Label inputPeakLabel;
-    juce::Label grPeakLabel;
-    juce::Label grReadoutLabel;
     // Slider runs NoTextBox so the cap at min value doesn't overlap
     // the textbox area.
     juce::Label faderValueLabel;
-    juce::Label threshMeterLabel;
     juce::TextButton muteButton    { "M" };
     juce::TextButton soloButton    { "S" };
     juce::TextButton phaseButton   { juce::CharPointer_UTF8 ("\xc3\x98") };  // Ø
@@ -263,6 +253,7 @@ private:
     // without losing wiring / state.
     juce::TextButton ioConfigButton;
     void openIoConfigPopup();
+    void refreshInputAvailability();
     void refreshIoConfigButton();
     // PRINT only commits post-effects audio. MIDI tracks render audio
     // at playback time, not at capture, so PRINT is a no-op. Grey out
@@ -395,6 +386,9 @@ private:
     std::unique_ptr<class AuPluginEditorComponent> auEditor;
     void loadNativeAuForChannel (const juce::String& componentId);
 #endif
+    // Built-in unit rung. No editor yet, so the slot label and the picker are
+    // the whole UI surface.
+    void loadBuiltinForChannel (const std::string& unitId);
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     // Multisample instrument editor - in-process Dusk UI over the strip's
     // NativeMultisampleSlot instance, same kept-alive/showBorrowed lifecycle.
@@ -443,6 +437,13 @@ public:
     // can be neither seen nor clicked.
     void closeCompEditorPopup();
 
+    // Same reason again: the built-in unit editor is another native child, and
+    // the shell has to be able to close it and to ask whether it is open.
+    void closeBuiltinEditorPopup();
+    bool isBuiltinEditorOpen() const noexcept;
+    void openBuiltinEditorForCapture (const std::string& capturePath);
+    void captureBuiltinPluginEditor (const std::string& capturePath);
+
 private:
 
     bool compactMode = false;
@@ -462,13 +463,29 @@ private:
     // graphics resource and most strips never open one.
    #if DUSKSTUDIO_HAS_NATIVE_UI
     std::unique_ptr<imgui::DuskPanelWindow> compEditorWindow;
+    // The built-in unit editor, hosted exactly as the compressor editor is: one
+    // native child over a dim, dismissed by Escape, a click outside or the same
+    // slot control that opened it.
+    std::unique_ptr<imgui::DuskPanelWindow> builtinEditorWindow;
+    // A unit that is one of Dusk's own DAF plug-ins brings its own editor; the
+    // panel window above stays for the units drawn from a parameter table.
+    std::unique_ptr<imgui::DafEditorHost> builtinPluginEditor;
     // The child is an opaque native surface, so the dim behind it is a JUCE sibling
     // exactly as the session notepad arranges it, and it owns the click-outside.
     std::unique_ptr<DimOverlay> compEditorDim;
     PluginEditorHider compEditorHider;
+    std::unique_ptr<DimOverlay> builtinEditorDim;
+    PluginEditorHider builtinEditorHider;
    #endif
     void openEqEditorPopup();
     void openCompEditorPopup();
+    void openBuiltinEditorPopup();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    void openBuiltinPluginEditor (std::uintptr_t parentHandle);
+    // Where the plug-in's editor belongs: its own size, centred, scaled down when
+    // the window cannot hold it. Also follows the dim's click-through region.
+    imgui::DafEditorHost::Geometry builtinPluginEditorGeometry();
+   #endif
     void openAuxEditorPopup();
     void setAuxSectionVisible (bool visible);
 

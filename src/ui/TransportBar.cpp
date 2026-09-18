@@ -11,6 +11,19 @@ namespace duskstudio
 {
 namespace
 {
+// Hoisted so the notice costs the file no new framework names, and so the
+// colours it shares with the rest of the bar are stated once.
+const juce::Colour kPanelBackground   { 0xff202024 };
+const juce::Colour kBrightText        { 0xffe0e0e0 };
+const juce::Colour kNoInputBackground { 0xff3a2020 };
+const juce::Colour kNoInputText       { 0xffe0a0a0 };
+const juce::Font   kNoticeFont        { juce::FontOptions (11.5f) };
+constexpr auto     kNoticeJustification = juce::Justification::centred;
+constexpr int      kNoticeMaxW          = 480;
+} // namespace
+
+namespace
+{
 // BPM can be fractional (the tempo field accepts e.g. 127.9). Show up to two
 // decimals but trim trailing zeros so whole tempos read "120", not "120.00".
 juce::String formatBpm (double bpm)
@@ -323,7 +336,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     ffwdButton  .setTitle ("Fast forward");
 
     playButton.onClick   = [this] { engine.play();   refreshButtonStates(); };
-    stopButton.onClick   = [this] { engine.stop();   notifyRecordStopped(); refreshButtonStates(); };
+    stopButton.onClick   = [this] { engine.pressStop(); notifyRecordStopped(); refreshButtonStates(); };
     recordButton.onClick = [this]
     {
         engine.record();
@@ -393,7 +406,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     addAndMakeVisible (recordButton);
 
     clockLabel.setJustificationType (juce::Justification::centred);
-    clockLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e0));
+    clockLabel.setColour (juce::Label::textColourId, kBrightText);
     clockLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff121214));
     clockLabel.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
                                                         18.0f, juce::Font::bold)));
@@ -441,7 +454,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
                     const double total = (bar - 1) * beatsPerBar * secondsPerBeat
                                        + (beat - 1) * secondsPerBeat
                                        + (sub  - 1) * secondsPerSub;
-                    engine.getTransport().setPlayhead (
+                    engine.getTransport().locate (
                         (std::int64_t) std::round (total * sr));
                     return;
                 }
@@ -457,14 +470,14 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
             const double mins = minStr.isEmpty() ? 0.0 : (double) minStr.getDoubleValue();
             const double secs = (double) secStr.getDoubleValue();
             const auto target = (std::int64_t) std::round ((mins * 60.0 + secs) * sr);
-            engine.getTransport().setPlayhead (std::max ((std::int64_t) 0, target));
+            engine.getTransport().locate (std::max ((std::int64_t) 0, target));
             return;
         }
 
         // Bare number = seconds.
         const double secs = (double) text.getDoubleValue();
         const auto target = (std::int64_t) std::round (secs * sr);
-        engine.getTransport().setPlayhead (std::max ((std::int64_t) 0, target));
+        engine.getTransport().locate (std::max ((std::int64_t) 0, target));
     };
     addAndMakeVisible (clockLabel);
 
@@ -503,7 +516,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     auto styleModeToggle = [] (juce::TextButton& b, juce::Colour onColour)
     {
         b.setClickingTogglesState (true);
-        b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+        b.setColour (juce::TextButton::buttonColourId,   kPanelBackground);
         b.setColour (juce::TextButton::buttonOnColourId, onColour.darker (0.45f));
         b.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
         b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
@@ -579,7 +592,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     addAndMakeVisible (bpmCaption);
 
     bpmValue.setJustificationType (juce::Justification::centred);
-    bpmValue.setColour (juce::Label::textColourId,        juce::Colour (0xffe0e0e0));
+    bpmValue.setColour (juce::Label::textColourId,        kBrightText);
     bpmValue.setColour (juce::Label::backgroundColourId,  juce::Colour (0xff121214));
     bpmValue.setColour (juce::Label::outlineColourId,     juce::Colour (0xff2a2a32));
     bpmValue.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
@@ -597,7 +610,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     bpmValue.addMouseListener (this, false);
     addAndMakeVisible (bpmValue);
 
-    tapButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+    tapButton.setColour (juce::TextButton::buttonColourId,   kPanelBackground);
     tapButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffe0c050));
     tapButton.setTooltip ("Tap to set tempo (B). Click in time with the music; "
                           "BPM updates after the second tap and averages "
@@ -606,7 +619,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     tapButton.onClick = [this] { onTap(); };
     addAndMakeVisible (tapButton);
 
-    timeSigButton.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff202024));
+    timeSigButton.setColour (juce::TextButton::buttonColourId,  kPanelBackground);
     timeSigButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0d0d0));
     timeSigButton.setTooltip ("Time signature (Shift+M). Click to pick a common time "
                               "(3/4, 4/4, 5/4, 6/8, 7/8, 12/8) or open Custom...");
@@ -628,7 +641,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     // Initial text - syncCompactLabels() in resized() rewrites this whenever
     // the transport-bar width crosses the compact breakpoint.
     tapeToggle.setButtonText (juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE")); // "▾ TIMELINE"
-    tapeToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+    tapeToggle.setColour (juce::TextButton::buttonColourId,   kPanelBackground);
     tapeToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff2a3a48));
     tapeToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff7090a8));
     tapeToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xffd0e0f0));
@@ -679,12 +692,38 @@ void TransportBar::forwardTap()
         engine.jumpToNextMarker();
 }
 
+void TransportBar::refreshDeviceNotice()
+{
+    // Exactly zero, not "unknown": before a device has started there is no
+    // evidence either way and the bar should stay quiet.
+    const bool noInput = engine.getSession().deviceCaptureChannels.load (
+                             std::memory_order_relaxed) == 0;
+    // No input is the one that stops the next thing the user tries, so it wins
+    // when a backend fallback is also standing. Views, not strings: this runs
+    // at the timer rate and the notice changes almost never.
+    const std::string_view wanted =
+        noInput ? std::string_view ("No input device. Choose one in Settings > Audio.")
+                : std::string_view (engine.backendFallbackNotice());
+    if (wanted == deviceNotice) return;
+    deviceNotice.assign (wanted.data(), wanted.size());
+    // The notice has a row of its own, so appearing and clearing changes the
+    // bar's height; the parent owns that and everything stacked under it, and
+    // its relayout brings this bar's own controls with it.
+    if (auto* parent = getParentComponent())
+        parent->resized();
+    else
+        resized();
+    repaint();
+}
+
 void TransportBar::timerCallback()
 {
+    refreshDeviceNotice();
+
     // 10x scrub. Once a REW / FFWD button has been held past
     // kHoldThresholdMs, advance the playhead by (sr * kScrubMultiplier *
     // tickPeriod) samples per tick. Continues until the button releases.
-    // Direct setPlayhead - scrub does NOT engage the transport so audio
+    // Direct locate - scrub does NOT engage the transport so audio
     // stays silent and the audio thread sees a "playhead jumped" event
     // (which fires the existing All Notes Off MIDI flush; safe).
     const auto nowMs = juce::Time::currentTimeMillis();
@@ -709,7 +748,7 @@ void TransportBar::timerCallback()
             lastScrubTickMs = nowMs;
             const auto delta = (std::int64_t) ((double) dtMs * 0.001 * sr * kScrubMultiplier);
             const auto cur = engine.getTransport().getPlayhead();
-            engine.getTransport().setPlayhead (std::max ((std::int64_t) 0,
+            engine.getTransport().locate (std::max ((std::int64_t) 0,
                 cur + (std::int64_t) direction * delta));
         };
 
@@ -769,7 +808,7 @@ void TransportBar::timerCallback()
         }
         else
         {
-            clockLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e0));
+            clockLabel.setColour (juce::Label::textColourId, kBrightText);
             const auto mode = (TimeDisplayMode) engine.getSession()
                                                    .timeDisplayMode.load (std::memory_order_relaxed);
             const float bpm = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
@@ -793,7 +832,7 @@ void TransportBar::timerCallback()
 
     // Auto-punch post-roll: while recording with punch enabled and the
     // playhead has crossed punchOut + postRoll samples, auto-stop. Done
-    // here on the message thread so engine.stop()'s teardown is safe.
+    // here on the message thread so the stop's teardown is safe.
     // postRoll == 0 disables the auto-stop (matches the previous behaviour
     // where punch never auto-stopped); punch-disabled and loop recording also
     // disable it.
@@ -812,7 +851,7 @@ void TransportBar::timerCallback()
                 const auto stopAt = pOut + (std::int64_t) ((double) postRoll * sr);
                 if (engine.getTransport().getPlayhead() >= stopAt)
                 {
-                    engine.stop();
+                    engine.pressStop();
                     notifyRecordStopped();
                 }
             }
@@ -833,7 +872,7 @@ void TransportBar::timerCallback()
         if (const auto target = s.pendingTransportPlayhead.exchange (
                 (std::int64_t) -1, std::memory_order_relaxed); target >= 0)
         {
-            engine.getTransport().setPlayhead (target);
+            engine.getTransport().locate (target);
         }
 
         // Transport-action queue: a binding hit on the audio thread (which
@@ -845,11 +884,14 @@ void TransportBar::timerCallback()
         switch (pending)
         {
             case PendingTransportAction::Play:   engine.play();   break;
-            case PendingTransportAction::Stop:   engine.stop();   notifyRecordStopped(); break;
+            case PendingTransportAction::Stop:   engine.pressStop(); notifyRecordStopped(); break;
+            // The master decides where the song is, so a chase stop leaves the
+            // playhead where the master stopped it.
+            case PendingTransportAction::SyncStop: engine.stop(); notifyRecordStopped(); break;
             case PendingTransportAction::Record: engine.record(); surfaceRecordSetupFailures(); break;
             case PendingTransportAction::Toggle:
                 if (engine.getTransport().isStopped()) engine.play();
-                else                                    { engine.stop(); notifyRecordStopped(); }
+                else                                    { engine.pressStop(); notifyRecordStopped(); }
                 break;
             case PendingTransportAction::LoopToggle:
             {
@@ -1057,11 +1099,31 @@ void TransportBar::paint (juce::Graphics& g)
     g.fillAll (juce::Colour (0xff181820));
     g.setColour (juce::Colour (0xff2a2a32));
     g.drawRect (getLocalBounds(), 1);
+
+    const int noticeH = noticeRowHeight();
+    if (noticeH == 0) return;
+
+    // Its own row under the controls. The bar's middle is where the parent lays
+    // the bank buttons out, and they are drawn after this, so a notice there is
+    // covered by them at every width that needs banking.
+    auto row = getLocalBounds().removeFromBottom (noticeH);
+    auto notice = row.withSizeKeepingCentre (
+        std::min (kNoticeMaxW, std::max (0, row.getWidth() - 16)),
+        std::max (0, noticeH - 4));
+    g.setColour (kNoInputBackground);
+    g.fillRoundedRectangle (notice.toFloat(), 3.0f);
+    g.setColour (kNoInputText);
+    g.setFont (kNoticeFont);
+    // Fitted, not clipped: the line's length is not fixed once more than one
+    // notice can stand here.
+    g.drawFittedText (deviceNotice.c_str(), notice, kNoticeJustification, 1);
 }
 
 void TransportBar::resized()
 {
-    auto area = getLocalBounds().reduced (8, 6);
+    auto controls = getLocalBounds();
+    controls.removeFromBottom (noticeRowHeight());
+    auto area = controls.reduced (8, 6);
 
     constexpr int kBtnDia = 36;
     constexpr int kBtnGap = 4;

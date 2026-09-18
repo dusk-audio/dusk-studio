@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 #include <memory>
+#include <string>
 
 namespace duskstudio
 {
@@ -60,6 +61,9 @@ enum class PluginKind { Effects, Instruments };
 // duplicates, and routes the stable component identifier here.
 // `onPickSoundfont`, when set, adds the "Soundfont" button to an instrument
 // picker and hands the chosen .sfz / .sf2 to the caller's multisample rung.
+// `onPickBuiltin` routes the built-in suite. Its rows come from the compiled-in
+// registry rather than a scan and always appear (there is nothing to install),
+// so a surface that can host them must always pass this.
 void openPickerMenu (PluginSlot& slot,
                       juce::Component& target,
                       std::function<void()> onChange,
@@ -71,7 +75,8 @@ void openPickerMenu (PluginSlot& slot,
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2 = {},
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {},
                       std::function<void (const juce::File&)> onPickSoundfont = {},
-                      std::function<void (const juce::String&)> onPickNativeAu = {});
+                      std::function<void (const juce::String&)> onPickNativeAu = {},
+                      std::function<void (const std::string&)> onPickBuiltin = {});
 
 // Two-step insert flow. Step 1 shows a small modal with three big
 // buttons - Hardware Insert / Soundfont / Plugin - letting the user
@@ -93,7 +98,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2 = {},
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {},
                          std::function<void (const juce::File&)> onPickSoundfont = {},
-                         std::function<void (const juce::String&)> onPickNativeAu = {});
+                         std::function<void (const juce::String&)> onPickNativeAu = {},
+                         std::function<void (const std::string&)> onPickBuiltin = {});
 
 // Synchronous scan. Blocks the message thread during scanInstalledPlugins().
 // Shows a Dusk in-window completion alert in `parent` (top-level Component)

@@ -4,7 +4,8 @@
 #   - packaging/DuskStudio.appdata.xml - prepends a new <release> entry
 #     dated today
 #   - packaging/RELEASE-NOTES.md - rewrites the summary slot of the canonical
-#     release body every tag workflow publishes
+#     release body every tag workflow publishes, and the VERSION= line of its
+#     signature-check commands
 # Then prints what to do next (git commit + tag).
 #
 # Usage:   scripts/bump-version.sh 1.0.0
@@ -202,7 +203,8 @@ if [[ -f "$NOTES_FILE" ]]; then
         SUMMARY_FILE=$(mktemp -t duskstudio-summary.XXXXXX)
         printf '%s\n' "$NOTES" > "$SUMMARY_FILE"
 
-        awk -v summary_file="$SUMMARY_FILE" -v start="$NOTES_START" -v end="$NOTES_END" '
+        awk -v summary_file="$SUMMARY_FILE" -v start="$NOTES_START" -v end="$NOTES_END" \
+            -v version="$NEW_VERSION" '
             { trimmed = $0; sub(/^[ \t]+/, "", trimmed); sub(/[ \t]+$/, "", trimmed) }
             trimmed == start {
                 print
@@ -212,6 +214,9 @@ if [[ -f "$NOTES_FILE" ]]; then
                 next
             }
             trimmed == end { inside = 0 }
+            !inside && /^[ \t]*VERSION=[0-9]+\.[0-9]+\.[0-9]+([ \t]|$)/ {
+                sub(/VERSION=[0-9]+\.[0-9]+\.[0-9]+/, "VERSION=" version)
+            }
             !inside { print }
         ' "$NOTES_FILE" > "$NOTES_FILE.tmp" \
             || { echo "error: awk failed to update $NOTES_FILE" >&2; exit 1; }
@@ -383,5 +388,5 @@ echo "     Prove landing:     git merge-base --is-ancestor \"\${RELEASE_COMMIT:?
 echo "     PR squash:         re-record RELEASE_COMMIT as the landed commit, then rerun step 6 (see MAINTAINER-GUIDE Part 10)"
 echo "  7) Tag landed commit: git tag -a v$NEW_VERSION -m \"Dusk Studio $NEW_VERSION\" \"\${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}\""
 echo "  8) Push tag:          git push origin \"refs/tags/v$NEW_VERSION\""
-echo "  9) Wait for CI assets: Dusk Studio release (all 6 assets)"
+echo "  9) Wait for CI assets: Dusk Studio release (all 7 assets)"
 echo " 10) Verify assets:     scripts/verify-release-assets.sh v$NEW_VERSION"

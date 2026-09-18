@@ -1,0 +1,599 @@
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+
+#include "engine/builtin/DafUnitInstance.h"
+
+#include <array>
+#include <cmath>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+// The host a DAF plug-in runs under as a built-in unit, driven here through a
+// stand-in plug-in that records what reaches it. Tape Echo 2 itself is covered in
+// builtin_tape_echo_2.cpp; these pin the host's own contract: parameters at the
+// plug-in's indices, writes that reach the plug-in only on the audio thread and in
+// order, the mirror, transport, latency and the session blob.
+
+using namespace duskstudio;
+using namespace duskstudio::builtin;
+using Catch::Matchers::WithinAbs;
+
+namespace
+{
+constexpr double kSampleRate = 48000.0;
+constexpr int    kBlock      = 64;
+constexpr const char* kId    = "dusk.builtin.fake";
+
+enum FakeParam : std::uint32_t { kGain = 0, kSteps, kAge, kOn, kLegacy, kMeter, kNumFakeParams };
+
+class FakeEditor final : public DafEditor
+{
+public:
+    explicit FakeEditor (DafEditorCallbacks cb) : callbacks (std::move (cb)) {}
+
+    bool setOffset (int, int) noexcept override { return true; }
+    void setSize (std::uint32_t, std::uint32_t) override {}
+    bool idle() noexcept override { return true; }
+    void parameterChanged (std::uint32_t, float) override {}
+    std::uint32_t width() const noexcept override { return 800; }
+    std::uint32_t height() const noexcept override { return 600; }
+
+    void setState (const std::string& key, const std::string& value)
+    {
+        callbacks.stateEdited (key, value);
+    }
+
+    DafEditorCallbacks callbacks;
+};
+
+class FakePlugin final : public DafPlugin
+{
+public:
+    struct Write { std::uint32_t index; float value; };
+    struct StateWrite { std::string key; std::string value; };
+
+    explicit FakePlugin (bool withStates = false)
+    {
+        descs.resize (kNumFakeParams);
+        auto set = [this] (FakeParam i, const char* symbol, float lo, float hi, float def)
+        {
+            descs[i].symbol = symbol;
+            descs[i].name = symbol;
+            descs[i].minValue = lo;
+            descs[i].maxValue = hi;
+            descs[i].defaultValue = def;
+        };
+        set (kGain, "gain", 0.0f, 2.0f, 1.0f);
+        set (kSteps, "steps", 1.0f, 4.0f, 1.0f);
+        descs[kSteps].isInteger = true;
+        set (kAge, "age", 0.0f, 1.0f, 0.5f);
+        descs[kAge].enumValues = { 0.0f, 0.5f, 1.0f };
+        descs[kAge].enumLabels = { "New", "Used", "Old" };
+        set (kOn, "on", 0.0f, 1.0f, 1.0f);
+        descs[kOn].isBoolean = descs[kOn].isInteger = true;
+        set (kLegacy, "legacy", 0.0f, 1.0f, 0.0f);
+        descs[kLegacy].isHidden = true;
+        set (kMeter, "meter", 0.0f, 4.0f, 0.0f);
+        descs[kMeter].isOutput = true;
+
+        for (std::size_t i = 0; i < descs.size(); ++i)
+            held[i] = descs[i].defaultValue;
+
+        if (withStates)
+        {
+            stateKeys = { "engine", "brightness" };
+            stateDefaults = { "clean", "0.5" };
+            stateValues = stateDefaults;
+        }
+    }
+
+    const std::vector<DafParamDesc>& params() const noexcept override { return descs; }
+    int numInputs() const noexcept override  { return 2; }
+    int numOutputs() const noexcept override { return 2; }
+
+    void activate (double, int) override { ++activations; activeNow = true; }
+    void deactivate() override { activeNow = false; }
+
+    float getParameterValue (std::uint32_t index) const noexcept override { return held[index]; }
+    void setParameterValue (std::uint32_t index, float value) noexcept override
+    {
+        held[index] = value;
+        log.push_back ({ index, value });
+    }
+
+    std::uint32_t getStateCount() const noexcept override
+    {
+        return (std::uint32_t) stateKeys.size();
+    }
+    const std::string& getStateKey (std::uint32_t index) const noexcept override
+    {
+        return stateKeys[index];
+    }
+    const std::string& getStateDefaultValue (std::uint32_t index) const noexcept override
+    {
+        return stateDefaults[index];
+    }
+    std::string getStateValue (const std::string& key) const override
+    {
+        for (std::size_t i = 0; i < stateKeys.size(); ++i)
+            if (stateKeys[i] == key)
+                return stateValues[i];
+        return {};
+    }
+    void setState (const std::string& key, const std::string& value) override
+    {
+        stateLog.push_back ({ key, value });
+        for (std::size_t i = 0; i < stateKeys.size(); ++i)
+        {
+            if (stateKeys[i] != key) continue;
+            stateValues[i] = value;
+            if (key == "engine") held[kGain] = value == "wide" ? 1.75f : 1.0f;
+            if (key == "brightness") held[kMeter] = std::stof (value);
+            return;
+        }
+    }
+
+    void setTimePosition (const dusk::TransportPosition& position) noexcept override
+    {
+        ++transportCalls;
+        lastBpm = position.bpm;
+    }
+
+    void run (const float* const* in, float* const* out, std::uint32_t frames) noexcept override
+    {
+        float peak = 0.0f;
+        for (std::uint32_t c = 0; c < 2; ++c)
+            for (std::uint32_t i = 0; i < frames; ++i)
+            {
+                out[c][i] = in[c][i] * held[kGain];
+                peak = std::max (peak, std::abs (out[c][i]));
+            }
+        held[kMeter] = peak;
+        ++runs;
+    }
+
+    int latencySamples() const noexcept override { return latency; }
+
+    bool hasEditor() const noexcept override { return true; }
+    std::uint32_t editorWidth() const noexcept override  { return 800; }
+    std::uint32_t editorHeight() const noexcept override { return 600; }
+    std::unique_ptr<duskstudio::builtin::DafEditor> createEditor (
+        std::uintptr_t, std::uint32_t, std::uint32_t, double,
+        duskstudio::builtin::DafEditorCallbacks callbacks, std::string&) override
+    {
+        auto editor = std::make_unique<FakeEditor> (std::move (callbacks));
+        liveEditor = editor.get();
+        return editor;
+    }
+
+    std::vector<DafParamDesc> descs;
+    std::array<float, kNumFakeParams> held {};
+    std::vector<Write> log;
+    std::vector<std::string> stateKeys;
+    std::vector<std::string> stateDefaults;
+    std::vector<std::string> stateValues;
+    std::vector<StateWrite> stateLog;
+    FakeEditor* liveEditor = nullptr;
+    int activations = 0;
+    bool activeNow = false;
+    int transportCalls = 0;
+    double lastBpm = 0.0;
+    int runs = 0;
+    int latency = 0;
+};
+
+struct Rig
+{
+    explicit Rig (bool withStates = false)
+    {
+        auto owned = std::make_unique<FakePlugin> (withStates);
+        fake = owned.get();
+        unit = std::make_unique<DafUnitInstance> (kId, std::move (owned));
+    }
+
+    void activate()
+    {
+        std::string error;
+        REQUIRE (unit->activate (kSampleRate, kBlock, error));
+    }
+
+    FakeEditor& openEditor (DafEditorCallbacks callbacks = {})
+    {
+        std::string error;
+        editor = unit->createEditor (1, 800, 600, 1.0, std::move (callbacks), error);
+        REQUIRE (editor != nullptr);
+        return *fake->liveEditor;
+    }
+
+    // One block of a constant signal; returns the left output's first sample.
+    float process (float in, const dusk::TransportPosition* transport = nullptr)
+    {
+        std::fill (inL.begin(), inL.end(), in);
+        std::fill (inR.begin(), inR.end(), in);
+        float* ins[2]  = { inL.data(), inR.data() };
+        float* outs[2] = { outL.data(), outR.data() };
+        hosting::PortBuffers io;
+        io.mainIn = ins;
+        io.mainInChannels = 2;
+        io.mainOut = outs;
+        io.mainOutChannels = 2;
+        io.numFrames = kBlock;
+        io.transport = transport;
+        unit->processBlock (io);
+        return outL[0];
+    }
+
+    FakePlugin* fake = nullptr;
+    std::unique_ptr<DafUnitInstance> unit;
+    std::unique_ptr<DafEditor> editor;
+    std::array<float, kBlock> inL {}, inR {}, outL {}, outR {};
+};
+
+std::vector<std::uint8_t> blob (const std::string& text)
+{
+    return { text.begin(), text.end() };
+}
+} // namespace
+
+TEST_CASE ("a DAF unit presents the plug-in's parameters at the plug-in's indices",
+           "[builtin][daf]")
+{
+    Rig rig;
+    REQUIRE (rig.unit->paramCount() == (int) kNumFakeParams);
+
+    const auto* gain = rig.unit->paramInfo (kGain);
+    REQUIRE (gain != nullptr);
+    REQUIRE (std::string (gain->id) == "gain");
+    REQUIRE (gain->kind == ParamKind::Continuous);
+    REQUIRE_FALSE (gain->hidden);
+    REQUIRE_THAT (gain->maxValue, WithinAbs (2.0, 1e-9));
+    REQUIRE_THAT (gain->defaultValue, WithinAbs (1.0, 1e-9));
+
+    const auto* steps = rig.unit->paramInfo (kSteps);
+    REQUIRE (steps->kind == ParamKind::Choice);
+    REQUIRE (steps->choiceCount == 4);
+    REQUIRE (std::string (steps->choices[0]) == "1");
+    REQUIRE (std::string (steps->choices[3]) == "4");
+
+    REQUIRE (rig.unit->paramInfo (kOn)->kind == ParamKind::Toggle);
+    REQUIRE (rig.unit->paramInfo (kAge)->kind == ParamKind::Continuous);
+    REQUIRE (rig.unit->paramInfo (kLegacy)->hidden);
+    REQUIRE (rig.unit->paramInfo (kMeter)->hidden);
+    REQUIRE (rig.unit->paramInfo (kNumFakeParams) == nullptr);
+
+    REQUIRE (rig.unit->portLayout().inputs.size() == 1);
+    REQUIRE (rig.unit->portLayout().outputs.size() == 1);
+    REQUIRE (rig.unit->portLayout().outputs[0].channelCount == 2);
+}
+
+TEST_CASE ("a DAF unit's parameter writes reach the plug-in only on the audio thread",
+           "[builtin][daf]")
+{
+    Rig rig;
+    rig.activate();
+    rig.fake->log.clear();
+
+    rig.unit->setParamValue (kGain, 0.5f);
+    rig.unit->setParamValue (kSteps, 3.0f);
+    rig.unit->setParamValue (kGain, 0.25f);
+
+    // Queued, not applied: the message thread never calls into the plug-in.
+    REQUIRE (rig.fake->log.empty());
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (0.25, 1e-9));
+
+    // Drained at the top of the block, in the order they were made, before run.
+    REQUIRE_THAT (rig.process (1.0f), WithinAbs (0.25, 1e-6));
+    REQUIRE (rig.fake->log.size() == 3);
+    REQUIRE (rig.fake->log[0].index == kGain);
+    REQUIRE_THAT (rig.fake->log[0].value, WithinAbs (0.5, 1e-9));
+    REQUIRE (rig.fake->log[1].index == kSteps);
+    REQUIRE (rig.fake->log[2].index == kGain);
+    REQUIRE_THAT (rig.fake->log[2].value, WithinAbs (0.25, 1e-9));
+
+    rig.fake->log.clear();
+    rig.process (1.0f);
+    REQUIRE (rig.fake->log.empty());
+}
+
+TEST_CASE ("a DAF unit whose write ring fills pushes the whole mirror instead",
+           "[builtin][daf]")
+{
+    Rig rig;
+    rig.activate();
+
+    for (std::uint32_t i = 0; i < DafUnitInstance::kWriteRingSize + 50; ++i)
+    {
+        rig.unit->setParamValue (kGain, (float) (i % 7) * 0.25f);
+        rig.unit->setParamValue (kSteps, (float) (1 + i % 4));
+    }
+    rig.unit->setParamValue (kGain, 1.5f);
+
+    rig.process (1.0f);
+    REQUIRE_THAT (rig.fake->held[kGain], WithinAbs (1.5, 1e-9));
+    REQUIRE_THAT (rig.fake->held[kSteps],
+                  WithinAbs (rig.unit->getParamValue (kSteps), 1e-9));
+    REQUIRE_THAT (rig.process (1.0f), WithinAbs (1.5, 1e-6));
+}
+
+TEST_CASE ("a DAF unit's mirror holds what the plug-in would", "[builtin][daf]")
+{
+    Rig rig;
+
+    rig.unit->setParamValue (kGain, 7.0f);
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (2.0, 1e-9));
+
+    rig.unit->setParamValue (kSteps, 2.6f);
+    REQUIRE_THAT (rig.unit->getParamValue (kSteps), WithinAbs (3.0, 1e-9));
+
+    rig.unit->setParamValue (kOn, 0.4f);
+    REQUIRE_THAT (rig.unit->getParamValue (kOn), WithinAbs (0.0, 1e-9));
+    rig.unit->setParamValue (kOn, 0.5f);
+    REQUIRE_THAT (rig.unit->getParamValue (kOn), WithinAbs (1.0, 1e-9));
+
+    // A restricted enumeration snaps, and a tie goes to the higher value.
+    rig.unit->setParamValue (kAge, 0.2f);
+    REQUIRE_THAT (rig.unit->getParamValue (kAge), WithinAbs (0.0, 1e-9));
+    rig.unit->setParamValue (kAge, 0.25f);
+    REQUIRE_THAT (rig.unit->getParamValue (kAge), WithinAbs (0.5, 1e-9));
+    rig.unit->setParamValue (kAge, 0.9f);
+    REQUIRE_THAT (rig.unit->getParamValue (kAge), WithinAbs (1.0, 1e-9));
+
+    rig.unit->setParamValue (kGain, std::nanf (""));
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (2.0, 1e-9));
+
+    // An output belongs to the plug-in.
+    rig.unit->setParamValue (kMeter, 3.0f);
+    REQUIRE_THAT (rig.unit->getParamValue (kMeter), WithinAbs (0.0, 1e-9));
+}
+
+TEST_CASE ("a DAF unit copies its output parameters into the mirror each block",
+           "[builtin][daf]")
+{
+    Rig rig;
+    rig.activate();
+    rig.unit->setParamValue (kGain, 2.0f);
+    rig.process (0.75f);
+    REQUIRE_THAT (rig.unit->getParamValue (kMeter), WithinAbs (1.5, 1e-6));
+}
+
+TEST_CASE ("a DAF unit pushes writes made while inactive when it activates",
+           "[builtin][daf]")
+{
+    Rig rig;
+    rig.unit->setParamValue (kGain, 0.5f);
+    REQUIRE_THAT (rig.fake->held[kGain], WithinAbs (1.0, 1e-9));
+
+    rig.activate();
+    REQUIRE (rig.fake->activations == 1);
+    REQUIRE_THAT (rig.fake->held[kGain], WithinAbs (0.5, 1e-9));
+
+    // Reactivating keeps the plug-in and every value it holds.
+    std::string error;
+    REQUIRE (rig.unit->reactivate (96000.0, kBlock, error));
+    REQUIRE (rig.fake->activations == 2);
+    REQUIRE_THAT (rig.process (1.0f), WithinAbs (0.5, 1e-6));
+}
+
+TEST_CASE ("a DAF unit processes nothing while inactive or oversized", "[builtin][daf]")
+{
+    Rig rig;
+    rig.process (1.0f);
+    REQUIRE (rig.fake->runs == 0);
+
+    rig.activate();
+    rig.process (1.0f);
+    REQUIRE (rig.fake->runs == 1);
+
+    rig.unit->deactivate();
+    REQUIRE_FALSE (rig.fake->activeNow);
+    rig.process (1.0f);
+    REQUIRE (rig.fake->runs == 1);
+}
+
+TEST_CASE ("a DAF unit hands the plug-in the transport only when one is supplied",
+           "[builtin][daf]")
+{
+    Rig rig;
+    rig.activate();
+
+    rig.process (0.0f);
+    REQUIRE (rig.fake->transportCalls == 0);
+
+    dusk::TransportPosition position;
+    position.bpm = 93.0;
+    rig.process (0.0f, &position);
+    REQUIRE (rig.fake->transportCalls == 1);
+    REQUIRE_THAT (rig.fake->lastBpm, WithinAbs (93.0, 1e-9));
+}
+
+TEST_CASE ("a DAF unit reports the plug-in's latency only while active", "[builtin][daf]")
+{
+    Rig rig;
+    rig.fake->latency = 128;
+    REQUIRE (rig.unit->getLatencySamples() == 0);
+    rig.activate();
+    REQUIRE (rig.unit->getLatencySamples() == 128);
+    rig.unit->deactivate();
+    REQUIRE (rig.unit->getLatencySamples() == 0);
+}
+
+TEST_CASE ("a plug-in without states round-trips exactly as before",
+           "[builtin][daf]")
+{
+    Rig saver;
+    saver.unit->setParamValue (kGain, 0.3f);
+    saver.unit->setParamValue (kSteps, 4.0f);
+    saver.unit->setParamValue (kLegacy, 0.7f);
+
+    std::vector<std::uint8_t> state;
+    REQUIRE (saver.unit->saveState (state));
+    const std::string text (state.begin(), state.end());
+    REQUIRE (text.find ("\"version\":2") != std::string::npos);
+    REQUIRE (text.find ("\"gain\"") != std::string::npos);
+    REQUIRE (text.find ("\"legacy\"") != std::string::npos);
+    REQUIRE (text.find ("\"meter\"") == std::string::npos);
+    REQUIRE (text.find ("\"state\"") == std::string::npos);
+
+    Rig loader;
+    loader.activate();
+    REQUIRE (loader.unit->loadState (state));
+    REQUIRE_THAT (loader.unit->getParamValue (kGain), WithinAbs (0.3, 1e-6));
+    REQUIRE_THAT (loader.unit->getParamValue (kSteps), WithinAbs (4.0, 1e-9));
+    REQUIRE_THAT (loader.unit->getParamValue (kLegacy), WithinAbs (0.7, 1e-6));
+    REQUIRE_THAT (loader.process (1.0f), WithinAbs (0.3, 1e-6));
+
+    SECTION ("a missing key restores that parameter's default")
+    {
+        REQUIRE (loader.unit->loadState (blob (
+            R"({"id":"dusk.builtin.fake","version":2,"params":{"steps":2}})")));
+        REQUIRE_THAT (loader.unit->getParamValue (kGain), WithinAbs (1.0, 1e-9));
+        REQUIRE_THAT (loader.unit->getParamValue (kSteps), WithinAbs (2.0, 1e-9));
+    }
+}
+
+TEST_CASE ("a plug-in with states saves and restores every state value",
+           "[builtin][daf]")
+{
+    Rig saver (true);
+    saver.fake->setState ("engine", "wide");
+    saver.fake->setState ("brightness", "0.875");
+    saver.unit->setParamValue (kGain, 0.4f);
+
+    std::vector<std::uint8_t> state;
+    REQUIRE (saver.unit->saveState (state));
+    const std::string text (state.begin(), state.end());
+    REQUIRE (text.find (R"("state":{"brightness":"0.875","engine":"wide"})")
+             != std::string::npos);
+
+    Rig loader (true);
+    loader.fake->stateLog.clear();
+    REQUIRE (loader.unit->loadState (state));
+    REQUIRE (loader.fake->stateLog.size() == 2);
+    REQUIRE (loader.fake->stateLog[0].key == "engine");
+    REQUIRE (loader.fake->stateLog[1].key == "brightness");
+    REQUIRE (loader.fake->getStateValue ("engine") == "wide");
+    REQUIRE (loader.fake->getStateValue ("brightness") == "0.875");
+}
+
+TEST_CASE ("restoring state refreshes the parameter mirrors", "[builtin][daf]")
+{
+    Rig rig (true);
+    REQUIRE (rig.unit->loadState (blob (
+        R"({"id":"dusk.builtin.fake","version":3,"state":{"brightness":"0.875","engine":"wide"},"params":{}})")));
+    REQUIRE_THAT (rig.unit->getParamValue (kMeter), WithinAbs (0.875, 1e-9));
+}
+
+TEST_CASE ("an editor state write reaches the plug-in and is saved with the unit",
+           "[builtin][daf][editor]")
+{
+    Rig rig (true);
+    auto& editor = rig.openEditor();
+    editor.setState ("engine", "wide");
+
+    REQUIRE (rig.fake->stateLog.size() == 1);
+    REQUIRE (rig.fake->stateLog[0].key == "engine");
+    REQUIRE (rig.fake->stateLog[0].value == "wide");
+
+    std::vector<std::uint8_t> state;
+    REQUIRE (rig.unit->saveState (state));
+    const std::string text (state.begin(), state.end());
+    REQUIRE (text.find (R"("engine":"wide")") != std::string::npos);
+}
+
+TEST_CASE ("an editor state write refreshes the parameter mirrors",
+           "[builtin][daf][editor]")
+{
+    Rig rig (true);
+    rig.openEditor().setState ("engine", "wide");
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.75, 1e-9));
+}
+
+TEST_CASE ("an editor state write does not echo parameter edits back to the editor",
+           "[builtin][daf][editor]")
+{
+    Rig rig (true);
+    int echoedEdits = 0;
+    DafEditorCallbacks callbacks;
+    callbacks.parameterEdited = [&echoedEdits] (std::uint32_t, float) { ++echoedEdits; };
+    rig.openEditor (std::move (callbacks)).setState ("engine", "wide");
+
+    REQUIRE (echoedEdits == 0);
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.75, 1e-9));
+}
+
+TEST_CASE ("a state-free plug-in ignores editor state callbacks",
+           "[builtin][daf][editor]")
+{
+    Rig rig;
+    rig.openEditor().setState ("engine", "wide");
+    REQUIRE (rig.fake->stateLog.empty());
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.0, 1e-9));
+}
+
+TEST_CASE ("a saved state key the plug-in no longer declares is ignored",
+           "[builtin][daf]")
+{
+    Rig rig (true);
+    REQUIRE (rig.unit->loadState (blob (
+        R"({"id":"dusk.builtin.fake","version":3,"state":{"removed":"value","brightness":"0.9","engine":"wide"},"params":{"gain":0.6}})")));
+    REQUIRE (rig.fake->stateLog.size() == 2);
+    REQUIRE (rig.fake->stateLog[0].key == "engine");
+    REQUIRE (rig.fake->stateLog[1].key == "brightness");
+    REQUIRE_THAT (rig.fake->held[kGain], WithinAbs (0.6, 1e-6));
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (0.6, 1e-6));
+}
+
+TEST_CASE ("a DAF unit restores a version-1 blob under its id as its defaults",
+           "[builtin][daf]")
+{
+    Rig rig;
+    rig.unit->setParamValue (kGain, 0.3f);
+    rig.unit->setParamValue (kSteps, 4.0f);
+
+    REQUIRE (rig.unit->loadState (blob (
+        R"({"id":"dusk.builtin.fake","version":1,"params":{"gain":0.6,"echo":1.0}})")));
+    for (int i = 0; i < (int) kNumFakeParams; ++i)
+        if (i != (int) kMeter)
+            REQUIRE_THAT (rig.unit->getParamValue (i),
+                          WithinAbs (rig.unit->paramInfo (i)->defaultValue, 1e-9));
+}
+
+TEST_CASE ("a version 1 blob restores the plug-in defaults", "[builtin][daf]")
+{
+    Rig rig (true);
+    rig.fake->setState ("engine", "wide");
+    rig.fake->setState ("brightness", "0.9");
+    rig.fake->stateLog.clear();
+
+    REQUIRE (rig.unit->loadState (blob (
+        R"({"id":"dusk.builtin.fake","version":1,"params":{"gain":0.2}})")));
+    REQUIRE (rig.fake->getStateValue ("engine") == "clean");
+    REQUIRE (rig.fake->getStateValue ("brightness") == "0.5");
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.0, 1e-9));
+}
+
+TEST_CASE ("the previous parameter-only version still loads", "[builtin][daf]")
+{
+    Rig rig (true);
+    REQUIRE (rig.unit->loadState (blob (
+        R"({"id":"dusk.builtin.fake","version":2,"params":{"gain":0.6,"steps":3}})")));
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (0.6, 1e-6));
+    REQUIRE_THAT (rig.unit->getParamValue (kSteps), WithinAbs (3.0, 1e-9));
+    REQUIRE (rig.fake->stateLog.empty());
+}
+
+TEST_CASE ("a DAF unit refuses a blob it cannot read", "[builtin][daf]")
+{
+    Rig rig;
+    rig.unit->setParamValue (kGain, 0.3f);
+
+    REQUIRE_FALSE (rig.unit->loadState ({}));
+    REQUIRE_FALSE (rig.unit->loadState (blob ("not json")));
+    REQUIRE_FALSE (rig.unit->loadState (blob (
+        R"({"id":"dusk.builtin.other","version":3,"params":{"gain":1.5}})")));
+    REQUIRE_FALSE (rig.unit->loadState (blob (
+        R"({"id":"dusk.builtin.fake","version":4,"params":{"gain":1.5}})")));
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (0.3, 1e-6));
+}

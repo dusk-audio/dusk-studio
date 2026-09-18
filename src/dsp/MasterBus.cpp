@@ -295,12 +295,21 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     }
     tapeMix.setTargetValue (tapeTarget);
 
+    // A passthrough path (Thru) hands the input straight back with no delay, so
+    // running it would put the master's output ahead of the latency it reports.
+    // The delayed dry is that same signal, aligned, and a blend between two
+    // identical signals has nothing to fade.
+    const bool passthrough = tape.isPassthroughPath();
+    if (passthrough)
+        tapeMix.setCurrentAndTargetValue (tapeTarget);
+
     const bool blending = tapeMix.isSmoothing();
     const bool runTape  = tapeOn || blending;            // wet needed this block
-    const bool alignDry = tapeLatencySamples > 0;        // tape adds latency (2×/4×)
+    const bool alignDry = tapeLatencySamples > 0;        // the tape core's own delay
 
-    // At 1x (no latency), fully faded out -> the dry passes through untouched
-    // and the whole stage is free.
+    // The tape core reports a constant latency at every oversampling factor, so
+    // the dry alignment below runs whenever a tape is prepared. A core that
+    // reported none would let a faded-out stage cost nothing.
     if (runTape || alignDry)
     {
         for (int offset = 0; offset < numSamples; offset += tapeMaxBlock)
@@ -309,10 +318,10 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
             float* Lc = L + offset;
             float* Rc = R + offset;
 
-            // Capture the dry (pre-tape) signal. With tape latency present we
-            // push it through a matching delay - fed EVERY block so the ring
-            // stays warm -> seamless next toggle. At 0 latency a plain copy
-            // suffices and is only needed while blending.
+            // Capture the dry (pre-tape) signal and push it through a matching
+            // delay, fed EVERY block so the ring stays warm and the next toggle
+            // is seamless. The plain-copy branch is what a zero-latency core
+            // would take, and is only needed while blending.
             if (alignDry)
             {
                 for (int i = 0; i < n; ++i)
@@ -334,9 +343,9 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 
             const float* dryL = tapeDryL.data();
             const float* dryR = tapeDryR.data();
-            if (! runTape)
+            if (! runTape || passthrough)
             {
-                // Fully off but latency-compensated -> emit the delayed dry so
+                // Fully off, or on a passthrough path -> emit the delayed dry so
                 // master latency stays constant (no timing jump on re-engage).
                 std::copy (dryL, dryL + n, Lc);
                 std::copy (dryR, dryR + n, Rc);

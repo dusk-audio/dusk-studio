@@ -68,4 +68,35 @@ inline std::string startupDeviceMessage (bool opened,
            "device in the other app, then open Audio Settings and select one.";
     return msg;
 }
+
+// One-line transport-bar notice for a startup open that could not use the
+// preferred backend. Empty string = nothing to say. Separate from
+// startupDeviceMessage above because this one is not an alert: the session is
+// working, and the user is only being told which backend it is working on -
+// silently landing on a fallback is how someone ends up wondering why their
+// interface is missing from a list that never had it.
+//
+//   hadSavedIntent   : the launch restored a persisted setup. startupDeviceMessage
+//                      above owns that case, and a user who chose ALSA on purpose
+//                      must not be told it is a fallback on every launch.
+//   preferredBackend : the first backend the platform registers (the one the
+//                      app uses when it has the choice).
+//   actualBackend    : the backend that ended up open (empty = none did).
+//
+// The init's error string is deliberately not an input: a backend that
+// enumerates nothing is skipped without one, and that silent skip is exactly
+// the case the notice exists for.
+inline std::string backendFallbackNotice (bool hadSavedIntent,
+                                          const std::string& preferredBackend,
+                                          const std::string& actualBackend)
+{
+    if (hadSavedIntent)
+        return {};
+    if (preferredBackend.empty() || actualBackend.empty())
+        return {};
+    if (preferredBackend == actualBackend)
+        return {};
+    return preferredBackend + " unavailable - using " + actualBackend
+         + ". Change it in Settings > Audio.";
+}
 } // namespace duskstudio

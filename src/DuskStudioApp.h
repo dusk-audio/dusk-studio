@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "foundation/MessageThread.h"
+
 namespace duskstudio
 {
 namespace scenario { class SuiteRunner; }
@@ -32,6 +34,7 @@ public:
 private:
     class MainWindow;
     std::unique_ptr<MainWindow> mainWindow;
+    std::unique_ptr<dusk::QuitSignalHandler> quitSignalHandler;
     // DUSKSTUDIO_CLAP_EDITOR_TEST standalone window (native CLAP editor embed).
     std::unique_ptr<juce::DocumentWindow> clapEditorTestWindow;
 #if DUSKSTUDIO_HAS_NATIVE_LV2

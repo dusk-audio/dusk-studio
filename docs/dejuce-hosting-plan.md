@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # De-JUCE — plugin-hosting tower (campaign plan)
 
 Status: **H1a-c merged (PR #114); H3 merged (PR #118); H4 merged (PR #119,

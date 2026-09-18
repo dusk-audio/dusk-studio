@@ -122,10 +122,51 @@ void Session::setTrackArmed (int trackIndex, bool armed) noexcept
     // alert + toggle rollback for UI feedback; this is the shared backstop.)
     if (armed && tracks[(size_t) trackIndex].frozen.load (std::memory_order_relaxed))
         return;
+    // Nothing to capture from: arming would light ARM over a recording that
+    // writes no file and reports nothing.
+    if (armed && missingInputForTrack (trackIndex) != kInputAvailable)
+        return;
     auto& a = tracks[(size_t) trackIndex].recordArmed;
     const bool prev = a.exchange (armed, std::memory_order_relaxed);
     if (prev != armed)
         armedTrackCount.fetch_add (armed ? 1 : -1, std::memory_order_relaxed);
+}
+
+int Session::disarmAudioTracksWithoutInput() noexcept
+{
+    int disarmed = 0;
+    for (int i = 0; i < kNumTracks; ++i)
+    {
+        auto& t = tracks[(size_t) i];
+        if (! t.recordArmed.load (std::memory_order_relaxed)) continue;
+        if (missingInputForTrack (i) == kInputAvailable) continue;
+        setTrackArmed (i, false);
+        ++disarmed;
+    }
+    return disarmed;
+}
+
+int Session::missingInputForTrack (int trackIndex) const noexcept
+{
+    if (trackIndex < 0 || trackIndex >= kNumTracks) return kInputAvailable;
+    if (tracks[(size_t) trackIndex].mode.load (std::memory_order_relaxed)
+            == (int) Track::Mode::Midi)
+        return kInputAvailable;
+    const int width = deviceCaptureChannels.load (std::memory_order_relaxed);
+    if (width == kCaptureWidthUnknown) return kInputAvailable;
+
+    const int left = resolveInputForTrack (trackIndex);
+    if (left < 0) return kNoInputSelected;
+    if (left >= width) return left;
+
+    if (tracks[(size_t) trackIndex].mode.load (std::memory_order_relaxed)
+            == (int) Track::Mode::Stereo)
+    {
+        const int right = resolveInputRForTrack (trackIndex);
+        if (right < 0) return kNoInputSelected;
+        if (right >= width) return right;
+    }
+    return kInputAvailable;
 }
 
 void Session::recomputeRtCounters() noexcept

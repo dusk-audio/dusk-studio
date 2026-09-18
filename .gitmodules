@@ -1,5 +1,5 @@
-[submodule "external/sfizz"]
-	path = external/sfizz
+[submodule "external/dusk-fizz"]
+	path = external/dusk-fizz
 	url = https://github.com/dusk-audio/dusk-fizz.git
 	branch = dusk-studio
 [submodule "external/clap"]

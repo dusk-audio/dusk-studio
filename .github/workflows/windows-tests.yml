@@ -37,12 +37,17 @@ jobs:
     # image no longer resolves the "Visual Studio 17 2022" CMake generator.
     runs-on: windows-2022
 
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-binary-cache
+      VCPKG_BINARY_SOURCES: "clear;default,readwrite"
+
     steps:
       - name: Checkout Dusk Studio
         uses: actions/checkout@v7
         with:
-          # external/sfizz is a submodule; without recursive checkout the
-          # CMake configure step fails ("external/sfizz/src/sfizz.h not
+          # external/dusk-fizz is a submodule; without recursive checkout the
+          # CMake configure step fails ("external/dusk-fizz/src/sfizz.h not
           # found"). Nested sfizz deps (abseil, st_audiofile) also need
           # to be present for the static link to succeed.
           submodules: recursive
@@ -55,26 +60,10 @@ jobs:
             https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE"
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned donor SHA (mirrors release.yml). main consumes source
-        # files the donor's main HEAD has since relocated, so an unpinned
-        # clone breaks configure. Bump every workflow's DONOR_REV together.
-        shell: bash
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-          DONOR_REV: 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins"
-          cd "${RUNNER_TEMP}/plugins"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
-      - name: Clone DAF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-daf-stack.
+      - name: Clone DAF main
         uses: ./.github/actions/clone-daf-stack
 
       - name: Fetch Steinberg ASIO SDK
@@ -98,6 +87,21 @@ jobs:
           fi
           echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
 
+      - name: Set up MSVC x64 host and target
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: amd64
+          vsversion: '2022'
+
+      - name: Cache vcpkg binary archives
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-windows-2022-x64-windows-static-${{ hashFiles('vcpkg.json') }}-${{ github.sha }}
+          restore-keys: |
+            vcpkg-windows-2022-x64-windows-static-${{ hashFiles('vcpkg.json') }}-
+            vcpkg-windows-2022-x64-windows-static-
+
       - name: Install libmp3lame + libsndfile (vcpkg)
         shell: bash
         # x64-windows-static = static libs + /MT static CRT, matching the whole
@@ -109,24 +113,36 @@ jobs:
         # own vcpkg clone commit: vcpkg cannot fetch a baseline it does not
         # already have, so never bump it past what the current image ships.
         run: |
+          cmake -E make_directory "${VCPKG_DEFAULT_BINARY_CACHE}"
           vcpkg install --triplet x64-windows-static
           echo "VCPKG_PREFIX=${GITHUB_WORKSPACE//\\//}/vcpkg_installed/x64-windows-static" >> "$GITHUB_ENV"
 
-      - name: Configure tests (CMake / Visual Studio 17 2022 / x64)
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.16.0
+
+      - name: Configure tests (CMake / Ninja / MSVC x64)
         shell: bash
         run: |
           # DAF's cmake re-parses these paths, so backslashes from RUNNER_TEMP
           # become invalid \-escapes there; hand it forward slashes (same
           # conversion the vcpkg prefix uses above).
           RT_UNIX="${RUNNER_TEMP//\\//}"
+          # A cached OFF skips find_program(ccache), so the project's
+          # auto-detection cannot overwrite the explicit sccache launchers.
           cmake -S . -B build-tests \
-            -G "Visual Studio 17 2022" -A x64 \
+            -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=cl \
+            -DCMAKE_CXX_COMPILER=cl \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DDUSKSTUDIO_CCACHE:FILEPATH=OFF \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RT_UNIX}/DAF" \
-            -DDAF_WIDGETS_PATH="${RT_UNIX}/DAF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
@@ -140,9 +156,26 @@ jobs:
         # Building DuskStudio covers Windows-only app sources such as the
         # native CLAP/VST3 editors and pulls dusk_native_ui transitively. The
         # Catch2 target also depends on dusk-studio-plugin-host and resolves
-        # that child beside the test executable through its configured path.
+        # that child through its configured $<TARGET_FILE:...> path. The child
+        # is beside the app in DuskStudio_artefacts/Release with Ninja too.
         shell: bash
-        run: cmake --build build-tests --config Release --target DuskStudio dusk-studio-tests -j4
+        run: cmake --build build-tests --target DuskStudio dusk-studio-tests -j4
+
+      - name: sccache stats
+        if: always()
+        shell: bash
+        run: sccache --show-stats
+
+      - name: Upload the built app
+        # Windows has no other route to a runnable build from a branch: the
+        # MSI is tag-driven. Short retention because this is for walking a
+        # branch on a test machine, not for distribution.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: duskstudio-windows-x64
+          path: build-tests/DuskStudio_artefacts/Release/
+          retention-days: 3
+          if-no-files-found: error
 
       - name: Run tests
         # Full Catch2 suite on MSVC. FileImporter fixtures close their writers
@@ -157,7 +190,7 @@ jobs:
         # without elevation.
         shell: bash
         run: |
-          inventory="$(ctest --test-dir build-tests -N -C Release)"
+          inventory="$(ctest --test-dir build-tests -N)"
           printf '%s\n' "$inventory"
           for required in \
             "ipc-stub: connect, round-trip 32 blocks, byte-exact echo" \
@@ -183,4 +216,4 @@ jobs:
               exit 1
             }
           done
-          ctest --test-dir build-tests --output-on-failure -C Release
+          ctest --test-dir build-tests --output-on-failure

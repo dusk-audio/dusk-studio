@@ -2,7 +2,10 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <cstdint>
+#include <filesystem>
 #include <functional>
+#include <string>
 
 // Forward-decl in the juce namespace so createInProcessEditorHost's
 // AudioProcessorEditor* parameter (Mac-only) doesn't force every
@@ -18,6 +21,16 @@ class AudioProcessorEditor;
 
 namespace duskstudio::platform
 {
+// The directory the running executable sits in. Package layouts arrange the
+// user-facing documents around it, so a caller resolves those from here rather
+// than from the working directory, which is wherever the launcher happened to
+// be. Empty if the platform would not say.
+std::filesystem::path executableDirectory();
+
+// Hand a path to the desktop's default handler for its type. False when
+// nothing could be launched; the caller decides what to say about it.
+bool openPathInDefaultApp (const std::filesystem::path& path);
+
 // Cross-platform window-management primitives. Per-platform
 // implementations live in PlatformWindowing_{Linux,Mac,Windows}.{cpp,mm}.
 // Callsites stay platform-agnostic; only this header is included.
@@ -51,6 +64,16 @@ bool hasUsableDisplay();
 // have no separate backing scale - the peer's own platform scale already
 // carries DPI - so they report 1 and the caller uses the peer scale instead.
 double nativeViewBackingScale (void* nativeViewHandle);
+
+// Read a native window's pixels back as the display server holds them and write
+// them as a binary PPM. The manual's capture harness uses it for a built-in
+// unit's own plug-in editor, which draws through a GL surface the framework's
+// snapshot cannot reach.
+//
+// Linux: XGetImage on a connection of its own. False when the window is not
+//        viewable or the file cannot be written.
+// macOS / Windows: false; nothing captures there.
+bool captureNativeWindowToPpm (std::uintptr_t nativeWindow, const std::string& path);
 
 // Bring the given window's native peer to the foreground and grant it
 // focus. Used after creating a fresh top-level window (main window,

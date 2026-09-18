@@ -21,9 +21,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  # Both sanitizer jobs must compile the same donor snapshot.
-  DONOR_REV: 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
+# gh cache delete in the prune steps needs actions: write; everything else
+# only reads the checkout.
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   tsan-tests:
@@ -52,13 +54,13 @@ jobs:
       # whole wiring. Sanitizer objects are not interchangeable with the
       # Release ones, so this job carries its own cache key.
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 500M
+      CCACHE_MAXSIZE: 2G
 
     steps:
       - name: Checkout Dusk Studio
         uses: actions/checkout@v7
         with:
-          # external/sfizz is a submodule consumed by the test binary
+          # external/dusk-fizz is a submodule consumed by the test binary
           # (DuskMultisampleProcessor.cpp includes <sfizz.h>).
           submodules: recursive
           persist-credentials: false
@@ -84,8 +86,11 @@ jobs:
             libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev xvfb
             libwayland-dev libxkbcommon-dev libdecor-0-dev
 
-      - name: Cache ccache objects
-        uses: actions/cache@v6
+      - name: Restore ccache objects
+        # Restore on every run, save only from main (below): a snapshot per PR
+        # push filled the repository's 10 GB cache quota within hours and
+        # evicted the snapshots the next run needed.
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-linux-tsan-${{ github.sha }}
@@ -114,24 +119,10 @@ jobs:
             modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
             echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned donor SHA (mirrors release.yml). main consumes source
-        # files the donor's main HEAD has since relocated, so an unpinned
-        # clone breaks configure. Bump every workflow's DONOR_REV together.
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins-main"
-          cd "${RUNNER_TEMP}/plugins-main"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
-      - name: Clone DAF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-daf-stack.
+      - name: Clone DAF main
         uses: ./.github/actions/clone-daf-stack
 
       - name: Configure tests (TSan, RelWithDebInfo)
@@ -149,9 +140,8 @@ jobs:
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF"
 
       - name: Build tests (TSan)
         run: cmake --build build-tsan --target dusk-studio-tests -j6
@@ -164,12 +154,31 @@ jobs:
         # fix. TSan itself fires via TSAN_OPTIONS=exitcode=66 above —
         # any race makes ctest see a non-zero status and fail this step.
         run: |
-          ctest --test-dir build-tsan --output-on-failure \
+          ctest --test-dir build-tsan --output-on-failure --parallel 4 \
                 -E "VCA detector mode toggle is a no-op|FET has no GR-driven sub-bass HPF"
 
       - name: ccache stats
         if: always()
         run: ccache -s
+
+      - name: Save ccache objects (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-linux-tsan-${{ github.sha }}
+
+      - name: Prune older ccache snapshots (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --key ccache-linux-tsan- \
+              --sort created_at --order desc --limit 100 --json id \
+            | jq -r '.[1:][].id' \
+            | while IFS= read -r id; do
+                gh cache delete "$id" --repo "$GITHUB_REPOSITORY"
+              done
 
   asan-ubsan-tests:
     name: Catch2 tests (ASan + UBSan, Ubuntu 22.04)
@@ -184,7 +193,7 @@ jobs:
       ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
 
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 500M
+      CCACHE_MAXSIZE: 2G
 
     steps:
       - name: Checkout Dusk Studio
@@ -209,8 +218,11 @@ jobs:
             libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev xvfb
             libwayland-dev libxkbcommon-dev libdecor-0-dev
 
-      - name: Cache ccache objects
-        uses: actions/cache@v6
+      - name: Restore ccache objects
+        # Restore on every run, save only from main (below): a snapshot per PR
+        # push filled the repository's 10 GB cache quota within hours and
+        # evicted the snapshots the next run needed.
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-linux-asan-ubsan-${{ github.sha }}
@@ -235,20 +247,10 @@ jobs:
             modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
             echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins-main"
-          cd "${RUNNER_TEMP}/plugins-main"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
-      - name: Clone DAF stack (dusk-audio forks, pinned)
+      - name: Clone DAF main
         uses: ./.github/actions/clone-daf-stack
 
       - name: Configure tests (ASan + UBSan, RelWithDebInfo)
@@ -261,9 +263,8 @@ jobs:
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
 
       - name: Build tests (ASan + UBSan)
         run: cmake --build build-asan --target dusk-studio-tests -j6
@@ -276,7 +277,7 @@ jobs:
         # parity cases keep JUCE's message-loop initialiser alive so its timer
         # cannot race teardown. Every other test runs with leak detection on.
         run: |
-          ctest --test-dir build-asan --output-on-failure \
+          ctest --test-dir build-asan --output-on-failure --parallel 4 \
             -E '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it|TapeMachineDSP nulls against the JUCE donor at 1x|TapeMachineDSP tracks the JUCE donor within tolerance at 2x and 4x|TapeMachineDSP latency is stable per oversampling factor)$'
 
       - name: Run leak-for-safety tests under ASan + UBSan
@@ -289,3 +290,22 @@ jobs:
       - name: ccache stats
         if: always()
         run: ccache -s
+
+      - name: Save ccache objects (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-linux-asan-ubsan-${{ github.sha }}
+
+      - name: Prune older ccache snapshots (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --key ccache-linux-asan-ubsan- \
+              --sort created_at --order desc --limit 100 --json id \
+            | jq -r '.[1:][].id' \
+            | while IFS= read -r id; do
+                gh cache delete "$id" --repo "$GITHUB_REPOSITORY"
+              done

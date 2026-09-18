@@ -63,10 +63,6 @@ private:
     juce::Slider     eqHfGain  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      eqLfLbl, eqMidLbl, eqHfLbl;
 
-    // Bus compressor controls. Shell mirrors the channel-strip COMP
-    // section visually: a split module button on top, a CompMeterStrip
-    // on the left, and the parameter knob grid on the right. The DSP
-    // underneath is still a fixed SSL-style glue topology - no mode picker.
     std::unique_ptr<SplitModuleButton> compHeaderBtn;
     std::unique_ptr<CompMeterStrip>   compMeter;
     juce::Slider     compRatio   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
@@ -108,11 +104,7 @@ private:
 
     // Stereo output meter (L | R) on the right side of the fader, matching
     // the master strip's layout. Smoothed and peak-hold values per channel.
-    // Plus a slim vertical GR bar (top-down fill, gold->red) so the user
-    // sees compressor activity at a glance, not just as a numeric readout.
     juce::Rectangle<int> meterArea;
-    juce::Rectangle<int> grMeterArea;
-    juce::Rectangle<int> faderScaleArea;
     // Painted background bands for the EQ + COMP sections - same framed
     // look as the channel strip's eqArea / compArea so all strip types
     // share one visual grammar.
@@ -138,7 +130,6 @@ private:
     juce::Label outputPeakLabel;
     float displayedOutputLDb = -100.0f;
     float displayedOutputRDb = -100.0f;
-    float displayedGrDb      = 0.0f;
     float outputPeakHoldLDb  = -100.0f;
     float outputPeakHoldRDb  = -100.0f;
     int   outputPeakHoldFramesL = 0;

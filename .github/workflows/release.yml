@@ -22,7 +22,6 @@ concurrency:
 
 env:
   RELEASES_REPO: dusk-audio/dusk-studio-releases
-  DONOR_REV: 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
   SODIUM_VERSION: 1.0.22
   SODIUM_SHA256: adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349
 
@@ -30,7 +29,21 @@ jobs:
   preflight:
     name: Validate release request
     runs-on: ubuntu-22.04
+    outputs:
+      daf_rev: ${{ steps.daf.outputs.rev }}
     steps:
+      - name: Resolve DAF main
+        # Resolved once so every platform builds the same DAF commit even if
+        # DAF main moves while the release is running.
+        id: daf
+        run: |
+          set -euo pipefail
+          rev="$(git ls-remote https://github.com/dusk-audio/DAF.git refs/heads/main | cut -f1)"
+          [[ "${rev}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "ERROR: could not resolve DAF main (got '${rev}')" >&2; exit 1; }
+          echo "DAF ${rev}"
+          echo "rev=${rev}" >> "${GITHUB_OUTPUT}"
+
       - name: Checkout release metadata
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -120,6 +133,7 @@ jobs:
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev
             libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev
             libwayland-dev libxkbcommon-dev libdecor-0-dev
+            xvfb
             xz-utils
 
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
@@ -176,26 +190,13 @@ jobs:
               echo "ERROR: NEON SIMDNativeOps<long long> alias still missing after patch (awk anchor no longer matches the mirror header)." >&2; exit 1; }
           fi
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned to a specific donor SHA, mirroring the JUCE pin above. An
-        # unpinned `git clone` of main HEAD makes old tags non-reproducible:
-        # a later donor commit would silently change the DSP a past release
-        # was built from. To move the donor forward, bump DONOR_REV.
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins-main"
-          cd "${RUNNER_TEMP}/plugins-main"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
-      - name: Clone DAF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-daf-stack.
+      - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
+        with:
+          rev: ${{ needs.preflight.outputs.daf_rev }}
 
       - name: Refresh Patreon supporters
         # Bakes the live supporters list into the release binary via
@@ -209,7 +210,7 @@ jobs:
           PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
           PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
           PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
-          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins-main
+          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins
         run: |
           if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
              || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
@@ -267,9 +268,8 @@ jobs:
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF"
           for option in DUSKSTUDIO_ENABLE_NATIVE_UI DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build-linux/CMakeCache.txt || {
               echo "::error::${option} was not enabled in the app configure" >&2; exit 1; }
@@ -284,6 +284,14 @@ jobs:
 
       - name: Build (Release)
         run: cmake --build build-linux -j6
+
+      - name: Headless self-test (xvfb, DUSKSTUDIO_RUN_SELFTEST=1)
+        # The release gate has to prove the packaged binary brings its engine
+        # up, not only that it links. 60 s: no audio device on the runner.
+        run: |
+          timeout 60 xvfb-run --auto-servernum \
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+            build-linux/DuskStudio_artefacts/Release/DuskStudio
 
       - name: Verify libsodium is not a runtime dependency
         # libsodium-dev is installed, so a regression in the CMake selection
@@ -322,9 +330,8 @@ jobs:
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF"
           cmake --build build-tests --target dusk-studio-tests -j6
           ctest --test-dir build-tests --output-on-failure
 
@@ -336,6 +343,15 @@ jobs:
         # integration.
         run: BUILD_DIR=build-linux scripts/package-tarball.sh
 
+      - name: Verify tarball contents
+        # packaging/contents.txt is the contract; a packager that stops shipping
+        # a file fails here rather than on the user's first launch.
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          tar -xf dusk-studio-*-Linux-${{ matrix.arch }}.tar.xz -C "$work"
+          root="$(find "$work" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          scripts/verify-package-contents.sh linux "$root"
 
       - name: Stage Linux payload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -408,8 +424,8 @@ jobs:
       - name: Checkout Dusk Studio
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # external/sfizz is a submodule; without recursive checkout
-          # the CMake configure step fails ("external/sfizz/src/sfizz.h
+          # external/dusk-fizz is a submodule; without recursive checkout
+          # the CMake configure step fails ("external/dusk-fizz/src/sfizz.h
           # not found"). Nested sfizz deps (abseil, st_audiofile, etc)
           # also need to be present for the static link to succeed.
           submodules: recursive
@@ -424,28 +440,13 @@ jobs:
             https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE"
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned to the same donor SHA the Linux job uses. An unpinned
-        # clone of main HEAD makes old tags non-reproducible and breaks the
-        # build outright once the donor relocates a consumed source file.
-        # To move the donor forward, bump DONOR_REV here and in the other
-        # release workflows together.
-        shell: bash
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins"
-          cd "${RUNNER_TEMP}/plugins"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
-      - name: Clone DAF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-daf-stack.
+      - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
+        with:
+          rev: ${{ needs.preflight.outputs.daf_rev }}
 
       - name: Refresh Patreon supporters
         # See the Linux job for the rationale. Bakes the live list into the
@@ -545,7 +546,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RT_UNIX}/DAF" \
-            -DDAF_WIDGETS_PATH="${RT_UNIX}/DAF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR="${MESA_SOFTGL_PATH}" \
@@ -590,7 +590,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RT_UNIX}/DAF" \
-            -DDAF_WIDGETS_PATH="${RT_UNIX}/DAF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
@@ -648,16 +647,180 @@ jobs:
           $wixBin                     | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           Write-Host "WiX ready: $wixBin"
 
-      - name: Package MSI via CPack WIX (unsigned)
+      - name: Decide the Windows signing route
+        # Two credential shapes. A PFX is the simple one and works with any
+        # certificate you hold; Azure Trusted Signing is the CI-friendly one,
+        # because since June 2023 OV and EV certificates are issued on hardware
+        # tokens that a hosted runner cannot reach. With neither, the MSI ships
+        # unsigned and the documented SmartScreen steps apply; signing starts
+        # the day the secrets exist.
+        id: winsign
+        shell: bash
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          TRUSTED_SIGNING_PROFILE: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+        run: |
+          set -euo pipefail
+          route=none
+          if [[ -n "${WINDOWS_CERT_PFX_BASE64:-}" && -n "${WINDOWS_CERT_PASSWORD:-}" ]]; then
+            route=pfx
+          elif [[ -n "${AZURE_TENANT_ID:-}" && -n "${AZURE_CLIENT_ID:-}" \
+               && -n "${AZURE_CLIENT_SECRET:-}" && -n "${TRUSTED_SIGNING_ENDPOINT:-}" \
+               && -n "${TRUSTED_SIGNING_ACCOUNT:-}" && -n "${TRUSTED_SIGNING_PROFILE:-}" ]]; then
+            route=azure
+          fi
+
+          if [[ "$route" == "none" ]]; then
+            echo "::notice::Windows signing secrets absent; the MSI ships unsigned"
+          fi
+          echo "route=$route" >> "$GITHUB_OUTPUT"
+
+      - name: Sign the executables (PFX)
+        # Before the MSI is built: signing only the installer would leave the
+        # binaries it lays down unsigned, which is what the user actually runs.
+        if: ${{ steps.winsign.outputs.route == 'pfx' }}
         shell: pwsh
-        # Delegates the cpack run to the cross-platform packaging script.
-        # No signing args: the MSI ships unsigned by design.
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'code-signing.pfx'
+          try {
+              [IO.File]::WriteAllBytes($pfx,
+                  [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+              $targets = Get-ChildItem build -Recurse -File -Include `
+                  'DuskStudio.exe','dusk-studio-plugin-host.exe'
+              if (-not $targets) { throw 'no executables to sign under build' }
+              foreach ($t in $targets) {
+                  # RFC 3161 timestamp: without one every signature expires with
+                  # the certificate and old downloads stop validating.
+                  & signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+                      /f $pfx /p $env:WINDOWS_CERT_PASSWORD $t.FullName
+                  if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($t.FullName)" }
+              }
+          }
+          finally {
+              if (Test-Path $pfx) { Remove-Item $pfx -Force }
+          }
+
+      - name: Sign the executables (Azure Trusted Signing)
+        if: ${{ steps.winsign.outputs.route == 'azure' }}
+        uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+          files-folder: build
+          files-folder-filter: exe
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Package MSI via CPack WIX
+        shell: pwsh
+        # Delegates the cpack run to the cross-platform packaging script. The
+        # executables it packages are already signed on a tag.
         run: |
           .\scripts\package-windows.ps1 -BuildDir build
           if ($LASTEXITCODE -ne 0) { throw "package-windows.ps1 failed" }
           Get-ChildItem build\*.msi
           Get-ChildItem *.msi -ErrorAction SilentlyContinue
 
+      - name: Sign the MSI (PFX)
+        if: ${{ steps.winsign.outputs.route == 'pfx' }}
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'code-signing.pfx'
+          try {
+              [IO.File]::WriteAllBytes($pfx,
+                  [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+              $msi = Get-ChildItem *.msi, build\*.msi -ErrorAction SilentlyContinue |
+                     Select-Object -First 1
+              if (-not $msi) { throw 'no MSI to sign' }
+              & signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+                  /f $pfx /p $env:WINDOWS_CERT_PASSWORD $msi.FullName
+              if ($LASTEXITCODE -ne 0) { throw 'signtool failed for the MSI' }
+          }
+          finally {
+              if (Test-Path $pfx) { Remove-Item $pfx -Force }
+          }
+
+      - name: Sign the MSI (Azure Trusted Signing)
+        if: ${{ steps.winsign.outputs.route == 'azure' }}
+        uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the Authenticode signatures
+        # The acceptance test: all three files a user ends up with, verified the
+        # way Windows will, including that each carries a countersignature so
+        # the signature outlives the certificate.
+        if: ${{ steps.winsign.outputs.route != 'none' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = Get-ChildItem *.msi, build\*.msi -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+          $exes = Get-ChildItem build -Recurse -File -Include `
+              'DuskStudio.exe','dusk-studio-plugin-host.exe'
+          foreach ($f in @($msi) + @($exes)) {
+              $out = & signtool verify /pa /v $f.FullName 2>&1 | Out-String
+              Write-Host $out
+              if ($LASTEXITCODE -ne 0) { throw "signtool verify failed for $($f.FullName)" }
+              if ($out -notmatch 'Timestamp') {
+                  throw "no countersignature timestamp on $($f.FullName)"
+              }
+          }
+
+      - name: Verify MSI contents
+        # 7z flattens an MSI, so the checker matches file names rather than
+        # paths on this platform. See packaging/contents.txt.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The repo root only, and exactly one: that is where the packaging
+          # step leaves the MSI and what the upload path publishes, so checking
+          # a copy under build/ could verify a file nobody ships.
+          shopt -s nullglob
+          msis=(*.msi)
+          (( ${#msis[@]} == 1 )) || {
+            echo "::error::expected exactly one MSI at the repo root, found ${#msis[@]}" >&2
+            exit 1; }
+          msi="${msis[0]}"
+          # Not mktemp: Git Bash resolves /tmp inside its own tree, while the
+          # native 7z.exe reads -o/tmp/... against the drive root, so find
+          # would then search an empty directory. A mixed-style RUNNER_TEMP
+          # path means the same directory to both.
+          work="${RUNNER_TEMP//\\//}/msi-contents"
+          rm -rf "$work"
+          mkdir -p "$work"
+          7z x -y -o"$work" "$msi" > /dev/null
+          scripts/verify-package-contents.sh windows "$work"
 
       - name: Stage Windows payload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -669,7 +832,7 @@ jobs:
 
   macos:
     needs: preflight
-    name: Build + package unsigned DMG (macOS arm64 Release)
+    name: Build + package DMG (macOS arm64 Release)
     runs-on: macos-14
     env:
       # ccache obj cache (auto-detected by CMakeLists.txt). Stable dir for
@@ -729,27 +892,13 @@ jobs:
             https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE"
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned to the same donor SHA the Linux job uses. An unpinned
-        # clone of main HEAD makes old tags non-reproducible and breaks the
-        # build outright once the donor relocates a consumed source file.
-        # To move the donor forward, bump DONOR_REV here and in the other
-        # release workflows together.
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins-main"
-          cd "${RUNNER_TEMP}/plugins-main"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
-      - name: Clone DAF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-daf-stack.
+      - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
+        with:
+          rev: ${{ needs.preflight.outputs.daf_rev }}
 
       - name: Refresh Patreon supporters
         # See the Linux job for the rationale. Bakes the live list into the
@@ -761,7 +910,7 @@ jobs:
           PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
           PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
           PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
-          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins-main
+          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins
         run: |
           if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
              || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
@@ -795,9 +944,8 @@ jobs:
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
             -DDUSKSTUDIO_CODESIGN_IDENTITY="-" \
             -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
@@ -814,6 +962,14 @@ jobs:
         # Preserve Ninja's five-worker default on this three-core runner,
         # but keep the limit explicit so generator changes cannot unbound it.
         run: cmake --build build -j5
+
+      - name: Headless self-test (DUSKSTUDIO_RUN_SELFTEST=1)
+        # The runner has no GNU timeout; perl's alarm survives the exec and
+        # bounds the run. 90 s because there is no audio device.
+        run: |
+          perl -e 'alarm shift @ARGV; exec @ARGV' 90 \
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+            build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio
 
       - name: Verify macOS 11 sandbox helper
         run: |
@@ -836,9 +992,8 @@ jobs:
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
@@ -851,9 +1006,89 @@ jobs:
           cmake --build build-tests --target dusk-studio-tests -j5
           ctest --test-dir build-tests --output-on-failure
 
-      - name: Package unsigned DMG
-        # CMake already ad-hoc-signed the .app via identity "-"; just wrap
-        # it in a DMG. Not notarized, so users right-click -> Open once.
+      - name: Import the Developer ID certificate
+        # Without Developer ID credentials the DMG keeps the ad-hoc signature
+        # CMake already applied and ships with the documented first-open steps;
+        # the signing and notarization path below waits for the secrets.
+        id: signing
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in MACOS_CERT_P12_BASE64 MACOS_CERT_PASSWORD MACOS_TEAM_ID \
+                      NOTARY_KEY_ID NOTARY_ISSUER_ID NOTARY_KEY_P8_BASE64; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::notice::macOS signing secrets absent; the DMG ships with the ad-hoc signature"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # A keychain of our own, unlocked for this job and deleted after it.
+          # The login keychain is never touched.
+          KEYCHAIN="${RUNNER_TEMP}/dusk-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+          cert="${RUNNER_TEMP}/cert.p12"
+          printf '%s' "$MACOS_CERT_P12_BASE64" | base64 -d > "$cert"
+          security import "$cert" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" \
+                   -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$cert"
+          # Without this codesign prompts for the keychain on first use, which
+          # on a runner means hanging until the job times out.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+                   -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+
+          identity="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+                        | awk '/Developer ID Application/ { print $2; exit }')"
+          [[ -n "$identity" ]] || {
+            echo "::error::no Developer ID Application identity in the imported certificate" >&2
+            exit 1; }
+
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          echo "keychain=$KEYCHAIN" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$identity"
+          echo "imported a Developer ID Application identity"
+
+      - name: Sign the app bundle
+        if: ${{ steps.signing.outputs.signed == 'true' }}
+        env:
+          IDENTITY: ${{ steps.signing.outputs.identity }}
+          KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+        run: |
+          set -euo pipefail
+          APP="build/DuskStudio_artefacts/Release/DuskStudio.app"
+          [[ -d "$APP" ]] || { echo "::error::no app bundle at $APP" >&2; exit 1; }
+          ENTITLEMENTS="build/DuskStudio_artefacts/JuceLibraryCode/DuskStudio.entitlements"
+
+          # Inside out: the helper carries its own signature, and signing the
+          # bundle afterwards would not cover a nested binary signed later.
+          HELPER="$APP/Contents/MacOS/dusk-studio-plugin-host"
+          if [[ -f "$HELPER" ]]; then
+            codesign --force --timestamp --options runtime \
+                     --keychain "$KEYCHAIN" --sign "$IDENTITY" "$HELPER"
+          fi
+
+          codesign --force --deep --timestamp --options runtime \
+                   ${ENTITLEMENTS:+--entitlements "$ENTITLEMENTS"} \
+                   --keychain "$KEYCHAIN" --sign "$IDENTITY" "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Package DMG
+        # CMake ad-hoc-signs the .app via identity "-" for a dispatch run; a tag
+        # has replaced that with a Developer ID signature by now.
         run: |
           set -euo pipefail
           ( cd build && cpack -G DragNDrop -C Release )
@@ -863,7 +1098,87 @@ jobs:
           [[ -n "$DMG" ]] || { echo "::error::cpack produced no .dmg" >&2; exit 1; }
           base="$(basename "$DMG" .dmg)"
           mv "$DMG" "./${base}.dmg"
-          echo "Unsigned DMG: ${base}.dmg"
+          echo "DMG: ${base}.dmg"
+
+      - name: Sign, notarize and staple the DMG
+        if: ${{ steps.signing.outputs.signed == 'true' }}
+        env:
+          IDENTITY: ${{ steps.signing.outputs.identity }}
+          KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+          MACOS_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          dmg="$(ls *.dmg | head -1)"
+
+          codesign --force --timestamp --keychain "$KEYCHAIN" \
+                   --sign "$IDENTITY" "$dmg"
+
+          key="${RUNNER_TEMP}/notary.p8"
+          printf '%s' "$NOTARY_KEY_P8_BASE64" | base64 -d > "$key"
+          # --wait rather than polling: the submission is the gate, and a build
+          # that publishes before Apple answers would publish an unstapled DMG.
+          xcrun notarytool submit "$dmg" \
+                --key "$key" --key-id "$NOTARY_KEY_ID" \
+                --issuer "$NOTARY_ISSUER_ID" --team-id "$MACOS_TEAM_ID" \
+                --wait --timeout 45m
+          rm -f "$key"
+
+          # Stapling is what lets a first launch succeed offline; without it
+          # Gatekeeper has to reach Apple and a user with no network is refused.
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+
+      - name: Assess the DMG the way Gatekeeper will
+        if: ${{ steps.signing.outputs.signed == 'true' }}
+        run: |
+          set -euo pipefail
+          dmg="$(ls *.dmg | head -1)"
+          mnt="$(mktemp -d)"
+          set +o pipefail
+          yes | hdiutil attach -nobrowse -readonly -noverify -noautoopen \
+                        -mountpoint "$mnt" "$dmg" >/dev/null
+          mount_rc=${PIPESTATUS[1]}
+          set -o pipefail
+          [[ $mount_rc -eq 0 ]] || { echo "::error::could not mount $dmg to assess it" >&2; exit 1; }
+          trap 'hdiutil detach "$mnt" >/dev/null 2>&1 || true' EXIT
+
+          # The acceptance test: what a downloader's machine decides, not what
+          # our own signing thinks it did.
+          assessment="$(spctl --assess --type execute --verbose=4 "$mnt/DuskStudio.app" 2>&1)"
+          printf '%s\n' "$assessment"
+          grep -q 'accepted' <<< "$assessment" || {
+            echo "::error::spctl refused the notarized app" >&2; exit 1; }
+          grep -q 'source=Notarized Developer ID' <<< "$assessment" || {
+            echo "::error::app is accepted but not as a notarized Developer ID build" >&2; exit 1; }
+
+      - name: Remove the signing keychain
+        if: ${{ always() && steps.signing.outputs.keychain != '' }}
+        run: security delete-keychain "${{ steps.signing.outputs.keychain }}" || true
+
+      - name: Verify DMG contents
+        # Mounts the image the user downloads and checks it against
+        # packaging/contents.txt before anything is staged for publication.
+        run: |
+          set -euo pipefail
+          dmg="$(ls *.dmg | head -1)"
+          mnt="$(mktemp -d)"
+          # The DMG carries a licence agreement, so hdiutil blocks for an
+          # answer, and it closes stdin once it has one. Read hdiutil's own
+          # status rather than the pipeline's, which pipefail would otherwise
+          # take from the SIGPIPEd yes. Same pattern as the launch check below.
+          set +o pipefail
+          yes | hdiutil attach -nobrowse -readonly -noverify -noautoopen \
+                        -mountpoint "$mnt" "$dmg" > /dev/null
+          mount_rc=${PIPESTATUS[1]}
+          set -o pipefail
+          [[ $mount_rc -eq 0 ]] || {
+              echo "::error::could not mount $dmg to verify its contents" >&2
+              exit 1; }
+          trap 'hdiutil detach "$mnt" >/dev/null 2>&1 || true' EXIT
+          scripts/verify-package-contents.sh macos "$mnt"
 
       - name: Verify the packaged app launches
         # The build and the test suite both run against the Homebrew prefix,
@@ -932,7 +1247,7 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Assemble + publish six release assets
+    name: Assemble + publish the release assets
     needs: [linux, macos, windows, manual]
     runs-on: ubuntu-22.04
     steps:
@@ -943,7 +1258,7 @@ jobs:
           persist-credentials: false
 
       - name: Download every platform payload
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-*
           path: dist
@@ -987,10 +1302,67 @@ jobs:
             fi
             sha256sum --check SHA256SUMS
             [[ $(find . -maxdepth 1 -type f | wc -l) -eq 6 ]] || {
-              echo "::error::release directory must contain exactly six assets" >&2
+              echo "::error::release directory must hold the six payloads before signing" >&2
               exit 1
             }
           )
+
+      - name: Sign SHA256SUMS
+        # A checksum published next to the artifact proves the download is
+        # intact, not that it came from us. The signature is what a user can
+        # check against a key they obtained separately.
+        #
+        # A tag must not publish unsigned: fail before anything reaches the
+        # releases repo. A manual dispatch has no secrets to spend and is not
+        # published either, so it says so and carries on.
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_SIGNING_KEY_PASSWORD: ${{ secrets.RELEASE_SIGNING_KEY_PASSWORD }}
+          IS_TAG: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${RELEASE_SIGNING_KEY:-}" || -z "${RELEASE_SIGNING_KEY_PASSWORD:-}" ]]; then
+            if [[ "$IS_TAG" == "true" ]]; then
+              echo "::error::RELEASE_SIGNING_KEY and RELEASE_SIGNING_KEY_PASSWORD are required to publish a tag" >&2
+              exit 1
+            fi
+            echo "::notice::signing secrets absent; skipping the signature (dispatch runs publish nothing)"
+            exit 0
+          fi
+
+          # Private to the job: a keyring under the workspace, removed with it,
+          # never the runner's default home.
+          export GNUPGHOME="${RUNNER_TEMP}/release-gnupg"
+          mkdir -p "$GNUPGHOME"
+          chmod 700 "$GNUPGHOME"
+          printf '%s' "$RELEASE_SIGNING_KEY" | base64 -d | \
+            gpg --batch --quiet --import
+          key="$(gpg --batch --with-colons --list-secret-keys \
+                   | awk -F: '$1 == "sec" { print $5; exit }')"
+          [[ -n "$key" ]] || { echo "::error::no secret key after import" >&2; exit 1; }
+
+          printf '%s' "$RELEASE_SIGNING_KEY_PASSWORD" > "$GNUPGHOME/pass"
+          gpg --batch --yes --pinentry-mode loopback \
+              --passphrase-file "$GNUPGHOME/pass" \
+              --local-user "$key" \
+              --armor --detach-sign --output dist/SHA256SUMS.asc dist/SHA256SUMS
+          shred -u "$GNUPGHOME/pass" 2>/dev/null || rm -f "$GNUPGHOME/pass"
+
+          # Verified here rather than trusted: a signature the committed public
+          # key cannot check is worse than none, because it looks like proof.
+          # Until the real key is committed the file is a placeholder, which
+          # warns rather than blocks; once it holds a key this is a hard check.
+          if grep -q 'BEGIN PGP PUBLIC KEY BLOCK' packaging/release-signing.pub; then
+            verify="${RUNNER_TEMP}/verify-gnupg"
+            mkdir -p "$verify"
+            chmod 700 "$verify"
+            GNUPGHOME="$verify" gpg --batch --quiet --import packaging/release-signing.pub
+            GNUPGHOME="$verify" gpg --batch --verify dist/SHA256SUMS.asc dist/SHA256SUMS
+            echo "signed SHA256SUMS with $key and verified against packaging/release-signing.pub"
+          else
+            echo "::warning::packaging/release-signing.pub holds no key yet, so the signature was not verified against it; see MAINTAINER-GUIDE Part 10"
+            echo "signed SHA256SUMS with $key"
+          fi
 
       - name: Publish complete asset set to the PRIVATE releases repo
         if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}

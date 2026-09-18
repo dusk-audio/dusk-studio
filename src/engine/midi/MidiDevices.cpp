@@ -2,6 +2,8 @@
 
 #if defined(__linux__)
  #include "AlsaSeqMidi.h"
+#elif defined(__APPLE__) && DUSKSTUDIO_HAS_NATIVE_COREMIDI
+ #include "CoreMidiBackend.h"
 #else
  #include "JuceMidiBackend.h"
 #endif
@@ -28,6 +30,8 @@ std::unique_ptr<IMidiInputBackend> makeInputBackend()
 {
    #if defined(__linux__)
     return std::make_unique<AlsaSeqMidiInput>();
+   #elif defined(__APPLE__) && DUSKSTUDIO_HAS_NATIVE_COREMIDI
+    return makeCoreMidiInputBackend();
    #else
     return makeJuceMidiInputBackend();
    #endif
@@ -37,6 +41,8 @@ std::unique_ptr<IMidiOutputBackend> makeOutputBackend()
 {
    #if defined(__linux__)
     return std::make_unique<AlsaSeqMidiOutput>();
+   #elif defined(__APPLE__) && DUSKSTUDIO_HAS_NATIVE_COREMIDI
+    return makeCoreMidiOutputBackend();
    #else
     return makeJuceMidiOutputBackend();
    #endif

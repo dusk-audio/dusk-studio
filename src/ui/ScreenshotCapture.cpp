@@ -22,6 +22,8 @@
 #include "MidiBindingsPanel.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerPanel.h"
+#include "../engine/builtin/BuiltinScanRows.h"
+#include "multisample/SfzLibraryPanel.h"
 #include "BounceDialog.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/audiofile/FileWriter.h"
@@ -31,6 +33,7 @@
 #include "../engine/AudioEngine.h"
 
 #include <algorithm>
+#include <iterator>
 
 namespace duskstudio
 {
@@ -217,6 +220,25 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     snapshotComponent (this, outDir, "np-01-main-window.png");
     snapshotComponent (this, outDir, "rec-01-arm-multiple.png");
     snapshotComponent (transportBar.get(), outDir, "np-02-transport-bar.png");
+    {
+        // The no-input notice: staged by publishing a zero capture width, the
+        // same value a device that opened with no inputs publishes.
+        const auto savedCapture = session.deviceCaptureChannels.load (
+            std::memory_order_relaxed);
+        session.deviceCaptureChannels.store (0, std::memory_order_relaxed);
+        transportBar->refreshDeviceNotice();
+        // Snapshot the bar's area off this component, not the bar itself: the
+        // bank buttons that share the row are siblings of the bar, and a
+        // component snapshot cannot contain them. A figure taken from the bar
+        // alone shows a layout nobody sees.
+        settle (250);
+        writePng (createComponentSnapshot (transportBar->getBounds(), true),
+                  outDir.getChildFile ("rec-02-no-input-notice.png"));
+        session.deviceCaptureChannels.store (savedCapture, std::memory_order_relaxed);
+        // The notice row changes the window's layout, so put it back before the
+        // next figure rather than leaving every later snapshot shifted down.
+        transportBar->refreshDeviceNotice();
+    }
     if (consoleView != nullptr)
     {
         snapshotComponent (consoleView->getStripComponent (0), outDir, "np-04-channel-strip-recording.png");
@@ -402,16 +424,49 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
             mk ("ZamComp",         "Zam Audio",       "Dynamics"),
             mk ("x42 Convolver",   "Robin Gareus",    "Reverb")
         };
+        auto builtinRows = builtin::descriptorRows (/*instruments*/ false);
+        descs.insert (descs.end(),
+                      std::make_move_iterator (builtinRows.begin()),
+                      std::make_move_iterator (builtinRows.end()));
         PluginPickerPanel::Callbacks cb;   // all null - display only
         PluginPickerPanel pp (descs, PluginPickerPanel::Kind::Effects, cb);
         modalShot (pp, 480, 560, "pl-01-plugin-picker.png", 300);
+    }
+    {
+        // Soundfont library. Scans a fixture tree rather than the machine's
+        // own roots so the figure is the same everywhere it is regenerated.
+        auto fixture = outDir.getChildFile ("_demo").getChildFile ("library");
+        auto acoustic = fixture.getChildFile ("Acoustic");
+        auto banks = fixture.getChildFile ("Banks");
+        acoustic.createDirectory();
+        banks.createDirectory();
+        for (const auto* name : { "Grand Piano", "Upright Bass", "Rhodes Mk I",
+                                  "Studio Kit", "Nylon Guitar" })
+            acoustic.getChildFile (std::string (name) + ".sfz").replaceWithText ("<region>");
+        for (const auto* name : { "GM Bank", "Orchestral" })
+            banks.getChildFile (std::string (name) + ".sf2").replaceWithText ("RIFF");
+
+        SfzLibraryPanel::Callbacks cb;   // all null - display only
+        SfzLibraryPanel lib (cb, { std::filesystem::path (
+            fixture.getFullPathName().toStdString()) });
+        // settle() sleeps rather than pumping, so the panel's own timer never
+        // runs here; drive the hand-off directly until the scan lands.
+        for (int i = 0; i < 40 && ! lib.applyFinishedScan(); ++i)
+            settle (25);
+        modalShot (lib, 620, 460, "ms-02-sfz-library.png", 200);
     }
     {
         // Bounce dialog (progress UI). Its ctor kicks an offline render to the
         // temp file; snapshot the progress panel immediately, then it cancels
         // on destruction. Done last so the offline-render device detach can't
         // disturb earlier snapshots.
-        auto target = outDir.getChildFile ("_demo").getChildFile ("bounce.wav");
+        // Deliberately deep: the dialog's one-line status is where a long path
+        // used to lose its file name off the right-hand edge.
+        auto target = outDir.getChildFile ("_demo")
+                            .getChildFile ("Recordings")
+                            .getChildFile ("2026 Sessions")
+                            .getChildFile ("Album Takes")
+                            .getChildFile ("bounce.wav");
         BounceDialog bd (engine, session, target,
                          BounceEngine::Mode::MasterMix);
         modalShot (bd, 520, 200, "qg-07-bounce-dialog.png", 200);
@@ -492,10 +547,12 @@ void MainComponent::captureNativePanels (std::string outDir)
 
     // The mastering stage's EQ and limiter are framework children inside a JUCE view, so
     // its figure is the JUCE snapshot with each child's own frame pasted back in.
-    steps->push_back ({ 0, [] (MainComponent& self)
+    steps->push_back ({ 0, [dir] (MainComponent& self)
     {
         self.switchToStage (AudioEngine::Stage::Mastering);
         self.resized();
+        if (self.masteringView != nullptr)
+            self.masteringView->loadFile (dir.getChildFile ("_demo").getChildFile ("demo-take.wav"));
     } });
     steps->push_back ({ 900, [masteringCaptures, dir] (MainComponent& self)
     {
@@ -540,6 +597,60 @@ void MainComponent::captureNativePanels (std::string outDir)
             if (auto* strip0 = self.consoleView->getStripComponent (0))
                 strip0->closeCompEditorForCapture();
     } });
+    // One figure per built-in unit, each loaded onto track 1's insert and shot
+    // through the same panel window the user opens.
+    {
+        static const char* const kUnits[][2] =
+        {
+            { "dusk.builtin.utility", "bi-01-utility" },
+            { "dusk.builtin.reverb",  "bi-02-reverb"  },
+            { "dusk.builtin.delay",   "bi-03-tape-echo" },
+            { "dusk.builtin.tape",    "bi-04-tape"    },
+            { "dusk.builtin.synth",   "bi-05-sunset"  },
+        };
+        for (const auto& unit : kUnits)
+        {
+            const std::string id = unit[0];
+            const std::string name = unit[1];
+            steps->push_back ({ 400, [outDir, id] (MainComponent& self)
+            {
+                std::string err;
+                self.engine.suspendProcessing();
+                const bool loaded = self.engine.getChannelStrip (0).loadBuiltin (id, err);
+                self.engine.resumeProcessing();
+                if (! loaded)
+                    std::fprintf (stderr, "[capture] built-in %s: %s\n",
+                                  id.c_str(), err.c_str());
+            } });
+            steps->push_back ({ 400, [outDir, name] (MainComponent& self)
+            {
+                if (auto* strip0 = self.consoleView != nullptr
+                                 ? self.consoleView->getStripComponent (0) : nullptr)
+                    strip0->openBuiltinEditorForCapture (outDir + "/" + name + ".ppm");
+            } });
+            // A unit with its own plug-in editor draws through a window the
+            // panel capture cannot reach, so that one is read back once painted.
+            steps->push_back ({ 1200, [outDir, name] (MainComponent& self)
+            {
+                if (auto* strip0 = self.consoleView != nullptr
+                                 ? self.consoleView->getStripComponent (0) : nullptr)
+                    strip0->captureBuiltinPluginEditor (outDir + "/" + name + ".ppm");
+            } });
+            steps->push_back ({ 300, [] (MainComponent& self)
+            {
+                if (auto* strip0 = self.consoleView != nullptr
+                                 ? self.consoleView->getStripComponent (0) : nullptr)
+                    strip0->closeBuiltinEditorPopup();
+            } });
+        }
+        steps->push_back ({ 400, [] (MainComponent& self)
+        {
+            self.engine.suspendProcessing();
+            self.engine.getChannelStrip (0).unloadBuiltin();
+            self.engine.resumeProcessing();
+        } });
+    }
+
     steps->push_back ({ 400, [outDir] (MainComponent& self)
     {
         self.openVirtualKeyboardForCapture (outDir + "/vkb-01-virtual-keyboard.ppm");

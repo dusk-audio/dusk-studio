@@ -52,18 +52,18 @@ transaction on a PipeWire box.
 
 ## Repository layout
 
-Dusk Studio expects four sibling repositories alongside its own checkout:
+Dusk Studio expects two sibling repositories alongside its own checkout:
 
 ```
 ~/projects/
 ├── dusk-studio/       (this repo)
 ├── JUCE-wayland/      (plugdata-team fork, branch: wayland-juce8)
-├── plugins/           (Dusk Audio plugins, donor DSP)
-├── DAF/               (Dusk Audio Framework — native notepad UI)
-└── DAF-Widgets/       (Dear ImGui layer for DAF)
+└── DAF/               (DAF framework, DGL, and in-tree widgets/ kit)
 ```
 
-CMake auto-discovers these. Override with `-DJUCE_PATH=...`, `-DDUSK_PLUGINS_PATH=...`, `-DDAF_PATH=...`, `-DDAF_WIDGETS_PATH=...` if you keep them elsewhere.
+CMake auto-discovers these. Override with `-DJUCE_PATH=...` or `-DDAF_PATH=...` if you keep them elsewhere.
+
+The Dusk Audio plugins repo (donor DSP) is not a sibling: configure fetches it into `build/_deps/dusk-plugins` at the commit named in [DONOR_REV](DONOR_REV), the same commit CI and every release build. That needs git and network access on the first configure. To build against your own plugins checkout instead, pass `-DDUSK_PLUGINS_PATH=/path/to/plugins`.
 
 ### Why the JUCE-wayland fork (Linux-only)
 
@@ -79,55 +79,31 @@ Cross-platform Dusk Studio source compiles against either upstream JUCE or the f
 cd ~/projects
 git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch wayland-juce8 https://github.com/plugdata-team/JUCE.git JUCE-wayland
-git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
-git -C plugins fetch --depth 1 origin 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
-git -C plugins checkout --detach FETCH_HEAD
-test "$(git -C plugins rev-parse HEAD)" = 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea || {
-  echo "ERROR: donor checkout did not reach the pinned revision" >&2
-  false
-}
 ```
 
-`--recurse-submodules` is required, not tidiness. Dusk Studio carries three: `external/clap`, `external/sfizz`, and `external/vst3sdk`. A clone without them fails configure outright on the CLAP headers (the native CLAP host defaults ON here, [CMakeLists.txt:27-33](CMakeLists.txt#L27-L33), and [CMakeLists.txt:1076-1081](CMakeLists.txt#L1076-L1081) stops the build), and a missing `external/sfizz` costs you the SF2 / multisample instrument with no diagnostic at all ([CMakeLists.txt:1163](CMakeLists.txt#L1163) simply gates on the header being there). Already cloned without them:
+`--recurse-submodules` is required, not tidiness. Dusk Studio carries three: `external/clap`, `external/dusk-fizz`, and `external/vst3sdk`. A clone without them fails configure outright on the CLAP headers (the native CLAP host defaults ON here, [CMakeLists.txt:27-33](CMakeLists.txt#L27-L33), and [CMakeLists.txt:1076-1081](CMakeLists.txt#L1076-L1081) stops the build), and a missing `external/dusk-fizz` costs you the SF2 / multisample instrument with no diagnostic at all ([CMakeLists.txt:1163](CMakeLists.txt#L1163) simply gates on the header being there). Already cloned without them:
 
 ```bash
 git submodule update --init --recursive
 ```
 
-The explicit `plugins` target on the third clone is mandatory — the repo is named `dusk-audio-plugins` on GitHub, and `../plugins` is the only sibling directory CMake checks ([CMakeLists.txt:358-367](CMakeLists.txt#L358-L367)). Get it wrong and configure prints a warning rather than failing; the build then produces a recorder with no EQ, compressor, or tape.
-
-The fetch and detached checkout are also mandatory. Dusk Studio consumes a
-framework-free compressor core that is present at the revision pinned by all
-build and release workflows but is not on the donor repository's current
-`main`. When that pin moves, update every workflow and this guide together.
-
 If you also keep an upstream `JUCE/` sibling for cross-OS dev, CMake prefers `JUCE-wayland/` on Linux and falls back to `JUCE/` only if the fork isn't there.
 
 ### The native notepad (DAF + Dear ImGui)
 
-The session notepad is Dusk Studio's first native UI window: DAF/DGL for the OpenGL surface, DAF-Widgets for the Dear ImGui layer. Both come from Dusk-owned forks so an upstream rebase can't break a build.
+The session notepad is Dusk Studio's first native UI window: DAF/DGL for the OpenGL surface and DAF's in-tree `widgets/` kit for the Dear ImGui layer.
 
 ```bash
 cd ~/projects
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout 50ad8c22a2f05b85be4b40e473d830d2dc91c2c2
-git -C DAF submodule update --init
-git clone https://github.com/dusk-audio/DAF-Widgets.git
-git -C DAF-Widgets checkout 798154e874eaaa024371f6076249398b51498142
 ```
 
-Clone then check out the SHA, rather than building whatever `main` points at today: a branch tip moves and CI fetches these exact SHAs. Both checkouts end up on a detached HEAD, which is what you want here. The submodule step is not optional: DGL pulls the Dusk Pugl fork into `dgl/src/pugl-upstream`.
+Build against DAF `main`, the same branch CI builds; `git -C DAF pull` before building picks up its latest changes. Pugl and the widget kit are vendored in the DAF checkout.
 
-The pinned Pugl revision is carried by `dusk-pin-5e2621d`, not Pugl's `main`.
-Do not delete that branch: a fresh DAF submodule checkout and every CI build
-depend on the commit remaining reachable.
-
-The pins live in [.github/actions/clone-daf-stack/action.yml](.github/actions/clone-daf-stack/action.yml), which is the single source of truth for every workflow — read them from there if it ever disagrees with the commands above.
-
-Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
+Without DAF and its in-tree widgets, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 
 ```text
--- Native UI: DAF / DAF-Widgets not found - disabled
+-- Native UI: DAF / DAF widgets not found - disabled
 ```
 
 The rest of the app builds and runs normally, but every native view is gone: opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*, the compressor editor, the virtual keyboard and the audio settings panel say the same of themselves, and the startup dialog does not appear. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` with a checkout missing turns that into a configure error instead of a silent downgrade.
@@ -193,8 +169,7 @@ cmake --build build-linux-debug -j6
 cmake -S . -B build-linux \
   -DJUCE_PATH=/some/other/JUCE \
   -DDUSK_PLUGINS_PATH=/some/other/plugins \
-  -DDAF_PATH=/some/other/DAF \
-  -DDAF_WIDGETS_PATH=/some/other/DAF-Widgets
+  -DDAF_PATH=/some/other/DAF
 ```
 
 ## Tests

@@ -14,6 +14,8 @@ class PluginPickerPanel::ListBody final : public juce::Component
 public:
     enum class Group { Manufacturer, Type };
 
+    static constexpr const char* kBuiltinGroup = "Built-In";
+
     ListBody (std::vector<PluginDescriptor> descs,
               std::function<void (const PluginDescriptor&)> picker)
         : rawDescs (std::move (descs)), onPick (std::move (picker))
@@ -31,6 +33,12 @@ public:
     // Header key a description sorts/groups under, per current group mode.
     static juce::String groupKeyFor (const PluginDescriptor& d, Group g)
     {
+        // The built-in suite is its own section under either grouping: it is
+        // what a user with nothing installed reaches for, so it must be findable
+        // without knowing who made it.
+        if (d.backend == PluginBackend::Native && d.formatName == "Builtin")
+            return kBuiltinGroup;
+
         if (g == Group::Manufacturer)
             return d.manufacturer.empty() ? juce::String ("(unknown)")
                                           : juce::String (d.manufacturer);
@@ -55,7 +63,14 @@ public:
             {
                 const auto ka = groupKeyFor (a, g);
                 const auto kb = groupKeyFor (b, g);
-                if (ka != kb) return ka.compareIgnoreCase (kb) < 0;
+                if (ka != kb)
+                {
+                    // Built-In pins to the top rather than sorting by name.
+                    const int ra = ka == kBuiltinGroup ? 0 : 1;
+                    const int rb = kb == kBuiltinGroup ? 0 : 1;
+                    if (ra != rb) return ra < rb;
+                    return ka.compareIgnoreCase (kb) < 0;
+                }
                 return juce::String (a.name).compareIgnoreCase (juce::String (b.name)) < 0;
             });
 
@@ -80,6 +95,8 @@ public:
                     visibleFormat = "LV2-Native";
                 else if (d.backend == PluginBackend::Native && d.formatName == "VST3")
                     visibleFormat = "VST3-Native";
+                else if (d.backend == PluginBackend::Native && d.formatName == "Builtin")
+                    visibleFormat = kBuiltinGroup;
                 label += "  (" + visibleFormat + ")";
             }
             allEntries.push_back ({ false, label, d });

@@ -57,7 +57,7 @@ This chapter walks an empty session all the way to a finished bounce. If you hav
 
 ## Install and first launch
 
-Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New**, name your session, and click through.
+Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New** and it offers the starting points (**Blank**, **Band**, **Beats**, **Singer-Songwriter**), then name your session and click through. The same templates are on **File > New from template** once a session is open.
 
 You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). On Linux, macOS, and Windows, if Dusk Studio is already running, the session opens in the existing window rather than in a second copy of the app. The window comes forward on Linux and macOS; on Windows it comes forward when the operating system's focus policy permits, and otherwise the existing window is restored and its taskbar button flashes for you to click. Either way playback stops and any take in progress is committed to the session you were working on, and if that session then has unsaved changes you get the same **Save / Don't Save / Cancel** prompt as **File > Open**. **Cancel** leaves the other session unopened and keeps you in the one you were in — with the transport stopped and the finished take in place, so save it if you want to keep it. A switch is refused outright while a bounce is running or another prompt is open; the status bar says which.
 
@@ -101,7 +101,7 @@ Disarm track 1. Arm track 2, pick the right input, and record over the playback 
 
 ![Tracks 1 (with a region) and 2 (mid-record) on the tape strip.](docs/images/qg-05-overdub.png)
 
-To punch in over a specific section of an already-recorded track, set the punch in and out points (**Shift+[** and **Shift+]**), engage **P** for punch mode, arm the track, and press record before the punch in point. Dusk Studio will start recording at the punch in point and stop at the punch out point automatically.
+To punch in over a specific section of an already-recorded track, set the punch in and out points (**Shift+[** and **Shift+]**). Punch turns on by itself once the in point sits before the out point. Arm the track and press record before the punch in point. Dusk Studio will start recording at the punch in point and stop at the punch out point automatically.
 
 ## Mix
 
@@ -156,7 +156,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 
 | #   | Name             | Description                                                                      |
 | --- | ---------------- | -------------------------------------------------------------------------------- |
-| 1   | Stop             | Halts playback or recording, returns the playhead to bar 1.                      |
+| 1   | Stop             | Halts playback or recording and returns the playhead to where play or record started. Press again to return to bar 1. |
 | 2   | Rewind           | Short press jumps to the previous marker or bar 1; hold for 10× scrub backwards. |
 | 3   | Play             | Toggles playback. Snaps to loop start if loop is on and the playhead is outside. |
 | 4   | Forward          | Short press jumps to the next marker; hold for 10× scrub forwards.               |
@@ -238,7 +238,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | --- | --------------------- | ------------------------------------------------------------------------------------------------ |
 | 1   | Program EQ            | Tube-saturated low + high program EQ. Click the left status light to bypass/engage, click **EQ** to open the editor, or right-click anywhere for the EQ menu (reset, open editor). |
 | 2   | Master bus compressor | Identical DSP to the bus comp, typically used slower. Click the left status light to bypass/engage, click **COMP** to open the editor, or right-click anywhere for the COMP menu (reset, open editor). |
-| 3   | Tape saturation       | Reel-to-reel model. Oversampling follows the global Effect Oversampling setting (Audio settings). Click the left status light to bypass/engage, click **TAPE** to open the editor, or right-click anywhere for the TAPE menu. |
+| 3   | Tape saturation       | Reel-to-reel model, anti-aliased internally at a fixed rate rather than following the global Effect Oversampling setting. Click the left status light to bypass/engage, click **TAPE** to open the editor, or right-click anywhere for the TAPE menu. |
 | 4   | Master fader          | −∞ to +12 dB.                                                                                    |
 | 5   | Mono                  | Sums L+R to mono on both legs for phase / single-speaker checks.                                 |
 | 6   | Peak meters           | Post-output L/R.                                                                                 |
@@ -283,8 +283,8 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 2   | Region             | Audio or MIDI clip. Drag to move, drag the edges to trim.       |
 | 3   | Region edge handle | Trim handle. Hold Cmd to nudge by snap.                         |
 | 4   | Marker             | Drop with **M**, drag to move, right-click to rename or delete. |
-| 5   | Loop bracket       | Set with **[** / **]**; enable loop with **L**.                 |
-| 6   | Punch bracket      | Set with **Shift+[** / **Shift+]**; enable punch with **P**.    |
+| 5   | Loop bracket       | Set with **[** / **]** or from the ruler's right-click menu; loop turns on once the in point sits before the out point. Drawn hollow while loop is off. |
+| 6   | Punch bracket      | Set with **Shift+[** / **Shift+]** or from the ruler's right-click menu; punch turns on once the in point sits before the out point. Drawn hollow while punch is off. |
 
 **Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
 
@@ -317,6 +317,10 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 # Getting started
 
+If you have just downloaded Dusk Studio and want to be recording rather than
+reading, [QUICKSTART.md](QUICKSTART.md) is the five-minute version of this
+chapter. Everything below is the long form.
+
 ## System requirements
 
 - **Linux**: PipeWire (recommended) or ALSA. Dusk Studio talks to the PipeWire graph directly through its own backend, so the client shows up as "Dusk Studio" and reports its node latency to the graph; ALSA reaches the raw hardware for exclusive low-latency use. An X11 display is required: on a Wayland desktop this means XWayland (present and enabled by default on GNOME and KDE; compositors like sway, niri and labwc can run without it — enable it there, or Dusk Studio will refuse to start with a message pointing here).
@@ -340,7 +344,7 @@ Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-
 
 ## Installing Dusk Studio
 
-The binaries shipped via Patreon and GitHub Sponsors are **unsigned by design** — Dusk Studio uses no Apple Developer ID and no Windows Authenticode certificate, and neither is planned. The result: macOS Gatekeeper and Windows SmartScreen will warn you on first launch. The warning is expected and the bypass is quick — under 30 seconds per OS — but it is required the first time.
+Beta builds are **ad-hoc signed on macOS and unsigned on Windows**: no Apple Developer ID and no Windows Authenticode certificate is configured, so macOS Gatekeeper and Windows SmartScreen warn on first launch. The warning is expected and the bypass is quick, under 30 seconds per OS, but it is required the first time.
 
 The source on GitHub is GPL-3.0; anyone who prefers to skip the warning can build from source.
 
@@ -368,32 +372,33 @@ No signing dance. Linux desktops run the binary directly.
 
 ### macOS (DMG / .app)
 
-macOS 14 Sonoma and 15 Sequoia ship Gatekeeper at its strictest defaults. Right-click → Open used to bypass; recent macOS releases require a trip to System Settings instead.
+Current beta DMGs are not notarized. On recent macOS releases, the first-open approval is in System Settings rather than the app's right-click menu.
 
-1. Double-click the downloaded `DuskStudio.dmg` to mount it.
-2. Drag **Dusk Studio.app** to your `Applications` folder.
-3. The first time you launch the app, macOS will show: *"Dusk Studio.app cannot be opened because the developer cannot be verified."* Click **OK** to dismiss — this step is required so macOS records the block in your security log.
-4. Open **System Settings → Privacy & Security**. Scroll to the bottom.
-5. You will see *"Dusk Studio.app was blocked from use because it is not from an identified developer."* Click **Open Anyway**.
-6. Enter your administrator password when prompted.
-7. macOS shows the warning one more time with an **Open** button — click it.
-8. Subsequent launches work normally; macOS only asks once per build.
+1. Double-click the downloaded `dusk-studio-<version>-macOS-arm64.dmg` to mount it.
+2. Drag **DuskStudio.app** onto the **Applications** shortcut in the DMG window.
+3. Open **DuskStudio.app** from Applications once. macOS shows *"DuskStudio" Not Opened - Apple could not verify "DuskStudio" is free of malware*. Click **Done** (not Move to Trash); the attempt is what unlocks the next step.
+4. Open **System Settings → Privacy & Security** and scroll to the **Security** section.
+5. Next to *"DuskStudio" was blocked to protect your Mac*, click **Open Anyway**.
+6. In the *Open "DuskStudio"?* dialog, click **Open Anyway**.
+7. Approve with Touch ID or an administrator password.
+8. Dusk Studio then asks for microphone access. Allow it, or recording stays silent.
+9. Subsequent launches work normally; macOS only asks once per build.
 
 If you later install a newer build (different binary hash), the bypass dance repeats once for that new build.
 
-**If the icon shows in the Dock but the app never opens (and you have to force-quit):** you are almost certainly launching it from the mounted DMG or your Downloads folder. An ad-hoc-signed app run from a quarantined location can hang at launch on Apple Silicon. Fix: make sure **Dusk Studio.app** is in `/Applications` (step 2) and launch it from there - not from the DMG. If it still hangs, clear the quarantine flag in Terminal, then launch again:
+**If the icon shows in the Dock but the app never opens (and you have to force-quit):** you are almost certainly launching it from the mounted DMG or your Downloads folder. An ad-hoc-signed app run from a quarantined location can hang at launch on Apple Silicon. Fix: make sure **DuskStudio.app** is in `/Applications` (step 2) and launch it from there - not from the DMG. If it still hangs, clear the quarantine flag in Terminal, then launch again:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Dusk Studio.app"
+xattr -dr com.apple.quarantine "/Applications/DuskStudio.app"
 ```
 
 ### Windows (MSI installer)
 
 Windows SmartScreen blocks unsigned MSIs by default. The bypass is one click but it's hidden behind a small link.
 
-1. Double-click the downloaded `DuskStudio-{version}.msi`.
+1. Double-click the downloaded `dusk-studio-<version>-Windows-x64.msi`.
 2. SmartScreen shows: *"Windows protected your PC"* with a **Don't run** button.
-3. Click the small **More info** link near the top of the dialog. SmartScreen expands to show *"App: DuskStudio-{version}.msi / Publisher: Unknown publisher"*.
+3. Click the small **More info** link near the top of the dialog. SmartScreen expands to show *"App: dusk-studio-<version>-Windows-x64.msi / Publisher: Unknown publisher"*.
 4. A new **Run anyway** button appears at the bottom — click it.
 5. The MSI installer runs normally. Accept the install location (`C:\Program Files\Dusk Studio` by default) and finish.
 6. Launch Dusk Studio from the **Start menu** (under *Dusk Studio*) or the **desktop shortcut** the installer creates.
@@ -417,7 +422,20 @@ Get-FileHash -Algorithm SHA256 dusk-studio-*-Windows-x64.msi
 # Compare against that file's line in the published SHA256SUMS.
 ```
 
-Verification protects against a bit-flipped download or a man-in-the-middle attack on the release attachment. It does NOT verify authorship; that's what the (currently absent) code-signing certificate would do.
+From 0.14 on, `SHA256SUMS` ships with a detached OpenPGP signature, `SHA256SUMS.asc`. The public key that made it is not a release asset: it is kept in the source repository at `packaging/release-signing.pub`, so download it from the tag that matches your release. Before you import the key, compare its fingerprint with the one printed on the project site. Import only if the two agree, then check the signature before you check the hashes:
+
+```bash
+VERSION=0.14.0   # the release you downloaded
+curl -fsSLO "https://raw.githubusercontent.com/dusk-audio/dusk-studio/v$VERSION/packaging/release-signing.pub"
+gpg --show-keys --with-fingerprint release-signing.pub
+# Compare the fingerprint line with the one published on the project site.
+gpg --import release-signing.pub
+gpg --verify SHA256SUMS.asc SHA256SUMS
+```
+
+The checksums tell you the download arrived intact. The signature is what tells you the checksums came from us, so a signature that does not verify matters more than a hash that does.
+
+Verification protects against a bit-flipped download or a man-in-the-middle attack on the release attachment.
 
 ## First launch
 
@@ -445,6 +463,7 @@ Open **Settings → Audio…** to choose your audio device. The panel is divided
 - **Active output channels**: the master mix uses outputs 1-2. If your interface has more outputs, tick the extra pairs here to open them — each pair then becomes selectable as an aux lane's **Output** (a headphone / cue feed). Off by default; the master stays stereo until you enable more.
 - **Main output**: which physical pair the master mix goes to. **1-2 (default)** in most rigs; move it to another pair (e.g. when you want outputs 1-2 free for a control-room or cue feed). Only pairs the device currently has open are listed. If an aux lane is routed to the same pair as the master, the two sum on that pair.
 - **Rescan devices**: re-enumerates every backend and every MIDI port, useful if you plugged in a USB interface after launch. MIDI controllers on Linux do not need it — see [MIDI hot-plug](#midi-hot-plug).
+- **First launch only**: with nothing saved yet, Dusk Studio picks an input device alongside the output when the backend offers one, so recording works without a trip to this panel first. It never touches a configuration you have already made: if you chose no input on purpose, it stays that way.
 
 ### Control surface
 
@@ -471,14 +490,14 @@ All seven are saved with the session, so a project that syncs to an external clo
 - **UI scale**: a global zoom factor for the entire interface. The interface previews changes live while you adjust the slider; the final value is saved per-machine when you release it.
 - **Expand tape strip by default**: show the tape strip on every session open.
 - **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
-- **Stop behavior**: where the playhead lands when playback stops — **Stay where it is** (pause), **Return to start**, or **Return to last clicked point**.
+- **Playhead on Stop**: where the playhead lands when you press Stop. **Return to where play or record started** is the default: the playhead goes back to where playback or the take began, or to where you last moved it during playback, so Play hears the take you just made. A punch take begins at the punch-in point and a loop take at the loop start; count-in and pre-roll do not count. The other choices are **Stay where it is (pause)**, **Return to start (rewind to 0)** and **Return to last clicked point**. Pressing Stop while already stopped returns to bar 1 whatever this says. Per-machine; takes effect immediately.
 - **MIDI soft takeover (pickup)**: when on, a knob or fader bound with MIDI Learn stays dormant until the physical control crosses the parameter's current position, instead of snapping the parameter on first touch. Applies to continuous mixer targets (faders, pans, sends, EQ, comp, master); plugin-parameter bindings always track directly. Per-machine; takes effect immediately.
 - **Autosave every**: the crash-recovery autosave cadence, 15 seconds to 5 minutes (default 30 seconds). Per-machine; applies when the Settings panel closes.
 - **Scan plugins on startup**: re-run the plugin scanner every time Dusk Studio launches. Off by default; large plugin collections take 10–30 seconds to scan.
 
 ### Advanced
 
-- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus EQ and compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Tape saturation follows this same setting.
+- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus EQ and compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. The master tape is the exception: it anti-aliases locally at a fixed internal rate and ignores this setting.
 - **Multicore DSP**: spreads the per-block DSP of the 24 channel strips across several CPU cores instead of running them all on the single audio thread. **Auto** (default) uses *cores − 2* worker threads on machines with 4 or more cores — leaving one core for the interface and one for the operating system — and falls back to single-core on smaller machines. **Off** forces the single-core path; you can also pin an explicit worker count. This is a **per-machine** setting: it is stored on this computer and is **not** saved in the session, so a project made on a many-core workstation will not overload a smaller machine (a 4-core Raspberry Pi 5, say) when you open it there. The bus, aux, and master stages always run on the audio thread; only the channel strips fan out, and on a quad-core machine that heavy strip work runs roughly three times faster. Hosted plugins on those strips process on the worker threads too; in the unlikely event a specific plugin misbehaves with this enabled, switch it Off.
 - **Recording offset**: a manual correction, in samples, subtracted from where each newly recorded audio take is placed on the timeline. Use it when your monitoring path adds a round-trip delay that isn't already reported — analog converters, an external effects loop, or a plugin that under-reports its latency — so what you played lands back in time instead of slightly late. A positive value pulls takes earlier; the take is never moved before sample 0 — a take that would land entirely before it is discarded with a warning. It affects **audio** takes only — MIDI is captured with no converter delay and is left where it was played. **To calibrate**: route your interface's output back into an input (a physical loopback cable, or the same converter you monitor through), record the metronome click for a few bars, then open the take in the audio editor and read off, in samples, how far the recorded click sits after the beat it should land on. Enter that number here. The value is **per-machine** — it describes this desk's I/O latency, not the session — and applies to the next take, no restart needed.
 - **Run self-test**: runs Dusk Studio's headless audio engine against a synthetic test signal and reports pass/fail. The suite includes a determinism check that the multicore mix matches the single-core mix sample-for-sample (within floating-point rounding). As with the bindings panel, the settings panel steps out of the way while the self-test is open and comes back when you close it.
@@ -526,6 +545,8 @@ Only one stage is visible at a time, but the same engine drives all four. Switch
 - **MASTERING** swaps the console view for the mastering chain, including a file picker for loading a finished mix.
 - **AUX** swaps the console view for the four aux return lanes, with a full-width view of each lane's plugin chain.
 
+**Settings → Quickstart** opens the one-page quickstart that ships with the app, in whatever your system uses for text; it is greyed out and says so when that file is not installed.
+
 Press **Cmd/Ctrl+1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The bank selector has the plain number keys **1 through 8**, so a modified digit changes stage and a plain digit changes the visible page of strips. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
 
 Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time. Changing stage also closes the notepad, saving it — the two cannot share the window.
@@ -534,9 +555,12 @@ Switching into or out of MASTERING force-stops the transport. The mix engine and
 
 From left to right:
 
-- **Stop** (■). Halts playback or recording, returns the playhead to bar 1, and
-  silences held notes in hosted instruments even when their tracks are muted or
-  excluded by solo.
+- **Stop** (■). Halts playback or recording and silences held notes in hosted
+  instruments even when their tracks are muted or excluded by solo. The playhead
+  goes back to where playback or the take began, or wherever **Playhead on Stop**
+  in Settings sends it. Press Stop again while stopped to return to bar 1. A stop
+  that comes from MIDI clock or MTC chase leaves the playhead where the master
+  stopped.
 - **Rewind** (◀◀). Brief press jumps to the previous marker; if there is no previous marker, jumps to bar 1. Hold for more than 180 milliseconds to scrub backwards at 10× speed.
 - **Play** (▶). Toggles play. If loop is enabled and the playhead is outside the loop region, the playhead snaps to the loop start before playback begins.
 - **Forward** (▶▶). Brief press jumps to the next marker (no overshoot past the last one). Hold to scrub forward at 10× speed.
@@ -558,7 +582,7 @@ When the timeline is expanded, a toolbar row sits directly above the tape strip:
 
 - **Snap**. Global grid snap toggle, with a resolution button beside it. When on, region drags, trims, pastes, marker / loop / punch / tempo moves snap to the chosen grid resolution.
 - **−** / **+** / **Fit**. Timeline zoom out, in, and fit-to-window.
-- **Chase**. When on, the timeline scrolls during playback to keep the playhead in view. Its launch default is set by **Follow playhead by default** in Settings.
+- **Chase**. When on, the timeline scrolls during playback to keep the playhead in view. Its launch default is set by **Follow playhead by default** in Settings. While recording the timeline always follows the playhead, Chase or not.
 
 In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
 
@@ -566,7 +590,7 @@ In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and
 
 ![The virtual MIDI keyboard, with the typing letter printed on each key it plays.](docs/images/vkb-01-virtual-keyboard.png)
 
-The ⌨ button (or **K**) opens an on-screen MIDI keyboard. It belongs to the transport bar, not to any one view: it opens in any stage, with or without the piano roll. It appears as a MIDI source called **Virtual Keyboard (Dusk Studio)** in each track's MIDI input picker, and loading an instrument onto a track with no input bound selects it automatically so the instrument is playable straight away.
+The ⌨ button (or **K**) opens an on-screen MIDI keyboard. It belongs to the transport bar, not to any one view: it opens in any stage, with or without the piano roll. It appears as a MIDI source called **Virtual Keyboard (Dusk Studio)** in each track's MIDI input picker, and loading an instrument onto a track with no input bound selects it automatically and turns on **IN**, so the instrument is playable straight away.
 
 Each key is labelled with the typing letter that plays it, and every C is labelled with its octave. **Oct -** / **Oct +** and the **Up** / **Down** arrows move the octave, **Ch -** / **Ch +** and **Left** / **Right** move the MIDI channel, and you can click or drag across the keys with the mouse for a glissando. While it is open, every letter and digit in its layout belongs to the keyboard rather than to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard.
 
@@ -698,6 +722,8 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 ## ARM, IN, PRINT/FREEZE (RECORDING stage)
 
 - **ARM**: light red when on. Marks the track for recording on the next Record press and shows its live pre-fader input level in the Recording stage; it does not make that input audible.
+  - ARM refuses to light on an audio track while the open audio device offers no input channels, because a recording that follows would write nothing. The transport bar says so: **No input device. Choose one in Settings > Audio.** Pick an input there and ARM works again. A device change that takes the inputs away disarms the audio tracks and raises the same message, so ARM is never lit over a device that cannot feed it. MIDI tracks record from a MIDI input and are not affected.
+  - ARM also refuses on an audio track whose input the device does not have, or that is set to **None**. A new session routes each track to the input with its own number, so on a device with one input (a laptop microphone, say) every track after the first starts out pointing at an input that is not there. Clicking ARM on such a track says which input is missing and opens the track's input settings; choose an input, then arm it again. Inputs the current device does not offer are greyed out in that list. Switching to a device with fewer inputs disarms the tracks it cannot feed.
 - **IN**: input monitor. When on, you hear the live input through the channel strip. Useful for tracking with effects.
 - **PRINT** (empty audio track): when on, the channel's EQ, compressor, and insert are committed to the recorded file as you record. When off (the default), they are kept live, so you can tweak them after the take.
 - **FREEZE** (MIDI tracks, and audio tracks once recorded): the same button reads **FREEZE**. Click it to render the track to an audio file and bypass the DSP that produced it, to reclaim CPU — the frozen track plays back from the rendered audio with the fader, pan, and aux sends still live so you can keep mixing. The button turns to a snowflake while frozen; click it again to unfreeze (the rendered file is discarded). Frozen state is saved with the session, and a frozen track is locked — unfreeze first to edit, re-record, or change its mode.
@@ -751,6 +777,8 @@ The four bands are:
 Each knob is a rotary slider. Drag up to increase, down to decrease. Use a vertical drag for gain, a horizontal drag for frequency. There are no numeric text boxes on the knobs; the values display below.
 
 EQ in Dusk Studio does **not cramp** near Nyquist; the British EQ does its own internal pre-warping and benefits further when the global oversampling is raised.
+
+The band curves, the filter slopes and the console character are calibrated against measurements of the hardware at each marked position, so a setting reads as the console's own rather than as a textbook filter at the same frequency. The console character is always on, at a fixed light amount, whether the EQ section is engaged or not; a silent channel stays silent through it.
 
 ## Compressor
 
@@ -909,7 +937,7 @@ Models a small reel-to-reel tape machine.
 - **Bypass / engage**: click the left status light to toggle the tape stage in or out of the signal path.
 - **Open the editor**: click the **TAPE** label, or right-click anywhere on the split button and choose **Open editor…**, to open the tape-machine modal editor: machine, tape speed and formulation, signal path, EQ standard and calibration, plus input drive, bias, high/low-pass filters, wow, flutter, noise, and output level, plus **Auto cal** (calibrates bias for the selected tape type and speed — disables the Bias knob) and **Auto comp** (matches output level to input so drive changes don't change loudness — overrides Output). Touching any control engages the tape stage.
 
-- **Oversampling**: tape oversampling follows the engine-wide **Effect Oversampling** setting in the Audio Device panel — it is not a per-stage toggle.
+- **Oversampling**: the tape engine anti-aliases locally around each of its nonlinear stages and runs a fixed internal rate, so the engine-wide **Effect Oversampling** setting in the Audio Device panel no longer changes it. That setting still drives every other oversampled stage. The tape stage reports a constant 56 samples of latency, which delay compensation covers.
 
 ![The tape-machine editor.](docs/images/fx-03-tape.png)
 
@@ -976,6 +1004,8 @@ Each lane is divided into three columns:
 ### Plugin chain (centre column)
 
 Each aux lane has one insert slot. Click **+ Plugin** to open the picker. Right-click for **Add / Replace / Remove / Edit / Configure as hardware insert**. The slot can hold a plugin or a hardware insert, mutually exclusive, with a 20 ms crossfade between modes.
+
+A plugin's own editor sits under the slot header. A built-in unit's controls fill that whole area instead; see *Editing a unit* under *Built-in insert units*.
 
 Common uses:
 
@@ -1117,10 +1147,12 @@ The count-in always uses the metronome click, even if you have the click disable
 
 To overdub a specific section without erasing material before or after:
 
-1. Set the **punch in** and **punch out** points by clicking the timeline ruler at the desired in and out positions, holding **Shift**.
-2. Click the **Punch** button on the transport bar.
+1. Set the **punch in** and **punch out** points. Drag across the timeline ruler and choose **Set punch in / out here**, or right-click the ruler at each point and choose **Set punch in here** and **Set punch out here**. You can also press **Shift+[** and **Shift+]** at the playhead. Every way turns punch on as soon as the in point sits before the out point.
+2. Check that the **Punch** button on the transport bar is lit. **P** or the button turns punch off and on again without moving the brackets.
 3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Each has an enable toggle in the same menu, so you can switch a roll off without losing its seconds value. Post-roll defaults to 0 (off).
 4. Press Record. Playback begins at the pre-roll position. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
+
+You can also right-click the ruler to set the punch in and out points separately. Punch arms automatically once the in point is before the out point; equal points leave it off.
 
 When the new take begins, a 64-sample raised-cosine fade-in shapes its edge against the existing material. When the new take ends, a 64-sample fade-out shapes the other edge. The result is a click-free splice.
 
@@ -1128,8 +1160,8 @@ When the new take begins, a 64-sample raised-cosine fade-in shapes its edge agai
 
 To repeat a section while you experiment:
 
-1. Set the loop region with the **[** and **]** keys at the desired in and out positions.
-2. Click the **Loop** button on the transport bar.
+1. Set the loop region with the **[** and **]** keys at the desired in and out positions. Loop turns on as soon as the in point sits before the out point.
+2. Check that the **Loop** button on the transport bar is lit. **L** or the button turns loop off and on again without moving the brackets.
 3. Press Play (for loop playback) or Record (for loop recording).
 
 In loop play, the transport wraps at the loop boundary indefinitely. Loop recording also wraps and creates a new take on each pass. The current pass plus up to **8 previous passes** stay attached to one range-aligned region, so you can cycle performances after stopping. A loop must be at least 128 samples long to record.
@@ -1158,6 +1190,11 @@ MIDI tracks do not produce separate files; their note and CC data is embedded in
 ## Take history
 
 Each region keeps a stack of up to **8 previous takes**. When you record a new take whose timeline range fully contains an existing region, the existing region is pushed onto that stack. Partially-overlapping takes are not absorbed — they stay visible on either side of the punch.
+
+Current limits:
+
+- When a new take covers only part of an older region, the covered part of the older region is not kept in take history. To get it back, use **Undo** (Cmd+Z / Ctrl+Z) right after recording. The audio file itself stays on disk.
+- Deleting a region deletes its whole take stack. **Undo** restores it.
 
 To cycle through takes:
 
@@ -1262,18 +1299,22 @@ Once a song has markers, the mini timeline strip (shown below the transport when
 
 ## Loop and punch brackets
 
-When **Loop** or **Punch** is enabled, coloured brackets appear in the ruler.
+Loop and punch ranges show as coloured brackets in the ruler, with a tinted band across the tracks.
 
-- **Cyan**: loop start and loop end.
+- **Green**: loop start and loop end.
 - **Red**: punch in and punch out.
 
-Drag the bracket ends to adjust. The keyboard shortcuts **[** and **]** set the loop in and out at the current playhead. Hold **Shift** to set punch in and out instead.
+A bracket is drawn solid while its mode is on. While the mode is off a set bracket stays on screen, drawn hollow and faint, so you can see at a glance that the range is set but not armed.
+
+Drag the bracket ends to adjust. The keyboard shortcuts **[** and **]** set the loop in and out at the current playhead. Hold **Shift** to set punch in and out instead. The ruler's right-click menu has **Set loop in here**, **Set loop out here**, **Set punch in here** and **Set punch out here**. Brackets placed with these keys or the menu turn their mode on once the in point sits before the out point, and off again if a new point leaves the in point at or after the out point. **Clear loop** and **Clear punch** remove the brackets and turn the mode off.
 
 ## Zoom
 
 - **−** / **=** (or **+**): zoom out, zoom in.
 - **0**: zoom to fit the entire timeline width.
 - **Cmd/Ctrl+mouse wheel** over the timeline: zoom around the cursor.
+
+Recording keeps your zoom. When the playhead reaches the right-hand edge the view turns the page, so the take you are recording stays in sight whether or not **Chase** is on. If Stop sends the playhead out of sight, the view goes back to it.
 
 ## Drag-and-drop import
 
@@ -1545,12 +1586,14 @@ In the **plugin picker** modal:
 
 - Use the filter field at the top to narrow by name.
 - The list is grouped by manufacturer. Click a manufacturer to expand or collapse.
-- Each row shows the plugin name and its format (VST3 / LV2 / AudioUnit / CLAP / LV2-Native / VST3-Native).
+- Each row shows the plugin name and its format (VST3 / LV2 / AudioUnit / CLAP / LV2-Native / VST3-Native / Built-In).
 - Click a row to load and dismiss.
 
 Both the effect and instrument pickers list VST3 plugins as **VST3-Native** rows on every OS, and LV2 plugins as **LV2-Native** rows on Linux and macOS — the same plugins, hosted by Dusk Studio's native hosts instead of the standard one. On macOS, Audio Units appear once as native **AudioUnit** rows. There are no duplicate standard-host rows for these formats.
 
 The picker filters by intent: only effect plugins appear when you're loading onto a channel insert or aux lane; only instruments appear when you're loading onto a MIDI track.
+
+A **Built-In** section sits at the top of the list, above the manufacturer groups, and stays there whichever grouping you pick. Those rows are Dusk Studio's own units. They are compiled into the application, so they need no scan, they are present on a fresh install with nothing else on the machine, and they are identical on Linux, macOS and Windows. See *Built-in insert units* below.
 
 The insert chooser and the bottom of the picker also provide these actions where applicable:
 
@@ -1558,6 +1601,126 @@ The insert chooser and the bottom of the picker also provide these actions where
 - **Soundfont (.sfz / .sf2 / .bank.xml)**: open a soundfont directly. Choosing this on an audio track converts the track to MIDI; see *Multi-sample instruments*.
 - **Browse file…**: load a plugin by file path (useful for plugins not yet in the scan cache).
 - **Scan plugins**: re-scan.
+
+## Built-in insert units
+
+Dusk Studio ships its own insert units. They load into a channel insert slot or an aux lane slot exactly like a scanned plugin: the same picker, the same Replace and Remove actions, the same bypass, and the same delay compensation. Only one insert host runs per slot, so loading a built-in unit replaces whatever the slot held, and loading a plugin replaces the built-in unit.
+
+Settings are saved with the session and restored when you reopen it, and they travel with **Clone Track** and its undo. A built-in unit needs nothing installed and cannot go offline the way a missing plugin does.
+
+### Utility
+
+A clean gain and stereo-image tool. Reach for it to trim a level without touching the fader, to flip an out-of-phase mic, to check a mix in mono, or to narrow a stereo source that is fighting the centre.
+
+| Control | Range | Default | What it does |
+|---|---|---|---|
+| Gain | −60 dB to +24 dB | 0 dB | Output level. At the bottom of the range the unit is silent rather than very quiet. |
+| Polarity | Off / On | Off | Inverts both channels. Useful on a mic that is out of phase with another. |
+| Width | 0% to 200% | 100% | Stereo width. 100% passes left and right through untouched, 0% collapses to the centre, and above 100% pushes the sides wider. |
+| Mono | Off / On | Off | Sums left and right to the centre. Width has no effect once Mono is on, because the sum has already removed the sides. |
+
+The controls are applied in the order polarity, width, mono, gain. Every one of them is smoothed over 20 milliseconds, so moving a control never clicks. At its defaults the unit passes audio through unchanged and adds no latency.
+
+![The Utility unit's editor.](docs/images/bi-01-utility.png)
+
+### DuskVerb 2
+
+Dusk Audio's DuskVerb 2 plug-in is Dusk Studio's built-in reverb. It combines sixteen plate, room, chamber, hall, spring, gated, reverse and shimmer engines with the plug-in's own DSP and editor, so a setting sounds the same here as in the plug-in. Controls change labels or availability where an engine needs them; click **?** in the editor for its complete engine-specific reference.
+
+| Section | Controls and ranges | What they do |
+|---|---|---|
+| Engine | **Algorithm**: 16 engines | Chooses the reverb topology. |
+| Input | **Pre-Delay**: 0 to 250 ms; **Pre-Delay Sync**: Free, 1/32, 1/16, 1/8, 1/4, 1/2 or 1/1; **Saturation**: 0 to 100% | Separates the source from the tail, optionally follows session tempo, and adds colour before the reverb. |
+| Filter | **Low Cut**: 5 to 500 Hz; **High Cut**: 1 to 20 kHz; **Mono Below**: 20 to 300 Hz; **Mono Depth**: 0 to 100% | Shapes what reaches the reverb and controls the low-frequency stereo content. |
+| Decay / Size | **Decay**: 0.2 to 30 s; **Size**: 0 to 100% | Sets the tail length and scale of the selected space. |
+| Output | **Dry / Wet**: 0 to 100%; **Width**: 0 to 200%; **Trim**: −48 to +48 dB; **Bus Mode**: Off / On | Balances and trims the output. Bus Mode makes the output fully wet without losing the Dry / Wet setting. |
+| Early Reflections | **Level**, **Size** and **Diffusion**: 0 to 100% | Sets the level, scale and density of the early reflections. Labels can vary by engine. |
+| Damping | **Bass Multiply**, **Mid Multiply**: 0.3 to 2.5; **Treble Multiply**: 0.1 to 1.5; **Low Crossover**: 200 Hz to 4 kHz; **High Crossover**: 1 to 12 kHz | Shapes how long different frequency bands decay. |
+| Modulation | **Depth**: 0 to 100%; **Rate**: 0.1 to 10 Hz | Adds movement to the tail, with engine-specific labels where applicable. |
+| Macro | **Tone**: −1 to +1; **Character**, **Duck**: 0 to 100% | Provides broad dark-to-bright, movement/grit and wet-ducking adjustments. |
+| Holds and modes | **Freeze**, **Gate**, **Tonal Correction**: Off / On | Freeze holds the tail; Gate and Tonal Correction appear on the engines that support them. |
+
+DuskVerb 2 keeps the plug-in's own defaults everywhere. Its first factory preset has **Mix (Dry / Wet) at 35%**, so a freshly loaded instance is audible. On an aux lane, turn on **Bus Mode** for a 100% wet return.
+
+The unit reports zero latency. Its tail can run for up to 30 seconds, and an aux lane keeps processing for as long as its return remains audible.
+
+Presets and **INIT** in DuskVerb 2's editor are saved with the session, as is whichever of **A** and **B** is active when you save. The other comparison slot lasts as long as the session is open, and comes back holding the saved sound when you reopen it. Sessions saved with the old built-in Reverb still load under the same unit, but they return at DuskVerb 2's defaults; the old Reverb settings are not converted.
+
+![The DuskVerb 2 unit's editor.](docs/images/bi-02-reverb.png)
+
+### Tape Echo 2
+
+Dusk Audio's Tape Echo 2 plug-in, compiled into Dusk Studio and running the plug-in's own DSP, so a setting sounds the same here as in the plug-in. A three-head tape echo with a spring tank, modelled on the classic transport: the record EQ and the tape saturation sit inside the feedback loop, so each repeat darkens and compresses rather than simply getting quieter. It loads at the plug-in's own defaults, with Echo Volume and Mix at halfway, so a freshly loaded Tape Echo 2 echoes straight away.
+
+| Control | Range | Default | What it does |
+|---|---|---|---|
+| Mode | 1 to 12 | 1 | The twelve-position selector: which of the three heads play, and whether the spring tank does. Modes 5 to 11 add the spring; 12 is the spring alone. |
+| Repeat Rate | 0 to 1 | 0 | Motor speed. 0 is the longest delay (177 ms on head 1), 1 the shortest (69 ms). |
+| Intensity | 0 to 1 | 0 | Feedback. Above about 0.75 the loop self-oscillates, which is the point. |
+| Echo Volume | 0 to 1 | 0.5 | Level of the playback heads. |
+| Reverb Volume | 0 to 1 | 0 | Level of the spring tank. |
+| Mix | 0 to 1 | 0.5 | Dry against wet. Both play at full level at 0.5; 0 is dry only and 1 is wet only. |
+| Input Volume | 0 to 1 | 0.5 | Preamp drive into the tape, unity at the midpoint. Higher saturates. |
+| Output Volume | 0 to 1 | 0.5 | Trim after the mix: −20 dB at 0, unity at 0.5, +20 dB at 1. |
+| Bass / Treble | −1 to +1 | 0 | Shelves on the echo path. |
+| Wow & Flutter | 0 to 1 | 0 | Transport instability. |
+| Tape Age | New / Used / Old | Used | Worn tape: hiss, extra wow, high-frequency loss and level wobble. Even new tape carries a hiss floor, around −113 dBFS. |
+| Echo Pan / Reverb Pan | 0 to 1 | 0.5 | Where the repeats and the spring sit, from left to right. |
+| Input Send | Off / On | On | Feeds the input to the tape. Off lets what is already on the tape play out, the dub move. |
+| Tempo Sync | Off / On | Off | Locks the first active head to the session tempo. |
+| Echo Rate Note | 1 to 11 | 5 | With Tempo Sync on, the note the first active head repeats at. A note the motor cannot reach at the session tempo stays at the motor's limit, as the hardware's does. |
+| Bypass | Off / On | Off | The plug-in's own bypass. On fades the effect out, passes the input through untouched and clears the tape. |
+
+The unit reports no latency. Its settings are saved with the session as the plug-in's own parameter values, and its editor is the plug-in's own.
+
+![The Tape Echo 2 unit's editor.](docs/images/bi-03-tape-echo.png)
+
+### Tape
+
+Per-channel tape colour, running the same Tape Machine engine as the master bus. Two decks, four speeds, four tape formulations and both EQ standards.
+
+| Control | Range | Default | What it does |
+|---|---|---|---|
+| Machine | Swiss / American | Swiss | Which deck is modelled. |
+| Speed | 7.5 / 15 / 30 / 3.75 IPS | 15 IPS | Tape speed. Slower is warmer and less extended. |
+| Tape | four formulations | the first | Tape formulation. Each has its own saturation character and headroom. |
+| Path | Repro / Sync / Input / Thru | Repro | Which head the signal comes off. **Thru** is a bit-exact passthrough, the way pulling the tape out would be. |
+| EQ | NAB / CCIR | NAB | Replay equalisation standard. |
+| Input | −12 dB to +12 dB | 0 dB | Level onto the tape. This is the drive control. |
+| Bias | 0% to 100% | 50% | Bias current. 50 is optimal; away from it loses top end and adds distortion. |
+| Calibration | +3 / +6 / +7.5 / +9 dB | +3 dB | Reference fluxivity. |
+| Output | −12 dB to +12 dB | 0 dB | Level off the tape. |
+| Low Cut / High Cut | 20 Hz to 500 Hz / 3 kHz to 20 kHz | 20 Hz / 20 kHz | Filters on the output. |
+| Wow / Flutter / Noise | 0% to 100% | 0% | Transport instability and tape hiss. |
+| Auto Cal / Auto Comp | Off / On | On | Level compensation, so changing speed or calibration does not change loudness. |
+
+The Tape unit reports **56 samples** of latency on every path except Thru, where it reports none because Thru does not enter the filters that cost it. Delay compensation covers the difference either way.
+
+![The Tape unit's editor.](docs/images/bi-04-tape.png)
+
+### Sunset
+
+A polyphonic synthesiser: six engines (Cosmos, Oracle, Mono, Modular, Prism and Acid), two oscillators plus sub and noise, a resonant filter, two envelopes, unison and glide. It is an **instrument**, so it appears only on a MIDI track's picker, and loading it converts an audio track to MIDI the way a soundfont does.
+
+The editor exposes the two dozen controls a player reaches for, grouped as Global, Oscillators, Filter and Envelopes. The engine carries a great many more, which stay at the values its own init patch sets.
+
+It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and channel and polyphonic aftertouch, and it stops cleanly when the transport does.
+
+![The Sunset instrument's editor.](docs/images/bi-05-sunset.png)
+
+### Editing a unit
+
+On a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, or click the slot again, to dismiss it.
+
+**DuskVerb 2 and Tape Echo 2 open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. The other three units have no editor of their own, so Dusk Studio draws them from their parameter table as a panel of knobs, switch banks, drop-down lists and toggles.
+
+On an aux lane there is nothing to open: the unit's controls are always on screen, filling the lane under the slot header. DuskVerb 2 and Tape Echo 2 sit there as their own editors, centred and scaled down to fit the lane while keeping their shape, the way a plug-in's editor does. The knob panels are grouped the way the unit's front panel would be: Tape shows Machine, Level, Tone and Transport; Utility shows Level and Image. Their knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
+
+On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Choices with a handful of positions, such as Tape's **Speed**, are rows of buttons. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
+
+The transport keys keep working while an editor is open. A click into a plug-in's editor gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again.
+
+**MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in DuskVerb 2's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot and choose **MIDI Learn last-touched parameter**. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
 
 ## Opening the editor
 
@@ -1625,6 +1788,18 @@ Click a track's **Insert** slot and choose **Soundfont (.sfz / .sf2 / .bank.xml)
 - **Master volume**: −60 to +12 dB.
 - **Master tune**: −100 to +100 cents.
 - **Polyphony cap**: 1 to 256 voices.
+
+### Instrument library
+
+**Library...** in the soundfont editor's header lists the `.sfz` and `.sf2` already installed on this computer, so loading one does not mean remembering where it lives. **Browse...** is still there for a file the library does not cover.
+
+![Instrument library](docs/images/ms-02-sfz-library.png)
+
+The library looks in a short list of standard locations for your platform, plus any folder you add with **Add folder...**. On Linux that includes the directories distribution packages install into, so a machine with a packaged General MIDI bank shows something the first time it opens. Your added folders are remembered per machine, not per session.
+
+Type in the filter box to narrow the list by instrument or folder name; clearing it brings the whole list back without rescanning. **Rescan** picks up instruments added since the panel opened.
+
+Scanning happens only when you open the panel, press **Rescan**, or add a folder. It never runs at startup or while a session loads, and it never reaches the network: this is a view of your own disk, nothing more. A folder that has gone missing or cannot be read is listed as such at the top rather than silently contributing nothing.
 
 When a `.sf2` holds more than one preset (most GM/GS/XG SoundFonts do), a **preset picker** appears. Click it to open a filterable browser: start typing to filter presets by name or number, or read across the columns. Presets are grouped program-first — an instrument and its bank variations list together, drum kits last — each shown as `program [bank] name`.
 
@@ -1890,6 +2065,7 @@ To export your finished mix as a stereo audio file:
 1. From any stage, choose **File → Bounce…** (or **Cmd/Ctrl+B**).
 2. A file browser opens at the session folder; pick or rename the destination WAV and confirm.
 3. A progress dialog renders the project offline. **Cancel** stops the render.
+4. When it finishes the dialog names the file it wrote. Long paths are shortened in the middle so the file name stays readable; hover the line for the whole path, or use **Copy path** to put it on the clipboard.
 
 The output is **stereo 24-bit WAV at the session sample rate** by default (or a 320 kbps MP3 if you name the file `.mp3`), with a fixed 5-second tail so reverb and compression ringouts decay naturally.
 
@@ -1965,10 +2141,10 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **P**       | Toggle punch                  |
 | **C**       | Toggle metronome              |
 | **M**       | Drop marker at playhead       |
-| **[**       | Set loop start at playhead    |
-| **]**       | Set loop end at playhead      |
-| **Shift+[** | Set punch in at playhead      |
-| **Shift+]** | Set punch out at playhead     |
+| **[**       | Set loop start at playhead; arms loop once in is before out |
+| **]**       | Set loop end at playhead; arms loop once in is before out |
+| **Shift+[** | Set punch in at playhead; arms punch once in is before out |
+| **Shift+]** | Set punch out at playhead; arms punch once in is before out |
 | **K**       | Toggle virtual MIDI keyboard  |
 | **Shift+←/→** | Previous / next marker (Rewind / Forward tap) |
 | **B**       | Tap tempo                     |
@@ -2226,18 +2402,20 @@ Either way, free the device in the other app (or run `pactl suspend-sink <sink-n
 
 Dusk Studio targets functional accessibility for screen reader users. The 24-channel strip is dense; the goal is for a screen reader to identify each control's role and read its current value without the user having to guess.
 
-## What works today
+## Current support
 
-- Every channel-strip rotary (HPF, LPF, EQ band gain / freq / Q, compressor knobs, pan, fader, aux sends) has an accessibility title and reports its formatted value: `-4.2 dB`, `L42`, `OFF`, `4:1`, etc. VoiceOver on macOS and Orca on Linux speak both the role and the value on focus.
-- Bus strips, aux returns, and the master strip follow the same convention.
-- Help text (the long-form description for each control) is wired from the existing tooltip strings, so the screen reader's verbose-mode readout matches what a sighted user sees on hover.
-- Every text-input dialog (region rename, marker rename, MIDI region label) renders inside the main window via the EmbeddedModal framework — no native popups that escape the screen reader's focus tree.
+- Channel faders, pan, HPF/LPF, mute, solo, record arm, input monitor, insert slots and aux sends have track-specific accessible names. Several continuous controls report formatted values such as `-4.2 dB`, `L42`, `OFF` and `4:1`. Channel faders report `-INF dB` throughout the hard-mute range, at or below −90 dB. A screen reader's text-value action can send `-INF` or `-INF dB` to set the fader to its muted minimum; the fader has no editable text box.
+- Aux return faders, aux mute buttons and aux plugin slots have lane-specific names. Transport buttons are named Play, Stop, Record, Rewind and Fast forward. Standard sliders and buttons expose their tooltip text as accessible help.
+- The popup menu exposes its active option and an activation action. Keyboard navigation updates the active-option announcement; this is not a separately navigable accessible item for every painted row.
+- macOS and Windows have platform accessibility support for the existing component controls. Coverage and focus behavior still need hands-on screen-reader verification. Native panels need the accessibility bridge that is currently being developed.
+- Linux screen-reader support through AT-SPI, including Orca, is not yet implemented. The existing control names and values do not by themselves make the Linux application accessible.
 
 ## What's still rough
 
+- Naming and formatted-value coverage is incomplete, particularly in the EQ editors, bus and master strips. Modal keyboard focus handling does not guarantee that a screen reader is confined to the active dialog or returns to the expected control after dismissal.
 - In the **Recording** and **Mixing** stages, **Left / Right arrows** move a gold focus ring across the 24 channel strips, automatically flipping the visible page as you cross a boundary. The focused strip is the target for the **A / S / X** (arm / solo / mute) shortcuts, so you can walk the mixer and toggle states without the mouse. (Clicking a strip moves the ring too.)
 - Region drag-and-drop on the timeline relies on mouse gestures. Region edit actions (split, trim, fade, gain) are all available via the keyboard reference; the drag-to-move case is the gap.
-- Plugin editors are out of Dusk Studio's accessibility control surface. JUCE forwards screen-reader requests to each plugin; vendor accessibility varies.
+- Plugin editors provide their own accessibility support; coverage varies by vendor and plugin format.
 
 ## Filing issues
 
@@ -2284,7 +2462,7 @@ The format for each entry:
 
 ### Save changes before quitting?
 
-- **When**: You quit with unsaved changes.
+- **When**: You quit with unsaved changes. Logging out, shutting the machine down, or stopping the app from a terminal counts as quitting: the prompt appears then too, and the session waits on your answer.
 - **Text**: "Your session has unsaved changes since the last manual save. If you don't save, the autosave will still be available the next time you open this session."
 - **Buttons**: **Save** / **Don't Save** / **Cancel**.
 - **Action**: Save unless you specifically want to discard. The autosave file remains as a safety net regardless.

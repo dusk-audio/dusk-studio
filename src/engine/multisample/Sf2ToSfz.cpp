@@ -140,7 +140,17 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
     const auto& preset = parsed.presets[(size_t) presetIndex];
     conv.presetName = preset.name;
 
-    outDir.createDirectory();
+    // Two processes can race to create the shared temp parent (parallel test
+    // runs, two instances converting at once): the loser gets EEXIST from the
+    // parent and no outDir. A second attempt then finds the parent in place.
+    if (! outDir.createDirectory().wasOk())
+        (void) outDir.createDirectory();
+    if (! outDir.isDirectory())
+    {
+        conv.error = "Could not create the sample directory "
+                   + outDir.getFullPathName().toStdString();
+        return conv;
+    }
 
     juce::FileInputStream in (sf2);
     if (! in.openedOk())

@@ -88,11 +88,14 @@ struct TempScope
     juce::File dir;
     TempScope()
     {
-        dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("dusk-studio-fileimporter-tests")
-                  .getChildFile (juce::Uuid().toDashedString());
+        const auto parent = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getChildFile ("dusk-studio-fileimporter-tests");
+        // Tests run as parallel processes and share this parent: creating it can lose
+        // a race with another test ("File exists"), which is fine once it exists.
+        (void) parent.createDirectory();
+        dir = parent.getChildFile (juce::Uuid().toDashedString());
         const auto result = dir.createDirectory();
-        if (result.failed())
+        if (result.failed() && ! dir.isDirectory())
             throw std::runtime_error ("TempScope failed to create temp dir '"
                                        + dir.getFullPathName().toStdString()
                                        + "': " + result.getErrorMessage().toStdString());

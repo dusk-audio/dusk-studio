@@ -85,6 +85,8 @@ printf '%s\n' \
     '### Downloads' \
     '' \
     '- **Linux** (`.tar.xz`): unsigned.' \
+    '' \
+    '    VERSION=0.0.1   # this release' \
     > "$FIXTURE/packaging/RELEASE-NOTES.md"
 
 WHITESPACE_ERROR="$SCRATCH/whitespace-notes-error.txt"
@@ -286,7 +288,8 @@ case " $* " in
                 'dusk-studio-9.9.9-macOS-arm64.dmg' \
                 'dusk-studio-9.9.9-Windows-x64.msi' \
                 'MANUAL.pdf' \
-                'SHA256SUMS'
+                'SHA256SUMS' \
+                'SHA256SUMS.asc'
         fi
         ;;
     *)
@@ -664,15 +667,15 @@ SUMMARY_START = "<!-- summary-start -->"
 SUMMARY_END = "<!-- summary-end -->"
 
 sfizz_tree = subprocess.run(
-    ["git", "-C", str(source_root), "ls-tree", "HEAD", "external/sfizz"],
+    ["git", "-C", str(source_root), "ls-tree", "HEAD", "external/dusk-fizz"],
     check=True,
     capture_output=True,
     text=True,
 ).stdout.strip()
 sfizz_tree_entry = re.fullmatch(
-    r"160000 commit ([0-9a-f]{40})\texternal/sfizz", sfizz_tree
+    r"160000 commit ([0-9a-f]{40})\texternal/dusk-fizz", sfizz_tree
 )
-assert sfizz_tree_entry, "external/sfizz must be a pinned git submodule"
+assert sfizz_tree_entry, "external/dusk-fizz must be a pinned git submodule"
 sfizz_revision = sfizz_tree_entry.group(1)
 
 licenses = (source_root / "LICENSES.txt").read_text(encoding="utf-8")
@@ -682,7 +685,7 @@ sfizz_header_revision = re.search(
     re.DOTALL,
 )
 sfizz_license_revision = re.search(
-    r"external/sfizz/LICENSE,\s+submodule rev\s+([0-9a-f]{40})",
+    r"external/dusk-fizz/LICENSE,\s+submodule rev\s+([0-9a-f]{40})",
     licenses,
 )
 assert sfizz_header_revision and sfizz_license_revision, (
@@ -700,7 +703,7 @@ assert len(recorded_sfizz_revisions) == 15, (
     "release contract"
 )
 assert set(recorded_sfizz_revisions) == {sfizz_revision}, (
-    "LICENSES.txt sfizz revisions must match the external/sfizz gitlink: "
+    "LICENSES.txt sfizz revisions must match the external/dusk-fizz gitlink: "
     f"expected {sfizz_revision}, found {sorted(set(recorded_sfizz_revisions))}"
 )
 
@@ -732,7 +735,7 @@ preflight_marker = "- name: Preflight - releases-repo token is valid (tag builds
 action_pins = {
     "actions/checkout": ("3d3c42e5aac5ba805825da76410c181273ba90b1", 6),
     "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 4),
-    "actions/download-artifact": ("37930b1c2abaa49bbe596cd826c3c89aef350131", 1),
+    "actions/download-artifact": ("3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", 1),
     "actions/cache": ("55cc8345863c7cc4c66a329aec7e433d2d1c52a9", 1),
 }
 
@@ -779,19 +782,18 @@ maintainer_guide = safe_selftest_callers["maintainer guide"].read_text(encoding=
 release_workflow = (source_root / ".github" / "workflows" / "release.yml").read_text(
     encoding="utf-8"
 )
-pinned_donor = re.search(
-    r"^\s*DONOR_REV:\s*([0-9a-f]{40})$", release_workflow, re.MULTILINE
+donor_rev = (source_root / "DONOR_REV").read_text(encoding="utf-8").strip()
+assert re.fullmatch(r"[0-9a-f]{40}", donor_rev), (
+    "DONOR_REV must hold one full donor commit hash"
 )
-assert pinned_donor, "release.yml must pin DONOR_REV"
-donor_pins = {}
+donor_workflows = set()
 for workflow_path in (source_root / ".github" / "workflows").glob("*.yml"):
-    pins = re.findall(
-        r"^\s*DONOR_REV:\s*([0-9a-f]{40})$",
-        workflow_path.read_text(encoding="utf-8"),
-        re.MULTILINE,
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    assert "DONOR_REV:" not in workflow_text and donor_rev not in workflow_text, (
+        f"{workflow_path.name} must take the donor revision from DONOR_REV"
     )
-    if pins:
-        donor_pins[workflow_path.name] = pins
+    if "uses: ./.github/actions/clone-donor" in workflow_text:
+        donor_workflows.add(workflow_path.name)
 expected_donor_workflows = {
     "linux-build.yml",
     "linux-sanitizer.yml",
@@ -800,15 +802,9 @@ expected_donor_workflows = {
     "release.yml",
     "windows-tests.yml",
 }
-assert set(donor_pins) == expected_donor_workflows, (
+assert donor_workflows == expected_donor_workflows, (
     "exactly the release and test workflows that consume donor source must "
-    f"pin DONOR_REV: {donor_pins.keys()}"
-)
-assert all(
-    pins and set(pins) == {pinned_donor.group(1)}
-    for pins in donor_pins.values()
-), (
-    f"DONOR_REV drift across workflows: {donor_pins}"
+    f"clone it through .github/actions/clone-donor: {sorted(donor_workflows)}"
 )
 
 # The Linux and Raspberry Pi legs build against the Dusk-owned JUCE mirror by
@@ -880,7 +876,7 @@ windows_pr_build = re.search(
 )
 assert windows_pr_build, "windows-tests.yml lost its app + test build step"
 assert re.search(
-    r"cmake --build build-tests --config Release --target "
+    r"cmake --build build-tests (?:--config Release )?--target "
     r"DuskStudio dusk-studio-tests -j4",
     windows_pr_build.group("body"),
 ), "Windows PR CI must compile both the app and test targets"
@@ -1010,26 +1006,10 @@ assert len(set(sodium_pins.values())) == 1, (
 )
 for guide_name in ("BUILDING-LINUX.md", "BUILDING-WINDOWS.md"):
     guide = (source_root / guide_name).read_text(encoding="utf-8")
-    assert (
-        f"git -C plugins fetch --depth 1 origin {pinned_donor.group(1)}" in guide
-    ), f"{guide_name} must fetch the workflow-pinned donor revision"
-    assert "git -C plugins checkout --detach FETCH_HEAD" in guide, (
-        f"{guide_name} must check out the fetched donor revision"
+    assert donor_rev not in guide, (
+        f"{guide_name} must leave the donor revision to DONOR_REV"
     )
-linux_guide = (source_root / "BUILDING-LINUX.md").read_text(encoding="utf-8")
-assert (
-    f'test "$(git -C plugins rev-parse HEAD)" = {pinned_donor.group(1)}'
-    in linux_guide
-), "BUILDING-LINUX.md must verify the workflow-pinned donor revision"
 windows_guide = (source_root / "BUILDING-WINDOWS.md").read_text(encoding="utf-8")
-windows_pin_check = (
-    'git -C plugins rev-parse HEAD | findstr /x /c:'
-    f'"{pinned_donor.group(1)}" >nul || '
-    '(echo ERROR: donor checkout did not reach the pinned revision & exit /b 1)'
-)
-assert windows_pin_check in windows_guide, (
-    "BUILDING-WINDOWS.md must fail when the donor revision does not match"
-)
 cmake_source = (source_root / "CMakeLists.txt").read_text(encoding="utf-8")
 assert "DUSKSTUDIO_REQUIRE_ASIO=OFF" not in cmake_source, (
     "CMake must not offer an ASIO-less Windows build"
@@ -1093,8 +1073,8 @@ release_section = release_section_match.group("body")
 assert "env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run" in release_section, (
     "Part 10 must retain the local Patreon freshness check"
 )
-assert ".github/workflows/release.yml" in release_section, (
-    "Part 10 must read the donor pin from a release workflow"
+assert "DONOR_REV=$(tr -d '[:space:]' < DONOR_REV)" in release_section, (
+    "Part 10 must read the donor revision from DONOR_REV"
 )
 assert 'cat-file -e "$DONOR_REV^{commit}"' in release_section, (
     "Part 10 must avoid turning the maintainer donor into a shallow checkout"
@@ -1102,7 +1082,7 @@ assert 'cat-file -e "$DONOR_REV^{commit}"' in release_section, (
 assert 'git -C ../plugins show "$DONOR_REV:plugins/shared/PatreonBackers.h"' in release_section, (
     "Part 10 must print the supporter header from the pinned donor revision"
 )
-assert "STOP: release workflow has no valid DONOR_REV" in release_section, (
+assert "STOP: DONOR_REV does not hold a valid commit" in release_section, (
     "Part 10 must stop instead of reading the donor index when pin parsing fails"
 )
 patreon_command = "env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run"
@@ -1125,7 +1105,7 @@ assert override_stop in patreon_block, (
 ordered_patreon_steps = [
     "set -e",
     override_stop,
-    "DONOR_REV=$(sed -nE",
+    "DONOR_REV=$(tr -d '[:space:]' < DONOR_REV)",
     '[[ "$DONOR_REV" =~ ^[0-9a-f]{40}$ ]]',
     'cat-file -e "$DONOR_REV^{commit}"',
     'git -C ../plugins show "$DONOR_REV:plugins/shared/PatreonBackers.h"',
@@ -1180,13 +1160,18 @@ assert visible_summary, "release-summary slot must carry visible content"
 assert "### Downloads" in tracked_after, "tracked notes must keep the Downloads section"
 
 # The summary is script-managed: the bump replaces the whole slot with the
-# release notes verbatim and touches nothing outside it.
+# release notes verbatim, and outside it touches only the signature-check
+# VERSION= line.
 bumped_text = bumped_notes_path.read_text(encoding="utf-8")
 before, slot, after = summary_slot(bumped_text)
 assert slot == expected_notes, (slot, expected_notes)
 assert before == "", "nothing may precede the summary slot"
 assert "stale summary" not in bumped_text, "the old summary must be gone"
 assert "### Downloads" in after, "the Downloads section must survive the bump"
+assert "\n    VERSION=9.9.9   # this release\n" in after, (
+    "the signature-check VERSION= line must follow the bump"
+)
+assert "0.0.1" not in after, "the old signature-check version must be gone"
 
 # The printed handoff is the maintainer's release-day checklist. Pin its
 # load-bearing order and CI-only packaging path.
@@ -1239,7 +1224,7 @@ assert "--jq '.body // \"\"'" in verifier_text, (
     "verifier must normalize a null release body to empty"
 )
 expected_assets = re.findall(r'^\s+"[^"\n]+\|[^"\n]+"$', verifier_text, re.MULTILINE)
-expected_asset_count = 6
+expected_asset_count = 7   # six payloads plus the SHA256SUMS signature
 assert len(expected_assets) == expected_asset_count, (
     "release verifier asset count changed; update the release contract explicitly"
 )
@@ -1388,7 +1373,8 @@ for required in (
     "release fan-in must contain exactly the five expected payloads",
     "SHA256SUMS must contain exactly five entries",
     "sha256sum --check SHA256SUMS",
-    "release directory must contain exactly six assets",
+    "release directory must hold the six payloads before signing",
+    "dist/SHA256SUMS.asc",
     "if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}",
     notes_marker,
     'gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber dist/*',
@@ -1420,8 +1406,11 @@ assert publish_job[:upload_at].count("--draft") == 2, (
 assert upload_at < verify_at < publish_at, (
     "the release must remain draft until the uploaded six-asset set verifies"
 )
-assert "SHA256SUMS." not in release_workflow, (
-    "per-job checksum fragments must not return"
+# The guard is against per-job checksum fragments (SHA256SUMS.linux and the
+# like) coming back. The detached signature is the one legitimate suffix.
+_suffixes = {m for m in re.findall(r"SHA256SUMS\.(\w+)", release_workflow)}
+assert _suffixes <= {"asc"}, (
+    f"per-job checksum fragments must not return (found: {sorted(_suffixes)})"
 )
 assert "if: ${{ github.ref_type == 'tag' }}" not in publish_job, (
     "a workflow_dispatch targeting a tag must not publish"
@@ -1444,7 +1433,8 @@ write_metadata_fixture() {
         > "$dir/CHANGELOG.md"
     printf '<component>\n  <releases>\n    <release version="%s" date="%s">\n    </release>\n  </releases>\n</component>\n' \
         "$app_version" "$app_date" > "$dir/packaging/DuskStudio.appdata.xml"
-    printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n' > "$dir/packaging/RELEASE-NOTES.md"
+    printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n\n    VERSION=%s   # this release\n' \
+        "$version" > "$dir/packaging/RELEASE-NOTES.md"
 }
 
 metadata_expect() {
@@ -1476,6 +1466,21 @@ write_metadata_fixture "$META/app-version" 0.0.2 "0.0.2] - 2026-01-02" 0.0.1 202
 metadata_expect fail "AppStream behind VERSION" --root "$META/app-version"
 write_metadata_fixture "$META/future" 0.0.2 "0.0.2] - 2999-01-01" 0.0.2 2999-01-01
 metadata_expect fail "a heading dated in the future" --root "$META/future"
+write_metadata_fixture "$META/no-summary" 0.0.2 "0.0.2] - 2026-01-02" 0.0.2 2026-01-02
+printf '<!-- summary-start -->\n<!-- summary-end -->\n' > "$META/no-summary/packaging/RELEASE-NOTES.md"
+metadata_expect fail "an empty release-notes summary" --root "$META/no-summary"
+write_metadata_fixture "$META/notes-key" 0.0.2 "0.0.2] - 2026-01-02" 0.0.2 2026-01-02
+printf '\n    VERSION=0.0.2   # this release\n' >> "$META/notes-key/packaging/RELEASE-NOTES.md"
+metadata_expect pass "release notes fetching the key from this release" --root "$META/notes-key" --tag v0.0.2
+printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n\n    VERSION=0.0.3   # this release\n' \
+    > "$META/notes-key/packaging/RELEASE-NOTES.md"
+metadata_expect pass "release notes written ahead of an untagged tree" --root "$META/notes-key"
+metadata_expect fail "release notes fetching the key from another release" --root "$META/notes-key" --tag v0.0.2
+write_metadata_fixture "$META/notes-no-key" 0.0.2 "0.0.2] - 2026-01-02" 0.0.2 2026-01-02
+printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n' \
+    > "$META/notes-no-key/packaging/RELEASE-NOTES.md"
+metadata_expect pass "notes without the key fetch on an untagged tree" --root "$META/notes-no-key"
+metadata_expect fail "notes carrying no key version at a tag" --root "$META/notes-no-key" --tag v0.0.2
 
 "$PYTHON" - "$SOURCE_ROOT" <<'PY'
 import re
@@ -1484,18 +1489,25 @@ from pathlib import Path
 
 source_root = Path(sys.argv[1])
 release_workflow = (source_root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-assert "scripts/release-metadata-check.sh --tag" in release_workflow, (
-    "the tag workflow must run the release metadata checker against the tag"
-)
+assert re.search(
+    r"scripts/release-metadata-check\.sh --tag \S+ \\\n\s*--commit-date ",
+    release_workflow,
+), "the tag workflow must run the release metadata checker against the tag and its commit date"
 
-# Every single-line configure example in the maintainer guide has to name the
-# donor pin: the sibling ../plugins has drifted past it, and an example without
-# the flag builds against the wrong DSP.
+# Configure examples in the maintainer guide leave the donor to DONOR_REV: an
+# explicit DUSK_PLUGINS_PATH builds whatever that checkout holds, not the
+# commit CI and releases build.
 guide = (source_root / "docs" / "MAINTAINER-GUIDE.md").read_text(encoding="utf-8").splitlines()
-unpinned = [
-    line.strip()
-    for line in guide
-    if re.match(r"^\s*cmake -S \. -B build", line) and "DUSK_PLUGINS_PATH" not in line
-]
-assert not unpinned, f"maintainer guide configure examples without the donor pin: {unpinned}"
+configure_commands = []
+for at, line in enumerate(guide):
+    if not re.match(r"^\s*cmake -S \. -B build", line):
+        continue
+    command = [line.strip()]
+    while command[-1].endswith("\\") and at + 1 < len(guide):
+        at += 1
+        command.append(guide[at].strip())
+    configure_commands.append(" ".join(command))
+assert configure_commands, "maintainer guide must show its configure commands"
+overridden = [c for c in configure_commands if "DUSK_PLUGINS_PATH" in c]
+assert not overridden, f"maintainer guide configure examples bypass DONOR_REV: {overridden}"
 PY

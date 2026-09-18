@@ -22,7 +22,19 @@ add_executable(dusk-studio-tests
     hosting_port_layout.cpp
     hosting_insert_adapter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
+    # Built-in insert rung: registry, the Utility unit and the slot that
+    # presents it to the mixer.
+    builtin_insert_slot.cpp
+    daf_unit_instance.cpp
+    daf_editor_host.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/imgui/DafEditorHost.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinInstance.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinRegistry.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/builtin/DafUnitInstance.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/builtin/UtilityUnit.cpp
     sfz_catalog.cpp
+    sfz_library_scan.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibrary.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalogEnvelope.cpp
     # Native CLAP tests + sources are added conditionally below.
@@ -38,6 +50,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/NativePluginCache.cpp
     plugin_scan_protocol.cpp
     plugin_backing_check.cpp
+    default_input_choice.cpp
     session_tick_conversion.cpp
     tempo_map_conversion.cpp
     output_pair_routing.cpp
@@ -71,6 +84,7 @@ add_executable(dusk-studio-tests
     base64_decode.cpp
     legacy_state_base64.cpp
     session_round_trip.cpp
+    session_builtin_insert_roundtrip.cpp
     session_tape_migration.cpp
     session_freeze_roundtrip.cpp
     session_region_bounds.cpp
@@ -82,6 +96,7 @@ add_executable(dusk-studio-tests
     session_portable_paths.cpp
     session_track_shrink.cpp
     device_fallback_message.cpp
+    pipewire_default_device.cpp
     imgui_gl_loader_win32.cpp
     device_interfaces.cpp
     device_state_blob.cpp
@@ -101,7 +116,9 @@ add_executable(dusk-studio-tests
     recording_byte_accuracy.cpp
     midi_fifo_overflow.cpp
     midi_device_layer.cpp
+    core_midi_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiDevices.cpp
+    winmm_midi_protocol.cpp
     midi_time_code_decode.cpp
     midi_time_code_emit.cpp
     midi_clock_drift.cpp
@@ -114,6 +131,8 @@ add_executable(dusk-studio-tests
     session_apply_tempo_change.cpp
     session_fader_group.cpp
     transport_state_machine.cpp
+    transport_stop_locate.cpp
+    timeline_follow.cpp
     loop_timeline.cpp
     generated_midi_budget.cpp
     session_mcu_roundtrip.cpp
@@ -178,8 +197,11 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadChords.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeEmitter.cpp
+    session_arm_input_gate.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
-    ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp)
+    ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp
+    session_templates.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/SessionTemplates.cpp)
 
 target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -192,7 +214,8 @@ if(WIN32)
     # CoTaskMemFree for the returned known-folder path; advapi32: per-user
     # security descriptors and token checks for the single-instance pipe;
     # bcrypt: BCryptGenRandom in the IPC channel backend compiled in below.
-    target_link_libraries(dusk-studio-tests PRIVATE shell32 ole32 advapi32 bcrypt)
+    target_sources(dusk-studio-tests PRIVATE ${CMAKE_SOURCE_DIR}/src/engine/midi/WinMmDeviceQuery.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE shell32 ole32 advapi32 bcrypt winmm)
 endif()
 
 # pffft backend for dusk::audio::Fft, plus its A/B parity suite. The pffft
@@ -209,6 +232,10 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_text_format.cpp
     foundation_vector_ops.cpp
     foundation_fs.cpp
+    log_file.cpp
+    ${CMAKE_SOURCE_DIR}/src/util/LogFile.cpp
+    host_info.cpp
+    ${CMAKE_SOURCE_DIR}/src/util/HostInfo.cpp
     foundation_special_locations.cpp
     ${CMAKE_SOURCE_DIR}/src/session/RecentSessions.cpp
     foundation_json.cpp
@@ -236,11 +263,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         alsa_thread_teardown.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/alsa/AlsaAudioIODevice.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
+elseif(APPLE AND DUSKSTUDIO_NATIVE_COREMIDI)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_COREMIDI=1)
 else()
-    # The seam picks its backend on __linux__, so off Linux the JUCE fallback is
-    # what MidiDevices.cpp links against. It is the only remaining user of the
-    # JUCE MIDI device API in the test binary, so the module is linked here
-    # rather than for every platform.
     target_sources(dusk-studio-tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src/engine/midi/JuceMidiBackend.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE juce::juce_audio_devices)
@@ -251,11 +276,14 @@ endif()
 # CMakeLists (config package where available, plain library search otherwise).
 target_sources(dusk-studio-tests PRIVATE
     audiofile_roundtrip.cpp
+    waveform_peaks.cpp
+    waveform_details.cpp
     audiofile_ab_null.cpp
     audiofile_buffered_reader.cpp
     audiofile_drain_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/BufferedFileReader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileReader.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WaveformPeaks.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ThreadedFileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WriterDrainPool.cpp)
@@ -271,35 +299,62 @@ if(DUSK_PLUGINS_PATH)
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         ${DUSK_PLUGINS_PATH}/plugins/multi-q
         ${DUSK_PLUGINS_PATH}/plugins/shared)
+
+    # Built-in units backed by donor cores. Gated with the donor for the same
+    # reason console_saturation.cpp is: without it the includes cannot resolve.
+    target_sources(dusk-studio-tests PRIVATE
+        builtin_tape_unit.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/builtin/TapeUnit.cpp
+        builtin_synth_unit.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/builtin/SynthUnit.cpp
+        ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp)
+    target_include_directories(dusk-studio-tests SYSTEM PRIVATE
+        ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DONOR_UNITS=1)
+
+    # DAF built-ins are the app's own static libraries, defined beside the app.
+    if(TARGET dusk_daf_tape_echo_2 AND TARGET dusk_daf_duskverb_2)
+        target_sources(dusk-studio-tests PRIVATE
+            builtin_tape_echo_2.cpp
+            builtin_duskverb_2.cpp)
+        target_include_directories(dusk-studio-tests SYSTEM PRIVATE
+            ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core)
+        target_link_libraries(dusk-studio-tests PRIVATE
+            dusk_daf_tape_echo_2
+            dusk_daf_duskverb_2)
+        target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
+    endif()
 endif()
 
 # The Dear ImGui widget kit and one console strip drawn through it, headlessly: no
 # window, no GL and no compositor, so the frame-cost work the GUI tower rests on has a
-# regression test that runs everywhere. Gated on the DAF-Widgets checkout the kit lives
+# regression test that runs everywhere. Gated on the DAF checkout's in-tree kit
 # in, the same way the app gates the native notepad on it. Dear ImGui's own translation
 # units are compiled here directly - the framework's bridge is what needs DGL, the
 # widgets do not.
-if(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
+if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
     target_sources(dusk-studio-tests PRIVATE
         imgui_widget_kit.cpp
         imgui_panel_controls.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/DuskTheme.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelControls.cpp
+        ${CMAKE_SOURCE_DIR}/src/ui/imgui/StartupView.cpp
         ${CMAKE_SOURCE_DIR}/tools/gui-spike/ChannelStripView.cpp
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui.cpp
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_draw.cpp
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_tables.cpp
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_widgets.cpp)
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk/DuskWidgets.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_draw.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_tables.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_widgets.cpp)
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl)
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk)
     # Dear ImGui is vendored third-party code and does not build clean under this
     # target's warning set. The app silences it the same way for dgl-opengl3.
     set_source_files_properties(
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui.cpp
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_draw.cpp
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_tables.cpp
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_widgets.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_draw.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_tables.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_widgets.cpp
         PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
 endif()
 
@@ -489,6 +544,29 @@ if(DUSKSTUDIO_NATIVE_VST3)
         PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
     get_target_property(DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE
         dusk-studio-runtime-relayout-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+    if(MSVC)
+        # The SDK compiles its plug-in targets with /Zi in Release. Under Ninja
+        # the fixture's translation units then race for one vc140.pdb (C1041),
+        # and sccache cannot cache /Zi objects. Embed the debug info instead.
+        get_target_property(DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS
+            dusk-studio-runtime-relayout-vst3-fixture COMPILE_OPTIONS)
+        list(TRANSFORM DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS REPLACE "/Zi" "/Z7")
+        set_target_properties(dusk-studio-runtime-relayout-vst3-fixture
+            PROPERTIES COMPILE_OPTIONS "${DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS}")
+        if(NOT CMAKE_CONFIGURATION_TYPES)
+            # The SDK places the Windows bundle by looping over
+            # CMAKE_CONFIGURATION_TYPES, so with a single-config generator the
+            # module lands in VST3/ while SMTG_PLUGIN_PACKAGE_PATH, which the
+            # tests load, still names the bundle. Put it where the tests look.
+            get_target_property(DUSKSTUDIO_RELAYOUT_FIXTURE_CONTENTS
+                dusk-studio-runtime-relayout-vst3-fixture SMTG_PLUGIN_PACKAGE_CONTENTS)
+            get_target_property(DUSKSTUDIO_RELAYOUT_FIXTURE_ARCH
+                dusk-studio-runtime-relayout-vst3-fixture SMTG_WIN_ARCHITECTURE_NAME)
+            set_target_properties(dusk-studio-runtime-relayout-vst3-fixture
+                PROPERTIES LIBRARY_OUTPUT_DIRECTORY
+                    "${DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE}/${DUSKSTUDIO_RELAYOUT_FIXTURE_CONTENTS}/${DUSKSTUDIO_RELAYOUT_FIXTURE_ARCH}")
+        endif()
+    endif()
 
     smtg_add_vst3plugin(dusk-studio-panic-probe-vst3-fixture
         fixtures/panic_probe_vst3.cpp
@@ -609,6 +687,7 @@ endif()
 if (_duskstudio_ipc_test_enabled)
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
+        ipc_prepare_without_plugin.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp
         ${_duskstudio_ipc_test_sources})
     # The parent pipe endpoint uses overlapped I/O on Windows, so the reader's
@@ -633,21 +712,29 @@ if(DUSK_PLUGINS_PATH)
         comp_timing.cpp
         bus_stereo_link.cpp
         tape_hysteresis.cpp
-        tape_core_ab.cpp
+        tape_core_regression.cpp
         bus_strip.cpp
         mastering_chain.cpp
         mastering_digital_eq.cpp
         # The mastering stage's native panels draw the chain through the widget kit, so
         # their headless suite needs the kit as well as the donor DSP this block gates.
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:imgui_mastering_views.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:imgui_builtin_unit_view.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:imgui_builtin_lane_view.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/BuiltinLaneView.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/BuiltinUnitView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringEqView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringLimiterView.cpp>
         dsp_stereo_oversampler.cpp
         eq_british_ab.cpp
+        eq_core_regression.cpp
         tube_multiq_ab.cpp
         comp_core_ab.cpp
         smoke_brickwall_limiter.cpp
         dsp_loudness_meter.cpp
+        master_tape_alignment.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MasterBus.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MasterTape.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
@@ -659,34 +746,7 @@ if(DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
-        # tape_core_ab.cpp A/Bs the framework-free core against the JUCE donor,
-        # so both sides link here. The donor's createEditor() pulls its editor
-        # and GUI widgets in behind it.
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginEditor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/ImprovedTapeEmulation.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/AnalogVUMeter.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeMachineLookAndFeel.cpp")
-
-    # Same createPluginFilter rename the main app applies - both donors define
-    # it as their plugin entry point and neither is ever called here.
-    set_source_files_properties(
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
-        PROPERTIES
-        COMPILE_DEFINITIONS "createPluginFilter=createTapeMachinePluginFilter")
-
-    # Required only here: the tests compile TapeMachine's GUI/AnalogVUMeter.cpp
-    # alongside multi-comp's, and both declare a global AnalogVUMeter. Renaming
-    # the multi-comp one in-translation-unit keeps the donor untouched. The app
-    # no longer links TapeMachine's editor, so it does not need this.
-    set_source_files_properties(
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
-        PROPERTIES
-        COMPILE_DEFINITIONS "AnalogVUMeter=MultiCompAnalogVUMeter")
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp")
 
     # projucer-shim satisfies BritishEQProcessor.h's `#include <JuceHeader.h>`
     # (the donor EQ under A/B test in eq_british_ab.cpp); the shim pulls in a
@@ -748,11 +808,40 @@ include(Catch)
 # (Catch2 >= 3.0.1; v3.5.4 is pinned above) makes an all-skipped run exit 0
 # while a real failure still returns its assertion count. Scope it to the [alsa]
 # tag so an unmatched/stale filter on any other test still fails.
+#
+# They also run serially. Each case registers a sequencer client called "Dusk
+# Studio", and the identifiers the seam hands out are built from those names,
+# with an enumeration-order ordinal to tell duplicates apart. Two cases at once
+# are therefore two clients a case cannot tell apart: one resolves a port
+# belonging to the other process, and the hot-plug case counts the other's
+# client arriving as a change.
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[alsa]"
-    EXTRA_ARGS --allow-running-no-tests)
+    EXTRA_ARGS --allow-running-no-tests
+    PROPERTIES RUN_SERIAL TRUE)
+# [ipc] cases start the plug-in host process and several assert on timing windows
+# (the park-timeout stub parks against a 250 ms block). Under ctest --parallel the
+# runner's cores are shared, so those windows close; run them serially.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]")
+    TEST_SPEC "~[alsa]~[ipc]")
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[ipc]"
+    PROPERTIES RUN_SERIAL TRUE)
+
+if(APPLE)
+    target_link_libraries(dusk-studio-tests PRIVATE dusk-coremidi)
+    add_executable(dusk-coremidi-tests core_midi_backend.mm)
+    set_target_properties(dusk-coremidi-tests PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED ON)
+    target_compile_options(dusk-coremidi-tests PRIVATE -Wall -Wextra -Wpedantic -fblocks)
+    target_link_libraries(dusk-coremidi-tests PRIVATE dusk-coremidi Catch2::Catch2WithMain)
+    add_dependencies(dusk-studio-tests dusk-coremidi-tests)
+
+    option(DUSKSTUDIO_TEST_COREMIDI_VIRTUAL "Run CoreMIDI tests that create temporary virtual endpoints" OFF)
+    if(DUSKSTUDIO_TEST_COREMIDI_VIRTUAL)
+        add_test(NAME coremidi-virtual-endpoints COMMAND dusk-coremidi-tests)
+        set_tests_properties(coremidi-virtual-endpoints PROPERTIES TIMEOUT 45 RUN_SERIAL TRUE)
+    endif()
+endif()
 
 # Exercise the real release-version insertion script against an isolated fixture,
 # and pin the private-release fan-in and single-publisher contract. The release
@@ -761,6 +850,17 @@ if(UNIX)
     find_program(DUSKSTUDIO_BASH_EXECUTABLE bash)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(DUSKSTUDIO_BASH_EXECUTABLE AND Python3_Interpreter_FOUND)
+        add_test(NAME package-contents-checker
+            COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/package_contents.sh"
+                    "${CMAKE_SOURCE_DIR}"
+                    "${CMAKE_COMMAND}")
+        if(NOT APPLE)
+            add_test(NAME install-linux
+                COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/install_linux.sh"
+                        "${CMAKE_SOURCE_DIR}")
+        endif()
         add_test(NAME release-mechanics-contract
             COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/release_mechanics.sh"

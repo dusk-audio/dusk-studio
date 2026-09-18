@@ -125,6 +125,40 @@ std::string convertTuned (const TuningOpts& o)
 }
 }
 
+TEST_CASE("Sf2ToSfz: creates the sample directory and reports when it cannot", "[sf2conv]")
+{
+    const auto bytes = tunedSf2({});
+    auto sf2 = juce::File::createTempFile(".sf2");
+    {
+        std::ofstream os (std::filesystem::u8path(sf2.getFullPathName().toStdString()),
+                          std::ios::binary);
+        os.write(reinterpret_cast<const char*>(bytes.data()), (std::streamsize) bytes.size());
+    }
+
+    SECTION("a missing parent is created along with the directory")
+    {
+        auto parent = freshTempDir();
+        parent.deleteRecursively();
+        auto dir = parent.getChildFile("nested").getChildFile("out");
+        auto conv = duskstudio::convertSf2Preset(sf2, 0, dir);
+        REQUIRE(conv.ok);
+        REQUIRE(dir.isDirectory());
+        parent.deleteRecursively();
+    }
+
+    SECTION("a directory that cannot exist fails with a message, not later")
+    {
+        auto file = freshTempDir().getChildFile("blocker");
+        REQUIRE(file.replaceWithText("x"));
+        auto conv = duskstudio::convertSf2Preset(sf2, 0, file.getChildFile("out"));
+        REQUIRE_FALSE(conv.ok);
+        REQUIRE(dusk::text::contains(conv.error, "sample directory"));
+        file.getParentDirectory().deleteRecursively();
+    }
+
+    sf2.deleteFile();
+}
+
 TEST_CASE("Sf2ToSfz: missing file fails cleanly", "[sf2conv]")
 {
     auto dir = freshTempDir();

@@ -13,7 +13,7 @@ A guide to understanding, building, debugging, and extending Dusk Studio. It ass
 
 Dusk Studio is a **deliberately constrained, portastudio-style DAW** for Linux/macOS/Windows, written in **JUCE 8 / C++17**. It is one native desktop application — no server, no web component, no database. State lives in RAM (the `Session` object) and is serialized to a single `session.json` file plus a folder of WAV takes.
 
-It is ~**85,000 lines** of C++ across `src/`, plus a large `CMakeLists.txt` (~990 lines) and 51 Catch2 test files. The DSP (EQ, compressors, tape) is **not** written here — it is shared header code pulled in from a sibling repo of Dusk Audio plugins.
+It is ~**155,000 lines** of C++ across `src/`, plus a large `CMakeLists.txt` (~2,000 lines) and over 200 Catch2 test files. The DSP (EQ, compressors, tape) is **not** written here — it is shared header code pulled in from a sibling repo of Dusk Audio plugins.
 
 The single most important mental model: **there are several threads, and the rules about what each may do are absolute.** Most bugs that look mysterious are thread-rule violations. Internalize Part 3 before you touch the audio path.
 
@@ -44,7 +44,7 @@ cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
 
-JUCE, the Dusk plugins repo, and the DAF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../plugins`, `../DAF`, `../DAF-Widgets`). See Part 5 for what happens when discovery fails — it will, eventually, and the error messages are not always obvious.
+JUCE and the DAF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../DAF`); configure fetches the Dusk plugins repo itself at the commit in `DONOR_REV`. See Part 5 for what happens when discovery fails — it will, eventually, and the error messages are not always obvious.
 
 **Checkpoint:** the app launches, you can create a track, arm it, and play a click.
 
@@ -247,9 +247,9 @@ Per channel: **HPF → 4-band EQ → compressor (Opto/FET/VCA) → sends → pan
 
 ### Where the actual EQ/comp/tape code lives (vendored DSP)
 
-This is a gotcha that will confuse you the first time: **the EQ, compressor, and tape DSP are not in this repo.** They are header-only "cores" shared with the Dusk Audio plugins, pulled in from a sibling repo resolved at configure time (`-DDUSK_PLUGINS_PATH`, else `../plugins`). Classes like `UniversalCompressor`, `BritishEQProcessor`, `TubeEQProcessor`, and the TapeMachine processor come from there.
+This is a gotcha that will confuse you the first time: **the EQ, compressor, and tape DSP are not in this repo.** They are header-only "cores" shared with the Dusk Audio plugins, pulled in from the plugins repo at configure time (`-DDUSK_PLUGINS_PATH`, else fetched at the commit in `DONOR_REV`). Classes like `UniversalCompressor`, `BritishEQProcessor`, `TubeEQProcessor`, and the TapeMachine processor come from there.
 
-If `DUSK_PLUGINS_PATH` isn't found, the build defines `DUSKSTUDIO_HAS_DUSK_DSP=0` and you get a recorder with basic internal EQ and no comp/tape. So "where did the compressor go?" almost always means "the plugins repo wasn't discovered." Check the CMake configure output.
+If the plugins repo can't be fetched, configure stops with an error. There is no build without it: the mastering EQ, loudness meter and oversampler include donor headers too. Reconfigure with network access, or point `-DDUSK_PLUGINS_PATH` at a plugins checkout.
 
 ### The atomic-pointer pattern for vendored DSP (the one pattern to copy)
 
@@ -294,32 +294,33 @@ ctest --test-dir build-tests --output-on-failure
 
 ### Dependency discovery (the thing most likely to bite you)
 
-CMake auto-detects four external repos at configure time, on top of three git submodules. **Read the configure output** — it prints which paths it picked.
+CMake auto-detects three external repos at configure time, on top of three git submodules. **Read the configure output** — it prints which paths it picked.
 
-- **Submodules** (`external/clap`, `external/sfizz`, `external/vst3sdk`): clone with `--recurse-submodules`, or run `git submodule update --init --recursive`. They fail in three different ways, which is worth knowing before you debug the wrong one. Missing `external/clap` is fatal — the native CLAP host defaults ON on Linux, macOS, and Windows, and the configure stops with a "CLAP headers missing" error. Missing `external/vst3sdk` is loud but survivable: a STATUS line, native VST3 disabled, unless you explicitly asked for `-DDUSKSTUDIO_NATIVE_VST3=ON`, which turns it fatal. Missing `external/sfizz` says **nothing at all** — the block is wrapped in a bare `EXISTS` test, so SF2 / multisample support simply isn't in the binary.
+- **Submodules** (`external/clap`, `external/dusk-fizz`, `external/vst3sdk`): clone with `--recurse-submodules`, or run `git submodule update --init --recursive`. They fail in three different ways, which is worth knowing before you debug the wrong one. Missing `external/clap` is fatal — the native CLAP host defaults ON on Linux, macOS, and Windows, and the configure stops with a "CLAP headers missing" error. Missing `external/vst3sdk` is loud but survivable: a STATUS line, native VST3 disabled, unless you explicitly asked for `-DDUSKSTUDIO_NATIVE_VST3=ON`, which turns it fatal. Missing `external/dusk-fizz` says **nothing at all** — the block is wrapped in a bare `EXISTS` test, so SF2 / multisample support simply isn't in the binary.
 
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (a plugdata-team fork with ~5 local commits Dusk Studio depends on — XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
-- **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; else `../plugins`, and that is the whole list. Check out the `DONOR_REV` shared by the build and release workflows so every build uses the same DSP and layout. Missing entirely, configure only *warns*: you get a recorder with no EQ, comp, or tape rather than a failed build, so read the configure output.
-- **DAF + DAF-Widgets** (the native UI: notepad, startup dialog, compressor editor, virtual keyboard, audio settings): `-DDAF_PATH=…` / `-DDAF_WIDGETS_PATH=…` win; else `../DAF` and `../DAF-Widgets`, then the `external/` fallbacks, which are placeholders for eventual release pinning and are not populated today. The two checks are ANDed, so missing *either* one quietly defaults `DUSKSTUDIO_ENABLE_NATIVE_UI` to OFF, announced by one easy-to-miss STATUS line (`Native UI: DAF / DAF-Widgets not found - disabled`); at runtime every native view is gone - the notepad reports *"Notepad unavailable: built without the native notepad UI"*, the compressor editor, the virtual keyboard and the audio settings panel say the same of themselves, and the startup dialog simply does not appear. Forcing `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` without them is a configure error rather than a silent downgrade. Clone the Dusk-owned forks at the revisions CI pins — [.github/actions/clone-daf-stack/action.yml](../.github/actions/clone-daf-stack/action.yml) is the single source of truth for those pins and verifies that DAF uses the Dusk Pugl fork:
+- **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure stops with an error; reconfigure with network access or pass `-DDUSK_PLUGINS_PATH`. To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together.
+- **DAF and its in-tree widgets** (the native UI): `-DDAF_PATH=…` wins, then
+  `../DAF`, then `external/DAF`. Without DAF and `widgets/imgui/DearImGui.hpp`,
+  `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults OFF and every native view is unavailable.
+  Forcing it ON makes missing dependencies a configure error. DGL, pugl and the
+  widget kit move together as one checkout; builds track DAF `main`.
 
 ```bash
 cd /path/to/dusk-studio
 
 git clone https://github.com/dusk-audio/DAF.git ../DAF
-git -C ../DAF checkout 50ad8c22a2f05b85be4b40e473d830d2dc91c2c2
-git -C ../DAF submodule update --init     # dgl/src/pugl-upstream
+git -C ../DAF pull --ff-only
 
-git clone https://github.com/dusk-audio/DAF-Widgets.git ../DAF-Widgets
-git -C ../DAF-Widgets checkout 798154e874eaaa024371f6076249398b51498142
 ```
 
-Clone then check out the SHA rather than cloning a moving branch. Both pins are
-on their forks' `main` histories today, but exact revisions keep local and CI
-builds reproducible as those branches advance.
-
-DAF's Pugl revision is carried by the Pugl branch `dusk-pin-5e2621d`, not that
-fork's `main`. Keep that branch too: DAF submodule initialization and CI require
-the pinned commit to remain reachable.
+CI builds the tip of DAF `main`, so keep `../DAF` on `main` and pull it before
+building. A release resolves `main` once and builds every platform against that
+commit, then writes it into the shipped LICENSES.txt in place of `@DAF_REV@`
+([.github/actions/clone-daf-stack/action.yml](../.github/actions/clone-daf-stack/action.yml)).
+When DAF changes a vendored third-party component, update that component's
+LICENSES.txt entry here. Pugl and the widget kit are vendored inside DAF; no
+extra checkout is needed.
 
 `DUSKSTUDIO_ENABLE_NATIVE_UI` is a cached `option()`, which makes the OFF sticky in a nasty way: configure a build dir before the checkouts exist, add them later, and re-running CMake in that same dir leaves the notepad off — and the STATUS line above no longer prints, because its guard also requires the deps to be missing. Use a fresh build dir after cloning, or pass `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` to overwrite the cache entry.
 
@@ -327,8 +328,8 @@ The cross-OS layout (development happens on macOS, Linux testing on a separate m
 
 | OS | App | Tests | JUCE | Plugins |
 |---|---|---|---|---|
-| macOS | `build/` | `build-tests/` | `../JUCE` (upstream) | `../plugins` |
-| Linux | `build/` | `build-tests/` | `../JUCE-wayland` (fork) | `../plugins` |
+| macOS | `build/` | `build-tests/` | `../JUCE` (upstream) | fetched at `DONOR_REV` |
+| Linux | `build/` | `build-tests/` | `../JUCE-wayland` (fork) | fetched at `DONOR_REV` |
 
 ### When to add a test
 
@@ -343,8 +344,8 @@ To add one: drop `tests/<unit>_<aspect>.cpp` following [tests/smoke_brickwall_li
 ### Sanitizers (your best debugging friends for this kind of code)
 
 ```bash
-cmake -S . -B build-asan -DDUSKSTUDIO_ENABLE_ASAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin   # use-after-free, overflow
-cmake -S . -B build-tsan -DDUSKSTUDIO_ENABLE_TSAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin   # data races (mutually exclusive with ASan)
+cmake -S . -B build-asan -DDUSKSTUDIO_ENABLE_ASAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON   # use-after-free, overflow
+cmake -S . -B build-tsan -DDUSKSTUDIO_ENABLE_TSAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON   # data races (mutually exclusive with ASan)
 ```
 
 TSan is the one that catches "I forgot this cross-thread field should be atomic" — the most common real bug class here.
@@ -401,7 +402,7 @@ Region and marker edits are `juce::UndoableAction` subclasses ([src/session/Regi
 |---|---|
 | Audible clicks / dropouts ("xruns") | Something allocating/locking/logging on the audio thread; a `SmoothedValue` not reset in `prepare`; buffer-size mismatch. Run TSan. Re-read the thread rules in Part 3. |
 | Intermittent wrong value / flicker | A cross-thread field that should be `atomic` isn't, or wrong memory order. TSan. |
-| "The EQ/comp/tape disappeared" | `DUSK_PLUGINS_PATH` not discovered → `DUSKSTUDIO_HAS_DUSK_DSP=0`. Check CMake configure output. |
+| Configure stops with "Could not fetch Dusk plugins" | No git or network on the first configure. Reconfigure with network access, or pass `-DDUSK_PLUGINS_PATH=/path/to/plugins`. |
 | Build fails finding JUCE | Wrong sibling dir / fork vs upstream. Pass `-DJUCE_PATH=…` explicitly; check JuceCompat.h API split. |
 | Loading one plugin crashes the app | Expected risk of the in-process default — try the same plugin with `DUSKSTUDIO_USE_OOP_PLUGINS=1` to confirm it's the plugin, then blacklist or sandbox it. If it crashes only in OOP mode, suspect the IPC swap / child lifecycle in `PluginSlot`/`ipc/`; reproduce with the stub test. |
 | Plugin scan hangs / a plugin never appears | Scanner timeout/blacklist in `PluginManager.cpp`; check the sentinel parsing in `PluginScanProtocol`. |
@@ -761,7 +762,7 @@ The order is load-bearing. Replace `X.Y.Z` with the release version throughout.
 Set `RELEASE_VERSION=X.Y.Z` in the shell used for the guarded commands.
 
 [`CPACK_PACKAGE_CONTACT`](../CMakeLists.txt) holds the maintainer address and
-feeds only DEB/RPM package metadata. Neither format is among the six assets the
+feeds only DEB/RPM package metadata. Neither format is among the seven assets the
 current tag workflows publish, so nothing a tagged release produces uses it.
 
 1. Finish the `## [X.Y.Z] - Unreleased` section in
@@ -799,11 +800,9 @@ current tag workflows publish, so nothing a tagged release produces uses it.
            "STOP: local Patreon name_overrides are not available to release workflows"
        )
    PY
-     DONOR_REV=$(sed -nE \
-       's/^[[:space:]]*DONOR_REV:[[:space:]]*([0-9a-f]{40})[[:space:]]*$/\1/p' \
-       .github/workflows/release.yml)
+     DONOR_REV=$(tr -d '[:space:]' < DONOR_REV)
      [[ "$DONOR_REV" =~ ^[0-9a-f]{40}$ ]] \
-       || { echo "STOP: release workflow has no valid DONOR_REV" >&2; exit 1; }
+       || { echo "STOP: DONOR_REV does not hold a valid commit" >&2; exit 1; }
      git -C ../plugins cat-file -e "$DONOR_REV^{commit}" 2>/dev/null \
        || git -C ../plugins fetch origin "$DONOR_REV"
      git -C ../plugins show "$DONOR_REV:plugins/shared/PatreonBackers.h"
@@ -817,8 +816,8 @@ current tag workflows publish, so nothing a tagged release produces uses it.
    the release workflows do not receive those mappings and would inject
    different display names. Clear the mappings only if the unmodified Patreon
    names are intended; otherwise stop and add reviewed workflow propagation.
-   The command reads `DONOR_REV` from the Linux release workflow; all donor
-   workflow pins must match. Compare the reported `champions`, `patrons`,
+   The command reads the donor commit from the `DONOR_REV` file, the one every
+   build and release workflow clones. Compare the reported `champions`, `patrons`,
    `supporters`, and `hugs` tiers with the
    header printed from that exact revision. The dry run does not rewrite
    supporter headers, but it can refresh the local Patreon access and refresh
@@ -867,7 +866,12 @@ current tag workflows publish, so nothing a tagged release produces uses it.
        "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}:CHANGELOG.md" \
        | grep -E '^## \[[0-9]+\.[0-9]+\.[0-9]+\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$' \
        | grep -F "## [${RELEASE_VERSION:?set RELEASE_VERSION first}] - "
-     scripts/release-metadata-check.sh \
+     meta="$(mktemp -d)"
+     trap 'rm -rf "$meta"' EXIT
+     git archive \
+       "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}" \
+       VERSION CHANGELOG.md packaging | tar -x -C "$meta"
+     scripts/release-metadata-check.sh --root "$meta" \
        --tag "v${RELEASE_VERSION:?set RELEASE_VERSION first}" --date "$(date -u +%F)"
    )
    ```
@@ -894,9 +898,213 @@ current tag workflows publish, so nothing a tagged release produces uses it.
 Do not announce the release when the workflow merely turns green; complete the
 acceptance checks below first.
 
+### Windows code signing
+
+An unsigned MSI raises SmartScreen's "Windows protected your PC" on every
+download, and the user has to choose More info and then Run anyway. Most people
+do not.
+
+**The certificate.** Since June 2023 both OV and EV code-signing certificates
+are issued on hardware tokens or through a cloud signing service; a `.pfx` file
+you can hand a hosted runner is no longer something a CA will sell you. That
+leaves two practical routes:
+
+- **Azure Trusted Signing**, roughly 10 USD a month, is the CI-friendly one.
+  Microsoft holds the key and the runner authenticates to it, so there is no
+  token and no secret certificate. This is the recommended route.
+- **A hardware token** with an OV or EV certificate, which a hosted runner
+  cannot reach. It needs a self-hosted Windows runner with the token attached,
+  or signing by hand before upload.
+
+The workflow supports a PFX as well, because an existing certificate, an
+internal CA, or a test certificate is still worth being able to use. It is not
+the route to plan a release around.
+
+**OV against EV.** EV carries SmartScreen reputation immediately. OV starts
+from nothing and accrues reputation as downloads accumulate, so the first users
+of a fresh OV certificate may still see the warning. Azure Trusted Signing
+behaves like OV in this respect.
+
+Uploading the Azure Trusted Signing secrets, after creating the account,
+certificate profile, and an app registration with the Trusted Signing Certificate
+Profile Signer role:
+
+```bash
+gh secret set AZURE_TENANT_ID --repo dusk-audio/dusk-studio
+gh secret set AZURE_CLIENT_ID --repo dusk-audio/dusk-studio
+gh secret set AZURE_CLIENT_SECRET --repo dusk-audio/dusk-studio
+gh secret set TRUSTED_SIGNING_ENDPOINT --repo dusk-audio/dusk-studio   # https://<region>.codesigning.azure.net
+gh secret set TRUSTED_SIGNING_ACCOUNT --repo dusk-audio/dusk-studio
+gh secret set TRUSTED_SIGNING_PROFILE --repo dusk-audio/dusk-studio
+```
+
+Or, for the PFX route:
+
+```bash
+base64 -w0 code-signing.pfx | gh secret set WINDOWS_CERT_PFX_BASE64 --repo dusk-audio/dusk-studio
+gh secret set WINDOWS_CERT_PASSWORD --repo dusk-audio/dusk-studio
+```
+
+The job takes the PFX route when both of those are set, otherwise Azure when
+all six are, and ships the MSI unsigned with a notice when neither set is
+complete, on a tag as on a `workflow_dispatch` run.
+
+Both executables are signed before the MSI is built, then the MSI itself:
+signing only the installer would leave the binaries it lays down unsigned, and
+those are what the user runs. Every signature carries an RFC 3161 timestamp, so
+it outlives the certificate. `signtool verify /pa /v` on all three files, plus a
+check that each carries a countersignature, is the acceptance step.
+
+### macOS signing and notarization
+
+Gatekeeper blocks an unnotarized DMG until the user approves it in System
+Settings, so notarization is the goal once the project pays for the Developer
+Program; until then the DMG ships ad-hoc signed with the first-open steps in
+`QUICKSTART.md`.
+
+Procuring the credentials, once:
+
+1. **Apple Developer Program membership**, 99 USD a year, for the Dusk Audio
+   entity. Notarization is not available without it.
+2. **A Developer ID Application certificate.** In Xcode, Settings, Accounts,
+   Manage Certificates, then add a Developer ID Application certificate. Export
+   it from Keychain Access as a `.p12` with a password. Developer ID
+   Application is the right type: Mac App Distribution is for the App Store and
+   Gatekeeper will not accept it for a direct download.
+3. **An App Store Connect API key** for notarization, from App Store Connect,
+   Users and Access, Integrations, keys. Give it the Developer role and
+   download the `.p8` once; it cannot be downloaded again. Note the key ID and
+   the issuer ID shown beside it.
+
+An API key is used rather than an Apple ID and app-specific password because
+the key does not expire when a password changes and carries no second factor.
+
+Uploading the six secrets:
+
+```bash
+base64 -i DeveloperID.p12 | gh secret set MACOS_CERT_P12_BASE64 --repo dusk-audio/dusk-studio
+gh secret set MACOS_CERT_PASSWORD --repo dusk-audio/dusk-studio
+gh secret set MACOS_TEAM_ID --repo dusk-audio/dusk-studio          # the 10-character team ID
+gh secret set NOTARY_KEY_ID --repo dusk-audio/dusk-studio          # the API key ID
+gh secret set NOTARY_ISSUER_ID --repo dusk-audio/dusk-studio       # the issuer UUID
+base64 -i AuthKey_XXXXXXXX.p8 | gh secret set NOTARY_KEY_P8_BASE64 --repo dusk-audio/dusk-studio
+```
+
+Keep the `.p12` and the `.p8` somewhere safe offline. The `.p8` in particular
+cannot be re-downloaded.
+
+What the macOS job then does on a `v*` tag: imports the certificate into a
+keychain of its own, signs the plugin host and then the bundle with
+`--options runtime` and a secure timestamp, packages the DMG, signs that,
+submits it to the notary service and waits, staples the ticket, and requires
+`spctl --assess` to report `accepted` with `source=Notarized Developer ID`
+before anything is published. With any secret missing the job keeps the
+ad-hoc signature, says so, and carries on, on a tag as on a `workflow_dispatch`
+run.
+
+### Release signing key
+
+`SHA256SUMS` is signed, and the signature ships as a seventh asset. A checksum
+published next to the artifact proves a download is intact; the signature is
+what a user can check against a key obtained separately.
+
+The key pair is generated once. Do this on a machine you trust, not a runner:
+
+```bash
+gpg --batch --quiet --gen-key <<'EOF'
+%echo generating the Dusk Studio release signing key
+Key-Type: eddsa
+Key-Curve: ed25519
+Key-Usage: sign
+Name-Real: Dusk Audio Release Signing
+Name-Email: releases@duskaudio.com
+Expire-Date: 0
+Passphrase: <a long random passphrase>
+%commit
+EOF
+
+KEY=$(gpg --batch --with-colons --list-secret-keys releases@duskaudio.com \
+        | awk -F: '$1 == "sec" { print $5; exit }')
+gpg --armor --export "$KEY" > packaging/release-signing.pub
+gpg --armor --export-secret-keys "$KEY" | base64 -w0 > release-secret.b64
+```
+
+Commit `packaging/release-signing.pub`, replacing the placeholder text. Until
+that file holds a key the workflow signs but warns that it could not verify the
+signature against a committed key; once it does, a signature the key cannot
+verify fails the release.
+
+Upload the two secrets to the repository, then destroy the exported copy:
+
+```bash
+gh secret set RELEASE_SIGNING_KEY --repo dusk-audio/dusk-studio < release-secret.b64
+gh secret set RELEASE_SIGNING_KEY_PASSWORD --repo dusk-audio/dusk-studio
+shred -u release-secret.b64
+```
+
+Keep an offline backup of the secret key. Losing it means a new key, and every
+user who pinned the old one has to be told.
+
+A `v*` tag fails before publishing anything when either secret is missing, so a
+release cannot go out unsigned. A `workflow_dispatch` run skips signing with a
+notice, since it publishes nothing.
+
+To verify a published release by hand:
+
+```bash
+gpg --import packaging/release-signing.pub
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum --check SHA256SUMS
+```
+
+### Smoke-testing a published artifact
+
+The workflow proves the artifact builds. It does not prove it runs anywhere
+else. Download each asset and run it through
+[`scripts/release-smoke-test.sh`](../scripts/release-smoke-test.sh) (Linux and
+macOS) or
+[`scripts/release-smoke-test.ps1`](../scripts/release-smoke-test.ps1)
+(Windows):
+
+```bash
+scripts/release-smoke-test.sh linux dusk-studio-X.Y.Z-Linux-x86_64.tar.xz
+scripts/release-smoke-test.sh macos dusk-studio-X.Y.Z-macOS-arm64.dmg
+pwsh -NoProfile -File scripts/release-smoke-test.ps1 dusk-studio-X.Y.Z-Windows-x64.msi
+```
+
+Each unpacks or mounts the artifact into a scratch directory, checks it against
+`packaging/contents.txt`, requires `--version` to report the version in the
+artifact's own file name, and on Linux and macOS runs the headless self-test
+against the packaged binary under a bounded wait, which also proves the plugin
+scan terminates. One PASS or FAIL line per check, and every check runs even
+after one fails, so a single invocation reports the whole picture.
+
+Nothing is installed and no system location is touched. On Linux the app is
+launched under a private Xvfb display; never run this against a live session.
+
+Windows coverage is narrower: the MSI is extracted rather than installed, since
+installing needs elevation, and the self-test leg is omitted while
+`DUSKSTUDIO_RUN_IPC_SELFTEST` hangs there (#504).
+
+### Package contents
+
+[`packaging/contents.txt`](../packaging/contents.txt) is the contract for what
+every package must contain: one `<platform><TAB><path>` record per required
+file, relative to that package's own install root. Each of the three packaging
+jobs runs
+[`scripts/verify-package-contents.sh`](../scripts/verify-package-contents.sh)
+against the built artifact before staging it, so a packager that stops shipping
+a file fails the release rather than the user's first launch. Windows is matched
+by file name rather than path, because an MSI is a database and 7z flattens it
+on extraction. Adding a file to one package means adding its record here, and
+the `package-contents-checker` ctest case covers the checker itself. Project
+templates are deliberately absent: they ship as code in
+`src/session/SessionTemplates.h` and reach the user through File -> New, so
+there is no file to verify.
+
 ### Tag assets and acceptance
 
-A complete `vX.Y.Z` release has exactly these six assets:
+A complete `vX.Y.Z` release has exactly these seven assets:
 
 - `dusk-studio-X.Y.Z-Linux-x86_64.tar.xz`
 - `dusk-studio-X.Y.Z-Linux-aarch64.tar.xz`
@@ -904,11 +1112,12 @@ A complete `vX.Y.Z` release has exactly these six assets:
 - `dusk-studio-X.Y.Z-Windows-x64.msi`
 - `MANUAL.pdf`
 - `SHA256SUMS`
+- `SHA256SUMS.asc`
 
 The publisher downloads all five payloads into one job and refuses to publish
 unless their exact filenames are present. It writes a sorted, lowercase
-`SHA256SUMS` with five entries and verifies it locally before uploading all six
-assets together.
+`SHA256SUMS` with five entries, verifies it locally, signs it into
+`SHA256SUMS.asc`, and uploads all seven assets together.
 
 Before announcement, run
 [`scripts/verify-release-assets.sh`](../scripts/verify-release-assets.sh)
@@ -924,7 +1133,7 @@ manual checks that the script cannot cover:
 
 - Confirm the populated release summary is correct for this version. The
   verifier rejects an empty slot but cannot judge editorial accuracy.
-- Confirm all six filenames exactly match the list above. Inspect the
+- Confirm all seven filenames exactly match the list above. Inspect the
   executable inside the DMG and MSI and confirm arm64 and x64 respectively;
   do not infer architecture from the filename. The DMG must carry the `.app`,
   `LICENSE` and `LICENSES.txt` and nothing else; a `share/` tree of XDG desktop

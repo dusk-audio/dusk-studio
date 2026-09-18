@@ -18,6 +18,7 @@
 #include "../dsp/PitchDetector.h"
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/MessageThread.h"
+#include "../foundation/TransportPosition.h"
 #include "MidiSyncReceiver.h"
 #include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
@@ -289,7 +290,14 @@ public:
     }
 
     void play();
+    // Halts the transport and commits any take without moving the playhead.
+    // For stops the user did not ask for as a transport press: session
+    // switch, shutdown, bounce, external sync.
     void stop();
+    // The Stop control. A rolling transport stops and the playhead goes where
+    // the Playhead on Stop setting says; pressed while already stopped, the
+    // playhead returns to zero.
+    void pressStop();
     void record();
 
     // Message thread. Detach + reattach the audio callback so DSP re-prepares
@@ -301,6 +309,16 @@ public:
     // Message thread. Re-enables device-state persistence after the ALSA
     // startup fallback and immediately persists the user's explicit choice.
     void clearDeviceFallbackHold();
+
+    // One line for the transport bar when the startup open could not use the
+    // preferred backend. Empty when it did. Unlike consumeStartupDeviceMessage
+    // this is not drained by reading: the bar polls it, and it stands until the
+    // user picks a device, because the fallback stands until then too.
+    const std::string& backendFallbackNotice() const noexcept
+    {
+        return backendFallbackNotice_;
+    }
+    void clearBackendFallbackNotice() noexcept { backendFallbackNotice_.clear(); }
 
     // Marker jumps clamp to known points - no overshoot past zero or
     // past the last marker. Message-thread only.
@@ -434,6 +452,13 @@ public:
     int getMasterDryPdcTargetSamples() const noexcept
     {
         return masterDryPdcTarget.load (std::memory_order_relaxed);
+    }
+
+    // The master tape's constant delay. Anything rendered through the master
+    // carries it, so a bounce trims it alongside the other two.
+    int getMasterTapeLatencySamples() const noexcept
+    {
+        return master.getTapeLatencySamples();
     }
 
     // Offline-render only - call with the audio callback DETACHED. The
@@ -578,6 +603,10 @@ private:
     // Heap-allocated so we can pass &session.tempoBpm / &currentSampleRate
     // from the ctor body, after those addresses are known.
     std::unique_ptr<DuskStudioPlayHead> playHead;
+    // The transport built-in inserts see for the current block. The audio thread
+    // rewrites it before the strip pass, and the strips (worker lanes included)
+    // read it only inside that pass.
+    dusk::TransportPosition blockTransport;
     RecordManager   recordManager   { session };
 
     std::vector<PluginLoadFailure> lastPluginLoadFailures;
@@ -902,13 +931,10 @@ private:
     class PerfReporter;
     std::unique_ptr<PerfReporter> perfReporter;
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
-    || DUSKSTUDIO_HAS_NATIVE_AU
-    // Applies MIDI-binding writes queued by the audio thread to the native
-    // slots' parameter surfaces on the message thread (30 Hz).
+    // Applies MIDI-binding writes queued by the audio thread to the native and
+    // built-in slots' parameter surfaces on the message thread (30 Hz).
     class NativeParamDrain;
     std::unique_ptr<NativeParamDrain> nativeParamDrain;
-#endif
 
     // Process gate state (see suspendProcessing). The callback increments
     // callbacksInFlight around its body; suspend raises the flag and waits for
@@ -971,6 +997,11 @@ private:
     // Set once in the constructor by the busy-device fallback; drained by
     // consumeStartupDeviceMessage() after construction. Message-thread only.
     juce::String        startupDeviceMessage_;
+
+    // Non-empty while the startup open landed on a backend other than the
+    // platform's preferred one. Read by the transport bar every timer tick and
+    // cleared when the user picks a device. Message-thread only.
+    std::string         backendFallbackNotice_;
 
     DeviceLostAlertSink onDeviceLostAlert_;
     RecordBlockedSink   onRecordBlocked_;

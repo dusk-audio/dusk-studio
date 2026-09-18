@@ -18,6 +18,9 @@ endif()
 # version literal here.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" DUSKSTUDIO_VERSION_RAW)
 string(STRIP "${DUSKSTUDIO_VERSION_RAW}" DUSKSTUDIO_VERSION)
+# A bump must re-run configure, or an incremental build keeps the old version
+# string in the binary and the AppStream/CPack metadata.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS VERSION)
 project(DuskStudio VERSION ${DUSKSTUDIO_VERSION} LANGUAGES C CXX)
 
 if(APPLE)
@@ -187,8 +190,14 @@ endif()
 # The wayland fork has its own XEmbed + addDefaultFormatsToManager API that
 # Dusk Studio's source assumes on Linux; see [src/engine/JuceCompat.h](src/engine/JuceCompat.h)
 # for the API-split shim.
+#
+# A relative -DJUCE_PATH, -DDUSK_PLUGINS_PATH or -DDAF_PATH
+# is made absolute against this source tree where it is read: the base the
+# top-level uses already resolved it against, and one that does not move when
+# CMake re-runs itself from the build directory. Left relative, tests/ resolves
+# it against tests/ and if(EXISTS) against the working directory.
 if(DEFINED JUCE_PATH)
-    set(DUSKSTUDIO_JUCE_SOURCE_DIR "${JUCE_PATH}")
+    get_filename_component(DUSKSTUDIO_JUCE_SOURCE_DIR "${JUCE_PATH}" ABSOLUTE)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux"
        AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE-wayland/CMakeLists.txt")
     set(DUSKSTUDIO_JUCE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE-wayland")
@@ -374,25 +383,72 @@ endif()
 # Dusk Audio plugins repo — donor for the analog DSP cores (4K EQ filter chain,
 # FET/Opto compressor, Pultec EQ, tape saturation, console saturation, plus the
 # AnalogEmulation library). Header-only cores are picked up via the include
-# paths below; editing a header in the plugins repo automatically rebuilds
-# the affected Dusk Studio translation units. No copy / submodule bump required.
+# paths below; with -DDUSK_PLUGINS_PATH pointing at a plugins checkout, editing
+# a header there rebuilds the affected Dusk Studio translation units.
 #
 # Resolution priority:
-#   1. -DDUSK_PLUGINS_PATH (explicit override)
-#   2. sibling ../plugins — the single donor checkout, kept on main as its resting
-#      state (the stable donor API). If ../plugins is on a feature branch, you build
-#      against that branch. (The former ../plugins-main worktree was removed; the
-#      plugins repo is consolidated to one directory.)
+#   1. -DDUSK_PLUGINS_PATH (explicit override, e.g. ../plugins to try donor edits)
+#   2. the commit named in DONOR_REV, fetched into the build tree. CI and release
+#      builds use the same commit, so a default local build matches them.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/DONOR_REV" DUSKSTUDIO_DONOR_REV)
+string(STRIP "${DUSKSTUDIO_DONOR_REV}" DUSKSTUDIO_DONOR_REV)
+string(LENGTH "${DUSKSTUDIO_DONOR_REV}" _duskstudio_donor_rev_length)
+if(NOT _duskstudio_donor_rev_length EQUAL 40
+   OR NOT DUSKSTUDIO_DONOR_REV MATCHES "^[0-9a-f]+$")
+    message(FATAL_ERROR "DONOR_REV must hold one full 40-character commit hash")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/DONOR_REV")
+
 if(DEFINED DUSK_PLUGINS_PATH)
+    get_filename_component(DUSK_PLUGINS_PATH "${DUSK_PLUGINS_PATH}" ABSOLUTE)
     message(STATUS "Using Dusk plugins from: ${DUSK_PLUGINS_PATH}")
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/plugins/shared")
-    set(DUSK_PLUGINS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../plugins")
-    message(STATUS "Using Dusk plugins from sibling directory: ${DUSK_PLUGINS_PATH}")
 else()
-    message(WARNING
-        "Dusk plugins repo not found. Dusk Studio will build but DSP cores will be "
-        "unavailable until you set -DDUSK_PLUGINS_PATH=/path/to/plugins or clone "
-        "the plugins repo to ../plugins (sibling directory).")
+    set(_duskstudio_donor_dir "${CMAKE_BINARY_DIR}/_deps/dusk-plugins")
+    find_package(Git QUIET)
+    set(_duskstudio_donor_head "")
+    if(GIT_FOUND AND EXISTS "${_duskstudio_donor_dir}/.git")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${_duskstudio_donor_dir}" rev-parse HEAD
+            OUTPUT_VARIABLE _duskstudio_donor_head
+            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    endif()
+    if(GIT_FOUND AND NOT _duskstudio_donor_head STREQUAL DUSKSTUDIO_DONOR_REV)
+        message(STATUS "Fetching Dusk plugins ${DUSKSTUDIO_DONOR_REV}")
+        file(MAKE_DIRECTORY "${_duskstudio_donor_dir}")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" init -q
+            WORKING_DIRECTORY "${_duskstudio_donor_dir}"
+            RESULT_VARIABLE _duskstudio_donor_result)
+        if(_duskstudio_donor_result EQUAL 0)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" fetch -q --depth 1
+                    https://github.com/dusk-audio/dusk-audio-plugins.git
+                    "${DUSKSTUDIO_DONOR_REV}"
+                WORKING_DIRECTORY "${_duskstudio_donor_dir}"
+                RESULT_VARIABLE _duskstudio_donor_result)
+        endif()
+        if(_duskstudio_donor_result EQUAL 0)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" checkout -q --force --detach FETCH_HEAD
+                WORKING_DIRECTORY "${_duskstudio_donor_dir}"
+                RESULT_VARIABLE _duskstudio_donor_result)
+        endif()
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${_duskstudio_donor_dir}" rev-parse HEAD
+            OUTPUT_VARIABLE _duskstudio_donor_head
+            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    endif()
+    if(_duskstudio_donor_head STREQUAL DUSKSTUDIO_DONOR_REV)
+        set(DUSK_PLUGINS_PATH "${_duskstudio_donor_dir}")
+        message(STATUS "Using Dusk plugins ${DUSKSTUDIO_DONOR_REV} from: ${DUSK_PLUGINS_PATH}")
+    else()
+        message(FATAL_ERROR
+            "Could not fetch Dusk plugins ${DUSKSTUDIO_DONOR_REV} (needs git and "
+            "network access to github.com/dusk-audio/dusk-audio-plugins). "
+            "Reconfigure with network access, or set "
+            "-DDUSK_PLUGINS_PATH=/path/to/plugins.")
+    endif()
 endif()
 
 if(DEFINED DUSK_PLUGINS_PATH)
@@ -428,7 +484,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
     if(NOT EXISTS "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}")
         message(FATAL_ERROR
             "Dusk plugins donor lacks the 0.13-compatible compressor core; "
-            "use the revision pinned by the build workflows")
+            "use the revision in DONOR_REV")
     endif()
 endif()
 
@@ -442,12 +498,13 @@ function(duskstudio_resolve_framework_dir outVar)
 
     foreach(pathVar IN LISTS ARG_EXPLICIT)
         if(DEFINED ${pathVar})
-            if(NOT EXISTS "${${pathVar}}/${ARG_MARKER}")
+            get_filename_component(explicitDir "${${pathVar}}" ABSOLUTE)
+            if(NOT EXISTS "${explicitDir}/${ARG_MARKER}")
                 message(FATAL_ERROR
                     "${pathVar}=${${pathVar}} has no ${ARG_MARKER} - it is not a "
                     "${ARG_LABEL} checkout.")
             endif()
-            set(${outVar} "${${pathVar}}" PARENT_SCOPE)
+            set(${outVar} "${explicitDir}" PARENT_SCOPE)
             return()
         endif()
     endforeach()
@@ -474,11 +531,7 @@ duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_SOURCE_DIR
     LABEL    DAF
     EXPLICIT DAF_PATH
     SEARCH   ../DAF external/DAF)
-duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR
-    MARKER   opengl/DearImGui.hpp
-    LABEL    DAF-Widgets
-    EXPLICIT DAF_WIDGETS_PATH
-    SEARCH   ../DAF-Widgets external/DAF-Widgets)
+set(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR "${DUSKSTUDIO_DAF_SOURCE_DIR}/widgets")
 
 # OFF drops every native view - the notepad and the GUI tower's ported dialogs and
 # panels (DUSKSTUDIO_HAS_NATIVE_UI guards their call sites) - so a configure without
@@ -487,14 +540,14 @@ duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR
 # EXPLICIT -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON with them missing (what CI
 # effectively exercises by passing DAF_PATH) stays a configure error.
 set(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND OFF)
-if(DUSKSTUDIO_DAF_SOURCE_DIR AND DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
+if(DUSKSTUDIO_DAF_SOURCE_DIR AND EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui.hpp")
     set(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND ON)
 endif()
 option(DUSKSTUDIO_ENABLE_NATIVE_UI
        "Build the native DAF/DGL + Dear ImGui views (notepad, dialogs and panels)"
        ${DUSKSTUDIO_NATIVE_UI_DEPS_FOUND})
 if(NOT DUSKSTUDIO_ENABLE_NATIVE_UI AND NOT DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
-    message(STATUS "Native UI: DAF / DAF-Widgets not found - disabled")
+    message(STATUS "Native UI: DAF / DAF widgets not found - disabled")
 endif()
 
 if(WIN32)
@@ -520,27 +573,29 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
             "clone it to ../DAF, initialise external/DAF, or configure with "
             "-DDUSKSTUDIO_ENABLE_NATIVE_UI=OFF.")
     endif()
-    if(NOT DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
+    if(NOT EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui.hpp")
         message(FATAL_ERROR
-            "DAF-Widgets is required for the native UI. Set "
-            "-DDAF_WIDGETS_PATH=/path/to/DAF-Widgets, clone it to ../DAF-Widgets, "
-            "initialise external/DAF-Widgets, or configure with "
+            "DAF's widgets/ tree is required for the native UI. Set "
+            "-DDAF_PATH=/path/to/DAF, or configure with "
             "-DDUSKSTUDIO_ENABLE_NATIVE_UI=OFF.")
     endif()
 
     message(STATUS "Using DAF from: ${DUSKSTUDIO_DAF_SOURCE_DIR}")
-    message(STATUS "Using DAF-Widgets from: ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}")
+    message(STATUS "Using DAF widgets from: ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}")
 
     set(DAF_LIBRARIES OFF CACHE BOOL "Build DAF's complete library set" FORCE)
     set(DAF_EXAMPLES OFF CACHE BOOL "Build DAF examples" FORCE)
     add_subdirectory("${DUSKSTUDIO_DAF_SOURCE_DIR}"
                      "${CMAKE_CURRENT_BINARY_DIR}/DAF" EXCLUDE_FROM_ALL)
-    daf__add_dgl_opengl3(TRUE FALSE FALSE)
+    daf__add_dgl_opengl3(TRUE TRUE FALSE)
+    daf__add_widgets_dusk()
+    daf__add_widgets_imgui(dgl-opengl3)
     target_compile_options(dgl-opengl3 PRIVATE
         $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-cpp;-Wno-stringop-overflow>
         $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wno-cpp>)
 
     add_library(dusk_native_ui STATIC
+        src/ui/imgui/AtlasImage.cpp
         src/ui/imgui/DuskImGuiHost.cpp
         src/ui/imgui/DuskTheme.cpp
         src/ui/imgui/DuskPanelWindow.cpp
@@ -548,31 +603,17 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp
         src/ui/NotepadEditor.cpp
-        src/ui/NativeNotepadWindow.cpp
-        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
-        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp")
+        src/ui/NativeNotepadWindow.cpp)
     target_include_directories(dusk_native_ui PRIVATE
-        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
-
-    if(MSVC)
-        # Windows' GL header and opengl32 stop at OpenGL 1.1, and DAF-Widgets hands Dear
-        # ImGui's OpenGL3 backend a "custom loader" (DGL's OpenGL.hpp) that carries GL 3.x
-        # prototypes on Linux and macOS only - so DearImGui.cpp does not compile here at
-        # all. Force-include a loader that resolves those entry points through
-        # wglGetProcAddress, the way DGL resolves its own. The header is named without a
-        # path so cl finds it on the include path; a /FI carrying an absolute path breaks
-        # on a source tree whose path contains spaces.
-        target_sources(dusk_native_ui PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
-        target_include_directories(dusk_native_ui PRIVATE src/ui)
-        set_source_files_properties(
-            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
-            PROPERTIES COMPILE_OPTIONS "/FIImGuiGlLoaderWin32.h")
-    endif()
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui"
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
 
     target_link_libraries(dusk_native_ui PRIVATE
         dgl-opengl3
         dgl-opengl3-definitions
-        dgl-system-libs-definitions)
+        dgl-system-libs-definitions
+        daf-widgets-imgui
+        daf-widgets-dusk)
     target_compile_features(dusk_native_ui PUBLIC cxx_std_17)
 
     target_link_libraries(DuskStudio PRIVATE dusk_native_ui)
@@ -587,12 +628,16 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/AudioSettingsView.cpp
         src/ui/imgui/ChannelCompView.cpp
         src/ui/imgui/MasteringEqView.cpp
+        src/ui/imgui/BuiltinLaneView.cpp
+        src/ui/imgui/BuiltinUnitView.cpp
+        src/ui/imgui/DafEditorHost.cpp
         src/ui/imgui/MasteringLimiterView.cpp
         src/ui/imgui/PanelControls.cpp
         src/ui/imgui/StartupView.cpp
         src/ui/imgui/VirtualKeyboardView.cpp)
     target_include_directories(DuskStudio PRIVATE
-        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui"
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
 
     # Gate spike for the GUI tower: a standalone framework application window rendering one
     # channel strip, used to measure frame cost and prove the shell. It ships with nothing,
@@ -604,21 +649,16 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         add_executable(dusk-gui-spike
             tools/gui-spike/GuiSpikeMain.cpp
             tools/gui-spike/ChannelStripView.cpp
-            src/ui/imgui/DuskTheme.cpp
-            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp"
-            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
+            src/ui/imgui/DuskTheme.cpp)
         target_include_directories(dusk-gui-spike PRIVATE
-            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
-        if(MSVC)
-            # Same GL 3.x loader the notepad needs, for the same reason: DAF-Widgets hands
-            # Dear ImGui a custom loader that only carries those prototypes off Windows.
-            target_sources(dusk-gui-spike PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
-            target_include_directories(dusk-gui-spike PRIVATE src/ui)
-        endif()
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui"
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
         target_link_libraries(dusk-gui-spike PRIVATE
             dgl-opengl3
             dgl-opengl3-definitions
-            dgl-system-libs-definitions)
+            dgl-system-libs-definitions
+            daf-widgets-imgui
+            daf-widgets-dusk)
         target_compile_features(dusk-gui-spike PRIVATE cxx_std_17)
         set_target_properties(dusk-gui-spike PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gui-spike")
@@ -678,6 +718,10 @@ target_sources(DuskStudio PRIVATE
     src/engine/McuReceiver.cpp
     src/engine/McuController.cpp
     src/engine/MidiTimeCodeEmitter.cpp
+    src/engine/builtin/BuiltinInstance.cpp
+    src/engine/builtin/BuiltinRegistry.cpp
+    src/engine/builtin/DafUnitInstance.cpp
+    src/engine/builtin/UtilityUnit.cpp
     # DeviceManager: native orchestrator on Linux (DeviceManager.cpp), JUCE-wrapped
     # fallback off Linux (DeviceManagerJuce.cpp). Gated below the target_sources().
     src/engine/midi/MidiDevices.cpp
@@ -687,6 +731,8 @@ target_sources(DuskStudio PRIVATE
     src/engine/PluginDescriptor.cpp
     src/engine/PluginManager.cpp
     src/engine/PluginSlot.cpp
+    src/engine/sfz/SfzLibrary.cpp
+    src/ui/multisample/SfzLibraryPanel.cpp
     src/engine/RecordManager.cpp
     src/engine/ShutdownPhases.cpp
     src/engine/scenario/ScenarioContext.cpp
@@ -732,6 +778,8 @@ target_sources(DuskStudio PRIVATE
     src/session/SessionSerializer.cpp
     src/session/SessionTemplates.cpp
     src/util/CrashHandler.cpp
+    src/util/HostInfo.cpp
+    src/util/LogFile.cpp
     src/util/SingleInstance.cpp
     src/ui/AnalogVuMeter.cpp
     src/ui/AppConfig.cpp
@@ -806,6 +854,7 @@ endif()
 target_sources(DuskStudio PRIVATE
     src/engine/audiofile/BufferedFileReader.cpp
     src/engine/audiofile/FileReader.cpp
+    src/engine/audiofile/WaveformPeaks.cpp
     src/engine/audiofile/FileWriter.cpp
     src/engine/audiofile/ThreadedFileWriter.cpp
     src/engine/audiofile/WriterDrainPool.cpp)
@@ -970,15 +1019,25 @@ if(UNIX AND NOT APPLE)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
 endif()
 
-# No native MIDI backend off Linux: the seam falls back to JUCE's MIDI device
-# API, confined to this one TU. This condition is the exact inverse of the
-# __linux__ branch MidiDevices.cpp picks its backend with, so the backend it
-# asks for is always compiled in. (The ALSA block above uses the wider
-# UNIX-AND-NOT-APPLE, so a non-Linux Unix would build AlsaSeqMidi.cpp too - as
-# its own non-Linux stub, unreferenced. Only Linux, macOS and Windows are
-# actually targeted.)
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+option(DUSKSTUDIO_NATIVE_COREMIDI "Use the native CoreMIDI device backend on macOS" OFF)
+if(DUSKSTUDIO_NATIVE_COREMIDI AND NOT APPLE)
+    message(FATAL_ERROR "DUSKSTUDIO_NATIVE_COREMIDI requires macOS")
+endif()
+
+if(DUSKSTUDIO_NATIVE_COREMIDI)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_COREMIDI=1)
+elseif(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(DuskStudio PRIVATE src/engine/midi/JuceMidiBackend.cpp)
+endif()
+
+if(APPLE)
+    add_library(dusk-coremidi STATIC src/engine/midi/CoreMidiBackend.mm)
+    target_compile_features(dusk-coremidi PUBLIC cxx_std_17)
+    set_target_properties(dusk-coremidi PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED ON)
+    target_include_directories(dusk-coremidi PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_options(dusk-coremidi PRIVATE -Wall -Wextra -Wpedantic -fblocks)
+    target_link_libraries(dusk-coremidi PUBLIC "-framework CoreMIDI" "-framework CoreFoundation")
+    target_link_libraries(DuskStudio PRIVATE dusk-coremidi)
 endif()
 
 # Dusk Studio-owned native PipeWire backend - a dusk device::IODevice +
@@ -995,15 +1054,10 @@ if(UNIX AND NOT APPLE AND PIPEWIRE_FOUND)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_PIPEWIRE=1)
 endif()
 
-# Shared native-host layer (format-agnostic) — compiled whenever any native host
-# or the multisample instrument rung is on, so it isn't double-added by the
-# per-format blocks below. The sfizz test mirrors the multisample gate further
-# down: that rung is platform-independent, so mac/win link it too.
-if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3
-   OR DUSKSTUDIO_NATIVE_AU
-   OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
-    target_sources(DuskStudio PRIVATE src/engine/hosting/InsertAdapter.cpp)
-endif()
+# Shared native-host layer (format-agnostic). Unconditional: the built-in unit
+# rung is always compiled in, so every platform reaches the insert adapter
+# whether or not a third-party host format is enabled.
+target_sources(DuskStudio PRIVATE src/engine/hosting/InsertAdapter.cpp)
 
 # Native macOS Audio Unit host. Registry discovery is metadata-only (no child
 # scanner needed); instantiation, rendering, state, and Cocoa views use the
@@ -1360,7 +1414,9 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/tape-echo/Source/DSP"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source")
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
+        "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp"
+        "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core")
 
     # Compile multi-comp's processor + editor + shared LEDMeter so
     # UniversalCompressor links cleanly. Editor sources are linked but not
@@ -1373,6 +1429,9 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # only translation unit that includes the TapeMachine core, which exists
     # only under DUSK_PLUGINS_PATH.
     target_sources(DuskStudio PRIVATE
+        src/engine/builtin/TapeUnit.cpp
+        src/engine/builtin/SynthUnit.cpp
+        "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp"
         src/dsp/MasterTape.cpp
         "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
         "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
@@ -1383,16 +1442,234 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp")
 
-    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DUSK_DSP=1)
+    # DUSKSTUDIO_HAS_DUSK_DSP gates the donor's framework-era processors as
+    # well as its cores; DUSKSTUDIO_HAS_DONOR_UNITS gates only the built-in
+    # units, so the narrow-link test target can enable those alone.
+    target_compile_definitions(DuskStudio PRIVATE
+        DUSKSTUDIO_HAS_DUSK_DSP=1
+        DUSKSTUDIO_HAS_DONOR_UNITS=1)
+
+    # Built-in units that are Dusk's own DAF plug-ins, run in process. Each is a
+    # static library of the plug-in, its DSP core and DAF's static-target entry
+    # point, compiled against that plug-in's DafPluginInfo.h inside a DAF
+    # namespace of its own, so no two of them share a DAF symbol. Its bridge in
+    # src/engine/builtin/daf is the only Dusk code that sees DAF. It takes the
+    # pinned shared DSP directory like every other core, so the program holds one
+    # definition of each shared filter. STATIC_BUILD keeps DAF from defining a
+    # DllMain or calling dladdr in an executable, and DUSK_CRASHLOG_NO_INSTALL
+    # keeps the plug-in's crash handler out of Dusk Studio's process.
+    #
+    # The same sources build twice: once with the plug-in's editor and once
+    # without. The editor drags in DGL and Dear ImGui, which a headless consumer
+    # has no use for and the test binary already compiles for itself, so the
+    # tests link the plain library and the app links the one with the editor.
+    if(DUSKSTUDIO_DAF_SOURCE_DIR)
+        set(_duskstudio_tape_echo_2_dir "${DUSK_PLUGINS_PATH}/plugins/tape-echo/daf-plugin")
+        set(_duskstudio_duskverb_2_dir "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/daf-plugin")
+        if(NOT EXISTS "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp")
+            message(FATAL_ERROR
+                "Dusk plugins donor lacks the Tape Echo 2 plug-in; "
+                "use the revision pinned by the build workflows")
+        endif()
+        if(NOT EXISTS "${_duskstudio_duskverb_2_dir}/DuskVerbPlugin.cpp")
+            message(FATAL_ERROR
+                "Dusk plugins donor lacks the DuskVerb 2 plug-in; "
+                "use the revision pinned by the build workflows")
+        endif()
+
+        function(duskstudio_embed_font symbol ttf out)
+            if(NOT EXISTS "${ttf}")
+                message(FATAL_ERROR "duskstudio_embed_font(${symbol}): no such font file: ${ttf}")
+            endif()
+            get_filename_component(_fontDir "${out}" DIRECTORY)
+            file(MAKE_DIRECTORY "${_fontDir}")
+            get_filename_component(_fontName "${ttf}" NAME)
+            file(READ "${ttf}" _fontHex HEX)
+            file(SIZE "${ttf}" _fontSize)
+            string(REGEX REPLACE "(..)" "0x\\1," _fontBytes "${_fontHex}")
+            string(REGEX REPLACE "(0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,)" "\\1\n  " _fontBytes "${_fontBytes}")
+            file(WRITE "${out}.tmp"
+"// Generated from ${_fontName}; SIL Open Font License 1.1.
+static const unsigned char ${symbol}[] = {
+  ${_fontBytes}
+};
+static const unsigned int ${symbol}_len = ${_fontSize}u;
+")
+            execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${out}.tmp" "${out}")
+            file(REMOVE "${out}.tmp")
+        endfunction()
+
+        function(duskstudio_add_daf_builtin_library
+                 target withEditor pluginNamespace pluginDir bridgeSource)
+            cmake_parse_arguments(BUILTIN "" "UI_SOURCE"
+                "DSP_SOURCES;INCLUDE_DIRS;COMPILE_DEFINITIONS" ${ARGN})
+            if(BUILTIN_UNPARSED_ARGUMENTS)
+                message(FATAL_ERROR
+                    "duskstudio_add_daf_builtin_library(${target}): unknown arguments: "
+                    "${BUILTIN_UNPARSED_ARGUMENTS}")
+            endif()
+            add_library("${target}" STATIC
+                "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafPluginMain.cpp"
+                ${BUILTIN_DSP_SOURCES}
+                "${bridgeSource}")
+            target_include_directories("${target}" SYSTEM PRIVATE
+                "${pluginDir}"
+                "${DUSK_PLUGINS_PATH}/plugins/shared-daf"
+                "${DUSKSTUDIO_DONOR_DSP_DIR}"
+                "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf"
+                ${BUILTIN_INCLUDE_DIRS})
+            target_compile_definitions("${target}" PRIVATE
+                "DAF_NAMESPACE=${pluginNamespace}"
+                DAF_PLUGIN_TARGET_STATIC
+                "DAF_PLUGIN_TARGET_STATIC_NAME=\"Dusk Studio\""
+                STATIC_BUILD
+                DUSK_CRASHLOG_NO_INSTALL
+                ${BUILTIN_COMPILE_DEFINITIONS})
+            target_compile_features("${target}" PRIVATE cxx_std_17)
+
+            if(NOT withEditor)
+                return()
+            endif()
+            if(NOT BUILTIN_UI_SOURCE)
+                message(FATAL_ERROR
+                    "duskstudio_add_daf_builtin_library(${target}): editor source missing")
+            endif()
+
+            # DAF's UI entry point and the plug-in's own editor, built against the
+            # DGL and Dear ImGui the app already links so the editor and Dusk
+            # Studio's own native views share one of each.
+            target_sources("${target}" PRIVATE
+                "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafUIMain.cpp"
+                "${BUILTIN_UI_SOURCE}")
+            if(APPLE)
+                # DAF reads the display scale through a platform helper that its own
+                # build adds beside the UI entry point. Elsewhere it is inside it.
+                target_sources("${target}" PRIVATE
+                    "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafUI_macOS.mm")
+            endif()
+            target_include_directories("${target}" SYSTEM PRIVATE
+                "${DUSK_PLUGINS_PATH}/plugins/shared-daf/ui"
+                "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui"
+                "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk"
+                "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
+            target_link_libraries("${target}" PRIVATE
+                dusk_native_ui
+                dgl-opengl3
+                dgl-opengl3-definitions
+                dgl-system-libs-definitions
+                dgl-system-libs)
+            target_compile_definitions("${target}" PRIVATE DUSKSTUDIO_DAF_UNIT_EDITOR=1)
+        endfunction()
+
+        set(_duskstudio_tape_echo_2_dsp_sources
+            "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp")
+        set(_duskstudio_tape_echo_2_includes
+            "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core")
+        duskstudio_add_daf_builtin_library(
+            dusk_daf_tape_echo_2 OFF DuskTapeEcho2
+            "${_duskstudio_tape_echo_2_dir}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/TapeEcho2.cpp"
+            DSP_SOURCES ${_duskstudio_tape_echo_2_dsp_sources}
+            INCLUDE_DIRS ${_duskstudio_tape_echo_2_includes}
+            UI_SOURCE "${_duskstudio_tape_echo_2_dir}/TapeEchoUI.cpp")
+
+        set(_duskstudio_duskverb_2_engine_sources "")
+        foreach(_verbSource IN ITEMS
+                FDNReverb OctaveGEQDesign DattorroTank QuadTank SixAPTankEngine
+                DiffusionStage DuskVerbEngine OutputDiffusion EarlyReflections
+                SpringEngine NonLinearEngine ShimmerEngine DattorroPlateVintage
+                ReverseRoomEngine)
+            list(APPEND _duskstudio_duskverb_2_engine_sources
+                "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp/${_verbSource}.cpp")
+        endforeach()
+        set(_duskstudio_duskverb_2_dsp_sources
+            "${_duskstudio_duskverb_2_dir}/DuskVerbPlugin.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core/DuskVerbDSP.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core/DuskVerbPresetEngineConfig.cpp"
+            ${_duskstudio_duskverb_2_engine_sources})
+        set(_duskstudio_duskverb_2_generated_dir
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/duskverb-2")
+        duskstudio_embed_font(kDvFontSemiBold
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/fonts/BarlowCondensed/BarlowCondensed-SemiBold.ttf"
+            "${_duskstudio_duskverb_2_generated_dir}/DuskVerbFontSemiBold.inc")
+        duskstudio_embed_font(kDvFontRegular
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/fonts/BarlowCondensed/BarlowCondensed-Regular.ttf"
+            "${_duskstudio_duskverb_2_generated_dir}/DuskVerbFontRegular.inc")
+
+        if(MSVC)
+            set_property(SOURCE ${_duskstudio_duskverb_2_dsp_sources} APPEND PROPERTY
+                COMPILE_OPTIONS
+                "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:/O2>"
+                "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:/fp:fast>")
+            set_property(SOURCE "${_duskstudio_duskverb_2_dir}/DuskVerbPlugin.cpp"
+                APPEND PROPERTY COMPILE_OPTIONS /fp:precise)
+        else()
+            set_property(SOURCE ${_duskstudio_duskverb_2_dsp_sources} APPEND PROPERTY
+                COMPILE_OPTIONS
+                "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-O3>"
+                "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-ffast-math>")
+            set_property(SOURCE "${_duskstudio_duskverb_2_dir}/DuskVerbPlugin.cpp"
+                APPEND PROPERTY COMPILE_OPTIONS -fno-finite-math-only)
+        endif()
+
+        set(_duskstudio_duskverb_2_includes
+            "${_duskstudio_duskverb_2_generated_dir}"
+            "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core"
+            "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src"
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/dsp"
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/ui")
+        set(_duskstudio_duskverb_2_definitions
+            DGL_USE_FILE_BROWSER
+            DUSKVERB2_VERSION_MAJOR=0
+            DUSKVERB2_VERSION_MINOR=1
+            DUSKVERB2_VERSION_PATCH=0)
+        duskstudio_add_daf_builtin_library(
+            dusk_daf_duskverb_2 OFF DuskVerb2
+            "${_duskstudio_duskverb_2_dir}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/DuskVerb2.cpp"
+            DSP_SOURCES ${_duskstudio_duskverb_2_dsp_sources}
+            INCLUDE_DIRS ${_duskstudio_duskverb_2_includes}
+            COMPILE_DEFINITIONS ${_duskstudio_duskverb_2_definitions}
+            UI_SOURCE "${_duskstudio_duskverb_2_dir}/DuskVerbUI.cpp")
+        set_target_properties(dusk_daf_duskverb_2 PROPERTIES UNITY_BUILD OFF)
+
+        if(TARGET dusk_native_ui)
+            duskstudio_add_daf_builtin_library(
+                dusk_daf_tape_echo_2_ui ON DuskTapeEcho2
+                "${_duskstudio_tape_echo_2_dir}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/TapeEcho2.cpp"
+                DSP_SOURCES ${_duskstudio_tape_echo_2_dsp_sources}
+                INCLUDE_DIRS ${_duskstudio_tape_echo_2_includes}
+                UI_SOURCE "${_duskstudio_tape_echo_2_dir}/TapeEchoUI.cpp")
+            duskstudio_add_daf_builtin_library(
+                dusk_daf_duskverb_2_ui ON DuskVerb2
+                "${_duskstudio_duskverb_2_dir}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/DuskVerb2.cpp"
+                DSP_SOURCES ${_duskstudio_duskverb_2_dsp_sources}
+                INCLUDE_DIRS ${_duskstudio_duskverb_2_includes}
+                COMPILE_DEFINITIONS ${_duskstudio_duskverb_2_definitions}
+                UI_SOURCE "${_duskstudio_duskverb_2_dir}/DuskVerbUI.cpp")
+            set_target_properties(dusk_daf_duskverb_2_ui PROPERTIES UNITY_BUILD OFF)
+            target_link_libraries(DuskStudio PRIVATE
+                dusk_daf_tape_echo_2_ui
+                dusk_daf_duskverb_2_ui)
+        else()
+            target_link_libraries(DuskStudio PRIVATE
+                dusk_daf_tape_echo_2
+                dusk_daf_duskverb_2)
+        endif()
+        target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
+    endif()
 endif()
 
 # Sfizz native sampler engine (BSD-2-Clause). Vendored as a git
-# submodule under external/sfizz; built as a static library so we
+# submodule under external/dusk-fizz; built as a static library so we
 # don't ship a separate .so/.dylib + dlopen at startup. Library-only
 # build: no JACK CLI, no MIDI-file renderer, no benchmarks/tests/demos.
 # DuskMultisampleProcessor (src/engine/multisample/) wraps it as a
 # native instrument rung (hosting::INativeInstance).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz.h")
     set(SFIZZ_JACK      OFF CACHE BOOL "" FORCE)
     set(SFIZZ_RENDER    OFF CACHE BOOL "" FORCE)
     set(SFIZZ_BENCHMARKS OFF CACHE BOOL "" FORCE)
@@ -1421,7 +1698,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     #      promotes the resulting -Wmissing-template-arg-list-after-
     #      template-kw warning to an error.
     set(_duskstudio_sfizz_cfg
-        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/cmake/SfizzConfig.cmake")
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/cmake/SfizzConfig.cmake")
     file(READ "${_duskstudio_sfizz_cfg}" _duskstudio_sfizz_cfg_src)
     string(REPLACE "elseif(PROJECT_SYSTEM_PROCESSOR MATCHES \"(arm.*)\")"
                    "elseif(PROJECT_SYSTEM_PROCESSOR MATCHES \"(arm.*)\" AND NOT PROJECT_SYSTEM_PROCESSOR MATCHES \"(aarch64|arm64)\")"
@@ -1435,7 +1712,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     unset(_duskstudio_sfizz_cfg)
 
     set(_duskstudio_atomic_queue_hdr
-        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/external/atomic_queue/include/atomic_queue/atomic_queue.h")
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/external/atomic_queue/include/atomic_queue/atomic_queue.h")
     file(READ "${_duskstudio_atomic_queue_hdr}" _duskstudio_aq_src)
     string(REPLACE "Base::template do_pop_any("  "Base::do_pop_any("  _duskstudio_aq_patched "${_duskstudio_aq_src}")
     string(REPLACE "Base::template do_push_any(" "Base::do_push_any(" _duskstudio_aq_patched "${_duskstudio_aq_patched}")
@@ -1453,7 +1730,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     #      replacement decimal rounds back to exactly the same float
     #      (the IEEE single just below 1.0).
     set(_duskstudio_voice_cpp
-        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz/Voice.cpp")
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz/Voice.cpp")
     file(READ "${_duskstudio_voice_cpp}" _duskstudio_voice_src)
     string(REPLACE "0x1.fffffep-1" "0.99999994f"
                    _duskstudio_voice_patched "${_duskstudio_voice_src}")
@@ -1471,14 +1748,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     # `git submodule update` after configure (restoring upstream)
     # but didn't reconfigure - the build would otherwise fail later
     # with cryptic compile errors instead of a clear up-front message.
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/cmake/SfizzConfig.cmake" _dsk_chk_a)
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/external/atomic_queue/include/atomic_queue/atomic_queue.h" _dsk_chk_b)
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz/Voice.cpp" _dsk_chk_c)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/cmake/SfizzConfig.cmake" _dsk_chk_a)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/external/atomic_queue/include/atomic_queue/atomic_queue.h" _dsk_chk_b)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz/Voice.cpp" _dsk_chk_c)
     if(_dsk_chk_a MATCHES "elseif\\(PROJECT_SYSTEM_PROCESSOR MATCHES \"\\(arm\\.\\*\\)\"\\)\n[ \t]*add_compile_options\\(-mfpu=neon\\)"
        OR _dsk_chk_b MATCHES "Base::template do_pop_any"
        OR _dsk_chk_c MATCHES "0x1\\.fffffep-1")
         message(FATAL_ERROR
-            "external/sfizz patches missing - the submodule was likely "
+            "external/dusk-fizz patches missing - the submodule was likely "
             "restored by `git submodule update` after configure last ran. "
             "Re-run cmake configure (the patches re-apply automatically) "
             "before building.")
@@ -1487,7 +1764,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     unset(_dsk_chk_b)
     unset(_dsk_chk_c)
 
-    add_subdirectory(external/sfizz EXCLUDE_FROM_ALL)
+    add_subdirectory(external/dusk-fizz EXCLUDE_FROM_ALL)
     target_link_libraries(DuskStudio PRIVATE sfizz::static)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
     target_sources(DuskStudio PRIVATE
@@ -1664,7 +1941,28 @@ if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_UI
                 "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/libgallium_wgl.dll"
             DESTINATION bin)
 endif()
+# No package carries the manual or the screenshots QUICKSTART.md links by
+# relative path, so every package installs a copy whose links point at the
+# tagged source instead. package-tarball.sh runs the same script.
+set(DUSKSTUDIO_SHIPPED_QUICKSTART "${CMAKE_CURRENT_BINARY_DIR}/packaging/QUICKSTART.md")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}"
+            "-DQUICKSTART_IN=${CMAKE_CURRENT_SOURCE_DIR}/QUICKSTART.md"
+            "-DQUICKSTART_OUT=${DUSKSTUDIO_SHIPPED_QUICKSTART}"
+            "-DQUICKSTART_VERSION=${PROJECT_VERSION}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ship-quickstart.cmake"
+    RESULT_VARIABLE duskstudio_quickstart_rc)
+if(NOT duskstudio_quickstart_rc EQUAL 0)
+    message(FATAL_ERROR "scripts/ship-quickstart.cmake failed (${duskstudio_quickstart_rc})")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             QUICKSTART.md scripts/ship-quickstart.cmake)
 if(APPLE)
+    # Keep a copy inside the installed bundle so Settings > Quickstart still
+    # works after the user drags only DuskStudio.app into /Applications. Install
+    # it before finalize-macos-bundle.sh signs the staged bundle.
+    install(FILES "${DUSKSTUDIO_SHIPPED_QUICKSTART}"
+            DESTINATION "DuskStudio.app/Contents/Resources")
     # Installing a bundle rewrites its Mach-O load commands, so the POST_BUILD
     # signature above is invalid by the time CPack stages the .app, and the
     # staged copy is still missing the Homebrew dylibs it links. Repair both on
@@ -1714,10 +2012,24 @@ if(UNIX AND NOT APPLE)
             DESTINATION share/doc/dusk-studio)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/copyright"
             DESTINATION share/doc/dusk-studio)
+    # Reachable before the app is opened, which is the point: a user who cannot
+    # get a device configured has not got as far as the in-app link. The Linux
+    # tarball is not CPack and stages its own copy in package-tarball.sh.
+    install(FILES "${DUSKSTUDIO_SHIPPED_QUICKSTART}"
+            DESTINATION share/doc/dusk-studio)
 else()
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
                   "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES.txt"
             DESTINATION .)
+    if(WIN32)
+        # A stock Windows has no program for .md, and the shell answers with the
+        # "how do you want to open this file" chooser rather than the quickstart.
+        # Every Windows opens .txt.
+        install(FILES "${DUSKSTUDIO_SHIPPED_QUICKSTART}"
+                DESTINATION . RENAME QUICKSTART.txt)
+    else()
+        install(FILES "${DUSKSTUDIO_SHIPPED_QUICKSTART}" DESTINATION .)
+    endif()
 endif()
 # The hicolor size the .desktop Icon=DuskStudio key resolves. Committed rather
 # than derived at build time so cpack DEB/RPM cannot emit an iconless package;
@@ -1783,9 +2095,6 @@ endif()
 # an ad-hoc codesign (unsigned by design - no notarization).
 set(CPACK_DMG_FORMAT                "UDZO")
 set(CPACK_DMG_VOLUME_NAME           "Dusk Studio ${DUSKSTUDIO_VERSION}")
-# CPack adds an /Applications symlink by default. Keep the image's root to the
-# three release artefacts promised by the packaging contract.
-set(CPACK_DMG_DISABLE_APPLICATIONS_SYMLINK ON)
 
 # Package filename platform suffix. CPack defaults to the kernel name
 # ("Darwin") on macOS and "win64" on Windows - override both to a user-facing,

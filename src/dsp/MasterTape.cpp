@@ -10,6 +10,7 @@ namespace duskstudio
 struct MasterTape::Impl
 {
     duskaudio::TapeMachineDSP core;
+    int processingLatency = 0;
 };
 
 MasterTape::MasterTape() : impl (std::make_unique<Impl>()) {}
@@ -22,11 +23,22 @@ void MasterTape::prepare (double sampleRate, int blockSize, int oversamplingFact
                                                           : 0);
     impl->core.prepare (sampleRate, std::max (1, blockSize));
     impl->core.reset();
+
+    // The core's report is path-dependent and reads zero on Thru, so take the
+    // processing figure here with the path forced. pushParameters restores the
+    // session's path on the first block, before any audio reaches the core.
+    impl->core.setSignalPath (duskaudio::TapeCore::Repro);
+    impl->processingLatency = std::max (0, impl->core.latencySamples());
 }
 
 int MasterTape::latencySamples() const noexcept
 {
-    return impl->core.latencySamples();
+    return impl->processingLatency;
+}
+
+bool MasterTape::isPassthroughPath() const noexcept
+{
+    return impl->core.latencySamples() == 0;
 }
 
 void MasterTape::pushParameters (const TapeParams& p) noexcept

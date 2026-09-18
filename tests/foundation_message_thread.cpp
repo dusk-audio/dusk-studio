@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <functional>
 
 // The event seam is a thin wrapper over the platform message loop.
@@ -100,5 +101,22 @@ TEST_CASE ("dusk::callAsync defers and dispatches on the message thread", "[foun
 #if ! defined (__APPLE__)
     pumpUntil ([&ran] { return ran.load(); }, std::chrono::seconds (5));
     REQUIRE (ran.load());
+#endif
+}
+
+TEST_CASE ("a termination signal routes a quit request to the message thread", "[foundation][events]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    std::atomic<bool> asked { false };
+    dusk::QuitSignalHandler handler ([&asked] { asked.store (true, std::memory_order_relaxed); });
+    REQUIRE (handler.isInstalled());
+
+    REQUIRE (std::raise (SIGTERM) == 0);
+    REQUIRE_FALSE (asked.load());   // latched in the handler, not called back from signal context
+
+#if ! defined (__APPLE__)
+    pumpUntil ([&asked] { return asked.load(); }, std::chrono::seconds (5));
+    REQUIRE (asked.load());
 #endif
 }

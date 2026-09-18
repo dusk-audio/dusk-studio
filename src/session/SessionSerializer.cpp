@@ -539,6 +539,11 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
         obj["native_multisample_path"]  = toStd (t.nativeMultisamplePath);
         obj["native_multisample_state"] = toStd (t.nativeMultisampleStateBase64);
     }
+    if (! t.builtinUnitId.empty())
+    {
+        obj["builtin_id"]    = t.builtinUnitId;
+        obj["builtin_state"] = t.builtinStateBase64;
+    }
 
     obj["fader_db"]     = t.strip.faderDb.load();
     obj["pan"]          = t.strip.pan.load();
@@ -1068,6 +1073,8 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
     t.nativeAuStateBase64   = json::getString (v, "native_au_state");
     t.nativeMultisamplePath        = json::getString (v, "native_multisample_path");
     t.nativeMultisampleStateBase64 = json::getString (v, "native_multisample_state");
+    t.builtinUnitId      = json::getString (v, "builtin_id");
+    t.builtinStateBase64 = json::getString (v, "builtin_state");
 
     auto setFloat = [&v] (std::atomic<float>& a, const char* key,
                           float fallback, float minimum, float maximum)
@@ -1654,6 +1661,11 @@ juce::String SessionSerializer::serialize (const Session& s)
                 slot["native_au_identifier"] = toStd (lane.nativeAuIdentifier[(size_t) p]);
                 slot["native_au_state"] = toStd (lane.nativeAuStateBase64[(size_t) p]);
             }
+            if (! lane.builtinUnitId[(size_t) p].empty())
+            {
+                slot["builtin_id"]    = lane.builtinUnitId[(size_t) p];
+                slot["builtin_state"] = lane.builtinStateBase64[(size_t) p];
+            }
 
             // Hardware-insert side of this slot. Same shape as the
             // Track::hardwareInsert block above.
@@ -2160,6 +2172,8 @@ bool SessionSerializer::load (Session& s, const File& source)
                     lane.nativeVst3StateBase64[(size_t) p] = json::getString (sv, "native_vst3_state");
                     lane.nativeAuIdentifier[(size_t) p]    = json::getString (sv, "native_au_identifier");
                     lane.nativeAuStateBase64[(size_t) p]   = json::getString (sv, "native_au_state");
+                    lane.builtinUnitId[(size_t) p]         = json::getString (sv, "builtin_id");
+                    lane.builtinStateBase64[(size_t) p]    = json::getString (sv, "builtin_state");
 
                     // Same default-off rationale as the track hardware_insert.
                     lane.hardwareInserts[(size_t) p].enabled.store (

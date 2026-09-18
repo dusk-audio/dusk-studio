@@ -21,18 +21,18 @@ This document is aimed at a developer with a Windows machine who has been handed
 
 ## Repository layout
 
-Dusk Studio expects four sibling repositories to be present alongside its own checkout:
+Dusk Studio expects two sibling repositories to be present alongside its own checkout:
 
 ```
 C:\dev\
 ├── dusk-studio\       (this repo)
 ├── JUCE\              (JUCE 8.0.x, the framework)
-├── plugins\           (Dusk Audio plugins, donor DSP)
-├── DAF\               (Dusk Audio Framework — native notepad UI)
-└── DAF-Widgets\       (Dear ImGui layer for DAF)
+└── DAF\               (framework, DGL, and in-tree widgets/ kit)
 ```
 
-CMake auto-discovers these. If you put them elsewhere, pass `-DJUCE_PATH=...`, `-DDUSK_PLUGINS_PATH=...`, `-DDAF_PATH=...`, and `-DDAF_WIDGETS_PATH=...` at configure time.
+CMake auto-discovers these. If you put them elsewhere, pass `-DJUCE_PATH=...` and `-DDAF_PATH=...` at configure time.
+
+The Dusk Audio plugins repo (donor DSP) is not a sibling: configure fetches it into `build\_deps\dusk-plugins` at the commit named in [DONOR_REV](DONOR_REV), the same commit CI and every release build. That needs git and network access on the first configure. To build against your own plugins checkout instead, pass `-DDUSK_PLUGINS_PATH=C:/path/to/plugins`.
 
 ### Clone everything
 
@@ -42,46 +42,27 @@ Open Command Prompt (`cmd.exe`). All of these repos are public, no auth needed.
 cd C:\dev
 git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch 8.0.4 https://github.com/juce-framework/JUCE.git
-git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
-git -C plugins fetch --depth 1 origin 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
-git -C plugins checkout --detach FETCH_HEAD
-git -C plugins rev-parse HEAD | findstr /x /c:"0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea" >nul || (echo ERROR: donor checkout did not reach the pinned revision & exit /b 1)
 ```
 
-`--recurse-submodules` matters: `external/sfizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1164](CMakeLists.txt#L1164)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.
-
-The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` and nothing else ([CMakeLists.txt:383-393](CMakeLists.txt#L383-L393)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find — and it warns rather than failing, leaving you with a recorder that has no EQ, compressor, or tape.
-
-The fetch, detached checkout and exact revision check are also mandatory. Dusk
-Studio consumes a framework-free compressor core that is present at this
-workflow-pinned revision but is not on the donor repository's current `main`.
-When that pin moves, update every workflow and this guide together.
+`--recurse-submodules` matters: `external/dusk-fizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1164](CMakeLists.txt#L1164)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.
 
 The Dusk Studio repo's own directory name (`dusk-studio\`) doesn't matter to the build, so rename it if you prefer.
 
 ### The native notepad (DAF + Dear ImGui)
 
-The session notepad is a native window built on DAF/DGL plus the Dear ImGui layer from DAF-Widgets, rather than a JUCE component. Both come from Dusk-owned forks pinned to the revisions CI builds:
+The session notepad uses DAF/DGL and the in-tree Dear ImGui widget kit:
 
 ```cmd
 cd C:\dev
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout 50ad8c22a2f05b85be4b40e473d830d2dc91c2c2
-git -C DAF submodule update --init
-git clone https://github.com/dusk-audio/DAF-Widgets.git
-git -C DAF-Widgets checkout 798154e874eaaa024371f6076249398b51498142
 ```
 
-Clone then check out the SHA rather than building whatever a branch points at today. The submodule step is not optional: DGL pulls the Dusk Pugl fork into `dgl/src/pugl-upstream`. The pins live in [.github/actions/clone-daf-stack/action.yml](.github/actions/clone-daf-stack/action.yml), the single source of truth for every workflow.
+Build against DAF `main`, the same branch CI builds; `git -C DAF pull` before building picks up its latest changes. Pugl and the widget kit are vendored in that checkout.
 
-The pinned Pugl revision is carried by `dusk-pin-5e2621d`, not Pugl's `main`.
-Do not delete that branch: a fresh DAF submodule checkout and every CI build
-depend on the commit remaining reachable.
-
-Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
+Without DAF and its in-tree widgets, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 
 ```text
--- Native UI: DAF / DAF-Widgets not found - disabled
+-- Native UI: DAF / DAF widgets not found - disabled
 ```
 
 The build otherwise completes as normal, but every native view is gone: opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*, the compressor editor, the virtual keyboard and the audio settings panel say the same of themselves, and the startup dialog does not appear. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` with a checkout missing makes it a configure error instead.
@@ -163,7 +144,6 @@ cmake -S . -B build ^
   -DJUCE_PATH=C:/some/other/JUCE ^
   -DDUSK_PLUGINS_PATH=C:/some/other/plugins ^
   -DDAF_PATH=C:/some/other/DAF ^
-  -DDAF_WIDGETS_PATH=C:/some/other/DAF-Widgets ^
   -G "Visual Studio 17 2022" -A x64
 ```
 

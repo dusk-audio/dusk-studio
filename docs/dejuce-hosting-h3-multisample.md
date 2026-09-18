@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # Hosting tower H3 — DuskMultisample re-home (executable spec)
 
 Status: **IMPLEMENTED 2026-07-27, committed on `dejuce/hosting-h3`,

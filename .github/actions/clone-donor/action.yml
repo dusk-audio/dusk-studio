@@ -1,0 +1,23 @@
+name: Clone Dusk plugins
+description: Dusk plugins (donor DSP) checkout into RUNNER_TEMP/plugins at the commit in DONOR_REV.
+
+runs:
+  using: composite
+  steps:
+    - name: Clone Dusk plugins
+      shell: bash
+      env:
+        DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
+      run: |
+        set -euo pipefail
+        rev="$(tr -d '[:space:]' < "${GITHUB_WORKSPACE}/DONOR_REV")"
+        [[ "${rev}" =~ ^[0-9a-f]{40}$ ]] || {
+          echo "ERROR: DONOR_REV must hold one full commit hash (got '${rev}')" >&2; exit 1; }
+        git init -q "${RUNNER_TEMP}/plugins"
+        cd "${RUNNER_TEMP}/plugins"
+        git remote add origin "${DONOR_REPO}"
+        git fetch --depth 1 origin "${rev}"
+        git checkout -q FETCH_HEAD
+        [[ "$(git rev-parse HEAD)" == "${rev}" ]] || {
+          echo "ERROR: donor checkout $(git rev-parse HEAD) != DONOR_REV ${rev}" >&2; exit 1; }
+        echo "Dusk plugins ${rev}"

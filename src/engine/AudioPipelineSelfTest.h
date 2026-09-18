@@ -124,6 +124,7 @@ private:
     std::string testMidiPlayAlongMonitor();   // armed+IN MIDI track sounds live notes in Stopped AND Playing
     std::string testAudioPlayAlongSends();    // IN audio track feeds its aux send in Stopped AND Playing
     std::string testLoopRecordTakeStacking(); // one callback crosses loop seam into a second audio+MIDI take
+    std::string testCloneTrackNativeInsert(); // clone + undo carry a native CLAP insert's identity and state
     std::string testBackendsOpenCleanly();
     std::string probeUMC1820AlsaFormat();   // explicitly open UMC1820 ALSA & report format
 

@@ -1,9 +1,11 @@
 #include "PipeWireAudioIODeviceType.h"
 #include "PipeWireAudioIODevice.h"
+#include "PipeWireDefaultDevice.h"
 
 #include "../../foundation/Text.h"
 
 #include <pipewire/pipewire.h>
+#include <pipewire/extensions/metadata.h>
 #include <spa/utils/dict.h>
 
 #include <cassert>
@@ -81,11 +83,48 @@ struct ScanResult
     std::vector<std::string> inNames, outNames, inIds, outIds;
     std::vector<int>  inChans, outChans;
 
+    // The desktop's chosen devices, as the raw metadata values (JSON objects).
+    // Empty when the graph has no "default" metadata, which is a bare pipewire
+    // with no session manager.
+    std::string defaultSink, defaultSource;
+
     pw_main_loop* loop = nullptr;
+    pw_core*      core = nullptr;
+    pw_registry*  registry = nullptr;
+    pw_proxy*     metadata = nullptr;
+    spa_hook      metadataHook {};
     int  syncSeq = 0;
     bool haveSync = false;
+    // Property events for a metadata object only start after it is bound, which
+    // happens while the first roundtrip is still delivering globals. A second
+    // sync gives them a roundtrip of their own to arrive in.
+    int  metadataSyncSeq = 0;
+    bool haveMetadataSync = false;
     bool completed = false;   // the matching core.done arrived (scan is complete)
 };
+
+int onMetadataProperty (void* data, std::uint32_t subject, const char* key,
+                        const char* /*type*/, const char* value)
+{
+    auto& r = *static_cast<ScanResult*> (data);
+    if (subject != PW_ID_CORE || key == nullptr || value == nullptr)
+        return 0;
+    if (std::strcmp (key, "default.audio.sink") == 0)
+        r.defaultSink = value;
+    else if (std::strcmp (key, "default.audio.source") == 0)
+        r.defaultSource = value;
+    return 0;
+}
+
+pw_metadata_events makeMetadataEvents()
+{
+    pw_metadata_events e {};
+    e.version  = PW_VERSION_METADATA_EVENTS;
+    e.property = onMetadataProperty;
+    return e;
+}
+
+const pw_metadata_events kMetadataEvents = makeMetadataEvents();
 
 void onRegistryGlobal (void* data, uint32_t id, uint32_t /*permissions*/,
                         const char* type, uint32_t /*version*/,
@@ -114,6 +153,22 @@ void onRegistryGlobal (void* data, uint32_t id, uint32_t /*permissions*/,
         n.isSink   = isSink   || isDuplex;
         n.isSource = isSource || isDuplex;
         r.nodes.push_back (n);
+    }
+    else if (std::strcmp (type, PW_TYPE_INTERFACE_Metadata) == 0)
+    {
+        // Only the object the session manager calls "default" carries the
+        // desktop's device choice; others (route settings, per-node state) do not.
+        const char* metaName = spa_dict_lookup (props, PW_KEY_METADATA_NAME);
+        if (metaName == nullptr || std::strcmp (metaName, "default") != 0
+            || r.metadata != nullptr || r.registry == nullptr)
+            return;
+        auto* bound = (pw_proxy*) pw_registry_bind (r.registry, id, type,
+                                                    PW_VERSION_METADATA, 0);
+        if (bound == nullptr)
+            return;
+        r.metadata = bound;
+        pw_metadata_add_listener ((pw_metadata*) bound, &r.metadataHook,
+                                  &kMetadataEvents, &r);
     }
     else if (std::strcmp (type, PW_TYPE_INTERFACE_Port) == 0)
     {
@@ -150,9 +205,24 @@ void onCoreDone (void* data, uint32_t id, int seq)
     auto& r = *static_cast<ScanResult*> (data);
     // The graph delivers every existing registry global BEFORE answering our
     // sync, so once this matching done arrives the enumeration is complete.
-    if (id == PW_ID_CORE && r.haveSync && seq == r.syncSeq)
+    if (id != PW_ID_CORE)
+        return;
+    if (r.haveSync && seq == r.syncSeq)
     {
+        // The node list is whole at this point. Marking it so before waiting on
+        // the metadata keeps a second roundtrip that never answers costing only
+        // the default hint, which has a fallback, rather than the whole scan.
         r.completed = true;
+        if (r.metadata != nullptr && r.core != nullptr && ! r.haveMetadataSync)
+        {
+            r.metadataSyncSeq  = pw_core_sync (r.core, PW_ID_CORE, 0);
+            r.haveMetadataSync = true;
+            return;
+        }
+        pw_main_loop_quit (r.loop);
+    }
+    else if (r.haveMetadataSync && seq == r.metadataSyncSeq)
+    {
         pw_main_loop_quit (r.loop);
     }
 }
@@ -224,6 +294,10 @@ void enumerateNodes (ScanResult& result)
         return;
     }
 
+    // The registry callback binds the "default" metadata object off these.
+    result.core     = core;
+    result.registry = registry;
+
     spa_hook registryHook {};
     spa_hook coreHook {};
     pw_registry_add_listener (registry, &registryHook, &kRegistryEvents, &result);
@@ -241,6 +315,12 @@ void enumerateNodes (ScanResult& result)
     pw_main_loop_run (result.loop);
 
     pw_loop_destroy_source (pwLoop, timer);
+    if (result.metadata != nullptr)
+    {
+        spa_hook_remove (&result.metadataHook);
+        pw_proxy_destroy (result.metadata);
+        result.metadata = nullptr;
+    }
     spa_hook_remove (&registryHook);
     spa_hook_remove (&coreHook);
     pw_proxy_destroy ((pw_proxy*) registry);
@@ -248,6 +328,8 @@ void enumerateNodes (ScanResult& result)
     pw_context_destroy (context);
     pw_main_loop_destroy (result.loop);
     result.loop = nullptr;
+    result.core = nullptr;
+    result.registry = nullptr;
 
     // Only publish devices from a complete scan; a core error or the timeout
     // quits the loop early with partial data, which would list wrong counts.
@@ -272,6 +354,8 @@ void PipeWireAudioIODeviceType::scanForDevices()
     outputIds   = r.outIds;
     inputChans  = r.inChans;
     outputChans = r.outChans;
+    defaultSinkValue   = r.defaultSink;
+    defaultSourceValue = r.defaultSource;
 
     appendNumbersToDuplicates (inputNames);
     appendNumbersToDuplicates (outputNames);
@@ -288,9 +372,20 @@ std::vector<std::string> PipeWireAudioIODeviceType::getDeviceNames (bool wantInp
 int PipeWireAudioIODeviceType::getDefaultDeviceIndex (bool forInput) const
 {
     assert (hasScanned);
-    // Skip monitor sources and HDMI sinks - the same "don't default to the
-    // thing the user didn't mean" heuristic the ALSA backend uses. A saved
-    // selection, once resolved, always takes precedence over this.
+    // What the rest of the desktop plays through and records from, when the
+    // graph says. Ahead of the heuristic below because it is the user's actual
+    // answer rather than a guess at it.
+    if (const int fromMetadata = pipewire::indexOfMetadataDefault (
+            forInput ? defaultSourceValue : defaultSinkValue,
+            forInput ? inputIds : outputIds,
+            forInput ? inputNames : outputNames);
+        fromMetadata >= 0)
+        return fromMetadata;
+
+    // No session manager, or it names something this scan did not see: skip
+    // monitor sources and HDMI sinks, the same "don't default to the thing the
+    // user didn't mean" heuristic the ALSA backend uses. A saved selection,
+    // once resolved, always takes precedence over either.
     const auto& names = forInput ? inputNames : outputNames;
     for (int i = 0; i < (int) names.size(); ++i)
     {

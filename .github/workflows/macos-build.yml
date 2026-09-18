@@ -21,6 +21,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# gh cache delete in the prune steps needs actions: write; everything else
+# only reads the checkout.
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   build:
     name: Build + tests (clang Release, macOS arm64)
@@ -74,8 +80,11 @@ jobs:
           make -j3 check
           make install
 
-      - name: Cache ccache objects
-        uses: actions/cache@v6
+      - name: Restore ccache objects
+        # Restore on every run, save only from main (below): a snapshot per PR
+        # push filled the repository's 10 GB cache quota within hours and
+        # evicted the snapshots the next run needed.
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-macos-14-${{ github.sha }}
@@ -88,25 +97,10 @@ jobs:
             https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE"
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned donor SHA (mirrors release.yml). main consumes source
-        # files the donor's main HEAD has since relocated, so an unpinned
-        # clone breaks configure. Bump every workflow's DONOR_REV together.
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-          DONOR_REV: 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins-main"
-          cd "${RUNNER_TEMP}/plugins-main"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
-      - name: Clone DAF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-daf-stack.
+      - name: Clone DAF main
         uses: ./.github/actions/clone-daf-stack
 
       - name: Configure (Release)
@@ -117,9 +111,8 @@ jobs:
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
@@ -149,6 +142,16 @@ jobs:
       - name: Smoke launch (--version)
         run: build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio --version
 
+      - name: Headless self-test (DUSKSTUDIO_RUN_SELFTEST=1)
+        # Same coverage as the Linux job: full AudioEngine construction, plugin
+        # scan attempt, synthetic DSP. The runner has no GNU timeout, so the
+        # bound is perl's alarm, which survives the exec. 90 s because there is
+        # no audio device and the readiness wait burns its budget first.
+        run: |
+          perl -e 'alarm shift @ARGV; exec @ARGV' 90 \
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+            build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio
+
       - name: Configure + build + run tests
         run: |
           set -euo pipefail
@@ -158,9 +161,8 @@ jobs:
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
@@ -171,8 +173,27 @@ jobs:
           grep -Eq '^DUSKSTUDIO_SODIUM_STATIC_LIBRARY:FILEPATH=.*/libsodium\.a$' build-tests/CMakeCache.txt || {
             echo "::error::macOS test configure did not select static libsodium" >&2; exit 1; }
           cmake --build build-tests --target dusk-studio-tests -j5
-          ctest --test-dir build-tests --output-on-failure
+          ctest --test-dir build-tests --output-on-failure --parallel 3
 
       - name: ccache stats
         if: always()
         run: ccache -s
+
+      - name: Save ccache objects (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-14-${{ github.sha }}
+
+      - name: Prune older ccache snapshots (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --key ccache-macos-14- \
+              --sort created_at --order desc --limit 100 --json id \
+            | jq -r '.[1:][].id' \
+            | while IFS= read -r id; do
+                gh cache delete "$id" --repo "$GITHUB_REPOSITORY"
+              done

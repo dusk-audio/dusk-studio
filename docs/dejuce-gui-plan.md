@@ -1,4 +1,11 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # De-JUCE — GUI tower (campaign plan)
+
+Phase 0 consolidation update: the active build now consumes a single DAF checkout,
+with pugl and `widgets/` vendored in-tree, tracking DAF `main`. Use `DAF_PATH`
+only. References below to separate widget checkouts and pins describe the
+earlier gate history.
 
 The last tower. It removes `src/ui/` as a JUCE surface and, with it, every
 remaining JUCE module. This document is the execution spec: the gate evidence,
@@ -322,7 +329,7 @@ desktop application.
 | 6 | Keyboard focus | Fixed on `dusk/302-app-contract`, lands with the G0 repin | `wayland.c:1555`, `Widget::onFocusChanged` |
 | 7 | Clipboard | Partial (text only, no primary) | `wayland.c:4093`, `:4109` |
 | 8 | Cursors | Hide fixed on `dusk/302-app-contract`, lands with the G0 repin; still no custom image | `wayland.c:2519`, `kMouseCursorNone` |
-| 9 | Accessibility | Absent (nothing in the tree) | — |
+| 9 | Accessibility | Bridge chosen; implementation and parity outstanding | [Accessibility plan](dejuce-accessibility-plan.md) |
 | 10 | Headless automation | Absent in the backend | `wayland.c:2911` |
 | 11 | HiDPI / fractional scaling | Present | `wayland.c:312`, `:355` |
 | 12 | Timers and event loop | Present, real blocking wait with timeout | `wayland.c:3454`, `:3612` |
@@ -366,11 +373,12 @@ Detail on the ones that change the plan:
   application the string the portal wants through
   `Window::getPortalParentHandle()`: `x11:` and a window id, or `wayland:` and
   an xdg-foreign handle, empty where there is none. Verified on both backends.
-- **Accessibility (9).** Nothing exists, in either the framework or ImGui, and
-  `src/ui/` already carries JUCE accessibility labelling that would regress
-  silently. This needs a deliberate decision from Marc before G3, not after:
-  either an AT-SPI bridge fed from the ImGui widget kit, or a written,
-  documented decision to drop screen-reader support in the native UI.
+- **Accessibility (9).** Marc chose a platform accessibility bridge on
+  2026-09-08. Preserve existing JUCE semantics and provide native platform
+  exposure; G3 waits for implementation, parity and desktop checks. The
+  [accessibility plan](dejuce-accessibility-plan.md) records the source inventory,
+  the distinction between current semantics and new Linux AT-SPI support, and
+  the first native control slice. The framework/ImGui bridge is still unbuilt.
 - **Headless automation (10).** The backend hard-fails without a compositor and
   has no screenshot hook. This is workable and already solved twice over: run
   under a private headless `mutter` as this gate did, and let the application
@@ -663,12 +671,39 @@ application reads its own steady frame back as a PPM and
 
 ### G3 — The console
 
+**Preparation in progress; native console not started.** PRs #511–#513 removed
+unused master/bus metering, channel drawing helpers and obsolete console layout
+branches. The channel fader's conflicting range override was also removed in
+PR `#513` so it uses the parameter domain of -100 to +12 dB, as documented. Together
+these changes took the gate from 164 files / 8,241 uses to 164 / 8,149.
+
+PR #514 removed the channel strip's unused GR/threshold labels and
+the GR polling/smoothing that fed them, and consolidated the input readout's
+duplicate font setup. The labels never had drawable bounds;
+the visible GR meter owns its state and polling in `CompMeterStrip` and is
+unchanged. The gate fell to 164 / 8,097, with no allowlist departures or module
+unlinks.
+
+PR #515 removed the aux lane's empty editor-toggle helper and its
+unused PluginSlot forward declaration, plus obsolete bus-layout prose. The
+native-slot tooltip now describes removal instead of promising an editor toggle.
+Loaded slots still keep the picker closed; empty slots still open it. The gate
+stays at 164 / 8,097. Issue #305's first phase corrects the fader's accessible
+mute label to use the DSP's existing -90 dB threshold, keeps infinity-text input
+muted, and records the
+[accessibility support floor and bridge plan](dejuce-accessibility-plan.md).
+It does not implement the native bridge or complete #305.
+
+G0, G1 and both G2 passes are already on main (G2 remainder: PR #356).
+The accessibility bridge's parity and desktop checks in §3 and G2's outstanding
+desktop sign-offs remain prerequisites for the console port.
+
 The largest and riskiest phase, and the one the spike measured.
 `ChannelStripComponent` (6,340 lines), `MasterStripComponent`, `BusComponent`,
 `AuxLaneComponent`, `ConsoleView`, `AnalogVuMeter`, `CompMeterStrip`,
 `SplitModuleButton` become one embedded framework window covering the console
-area. Do not start it until §2.2's caching work is landed and measured at 24
-strips.
+area. The 24-strip CPU prerequisite is satisfied by G1's baked domes and
+30 Hz idle redraw (§2.2); draw-list caching was not needed for that budget.
 
 Owns: roughly 15 files, ~16,000 lines. Verify: 24-strip CPU under the budget
 agreed in G1; golden images per strip variant including the compact and 8-up
@@ -697,9 +732,19 @@ Owns: `MainComponent.{h,cpp}` (6,000 lines), `DuskStudioApp.{h,cpp}`,
 ### G6 — Residue
 
 What is left once no UI is JUCE: `MessageThread.cpp` rewritten on the pugl
-world's timers and event loop, `juce_data_structures`, `AudioThumbnail` off
-`juce_audio_utils`, and the last `juce::String`/`File`/`Colour` holdouts in
+world's timers and event loop, `juce_data_structures`, the remaining
+`juce_audio_utils`/`juce_audio_formats` links, and the last `juce::String`/`File`/`Colour` holdouts in
 `src/session` and `src/engine` that were anchored by UI types.
+
+Mastering and region waveforms already use native `WaveformSource` snapshots.
+The region editor requests bounded, exact visible-column details for sample-level
+zoom and same-file slices; metadata and audio reads run on the source worker.
+Paint uses one immutable snapshot so the waveform and ruler share a native sample
+rate. Until metadata arrives, existing engine-rate fallback behavior applies.
+AudioThumbnail has no production consumers. Module unlink still needs a separate
+audit of transitive includes and all platform builds. Persistent waveform caches
+and broader tape-view waveforms remain separate work; native GUI and accessibility
+gates are unchanged.
 
 Module unlink order, each step its own commit so a bisect lands on one module:
 
@@ -747,7 +792,8 @@ Owed to Marc's bench, and not inferable from this gate:
   elsewhere, and its CMake carries the same MSVC GL 3.x loader the notepad
   needs, but neither has been built. If the shell's portability is in question
   before G5, build `dusk-gui-spike` on both.
-- **The accessibility decision** (§3, row 9), which is Marc's call and gates G3.
+- **Accessibility bridge parity and desktop checks** (§3, row 9). The bridge
+  decision is made; implementation and screen-reader verification still gate G3.
 
 ## 7. Naming
 
@@ -763,3 +809,29 @@ only `../DAF` / `../DAF-Widgets`, and CI uses
 [dejuce-campaign.md](dejuce-campaign.md) for the ritual. The gate evidence is
 §2, the framework work is §1 and §4, and the phase you are on owns exactly the
 files listed under it.
+
+## 9. Lessons from the retired Rust port
+
+`DuskStudio-Rust` (June 2026, retired 2026-09-18) rebuilt the console in
+Rust, first on Tauri and then on iced. Its code does not carry over, since
+every layout it built was copied from the C++ UI. What it learned does:
+
+- Web views are out. Tauri on WebKitGTK could not keep fader and knob drags
+  free of lag, even on native Wayland and after the obvious fixes: no forced
+  X11, CSS-transform visuals, coalesced IPC, meters paused during a drag. The
+  cost was the webview's compositing plus the IPC hop, not the JavaScript.
+- The fast path is the one Dusk Studio already uses: the UI reads and writes
+  the engine's atomics in process and reads meters at 60 Hz. The iced
+  prototype passed the latency bar as soon as it was wired this way. Keep it
+  for DAF views and put no message layer between a control and its atomic.
+- Third-party plugin editors cannot be embedded on Wayland, which has no
+  XEMBED. The port opened them as separate top-level XWayland windows and
+  kept its own UI native, the same split this plan uses.
+- Matching the existing UI meant reading every number from the C++ source:
+  ConsoleView.h geometry, the editors' parameter ranges, the LookAndFeel
+  colours. Where the Tauri version guessed, it drifted from the original.
+  G1 and G3 should work the same way.
+- The port deferred four things any application shell needs, so plan for them
+  in G5: popups clamped to the window edge, explicit text-field focus, a close
+  request that can be intercepted for unsaved changes, and live meters kept
+  out of per-frame string formatting.

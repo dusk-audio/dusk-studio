@@ -9,14 +9,94 @@
 #include "X11EditorTeardownError.h"
 
 #include <X11/Xproto.h>
+#include <X11/Xutil.h>
 
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <cerrno>
+
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <system_error>
+#include <thread>
+#include <utility>
+#include <vector>
 
 namespace duskstudio::platform
 {
+std::filesystem::path executableDirectory()
+{
+    std::error_code ec;
+    const auto exe = std::filesystem::read_symlink ("/proc/self/exe", ec);
+    if (ec) return {};
+    return exe.parent_path();
+}
+
+bool openPathInDefaultApp (const std::filesystem::path& path)
+{
+    // The grandchild has no other way to report a failed exec, and the caller
+    // needs to tell "no handler" from "launched". CLOEXEC closes this pipe when
+    // the exec takes, so an empty read is success and any bytes are the errno
+    // that stopped it.
+    int fds[2] {};
+    if (::pipe2 (fds, O_CLOEXEC) != 0)
+        return false;
+
+    // Double fork so the viewer is reparented to init: the app never waits on
+    // it, and a single fork would leave a zombie for the life of the session.
+    const auto middle = ::fork();
+    if (middle < 0)
+    {
+        ::close (fds[0]);
+        ::close (fds[1]);
+        return false;
+    }
+
+    if (middle == 0)
+    {
+        // Async-signal-safe calls only from here to the exec.
+        ::close (fds[0]);
+        const auto grandchild = ::fork();
+
+        if (grandchild == 0)
+        {
+            ::setsid();
+            ::execlp ("xdg-open", "xdg-open", path.c_str(), (char*) nullptr);
+            const int failure = errno;
+            (void) ::write (fds[1], &failure, sizeof (failure));
+            ::_exit (127);
+        }
+
+        if (grandchild < 0)
+        {
+            const int failure = errno;
+            (void) ::write (fds[1], &failure, sizeof (failure));
+        }
+
+        ::close (fds[1]);
+        ::_exit (0);
+    }
+
+    // The grandchild owns the only remaining write end once this closes, so the
+    // read below cannot block on our own copy.
+    ::close (fds[1]);
+
+    int status = 0;
+    while (::waitpid (middle, &status, 0) < 0 && errno == EINTR)
+        continue;
+
+    int failure = 0;
+    const auto reported = ::read (fds[0], &failure, sizeof (failure));
+    ::close (fds[0]);
+
+    return reported == 0;
+}
+
 #if DUSKSTUDIO_JUCE_HAS_WAYLAND
 using juce::WaylandSymbols;
 using juce::WaylandWindowSystem;
@@ -51,10 +131,34 @@ struct EditorTeardownErrorTrap
 };
 
 std::atomic<EditorTeardownErrorTrap*> activeEditorTeardownTrap { nullptr };
+std::atomic<int> editorTeardownHandlersInFlight { 0 };
+// Xlib reads the handler pointer when it dispatches, so a handler can enter
+// after a scope has unpublished its trap, or between the install and the
+// publication. It must still reach the handler that was in place outside
+// teardown rather than take the fatal path, so that one is kept for the
+// process rather than only inside the trap.
+std::atomic<::XErrorHandler> handlerBeforeEditorTeardown { nullptr };
 std::mutex editorTeardownTrapMutex;
+
+// Process lifetime, like the capture registry below: the handler is global and
+// an error on another connection's thread can reach it after the teardown scope
+// has gone, so what it reads cannot be that scope's own storage.
+EditorTeardownErrorTrap& editorTeardownTrapStorage()
+{
+    static EditorTeardownErrorTrap storage;
+    return storage;
+}
 
 int editorTeardownXErrorHandler (::Display* display, ::XErrorEvent* error)
 {
+    // Counted around every read of the trap, so a scope that has unpublished it
+    // can wait for a handler that took the pointer first.
+    struct InFlight
+    {
+        InFlight()  { editorTeardownHandlersInFlight.fetch_add (1, std::memory_order_acq_rel); }
+        ~InFlight() { editorTeardownHandlersInFlight.fetch_sub (1, std::memory_order_acq_rel); }
+    } counted;
+
     auto* trap = activeEditorTeardownTrap.load (std::memory_order_acquire);
     if (trap != nullptr && error != nullptr && display == trap->display
         && x11::shouldSuppressEditorTeardownError (
@@ -70,8 +174,27 @@ int editorTeardownXErrorHandler (::Display* display, ::XErrorEvent* error)
         return 0;
     }
 
-    if (trap != nullptr && trap->previous != nullptr)
-        return trap->previous (display, error);
+    const auto previous = trap != nullptr
+                            ? trap->previous
+                            : handlerBeforeEditorTeardown.load (std::memory_order_acquire);
+    if (previous != nullptr)
+        return previous (display, error);
+
+    if (trap == nullptr)
+    {
+        // Installed with nothing published: a scope is between its install and
+        // its publication, or between unpublishing and restoring, and the outer
+        // handler is not known yet. The error belongs to neither teardown nor a
+        // handler this can reach, so it stops here rather than ending the
+        // process on a window a few instructions wide.
+        std::fprintf (stderr,
+                      "[Dusk Studio/X] dropped an X error taken outside editor "
+                      "teardown (error %u, request %u)\n",
+                      error != nullptr ? static_cast<unsigned int> (error->error_code) : 0u,
+                      error != nullptr ? static_cast<unsigned int> (error->request_code) : 0u);
+        std::fflush (stderr);
+        return 0;
+    }
 
     // A null previous handler means Xlib's fatal default was active. Preserve
     // that contract rather than silently accepting an unrelated protocol bug.
@@ -85,17 +208,121 @@ int editorTeardownXErrorHandler (::Display* display, ::XErrorEvent* error)
     std::abort();
 }
 
-// The handler is process-global but the trap it reads is a stack frame, so an
-// exception out of teardown() must not be able to leave the two mismatched.
-// The trap is fully populated before publication and never mutated while
-// published, so the handler only ever observes a complete one.
+// Window captures read on connections of their own. The handler they rely on is
+// installed once for the process and reads only this registry, which is never
+// destroyed, so an error delivered on any thread cannot reach a capture's stack
+// frame. The only Xlib call made under the mutex is the one-time
+// XSetErrorHandler, which takes Xlib's global lock and nothing Xlib holds while
+// it runs a handler, so a handler waiting on the mutex cannot deadlock it.
+struct CaptureErrorRegistry
+{
+    std::mutex mutex;
+    std::vector<std::pair<::Display*, bool>> failedByDisplay;
+    ::XErrorHandler previous = nullptr;
+    bool installed = false;
+};
+
+CaptureErrorRegistry& captureErrors()
+{
+    static auto* const registry = new CaptureErrorRegistry();
+    return *registry;
+}
+
+int captureXErrorHandler (::Display* display, ::XErrorEvent* error)
+{
+    auto& registry = captureErrors();
+    ::XErrorHandler previous = nullptr;
+    {
+        const std::lock_guard<std::mutex> lock (registry.mutex);
+        for (auto& entry : registry.failedByDisplay)
+        {
+            if (entry.first == display)
+            {
+                entry.second = true;
+                return 0;
+            }
+        }
+        previous = registry.previous;
+    }
+    if (previous != nullptr)
+        return previous (display, error);
+
+    std::fprintf (stderr,
+                  "[Dusk Studio/X] unexpected X error beside a window capture "
+                  "(error %u, request %u)\n",
+                  error != nullptr ? static_cast<unsigned int> (error->error_code) : 0u,
+                  error != nullptr ? static_cast<unsigned int> (error->request_code) : 0u);
+    std::fflush (stderr);
+    std::abort();
+}
+
+// Registers one capture connection for its lifetime. The caller holds
+// editorTeardownTrapMutex, so the one-time install cannot interleave with a
+// teardown trap swapping the handler and then restoring over it.
+class ScopedCaptureErrorTrap
+{
+public:
+    explicit ScopedCaptureErrorTrap (::Display* captureDisplay) : display (captureDisplay)
+    {
+        auto& registry = captureErrors();
+        const std::lock_guard<std::mutex> lock (registry.mutex);
+        // Installed and published under the lock the handler takes, so an error
+        // on another connection waits for the previous handler instead of
+        // finding none and aborting.
+        if (! registry.installed)
+        {
+            registry.previous = ::XSetErrorHandler (&captureXErrorHandler);
+            registry.installed = true;
+        }
+        registry.failedByDisplay.emplace_back (display, false);
+    }
+
+    ~ScopedCaptureErrorTrap()
+    {
+        ::XSync (display, False);
+        auto& registry = captureErrors();
+        const std::lock_guard<std::mutex> lock (registry.mutex);
+        auto& entries = registry.failedByDisplay;
+        entries.erase (std::remove_if (entries.begin(), entries.end(),
+                                       [this] (const auto& entry) { return entry.first == display; }),
+                       entries.end());
+    }
+
+    ScopedCaptureErrorTrap (const ScopedCaptureErrorTrap&) = delete;
+    ScopedCaptureErrorTrap& operator= (const ScopedCaptureErrorTrap&) = delete;
+
+    // Delivers whatever the last request left queued, so a failure is seen here.
+    bool ok()
+    {
+        ::XSync (display, False);
+        auto& registry = captureErrors();
+        const std::lock_guard<std::mutex> lock (registry.mutex);
+        for (const auto& entry : registry.failedByDisplay)
+            if (entry.first == display)
+                return ! entry.second;
+        return false;
+    }
+
+private:
+    ::Display* const display;
+};
+
+// The handler is process-global, so an exception out of teardown() must not be
+// able to leave the two mismatched. The trap is fully populated before
+// publication and never mutated while published, so the handler only ever
+// observes a complete one.
 struct ScopedEditorTeardownTrap
 {
     ScopedEditorTeardownTrap (::Display* display, std::uint64_t editorWindowId)
+        : trap (editorTeardownTrapStorage())
     {
         trap.display = display;
         trap.editorWindowId = editorWindowId;
-        trap.previous = ::XSetErrorHandler (&editorTeardownXErrorHandler);
+        const auto previous = ::XSetErrorHandler (&editorTeardownXErrorHandler);
+        // Reachable before the trap is published, so an error delivered on
+        // another connection in that gap delegates instead of aborting.
+        handlerBeforeEditorTeardown.store (previous, std::memory_order_release);
+        trap.previous = previous;
         activeEditorTeardownTrap.store (&trap, std::memory_order_release);
     }
 
@@ -106,12 +333,19 @@ struct ScopedEditorTeardownTrap
         ::XSync (trap.display, False);
         ::XSetErrorHandler (trap.previous);
         activeEditorTeardownTrap.store (nullptr, std::memory_order_release);
+        // Unpublished first, so no further handler can take the pointer, then
+        // drained: whoever took it before that is still reading the trap, and
+        // the next teardown rewrites the same storage. A handler that enters
+        // after the unpublication finds no trap and delegates through
+        // handlerBeforeEditorTeardown, which outlives every scope.
+        while (editorTeardownHandlersInFlight.load (std::memory_order_acquire) != 0)
+            std::this_thread::yield();
     }
 
     ScopedEditorTeardownTrap (const ScopedEditorTeardownTrap&) = delete;
     ScopedEditorTeardownTrap& operator= (const ScopedEditorTeardownTrap&) = delete;
 
-    EditorTeardownErrorTrap trap;
+    EditorTeardownErrorTrap& trap;
 };
 
 juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
@@ -154,6 +388,67 @@ bool hasUsableDisplay()
 }
 
 double nativeViewBackingScale (void*) { return 1.0; }
+
+bool captureNativeWindowToPpm (std::uintptr_t nativeWindow, const std::string& path)
+{
+    if (nativeWindow == 0)
+        return false;
+    auto* display = ::XOpenDisplay (nullptr);
+    if (display == nullptr)
+        return false;
+
+    ::XImage* image = nullptr;
+    {
+        const std::lock_guard<std::mutex> lock (editorTeardownTrapMutex);
+        ScopedCaptureErrorTrap errors (display);
+        ::XWindowAttributes attributes {};
+        if (::XGetWindowAttributes (display, (::Window) nativeWindow, &attributes) != 0
+            && errors.ok() && attributes.map_state == IsViewable
+            && attributes.width > 0 && attributes.height > 0)
+        {
+            image = ::XGetImage (display, (::Window) nativeWindow, 0, 0,
+                                 (unsigned) attributes.width, (unsigned) attributes.height,
+                                 AllPlanes, ZPixmap);
+            if (image != nullptr && ! errors.ok())
+            {
+                XDestroyImage (image);
+                image = nullptr;
+            }
+        }
+    }
+
+    bool written = false;
+    if (image != nullptr)
+    {
+        const auto channel = [] (unsigned long pixel, unsigned long mask)
+        {
+            if (mask == 0)
+                return (unsigned char) 0;
+            int shift = 0;
+            while (((mask >> shift) & 1ul) == 0)
+                ++shift;
+            return (unsigned char) (((pixel & mask) >> shift) * 255ul / (mask >> shift));
+        };
+
+        if (auto* file = std::fopen (path.c_str(), "wb"))
+        {
+            bool ok = std::fprintf (file, "P6\n%d %d\n255\n", image->width, image->height) > 0;
+            for (int y = 0; ok && y < image->height; ++y)
+                for (int x = 0; ok && x < image->width; ++x)
+                {
+                    const auto pixel = XGetPixel (image, x, y);
+                    const unsigned char rgb[3] { channel (pixel, image->red_mask),
+                                                 channel (pixel, image->green_mask),
+                                                 channel (pixel, image->blue_mask) };
+                    ok = std::fwrite (rgb, 1, 3, file) == 3;
+                }
+            written = (std::fclose (file) == 0) && ok;
+        }
+        XDestroyImage (image);
+    }
+    ::XCloseDisplay (display);
+    return written;
+}
 
 void runX11EditorTeardown (std::uint64_t editorWindowId,
                            const std::function<void()>& teardown)

@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # De-JUCE campaign — map and working agreement
 
 Read this first among the de-JUCE docs in any session doing de-JUCE work. It is
@@ -109,8 +111,10 @@ reimplemented.
   `IFileWriteSink` + externally-drained `ThreadedFileWriter` +
   `WriterDrainPool` (one disk thread per subsystem, as before). LameMp3Writer
   is JUCE-free (allowlist −2, gate 182 — the "zero movement" honest-yield
-  prediction missed this). `juce_audio_formats` stays linked only for
-  `juce_audio_utils`/AudioThumbnail; it unlinks globally with the GUI tower.
+  prediction missed this). Mastering and region waveforms now use the native
+  `WaveformSource`; no production AudioThumbnail consumer remains.
+  `juce_audio_formats` and `juce_audio_utils` still link pending a transitive
+  include and cross-platform module-unlink audit.
   Bench debts at spec §Owed. Spec:
   [dejuce-audiofile-plan.md](dejuce-audiofile-plan.md).
 
@@ -124,8 +128,9 @@ reimplemented.
    hosting path (PluginSlot/PluginManager JUCE half/PluginHostMain loop) and
    both remaining in-app JUCE donor processors (TapeMachine -> TapeMachineDSP,
    Multiband UniversalCompressor -> framework-free donor port) are deleted. Unlinks
-   `juce_audio_processors` globally; `juce_audio_utils` and
-   `juce_audio_formats` stay for AudioThumbnail — GUI tower unlinks those.
+   `juce_audio_processors` globally. AudioThumbnail consumers have migrated;
+   the remaining `juce_audio_utils` and `juce_audio_formats` links need their
+   own transitive-dependency audit before removal.
    Multi-PR tower, phases H1-H6 in
    [dejuce-hosting-plan.md](dejuce-hosting-plan.md).
 2. **GUI tower (finale)** — framework decision (Marc, 2026-07-27): build on
@@ -153,9 +158,10 @@ reimplemented.
    audit, framework revision reconciliation and phases G0-G6 in
    [dejuce-gui-plan.md](dejuce-gui-plan.md) — read that first, this entry is
    the summary it supersedes. The fork stack is now DAF (Dusk Audio Framework):
-   the repos are `dusk-audio/DAF` and `dusk-audio/DAF-Widgets`, all future work
-   is on DAF, and the shared ImGui widget kit lives in DAF-Widgets rather than
-   the plugins repo's former shared widget directory. The spec's Naming section
+   one repository, `dusk-audio/DAF`, carrying pugl and the shared ImGui widget
+   kit in-tree; the kit left the plugins repo's former shared widget directory,
+   and Dusk Studio has consumed only that repository since #598. All future
+   work is on DAF. The spec's Naming section
    records the completed cleanup.
 
 Done since the last queue edit: events remainder (PR #112, zero gate

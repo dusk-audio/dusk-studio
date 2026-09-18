@@ -1,12 +1,12 @@
 #pragma once
 
-#include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include <vector>
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
 #include "../engine/AudioEngine.h"
+#include "../engine/audiofile/WaveformPeaks.h"
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
 
@@ -16,33 +16,7 @@ class MasteringPlayer;
 
 namespace imgui { class DuskPanelWindow; }
 
-#if DUSKSTUDIO_HAS_NATIVE_UI
-// A JUCE stand-in for one of the mastering stage's native panels. Its bounds are where
-// the framework child goes, and its visibility is the one thing the covering-surface
-// machinery already toggles: the tag is what makes an EmbeddedModal take a native
-// surface down and put it back, and a framework child is exactly that. DGL refuses to
-// hide a window while it is embedded, so "hidden" here means closed and reopened.
-class NativePanelProxy final : public juce::Component
-{
-public:
-    NativePanelProxy()
-    {
-        getProperties().set (kPluginEditorTag, true);
-        setInterceptsMouseClicks (false, false);
-    }
-
-    std::function<void()> onVisibilityChanged;
-
-private:
-    void visibilityChanged() override
-    {
-        if (onVisibilityChanged)
-            onVisibilityChanged();
-    }
-};
-#endif
-
-// Inline AudioThumbnail above the mastering controls + playhead line
+// Inline waveform above the mastering controls + playhead line
 // that follows MasteringPlayer. Click anywhere to seek.
 class WaveformDisplay final : public juce::Component, private dusk::Timer
 {
@@ -58,9 +32,8 @@ private:
     void timerCallback() override;
 
     MasteringPlayer&            player;
-    juce::AudioFormatManager    formatManager;
-    juce::AudioThumbnailCache   thumbnailCache { 4 };
-    juce::AudioThumbnail        thumbnail;
+    dusk::audio::WaveformSource waveformSource;
+    dusk::audio::WaveformSource::Snapshot waveformSnapshot;
     std::int64_t                 lastPlayhead = -1;
 };
 

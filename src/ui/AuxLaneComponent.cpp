@@ -18,6 +18,12 @@
 #include "HardwareInsertEditor.h"
 #include "PlatformWindowing.h"
 #include "PluginPickerHelpers.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "NativeEditorEmbedScale.h"
+ #include "imgui/BuiltinLaneView.h"
+ #include "imgui/DuskPanelWindow.h"
+#endif
+#include "../foundation/Text.h"
 #include "../dsp/AuxLaneStrip.h"
 #include "../dsp/OutputPairRouting.h"
 #include "../engine/AudioEngine.h"
@@ -28,8 +34,10 @@
 #include "../session/ParamEditAction.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
+#include <utility>
 
 namespace duskstudio
 {
@@ -74,6 +82,28 @@ juce::Colour meterColourForFrac (float frac) noexcept
     if (frac >= 0.91f) return juce::Colour (0xffd0a040);
     return juce::Colour (0xff60c060);
 }
+
+#if DUSKSTUDIO_HAS_NATIVE_UI
+// A hardware insert owns the editor area even while a unit is still loaded behind it.
+bool showsBuiltinView (const AuxLaneStrip& strip, int slotIdx)
+{
+    return strip.isBuiltinLoaded (slotIdx)
+        && strip.insertMode[(size_t) slotIdx].load (std::memory_order_relaxed)
+               != AuxLaneStrip::kInsertHardware;
+}
+
+// Where a slot's built-in view belongs, from the rectangle its proxy occupies in the lane.
+imgui::DuskPanelWindow::Geometry builtinViewGeometry (const AuxLaneComponent& lane,
+                                                      const NativePanelProxy& proxy)
+{
+    auto* const topLevel = lane.getTopLevelComponent();
+    if (topLevel == nullptr)
+        return {};
+    const auto logical = topLevel->getLocalArea (&lane, proxy.getBounds());
+    const auto g = embedscale::childGeometryFor (*topLevel, logical);
+    return { g.x, g.y, g.width, g.height, g.scale };
+}
+#endif
 } // namespace
 
 class AuxLaneComponent::StripMeter final : public juce::Component
@@ -174,7 +204,7 @@ public:
             g.setColour (tr.colour.withAlpha (sendOn ? 0.9f : 0.35f));
             g.fillRect (idxArea.reduced (2, 4));
             g.setColour (sendOn ? juce::Colours::white : juce::Colour (0xff707078));
-            g.drawText (juce::String (i + 1), idxArea, juce::Justification::centred, false);
+            g.drawText (std::to_string (i + 1), idxArea, juce::Justification::centred, false);
 
             // Track name. Default Dusk Studio sessions name tracks "1".."16" -
             // the colour swatch on the left already shows the index, so
@@ -182,18 +212,18 @@ public:
             // digit twice. User-renamed tracks pass through verbatim.
             auto nameArea = row.removeFromLeft (std::max (60, row.getWidth() / 2));
             g.setColour (sendOn ? juce::Colour (0xffe0e0e4) : juce::Colour (0xff606068));
-            const auto rawName = tr.name.trim();
-            const auto displayName = (rawName.isEmpty() || rawName == juce::String (i + 1))
-                                       ? juce::String ("Trk ") + juce::String (i + 1)
-                                       : rawName;
+            const auto number = std::to_string (i + 1);
+            const auto rawName = tr.name.trim().toStdString();
+            const auto displayName = rawName.empty() || rawName == number ? "Trk " + number
+                                                                           : rawName;
             g.drawText (displayName, nameArea.reduced (4, 0),
                         juce::Justification::centredLeft, true);
 
             // dB readout on the right.
             auto dbArea = row.removeFromRight (52);
             g.setColour (sendOn ? juce::Colour (0xffe0e0e4) : juce::Colour (0xff505058));
-            const auto dbText = sendOn ? juce::String (sendDb, 1) + " dB"
-                                       : juce::String ("-inf");
+            const auto dbText = sendOn ? dusk::text::format ("%.1f dB", static_cast<double> (sendDb))
+                                       : std::string ("-inf");
             g.drawText (dbText, dbArea, juce::Justification::centredRight, false);
 
             // Meter bar between name and dB.
@@ -206,7 +236,8 @@ public:
                 {
                     const float inFrac = dbToMeterFrac (inputDb);
                     juce::Rectangle<int> fill = meterArea;
-                    fill.setWidth (juce::roundToInt ((float) meterArea.getWidth() * inFrac));
+                    fill.setWidth (static_cast<int> (
+                        std::lround (static_cast<float> (meterArea.getWidth()) * inFrac)));
                     g.setColour (meterColourForFrac (inFrac).withAlpha (0.85f));
                     g.fillRect (fill);
                 }
@@ -225,8 +256,8 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
 {
     // Accessibility floor - screen readers announce the lane as
     // "Aux N" instead of "Component".
-    setTitle ("Aux " + juce::String (idx + 1));
-    setDescription ("Aux send/return lane " + juce::String (idx + 1));
+    setTitle ("Aux " + std::to_string (idx + 1));
+    setDescription ("Aux send/return lane " + std::to_string (idx + 1));
 
     nameLabel.setText (lane.name, juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centredLeft);
@@ -361,16 +392,13 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         {
             auto& slotRef = strip.getPluginSlot (i);
             if (slotRef.isLoaded() || strip.isNativeClapLoaded (i) || strip.isNativeLv2Loaded (i)
-                || strip.isNativeVst3Loaded (i) || strip.isNativeAuLoaded (i))
+                || strip.isNativeVst3Loaded (i) || strip.isNativeAuLoaded (i)
+                || strip.isBuiltinLoaded (i))
             {
-                // Native CLAP fills the inline editor area when loaded (same as a JUCE
-                // plugin); clicking the name must not re-open the picker over it.
-                toggleEditorForSlot (i);
+                // Keep the picker closed for loaded slots; their editors are inline.
+                return;
             }
-            else
-            {
-                openPickerForSlot (i);
-            }
+            openPickerForSlot (i);
         };
         addAndMakeVisible (s.openOrAddButton);
 
@@ -410,6 +438,11 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
             }
             else
 #endif
+            if (strip.isBuiltinLoaded (i))
+            {
+                strip.getBuiltinSlot (i).setBypassed (on);
+            }
+            else
             {
                 auto& slotRef = strip.getPluginSlot (i);
                 slotRef.setBypassed (on);
@@ -425,6 +458,10 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         s.removeButton.onClick = [this, i] { unloadSlot (i); };
         addChildComponent (s.removeButton);
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+        s.builtinProxy.onVisibilityChanged = [this] { scheduleBuiltinViewSync(); };
+        addAndMakeVisible (s.builtinProxy);
+#endif
     }
 
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
@@ -432,12 +469,12 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     rebuildSlots();
 
     // Deeper a11y - name every user-driven control on the lane.
-    const auto an = juce::String (laneIndex + 1);
+    const auto an = std::to_string (laneIndex + 1);
     returnFader .setTitle ("Aux " + an + " return fader");
     muteButton  .setTitle ("Aux " + an + " mute");
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
         slots[(size_t) i].openOrAddButton.setTitle (
-            "Aux " + an + " plugin slot " + juce::String (i + 1));
+            "Aux " + an + " plugin slot " + std::to_string (i + 1));
 
     startTimerHz (30);
 }
@@ -451,6 +488,11 @@ AuxLaneComponent::~AuxLaneComponent()
     stopTimer();
     for (auto& s : slots)
     {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        // The framework child reaches back into this lane through its callbacks, so
+        // it goes down while the lane is still whole.
+        s.builtinWindow.reset();
+       #endif
         s.editor.reset();
         s.hwInsertEditor.reset();
     }
@@ -467,6 +509,9 @@ void AuxLaneComponent::timerCallback()
         // hold an abandoned editor until the next one.
         syncNativeEditorOwnersForSlot (i);
         refreshSlotControls (i);
+        // A session load swaps or clears the unit without touching the lane.
+        if (builtinViewNeedsSync (i))
+            scheduleBuiltinViewSync();
     }
     if (stripMeter != nullptr) stripMeter->repaint();
     if (sendPanel  != nullptr) sendPanel->repaint();
@@ -543,7 +588,7 @@ void AuxLaneComponent::populateOutputPairCombo()
         const int total = (int) device->getOutputChannelNames().size();
         for (int i = 0; i + 1 < total; i += 2)
             if (active[i] && active[i + 1])
-                outputPairCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
+                outputPairCombo.addItem (dusk::text::format ("Out %d-%d", i + 1, i + 2),
                                            outputpair::encodePair (i, i + 1));
         activeMask = active;
         lastOutputChannelCount = total;
@@ -680,7 +725,7 @@ void AuxLaneComponent::refreshSlotControls (int i)
     auto nativeLabel = [] (const juce::String& name, bool offline)
     {
         return offline
-            ? juce::String (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 ")) + name + " (offline)"
+            ? juce::String (std::string ("\xe2\x9a\xa0 ") + name.toStdString() + " (offline)")
             : name;
     };
     auto setNativeTooltip = [&ui] (bool offline)
@@ -689,7 +734,7 @@ void AuxLaneComponent::refreshSlotControls (int i)
             ? "This plug-in is offline after a restore or reactivation failure. "
               "Its saved reference and state will be preserved; replace or remove "
               "it to recover this slot."
-            : "Click to toggle the plug-in editor.");
+            : "Use X to remove this plug-in.");
     };
 
     const int mode = strip.insertMode[(size_t) i].load (std::memory_order_relaxed);
@@ -700,25 +745,23 @@ void AuxLaneComponent::refreshSlotControls (int i)
         // (out / in) is formatted independently so a mono routing
         // doesn't print a misleading "L-0".
         const auto routing = lane.hardwareInserts[(size_t) i].routing.current();
-        auto formatPair = [] (int l, int r) -> juce::String
+        auto formatPair = [] (int l, int r) -> std::string
         {
             if (l < 0 && r < 0) return {};
-            if (r < 0)          return juce::String (l + 1);
-            if (l < 0)          return juce::String (r + 1);
-            if (l == r)         return juce::String (l + 1);
-            return juce::String (l + 1) + "-" + juce::String (r + 1);
+            if (r < 0)          return dusk::text::format ("%d", l + 1);
+            if (l < 0)          return dusk::text::format ("%d", r + 1);
+            if (l == r)         return dusk::text::format ("%d", l + 1);
+            return dusk::text::format ("%d-%d", l + 1, r + 1);
         };
         const auto out = formatPair (routing.outputChL, routing.outputChR);
         const auto in  = formatPair (routing.inputChL,  routing.inputChR);
-        juce::String label;
-        if (out.isEmpty() && in.isEmpty())
+        std::string label;
+        if (out.empty() && in.empty())
             label = "HW (unrouted)";
         else
-            label = juce::String ("HW: out ")
-                  + (out.isNotEmpty() ? out : juce::String ("-"))
-                  + " / in "
-                  + (in .isNotEmpty() ? in  : juce::String ("-"));
-        if (label != ui.displayedName)
+            label = "HW: out " + (out.empty() ? std::string ("-") : out)
+                  + " / in "   + (in.empty()  ? std::string ("-") : in);
+        if (label != ui.displayedName.toStdString())
         {
             ui.displayedName = label;
             ui.openOrAddButton.setButtonText (label);
@@ -817,6 +860,25 @@ void AuxLaneComponent::refreshSlotControls (int i)
     }
 #endif
 
+    if (strip.isBuiltinLoaded (i))
+    {
+        const auto name = strip.getBuiltinSlot (i).displayName();
+        const bool offline = strip.builtinReloadFailed (i);
+        const auto label = nativeLabel (name, offline);
+        setNativeTooltip (offline);
+        if (label != ui.displayedName)
+        {
+            ui.displayedName = label;
+            ui.openOrAddButton.setButtonText (label);
+            resized();
+        }
+        ui.bypassButton.setVisible (true);
+        ui.bypassButton.setToggleState (strip.getBuiltinSlot (i).isBypassed(),
+                                        juce::dontSendNotification);
+        ui.removeButton.setVisible (true);
+        return;
+    }
+
     // A failed load can leave no live instance. Keep the saved native reference
     // visible as an offline row so the user can replace or remove it explicitly.
     if (strip.nativeInsertRestoreFailed (i))
@@ -841,6 +903,8 @@ void AuxLaneComponent::refreshSlotControls (int i)
         if (strip.nativeAuReloadFailed (i))
             name = lane.nativeAuIdentifier[(size_t) i];
 #endif
+        if (strip.builtinReloadFailed (i))
+            name = lane.builtinUnitId[(size_t) i];
         if (name.isEmpty()) name = "native plug-in";
         const auto label = nativeLabel (name, true);
         setNativeTooltip (true);
@@ -884,9 +948,9 @@ void AuxLaneComponent::refreshSlotControls (int i)
         // name so the user knows what to reinstall; the slot's stashed
         // descXml + state base64 will round-trip on the next save.
         const auto offline = slotRef.getOfflineName();
-        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 "))
-                         + (offline.isNotEmpty() ? offline : juce::String ("offline"))
-                         + " (offline)";
+        const auto label = juce::String (std::string ("\xe2\x9a\xa0 ")
+                                         + (offline.isNotEmpty() ? offline.toStdString() : "offline")
+                                         + " (offline)");
         if (label != ui.displayedName)
         {
             ui.displayedName = label;
@@ -949,6 +1013,11 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
             self->loadNativeAuForSlot (slotIdx, componentId);
     };
 #endif
+    auto onBuiltin = [safe, slotIdx] (const std::string& unitId)
+    {
+        if (auto* self = safe.getComponent())
+            self->loadBuiltinForSlot (slotIdx, unitId);
+    };
     pluginpicker::openPickerMenu (strip.getPluginSlot (slotIdx),
                                     slots[(size_t) slotIdx].openOrAddButton,
                                     [safe, slotIdx]
@@ -966,7 +1035,8 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                 self->strip.isNativeClapLoaded (slotIdx)
                                                 || self->strip.isNativeLv2Loaded (slotIdx)
                                                 || self->strip.isNativeVst3Loaded (slotIdx)
-                                                || self->strip.isNativeAuLoaded (slotIdx);
+                                                || self->strip.isNativeAuLoaded (slotIdx)
+                                                || self->strip.isBuiltinLoaded (slotIdx);
                                             if (self->strip.getPluginSlot (slotIdx).isLoaded()
                                                 && (hadLiveNative
                                                     || self->strip.nativeInsertRestoreFailed (
@@ -981,6 +1051,7 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                 self->strip.unloadNativeLv2 (slotIdx);
                                                 self->strip.unloadNativeVst3 (slotIdx);
                                                 self->strip.unloadNativeAu (slotIdx);
+                                                self->strip.unloadBuiltin (slotIdx);
                                                 if (hadLiveNative) self->engine.resumeProcessing();
                                                 self->lane.nativeClapPath[(size_t) slotIdx].clear();
                                                 self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
@@ -993,6 +1064,8 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                 self->lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
                                                 self->lane.nativeAuIdentifier[(size_t) slotIdx].clear();
                                                 self->lane.nativeAuStateBase64[(size_t) slotIdx].clear();
+                                                self->lane.builtinUnitId[(size_t) slotIdx].clear();
+                                                self->lane.builtinStateBase64[(size_t) slotIdx].clear();
                                             }
 
                                             self->refreshSlotControls (slotIdx);
@@ -1011,7 +1084,8 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                     std::move (onLv2),
                                     std::move (onVst3),
                                     {},
-                                    std::move (onAu));
+                                    std::move (onAu),
+                                    std::move (onBuiltin));
 }
 
 void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
@@ -1026,7 +1100,8 @@ void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
         const bool hadLiveNative = strip.isNativeClapLoaded (slotIdx)
                                 || strip.isNativeLv2Loaded (slotIdx)
                                 || strip.isNativeVst3Loaded (slotIdx)
-                                || strip.isNativeAuLoaded (slotIdx);
+                                || strip.isNativeAuLoaded (slotIdx)
+                                || strip.isBuiltinLoaded (slotIdx);
         if (hadLiveNative) engine.suspendProcessing();
         detachClapEditorForSlot (slotIdx);
         detachLv2EditorForSlot (slotIdx);
@@ -1036,6 +1111,7 @@ void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
         strip.unloadNativeLv2 (slotIdx);
         strip.unloadNativeVst3 (slotIdx);
         strip.unloadNativeAu (slotIdx);
+        strip.unloadBuiltin (slotIdx);
         if (hadLiveNative) engine.resumeProcessing();
         lane.nativeClapPath[(size_t) slotIdx].clear();
         lane.nativeClapPluginId[(size_t) slotIdx].clear();
@@ -1048,6 +1124,8 @@ void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
         lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
         lane.nativeAuIdentifier[(size_t) slotIdx].clear();
         lane.nativeAuStateBase64[(size_t) slotIdx].clear();
+        lane.builtinUnitId[(size_t) slotIdx].clear();
+        lane.builtinStateBase64[(size_t) slotIdx].clear();
     }
 
     // Flip the lane's slot to Hardware mode immediately so the audio
@@ -1083,7 +1161,8 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         const bool hadLiveNative = self->strip.isNativeClapLoaded (slotIdx)
                                 || self->strip.isNativeLv2Loaded (slotIdx)
                                 || self->strip.isNativeVst3Loaded (slotIdx)
-                                || self->strip.isNativeAuLoaded (slotIdx);
+                                || self->strip.isNativeAuLoaded (slotIdx)
+                                || self->strip.isBuiltinLoaded (slotIdx);
         const bool hadNativeReference = hadLiveNative
                                      || self->strip.nativeInsertRestoreFailed (slotIdx);
         if (hadLiveNative) self->engine.suspendProcessing();
@@ -1100,6 +1179,7 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
             self->strip.unloadNativeLv2 (slotIdx);
             self->strip.unloadNativeVst3 (slotIdx);
             self->strip.unloadNativeAu (slotIdx);
+            self->strip.unloadBuiltin (slotIdx);
             if (hadLiveNative) self->engine.resumeProcessing();
             self->lane.nativeClapPath[(size_t) slotIdx].clear();
             self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
@@ -1112,6 +1192,8 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
             self->lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
             self->lane.nativeAuIdentifier[(size_t) slotIdx].clear();
             self->lane.nativeAuStateBase64[(size_t) slotIdx].clear();
+            self->lane.builtinUnitId[(size_t) slotIdx].clear();
+            self->lane.builtinStateBase64[(size_t) slotIdx].clear();
         }
         // Clear the model's enabled flag so any consumer that polls
         // lane.hardwareInserts[slotIdx].enabled sees a disabled slot
@@ -1127,13 +1209,6 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         self->refreshSlotControls (slotIdx);
         self->rebuildSlots();
     });
-}
-
-void AuxLaneComponent::toggleEditorForSlot (int /*slotIdx*/)
-{
-    // Editor embeds inline whenever the slot is loaded - nothing to
-    // toggle. Clicks on the slot's name button when loaded fall through
-    // to a no-op; users use the X button to unload the slot.
 }
 
 void AuxLaneComponent::attachEditorForSlot (int slotIdx)
@@ -1427,6 +1502,309 @@ void AuxLaneComponent::loadNativeAuForSlot (int slotIdx, const juce::String& com
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_AU
 
+void AuxLaneComponent::loadBuiltinForSlot (int slotIdx, const std::string& unitId)
+{
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
+
+    detachEditorForSlot (slotIdx);
+    detachHardwareInsertForSlot (slotIdx);
+    detachClapEditorForSlot (slotIdx);
+    detachLv2EditorForSlot (slotIdx);
+    detachVst3EditorForSlot (slotIdx);
+    detachAuEditorForSlot (slotIdx);
+
+    std::string err;
+    engine.suspendProcessing();
+    const bool ok = strip.loadBuiltin (slotIdx, unitId, err);
+    if (ok)
+        strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertPlugin,
+                                                  std::memory_order_release);
+    engine.resumeProcessing();
+
+    // loadBuiltin evicts every other host on the slot before it can fail, so
+    // clear all of them either way (matches loadNativeAuForSlot).
+    lane.pluginDescriptor[(size_t) slotIdx].reset();
+    lane.pluginLegacyDescriptionXml[(size_t) slotIdx].clear();
+    lane.pluginStateBase64[(size_t) slotIdx].clear();
+    lane.nativeClapPath[(size_t) slotIdx].clear();
+    lane.nativeClapPluginId[(size_t) slotIdx].clear();
+    lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+    lane.nativeLv2Path[(size_t) slotIdx].clear();
+    lane.nativeLv2PluginId[(size_t) slotIdx].clear();
+    lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
+    lane.nativeVst3Path[(size_t) slotIdx].clear();
+    lane.nativeVst3PluginId[(size_t) slotIdx].clear();
+    lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+    lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+    lane.nativeAuStateBase64[(size_t) slotIdx].clear();
+    lane.builtinUnitId[(size_t) slotIdx].clear();
+    lane.builtinStateBase64[(size_t) slotIdx].clear();
+
+    if (! ok)
+    {
+        std::fprintf (stderr, "[aux builtin] load failed: %s\n", err.c_str());
+        showDuskAlert (*this, "Couldn't load built-in unit", unitId + ":\n" + err);
+        refreshSlotControls (slotIdx);
+        rebuildSlots();
+        return;
+    }
+
+    lane.builtinUnitId[(size_t) slotIdx] = strip.getBuiltinSlot (slotIdx).getPluginId();
+    refreshSlotControls (slotIdx);
+    rebuildSlots();
+}
+
+void AuxLaneComponent::scheduleBuiltinViewSync()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (builtinSyncPending)
+        return;
+    builtinSyncPending = true;
+    juce::Component::SafePointer<AuxLaneComponent> safe (this);
+    dusk::callAsync ([safe]
+    {
+        if (auto* self = safe.getComponent())
+        {
+            self->builtinSyncPending = false;
+            self->applyBuiltinViewSync();
+        }
+    });
+   #endif
+}
+
+bool AuxLaneComponent::builtinViewNeedsSync (int slotIdx) const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const auto& ui = slots[(size_t) slotIdx];
+    const bool shown = showsBuiltinView (strip, slotIdx);
+    const bool live = (ui.builtinWindow != nullptr && ui.builtinWindow->isOpen())
+                   || (ui.builtinEditorHost != nullptr && ui.builtinEditorHost->isOpen());
+    if (live)
+        return ! shown || strip.getBuiltinSlot (slotIdx).getPluginId() != ui.builtinViewUnit;
+    // A unit whose view failed to open is not retried on every tick; the next lane
+    // event or a different unit tries again.
+    return shown && strip.getBuiltinSlot (slotIdx).getPluginId() != ui.builtinViewUnit
+        && isShowing() && ui.builtinProxy.isVisible();
+   #else
+    (void) slotIdx;
+    return false;
+   #endif
+}
+
+#if DUSKSTUDIO_HAS_NATIVE_UI
+imgui::DafEditorHost::Geometry AuxLaneComponent::builtinEditorGeometry (int slotIdx) const
+{
+    auto* const topLevel = getTopLevelComponent();
+    if (topLevel == nullptr)
+        return {};
+
+    const auto& ui = slots[(size_t) slotIdx];
+    const auto& slot = strip.getBuiltinSlot (slotIdx);
+    const int designWidth = (int) slot.pluginEditorWidth();
+    const int designHeight = (int) slot.pluginEditorHeight();
+    const auto area = topLevel->getLocalArea (this, ui.builtinProxy.getBounds());
+    if (designWidth < 2 || designHeight < 2 || area.getWidth() < 2 || area.getHeight() < 2)
+        return {};
+
+    // The editor keeps its own size and aspect, centred in the lane's editor area
+    // and scaled down when the lane is smaller than it.
+    const double fit = std::min (1.0, std::min ((double) area.getWidth() / designWidth,
+                                                (double) area.getHeight() / designHeight));
+    const auto logical = area.withSizeKeepingCentre (
+        (int) std::lround (designWidth * fit), (int) std::lround (designHeight * fit));
+    auto geometry = embedscale::childGeometryFor (*topLevel, logical);
+    geometry.scale *= fit;
+    return { geometry.x, geometry.y, geometry.width, geometry.height, geometry.scale };
+}
+
+void AuxLaneComponent::openBuiltinEditorHostForSlot (int slotIdx, std::uintptr_t parentHandle,
+                                                     const std::string& unitId)
+{
+    auto& ui = slots[(size_t) slotIdx];
+    // A slot holds one or the other, never both: the unit that was here before may
+    // have been drawn from its parameter table.
+    ui.builtinWindow.reset();
+    auto& host = ui.builtinEditorHost;
+    host = std::make_unique<imgui::DafEditorHost> (
+        "aux-plugin-editor", "The unit's editor",
+        imgui::firstFrameMarkerPath ("aux-plugin-editor"));
+
+    // The lane owns the host and outlives it, and the slot is the strip's, so the
+    // wiring reaches both rather than capturing either.
+    imgui::DafEditorHost::Unit unit;
+    unit.createEditor = [this, slotIdx] (std::uintptr_t parent, std::uint32_t width,
+                                         std::uint32_t height, double scale,
+                                         builtin::DafEditorCallbacks callbacks,
+                                         std::string& error)
+    {
+        return strip.getBuiltinSlot (slotIdx).createPluginEditor (
+            parent, width, height, scale, std::move (callbacks), error);
+    };
+    unit.paramCount = [this, slotIdx]
+        { return strip.getBuiltinSlot (slotIdx).paramCount(); };
+    unit.paramValue = [this, slotIdx] (int index)
+        { return strip.getBuiltinSlot (slotIdx).getParamValue (index); };
+    unit.setParam = [this, slotIdx] (int index, float value)
+        { strip.getBuiltinSlot (slotIdx).setParamValue (index, value); };
+    unit.noteTouched = [this, slotIdx] (int index)
+        { strip.getBuiltinSlot (slotIdx).noteParamTouched (index); };
+    host->setUnit (std::move (unit));
+
+    // The host is torn down before the state these reach into, and it drops them
+    // before that teardown, so they may hold the lane.
+    imgui::DafEditorHost::Callbacks callbacks;
+    callbacks.closed = [this, slotIdx]
+    {
+        auto& slotUi = slots[(size_t) slotIdx];
+        // A close the graphics driver forced keeps its unit, so the timer does not
+        // reopen into the same failure every few ticks; the next lane event does.
+        if (std::exchange (slotUi.builtinCloseRequested, false))
+            slotUi.builtinViewUnit.clear();
+        else
+            slotUi.builtinViewFailure = "The unit's editor closed after a graphics error.";
+        repaint();
+        scheduleBuiltinViewSync();
+    };
+    // A click into the editor takes the keyboard with it, so the shell takes it
+    // back at the end of every gesture and the transport keys keep working.
+    callbacks.gestureEnded = []
+    {
+        if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+            target->grabKeyboardFocus();
+    };
+    callbacks.geometry = [this, slotIdx] { return builtinEditorGeometry (slotIdx); };
+    host->setCallbacks (std::move (callbacks));
+
+    ui.builtinViewUnit = unitId;
+    ui.builtinViewParent = parentHandle;
+    if (host->open (parentHandle, builtinEditorGeometry (slotIdx)))
+    {
+        if (! ui.builtinViewFailure.empty())
+        {
+            ui.builtinViewFailure.clear();
+            repaint();
+        }
+        return;
+    }
+
+    ui.builtinViewFailure = host->lastOpenFailure();
+    std::fprintf (stderr, "[aux builtin] %s\n", ui.builtinViewFailure.c_str());
+    host.reset();
+    repaint();
+}
+#endif
+
+void AuxLaneComponent::applyBuiltinViewSync()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    auto* const topLevel = getTopLevelComponent();
+    const auto parentHandle = topLevel != nullptr ? embedscale::nativeParentHandle (*topLevel) : 0;
+
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+    {
+        auto& ui = slots[(size_t) i];
+        const bool shown = showsBuiltinView (strip, i);
+        const std::string unit = shown ? strip.getBuiltinSlot (i).getPluginId() : std::string();
+        const bool wanted = shown && parentHandle != 0 && isShowing()
+                         && ui.builtinProxy.isVisible() && ! ui.builtinProxy.getBounds().isEmpty();
+
+        if (! shown && ! ui.builtinViewFailure.empty())
+        {
+            ui.builtinViewFailure.clear();
+            repaint();
+        }
+
+        auto& host = ui.builtinEditorHost;
+        if (host != nullptr && host->isOpen())
+        {
+            // The plug-in's own editor, built for one unit in one native parent,
+            // exactly as the panel window below is.
+            if (! wanted || unit != ui.builtinViewUnit || parentHandle != ui.builtinViewParent)
+            {
+                ui.builtinCloseRequested = true;
+                host->close();
+            }
+            else
+                host->setGeometry (builtinEditorGeometry (i));
+            continue;
+        }
+
+        auto& window = ui.builtinWindow;
+        if (window != nullptr && window->isOpen())
+        {
+            // A view is built for one unit and embedded in one native parent; a close
+            // takes two pump ticks, and its closed callback runs this again after.
+            if (! wanted || unit != ui.builtinViewUnit || parentHandle != ui.builtinViewParent)
+            {
+                ui.builtinCloseRequested = true;
+                window->close();
+            }
+            else
+                window->setGeometry (builtinViewGeometry (*this, ui.builtinProxy));
+            continue;
+        }
+        if (! wanted)
+            continue;
+
+        // A unit that is one of Dusk's own plug-ins shows the plug-in's editor.
+        if (strip.getBuiltinSlot (i).hasPluginEditor())
+        {
+            openBuiltinEditorHostForSlot (i, parentHandle, unit);
+            continue;
+        }
+
+        ui.builtinEditorHost.reset();
+        window = std::make_unique<imgui::DuskPanelWindow> (
+            "dusk-studio-aux-builtin", "aux-builtin", "Built-in unit controls");
+
+        imgui::DuskPanelWindow::Callbacks callbacks;
+        callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
+        {
+            return dispatchShellShortcut (shortcut);
+        };
+        // The window is torn down first in the destructor, and none of its callbacks
+        // run during that teardown, so they may hold the lane itself.
+        callbacks.closed = [this, i]
+        {
+            auto& slotUi = slots[(size_t) i];
+            // A close the graphics driver forced keeps its unit, so the timer does not
+            // reopen into the same failure every few ticks; the next lane event does.
+            if (std::exchange (slotUi.builtinCloseRequested, false))
+                slotUi.builtinViewUnit.clear();
+            else
+                slotUi.builtinViewFailure = "Built-in unit controls closed after a graphics error.";
+            repaint();
+            scheduleBuiltinViewSync();
+        };
+        callbacks.geometry = [this, i]
+        {
+            return builtinViewGeometry (*this, slots[(size_t) i].builtinProxy);
+        };
+        window->setCallbacks (std::move (callbacks));
+
+        auto& slot = strip.getBuiltinSlot (i);
+        window->setView (imgui::makeBuiltinLaneView (
+            slot, [&slot] (int paramIndex) { slot.noteParamTouched (paramIndex); }));
+
+        ui.builtinViewUnit = unit;
+        ui.builtinViewParent = parentHandle;
+        if (window->open (parentHandle, builtinViewGeometry (*this, ui.builtinProxy)))
+        {
+            if (! ui.builtinViewFailure.empty())
+            {
+                ui.builtinViewFailure.clear();
+                repaint();
+            }
+            continue;
+        }
+        ui.builtinViewFailure = window->lastOpenFailure();
+        std::fprintf (stderr, "[aux builtin] %s\n", ui.builtinViewFailure.c_str());
+        window.reset();
+        repaint();
+    }
+   #endif
+}
+
 void AuxLaneComponent::detachClapEditorForSlot (int slotIdx)
 {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -1435,7 +1813,7 @@ void AuxLaneComponent::detachClapEditorForSlot (int slotIdx)
     removeChildComponent (ui.clapEditor.get());
     ui.clapEditor.reset();
 #else
-    juce::ignoreUnused (slotIdx);
+    (void) slotIdx;
 #endif
 }
 
@@ -1447,7 +1825,7 @@ void AuxLaneComponent::detachLv2EditorForSlot (int slotIdx)
     removeChildComponent (ui.lv2Editor.get());
     ui.lv2Editor.reset();
 #else
-    juce::ignoreUnused (slotIdx);
+    (void) slotIdx;
 #endif
 }
 
@@ -1459,7 +1837,7 @@ void AuxLaneComponent::detachVst3EditorForSlot (int slotIdx)
     removeChildComponent (ui.vst3Editor.get());
     ui.vst3Editor.reset();
 #else
-    juce::ignoreUnused (slotIdx);
+    (void) slotIdx;
 #endif
 }
 
@@ -1471,7 +1849,7 @@ void AuxLaneComponent::detachAuEditorForSlot (int slotIdx)
     removeChildComponent (ui.auEditor.get());
     ui.auEditor.reset();
 #else
-    juce::ignoreUnused (slotIdx);
+    (void) slotIdx;
 #endif
 }
 
@@ -1561,6 +1939,7 @@ void AuxLaneComponent::hideEditorsKeepingAlive()
         else
             ui.editor->setVisible (false);
     }
+    scheduleBuiltinViewSync();
 }
 
 void AuxLaneComponent::attachHardwareInsertForSlot (int slotIdx)
@@ -1588,6 +1967,22 @@ void AuxLaneComponent::detachHardwareInsertForSlot (int slotIdx)
 void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
 {
     auto& ui = slots[(size_t) slotIdx];
+
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // A built-in unit's view fills the area under the slot header rather than
+    // centring at a preferred size.
+    {
+        auto area = getCenterArea();
+        area.removeFromTop (kSlotHeaderH + 4);
+        if (! showsBuiltinView (strip, slotIdx))
+            area.setSize (0, 0);
+        if (ui.builtinProxy.getBounds() != area)
+        {
+            ui.builtinProxy.setBounds (area);
+            scheduleBuiltinViewSync();
+        }
+    }
+   #endif
 
     // Plugin editor and hardware-insert editor share the same center
     // area below the slot header; only one is ever attached at a time.
@@ -1619,7 +2014,8 @@ void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
     const int mode = strip.insertMode[(size_t) slotIdx].load (std::memory_order_relaxed);
     if (slot.isLoaded() || slot.isOffline() || mode == AuxLaneStrip::kInsertHardware
         || strip.isNativeClapLoaded (slotIdx) || strip.isNativeLv2Loaded (slotIdx)
-        || strip.isNativeVst3Loaded (slotIdx) || strip.isNativeAuLoaded (slotIdx))
+        || strip.isNativeVst3Loaded (slotIdx) || strip.isNativeAuLoaded (slotIdx)
+        || strip.isBuiltinLoaded (slotIdx))
         center.removeFromTop (kSlotHeaderH + 4);
 
     if (center.isEmpty()) return;
@@ -1858,6 +2254,7 @@ void AuxLaneComponent::rebuildSlots()
     // parentHierarchyChanged can tell a real peer change (must rebuild) from a
     // same-peer visibility/tab change (cheap keep-alive).
     lastSeenPeer = getPeer();
+    scheduleBuiltinViewSync();
 }
 
 void AuxLaneComponent::visibilityChanged()
@@ -1933,6 +2330,18 @@ void AuxLaneComponent::paint (juce::Graphics& g)
         g.setColour (juce::Colour (0xff2a2a2e));
         g.drawRoundedRectangle (stripCol.toFloat(), 4.0f, 1.0f);
     }
+
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The view's framework child could not open on this display, so its area says why
+    // instead of standing empty.
+    for (const auto& ui : slots)
+        if (! ui.builtinViewFailure.empty())
+        {
+            g.setColour (juce::Colour (0xff909098));
+            g.drawFittedText (ui.builtinViewFailure, ui.builtinProxy.getBounds().reduced (16),
+                              juce::Justification::centred, 4);
+        }
+   #endif
 }
 
 void AuxLaneComponent::resized()
@@ -1981,7 +2390,8 @@ void AuxLaneComponent::resized()
     // mode - would never get bounds and the user couldn't dismiss
     // the HW insert.
     const bool nativeLoaded = strip.isNativeClapLoaded (0) || strip.isNativeLv2Loaded (0)
-                           || strip.isNativeVst3Loaded (0) || strip.isNativeAuLoaded (0);
+                           || strip.isNativeVst3Loaded (0) || strip.isNativeAuLoaded (0)
+                           || strip.isBuiltinLoaded (0);
     if (slot0.isLoaded() || slot0.isOffline() || hardware || nativeLoaded
         || strip.nativeInsertRestoreFailed (0))
     {
@@ -2087,7 +2497,8 @@ void AuxLaneComponent::mouseDown (const juce::MouseEvent& e)
                          || strip.isNativeClapLoaded (i)
                          || strip.isNativeLv2Loaded (i)
                          || strip.isNativeVst3Loaded (i)
-                         || strip.isNativeAuLoaded (i);
+                         || strip.isNativeAuLoaded (i)
+                         || strip.isBuiltinLoaded (i);
         if (loaded)
             midilearn::showLearnMenu (ui.openOrAddButton, session,
                                         MidiBindingTarget::AuxPluginParam, laneIndex);

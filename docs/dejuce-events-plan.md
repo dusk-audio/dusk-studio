@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # De-JUCE — events-remainder tower (executable spec)
 
 Status: **E0–E3 DONE 2026-07-25, committed on `dejuce/events-remainder`,

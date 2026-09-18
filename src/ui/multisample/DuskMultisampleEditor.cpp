@@ -1,4 +1,8 @@
 #include "DuskMultisampleEditor.h"
+
+#include "SfzLibraryPanel.h"
+
+#include <algorithm>
 #include "AriaGuiComponent.h"
 #include "../DuskFileBrowser.h"
 #include "../../engine/multisample/AriaBank.h"
@@ -24,6 +28,24 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
     browseButton.setTooltip ("Open an .sfz, .sf2, or ARIA .bank.xml soundfont.");
     browseButton.onClick = [this] { openFileChooser(); };
     addAndMakeVisible (browseButton);
+
+    libraryButton.setTooltip ("Browse the soundfonts already installed on this computer.");
+    libraryButton.onClick = [this]
+    {
+        auto safe = juce::Component::SafePointer<DuskMultisampleEditor> (this);
+        sfzlibrary::show (*this,
+                          [safe] (auto file)
+                          {
+                              if (auto* self = safe.getComponent())
+                                  self->startAsyncLoad (file);
+                          },
+                          [safe]
+                          {
+                              if (auto* self = safe.getComponent())
+                                  self->openFileChooser();
+                          });
+    };
+    addAndMakeVisible (libraryButton);
 
     reloadButton.setTooltip ("Re-parse the current .sfz from disk - useful when editing the file externally.");
     reloadButton.onClick = [this]
@@ -295,7 +317,7 @@ void DuskMultisampleEditor::rebuildSkin()
         const auto natH = ariaSkin->nativeSize().getHeight();
         // Header (62) + optional program-switcher row (28) + skin + 12.
         const int progRow = showAriaPrograms ? 28 : 0;
-        setSize (juce::jmax (natW + 24, 520), 62 + progRow + natH + 12);
+        setSize (std::max (natW + 24, 520), 62 + progRow + natH + 12);
     }
     else
     {
@@ -356,6 +378,7 @@ void DuskMultisampleEditor::openFileChooser()
 void DuskMultisampleEditor::setLoadControlsEnabled (bool enabled)
 {
     browseButton       .setEnabled (enabled);
+    libraryButton      .setEnabled (enabled);
     reloadButton       .setEnabled (enabled);
     clearButton        .setEnabled (enabled);
     sf2PresetSelector  .setEnabled (enabled);
@@ -426,10 +449,11 @@ void DuskMultisampleEditor::resized()
 {
     auto area = getLocalBounds().reduced (12);
 
-    // Header row: title (left) + browse / reload / clear buttons (right).
+    // Header row: title (left) + library / browse / reload / clear (right).
     auto header = area.removeFromTop (28);
-    titleLabel.setBounds (header.removeFromLeft (200));
+    titleLabel.setBounds (header.removeFromLeft (160));
     const int btnW = 80;
+    libraryButton.setBounds (header.removeFromLeft (btnW).reduced (2));
     browseButton.setBounds (header.removeFromLeft (btnW).reduced (2));
     reloadButton.setBounds (header.removeFromLeft (btnW).reduced (2));
     clearButton .setBounds (header.removeFromLeft (btnW).reduced (2));
@@ -446,7 +470,7 @@ void DuskMultisampleEditor::resized()
         {
             auto progRow = area.removeFromTop (24);
             ariaProgramLabel.setBounds (progRow.removeFromLeft (64));
-            ariaProgramSelector.setBounds (progRow.removeFromLeft (juce::jmin (260, progRow.getWidth())));
+            ariaProgramSelector.setBounds (progRow.removeFromLeft (std::min (260, progRow.getWidth())));
             area.removeFromTop (4);
         }
 

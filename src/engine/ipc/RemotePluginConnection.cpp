@@ -87,6 +87,18 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
                                         const std::string& extraArg,
                                         std::string& errorOut)
 {
+    return spawnChild (hostExecutablePath, extraArg, errorOut)
+             && completeConnect (extraArg, errorOut);
+}
+
+// Must run on a thread that outlives the child. The child arms
+// prctl(PR_SET_PDEATHSIG, SIGTERM), and on Linux that signal is delivered when
+// the spawning THREAD exits, not when the process does - so spawning from a
+// short-lived worker kills the child as soon as that worker returns.
+bool RemotePluginConnection::spawnChild (const std::string& hostExecutablePath,
+                                            const std::string& extraArg,
+                                            std::string& errorOut)
+{
     if (child.isAlive())
         return true;
 
@@ -126,7 +138,12 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
     }
 
     controlChannel = pair.parentEnd;
+    return true;
+}
 
+bool RemotePluginConnection::completeConnect (const std::string& extraArg,
+                                                 std::string& errorOut)
+{
     if (! platform::sendHandle (controlChannel, shm.handle()))
     {
         errorOut = std::string ("sendHandle failed: ") + std::strerror (errno);
@@ -199,6 +216,7 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
         || extraArg == "--ipc-control-reply-stub"
         || extraArg == "--ipc-park-timeout-stub"
         || extraArg == "--ipc-load-reply-stub"
+        || extraArg == "--ipc-load-audio-stub"
         || extraArg == "--ipc-stub-sudden-death")
         startReaderThread();
 

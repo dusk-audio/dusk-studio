@@ -5,7 +5,230 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.13.3] - Unreleased
+## [0.14.0] - 2026-09-18
+
+The first five minutes of using Dusk Studio, offline instrument browsing,
+quitting cleanly by any route, and a release pipeline that signs what it
+publishes.
+
+### Added
+
+- **A one-page quickstart, and a menu item that opens it.** `QUICKSTART.md`
+  ships inside every package and **Settings > Quickstart** hands it to whatever
+  your system uses for text. The item greys out and says so when the file is not
+  installed beside the app.
+- **The first session is created from a template.** Choosing **New** in the
+  startup dialog offers Blank, Band, Beats and Singer-Songwriter, the same set
+  as **File > New from template**, instead of always starting blank.
+- **An offline library for installed instruments.** **Library...** in the
+  soundfont editor lists the `.sfz` and `.sf2` files already on the machine, so
+  loading one does not mean remembering where it lives. The scan is
+  depth-capped, survives symlink loops, can be cancelled, and reports roots it
+  could not read rather than dropping them. It never reaches the network.
+- **First launch picks an input device.** With nothing saved yet, a backend that
+  offers a capture device gets one selected alongside the output, so recording
+  works without visiting Settings first. An existing configuration is never
+  touched.
+- **Releases carry a signed checksum file.** `SHA256SUMS` now ships with a
+  detached OpenPGP signature beside it, and the manual documents the verify
+  command. A tag cannot publish without it.
+- **Built-in insert units.** Dusk Studio now ships its own insert units, listed
+  in a **Built-In** section pinned to the top of the plugin picker. They are
+  compiled into the application, so they need no scan and are available on a
+  fresh install with no third-party plugins on the machine. A built-in unit
+  loads onto a channel insert or an aux lane slot exactly like a scanned
+  plugin, replaces whatever the slot held, reports its latency to delay
+  compensation, and saves and restores its settings with the session and
+  through Clone Track and its undo. The first unit is **Utility**: gain,
+  polarity invert, stereo width and mono sum, all smoothed over 20 ms and
+  transparent at their defaults.
+- **The built-in suite is complete: five units.** **Utility** (gain, polarity,
+  width, mono), **DuskVerb 2** (sixteen reverb engines from plate to shimmer),
+  **Tape Echo 2** (the Tape Echo 2 plug-in's own DSP running inside Dusk Studio:
+  a three-head tape delay with a spring tank that syncs to the session tempo), **Tape**
+  (per-channel tape colour on the same engine as the master bus) and **Sunset**
+  (a six-engine polyphonic synthesiser, the instrument a MIDI track can reach
+  with nothing installed).
+  On a channel insert, click a loaded unit's slot, or right-click it and choose
+  Open editor. On an aux lane the unit's controls are always on screen, filling
+  the lane under the slot header as sections of knobs, switch banks, drop-down
+  lists and toggles sized to the room the lane has (#596). MIDI Learn binds to a
+  built-in unit's controls the way it does to a plugin's.
+
+- **DuskVerb 2 is now the built-in reverb.** It shows its own editor on channel
+  inserts and aux lanes, and its presets, INIT and the active side of its A/B
+  comparison are saved with the session. Sessions using the old Reverb still load under the same unit, at
+  DuskVerb 2's defaults rather than with converted settings.
+
+- **Tape Echo 2 brings its own editor.** A built-in unit that is one of Dusk
+  Audio's plug-ins now shows the plug-in's own editor rather than a panel of
+  knobs: over the dimmed window on a channel insert, and filling the editor area
+  on an aux lane, centred and scaled to the lane the way a plug-in's editor sits
+  there. It runs in Dusk Studio's process beside the DSP, so its meters and its
+  presets are the plug-in's own. A display that cannot carry an embedded child,
+  such as native Wayland, says so in place of the editor instead of opening a
+  window of its own. The transport keys keep working: the keyboard returns to the
+  mixer at the end of every knob move.
+- **MIDI Learn reaches a built-in unit's controls.** A learned binding on a
+  built-in insert now arrives at the unit, on a channel strip and on an aux lane
+  alike; it was resolved and stored but never applied.
+
+### Changed
+
+- **The master tape runs the Tape Machine 2 engine** (#340). It is voiced
+  differently from the engine it replaces, and it anti-aliases locally around
+  each nonlinear stage at a fixed internal rate, so the engine-wide **Effect
+  Oversampling** setting no longer changes it; that setting still drives every
+  other oversampled stage. The tape stage now reports a constant 56 samples of
+  latency, which delay compensation covers, where it previously reported none
+  at 1x.
+- **The channel strips and the buses run the 4K EQ 2 engine** (#341). Its band
+  curves, filter slopes and console character are calibrated against
+  measurements of the hardware at each marked position, so it is voiced
+  differently from the engine it replaces while the controls, their ranges and
+  their defaults are unchanged. The console character stage no longer adds a
+  noise floor, so a silent channel stays silent through it.
+- **Stop returns the playhead to where play or record started** (#591). It is
+  the new default for **Playhead on Stop**, so Play after a take hears the take.
+  Moving the playhead during playback moves the return point with it. Pressing
+  Stop while already stopped returns to bar 1 whatever the setting, as the
+  quickstart says. A choice saved in Settings before this release is kept. A
+  stop that comes from MIDI clock or MTC chase leaves the playhead where the
+  master stopped.
+- **Arming a track with no input is refused, and says why.** ARM no longer
+  lights on an audio track while the open device offers no capture channels,
+  because the recording that followed wrote nothing and said nothing. The
+  transport bar carries the reason. A device change that takes the inputs away
+  disarms audio tracks and raises the same message.
+- **The bounce dialog keeps the file name readable.** A path too long for the
+  line is shortened in the middle rather than cut off at the right-hand edge,
+  the whole path is on the line's tooltip, and **Copy path** puts it on the
+  clipboard.
+- **Waveforms are drawn from Dusk-owned peak data.** The mastering overview and
+  the region editor both render from peaks generated in the background instead
+  of JUCE's thumbnail cache. Short files keep fine detail, sample-level
+  zoom reads exact column ranges, and the paint path performs no file reads.
+  Clicking to seek works while a file is still loading.
+
+### Fixed
+
+- **A normal macOS drag install keeps the quickstart available.** The DMG has
+  an Applications shortcut, and `QUICKSTART.md` is also inside the app bundle,
+  so **Settings > Quickstart** still works after copying only the app.
+- **The macOS first-open directions match current Gatekeeper.** The quickstart
+  now sends unsigned-beta users to **Privacy & Security > Open Anyway** after
+  the first blocked launch, and the manual uses the names of the shipped DMG
+  and app bundle.
+- **The quickstart's links work from an installed package** (#626). The copy
+  in every package linked the manual and its screenshots by paths that exist
+  only in the source tree. It now links them on GitHub at the release tag, and
+  the package check fails a Markdown file that links a path the package lacks.
+- **Placing loop and punch brackets arms them** (#592). **Set punch in here**
+  and **Set punch out here** on the ruler menu, and **Shift+[** / **Shift+]**,
+  turn punch on once the in point sits before the out point, as dragging a
+  range and choosing **Set punch in / out here** already did, so the take lands
+  inside the brackets instead of covering the whole pass. **[** / **]** and
+  **Set loop in here** / **Set loop out here** turn loop on the same way. A new
+  point that leaves the in point at or after the out point turns the mode off.
+  Loop and punch brackets are drawn hollow and faint while their mode is off,
+  so a range that is set but not armed shows at a glance.
+- **The tape strip keeps its zoom while recording** (#593). It used to zoom out
+  to at least a minute when recording started and snap back on stop, so the
+  view jumped twice per take. It now holds your zoom and turns the page when the
+  playhead reaches the right-hand edge, with or without Chase.
+- **A new session's tape strip opens on a one-minute window** (#628). With
+  nothing recorded, fitting the view picked the tightest zoom, so the strip
+  showed about two seconds of tape and a first take turned the page every two
+  seconds. **0** (Fit) on an empty session gives the same minute.
+- **Settings > Quickstart works after `install.sh`** (#630). The Linux installer
+  now copies `QUICKSTART.md` beside the installed program; the menu item was
+  greyed out as not installed.
+- **Transport keys and Escape work while a built-in unit's editor is open**
+  (#629). DuskVerb 2's and Tape Echo 2's own editors kept every key: on Linux
+  whenever the pointer rested on them, on macOS until the app was switched away
+  and back, and after any click inside one the shortcuts stayed dead until the
+  window was clicked. Keys the editor has no use for now reach Dusk Studio, so
+  Space plays and Escape closes the editor; typing in a preset name still goes
+  to the editor.
+- **A track can no longer record from an input the device does not have**
+  (#633). A new session routes each track to the input with its own number, so
+  on a one-input device every track after the first showed a recording and then
+  kept nothing. ARM now refuses such a track, says which input is missing and
+  opens the track's input settings to choose one; inputs the device does not
+  offer are greyed out there, and a switch to a smaller device disarms the
+  tracks it cannot feed.
+- **A freshly loaded instrument plays straight away** (#632). Loading one onto a
+  track with no MIDI input binds the on-screen keyboard as before and now turns
+  on **IN** too; without it the keyboard played nothing.
+- **Logging out no longer skips the unsaved-changes prompt.** A termination
+  signal, a logout or a shutdown runs the same staged shutdown as **File >
+  Quit**, so the prompt appears and plugin child processes are not left to be
+  reaped.
+- **A session that has never been saved is not dirty because it autosaved.**
+  Creating a session no longer asks whether to save changes that were never
+  made.
+- **Keyboard shortcuts work without clicking the window first.** Any launch that
+  shows no startup dialog left the window with nothing focused, and every
+  shortcut in the manual was dead until the user happened to click the canvas.
+- **A plugin loaded out of process is not killed moments later.** The sandbox
+  child was spawned from a worker thread that exits as soon as the load
+  reports success, and on Linux the child's parent-death signal fires when that
+  thread exits rather than when the application does.
+- **Opening a session while Dusk Studio is running always reaches the running
+  copy.** Simultaneous launches could each conclude they were the only one, and
+  on macOS a launch that could not reach the running copy started a second
+  window and its session was the one that lost work. The slot is claimed with an
+  owner lock rather than inferred from a refusal.
+- **MIDI files whose header over-counts their tracks import again.** A header
+  that includes a vendor chunk in its track count made the reader run past the
+  end of the file and fail the whole import, discarding tracks it had already
+  parsed. It keeps what it read, which is what the previous reader did.
+- **First launch on a PipeWire desktop no longer falls back to ALSA.** With no
+  saved device the elected driver is still waking from suspend when the node
+  starts streaming, and the first graph cycle lands about 270 ms later. The open
+  waited 200 ms and gave up, and the fallback then stuck in the saved
+  configuration. The wait now outlasts a cold device, and when the app does
+  fall back off the preferred backend the transport bar says so.
+- **The PipeWire default device follows the system default.** The first device
+  offered was the first non-monitor node in registry order, which could be an
+  interface the desktop does not use. The backend now reads PipeWire's own
+  default sink and source, keeps the old order as a fallback, and never
+  defaults the input to a monitor.
+- **Escape closes the audio settings panel on Windows.** The panel never
+  receives keyboard input there, so the main window now answers Escape for it,
+  the same way clicking outside already did.
+- **The transport bar's device notice is readable in a banked session.** The
+  bank buttons were drawn over it. It now has a row of its own under the
+  controls that exists only while a notice stands.
+- **Faders report mute to a screen reader.** A fader could speak a finite gain
+  while the signal was already hard-muted, and text set to `-INF dB` was read
+  back as 0 dB. The manual's Linux screen-reader claims are corrected to match
+  what is implemented.
+- **Button labels fit their buttons on a Retina display** (#590). The startup
+  dialog's tabs and buttons, the compressor editor's mode buttons, the virtual
+  keyboard's steppers and the settings panel's buttons (**Rescan devices**,
+  **MIDI Bindings...**, **Run Self-Test...**) drew their text at twice its size
+  on a display with a backing scale of 2. The built-in unit editor laid its rows
+  out at half size there, so its labels overlapped.
+- **A relative donor path configures the tests.** The documented
+  `-DDUSK_PLUGINS_PATH=../dusk-donor-pin` failed a tests configure with "Cannot
+  find source file". Relative `JUCE_PATH`, `DUSK_PLUGINS_PATH`, `DAF_PATH` and
+  `DAF_WIDGETS_PATH` values now resolve against the source tree.
+- **The mastering EQ curve follows the band you are moving.** Dragging a
+  band's dot, double-clicking it to reset the gain, or turning a band's
+  frequency, gain or Q knob left the response curve at its old shape until the
+  view was reopened.
+- **Linux release builds configure again.** Every Linux tarball build since the
+  DAF path was added to the release workflow failed at configure with "syntax
+  error near unexpected token `do`", so a tag would have shipped without Linux
+  packages. The macOS and Windows jobs were unaffected.
+- **The Windows package check reads the MSI it extracted.** The release
+  workflow's contents check unpacked the MSI into a Git Bash temporary path
+  that the native 7-Zip resolved elsewhere, and read the contract with a
+  trailing carriage return per line, so its first real run reported every
+  required file missing from a complete installer.
+
+## [0.13.3] - 2026-09-05
 
 This release hardens session and plugin recovery, transport MIDI cleanup,
 native plugin hosting, and cross-platform launch and window behaviour. It also

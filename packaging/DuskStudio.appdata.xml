@@ -30,6 +30,16 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
+    <release version="0.14.0" date="2026-09-18">
+      <description>
+        <p>A built-in plugin suite that works on a fresh install (Utility, DuskVerb 2, Tape Echo 2, Tape and the Sunset synth), the 4K EQ 2 and Tape Machine 2 engines in the console, a one-page quickstart, an offline instrument library, a first launch that picks an input and follows the system audio default, a signed checksum file, and the fixes from walking record, overdub and bounce on all three platforms.</p>
+      </description>
+    </release>
+    <release version="0.13.3" date="2026-09-05">
+      <description>
+        <p>Hardened session and plugin recovery, sandboxed plugin hosting on all three platforms, transport MIDI cleanup, cross-platform launch and window fixes, and the release metadata found missing in the pre-tag audit.</p>
+      </description>
+    </release>
     <release version="0.13.2" date="2026-08-26">
       <description>
         <p>Restores hosted plugin settings when reopening sessions, prevents hung plugin scans from wedging, and adds scan cancellation.</p>

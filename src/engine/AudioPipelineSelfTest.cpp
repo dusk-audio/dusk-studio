@@ -2,6 +2,7 @@
 #include "../foundation/Fs.h"
 #include "../foundation/Text.h"
 #include "audiofile/FileReader.h"
+#include "../session/RegionEditActions.h"
 #if defined(__linux__)
  #include "alsa/AlsaAudioIODevice.h"
 #endif
@@ -960,6 +961,122 @@ std::string AudioPipelineSelfTest::probeUMC1820AlsaFormat()
     return out;
 }
 
+std::string AudioPipelineSelfTest::testCloneTrackNativeInsert()
+{
+#if ! DUSKSTUDIO_HAS_NATIVE_CLAP
+    return "[SKIP] Clone track native insert: no native CLAP support in this build";
+#else
+    const char* fixturePath = std::getenv ("DUSKSTUDIO_CLAP_STATE_FIXTURE");
+    if (fixturePath == nullptr || *fixturePath == '\0')
+        return "[SKIP] Clone track native insert: DUSKSTUDIO_CLAP_STATE_FIXTURE unset";
+
+    constexpr double sr = 48000.0;
+    constexpr int blockSize = 64;
+    constexpr int srcIdx = 6;
+    constexpr int dstIdx = 7;
+    constexpr const char* fixtureId = "studio.dusk.test.multi-bus";
+
+    prepareCleanState();
+    engine.prepareForSelfTest (sr, blockSize);
+
+    auto& srcTrack = session.track (srcIdx);
+    auto& dstTrack = session.track (dstIdx);
+    auto& srcStrip = engine.getChannelStrip (srcIdx);
+    auto& dstStrip = engine.getChannelStrip (dstIdx);
+
+    const auto savedSrcName = srcTrack.name;
+    const auto savedDstName = dstTrack.name;
+    const auto savedSrcPath = srcTrack.nativeClapPath;
+    const auto savedDstPath = dstTrack.nativeClapPath;
+    const auto savedSrcId = srcTrack.nativeClapPluginId;
+    const auto savedDstId = dstTrack.nativeClapPluginId;
+    const auto savedSrcState = srcTrack.nativeClapStateBase64;
+    const auto savedDstState = dstTrack.nativeClapStateBase64;
+
+    auto restore = [&]
+    {
+        srcStrip.unloadNativeClap();
+        dstStrip.unloadNativeClap();
+        srcTrack.name = savedSrcName;
+        dstTrack.name = savedDstName;
+        srcTrack.nativeClapPath = savedSrcPath;
+        dstTrack.nativeClapPath = savedDstPath;
+        srcTrack.nativeClapPluginId = savedSrcId;
+        dstTrack.nativeClapPluginId = savedDstId;
+        srcTrack.nativeClapStateBase64 = savedSrcState;
+        dstTrack.nativeClapStateBase64 = savedDstState;
+    };
+
+    std::vector<std::string> failures;
+    auto expect = [&failures] (bool condition, const char* message)
+    {
+        if (! condition) failures.emplace_back (message);
+        return condition;
+    };
+
+    const auto fixture = std::filesystem::u8path (fixturePath);
+    std::string error;
+    if (! srcStrip.getNativeClapSlot().load (fixture, sr, blockSize, error, fixtureId))
+    {
+        restore();
+        return "[FAIL] Clone track native insert: could not load the fixture (" + error + ")";
+    }
+
+    // Drive the plug-in so its state diverges from the one it loads with,
+    // otherwise a clone that dropped the blob entirely would still compare
+    // equal to a freshly constructed destination.
+    std::array<float, blockSize> left {};
+    std::array<float, blockSize> right {};
+    for (int i = 0; i < 4; ++i)
+        srcStrip.getNativeClapSlot().processStereo (
+            left.data(), right.data(), left.data(), right.data(), blockSize);
+
+    engine.publishPluginStateForSave (true);
+    const auto sourceState = srcTrack.nativeClapStateBase64;
+    expect (srcTrack.nativeClapPath.toStdString() == fixture.u8string(),
+            "source path was not published");
+    expect (sourceState.isNotEmpty(), "source state was empty before the clone");
+
+    CloneTrackAction clone (session, engine, srcIdx, dstIdx);
+    if (! expect (clone.perform(), "perform() refused the clone"))
+    {
+        restore();
+        return "[FAIL] Clone track native insert: " + failures.front();
+    }
+
+    expect (dstTrack.nativeClapPath.toStdString() == fixture.u8string(),
+            "clone did not carry the plug-in path");
+    expect (dstTrack.nativeClapPluginId == fixtureId,
+            "clone did not carry the plug-in ID");
+    expect (dstTrack.nativeClapStateBase64 == sourceState,
+            "clone did not carry the plug-in state");
+    expect (dstStrip.isNativeClapLoaded(), "clone left the destination slot offline");
+    expect (dstTrack.name == savedSrcName + " (copy)", "clone did not tag the name");
+    expect (srcTrack.nativeClapStateBase64 == sourceState,
+            "clone disturbed the source state");
+
+    expect (clone.undo(), "undo() refused");
+    expect (dstTrack.nativeClapPath == savedDstPath,
+            "undo did not restore the destination path");
+    expect (dstTrack.nativeClapPluginId == savedDstId,
+            "undo did not restore the destination plug-in ID");
+    expect (dstTrack.nativeClapStateBase64 == savedDstState,
+            "undo did not restore the destination state");
+    expect (! dstStrip.isNativeClapLoaded(),
+            "undo left a plug-in on the destination slot");
+    expect (dstTrack.name == savedDstName, "undo did not restore the destination name");
+    expect (srcTrack.nativeClapStateBase64 == sourceState,
+            "undo disturbed the source state");
+
+    restore();
+
+    if (failures.empty())
+        return "[OK] Clone track native insert: CLAP identity and state clone and undo";
+    return "[FAIL] Clone track native insert: "
+             + dusk::text::joinIntoString (failures, "; ");
+#endif
+}
+
 std::string AudioPipelineSelfTest::testBackendsOpenCleanly()
 {
     std::string out;
@@ -1717,6 +1834,7 @@ std::string AudioPipelineSelfTest::runAll()
     report.push_back (testMidiPlayAlongMonitor());
     report.push_back (testAudioPlayAlongSends());
     report.push_back (testLoopRecordTakeStacking());
+    report.push_back (testCloneTrackNativeInsert());
     report.push_back ("");
 
    #if defined(__linux__)

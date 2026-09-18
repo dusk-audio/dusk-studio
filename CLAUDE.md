@@ -5,7 +5,7 @@ Dusk Studio is a portastudio-style DAW for Linux, C++17. It is being actively de
 ## Architecture cheat-sheet
 
 - **Audio backend**: native `dusk` PipeWire backend ([src/engine/pipewire/](src/engine/pipewire/)), primary; native ALSA fallback. (The old JUCE-JACK shim is deleted — don't reintroduce a JUCE audio-device path.)
-- **DSP**: extracted from the user's existing Dusk Audio plugins at `/home/marc/projects/plugins/`. Shared headers live (or will live) at `plugins/plugins/shared/dsp-cores/` so both Dusk Studio and the Dusk plugins are single-source-of-truth consumers. Resolved via `-DDUSK_PLUGINS_PATH=/path/to/plugins` or sibling `../plugins` (mirror of the JUCE pattern). Header-only cores: edit a file in the plugins repo, next Dusk Studio build picks it up — no copy step, no submodule bump.
+- **DSP**: extracted from the user's existing Dusk Audio plugins at `/home/marc/projects/plugins/`. Shared headers live (or will live) at `plugins/plugins/shared/dsp-cores/` so both Dusk Studio and the Dusk plugins are single-source-of-truth consumers. Configure fetches the plugins repo at the commit in [DONOR_REV](DONOR_REV) into `build/_deps/dusk-plugins`; `-DDUSK_PLUGINS_PATH=../plugins` builds against your plugins checkout instead, so header edits there reach the next Dusk Studio build.
 - **JUCE**: 8.x, resolved via `-DJUCE_PATH` or sibling `../JUCE` (same scheme as the Dusk plugins repo).
 - **Native plugin hosts** (Linux): CLAP (`src/engine/clap/`), LV2 (`src/engine/lv2/`, lilv/suil via pkg-config), VST3 (`src/engine/vst3/`, Steinberg SDK hosting subset via the `external/vst3sdk` submodule — Dusk-owned mirror `dusk-audio/vst3sdk`, tag `dusk-vst3sdk-v1`, GPL-3.0 arm). All implement `src/engine/hosting/INativeInstance`; compile gates `DUSKSTUDIO_HAS_NATIVE_{CLAP,LV2,VST3}` with `#else` stubs so other platforms build. GPL invariant: never bundle any third-party plugin in a distribution (see LICENSES.txt).
 - **Topology**: 24 channel strips (HPF → 4-band EQ → FET/Opto comp → sends → pan → bus assign → fader → mute/solo) → 4 aux buses (EQ + comp + fader) → master (Pultec EQ + bus comp + tape sat + fader). Three banks of 8 select which 8 strips the control surface drives at a time; the full 24 are visible on screen.
@@ -52,7 +52,7 @@ Two things the gate still can't catch — you must:
 ## Build
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDUSK_PLUGINS_PATH=../dusk-donor-pin
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
@@ -67,7 +67,7 @@ examples and automation explicitly bounded; do not replace the limit with bare
 for macOS/Ninja, three for the disabled macOS/Xcode jobs and the libsodium
 autotools build, and four for Windows/MSBuild.
 
-JUCE is auto-discovered from a sibling directory; pass `-DJUCE_PATH=...` to override. The donor plugins repo is auto-discovered too, but `-DDUSK_PLUGINS_PATH=../dusk-donor-pin` is required because the sibling `../plugins` has drifted past the pin (see Cross-OS dev below).
+JUCE is auto-discovered from a sibling directory; pass `-DJUCE_PATH=...` to override. The donor plugins repo is fetched at configure time (see Cross-OS dev below).
 
 ### Cross-OS dev (macOS authoring, Linux testing)
 
@@ -75,12 +75,12 @@ Same build directory names on both OSes: `build/` (app) and `build-tests/` (Catc
 
 | OS    | App build | Tests build      | JUCE source                              | Plugins source                    |
 |-------|-----------|------------------|------------------------------------------|-----------------------------------|
-| macOS | `build/`  | `build-tests/`   | `../JUCE` (upstream)                     | `../dusk-donor-pin` (`DONOR_REV`) |
-| Linux | `build/`  | `build-tests/`   | `../JUCE-wayland` (plugdata-team fork)   | `../dusk-donor-pin` (`DONOR_REV`) |
+| macOS | `build/`  | `build-tests/`   | `../JUCE` (upstream)                     | fetched at `DONOR_REV`            |
+| Linux | `build/`  | `build-tests/`   | `../JUCE-wayland` (plugdata-team fork)   | fetched at `DONOR_REV`            |
 
 CMake auto-detects:
 - **JUCE** — on Linux it prefers `../JUCE-wayland` if present, falls back to `../JUCE`. The wayland fork has 5 local commits Dusk Studio depends on (XEmbed mapping, X11-on-Wayland fix, peer-creation latch — see [memory](../../.claude/projects/-home-marc-projects-Dusk Studio/memory/linux_juce_wayland_pin.md)) and a divergent `addDefaultFormatsToManager` free function.
-- **Plugins** — the donor repo is a single checkout at `../plugins`, and `../dusk-donor-pin` is the one persistent detached worktree of it, parked at the `DONOR_REV` the build and release workflows share. Both routine and release-compatible builds configure with `-DDUSK_PLUGINS_PATH=../dusk-donor-pin`: `../plugins` HEAD has drifted past that revision, and donor `main` does not contain the required framework-free compressor core. Sibling auto-detection finds `../plugins`, so building without the override builds against *that* revision's DSP and layout. Follow the platform build guide to recreate the pin worktree if it is missing. (Do NOT add any further donor worktrees.)
+- **Plugins** — configure fetches the donor at the commit in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every build and release workflow clones through `.github/actions/clone-donor`. Nothing to check out by hand, and no donor worktrees. Donor `main` can't be used yet: it replaced the compressor core Dusk Studio builds against (the Multi-Comp 2 swap, #586). To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together. `-DDUSK_PLUGINS_PATH=../plugins` builds against your plugins checkout instead; a build dir configured with an old `-DDUSK_PLUGINS_PATH` keeps it cached until you reconfigure with `-UDUSK_PLUGINS_PATH`.
 
 The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/JuceCompat.h](src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and the `#if defined(__linux__)` lives in one place. Don't sprinkle new platform `#ifdef`s into call sites.
 
@@ -157,7 +157,7 @@ Dusk Studio has Catch2 v3 unit tests in [tests/](tests/), gated behind `-DDUSKST
 ### Build + run
 
 ```bash
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
 cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```
@@ -185,6 +185,7 @@ Don't write tests for: UI components (no JUCE message-loop / Component test harn
 - **Drive DSP through several blocks before measuring** when the unit has lookahead, smoothing, or filter state. Measuring the first block gives misleading results because envelopes / smoothers / delay lines haven't reached steady state.
 - **One concept per `TEST_CASE`.** Use `SECTION` for variations on the same setup, separate `TEST_CASE`s for unrelated scenarios.
 - **No sleeps, no threads, no real audio device.** Tests run in milliseconds and on every build.
+- **Tests run as parallel processes** (`ctest --parallel` in CI). Every test process needs its own temp directory (UUID or random suffix), and any shared parent it creates must tolerate losing the race: `juce::File::createDirectory` returns EEXIST to the loser and leaves the child uncreated, so create the parent separately and ignore that result, or retry once and check `isDirectory()`. Tests that start the plug-in host or depend on timing carry the `[ipc]` tag, which runs them serially.
 
 ### Forced verification (extends rule 4 in Agent directives)
 

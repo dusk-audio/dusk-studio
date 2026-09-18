@@ -22,6 +22,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# gh cache delete in the prune steps needs actions: write; everything else
+# only reads the checkout.
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   build:
     name: Build + tests (GCC Release, Ubuntu 22.04, arm64)
@@ -32,13 +38,13 @@ jobs:
       # so installing it and persisting this directory across runs is the
       # whole wiring. build-linux and build-tests share the one cache.
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 500M
+      CCACHE_MAXSIZE: 1G
 
     steps:
       - name: Checkout Dusk Studio
         uses: actions/checkout@v7
         with:
-          # external/sfizz is a submodule; DuskMultisampleProcessor.cpp pulls
+          # external/dusk-fizz is a submodule; DuskMultisampleProcessor.cpp pulls
           # <sfizz.h>, so it must be present or configure/build fails.
           submodules: recursive
           persist-credentials: false
@@ -63,8 +69,11 @@ jobs:
             libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev xvfb
             libwayland-dev libxkbcommon-dev libdecor-0-dev
 
-      - name: Cache ccache objects
-        uses: actions/cache@v6
+      - name: Restore ccache objects
+        # Restore on every run, save only from main (below): a snapshot per PR
+        # push filled the repository's 10 GB cache quota within hours and
+        # evicted the snapshots the next run needed.
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-linux-arm64-${{ github.sha }}
@@ -111,25 +120,10 @@ jobs:
               echo "ERROR: NEON SIMDNativeOps<long long> alias still missing after patch (awk anchor no longer matches the mirror header)." >&2; exit 1; }
           fi
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned donor SHA (mirrors release.yml). main consumes source
-        # files the donor's main HEAD has since relocated, so an unpinned
-        # clone breaks configure. Bump every workflow's DONOR_REV together.
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-          DONOR_REV: 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins-main"
-          cd "${RUNNER_TEMP}/plugins-main"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
-      - name: Clone DAF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-daf-stack.
+      - name: Clone DAF main
         uses: ./.github/actions/clone-daf-stack
 
       - name: Configure (Release)
@@ -140,9 +134,8 @@ jobs:
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF"
 
       - name: Build (Release)
         # GitHub-hosted ARM runner, not a memory-constrained physical Pi.
@@ -170,16 +163,34 @@ jobs:
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF"
 
       - name: Build tests
         run: cmake --build build-tests --target dusk-studio-tests -j6
 
       - name: Run tests
-        run: ctest --test-dir build-tests --output-on-failure
+        run: ctest --test-dir build-tests --output-on-failure --parallel 4
 
       - name: ccache stats
         if: always()
         run: ccache -s
+
+      - name: Save ccache objects (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-linux-arm64-${{ github.sha }}
+
+      - name: Prune older ccache snapshots (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --key ccache-linux-arm64- \
+              --sort created_at --order desc --limit 100 --json id \
+            | jq -r '.[1:][].id' \
+            | while IFS= read -r id; do
+                gh cache delete "$id" --repo "$GITHUB_REPOSITORY"
+              done

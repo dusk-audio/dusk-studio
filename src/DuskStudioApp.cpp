@@ -30,7 +30,7 @@
 #include "session/SessionSerializer.h"
 #include "util/CrashHandler.h"
 #include "util/SingleInstance.h"
-#if JUCE_LINUX
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
  #include "engine/ipc/IpcSelfTest.h"
 #endif
 #if defined(__linux__)
@@ -234,6 +234,27 @@ public:
         // No MainComponent (shouldn't happen in normal use) - fall back
         // to immediate quit so the X still works.
         JUCEApplication::getInstance()->systemRequestedQuit();
+    }
+
+    // The window takes the keyboard for itself whenever its peer regains focus,
+    // which on X11 includes a click inside an embedded plug-in editor, and at
+    // launch. Keys that land here never reach the shortcuts on the content, so
+    // the focus goes straight on to it.
+    void focusGained (FocusChangeType) override
+    {
+        if (auto* content = getContentComponent())
+            content->grabKeyboardFocus();
+    }
+
+    // With nothing focused, which is where macOS leaves JUCE once an embedded
+    // editor's view has been first responder, a key arrives at the window
+    // rather than at any component inside it. A key the focused content passed
+    // up has already been offered to it.
+    bool keyPressed (const juce::KeyPress& key) override
+    {
+        auto* content = getContentComponent();
+        return content != nullptr && ! content->hasKeyboardFocus (true)
+            && content->keyPressed (key);
     }
 
 private:
@@ -1380,14 +1401,15 @@ private:
     {
         const int numCh = 2;
         const int numFrames = (int) (sr * kContentSeconds);
+        constexpr double kPi = 3.14159265358979323846;
         dusk::audio::PlanarBuffer buf;
         if (! buf.setSize (numCh, numFrames)) return {};
         for (int n = 0; n < numFrames; ++n)
         {
             const double t   = (double) n / sr;
-            const double env = std::sin (juce::MathConstants<double>::pi * (double) n / numFrames);
-            buf.channel (0)[n] = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fL * t));
-            buf.channel (1)[n] = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fR * t));
+            const double env = std::sin (kPi * (double) n / numFrames);
+            buf.channel (0)[n] = (float) (env * 0.6 * std::sin (2.0 * kPi * fL * t));
+            buf.channel (1)[n] = (float) (env * 0.6 * std::sin (2.0 * kPi * fR * t));
         }
         file.deleteFile();
         dusk::audio::WriteSpec spec;
@@ -2248,15 +2270,36 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;
     }
 
-   #if JUCE_LINUX
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Both harnesses launch the sibling child. Resolve it under the name the
+    // loader uses, and report a child that is not there: handing the connect a
+    // path that cannot be spawned leaves the harness waiting with no output.
+    const auto resolveIpcHostChild = []
+    {
+        const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+        const auto host = exe.getSiblingFile (pluginHostExecutableName());
+        if (! host.existsAsFile())
+        {
+            std::fprintf (stderr, "FAIL: no %s next to the app; build it first\n",
+                          pluginHostExecutableName());
+            std::fflush (stderr);
+        }
+        return host;
+    };
+
     if (envFlagSet ("DUSKSTUDIO_RUN_IPC_SELFTEST"))
     {
         // Out-of-process plugin hosting Phase 1 acceptance gate.
         // Validates the shm + futex round-trip against the
         // dusk-studio-plugin-host stub binary (which lives next to Dusk Studio in
         // the build output).
-        const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-        const auto host = exe.getSiblingFile ("dusk-studio-plugin-host");
+        const auto host = resolveIpcHostChild();
+        if (! host.existsAsFile())
+        {
+            setApplicationReturnValue (1);
+            quit();
+            return;
+        }
         const auto rc = duskstudio::ipc::runIpcSelfTest (host.getFullPathName().toStdString());
         std::fflush (stdout);
         setApplicationReturnValue (rc);
@@ -2271,8 +2314,13 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     // entire JUCE plugin loading + processBlock path through the IPC.
     if (const char* path = std::getenv ("DUSKSTUDIO_IPC_HOST_TEST"); path != nullptr && *path)
     {
-        const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-        const auto host = exe.getSiblingFile ("dusk-studio-plugin-host");
+        const auto host = resolveIpcHostChild();
+        if (! host.existsAsFile())
+        {
+            setApplicationReturnValue (1);
+            quit();
+            return;
+        }
         const auto rc = duskstudio::ipc::runIpcHostTest (
             host.getFullPathName().toStdString(), std::string (path));
         std::fflush (stdout);
@@ -2388,7 +2436,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;
     }
 
-    // Install crash handler + FileLogger AFTER every selftest env-gate
+    // Install crash handler + application log AFTER every selftest env-gate
     // above has had its chance to quit. Self-test paths don't want
     // stray daily log files littering the user's data dir (or CI
     // runner $HOME). Normal-user launches fall through to here, so the
@@ -2408,6 +2456,13 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         capturingScreenshots ? 1.0f : appconfig::getUiScaleOverride());
 
     mainWindow = std::make_unique<MainWindow> (getApplicationName());
+
+    // A desktop logout, a `systemctl --user stop`, or any supervisor asks for
+    // an exit with SIGTERM. Without a handler the process dies where it stands:
+    // no unsaved-changes prompt, plugin editors torn down after the instances
+    // they belong to, sandbox children left to the reaper.
+    quitSignalHandler = std::make_unique<dusk::QuitSignalHandler> (
+        [this] { systemRequestedQuit(); });
 
     // Open a session passed on the command line (file-manager "open with",
     // `DuskStudio path/to/session.json`, or a session directory). Deferred so
@@ -2443,6 +2498,8 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
 void DuskStudioApp::shutdown()
 {
+    quitSignalHandler.reset();
+
     // Stop the single-instance listener first: a handoff arriving mid-teardown
     // would target a window that is about to go away.
     single_instance::release();
@@ -2494,15 +2551,25 @@ void DuskStudioApp::shutdown()
 #endif
     bounceTest.reset();             // headless bounce harness: worker joined, then engine/session
 
-    // Tear down the FileLogger installed by crash_handler::install so
-    // JUCE's leak detector doesn't complain at exit. The crash callback
-    // installed via setApplicationCrashHandler is harmless if it stays
-    // registered - process is exiting either way.
+    // Detach the logger after UI and engine teardown. Its storage is retained
+    // for any logging calls still in progress.
     duskstudio::crash_handler::uninstall();
 }
 
 void DuskStudioApp::systemRequestedQuit()
 {
+    // Three callers: the desktop session's logout, a termination signal, and
+    // phase 7 of the staged shutdown itself. The first two have to run the
+    // same sequence the titlebar X does, unsaved-changes prompt included. The
+    // third is that sequence asking to finish, so it must not re-enter it.
+    if (mainWindow != nullptr)
+        if (auto* main = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
+            if (! main->isShuttingDown())
+            {
+                main->requestQuit();
+                return;
+            }
+
     quit();
 }
 

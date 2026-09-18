@@ -62,6 +62,7 @@
 #include "../foundation/PlanarBuffer.h"
 #include "../foundation/Text.h"
 #include <algorithm>
+#include <filesystem>
 
 namespace duskstudio
 {
@@ -627,7 +628,7 @@ MainComponent::MainComponent()
     // Optional plugin scan on launch. Per-machine setting (AppConfig);
     // default off. Synchronous - blocks the message thread for a few
     // Push the user's persisted Stop-behavior preference into the session
-    // atom so AudioEngine::stop reads the right policy on the first Stop
+    // atom so AudioEngine::pressStop reads the right policy on the first Stop
     // after launch. The audio settings panel's combo updates this same atom
     // when the user changes the dropdown.
     session.stopBehavior.store ((int) appconfig::getStopBehavior(),
@@ -1039,29 +1040,44 @@ MainComponent::MainComponent()
         }
     };
 
-    if (willLoadSession)
+    // startupDialogPending was already set before setSize() above (so the
+    // scan-kicking resized() saw the gate); the routing here just decides what
+    // the first tick does. Capture and scenario runs suppress the picker too -
+    // its modal would overlay their work (mirrors the same guards in the scan
+    // path).
+    //
+    // The last branch is not a no-op: only the picker's dismissal hands
+    // keyboard focus to the canvas, so a route that shows no picker leaves the
+    // window with nothing focused, and every shortcut in the manual is dead
+    // until the user happens to click the canvas.
     {
-        juce::String pathStr (loadSessionPath);
-        dusk::callAsync ([safeThis, pathStr, armScriptedQuit]
+        const std::string pathStr (willLoadSession ? loadSessionPath : "");
+        const bool wantsPicker = ! willLoadSession
+                              && std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
+                              && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr
+                              && std::getenv ("DUSKSTUDIO_RUN_SCENARIOS") == nullptr;
+
+        dusk::callAsync ([safeThis, pathStr, loadsSession = willLoadSession, wantsPicker,
+                          armScriptedQuit]
         {
-            if (safeThis == nullptr) return;
-            safeThis->loadSessionFromJson (juce::File (pathStr));
-            // Armed from here, not the constructor, so a scripted quit that has
-            // to outlast the load is timed against the load.
-            armScriptedQuit();
-        });
-    }
-    else if (std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
-             && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr
-             && std::getenv ("DUSKSTUDIO_RUN_SCENARIOS") == nullptr)
-    {
-        // startupDialogPending was already set before setSize() above (so the
-        // scan-kicking resized() saw the gate); just queue the dialog here.
-        // Capture and scenario runs suppress the picker too - its modal would
-        // overlay their work (mirrors the same guards in the scan path).
-        dusk::callAsync ([safeThis]
-        {
-            if (safeThis != nullptr) safeThis->launchStartupDialog();
+            auto* const self = safeThis.getComponent();
+            if (self == nullptr) return;
+
+            if (loadsSession)
+            {
+                self->loadSessionFromJson (juce::File (pathStr));
+                // Armed from here, not the constructor, so a scripted quit that
+                // has to outlast the load is timed against the load.
+                armScriptedQuit();
+            }
+            else if (wantsPicker)
+            {
+                self->launchStartupDialog();
+            }
+            else
+            {
+                self->focusMainCanvas();
+            }
         });
     }
 
@@ -1247,6 +1263,37 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (code >= 'a' && code <= 'z') code -= ('a' - 'A');
     const bool cmd     = mods.isCommandDown();   // Ctrl on Linux/Windows, Cmd on macOS
     const bool shift   = mods.isShiftDown();
+
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The audio settings panel is a native child window with its own Escape
+    // handling, which only runs when that window has the keyboard. On Windows
+    // it never takes focus, so every key reaches this handler instead and the
+    // panel cannot be dismissed from the keyboard at all. Answering here works
+    // wherever the key lands, and lands on the same close path as clicking
+    // outside the panel.
+    // The built-in unit editor is another such child, hosted by the strip that
+    // owns the slot, so the same branch closes whichever one is showing.
+    if (code == juce::KeyPress::escapeKey)
+    {
+        if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
+        {
+            closeAudioSettings();
+            return true;
+        }
+        if (consoleView != nullptr)
+        {
+            for (int t = 0; t < Session::kNumTracks; ++t)
+            {
+                auto* const strip = consoleView->getStripComponent (t);
+                if (strip != nullptr && strip->isBuiltinEditorOpen())
+                {
+                    strip->closeBuiltinEditorPopup();
+                    return true;
+                }
+            }
+        }
+    }
+   #endif
     const bool noMods  = ! cmd && ! shift && ! mods.isAltDown();
 
     // Edit-mode shortcuts (Ardour-style). 'G' picks Grab Mode so the
@@ -1479,13 +1526,13 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
         auto& transport = engine.getTransport();
         if (transport.isStopped()) engine.play();
-        else                       { engine.stop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
+        else                       { engine.pressStop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
         return true;
     }
     if (code == 'R' && noMods)
     {
         auto& transport = engine.getTransport();
-        if (transport.isRecording()) { engine.stop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
+        if (transport.isRecording()) { engine.pressStop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
         else                         engine.record();
         return true;
     }
@@ -1506,13 +1553,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // - the timeline grows with the longest region.
     if (key == juce::KeyPress::homeKey)
     {
-        engine.getTransport().setPlayhead (0);
+        engine.getTransport().locate (0);
         return true;
     }
 
-    // '.' (period) -> stop transport and rewind to 0. Pro Tools / Cubase
-    // convention. Mirrors the Stop button on the transport bar with the
-    // added rewind that the bare Stop doesn't provide.
+    // '.' (period) -> stop transport and rewind to 0 whatever Playhead on
+    // Stop says. Pro Tools / Cubase convention.
     if (key.getTextCharacter() == '.' && noMods)
     {
         auto& tr = engine.getTransport();
@@ -1550,7 +1596,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 
     // Loop / punch: bracket keys set the current playhead as in/out;
     // L and P toggle the corresponding mode on/off. Shift+bracket switches
-    // to punch boundaries; the unshifted form sets loop boundaries.
+    // to punch boundaries; the unshifted form sets loop boundaries. Either
+    // arms its mode once in sits before out.
     auto& transport = engine.getTransport();
     // On Linux/X11 getKeyCode() returns the SHIFTED glyph (XLookupString
     // applies modifiers), so Shift+[ arrives as '{' and Shift+] as '}'.
@@ -1561,14 +1608,14 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         if (shift)
         {
             const auto end = transport.getPunchOut();
-            transport.setPunchRange (playhead,
-                                       end > playhead ? end : playhead);
+            transport.placePunchRange (playhead,
+                                         end > playhead ? end : playhead);
         }
         else
         {
             const auto end = transport.getLoopEnd();
-            transport.setLoopRange (playhead,
-                                      end > playhead ? end : playhead);
+            transport.placeLoopRange (playhead,
+                                        end > playhead ? end : playhead);
         }
         if (tapeStrip != nullptr) tapeStrip->repaint();
         return true;
@@ -1579,14 +1626,14 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         if (shift)
         {
             const auto start = transport.getPunchIn();
-            transport.setPunchRange (start < playhead ? start : playhead,
-                                       playhead);
+            transport.placePunchRange (start < playhead ? start : playhead,
+                                         playhead);
         }
         else
         {
             const auto start = transport.getLoopStart();
-            transport.setLoopRange (start < playhead ? start : playhead,
-                                      playhead);
+            transport.placeLoopRange (start < playhead ? start : playhead,
+                                        playhead);
         }
         if (tapeStrip != nullptr) tapeStrip->repaint();
         return true;
@@ -1865,9 +1912,14 @@ void MainComponent::resized()
     juce::Rectangle<int> rowBounds;
     if (! inFullscreenView && transportBar != nullptr)
     {
-        rowBounds = area.removeFromTop (kRowH);
-        transportBar->setBounds (rowBounds);
+        // A device notice gets a row of its own beneath the controls: the bank
+        // buttons below are laid out across the middle of the control row and
+        // drawn after the bar, so a notice sharing that row is covered by them.
+        // The row grows while one stands and shrinks back when it clears.
+        const int noticeH = transportBar->noticeRowHeight();
+        transportBar->setBounds (area.removeFromTop (kRowH + noticeH));
         transportBar->setHintVisible (false);
+        rowBounds = transportBar->getBounds().withHeight (kRowH);
     }
     else
     {
@@ -2635,6 +2687,7 @@ void MainComponent::launchStartupDialog()
     std::fprintf (stderr, "[Dusk Studio/startup] picker unavailable on this display\n");
     std::fflush (stderr);
     startupDialogPending = false;
+    focusMainCanvas();
     maybeStartStartupPluginScan();
    #else
     if (openStartupPanel (false))
@@ -2649,9 +2702,37 @@ void MainComponent::launchStartupDialog()
     std::fprintf (stderr, "[Dusk Studio/startup] picker unavailable on this display\n");
     std::fflush (stderr);
     startupDialogPending = false;
+    focusMainCanvas();
     setStatusText ("Startup dialog unavailable on this display; opened the default session");
     maybeStartStartupPluginScan();
    #endif
+}
+
+// The canvas is what MainComponent::keyPressed hangs off, so without this the
+// window has nothing focused and JUCE delivers key events to the peer's
+// component instead, which is this one's parent and never routes back down.
+void MainComponent::focusMainCanvas()
+{
+    // The startup routing runs on the first message-loop tick, before the
+    // window is on screen, and a component that is not showing cannot take
+    // focus. Latch the request; parentHierarchyChanged takes it once it can.
+    canvasFocusPending = true;
+    takePendingCanvasFocus();
+}
+
+void MainComponent::takePendingCanvasFocus()
+{
+    if (! canvasFocusPending || ! isShowing())
+        return;
+    canvasFocusPending = false;
+    grabKeyboardFocus();
+}
+
+// Showing the window walks this down every descendant, and it is the first
+// moment the canvas is allowed to hold focus.
+void MainComponent::parentHierarchyChanged()
+{
+    takePendingCanvasFocus();
 }
 
 void MainComponent::openStartupForCapture (const std::string& capturePath)
@@ -2714,8 +2795,12 @@ bool MainComponent::openStartupPanel (bool demoRecents)
     // The downloads page is Dusk-owned so the destination can change without an app
     // update, and the artifacts behind it are supporter-gated, so no direct URL
     // exists. It is the one banner action that leaves the dialog up.
+    std::vector<std::string> templateNames;
+    for (int i = 0; i < (int) SessionTemplate::kCount; ++i)
+        templateNames.emplace_back (nameForTemplate ((SessionTemplate) i));
+
     auto view = imgui::makeStartupView (
-        std::move (recents),
+        std::move (recents), std::move (templateNames),
         startupBrandRgba.empty() ? nullptr : startupBrandRgba.data(),
         startupBrandWidth, startupBrandHeight,
         [] { juce::URL ("https://builds.duskaudio.com/latest").launchInDefaultBrowser(); });
@@ -2763,6 +2848,7 @@ void MainComponent::runStartupChoice()
     const auto action = startupView != nullptr ? startupView->chosenAction()
                                                : imgui::StartupAction::skip;
     const auto path = startupView != nullptr ? startupView->chosenPath() : std::string();
+    const int tmpl = startupView != nullptr ? startupView->chosenTemplate() : 0;
 
     if (action == imgui::StartupAction::quit)
     {
@@ -2774,7 +2860,7 @@ void MainComponent::runStartupChoice()
     }
 
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    dismissStartupDialog ([safeThis, action, path]
+    dismissStartupDialog ([safeThis, action, path, tmpl]
     {
         auto* const self = safeThis.getComponent();
         if (self == nullptr)
@@ -2788,7 +2874,9 @@ void MainComponent::runStartupChoice()
                 self->loadSessionFromJson (
                     toFile (std::filesystem::u8path (path)).getChildFile ("session.json"));
                 break;
-            case imgui::StartupAction::newSession: self->newSessionPrompt(); break;
+            case imgui::StartupAction::newSession:
+                self->newSessionPrompt ((SessionTemplate) tmpl);
+                break;
             case imgui::StartupAction::openFile:   self->openFromFilePrompt(); break;
             case imgui::StartupAction::skip:
             case imgui::StartupAction::quit:
@@ -2992,17 +3080,17 @@ void MainComponent::guardSessionSwitchThen (const char* title,
     guardUnsavedThen (title, message, std::move (proceed));
 }
 
-void MainComponent::newSessionPrompt()
+void MainComponent::newSessionPrompt (SessionTemplate tmpl)
 {
     // Starting a new session blanks the current one - guard unsaved work first.
     guardSessionSwitchThen (
         "Save changes before starting a new session?",
         "Your current session has unsaved changes. If you don't save, "
         "those changes are discarded when the new session opens.",
-        [this] { promptNewSessionLocation(); });
+        [this, tmpl] { promptNewSessionLocation (tmpl); });
 }
 
-void MainComponent::promptNewSessionLocation()
+void MainComponent::promptNewSessionLocation (SessionTemplate tmpl)
 {
     // Single-dialog "Save As" UX: filename text field + folder browser in
     // one step. The typed name becomes the session folder; the navigated
@@ -3019,16 +3107,16 @@ void MainComponent::promptNewSessionLocation()
         /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
     },
-    [this] (juce::File chosen)
+    [this, tmpl] (juce::File chosen)
     {
         if (chosen == juce::File()) return;
         // The chosen path becomes the new session folder. Start from a clean
         // default state - NOT the current session saved under a new name.
-        createNewSessionAt (chosen);
+        createNewSessionAt (chosen, tmpl);
     });
 }
 
-void MainComponent::createNewSessionAt (const juce::File& dir)
+void MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate tmpl)
 {
     if (dir == juce::File()) return;
     dir.createDirectory();
@@ -3050,6 +3138,9 @@ void MainComponent::createNewSessionAt (const juce::File& dir)
     }
 
     auto fresh = std::make_unique<Session>();
+    // Stamped before the write, so the session lands on disk as the user asked
+    // for it and the normal load path rebuilds the UI from that.
+    applyTemplate (*fresh, tmpl);
     if (! SessionSerializer::writeAtomic (target, SessionSerializer::serialize (*fresh)))
     {
         setStatusForPath ("Could not create session at", target);
@@ -3377,8 +3468,23 @@ bool MainComponent::currentSessionDirty()
     // so transient fields don't flip the raw JSON on an otherwise-clean session.
     const auto strippedCurrent = stripVolatileStateForDirtyCompare (SessionSerializer::serialize (session));
     const auto strippedSaved   = stripVolatileStateForDirtyCompare (lastSavedSessionJson);
-    return (! lastSavedSessionJson.isEmpty() && strippedCurrent != strippedSaved)
-         || autosaveIsNewerThan (dir.getChildFile ("session.json"));
+    const bool divergedFromBaseline =
+        ! lastSavedSessionJson.isEmpty() && strippedCurrent != strippedSaved;
+
+    // A session that was never saved has no session.json, only the autosave the
+    // heartbeat wrote from this very state. autosaveIsNewerThan answers "yes"
+    // there because there is nothing for it to be newer than, which on the
+    // bootstrap Untitled session means the first autosave tick makes an
+    // untouched app ask the user to save work they have not done. The baseline
+    // seeded at construction answers the question instead - and if that
+    // baseline is ever missing, the old reading stands rather than reporting an
+    // hour of unsaved work clean.
+    const auto sessionJson = dir.getChildFile ("session.json");
+    if (! sessionJson.existsAsFile())
+        return lastSavedSessionJson.isEmpty() ? autosaveIsNewerThan (sessionJson)
+                                              : divergedFromBaseline;
+
+    return divergedFromBaseline || autosaveIsNewerThan (sessionJson);
 }
 
 void MainComponent::requestQuit()
@@ -5057,7 +5163,35 @@ enum MenuItemId
     kMenuSettingsAbout = 2002,
     kMenuSettingsShortcuts = 2003,
     kMenuSettingsSupporters = 2004,
+    kMenuSettingsQuickstart = 2005,
 };
+
+// The quickstart document as the packagers place it: at the install root, one
+// level above the executable on Linux and Windows, and three above it inside a
+// macOS bundle, which is also where the repo's own copy sits relative to a
+// build run out of the tree. packaging/contents.txt names it .md on all three
+// platforms; .txt is accepted so a packager renaming it does not silently turn
+// the menu entry off.
+std::filesystem::path locateQuickstartDocument()
+{
+    const auto exeDir = duskstudio::platform::executableDirectory();
+    if (exeDir.empty()) return {};
+
+    const std::filesystem::path roots[] = {
+        exeDir.parent_path(),
+        exeDir,
+        exeDir.parent_path() / "Resources",
+        exeDir.parent_path().parent_path().parent_path(),
+    };
+
+    std::error_code ec;
+    for (const auto& root : roots)
+        for (const char* name : { "QUICKSTART.md", "QUICKSTART.txt" })
+            if (std::filesystem::is_regular_file (root / name, ec))
+                return root / name;
+
+    return {};
+}
 }
 
 juce::StringArray MainComponent::getMenuBarNames()
@@ -5174,6 +5308,13 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
     {
         menu.addItem (kMenuSettingsAudio, "Settings...");
         menu.addItem (kMenuSettingsShortcuts, "Keyboard Shortcuts  (?)");
+        // Disabled rather than hidden when the document is not installed, and
+        // it says why in the label: a menu item has nowhere to put a tooltip,
+        // and an alert for a missing help file is worse than the gap.
+        const bool quickstartInstalled = ! locateQuickstartDocument().empty();
+        menu.addItem (kMenuSettingsQuickstart,
+                      quickstartInstalled ? "Quickstart" : "Quickstart  (not installed)",
+                      quickstartInstalled);
         menu.addSeparator();
        #if DUSKSTUDIO_HAS_PATREON_CREDITS
         menu.addItem (kMenuSettingsSupporters, "Supporters");
@@ -5296,6 +5437,22 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
             break;
         }
        #endif
+        case kMenuSettingsQuickstart:
+        {
+            const auto quickstart = locateQuickstartDocument();
+            if (quickstart.empty()) break;
+
+            if (! duskstudio::platform::openPathInDefaultApp (quickstart))
+            {
+                // Nothing was launched, so say where the file is rather than
+                // leaving a menu click that silently did nothing.
+                const auto message = "Dusk Studio could not hand this file to a "
+                                     "default application: " + quickstart.string()
+                                   + ". Open it from there by hand.";
+                showDuskAlert (*this, "Could not open the quickstart", message.c_str());
+            }
+            break;
+        }
         case kMenuSettingsAbout:
         {
             // Pull the version string from the JUCE_APPLICATION_VERSION_STRING

@@ -4,17 +4,21 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../foundation/MessageThread.h"
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include "../session/Session.h"
 #include "DuskComboBox.h"
+#include "EmbeddedModal.h"
+#include "imgui/DafEditorHost.h"
 #include "NativeEditorOwner.h"
 #include "../engine/device/ChannelSet.h"
 
 namespace duskstudio
 {
-class PluginSlot;
+namespace imgui { class DuskPanelWindow; }
+
 class AuxLaneStrip;
 class AudioEngine;
 class HardwareInsertEditor;
@@ -79,7 +83,6 @@ private:
     void openPickerForSlot (int slotIdx);
     void openHardwareInsertEditor (int slotIdx);
     void unloadSlot (int slotIdx);
-    void toggleEditorForSlot (int slotIdx);
     void refreshSlotControls (int slotIdx);
     void attachEditorForSlot (int slotIdx);
     void detachEditorForSlot (int slotIdx);
@@ -99,6 +102,24 @@ private:
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
     void loadNativeAuForSlot (int slotIdx, const juce::String& componentId);
+#endif
+    void loadBuiltinForSlot (int slotIdx, const std::string& unitId);
+    // A built-in unit's controls fill the editor area as a framework child placed on
+    // the slot's proxy. Opening, moving and closing it is coalesced onto the next
+    // message-loop tick: the proxy's visibility change that asks for it arrives from
+    // inside an EmbeddedModal teardown, which is no place to build a GL context.
+    void scheduleBuiltinViewSync();
+    void applyBuiltinViewSync();
+    bool builtinViewNeedsSync (int slotIdx) const;
+#if DUSKSTUDIO_HAS_NATIVE_UI
+    // Where a slot's plug-in editor belongs: its own size, centred in the lane's
+    // editor area and scaled down when the lane is smaller than it.
+    imgui::DafEditorHost::Geometry builtinEditorGeometry (int slotIdx) const;
+    void openBuiltinEditorHostForSlot (int slotIdx, std::uintptr_t parentHandle,
+                                       const std::string& unitId);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_UI
+    bool builtinSyncPending = false;
 #endif
     // Stubbed (no-op body) off Linux so the many callers don't each need a guard.
     void detachClapEditorForSlot (int slotIdx);
@@ -190,6 +211,21 @@ private:
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
         std::unique_ptr<class AuPluginEditorComponent> auEditor;
+#endif
+        // The built-in unit's inline view. `builtinViewUnit` is the unit the open view
+        // was built for, or the last one it failed to open for, and `builtinViewParent`
+        // the native handle it embeds in: either changing under an open view means a
+        // new one.
+#if DUSKSTUDIO_HAS_NATIVE_UI
+        NativePanelProxy builtinProxy;
+        std::unique_ptr<imgui::DuskPanelWindow> builtinWindow;
+        // A unit that is one of Dusk's own DAF plug-ins shows the plug-in's own
+        // editor here instead of the panel window above.
+        std::unique_ptr<imgui::DafEditorHost> builtinEditorHost;
+        std::string builtinViewUnit;
+        std::uintptr_t builtinViewParent = 0;
+        bool builtinCloseRequested = false;
+        std::string builtinViewFailure;
 #endif
         juce::String displayedName;
     };

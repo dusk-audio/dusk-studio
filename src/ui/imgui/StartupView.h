@@ -49,13 +49,20 @@ public:
     // Read from the dismissed callback, while the view is still alive.
     virtual StartupAction chosenAction() const = 0;
     virtual const std::string& chosenPath() const = 0;
+
+    // Index into the template names the view was built with. Only meaningful
+    // alongside StartupAction::newSession.
+    virtual int chosenTemplate() const = 0;
 };
 
 // `brandRgba` is the decoded app icon, width * height * 4 bytes, and must outlive the
 // view: the framework side has no image reader, so the host decodes it.
 // `openDownloads` is the one action that does not dismiss: the update banner hands
 // the viewer to a browser and leaves the dialog where it was.
+// `templateNames` are the starting points NEW offers, in the host's own order;
+// the choice comes back as an index into them.
 std::unique_ptr<StartupView> makeStartupView (std::vector<RecentSession> recents,
+                                              std::vector<std::string> templateNames,
                                               const unsigned char* brandRgba,
                                               int brandWidth, int brandHeight,
                                               std::function<void()> openDownloads);

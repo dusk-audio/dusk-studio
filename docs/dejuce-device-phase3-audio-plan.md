@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # De-JUCE tower spec — Device Phase-3-audio
 
 **STATUS: TOWER COMPLETE — all phases merged to main. P0-P2 = #103, P3 = #104,

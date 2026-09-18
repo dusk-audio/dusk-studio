@@ -43,4 +43,30 @@ private:
 // Post fn to run once on the message thread. Returns false if the message loop
 // is gone (shutdown) and the call could not be queued.
 bool callAsync (std::function<void()> fn);
+
+// Traps the signals a desktop session or a supervisor uses to ask a process to
+// exit (SIGTERM, plus SIGINT and SIGHUP where the platform defines them) and
+// runs onQuitRequested on the message thread. The signal handler itself only
+// latches a flag: callAsync allocates and takes the message-manager lock, and
+// neither is safe from a signal handler, so a message-thread watcher polls the
+// latch instead. Construct and destroy on the message thread. The dispositions
+// are process-wide, so only one of these may exist at a time; the destructor
+// restores the defaults. isInstalled() is false when the platform refused the
+// handlers, in which case the default disposition stands and the callback
+// never runs.
+class QuitSignalHandler
+{
+public:
+    explicit QuitSignalHandler (std::function<void()> onQuitRequested);
+    ~QuitSignalHandler();
+
+    bool isInstalled() const noexcept;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl;
+
+    QuitSignalHandler (const QuitSignalHandler&) = delete;
+    QuitSignalHandler& operator= (const QuitSignalHandler&) = delete;
+};
 } // namespace dusk

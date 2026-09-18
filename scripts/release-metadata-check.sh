@@ -34,8 +34,16 @@ fail() {
     exit 1
 }
 
+# GNU and BSD date disagree on how to parse a date, and this runs on both, so
+# the calendar work goes through Python.
+epochOf() {
+    python3 -c 'import datetime, sys
+d = datetime.datetime.strptime(sys.argv[1], "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
+print(int(d.timestamp()))' "$1"
+}
+
 isDate() {
-    [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && date -u -d "$1" +%F >/dev/null 2>&1
+    [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && epochOf "$1" >/dev/null 2>&1
 }
 
 version="$(tr -d '[:space:]' < "$ROOT/VERSION")"
@@ -80,6 +88,15 @@ today="$(date -u +%F)"
 
 if [[ -n "$TAG" ]]; then
     [[ "$TAG" == "v$version" ]] || fail "tag $TAG does not match VERSION v$version"
+    # The notes are written ahead of the bump, so only the tag holds them to it.
+    notesVersions="$(sed -nE 's/^[[:space:]]*VERSION=([0-9]+\.[0-9]+\.[0-9]+)([[:space:]].*)?$/\1/p' \
+                         "$ROOT/packaging/RELEASE-NOTES.md")"
+    [[ -n "$notesVersions" ]] \
+        || fail "packaging/RELEASE-NOTES.md carries no 'VERSION=X.Y.Z' for the signing-key fetch"
+    for notesVersion in $notesVersions; do
+        [[ "$notesVersion" == "$version" ]] \
+            || fail "packaging/RELEASE-NOTES.md fetches the signing key from v$notesVersion, tag is $TAG"
+    done
 fi
 if [[ -n "$DATE" ]]; then
     isDate "$DATE" || fail "--date '$DATE' is not YYYY-MM-DD"
@@ -87,7 +104,7 @@ if [[ -n "$DATE" ]]; then
 fi
 if [[ -n "$COMMIT_DATE" ]]; then
     isDate "$COMMIT_DATE" || fail "--commit-date '$COMMIT_DATE' is not YYYY-MM-DD"
-    delta=$(( ( $(date -u -d "$COMMIT_DATE" +%s) - $(date -u -d "$topDate" +%s) ) / 86400 ))
+    delta=$(( ( $(epochOf "$COMMIT_DATE") - $(epochOf "$topDate") ) / 86400 ))
     (( delta >= -1 && delta <= 1 )) \
         || fail "CHANGELOG dates $version $topDate; the tagged commit is from $COMMIT_DATE"
 fi

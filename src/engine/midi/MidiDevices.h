@@ -65,14 +65,14 @@ public:
     // bytes under the dead identifier.
     void rebuild (double sampleRate);
 
-    // Message thread, before the first attachCallback. Forwarded to the backend,
-    // whose MIDI thread fires it when the OS port set moves. Bursty and raised
-    // off the message thread, so the consumer owns the thread hop and the
-    // coalescing; backends without an OS notification never fire it.
+    // Message thread, before the first attachCallback. Delivery context is
+    // backend-defined; defer handling to a fresh message-thread turn to avoid
+    // re-entering backend callbacks. The consumer coalesces notification bursts;
+    // backends without an OS notification never fire it.
     void setDeviceChangeHandler (std::function<void()> h);
 
-    // Detach half of the fence: stop the backend's dispatch (its stop() joins
-    // that side before returning) and release the OS handles before a rebuild.
+    // Detach half of the fence: stop backend dispatch and wait for admitted
+    // callbacks before returning, so a rebuild can safely change the routes.
     void detachCallback();
     void disableAllDevices();
 
