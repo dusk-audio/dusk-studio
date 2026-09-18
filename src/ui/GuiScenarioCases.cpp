@@ -275,7 +275,7 @@ std::optional<ScenarioResult> runAuxAttachFailure (GuiHost& host, ScenarioContex
 
 std::optional<ScenarioResult> runClapNoWindowMessage (GuiHost& host, ScenarioContext& ctx)
 {
-    constexpr int kBlankNoticeTimeoutMs = 20000;
+    static constexpr int kBlankNoticeTimeoutMs = 20000;
 
     const auto fixture = ctx.fixture ("no_window.clap");
     if (! fixture)
@@ -324,8 +324,8 @@ std::optional<ScenarioResult> runClapNoWindowMessage (GuiHost& host, ScenarioCon
 
 std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, ScenarioContext& ctx)
 {
-    constexpr double kGain = 0.75;
-    constexpr double kTolerance = 1.0e-4;
+    static constexpr double kGain = 0.75;
+    static constexpr double kTolerance = 1.0e-4;
 
     const auto fixture = ctx.fixture ("file_state.lv2");
     if (! fixture)
@@ -422,7 +422,7 @@ bool processGone (int pid)
 
 std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, ScenarioContext& ctx)
 {
-    constexpr int kChildExitTimeoutMs = 15000;
+    static constexpr int kChildExitTimeoutMs = 15000;
 
     const auto childBinary = oopstub::hostBinary();
     if (! childBinary)
