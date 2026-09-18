@@ -844,7 +844,8 @@ void BusComponent::recordAutomation (AutomationParam param, bool recording, floa
     if (recording)
     {
         recorder.record (lane, engine.getTransport().getPlayhead(), value,
-                         sessionRef.tempoBpm.load (std::memory_order_relaxed));
+                         sessionRef.tempoBpm.load (std::memory_order_relaxed),
+                         engine.getTransport().getLocateCount());
     }
     else if (recorder.active())
     {

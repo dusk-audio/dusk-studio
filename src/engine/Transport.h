@@ -37,7 +37,12 @@ public:
         setPlayhead (s);
         if (isPlaying())
             setRollStart (s);
+        locates.fetch_add (1, std::memory_order_relaxed);
     }
+
+    // How many seeks locate() has made. An automation pass ends when this
+    // changes, so the stretch a seek skipped keeps what it held.
+    std::uint32_t getLocateCount() const noexcept { return locates.load (std::memory_order_relaxed); }
 
     // Called from the audio callback when state is Playing or Recording.
     void advancePlayhead (int numSamples) noexcept
@@ -92,6 +97,7 @@ private:
     std::atomic<State>       state            { State::Stopped };
     std::atomic<std::int64_t> playheadSamples  { 0 };
     std::atomic<std::int64_t> rollStart        { 0 };
+    std::atomic<std::uint32_t> locates         { 0 };
 
     std::atomic<bool>        loopEnabled      { false };
     std::atomic<std::int64_t> loopStart        { 0 };

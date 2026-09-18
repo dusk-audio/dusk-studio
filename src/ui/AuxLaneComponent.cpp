@@ -646,7 +646,8 @@ void AuxLaneComponent::recordAutomation (AutomationParam param, bool recording, 
     if (recording)
     {
         recorder.record (automation, engine.getTransport().getPlayhead(), value,
-                         engine.getSession().tempoBpm.load (std::memory_order_relaxed));
+                         engine.getSession().tempoBpm.load (std::memory_order_relaxed),
+                         engine.getTransport().getLocateCount());
     }
     else if (recorder.active())
     {

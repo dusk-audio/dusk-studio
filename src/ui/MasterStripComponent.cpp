@@ -1253,7 +1253,8 @@ void MasterStripComponent::recordFader (bool recording, float db)
     if (recording)
     {
         faderRecorder.record (lane, engine.getTransport().getPlayhead(), db,
-                              session.tempoBpm.load (std::memory_order_relaxed));
+                              session.tempoBpm.load (std::memory_order_relaxed),
+                              engine.getTransport().getLocateCount());
     }
     else if (faderRecorder.active())
     {

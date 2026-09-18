@@ -27,10 +27,10 @@ bool nearDb (float a, float b) { return std::abs (a - b) < 0.05f; }
 
 // A pass holding `db` from `from` to `to`, one point every UI timer tick.
 void ride (AutomationPassRecorder& recorder, AutomationLane& lane,
-           std::int64_t from, std::int64_t to, float db)
+           std::int64_t from, std::int64_t to, float db, std::uint32_t locates = 0)
 {
     for (std::int64_t t = from; t <= to; t += 1600)
-        recorder.record (lane, t, db, 120.0f);
+        recorder.record (lane, t, db, 120.0f, locates);
 }
 
 // WRITE replaces what it played over and nothing else: before and after the
@@ -105,6 +105,28 @@ ScenarioResult loopWrapClosesThePass (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// A seek while the pass runs ends it there: the stretch the playhead skipped
+// keeps the earlier ride.
+ScenarioResult locateEndsThePass (ScenarioContext& ctx)
+{
+    AutomationLane lane;
+    seedRide (lane);
+    const auto earlier = lane.pointsConst();
+    AutomationPassRecorder recorder (kFader);
+
+    ride (recorder, lane, 24000, 36000, -10.0f, 0);
+    ride (recorder, lane, 72000, 80000, -10.0f, 1);
+    recorder.finish (lane, 0);
+
+    const auto& now = lane.pointsConst();
+    ctx.expect (nearDb (evaluateLane (now, 54000, kFader), evaluateLane (earlier, 54000, kFader)),
+                "the pass overwrote the stretch the seek skipped");
+    ctx.expect (nearDb (evaluateLane (now, 30000, kFader), -10.0f)
+                    && nearDb (evaluateLane (now, 76000, kFader), -10.0f),
+                "the ride on either side of the seek was not kept");
+    return ctx.verdict();
+}
+
 // A discrete lane keeps only the changes, and holds the last state to the
 // end of the pass.
 ScenarioResult discreteKeepsChanges (ScenarioContext& ctx)
@@ -115,7 +137,7 @@ ScenarioResult discreteKeepsChanges (ScenarioContext& ctx)
     std::int64_t t = 0;
     for (const float state : states)
     {
-        recorder.record (lane, t, state, 120.0f);
+        recorder.record (lane, t, state, 120.0f, 0);
         t += 1600;
     }
     recorder.finish (lane, 0);
@@ -164,7 +186,7 @@ ScenarioResult enginePlaysControlWhilePassOpen (ScenarioContext& ctx)
     track.automationMode.store ((int) AutomationMode::Touch, std::memory_order_release);
 
     AutomationPassRecorder recorder (kFader);
-    recorder.record (lane, 0, -3.0f, 120.0f);
+    recorder.record (lane, 0, -3.0f, 120.0f, 0);
     ctx.pump (1);
     ctx.expect (nearDb (track.strip.liveFaderDb.load(), -3.0f),
                 "with a pass open the engine played the lane");
@@ -190,6 +212,9 @@ const ScenarioRegistrar touchRegistrar { Scenario {
 const ScenarioRegistrar wrapRegistrar { Scenario {
     "automation.loop_wrap_closes_the_pass", { "automation", "loop" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (loopWrapClosesThePass, ctx); } } };
+const ScenarioRegistrar locateRegistrar { Scenario {
+    "automation.locate_ends_the_pass", { "automation", "transport" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (locateEndsThePass, ctx); } } };
 const ScenarioRegistrar discreteRegistrar { Scenario {
     "automation.discrete_keeps_changes", { "automation" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (discreteKeepsChanges, ctx); } } };

@@ -5132,7 +5132,8 @@ void ChannelStripComponent::recordAutomation (AutomationParam param, bool record
     if (recording)
     {
         recorder.record (lane, engine.getTransport().getPlayhead(), value,
-                         session.tempoBpm.load (std::memory_order_relaxed));
+                         session.tempoBpm.load (std::memory_order_relaxed),
+                         engine.getTransport().getLocateCount());
     }
     else if (recorder.active())
     {

@@ -31,10 +31,12 @@ public:
 
     bool active() const noexcept { return ! pass.empty(); }
 
-    // Adds value (in the control's own units: dB, pan, 0/1) at playhead. A
-    // playhead behind the pass, as after a loop wrap, closes the pass first
-    // and starts a new one.
-    void record (AutomationLane& lane, std::int64_t playhead, float value, float bpm);
+    // Adds value (in the control's own units: dB, pan, 0/1) at playhead.
+    // locates is the transport's seek count. A seek, or a playhead behind the
+    // pass as after a loop wrap, closes the pass first and starts a new one,
+    // so what a seek skipped over keeps its earlier ride.
+    void record (AutomationLane& lane, std::int64_t playhead, float value, float bpm,
+                 std::uint32_t locates);
 
     // Splices the pass into the lane and publishes it. returnSamples is how
     // long the lane takes to get back to what it held after the pass: 0 for
@@ -50,6 +52,7 @@ private:
     std::vector<AutomationPoint> pass;
     const std::vector<AutomationPoint>* base = nullptr;
     std::int64_t spanEnd = 0;
+    std::uint32_t passLocates = 0;
     float lastValue = 0.0f;
     float lastBpm = 120.0f;
 };
