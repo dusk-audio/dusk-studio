@@ -39,7 +39,7 @@ Here is the realistic ramp from zero to maintaining this codebase. Budget a few 
 Before reading any code, build it. You cannot learn a codebase you can't compile.
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDUSK_PLUGINS_PATH=../dusk-donor-pin
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
@@ -51,7 +51,7 @@ JUCE and the DAF stack behind the native notepad are auto-discovered from siblin
 ### Step 2 — Run the tests and the self-test (½ day)
 
 ```bash
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
 cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```
@@ -283,11 +283,11 @@ There is **one** oversampling control: the **Effect Oversampling** dropdown in A
 
 ```bash
 # app
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDUSK_PLUGINS_PATH=../dusk-donor-pin
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j6
 
 # tests
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
 cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```
@@ -1167,10 +1167,10 @@ window-activation smoke tests, and license checks all pass.
 ## Quick reference card
 
 ```bash
-BUILD APP        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDUSK_PLUGINS_PATH=../dusk-donor-pin && cmake --build build -j6
+BUILD APP        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j6
 RUN              ./build/DuskStudio_artefacts/Release/DuskStudio
 SELF-TEST        scripts/run-selftest-xvfb.sh
-BUILD TESTS      cmake -S . -B build-tests -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin && cmake --build build-tests --target dusk-studio-tests -j6
+BUILD TESTS      cmake -S . -B build-tests -DDUSKSTUDIO_BUILD_TESTS=ON && cmake --build build-tests --target dusk-studio-tests -j6
 RUN TESTS        ctest --test-dir build-tests --output-on-failure
 ASAN / TSAN      -DDUSKSTUDIO_ENABLE_ASAN=ON  /  -DDUSKSTUDIO_ENABLE_TSAN=ON
 OVERRIDE DEPS    -DJUCE_PATH=…  -DDUSK_PLUGINS_PATH=…
