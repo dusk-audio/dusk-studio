@@ -324,8 +324,8 @@ private:
     void armStemTap (const StemTarget& target, float* l, float* r);
     void clearAllStemTaps();
 
-    // Per-kind PDC lead-in: track / bus taps sit before the master-stage dry
-    // delay; aux taps and the mix carry it too.
+    // Per-kind lead-in: how far behind the timeline that kind's tap runs (see
+    // AudioEngine::getTrackOutputLatencySamples and its siblings).
     std::int64_t leadInFor (StemTarget::Kind kind) const;
 
     bool runStemsMode();

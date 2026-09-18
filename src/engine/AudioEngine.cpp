@@ -1130,9 +1130,36 @@ void AudioEngine::recomputePdc() noexcept
         deepestAux = std::max (deepestAux, auxLat[a]);
     }
     masterDryPdcTarget.store (deepestAux, std::memory_order_relaxed);
+    // Sends leave the strips with the direct tracks, so the returns also wait
+    // for the bus alignment the direct tracks get.
+    const int busAlign = busAlignSamples.load (std::memory_order_relaxed);
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
-        auxReturnPdcTarget[(size_t) a].store (deepestAux - auxLat[a],
-                                               std::memory_order_relaxed);
+        auxReturnPdcTarget[(size_t) a].store (
+            std::min (deepestAux - auxLat[a] + busAlign, ChannelStrip::kMaxPdcSamples),
+            std::memory_order_relaxed);
+}
+
+int AudioEngine::getTrackOutputLatencySamples() const noexcept
+{
+    return getAggregatePdcLatencySamples() + strips[0].getOversamplingLatencySamples();
+}
+
+int AudioEngine::getBusOutputLatencySamples() const noexcept
+{
+    return getTrackOutputLatencySamples() + busStrips[0].getOversamplingLatencySamples();
+}
+
+int AudioEngine::getAuxReturnLatencySamples() const noexcept
+{
+    return getTrackOutputLatencySamples() + getMasterDryPdcTargetSamples()
+         + busAlignSamples.load (std::memory_order_relaxed);
+}
+
+int AudioEngine::getMixLatencySamples() const noexcept
+{
+    return getTrackOutputLatencySamples() + busAlignSamples.load (std::memory_order_relaxed)
+         + getMasterDryPdcTargetSamples() + master.getOversamplingLatencySamples()
+         + getMasterTapeLatencySamples();
 }
 
 void AudioEngine::applyMasterPdcTargetsNow() noexcept
@@ -3254,6 +3281,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
 
     for (auto& s : strips)        s.prepare (sr, bs, oxFactor);
     for (auto& a : busStrips)     a.prepare (sr, bs, oxFactor);
+    busAlignSamples.store (busStrips[0].getOversamplingLatencySamples(), std::memory_order_relaxed);
     for (auto& a : auxLaneStrips) a.prepare (sr, bs);
     collectDeferredNativeRestoreFailures();
     master.prepare (sr, bs, oxFactor);
@@ -3299,6 +3327,10 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         };
         prepPdc (masterDryPdcL);
         prepPdc (masterDryPdcR);
+        prepPdc (busAlignL);
+        prepPdc (busAlignR);
+        busAlignL.setDelay (busAlignSamples.load (std::memory_order_relaxed));
+        busAlignR.setDelay (busAlignSamples.load (std::memory_order_relaxed));
         for (int a = 0; a < Session::kNumAuxLanes; ++a)
         {
             prepPdc (auxReturnPdcL[(size_t) a]);
@@ -6031,6 +6063,21 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     }
 
     perfLap (PerfSections::kMeterRecordTail);
+
+    // Only the direct tracks are in the mix yet; they wait for the bus
+    // oversamplers so the bus-routed tracks land with them (busAlignSamples).
+    if (busAlignSamples.load (std::memory_order_relaxed) > 0)
+    {
+        auto* mL = mixL.data();
+        auto* mR = mixR.data();
+        for (int i = 0; i < numSamples; ++i)
+        {
+            busAlignL.pushSample (mL[i]);
+            busAlignR.pushSample (mR[i]);
+            mL[i] = busAlignL.popSample();
+            mR[i] = busAlignR.popSample();
+        }
+    }
 
     for (int a = 0; a < Session::kNumBuses; ++a)
     {

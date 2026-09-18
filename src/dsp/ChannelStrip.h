@@ -76,6 +76,10 @@ public:
     PluginSlot&       getPluginSlot()       noexcept { return pluginSlot; }
     const PluginSlot& getPluginSlot() const noexcept { return pluginSlot; }
 
+    // How far the always-oversampled EQ/comp stage delays the strip's output
+    // at the prepared factor, rounded; 0 at 1x.
+    int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
+
     // Native CLAP host path (replaces JUCE hosting for this insert when loaded). When
     // a native CLAP is loaded, the insert pass runs through it instead of pluginSlot.
     // Mirrors AuxLaneStrip. Message thread; engine fences load/unload via its gate.

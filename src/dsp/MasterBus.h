@@ -32,6 +32,10 @@ public:
 
     void processInPlace (float* L, float* R, int numSamples) noexcept;
 
+    // How far the EQ/comp stage delays the master at the prepared oversampling
+    // factor, engaged or not; 0 at 1x. The tape's delay is separate.
+    int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
+
 #if DUSKSTUDIO_HAS_DUSK_DSP
     // Tape meters for the tape panel; see MasterTape::getVu.
     MasterTape::Vu getTapeVu() const noexcept { return tape.getVu(); }
