@@ -279,7 +279,7 @@ pffft (FFT backend behind dusk::audio::Fft — spectrum analyser, DP alignment)
              top of external/pffft/pffft.h.
 
 DAF / DGL and widgets (Dusk Audio Framework graphics layer — backs the native notepad UI)
-  Version  : dusk-audio/DAF monorepo rev 50132e025f625d8b433fc80986c25f1ddf611cc7
+  Version  : dusk-audio/DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
              (CI pin DAF_REV in .github/actions/clone-daf-stack/action.yml)
   License  : ISC — Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
              (DAF/LICENSE)
@@ -3799,7 +3799,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 DAF / DGL — ISC
-LICENSE in the DAF monorepo rev 50132e025f625d8b433fc80986c25f1ddf611cc7
+LICENSE in the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
@@ -3818,7 +3818,7 @@ PERFORMANCE OF THIS SOFTWARE.
 
 --------------------------------------------------------------------------------
 pugl — ISC
-dgl/src/pugl-upstream/COPYING in the DAF monorepo rev 50132e025f625d8b433fc80986c25f1ddf611cc7
+dgl/src/pugl-upstream/COPYING in the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 Copyright 2011-2022 David Robillard <d@drobilla.net>
@@ -3837,7 +3837,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 DAF's dgl/src/pugl.cpp compiles common.c and internal.c, then the OpenGL and
 stub source for the selected Linux, macOS, or Windows backend. Recursing their
-headers in the DAF pugl subtree at rev 50132e025f625d8b433fc80986c25f1ddf611cc7
+headers in the DAF pugl subtree at rev aa6d20d03932d5149b836bc350da47757357ecf7
 produces the distinct source notices below. Every block ends with
 `SPDX-License-Identifier: ISC` and therefore uses the complete ISC permission
 and disclaimer immediately above.
@@ -3882,7 +3882,7 @@ Copyright 2012-2023 David Robillard <d@drobilla.net>
 --------------------------------------------------------------------------------
 DAF no-X11 Wayland OpenGL3 backend — ISC and MIT notices
 dgl/src/pugl.cpp HAVE_WAYLAND branch at dusk-audio/DAF rev
-50132e025f625d8b433fc80986c25f1ddf611cc7
+aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 daf__add_dgl_opengl3 defines DGL_OPENGL, so a supported Linux build without
@@ -4044,7 +4044,7 @@ DEALINGS IN THE SOFTWARE.
 --------------------------------------------------------------------------------
 NanoVG — zlib license
 dgl/src/nanovg/LICENSE.txt at dusk-audio/DAF rev
-50132e025f625d8b433fc80986c25f1ddf611cc7
+aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 Copyright (c) 2013 Mikko Mononen memon@inside.org
@@ -4068,7 +4068,7 @@ misrepresented as being the original software.
 --------------------------------------------------------------------------------
 fontstash — zlib license
 Notice at the head of dgl/src/nanovg/fontstash.h at dusk-audio/DAF rev
-50132e025f625d8b433fc80986c25f1ddf611cc7
+aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 Copyright (c) 2009-2013 Mikko Mononen memon@inside.org
@@ -4090,7 +4090,7 @@ freely, subject to the following restrictions:
 --------------------------------------------------------------------------------
 fontstash embedded UTF-8 decoder — MIT
 Notice at dgl/src/nanovg/fontstash.h:509-510 at dusk-audio/DAF rev
-50132e025f625d8b433fc80986c25f1ddf611cc7. NanoVG.cpp compiles nanovg.c,
+aa6d20d03932d5149b836bc350da47757357ecf7. NanoVG.cpp compiles nanovg.c,
 which includes fontstash.h. The compiled 2010 decoder variation carries these
 exact source lines:
 
@@ -4124,7 +4124,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 stb_truetype — MIT / public domain dual license
 Notice at the foot of dgl/src/nanovg/stb_truetype.h at dusk-audio/DAF rev
-50132e025f625d8b433fc80986c25f1ddf611cc7
+aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------
@@ -4170,7 +4170,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 --------------------------------------------------------------------------------
 stb_image — public-domain dedication and fallback permission
 License notice in dgl/src/nanovg/stb_image.h at dusk-audio/DAF rev
-50132e025f625d8b433fc80986c25f1ddf611cc7
+aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 This software is in the public domain. Where that dedication is not
@@ -4280,7 +4280,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 --------------------------------------------------------------------------------
 DejaVu Sans — Bitstream Vera Fonts License and Arev Fonts License
 dgl/src/resources/LICENSE-DejaVuSans.ttf.txt at dusk-audio/DAF rev
-50132e025f625d8b433fc80986c25f1ddf611cc7
+aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 Fonts are (c) Bitstream (see below). DejaVu changes are in public domain.
@@ -4384,7 +4384,7 @@ from Tavmjong Bah. For further information, contact: tavmjong @ free
 --------------------------------------------------------------------------------
 Khronos GL headers — MIT notices
 dgl/src/khronos/GL/glext.h and dgl/src/khronos/KHR/khrplatform.h at
-dusk-audio/DAF rev 50132e025f625d8b433fc80986c25f1ddf611cc7
+dusk-audio/DAF rev aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 glext.h carries this exact notice:
@@ -4417,7 +4417,7 @@ MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
 
 --------------------------------------------------------------------------------
 DAF widgets — ISC
-LICENSING.md widgets/ notice in the DAF monorepo, rev 50132e025f625d8b433fc80986c25f1ddf611cc7
+LICENSING.md widgets/ notice in the DAF monorepo, rev aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 DISTRHO Plugin Framework (DPF)
@@ -4471,7 +4471,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 --------------------------------------------------------------------------------
 Dear ImGui 1.91.9b — MIT
-widgets/imgui/DearImGui/LICENSE.txt in the DAF monorepo rev 50132e025f625d8b433fc80986c25f1ddf611cc7
+widgets/imgui/DearImGui/LICENSE.txt in the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -4498,7 +4498,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 imgui-knobs — MIT
-widgets/imgui/DearImGuiKnobs/LICENSE in the DAF monorepo rev 50132e025f625d8b433fc80986c25f1ddf611cc7
+widgets/imgui/DearImGuiKnobs/LICENSE in the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 MIT License
@@ -4525,7 +4525,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 imgui_toggle — ISC-style permission grant
-widgets/imgui/DearImGuiToggle/LICENSE in the DAF monorepo rev 50132e025f625d8b433fc80986c25f1ddf611cc7
+widgets/imgui/DearImGuiToggle/LICENSE in the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
 --------------------------------------------------------------------------------
 
 Copyright © 2022 nitz — chris marc dailey https://cmd.wtf
@@ -4548,7 +4548,7 @@ LICENSE at bluescan/proggyfonts rev
 stream expands to 41,208 bytes. Its Adler-32 is 0x48f962f7 and its SHA-256 is
 527d2a443ce051f93f7e77b855609722b8cb220a9f104b4aa037be5c90b71324; all three
 values match that revision's ProggyClean.ttf byte for byte at
-the DAF monorepo rev 50132e025f625d8b433fc80986c25f1ddf611cc7.
+the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7.
 --------------------------------------------------------------------------------
 
 MIT License
