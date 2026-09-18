@@ -7,6 +7,7 @@
 #include "../engine/scenario/cases/OopStubHarness.h"
 #include "../dsp/ChannelStrip.h"
 #include "../session/Session.h"
+#include "../session/SessionSerializer.h"
 
 #include <cmath>
 #include <cstddef>
@@ -15,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -631,7 +633,109 @@ std::optional<ScenarioResult> runOopEditorFailureNoStrand (GuiHost& host, Scenar
 }
 #endif
 
+// ---------------------------------------------------------------- autosave
+
+bool nearly (float a, float b) { return std::abs (a - b) < 1.0e-4f; }
+
+// Track 1's fader as a session file holds it; a large sentinel when the file
+// will not load.
+float savedFaderOf (const std::filesystem::path& sessionJson)
+{
+    Session probe;
+    if (! SessionSerializer::load (probe, sessionJson)) return 1000.0f;
+    return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
+}
+
+// The heartbeat writes session.json.autosave only when the session changed
+// since the last save or autosave, never touches session.json and leaves no
+// temp file behind. Opening a session whose autosave says something else
+// offers recovery, and each answer does what the prompt says.
+std::optional<ScenarioResult> runAutosave (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    static constexpr float kEdited = -12.0f;
+    static constexpr float kLater  = -6.0f;
+
+    auto& session = ctx.session();
+    auto& fader = session.track (0).strip.faderDb;
+    const float original = fader.load (std::memory_order_relaxed);
+    const auto originalDir = currentSessionDirectory (session);
+    ctx.cleanup ([&session, &fader, original, originalDir]
+    {
+        fader.store (original, std::memory_order_relaxed);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto dir = ctx.tempDir() / "autosaved";
+    std::error_code error;
+    fs::create_directories (dir, error);
+    const auto sessionJson = dir / "session.json";
+    const auto autosave = dir / "session.json.autosave";
+    if (! SessionSerializer::save (session, sessionJson))
+        return ScenarioResult::fail ("could not write the session to open");
+    if (! host.openSession (sessionJson) || ! host.modalStackEmpty())
+        return ScenarioResult::fail ("the session did not open without a prompt");
+
+    host.autosaveTick();
+    ctx.expect (! fs::exists (autosave, error), "the heartbeat wrote an autosave for an unchanged session");
+
+    fader.store (kEdited, std::memory_order_relaxed);
+    host.autosaveTick();
+    ctx.expect (fs::exists (autosave, error), "the heartbeat did not write the change");
+    ctx.expect (! fs::exists (dir / "session.json.autosave.tmp", error), "the autosave left its temp file behind");
+    ctx.expect (nearly (savedFaderOf (autosave), kEdited), "the autosave does not hold the change");
+    ctx.expect (nearly (savedFaderOf (sessionJson), original), "the heartbeat touched session.json");
+
+    fs::remove (autosave, error);
+    host.autosaveTick();
+    ctx.expect (! fs::exists (autosave, error), "the heartbeat rewrote a state it had already written");
+
+    // Recover: the autosave's state loads and becomes session.json.
+    SessionSerializer::save (session, autosave);
+    if (! ctx.expect (host.openSession (sessionJson) && ! host.modalStackEmpty(),
+                      "a session with a newer autosave opened without offering recovery"))
+        return ctx.verdict();
+    ctx.expect (host.answerRecovery (GuiHost::Recovery::Recover), "the recovery prompt was not the modal up");
+    ctx.expect (nearly (fader.load (std::memory_order_relaxed), kEdited), "Recover did not load the autosave");
+    ctx.expect (nearly (savedFaderOf (sessionJson), kEdited), "Recover did not write the recovered state to session.json");
+    ctx.expect (! fs::exists (autosave, error), "Recover left the autosave behind");
+
+    // Load saved session: session.json wins and the autosave is discarded.
+    fader.store (kLater, std::memory_order_relaxed);
+    SessionSerializer::save (session, autosave);
+    if (ctx.expect (host.openSession (sessionJson) && ! host.modalStackEmpty(),
+                    "the second newer autosave offered no recovery"))
+    {
+        host.answerRecovery (GuiHost::Recovery::LoadSaved);
+        ctx.expect (nearly (fader.load (std::memory_order_relaxed), kEdited), "Load saved session did not load session.json");
+        ctx.expect (! fs::exists (autosave, error), "Load saved session kept the autosave");
+    }
+
+    // Cancel: nothing loads and the recovery point stays.
+    fader.store (kLater, std::memory_order_relaxed);
+    SessionSerializer::save (session, autosave);
+    fader.store (kEdited, std::memory_order_relaxed);
+    if (ctx.expect (host.openSession (sessionJson) && ! host.modalStackEmpty(),
+                    "the third newer autosave offered no recovery"))
+    {
+        host.answerRecovery (GuiHost::Recovery::Cancel);
+        ctx.expect (host.modalStackEmpty(), "Cancel left the prompt up");
+        ctx.expect (fs::exists (autosave, error), "Cancel discarded the autosave");
+    }
+    return ctx.verdict();
+}
+
 // ------------------------------------------------------------- registration
+
+const ScenarioRegistrar autosave { Scenario {
+    "gui.autosave_writes_and_recovers",
+    { "gui", "session", "autosave" },
+    Needs::Engine | Needs::Gui,
+    {},
+    {},
+    60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAutosave (host, ctx); }
+} };
 
 const ScenarioRegistrar editorLoop { Scenario {
     "gui.editor_open_close_loop",

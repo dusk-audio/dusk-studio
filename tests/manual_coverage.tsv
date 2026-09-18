@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 136
+# ceiling gap 133
 # ceiling partial 56
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -362,8 +362,8 @@ Saving and loading sessions > Save commands	Save is atomic: temp file, fsync, re
 Saving and loading sessions > Save commands	Save As copies audio into the new folder	auto	test:consolidateInto copies session audio and repoints the model;test:consolidateInto pulls external files into audio/ with collision suffixes
 Saving and loading sessions > Save commands	Open loads a session by folder	partial	test:SessionSerializer round-trip preserves transport + per-track state		loading tested; the Open command is walked by hand
 Saving and loading sessions > Save commands	templates name and colour tracks only	auto	test:applying a template names every track;test:templates differ from Blank where they name instruments
-Saving and loading sessions > Autosave	writes session.json.autosave atomically on a timer, skipping idle sessions	gap
-Saving and loading sessions > Autosave	a newer autosave is offered for recovery; Recover writes it to session.json	gap
+Saving and loading sessions > Autosave	writes session.json.autosave atomically on a timer, skipping idle sessions	auto	scenario:gui.autosave_writes_and_recovers
+Saving and loading sessions > Autosave	a newer autosave is offered for recovery; Recover writes it to session.json	auto	scenario:gui.autosave_writes_and_recovers
 Saving and loading sessions > What's in a session	tracks, regions, mixer, plugins, transport, markers, bindings, sync, mastering source	partial	test:SessionSerializer round-trip preserves transport + per-track state;test:SessionSerializer round-trips the MTC sync settings;test:SessionSerializer round-trips MCU input/output identifiers + assign mode;test:mastering source file does not survive loading a session without one		tracks, transport, sync and MCU round-trip; markers, bindings and region fields are not asserted
 Saving and loading sessions > What's in a session	a damaged or partial session still loads safely	auto	test:SessionSerializer::load survives truncated JSON;test:SessionSerializer::load survives empty / non-JSON garbage;test:loading a session without section keys resets those sections;test:SessionSerializer rejects future-version sessions;bb:bb-damaged-recent
 Saving and loading sessions > Backing up	copying the folder is a complete backup	n/a			advice; relative paths are held under Where sessions live
@@ -420,7 +420,7 @@ Messages > Recording	recording alerts	n/a			index; entries are held below
 Messages > Recording > Recording setup failed	lists the tracks that could not start	gap
 Messages > Recording > Recording errors	reports per-track errors after the take	auto	test:RecordManager surfaces MIDI FIFO overflow at stopRecording
 Messages > Session	session alerts	n/a			index; entries are held below
-Messages > Session > Recover from autosave?	offered when the autosave is newer; three choices	gap
+Messages > Session > Recover from autosave?	offered when the autosave is newer; three choices	auto	scenario:gui.autosave_writes_and_recovers
 Messages > Session > Save changes before quitting?	quitting with changes prompts; logout and SIGTERM count as quitting	auto	bb:bb-clean-quit;bb:bb-quit-twice;test:Staged shutdown prints every phase marker the quit legs assert on
 Messages > Session > Save failed	an unwritable session.json raises the alert and keeps the session in memory	gap
 Messages > Session > Missing audio files	lists the files a loaded session cannot find	auto	test:unresolvable region path is reported as missing

@@ -78,5 +78,14 @@ public:
     virtual bool modalStackEmpty() const = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.
     virtual void closeTopModal() = 0;
+
+    // One tick of the autosave heartbeat, as its timer runs it.
+    virtual void autosaveTick() = 0;
+    // Opens a session the way File > Open does: a newer autosave beside it
+    // raises the recovery prompt instead of loading.
+    virtual bool openSession (const std::filesystem::path& sessionJson) = 0;
+    // Answers the recovery prompt; false when none is up.
+    enum class Recovery { Recover, LoadSaved, Cancel };
+    virtual bool answerRecovery (Recovery) = 0;
 };
 } // namespace duskstudio::scenario

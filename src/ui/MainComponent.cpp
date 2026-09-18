@@ -3839,6 +3839,17 @@ void MainComponent::openSessionPath (const juce::File& path)
     }
 }
 
+bool MainComponent::answerRecoveryPrompt (int choice)
+{
+    auto* prompt = dynamic_cast<AutosaveRecoveryDialog*> (recoveryModal.getBody());
+    if (prompt == nullptr) return false;
+    auto& press = choice == 0 ? prompt->onRecover
+                : choice == 1 ? prompt->onLoad
+                              : prompt->onCancel;
+    if (press) press();
+    return true;
+}
+
 bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
                                          std::function<void()> onComplete)
 {

@@ -250,6 +250,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (! stack.empty()) stack.back()->close();
     }
 
+    void autosaveTick() override { owner.writeAutosave(); }
+
+    bool openSession (const std::filesystem::path& sessionJson) override
+    {
+        return owner.loadSessionFromJson (hostFile (sessionJson));
+    }
+
+    bool answerRecovery (Recovery choice) override
+    {
+        return owner.answerRecoveryPrompt ((int) choice);
+    }
+
     MainComponent& owner;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;
     std::array<std::unique_ptr<ScenarioAuxLaneHandle>, Session::kNumAuxLanes> lanes;
