@@ -30,7 +30,21 @@ jobs:
   preflight:
     name: Validate release request
     runs-on: ubuntu-22.04
+    outputs:
+      daf_rev: ${{ steps.daf.outputs.rev }}
     steps:
+      - name: Resolve DAF main
+        # Resolved once so every platform builds the same DAF commit even if
+        # DAF main moves while the release is running.
+        id: daf
+        run: |
+          set -euo pipefail
+          rev="$(git ls-remote https://github.com/dusk-audio/DAF.git refs/heads/main | cut -f1)"
+          [[ "${rev}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "ERROR: could not resolve DAF main (got '${rev}')" >&2; exit 1; }
+          echo "DAF ${rev}"
+          echo "rev=${rev}" >> "${GITHUB_OUTPUT}"
+
       - name: Checkout release metadata
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -194,9 +208,10 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
-      - name: Clone DAF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-daf-stack.
+      - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
+        with:
+          rev: ${{ needs.preflight.outputs.daf_rev }}
 
       - name: Refresh Patreon supporters
         # Bakes the live supporters list into the release binary via
@@ -459,9 +474,10 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
-      - name: Clone DAF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-daf-stack.
+      - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
+        with:
+          rev: ${{ needs.preflight.outputs.daf_rev }}
 
       - name: Refresh Patreon supporters
         # See the Linux job for the rationale. Bakes the live list into the
@@ -925,9 +941,10 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
-      - name: Clone DAF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-daf-stack.
+      - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
+        with:
+          rev: ${{ needs.preflight.outputs.daf_rev }}
 
       - name: Refresh Patreon supporters
         # See the Linux job for the rationale. Bakes the live list into the

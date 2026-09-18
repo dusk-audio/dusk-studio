@@ -109,12 +109,9 @@ The session notepad is Dusk Studio's first native UI window: DAF/DGL for the Ope
 ```bash
 cd ~/projects
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout aa6d20d03932d5149b836bc350da47757357ecf7
 ```
 
-Clone then check out the SHA, rather than building whatever `main` points at today: a branch tip moves and CI fetches this exact SHA. Pugl and the widget kit are vendored in the DAF checkout.
-
-The pins live in [.github/actions/clone-daf-stack/action.yml](.github/actions/clone-daf-stack/action.yml), which is the single source of truth for every workflow — read them from there if it ever disagrees with the commands above.
+Build against DAF `main`, the same branch CI builds; `git -C DAF pull` before building picks up its latest changes. Pugl and the widget kit are vendored in the DAF checkout.
 
 Without DAF and its in-tree widgets, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 

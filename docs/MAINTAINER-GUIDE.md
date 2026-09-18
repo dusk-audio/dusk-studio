@@ -303,20 +303,24 @@ CMake auto-detects three external repos at configure time, on top of three git s
 - **DAF and its in-tree widgets** (the native UI): `-DDAF_PATH=…` wins, then
   `../DAF`, then `external/DAF`. Without DAF and `widgets/imgui/DearImGui.hpp`,
   `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults OFF and every native view is unavailable.
-  Forcing it ON makes missing dependencies a configure error. The single revision
-  in [.github/actions/clone-daf-stack/action.yml](../.github/actions/clone-daf-stack/action.yml)
-  pins DGL, pugl and the widget kit together.
+  Forcing it ON makes missing dependencies a configure error. DGL, pugl and the
+  widget kit move together as one checkout; builds track DAF `main`.
 
 ```bash
 cd /path/to/dusk-studio
 
 git clone https://github.com/dusk-audio/DAF.git ../DAF
-git -C ../DAF checkout aa6d20d03932d5149b836bc350da47757357ecf7
+git -C ../DAF pull --ff-only
 
 ```
 
-Clone then check out the pinned SHA to keep local and CI builds reproducible.
-Pugl and the widget kit are vendored inside DAF; no extra checkout is needed.
+CI builds the tip of DAF `main`, so keep `../DAF` on `main` and pull it before
+building. A release resolves `main` once and builds every platform against that
+commit, then writes it into the shipped LICENSES.txt in place of `@DAF_REV@`
+([.github/actions/clone-daf-stack/action.yml](../.github/actions/clone-daf-stack/action.yml)).
+When DAF changes a vendored third-party component, update that component's
+LICENSES.txt entry here. Pugl and the widget kit are vendored inside DAF; no
+extra checkout is needed.
 
 `DUSKSTUDIO_ENABLE_NATIVE_UI` is a cached `option()`, which makes the OFF sticky in a nasty way: configure a build dir before the checkouts exist, add them later, and re-running CMake in that same dir leaves the notepad off — and the STATUS line above no longer prints, because its guard also requires the deps to be missing. Use a fresh build dir after cloning, or pass `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` to overwrite the cache entry.
 

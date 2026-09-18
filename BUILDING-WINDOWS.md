@@ -60,15 +60,14 @@ The Dusk Studio repo's own directory name (`dusk-studio\`) doesn't matter to the
 
 ### The native notepad (DAF + Dear ImGui)
 
-The session notepad uses DAF/DGL and the in-tree Dear ImGui widget kit, pinned to the DAF revision CI builds:
+The session notepad uses DAF/DGL and the in-tree Dear ImGui widget kit:
 
 ```cmd
 cd C:\dev
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout aa6d20d03932d5149b836bc350da47757357ecf7
 ```
 
-Clone then check out the SHA rather than building whatever a branch points at today. Pugl and the widget kit are vendored in that checkout. The pins live in [.github/actions/clone-daf-stack/action.yml](.github/actions/clone-daf-stack/action.yml), the single source of truth for every workflow.
+Build against DAF `main`, the same branch CI builds; `git -C DAF pull` before building picks up its latest changes. Pugl and the widget kit are vendored in that checkout.
 
 Without DAF and its in-tree widgets, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 

@@ -334,7 +334,7 @@ release.
 - DAF is consumed, not reworked. It is the one framework repository, with pugl
   and the widget kit in-tree, and consuming it is how the native notepad UI and
   the built-in unit editors are built. A change to it lands only when a 1.0
-  feature needs it, on a branch, re-pinned deliberately, never as a refactor.
+  feature needs it, through a DAF pull request, never as a refactor.
 - Downloadable SFZ: the online catalog, downloads, archive extraction and the
   libcurl and libarchive dependencies (#74, #252, #253, #254). Only the
   offline browser (#535) is in.

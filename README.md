@@ -240,7 +240,7 @@ Linux and Windows guides list the exact packages and manifest setup.
 |----------|-----|
 | Linux | [BUILDING-LINUX.md](BUILDING-LINUX.md) |
 | Windows | [BUILDING-WINDOWS.md](BUILDING-WINDOWS.md) |
-| macOS | Mirrors the Linux flow: upstream JUCE 8.0.4, the donor plugins checkout at the pinned revision, the pinned DAF checkout, and static libsodium supplied through `DUSKSTUDIO_SODIUM_ROOT`. Built and tested per push on `macos-14` (Apple Silicon), see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
+| macOS | Mirrors the Linux flow: upstream JUCE 8.0.4, the donor plugins checkout at the pinned revision, DAF `main`, and static libsodium supplied through `DUSKSTUDIO_SODIUM_ROOT`. Built and tested per push on `macos-14` (Apple Silicon), see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
 | Linux tarball packaging | [packaging/README.md](packaging/README.md) |
 | End-user manual and troubleshooting | [MANUAL.md](MANUAL.md) |
 

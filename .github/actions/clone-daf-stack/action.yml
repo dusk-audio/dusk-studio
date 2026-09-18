@@ -1,20 +1,33 @@
-name: Clone DAF stack (dusk-audio forks, pinned)
-description: Pinned DAF checkout into RUNNER_TEMP for the native UI.
+name: Clone DAF
+description: DAF checkout into RUNNER_TEMP for the native UI; tip of main unless a revision is given.
+
+inputs:
+  rev:
+    description: DAF commit to check out. Empty takes the tip of main.
+    required: false
+    default: ''
 
 runs:
   using: composite
   steps:
-    - name: Clone pinned DAF
+    - name: Clone DAF
       shell: bash
       env:
         DAF_REPO: https://github.com/dusk-audio/DAF.git
-        DAF_REV: aa6d20d03932d5149b836bc350da47757357ecf7
+        DAF_REV: ${{ inputs.rev }}
       run: |
         set -euo pipefail
         git init -q "${RUNNER_TEMP}/DAF"
         cd "${RUNNER_TEMP}/DAF"
         git remote add origin "${DAF_REPO}"
-        git fetch --depth 1 origin "${DAF_REV}"
-        git checkout -q "${DAF_REV}"
-        [[ "$(git rev-parse HEAD)" == "${DAF_REV}" ]] || {
-          echo "ERROR: DAF checkout $(git rev-parse HEAD) != pinned ${DAF_REV}" >&2; exit 1; }
+        git fetch --depth 1 origin "${DAF_REV:-main}"
+        git checkout -q FETCH_HEAD
+        rev="$(git rev-parse HEAD)"
+        [[ -z "${DAF_REV}" || "${rev}" == "${DAF_REV}" ]] || {
+          echo "ERROR: DAF checkout ${rev} != requested ${DAF_REV}" >&2; exit 1; }
+        echo "DAF ${rev}"
+        # LICENSES.txt ships in every package and must name the DAF commit
+        # that was compiled in.
+        licenses="${GITHUB_WORKSPACE}/LICENSES.txt"
+        sed "s/@DAF_REV@/${rev}/g" "${licenses}" > "${licenses}.tmp"
+        mv "${licenses}.tmp" "${licenses}"
