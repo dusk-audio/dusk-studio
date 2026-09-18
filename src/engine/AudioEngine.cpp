@@ -1610,6 +1610,56 @@ void AudioEngine::pressStop()
         transport.setPlayhead (*target);
 }
 
+AudioEngine::TransportService AudioEngine::serviceTransportRequests()
+{
+    TransportService done;
+
+    // Auto-punch post-roll: stop once the playhead passes punch-out plus the
+    // post-roll. A post-roll of 0 keeps rolling, and so does loop recording.
+    if (transport.isRecording() && transport.isPunchEnabled() && ! isLoopRecordingActive())
+    {
+        const auto pIn  = transport.getPunchIn();
+        const auto pOut = transport.getPunchOut();
+        const float postRoll = session.postRollEnabled.load (std::memory_order_relaxed)
+                                 ? session.postRollSeconds.load (std::memory_order_relaxed)
+                                 : 0.0f;
+        const double sr = getCurrentSampleRate();
+        if (pOut > pIn && postRoll > 0.0f && sr > 0.0
+            && transport.getPlayhead() >= pOut + (std::int64_t) ((double) postRoll * sr))
+        {
+            pressStop();
+            done.stopped = true;
+        }
+    }
+
+    // Before the action, so a chase's locate-and-play lands first.
+    if (const auto target = session.pendingTransportPlayhead.exchange (
+            (std::int64_t) -1, std::memory_order_relaxed); target >= 0)
+        transport.locate (target);
+
+    const auto pending = (PendingTransportAction) session.pendingTransportAction.exchange (
+        (int) PendingTransportAction::None, std::memory_order_relaxed);
+    switch (pending)
+    {
+        case PendingTransportAction::Play:   play(); break;
+        case PendingTransportAction::Stop:   pressStop(); done.stopped = true; break;
+        // The master decides where the song is, so a chase stop leaves the
+        // playhead where the master stopped it.
+        case PendingTransportAction::SyncStop: stop(); done.stopped = true; break;
+        case PendingTransportAction::Record: record(); done.recordRequested = true; break;
+        case PendingTransportAction::Toggle:
+            if (transport.isStopped()) play();
+            else                       { pressStop(); done.stopped = true; }
+            break;
+        case PendingTransportAction::LoopToggle:
+            transport.setLoopEnabled (! transport.isLoopEnabled());
+            session.savedLoopEnabled = transport.isLoopEnabled();
+            break;
+        case PendingTransportAction::None:   break;
+    }
+    return done;
+}
+
 void AudioEngine::restartDspWhenIdle()
 {
     dspRestartPending_ = true;

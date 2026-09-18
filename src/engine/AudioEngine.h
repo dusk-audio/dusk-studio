@@ -298,6 +298,17 @@ public:
     // the Playhead on Stop setting says; pressed while already stopped, the
     // playhead returns to zero.
     void pressStop();
+
+    // Message-thread transport work the audio thread cannot do itself, run from
+    // the UI's timer: the punch post-roll auto-stop, then a playhead a sync
+    // chase asked for, then a queued transport action (a MIDI binding, or the
+    // chased master starting or stopping). Says what the UI has to follow up.
+    struct TransportService
+    {
+        bool stopped = false;
+        bool recordRequested = false;
+    };
+    TransportService serviceTransportRequests();
     void record();
 
     // Message thread. Detach + reattach the audio callback so DSP re-prepares
