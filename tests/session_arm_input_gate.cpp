@@ -195,3 +195,19 @@ TEST_CASE ("A narrower device disarms only the tracks it cannot feed")
     CHECK_FALSE (session.track (2).recordArmed.load (std::memory_order_relaxed));
     CHECK (session.anyTrackArmed());
 }
+
+// The strip names R after wherever L resolves, so the label the mixer shows is
+// only right while this pairing is.
+TEST_CASE ("A stereo track's right input follows wherever the left one resolves")
+{
+    Session session;
+    setMode (session, 2, Track::Mode::Stereo);
+
+    CHECK (session.resolveInputRForTrack (2) == 3);
+
+    session.track (2).inputSource.store (0, std::memory_order_relaxed);
+    CHECK (session.resolveInputRForTrack (2) == 1);
+
+    session.deviceCaptureChannels.store (2, std::memory_order_relaxed);
+    CHECK (session.missingInputForTrack (2) == Session::kInputAvailable);
+}

@@ -56,8 +56,8 @@ that will carry a signed 1.0.
   built-in unit's controls the way it does to a plugin's.
 
 - **DuskVerb 2 is now the built-in reverb.** It shows its own editor on channel
-  inserts and aux lanes, and its presets, INIT and A/B state are saved with the
-  session. Sessions using the old Reverb still load under the same unit, at
+  inserts and aux lanes, and its presets, INIT and the active side of its A/B
+  comparison are saved with the session. Sessions using the old Reverb still load under the same unit, at
   DuskVerb 2's defaults rather than with converted settings.
 
 - **Tape Echo 2 brings its own editor.** A built-in unit that is one of Dusk
