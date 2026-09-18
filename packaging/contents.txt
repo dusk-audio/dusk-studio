@@ -44,7 +44,7 @@ windows	LICENSES.txt
 linux	QUICKSTART.md
 macos	QUICKSTART.md
 macos	DuskStudio.app/Contents/Resources/QUICKSTART.md
-windows	QUICKSTART.md
+windows	QUICKSTART.txt
 
 # --- Linux desktop integration ---
 linux	install.sh

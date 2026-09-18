@@ -1947,8 +1947,16 @@ if(UNIX AND NOT APPLE)
 else()
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
                   "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES.txt"
-                  "${DUSKSTUDIO_SHIPPED_QUICKSTART}"
             DESTINATION .)
+    if(WIN32)
+        # A stock Windows has no program for .md, and the shell answers with the
+        # "how do you want to open this file" chooser rather than the quickstart.
+        # Every Windows opens .txt.
+        install(FILES "${DUSKSTUDIO_SHIPPED_QUICKSTART}"
+                DESTINATION . RENAME QUICKSTART.txt)
+    else()
+        install(FILES "${DUSKSTUDIO_SHIPPED_QUICKSTART}" DESTINATION .)
+    endif()
 endif()
 # The hicolor size the .desktop Icon=DuskStudio key resolves. Committed rather
 # than derived at build time so cpack DEB/RPM cannot emit an iconless package;

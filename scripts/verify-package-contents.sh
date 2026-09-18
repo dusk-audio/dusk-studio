@@ -149,7 +149,9 @@ done
 # the packaging host has a file there.
 deadLinks=()
 for path in "${expected[@]}"; do
-    [[ "$path" == *.md ]] || continue
+    # .txt as well as .md: the Windows package ships the quickstart as .txt,
+    # and its links are the ones this exists to catch.
+    [[ "$path" == *.md || "$path" == *.txt ]] || continue
     if [[ "$PLATFORM" == "windows" ]]; then
         doc="$(findWindowsFile "${path##*/}")"
     else
