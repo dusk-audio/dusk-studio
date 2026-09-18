@@ -1217,6 +1217,9 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     ioConfigButton.setTooltip ("Click to configure track type, audio inputs, MIDI port and channel.");
     ioConfigButton.onClick = [this] { openIoConfigPopup(); };
     addAndMakeVisible (ioConfigButton);
+    // Strips are rebuilt after a session loads, so this is where a saved left
+    // input first renames R's follow item before the summary reads it.
+    refreshInputAvailability();
     refreshIoConfigButton();
 
     // Aux send knobs
