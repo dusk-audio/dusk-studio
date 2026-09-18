@@ -75,13 +75,11 @@ struct AutomationPoint
 // Accessor discipline:
 //   pointsForRead()      - audio thread (acquire-load). Never null post-ctor.
 //   pointsConst()        - message-thread read.
-//   mutableForWritePass()- Write-mode capture ONLY. In-place append/erase with
-//                          NO publish. Sound solely because the audio thread
-//                          does not read this lane in Write mode (it reads the
-//                          manual setpoint), and discrete capture is gated
-//                          Write-only. Do NOT use for edit gestures - a
-//                          resize under a concurrent reader is UB; use
-//                          mutatePoints / publishPoints there.
+//   mutableForWritePass()- in-place edit with NO publish, for breakpoint
+//                          gestures gated on a stopped transport, so the
+//                          audio thread is not reading the lane. A resize
+//                          under a concurrent reader is UB; everything else
+//                          uses mutatePoints / publishPoints.
 //   publishPoints/mutate - safe swap for every edit / load / thin path.
 struct AutomationLane
 {

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
@@ -141,7 +142,10 @@ private:
 
     void showAutoModeMenu();
     void setAutoMode (AutomationMode m);
-    void captureWritePoint (AutomationParam param, float denormValue);
+    // Feeds param's WRITE / TOUCH pass while recording is true; the first
+    // call with it false splices the pass into the lane.
+    void recordAutomation (AutomationParam param, bool recording, float value);
+    AutomationPassRecorders passRecorders = makeAutomationPassRecorders();
 
     // Cue/headphone output-pair picker. Rebuilt from the live device's output
     // channels (so it tracks outputs the user enables in Audio settings).

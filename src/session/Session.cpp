@@ -442,7 +442,7 @@ void thinAutomationLane (std::vector<AutomationPoint>& points,
 {
     // Discrete params (mute / solo) are bit-exact - RDP'd values would
     // round wrong and silently lose state transitions. Skip thinning;
-    // the existing same-sample coalesce in captureWritePoint is enough.
+    // a recorded pass already keeps only the changes.
     if (! isContinuousParam (param)) return;
     if (points.size() <= 2) return;
 

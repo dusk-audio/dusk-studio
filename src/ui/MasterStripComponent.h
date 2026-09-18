@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
+#include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
 #include "CompMeterStrip.h"
@@ -103,7 +104,10 @@ private:
 
     void showAutoModeMenu();
     void setAutoMode (AutomationMode m);
-    void captureFaderWritePoint (float denormDb);
+    // Feeds the fader's WRITE / TOUCH pass while recording is true; the
+    // first call with it false splices the pass into the lane.
+    void recordFader (bool recording, float db);
+    AutomationPassRecorder faderRecorder { AutomationParam::FaderDb };
 
     std::unique_ptr<AnalogVuMeter> vuMeter;
 

@@ -654,11 +654,14 @@ bool timesAscend (const std::vector<AutomationPoint>& points)
 // The strips' own timers record the rides while the transport rolls. Write
 // takes the fader, pan, mute and solo; Touch records the fader while it is
 // held and returns to the earlier ride on release; a mute click in Touch
-// records nothing; a bus fader records like a track's; a Write pass leaves
-// the ride after where it stopped alone.
+// records nothing; bus, master and aux return faders record like a track's;
+// a Write pass leaves the ride after where it stopped alone.
 std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx)
 {
     static constexpr float kDbTolerance = 0.05f;
+    // The aux lanes record from their own strips, which the Aux stage builds
+    // the first time it is shown and which keep running once it is hidden.
+    host.switchToStage (GuiHost::Stage::Aux);
     host.switchToStage (GuiHost::Stage::Mixing);
     auto* strip = host.strip (kStripIndex);
     if (strip == nullptr)
@@ -669,17 +672,23 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
     auto& track = session.track (kStripIndex);
     auto& params = track.strip;
     auto& bus = session.bus (0).strip;
+    auto& master = session.master();
+    auto& aux = session.auxLane (0).params;
 
     const auto lane = [&track] (AutomationParam p) -> auto&
     { return track.automationLanes[(std::size_t) p]; };
-    const auto clearAll = [&track, &bus]
+    const auto clearAll = [&track, &bus, &master, &aux]
     {
         track.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
         bus.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        master.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        aux.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
         for (auto& l : track.automationLanes) l.publishPoints ({});
         for (auto& l : bus.automationLanes) l.publishPoints ({});
+        for (auto& l : master.automationLanes) l.publishPoints ({});
+        for (auto& l : aux.automationLanes) l.publishPoints ({});
     };
-    ctx.cleanup ([&engine, &session, &params, &bus, clearAll]
+    ctx.cleanup ([&engine, &session, &params, &bus, &master, &aux, clearAll]
     {
         engine.stop();
         clearAll();
@@ -689,6 +698,8 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
         params.mute.store (false, std::memory_order_relaxed);
         session.setTrackSoloed (kStripIndex, false);
         bus.faderDb.store (0.0f, std::memory_order_relaxed);
+        master.faderDb.store (0.0f, std::memory_order_relaxed);
+        aux.returnLevelDb.store (0.0f, std::memory_order_relaxed);
     });
 
     struct Marks
@@ -706,27 +717,32 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
 
     // First pass, WRITE: two positions for each continuous control, and a
     // mute on and off, a solo on.
-    steps->push_back ({ 0, [&params, &track, &bus, clearAll, roll]
+    steps->push_back ({ 0, [&params, &track, &bus, &master, &aux, clearAll, roll]
     {
         clearAll();
-        track.automationMode.store ((int) AutomationMode::Write, std::memory_order_release);
-        bus.automationMode.store ((int) AutomationMode::Write, std::memory_order_release);
+        for (auto* mode : { &track.automationMode, &bus.automationMode,
+                            &master.automationMode, &aux.automationMode })
+            mode->store ((int) AutomationMode::Write, std::memory_order_release);
         params.faderDb.store (-20.0f, std::memory_order_relaxed);
         params.pan.store (-0.5f, std::memory_order_relaxed);
         bus.faderDb.store (-8.0f, std::memory_order_relaxed);
+        master.faderDb.store (-2.0f, std::memory_order_relaxed);
+        aux.returnLevelDb.store (-12.0f, std::memory_order_relaxed);
         roll();
     } });
-    steps->push_back ({ 400, [&params, &bus, strip]
+    steps->push_back ({ 400, [&params, &bus, &master, &aux, strip]
     {
         params.faderDb.store (-10.0f, std::memory_order_relaxed);
         params.pan.store (0.5f, std::memory_order_relaxed);
         bus.faderDb.store (-4.0f, std::memory_order_relaxed);
+        master.faderDb.store (-4.0f, std::memory_order_relaxed);
+        aux.returnLevelDb.store (-6.0f, std::memory_order_relaxed);
         strip->clickMute();
     } });
     steps->push_back ({ 400, [strip] { strip->clickMute(); strip->clickSolo(); } });
     // The strips splice a pass on their first timer tick after the stop.
     steps->push_back ({ 400, [&engine] { engine.stop(); } });
-    steps->push_back ({ 100, [&ctx, &params, &track, &bus, lane, marks, roll]
+    steps->push_back ({ 100, [&ctx, &params, &track, &bus, &master, &aux, lane, marks, roll]
     {
         const auto& fader = lane (AutomationParam::FaderDb).pointsConst();
         ctx.expect (laneHolds (fader, AutomationParam::FaderDb, -20.0f, kDbTolerance)
@@ -749,11 +765,20 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
         ctx.expect (laneHolds (busFader, AutomationParam::FaderDb, -8.0f, kDbTolerance)
                         && laneHolds (busFader, AutomationParam::FaderDb, -4.0f, kDbTolerance),
                     "a bus fader in WRITE did not record");
+        const auto& masterFader = master.automationLanes[(std::size_t) AutomationParam::FaderDb].pointsConst();
+        ctx.expect (laneHolds (masterFader, AutomationParam::FaderDb, -2.0f, kDbTolerance)
+                        && laneHolds (masterFader, AutomationParam::FaderDb, -4.0f, kDbTolerance),
+                    "the master fader in WRITE did not record");
+        const auto& auxReturn = aux.automationLanes[(std::size_t) AutomationParam::FaderDb].pointsConst();
+        ctx.expect (laneHolds (auxReturn, AutomationParam::FaderDb, -12.0f, kDbTolerance)
+                        && laneHolds (auxReturn, AutomationParam::FaderDb, -6.0f, kDbTolerance),
+                    "an aux return in WRITE did not record");
         marks->muteCount = mute.size();
 
         // Second pass, TOUCH: hold the fader for the first part only.
         track.automationMode.store ((int) AutomationMode::Touch, std::memory_order_release);
-        bus.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        for (auto* mode : { &bus.automationMode, &master.automationMode, &aux.automationMode })
+            mode->store ((int) AutomationMode::Off, std::memory_order_release);
         params.faderTouched.store (true, std::memory_order_relaxed);
         params.faderDb.store (-3.0f, std::memory_order_relaxed);
         roll();
