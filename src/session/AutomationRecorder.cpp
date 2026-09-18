@@ -17,6 +17,8 @@ constexpr float kMovedEpsilon = 0.001f;
 void AutomationPassRecorder::record (AutomationLane& lane, std::int64_t playhead,
                                      float value, float bpm)
 {
+    if (active() && &lane.pointsConst() != base)
+        drop (lane);
     if (active() && playhead < spanEnd)
         finish (lane, 0);
 
@@ -28,6 +30,7 @@ void AutomationPassRecorder::record (AutomationLane& lane, std::int64_t playhead
     if (! active())
     {
         lane.passOpen.store (true, std::memory_order_release);
+        base = &lane.pointsConst();
         pass.push_back (point);
     }
     else if (pass.back().timeSamples == playhead)
@@ -50,9 +53,20 @@ void AutomationPassRecorder::record (AutomationLane& lane, std::int64_t playhead
     lastBpm = bpm;
 }
 
+void AutomationPassRecorder::drop (AutomationLane& lane) noexcept
+{
+    pass.clear();
+    lane.passOpen.store (false, std::memory_order_release);
+}
+
 void AutomationPassRecorder::finish (AutomationLane& lane, std::int64_t returnSamples)
 {
     if (! active()) return;
+    if (&lane.pointsConst() != base)
+    {
+        drop (lane);
+        return;
+    }
 
     const auto& old = lane.pointsConst();
     const auto spanStart = pass.front().timeSamples;
@@ -91,7 +105,20 @@ void AutomationPassRecorder::finish (AutomationLane& lane, std::int64_t returnSa
     }
 
     lane.publishPoints (std::move (spliced));
-    pass.clear();
-    lane.passOpen.store (false, std::memory_order_release);
+    drop (lane);
+}
+
+namespace
+{
+template <std::size_t... Index>
+AutomationPassRecorders makeRecorders (std::index_sequence<Index...>)
+{
+    return {{ AutomationPassRecorder ((AutomationParam) Index)... }};
+}
+} // namespace
+
+AutomationPassRecorders makeAutomationPassRecorders()
+{
+    return makeRecorders (std::make_index_sequence<(std::size_t) kNumAutomationParams>());
 }
 } // namespace duskstudio

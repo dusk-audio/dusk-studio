@@ -128,6 +128,23 @@ ScenarioResult discreteKeepsChanges (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// A lane something else replaced during the pass, as a session load does,
+// keeps what it was given; the pass is dropped.
+ScenarioResult replacedLaneDropsThePass (ScenarioContext& ctx)
+{
+    AutomationLane lane;
+    seedRide (lane);
+    AutomationPassRecorder recorder (kFader);
+    ride (recorder, lane, 24000, 48000, -10.0f);
+    lane.publishPoints ({ { 0, normalizeAutomationValue (kFader, -6.0f), 120.0f } });
+    const auto loaded = lane.pointsConst();
+
+    recorder.finish (lane, 0);
+    ctx.expect (lane.pointsConst() == loaded, "the pass landed in a lane that was replaced under it");
+    ctx.expect (! lane.passOpen.load(), "the dropped pass left passOpen up");
+    return ctx.verdict();
+}
+
 // While a pass is open the engine plays the control, not the lane: a TOUCH
 // release does not play the old points before the splice lands.
 ScenarioResult enginePlaysControlWhilePassOpen (ScenarioContext& ctx)
@@ -176,6 +193,9 @@ const ScenarioRegistrar wrapRegistrar { Scenario {
 const ScenarioRegistrar discreteRegistrar { Scenario {
     "automation.discrete_keeps_changes", { "automation" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (discreteKeepsChanges, ctx); } } };
+const ScenarioRegistrar replacedRegistrar { Scenario {
+    "automation.replaced_lane_drops_the_pass", { "automation", "session" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (replacedLaneDropsThePass, ctx); } } };
 const ScenarioRegistrar gateRegistrar { Scenario {
     "automation.engine_plays_control_while_pass_open", { "automation" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (enginePlaysControlWhilePassOpen, ctx); } } };

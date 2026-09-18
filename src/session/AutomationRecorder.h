@@ -2,6 +2,8 @@
 
 #include "Session.h"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -36,14 +38,23 @@ public:
 
     // Splices the pass into the lane and publishes it. returnSamples is how
     // long the lane takes to get back to what it held after the pass: 0 for
-    // WRITE, the TOUCH glide otherwise. No-op when no pass is open.
+    // WRITE, the TOUCH glide otherwise. No-op when no pass is open. A lane
+    // something else replaced meanwhile (a session load) drops the pass
+    // instead, so one session's ride never lands in another's.
     void finish (AutomationLane& lane, std::int64_t returnSamples);
 
 private:
+    void drop (AutomationLane& lane) noexcept;
+
     AutomationParam param;
     std::vector<AutomationPoint> pass;
+    const std::vector<AutomationPoint>* base = nullptr;
     std::int64_t spanEnd = 0;
     float lastValue = 0.0f;
     float lastBpm = 120.0f;
 };
+
+// One recorder per automatable control, indexed by AutomationParam.
+using AutomationPassRecorders = std::array<AutomationPassRecorder, (std::size_t) kNumAutomationParams>;
+AutomationPassRecorders makeAutomationPassRecorders();
 } // namespace duskstudio
