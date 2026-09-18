@@ -809,3 +809,29 @@ only `../DAF` / `../DAF-Widgets`, and CI uses
 [dejuce-campaign.md](dejuce-campaign.md) for the ritual. The gate evidence is
 §2, the framework work is §1 and §4, and the phase you are on owns exactly the
 files listed under it.
+
+## 9. Lessons from the retired Rust port
+
+`DuskStudio-Rust` (June 2026, retired 2026-09-18) rebuilt the console in
+Rust, first on Tauri and then on iced. Its code does not carry over, since
+every layout it built was copied from the C++ UI. What it learned does:
+
+- Web views are out. Tauri on WebKitGTK could not keep fader and knob drags
+  free of lag, even on native Wayland and after the obvious fixes: no forced
+  X11, CSS-transform visuals, coalesced IPC, meters paused during a drag. The
+  cost was the webview's compositing plus the IPC hop, not the JavaScript.
+- The fast path is the one Dusk Studio already uses: the UI reads and writes
+  the engine's atomics in process and reads meters at 60 Hz. The iced
+  prototype passed the latency bar as soon as it was wired this way. Keep it
+  for DAF views and put no message layer between a control and its atomic.
+- Third-party plugin editors cannot be embedded on Wayland, which has no
+  XEMBED. The port opened them as separate top-level XWayland windows and
+  kept its own UI native, the same split this plan uses.
+- Matching the existing UI meant reading every number from the C++ source:
+  ConsoleView.h geometry, the editors' parameter ranges, the LookAndFeel
+  colours. Where the Tauri version guessed, it drifted from the original.
+  G1 and G3 should work the same way.
+- The port deferred four things any application shell needs, so plan for them
+  in G5: popups clamped to the window edge, explicit text-field focus, a close
+  request that can be intercepted for unsaved changes, and live meters kept
+  out of per-frame string formatting.
