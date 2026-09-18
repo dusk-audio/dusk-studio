@@ -57,6 +57,9 @@ public:
     bool hasOpenPluginEditorForScenario() const noexcept;
     // The open CLAP editor is a container the plug-in never put a window in.
     bool pluginWindowMissingForScenario() const noexcept;
+    // Click MUTE / SOLO as the mouse would; the click lands on a later tick.
+    void clickMuteForScenario();
+    void clickSoloForScenario();
 
     void paint (juce::Graphics&) override;
     void resized() override;

@@ -42,6 +42,10 @@ public:
     // The value behind the open editor, by control name. False when no editor
     // is up, or the plug-in has no such control.
     virtual bool readEditorControl (const std::string& name, double& valueOut) const = 0;
+
+    // Click MUTE / SOLO as the mouse would; the click lands on a later tick.
+    virtual void clickMute() = 0;
+    virtual void clickSolo() = 0;
 };
 
 // One aux lane's plug-in slots.

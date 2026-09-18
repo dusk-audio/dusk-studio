@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 129
+# ceiling gap 128
 # ceiling partial 54
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -166,7 +166,7 @@ The channel strip > Pan	equal-power with a 3 dB centre dip	auto	test:BusStrip: c
 The channel strip > Pan	a stereo track pans by balance; hard left silences R	gap
 The channel strip > Fader	-inf to +12 dB; unity at 0 dB	auto	scenario:engine.pipeline_selftest;test:FaderBindingMap: CC/Note fader binds stay linear -90..+12 dB
 The channel strip > Fader	click the readout to type; right-click for MIDI Learn	gap
-The channel strip > Fader	automation modes OFF / READ / WRITE / TOUCH	partial	test:evaluateLane: continuous interpolation + hold-first/last;test:AutomationLane: mutableForWritePass appends in place, no swap		lane storage and playback tested; recording in WRITE and TOUCH is not
+The channel strip > Fader	automation modes OFF / READ / WRITE / TOUCH	partial	test:evaluateLane: continuous interpolation + hold-first/last;test:AutomationLane: mutableForWritePass appends in place, no swap;scenario:gui.automation_write_and_touch		playback, WRITE and TOUCH recording tested; TOUCH returning to the earlier ride and WRITE leaving what it did not play over fail on #656
 The channel strip > Mute, Solo, Phase	mute silences; solo is additive solo-in-place	auto	scenario:engine.pipeline_selftest
 The channel strip > Mute, Solo, Phase	phase inverts polarity before the insert	gap
 The channel strip > Bus assigns	assigning a bus removes the direct master send	auto	scenario:engine.pipeline_selftest
@@ -286,8 +286,8 @@ Mixing > A suggested order of operations	mixing advice	n/a			advice
 Mixing > Aux sends in detail	post-fader follows the fader; pre-fader ignores it	gap
 Mixing > Bus routing	bus assignment replaces the direct master send	auto	scenario:engine.pipeline_selftest
 Mixing > Solo and PFL	solo-in-place, additive, no PFL	auto	scenario:engine.pipeline_selftest
-Mixing > Automation	OFF, READ, WRITE, TOUCH for fader, pan, mute and solo	partial	test:evaluateLane: continuous interpolation + hold-first/last;test:evaluateLane: discrete holds previous (step), thresholds at 0.5;test:Session load publishes each automation lane exactly once		lane playback and discrete holds tested; writing in WRITE and TOUCH is not
-Mixing > Automation	mute and solo record only in WRITE	gap
+Mixing > Automation	OFF, READ, WRITE, TOUCH for fader, pan, mute and solo	partial	test:evaluateLane: continuous interpolation + hold-first/last;test:evaluateLane: discrete holds previous (step), thresholds at 0.5;test:Session load publishes each automation lane exactly once;scenario:gui.automation_write_and_touch		playback and WRITE for all four, TOUCH on the fader and bus faders tested; TOUCH's return and WRITE's extent fail on #656
+Mixing > Automation	mute and solo record only in WRITE	auto	scenario:gui.automation_write_and_touch
 Mixing > Automation > Editing breakpoints in the region editor	add, drag, delete and draw points; stopped transport only; drawing arms READ	gap
 Mixing > Automation > Editing breakpoints in the region editor	a drawn stroke is thinned to a clean set	auto	test:thinAutomationLane: collinear interior points are dropped;test:thinAutomationLane: sine-shaped lane keeps the peak + endpoints;test:thinAutomationLane: discrete lanes are NOT thinned
 

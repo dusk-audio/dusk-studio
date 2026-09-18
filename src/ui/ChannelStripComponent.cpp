@@ -2624,6 +2624,9 @@ bool ChannelStripComponent::pluginWindowMissingForScenario() const noexcept
 #endif
 }
 
+void ChannelStripComponent::clickMuteForScenario() { muteButton.triggerClick(); }
+void ChannelStripComponent::clickSoloForScenario() { soloButton.triggerClick(); }
+
 void ChannelStripComponent::openPluginEditor()
 {
     if (isPluginEditorOpen()) return;

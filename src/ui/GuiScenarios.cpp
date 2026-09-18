@@ -147,6 +147,16 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         return false;
     }
 
+    void clickMute() override
+    {
+        if (auto* component = strip()) component->clickMuteForScenario();
+    }
+
+    void clickSolo() override
+    {
+        if (auto* component = strip()) component->clickSoloForScenario();
+    }
+
     ChannelStripComponent* strip() const
     {
         return owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index)
