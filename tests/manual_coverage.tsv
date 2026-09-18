@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 137
-# ceiling partial 57
+# ceiling gap 136
+# ceiling partial 56
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -88,6 +88,7 @@ Getting started > Configuring audio > General	MIDI soft takeover keeps a control
 Getting started > Configuring audio > General	autosave cadence 15 s to 5 min	gap
 Getting started > Configuring audio > General	scan plugins on startup	gap
 Getting started > Configuring audio > Advanced	effect oversampling 1x/2x/4x drives every EQ and comp but not the tape	partial	test:TapeMachineDSP ignores the oversampling choice;test:BusStrip: comp-off EQ response is independent of OS factor		tape and bus behaviour tested; the channel and master fan-out is not
+Getting started > Configuring audio > Advanced	oversampling latency is compensated: bus-routed and direct tracks stay aligned, bounces trim it	auto	scenario:mix.bus_routed_lands_with_direct;scenario:bounce.renders_land_on_the_timeline;scenario:bounce.export_master_in_place
 Getting started > Configuring audio > Advanced	multicore DSP matches single-core output	auto	scenario:engine.pipeline_selftest;test:AudioWorkerPool: every lane runs exactly once per block over a soak
 Getting started > Configuring audio > Advanced	recording offset shifts audio takes earlier, never MIDI	auto	test:Latency offset shifts committed audio start earlier;test:Latency offset larger than start clamps audio to zero and trims head;test:Latency offset exceeding take length commits no region;test:Latency offset does not move MIDI region placement
 Getting started > Configuring audio > Advanced	Run self-test reports pass or fail	auto	scenario:engine.pipeline_selftest
@@ -338,7 +339,7 @@ Plugins > Multi-sample instruments > Instrument library	an unreadable folder is 
 Hardware inserts > Configuring an insert	output, volumes, input, latency, dry/wet, stereo, mid/side, mono	auto	test:HardwareInsertSlot: dryWet=0 returns dry signal unchanged at zero latency;test:HardwareInsertSlot: Mid/Side encode + decode round-trip is unity gain;test:HardwareInsertSlot: outputGain and inputGain compose independently;test:HardwareInsertSlot: invalid routing falls through to dry-only path
 Hardware inserts > Auto-measuring latency	Ping measures the round trip; reports silence and invalid routing	auto	test:HardwareInsertSlot: ping measures loopback round-trip exactly;test:HardwareInsertSlot: ping with silent return reports -1;test:HardwareInsertSlot: ping with invalid input routing reports -2;test:HardwareInsertSlot: ping correlation budget matches callback contract
 Hardware inserts > Latency compensation	the dry path is delayed to match; PDC across tracks to the deepest latency	auto	test:HardwareInsertSlot: dry-path delay aligns dry with hardware latency;test:PDC: every track compensates to the deepest latency;test:PDC: a single latency source delays everyone else;test:PDC: all-zero latency yields no compensation
-Hardware inserts > Latency compensation	offline inserts add no PDC; bounces trim the compensation out	partial	scenario:plugin.offline_insert_no_pdc		offline inserts tested; trimming PDC out of bounces fails on #655 and its scenario lands with the fix
+Hardware inserts > Latency compensation	offline inserts add no PDC; bounces trim the compensation out	auto	scenario:plugin.offline_insert_no_pdc;scenario:bounce.pdc_trimmed_from_render
 
 Sync to external gear > MIDI Clock	chase tempo from F8 averaged over 24 ticks; big jumps skipped	gap
 Sync to external gear > MIDI Clock	emit 24 PPQN clock with Start and Stop	auto	test:MidiClockEmitter: integer samples-per-clock has no drift;test:MidiClockEmitter: fractional samples-per-clock has no systematic drift;test:MidiClockEmitter: transport edges emit Start / Stop
@@ -371,7 +372,7 @@ Bouncing and exporting > Bouncing the mix	offline render to 24-bit WAV at the se
 Bouncing and exporting > Bouncing the mix	the device detaches for the render and reattaches after	gap
 Bouncing and exporting > Bouncing the mix	Mixdown renders mixdown.wav and opens it in MASTERING	gap
 Bouncing and exporting > Bouncing the mix	Bounce stems: one file per track, bus and aux, named by pattern	auto	test:collectStemTargets: tracks then buses then auxes, gated on routing;test:stemOutputFile builds <dir>/<base>_<NN>_<safe>.wav;test:namedStemOutputFile builds <dir>/<base>_<tag>_<safe>.wav
-Bouncing and exporting > Bouncing the mix	stems are sample-aligned and reconstruct the pre-master mix	gap		#655: stems of different kinds are offset from each other; the scenario lands with the fix
+Bouncing and exporting > Bouncing the mix	stems are sample-aligned and reconstruct the pre-master mix	auto	scenario:bounce.stems_rebuild_the_mix;scenario:bounce.renders_land_on_the_timeline
 Bouncing and exporting > Bouncing the mix	hardware inserts offer a realtime bounce	partial	test:anyHardwareInsertActive follows rendered tracks and aux lanes		the detection is tested; the realtime bounce is not
 Bouncing and exporting > Bouncing the mix	the metronome never prints	auto	scenario:bounce.metronome_never_prints
 Bouncing and exporting > Bouncing the master vs the mastering chain	bounce captures post-master; Export master captures post-limiter	auto	scenario:bounce.captures_post_master_fader;scenario:bounce.export_master_post_limiter

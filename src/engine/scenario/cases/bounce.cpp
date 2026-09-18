@@ -88,6 +88,31 @@ std::optional<Rendered> readBack (const std::filesystem::path& path)
     return out;
 }
 
+std::filesystem::path pathOf (const SessionFile& file)
+{
+    return std::filesystem::u8path (file.getFullPathName().toStdString());
+}
+
+std::int64_t argmaxAbs (const std::vector<float>& samples)
+{
+    std::size_t at = 0;
+    for (std::size_t i = 1; i < samples.size(); ++i)
+        if (std::abs (samples[i]) > std::abs (samples[at])) at = i;
+    return (std::int64_t) at;
+}
+
+std::vector<float> impulse (int frames, int at)
+{
+    std::vector<float> samples ((std::size_t) frames, 0.0f);
+    samples[(std::size_t) at] = 0.5f;
+    return samples;
+}
+
+// A 4x oversampler's latency is 26.5 samples, so each one an integer trim
+// rounds can leave an impulse's peak a sample either side of where it was
+// placed.
+constexpr std::int64_t kFractionalSlack = 1;
+
 // A mono region on a mono track, reading `file` from its first sample.
 void placeRegion (ScenarioContext& ctx, int track, const std::filesystem::path& file,
                   std::int64_t start, std::int64_t length)
@@ -360,6 +385,312 @@ std::optional<ScenarioResult> cancelLeavesNoFile (ScenarioContext& ctx)
     return std::nullopt;
 }
 
+// --------------------------------------------------------------- alignment
+
+// Track 1 plays to the master and sends to aux 1, track 2 plays through bus 1,
+// and track 3 is muted. The stems come out aligned with each other and with
+// the mix, and together rebuild it; the muted track's stem is silent.
+std::optional<ScenarioResult> stemsRebuildTheMix (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    constexpr int kLength = 24000;
+    const auto a = ctx.tempDir() / "a.wav";
+    const auto b = ctx.tempDir() / "b.wav";
+    if (! writeMono (a, sine (220.0f, 0.2f, kLength)) || ! writeMono (b, sine (330.0f, 0.2f, kLength)))
+        return ScenarioResult::fail ("could not write the source takes");
+    placeRegion (ctx, 0, a, 4800, kLength);
+    placeRegion (ctx, 1, b, 9600, kLength);
+    placeRegion (ctx, 2, a, 0, kLength);
+
+    auto& sendDb = session.track (0).strip.auxSendDb[0];
+    const float savedSend = sendDb.load (std::memory_order_relaxed);
+    ctx.cleanup ([&sendDb, savedSend] { sendDb.store (savedSend, std::memory_order_relaxed); });
+    sendDb.store (-6.0f, std::memory_order_relaxed);
+    session.track (1).strip.busAssign[0].store (true, std::memory_order_relaxed);
+    session.track (2).strip.mute.store (true, std::memory_order_relaxed);
+    session.recomputeRtCounters();
+
+    const auto stemDir = ctx.sessionDir() / "stems";
+    std::error_code fsError;
+    std::filesystem::create_directories (stemDir, fsError);
+    const auto base = stemDir / "mix.wav";
+    const auto targets = BounceEngine::collectStemTargets (session, sessionFile (base));
+    const auto mixPath = ctx.sessionDir() / "mix.wav";
+
+    Render stemRender;
+    stemRender.mode = BounceEngine::Mode::Stems;
+    stemRender.tailSeconds = 0.5;
+    Render mixRender;
+    mixRender.tailSeconds = 0.5;
+
+    renderThen (ctx, base, stemRender, [&ctx, targets, mixPath, mixRender] (bool ok, const std::string& error)
+    {
+        if (! ctx.expect (ok, "the stem bounce failed: " + error))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        renderThen (ctx, mixPath, mixRender, [&ctx, targets, mixPath] (bool mixOk, const std::string& mixError)
+        {
+            const auto mix = readBack (mixPath);
+            if (! ctx.expect (mixOk && mix.has_value(), "the mix bounce failed: " + mixError))
+            {
+                ctx.complete (ctx.verdict());
+                return;
+            }
+
+            int trackStems = 0, busStems = 0, auxStems = 0;
+            std::vector<float> rebuiltL (mix->left.size(), 0.0f), rebuiltR (mix->right.size(), 0.0f);
+            for (const auto& target : targets)
+            {
+                const auto name = pathOf (target.file).filename().u8string();
+                const auto stem = readBack (pathOf (target.file));
+                if (! ctx.expect (stem.has_value(), "a stem is missing: " + name))
+                    continue;
+                ctx.expect (stem->info.numFrames == mix->info.numFrames,
+                            "a stem is not the same length as the mix: " + name);
+                switch (target.kind)
+                {
+                    case BounceEngine::StemTarget::Kind::Track: ++trackStems; break;
+                    case BounceEngine::StemTarget::Kind::Bus:   ++busStems;   break;
+                    case BounceEngine::StemTarget::Kind::Aux:   ++auxStems;   break;
+                    case BounceEngine::StemTarget::Kind::Mix:   break;
+                }
+                if (target.kind == BounceEngine::StemTarget::Kind::Track && target.index == 2)
+                    ctx.expect (stem->peak() <= 0.0f, "the muted track's stem is not silent");
+                // A bus-routed track is inside its bus stem, so the rebuild
+                // takes the direct track stems plus every bus and aux stem.
+                if (target.kind == BounceEngine::StemTarget::Kind::Track && target.index == 1)
+                    continue;
+                for (std::size_t s = 0; s < rebuiltL.size() && s < stem->left.size(); ++s)
+                {
+                    rebuiltL[s] += stem->left[s];
+                    rebuiltR[s] += stem->right[s];
+                }
+            }
+            ctx.expect (trackStems == 3 && busStems == 1 && auxStems == 1,
+                        "expected three track stems, one bus stem and one aux stem, got "
+                            + std::to_string (trackStems) + "/" + std::to_string (busStems)
+                            + "/" + std::to_string (auxStems));
+
+            float worst = 0.0f;
+            std::size_t worstAt = 0;
+            for (std::size_t s = 0; s < rebuiltL.size(); ++s)
+            {
+                const float d = std::max (std::abs (rebuiltL[s] - mix->left[s]),
+                                          std::abs (rebuiltR[s] - mix->right[s]));
+                if (d > worst) { worst = d; worstAt = s; }
+            }
+            ctx.note ("largest stem-sum error " + std::to_string (worst) + " at sample "
+                      + std::to_string (worstAt) + "; mix peak " + std::to_string (mix->peak()));
+            ctx.expect (mix->peak() > 0.05f, "the mix is silent");
+            ctx.expect (worst < 1.0e-4f, "the stems do not add back up to the mix");
+            ctx.complete (ctx.verdict());
+        });
+    });
+    return std::nullopt;
+}
+
+// An impulse on a direct track and one on a bus-routed track, rendered as a
+// mix and as stems, all land where they sit on the timeline.
+std::optional<ScenarioResult> rendersLandOnTheTimeline (ScenarioContext& ctx)
+{
+    static constexpr std::int64_t kAt = 24000;
+    const auto source = ctx.tempDir() / "impulse.wav";
+    if (! writeMono (source, impulse (4800, 0)))
+        return ScenarioResult::fail ("could not write the impulse");
+    placeRegion (ctx, 0, source, kAt, 4800);
+    placeRegion (ctx, 1, source, kAt + 12000, 4800);
+    ctx.session().track (1).strip.busAssign[0].store (true, std::memory_order_relaxed);
+    ctx.session().recomputeRtCounters();
+
+    const auto stemDir = ctx.sessionDir() / "stems";
+    std::error_code fsError;
+    std::filesystem::create_directories (stemDir, fsError);
+    const auto base = stemDir / "at.wav";
+    const auto targets = BounceEngine::collectStemTargets (ctx.session(), sessionFile (base));
+    const auto mixPath = ctx.sessionDir() / "at-mix.wav";
+
+    const auto landed = [&ctx] (const std::vector<float>& samples, std::int64_t from, std::int64_t to,
+                                std::int64_t want, const std::string& label)
+    {
+        const std::vector<float> window (samples.begin() + from, samples.begin() + to);
+        const auto at = from + argmaxAbs (window);
+        ctx.note (label + ": impulse at " + std::to_string (at));
+        ctx.expect (std::abs (at - want) <= kFractionalSlack,
+                    label + ": the impulse moved by " + std::to_string (at - want) + " samples");
+    };
+
+    Render mixRender;
+    mixRender.tailSeconds = 0.2;
+    Render stemRender = mixRender;
+    stemRender.mode = BounceEngine::Mode::Stems;
+    renderThen (ctx, mixPath, mixRender, [&ctx, mixPath, base, targets, stemRender, landed] (bool ok, const std::string& error)
+    {
+        const auto mix = readBack (mixPath);
+        if (! ctx.expect (ok && mix.has_value(), "the mix bounce failed: " + error))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        landed (mix->left, 0, kAt + 6000, kAt, "mix, direct track");
+        landed (mix->left, kAt + 6000, (std::int64_t) mix->left.size(), kAt + 12000, "mix, bus-routed track");
+
+        renderThen (ctx, base, stemRender, [&ctx, targets, landed] (bool stemsOk, const std::string& stemsError)
+        {
+            if (ctx.expect (stemsOk, "the stem bounce failed: " + stemsError))
+                for (const auto& target : targets)
+                    if (const auto stem = readBack (pathOf (target.file)))
+                    {
+                        const bool routed = target.kind == BounceEngine::StemTarget::Kind::Bus
+                                         || (target.kind == BounceEngine::StemTarget::Kind::Track
+                                             && target.index == 1);
+                        landed (stem->left, 0, (std::int64_t) stem->left.size(),
+                                routed ? kAt + 12000 : kAt,
+                                pathOf (target.file).filename().u8string());
+                    }
+            ctx.complete (ctx.verdict());
+        });
+    });
+    return std::nullopt;
+}
+
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+// An insert's latency delays every other track to match; the render drops
+// that compensation too, so an impulse on a plug-in-free track stays put.
+std::optional<ScenarioResult> pdcTrimmedFromRender (ScenarioContext& ctx)
+{
+    static constexpr std::int64_t kAt = 24000;
+    const auto source = ctx.tempDir() / "impulse.wav";
+    if (! writeMono (source, impulse (4800, 0)))
+        return ScenarioResult::fail ("could not write the impulse");
+    placeRegion (ctx, 0, source, kAt, 4800);
+
+    auto& engine = ctx.engine();
+    auto& slot = engine.getChannelStrip (3).getNativeVst3Slot();
+    std::string error;
+    if (! slot.load (*ctx.fixture ("relayout.vst3"), kRate, ScenarioContext::kBlockSize, error))
+        return ScenarioResult::fail ("the latency fixture did not load: " + error);
+    for (int i = 0; i < slot.paramCount(); ++i)
+        if (const auto* info = slot.paramInfo (i); info != nullptr && info->name == "Latency Mode")
+            slot.setParamValue (info->id, 1.0);
+    if (! slot.reactivate (kRate, ScenarioContext::kBlockSize, error))
+        return ScenarioResult::fail ("the latency fixture did not re-activate: " + error);
+    engine.recomputePdc();
+    ctx.note ("aggregate PDC " + std::to_string (engine.getAggregatePdcLatencySamples()));
+    if (! ctx.expect (engine.getAggregatePdcLatencySamples() > 0,
+                      "the fixture added no delay compensation to trim"))
+        return ctx.verdict();
+
+    const auto out = ctx.sessionDir() / "pdc.wav";
+    Render render;
+    render.tailSeconds = 0.2;
+    renderThen (ctx, out, render, [&ctx, out] (bool ok, const std::string& renderError)
+    {
+        const auto mix = readBack (out);
+        if (ctx.expect (ok && mix.has_value(), "the bounce failed: " + renderError))
+        {
+            const auto at = argmaxAbs (mix->left);
+            ctx.note ("impulse at sample " + std::to_string (at));
+            ctx.expect (std::abs (at - kAt) <= kFractionalSlack,
+                        "the impulse moved by " + std::to_string (at - kAt)
+                            + " samples, so the compensation delay is in the file");
+        }
+        ctx.complete (ctx.verdict());
+    });
+    return std::nullopt;
+}
+#endif
+
+// Export master drops the mastering chain's own latency from the file. The
+// chain's EQ and limiter each oversample 4x, so it can land two samples out.
+std::optional<ScenarioResult> exportMasterInPlace (ScenarioContext& ctx)
+{
+    static constexpr int kAt = 24000;
+    auto& player = ctx.engine().getMasteringPlayer();
+    const auto source = ctx.tempDir() / "impulse-mix.wav";
+    if (! writeMono (source, impulse (48000, kAt)))
+        return ScenarioResult::fail ("could not write the source mix");
+    if (! player.loadFile (sessionFile (source)))
+        return ScenarioResult::fail ("the mastering player would not load the mix");
+    ctx.cleanup ([&player] { player.unloadFile(); });
+
+    const auto out = ctx.sessionDir() / "master.wav";
+    Render render;
+    render.mode = BounceEngine::Mode::MasteringChain;
+    render.tailSeconds = 0.2;
+    renderThen (ctx, out, render, [&ctx, out] (bool ok, const std::string& error)
+    {
+        const auto master = readBack (out);
+        if (ctx.expect (ok && master.has_value(), "the export failed: " + error))
+        {
+            const auto at = argmaxAbs (master->left);
+            ctx.note ("impulse at sample " + std::to_string (at));
+            ctx.expect (std::abs (at - kAt) <= 2 * kFractionalSlack,
+                        "the export moved the mix by " + std::to_string (at - kAt) + " samples");
+        }
+        ctx.complete (ctx.verdict());
+    });
+    return std::nullopt;
+}
+
+// Live, with Effect Oversampling at 2x and 4x, a bus-routed track plays at the
+// same moment as a direct one.
+ScenarioResult busRoutedLandsWithDirect (ScenarioContext& ctx)
+{
+    static constexpr std::int64_t kAt = 24000;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const auto source = ctx.tempDir() / "impulse.wav";
+    if (! writeMono (source, impulse (4800, 0)))
+        return ScenarioResult::fail ("could not write the impulse");
+    placeRegion (ctx, 0, source, kAt, 4800);
+    placeRegion (ctx, 1, source, kAt, 4800);
+    session.track (1).strip.busAssign[0].store (true, std::memory_order_relaxed);
+
+    const int savedFactor = session.oversamplingFactor.load (std::memory_order_relaxed);
+    ctx.cleanup ([&session, savedFactor]
+                 { session.oversamplingFactor.store (savedFactor, std::memory_order_relaxed); });
+
+    const auto landsAt = [&] (int audibleTrack)
+    {
+        for (int t = 0; t < 2; ++t)
+            session.track (t).strip.mute.store (t != audibleTrack, std::memory_order_relaxed);
+        session.recomputeRtCounters();
+        engine.getTransport().setPlayhead (0);
+        engine.play();
+        std::int64_t at = -1;
+        float best = 0.0f;
+        for (int block = 0; block < (int) (kAt / ScenarioContext::kBlockSize) + 8; ++block)
+        {
+            ctx.pump (1);
+            const auto& out = ctx.lastBlock (0);
+            for (std::size_t i = 0; i < out.size(); ++i)
+                if (std::abs (out[i]) > best)
+                {
+                    best = std::abs (out[i]);
+                    at = (std::int64_t) block * ScenarioContext::kBlockSize + (std::int64_t) i;
+                }
+        }
+        engine.stop();
+        return at;
+    };
+
+    for (const int factor : { 2, 4 })
+    {
+        session.oversamplingFactor.store (factor, std::memory_order_relaxed);
+        engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+        const auto direct = landsAt (0);
+        const auto routed = landsAt (1);
+        ctx.note (std::to_string (factor) + "x: direct at " + std::to_string (direct)
+                  + ", via bus at " + std::to_string (routed));
+        ctx.expect (std::abs (direct - routed) <= kFractionalSlack,
+                    std::to_string (factor) + "x: the bus-routed track played "
+                        + std::to_string (routed - direct) + " samples after the direct one");
+    }
+    return ctx.verdict();
+}
+
 // ---------------------------------------------------------- Export master
 
 // Export master renders the mastering chain on the loaded mix: the file is
@@ -425,6 +756,29 @@ const ScenarioRegistrar clickRegistrar { Scenario {
 const ScenarioRegistrar faderRegistrar { Scenario {
     "bounce.captures_post_master_fader", { "bounce" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return capturesPostMasterFader (ctx); }, 120000 } };
+const ScenarioRegistrar stemsRegistrar { Scenario {
+    "bounce.stems_rebuild_the_mix", { "bounce", "stems" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return stemsRebuildTheMix (ctx); }, 180000 } };
+const ScenarioRegistrar timelineRegistrar { Scenario {
+    "bounce.renders_land_on_the_timeline", { "bounce", "stems", "pdc" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return rendersLandOnTheTimeline (ctx); }, 180000 } };
+const ScenarioRegistrar pdcRegistrar { Scenario {
+    "bounce.pdc_trimmed_from_render", { "bounce", "pdc", "vst3" }, Needs::Engine, { "relayout.vst3" },
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_VST3
+        return pdcTrimmedFromRender (ctx);
+       #else
+        (void) ctx;
+        return ScenarioResult::skip ("built without the native VST3 host");
+       #endif
+    }, 120000 } };
+const ScenarioRegistrar exportInPlaceRegistrar { Scenario {
+    "bounce.export_master_in_place", { "bounce", "mastering", "pdc" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return exportMasterInPlace (ctx); }, 120000 } };
+const ScenarioRegistrar busAlignRegistrar { Scenario {
+    "mix.bus_routed_lands_with_direct", { "mix", "pdc" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return busRoutedLandsWithDirect (ctx); } } };
 const ScenarioRegistrar cancelRegistrar { Scenario {
     "bounce.cancel_leaves_no_file", { "bounce" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return cancelLeavesNoFile (ctx); }, 120000 } };
