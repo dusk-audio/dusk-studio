@@ -1252,7 +1252,7 @@ bool AuxLaneComponent::loadNativeClapForSlotForScenario (int slotIdx,
                                                          const std::string& pluginId)
 {
     if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return false;
-    loadNativeClapForSlot (slotIdx, juce::File (clapFile.string()), pluginId);
+    loadNativeClapForSlot (slotIdx, juce::File (clapFile.u8string()), pluginId);
     return strip.getNativeClapSlot (slotIdx).isLoaded();
 }
 #endif

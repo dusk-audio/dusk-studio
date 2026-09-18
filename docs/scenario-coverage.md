@@ -92,6 +92,6 @@ What the pre-tag audit checks by hand, and what runs it now.
 | the `main` ruleset requires every CI check (#442) | `github-ruleset` leg, `WARN` with the missing names |
 | Patreon freshness before a tag | `patreon-freshness` leg, opt-in through `--release-checks` |
 | the six release assets | `scripts/verify-release-assets.sh` inside the tag workflow |
-| configure examples carry the donor pin | `release_mechanics` over the maintainer guide |
+| configure examples leave the donor to `DONOR_REV` | `release_mechanics` over the maintainer guide |
 | deferred issues stay visible | #508 is the `gui.oop_editor_closes_before_child` SKIP and #504 the Windows `ipc-selftest` SKIP on every run; #507 needs a Known Issues line by hand |
 

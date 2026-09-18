@@ -81,6 +81,9 @@ ScenarioResult runOfflineInsert (ScenarioContext& ctx)
     ctx.expect (engine.getAggregatePdcLatencySamples() == 0,
             "PDC survived every insert going offline");
 
+    // Unloading keeps a slot's bypass flag, and the world reset does not touch
+    // it, so the next scenario to load a VST3 on that strip would start bypassed.
+    otherSlot.setBypassed (false);
     return ctx.verdict();
 }
 #endif

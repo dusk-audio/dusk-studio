@@ -327,6 +327,13 @@ void SuiteRunner::finishSuite()
                   summary.pass, summary.fail, summary.skip);
     std::fflush (stdout);
 
-    if (onFinishedFn) onFinishedFn (summary.fail == 0 ? 0 : 1);
+    int exitCode = summary.fail == 0 ? 0 : 1;
+    if (summary.pass == 0 && summary.fail == 0 && summary.skip > 0)
+    {
+        std::fprintf (stderr, "every selected scenario skipped, so nothing was verified\n");
+        std::fflush (stderr);
+        exitCode = 3;
+    }
+    if (onFinishedFn) onFinishedFn (exitCode);
 }
 } // namespace duskstudio::scenario

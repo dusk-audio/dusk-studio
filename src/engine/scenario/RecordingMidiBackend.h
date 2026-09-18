@@ -115,12 +115,6 @@ public:
     // is not read as the engine having dropped the messages.
     bool hasDropped() const noexcept { return dropped.load (std::memory_order_relaxed); }
 
-    void reset() noexcept
-    {
-        dropped.store (false, std::memory_order_relaxed);
-        writeIndex.store (0, std::memory_order_release);
-    }
-
 private:
     int indexOf (const std::string& identifier) const noexcept
     {
