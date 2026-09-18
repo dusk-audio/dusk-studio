@@ -36,7 +36,7 @@ function Read-RegressStderr($state, $ms) {
         if ($null -eq $line) { $state.Task = $null; break }
         [void]$state.Text.AppendLine($line)
         $state.Task = $state.Reader.ReadLineAsync()
-        $ms = 0
+        $ms = 100
     }
     return $state.Text.ToString()
 }

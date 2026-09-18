@@ -27,9 +27,9 @@ PLAIN = {
 
 
 def keys_for(ch):
-    if ch.isalpha():
+    if ch.isascii() and ch.isalpha():
         return (['KEY_LEFTSHIFT'] if ch.isupper() else []) + ['KEY_' + ch.upper()]
-    if ch.isdigit():
+    if ch.isascii() and ch.isdigit():
         return ['KEY_' + ch]
     if ch in SHIFTED:
         return ['KEY_LEFTSHIFT', 'KEY_' + SHIFTED[ch]]
@@ -39,9 +39,12 @@ def keys_for(ch):
 
 
 def send(domain, connect, keys, holdtime):
-    subprocess.run(
+    result = subprocess.run(
         ['virsh', '-c', connect, 'send-key', domain, '--holdtime', str(holdtime)] + keys,
-        check=True, capture_output=True)
+        capture_output=True, text=True)
+    if result.returncode != 0:
+        raise SystemExit('vkey: send-key {} failed: {}'.format(
+            ' '.join(keys), result.stderr.strip()))
 
 
 def main():
