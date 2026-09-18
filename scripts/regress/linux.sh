@@ -15,7 +15,6 @@ source "${REPO_ROOT}/scripts/regress/xvfb.sh"
 source "${REPO_ROOT}/scripts/regress/scenarios.sh"
 
 JOBS="${DUSK_JOBS:-6}"
-DONOR_DIR_NAME="dusk-donor-pin"
 SELFTEST_TIMEOUT="${DUSK_REGRESS_SELFTEST_TIMEOUT:-180}"
 VST3_PATH=""
 RUN_PERF=0
@@ -90,38 +89,34 @@ run_build() {
 # drifted ../plugins silently changes the DSP under test, and the failure then
 # looks like a Dusk Studio regression.
 check_configure() {
-    local expected dir cached rc=0
-    expected=""
-    if [[ -d "${REPO_ROOT}/../${DONOR_DIR_NAME}" ]]; then
-        expected="$(cd "${REPO_ROOT}/../${DONOR_DIR_NAME}" && pwd)"
-    fi
-    if [[ -z "$expected" ]]; then
-        echo "error: donor pin checkout ${REPO_ROOT}/../${DONOR_DIR_NAME} does not exist." >&2
-        echo "       Recreate it from the plugins repo at the DONOR_REV in" >&2
-        echo "       .github/workflows/release.yml (git worktree add)." >&2
-        return 1
-    fi
+    local want dir cached head rc=0
+    want="$(tr -d '[:space:]' < "${REPO_ROOT}/DONOR_REV")"
     for dir in build build-tests; do
         if [[ ! -f "${REPO_ROOT}/${dir}/CMakeCache.txt" ]]; then
             local extra=""
             [[ "$dir" == build-tests ]] && extra=" -DDUSKSTUDIO_BUILD_TESTS=ON"
             echo "error: ${dir}/CMakeCache.txt missing - configure it first:" >&2
-            echo "       cmake -S . -B ${dir} -DCMAKE_BUILD_TYPE=Release${extra} \\" >&2
-            echo "         -DDUSK_PLUGINS_PATH=${expected}" >&2
+            echo "       cmake -S . -B ${dir} -DCMAKE_BUILD_TYPE=Release${extra}" >&2
             rc=1
             continue
         fi
+        # An explicit DUSK_PLUGINS_PATH is for trying donor edits: the DSP under
+        # test is then not DONOR_REV, and a failure would read as a Dusk Studio
+        # regression.
         cached="$(sed -n 's/^DUSK_PLUGINS_PATH:[^=]*=//p' "${REPO_ROOT}/${dir}/CMakeCache.txt" | head -1)"
-        if [[ -d "$cached" ]]; then
-            cached="$(cd "$cached" && pwd)"
+        if [[ -n "$cached" ]]; then
+            echo "error: ${dir} builds the donor from DUSK_PLUGINS_PATH='${cached}', not DONOR_REV." >&2
+            echo "       Reconfigure without it: cmake -S . -B ${dir} -UDUSK_PLUGINS_PATH" >&2
+            rc=1
+            continue
         fi
-        if [[ "$cached" != "$expected" ]]; then
-            echo "error: ${dir} is configured with DUSK_PLUGINS_PATH='${cached}'," >&2
-            echo "       expected the pinned donor '${expected}'." >&2
-            echo "       Reconfigure: cmake -S . -B ${dir} -DDUSK_PLUGINS_PATH=${expected}" >&2
+        head="$(git -C "${REPO_ROOT}/${dir}/_deps/dusk-plugins" rev-parse HEAD 2>/dev/null || true)"
+        if [[ "$head" != "$want" ]]; then
+            echo "error: ${dir}/_deps/dusk-plugins is at '${head:-nothing}', DONOR_REV is ${want}." >&2
+            echo "       Reconfigure to fetch it: cmake -S . -B ${dir}" >&2
             rc=1
         else
-            regress_note "${dir}: DUSK_PLUGINS_PATH=${cached}"
+            regress_note "${dir}: donor at DONOR_REV ${want:0:8}"
         fi
     done
     return "$rc"

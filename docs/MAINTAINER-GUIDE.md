@@ -462,11 +462,11 @@ Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
 ### Linux
 
 Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
-`timeout`, `flock`, and the pinned donor checkout at `../dusk-donor-pin`.
+`timeout` and `flock`.
 
 | Leg | What it proves |
 |---|---|
-| `configure-check` | both build dirs point `DUSK_PLUGINS_PATH` at `../dusk-donor-pin`. A drifted `../plugins` changes the DSP under test, and the failure then reads as a Dusk Studio regression. A mismatch aborts the run before anything is built. |
+| `configure-check` | both build dirs build the donor from `DONOR_REV`: no `DUSK_PLUGINS_PATH` override, and `_deps/dusk-plugins` checked out at that commit. Any other donor changes the DSP under test, and the failure then reads as a Dusk Studio regression. A mismatch aborts the run before anything is built. |
 | `build-app` / `build-tests` | both targets compile at `-j6`. |
 | `ctest` | the Catch2 suite in `build-tests/`. |
 | `juce-gate` | `tools/juce-gate.sh`: no file gained JUCE and no listed file gained occurrences. |
