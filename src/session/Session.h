@@ -798,6 +798,41 @@ inline void swapAudioTakePayload (AudioRegion& region, TakeRef& take)
     swap (region.provenance, take.provenance);
 }
 
+// Forward brings the front of the take stack live and sends the displaced take
+// to the back; backward is the mirror image, so the two directions step through
+// the same ring. False when the region has no history.
+template <typename Region, typename SwapPayload>
+bool cycleTakeStack (Region& region, bool forward, SwapPayload swapPayload)
+{
+    auto& takes = region.previousTakes;
+    if (takes.empty()) return false;
+    if (forward)
+    {
+        auto chosen = std::move (takes.front());
+        takes.erase (takes.begin());
+        swapPayload (region, chosen);
+        takes.push_back (std::move (chosen));
+    }
+    else
+    {
+        auto chosen = std::move (takes.back());
+        takes.pop_back();
+        swapPayload (region, chosen);
+        takes.insert (takes.begin(), std::move (chosen));
+    }
+    return true;
+}
+
+inline bool cycleTake (AudioRegion& region, bool forward)
+{
+    return cycleTakeStack (region, forward, swapAudioTakePayload);
+}
+
+inline bool cycleTake (MidiRegion& region, bool forward)
+{
+    return cycleTakeStack (region, forward, swapMidiTakePayload);
+}
+
 struct Track
 {
     // Mono   : 1 audio in -> mono WAV -> mono playback

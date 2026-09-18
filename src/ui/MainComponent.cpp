@@ -1394,9 +1394,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     {
         if (tapeStrip != nullptr)
         {
-            const bool ok = shift ? tapeStrip->cycleSelectedTakeBackward()
-                                   : tapeStrip->cycleSelectedTakeForward();
-            if (ok) return true;
+            if (tapeStrip->cycleSelectedTake (! shift)) return true;
         }
     }
 

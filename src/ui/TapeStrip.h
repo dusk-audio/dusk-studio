@@ -80,10 +80,8 @@ public:
     bool duplicateSelectedRegion();
     // Negative deltaSamples moves earlier. Clamped at zero.
     bool nudgeSelectedRegion (std::int64_t deltaSamples);
-    // Forward: next previous take becomes live, old live moves to back.
-    // Backward: last previous take becomes live, old moves to front.
-    bool cycleSelectedTakeForward();
-    bool cycleSelectedTakeBackward();
+    // Alt+T (forward) and Alt+Shift+T: see cycleTake.
+    bool cycleSelectedTake (bool forward);
 
     // Single-click is reserved for direct manipulation. Double-click
     // opens the dedicated editor - one mental model across audio + MIDI.
