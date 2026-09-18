@@ -583,8 +583,9 @@ that does not exist exits 2 before anything runs. The report is one line per
 scenario, `[PASS] name (ms)` / `[FAIL] name: reason (ms)` / `[SKIP] name:
 reason`, with the notes a failing scenario recorded indented underneath, then
 `=== scenarios: N pass, M fail, K skip ===`; the exit status is 0 only when
-nothing failed, and 3 when every selected scenario skipped, since a run that
-verified nothing is not a pass. The private `HOME` matters: the app reads
+nothing failed, and 3 when nothing passed or failed (every selected scenario
+skipped, or the selection matched none), since a run that verified nothing is
+not a pass. The private `HOME` matters: the app reads
 Recent Sessions and the plug-in cache from `$HOME/.config`, and a scripted
 run must not touch yours. A desktop session exports the `XDG_*_HOME`
 variables as absolute paths into the real home, so they move with it.

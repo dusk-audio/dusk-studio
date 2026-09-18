@@ -29,8 +29,8 @@ std::function<void (int exitCode)>& guiSuiteExit();
 // Selector grammar: "all" | "list" | a comma-separated mix of scenario names and
 // "tag:<x>" terms. An unrecognised name is fatal: nothing runs and the exit code
 // is 2, so a typo in CI is never mistaken for a green suite. For the same reason
-// a selection where every scenario skipped exits 3: a missing fixture must not
-// read as a pass.
+// a run where nothing passed or failed exits 3, whether every scenario skipped
+// or the selection matched none: a missing fixture must not read as a pass.
 //
 // The GUI form is the same grammar behind a "gui" prefix: "gui" for every GUI
 // scenario, "gui:<terms>" for a subset. "all" never picks a GUI scenario up -

@@ -328,9 +328,9 @@ void SuiteRunner::finishSuite()
     std::fflush (stdout);
 
     int exitCode = summary.fail == 0 ? 0 : 1;
-    if (summary.pass == 0 && summary.fail == 0 && summary.skip > 0)
+    if (summary.pass == 0 && summary.fail == 0)
     {
-        std::fprintf (stderr, "every selected scenario skipped, so nothing was verified\n");
+        std::fprintf (stderr, "no scenario passed or failed, so nothing was verified\n");
         std::fflush (stderr);
         exitCode = 3;
     }

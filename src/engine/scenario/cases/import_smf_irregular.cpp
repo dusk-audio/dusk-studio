@@ -74,10 +74,12 @@ ScenarioResult runImport (ScenarioContext& ctx)
             if (ctx.expect (reader.tracks().size() == 2,
                         "a vendor chunk was counted as a track"))
             {
-                ctx.expect (reader.tracks()[0].size() == 2, "the first track lost events");
-                ctx.expect (reader.tracks()[1].size() == 2, "the second track lost events");
-                ctx.expect (reader.tracks()[0][0].noteNumber() == 60, "the first track's note changed");
-                ctx.expect (reader.tracks()[1][0].noteNumber() == 64, "the second track's note changed");
+                const bool firstKept  = ctx.expect (reader.tracks()[0].size() == 2, "the first track lost events");
+                const bool secondKept = ctx.expect (reader.tracks()[1].size() == 2, "the second track lost events");
+                if (firstKept)
+                    ctx.expect (reader.tracks()[0][0].noteNumber() == 60, "the first track's note changed");
+                if (secondKept)
+                    ctx.expect (reader.tracks()[1][0].noteNumber() == 64, "the second track's note changed");
             }
 
             int imported = 0;
@@ -97,7 +99,9 @@ ScenarioResult runImport (ScenarioContext& ctx)
                         "a header that counts its vendor chunk failed the whole file"))
         {
             if (ctx.expect (reader.tracks().size() == 2,
-                            "the over-counted file did not keep both tracks"))
+                            "the over-counted file did not keep both tracks")
+                && ctx.expect (! reader.tracks()[0].empty() && ! reader.tracks()[1].empty(),
+                               "the over-counted file kept a track with no events"))
             {
                 ctx.expect (reader.tracks()[0][0].noteNumber() == 60, "the first track's note changed");
                 ctx.expect (reader.tracks()[1][0].noteNumber() == 64, "the second track's note changed");

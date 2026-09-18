@@ -65,7 +65,13 @@ const ScenarioRegistrar registrar { Scenario {
     "engine.muted_midi_track_skips_chain",
     { "engine", "midi", "mute" },
     Needs::Engine,
+    // Only the instrument leg needs the probe, and it is compiled out without
+    // the native CLAP host; the skip checks run everywhere.
+   #if DUSKSTUDIO_HAS_NATIVE_CLAP
     { "panic_probe.clap" },
+   #else
+    {},
+   #endif
     [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runMutedSkip (ctx); }
 } };
 } // namespace
