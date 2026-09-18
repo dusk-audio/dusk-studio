@@ -249,7 +249,7 @@ Per channel: **HPF → 4-band EQ → compressor (Opto/FET/VCA) → sends → pan
 
 This is a gotcha that will confuse you the first time: **the EQ, compressor, and tape DSP are not in this repo.** They are header-only "cores" shared with the Dusk Audio plugins, pulled in from the plugins repo at configure time (`-DDUSK_PLUGINS_PATH`, else fetched at the commit in `DONOR_REV`). Classes like `UniversalCompressor`, `BritishEQProcessor`, `TubeEQProcessor`, and the TapeMachine processor come from there.
 
-If `DUSK_PLUGINS_PATH` isn't found, the build defines `DUSKSTUDIO_HAS_DUSK_DSP=0` and you get a recorder with basic internal EQ and no comp/tape. So "where did the compressor go?" almost always means "the plugins repo wasn't discovered." Check the CMake configure output.
+If the plugins repo can't be fetched or found, configure warns and the build fails on the missing donor headers, because the mastering EQ, loudness meter and oversampler share them. A build error naming `dsp/DuskFilters.hpp` means the donor wasn't resolved; check the CMake configure output.
 
 ### The atomic-pointer pattern for vendored DSP (the one pattern to copy)
 
@@ -299,7 +299,7 @@ CMake auto-detects three external repos at configure time, on top of three git s
 - **Submodules** (`external/clap`, `external/dusk-fizz`, `external/vst3sdk`): clone with `--recurse-submodules`, or run `git submodule update --init --recursive`. They fail in three different ways, which is worth knowing before you debug the wrong one. Missing `external/clap` is fatal — the native CLAP host defaults ON on Linux, macOS, and Windows, and the configure stops with a "CLAP headers missing" error. Missing `external/vst3sdk` is loud but survivable: a STATUS line, native VST3 disabled, unless you explicitly asked for `-DDUSKSTUDIO_NATIVE_VST3=ON`, which turns it fatal. Missing `external/dusk-fizz` says **nothing at all** — the block is wrapped in a bare `EXISTS` test, so SF2 / multisample support simply isn't in the binary.
 
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (a plugdata-team fork with ~5 local commits Dusk Studio depends on — XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
-- **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure only *warns*: you get a recorder with no EQ, comp, or tape rather than a failed build, so read the configure output. To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together.
+- **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure only *warns*, and the build then stops on the missing donor DSP headers (`dsp/DuskFilters.hpp` first), so read the configure output. To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together.
 - **DAF and its in-tree widgets** (the native UI): `-DDAF_PATH=…` wins, then
   `../DAF`, then `external/DAF`. Without DAF and `widgets/imgui/DearImGui.hpp`,
   `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults OFF and every native view is unavailable.
@@ -402,7 +402,7 @@ Region and marker edits are `juce::UndoableAction` subclasses ([src/session/Regi
 |---|---|
 | Audible clicks / dropouts ("xruns") | Something allocating/locking/logging on the audio thread; a `SmoothedValue` not reset in `prepare`; buffer-size mismatch. Run TSan. Re-read the thread rules in Part 3. |
 | Intermittent wrong value / flicker | A cross-thread field that should be `atomic` isn't, or wrong memory order. TSan. |
-| "The EQ/comp/tape disappeared" | `DUSK_PLUGINS_PATH` not discovered → `DUSKSTUDIO_HAS_DUSK_DSP=0`. Check CMake configure output. |
+| Build fails on `dsp/DuskFilters.hpp` | The donor wasn't fetched or found. Check the CMake configure output for the `DONOR_REV` fetch warning. |
 | Build fails finding JUCE | Wrong sibling dir / fork vs upstream. Pass `-DJUCE_PATH=…` explicitly; check JuceCompat.h API split. |
 | Loading one plugin crashes the app | Expected risk of the in-process default — try the same plugin with `DUSKSTUDIO_USE_OOP_PLUGINS=1` to confirm it's the plugin, then blacklist or sandbox it. If it crashes only in OOP mode, suspect the IPC swap / child lifecycle in `PluginSlot`/`ipc/`; reproduce with the stub test. |
 | Plugin scan hangs / a plugin never appears | Scanner timeout/blacklist in `PluginManager.cpp`; check the sentinel parsing in `PluginScanProtocol`. |

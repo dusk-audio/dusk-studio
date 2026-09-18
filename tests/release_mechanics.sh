@@ -1498,10 +1498,16 @@ assert re.search(
 # explicit DUSK_PLUGINS_PATH builds whatever that checkout holds, not the
 # commit CI and releases build.
 guide = (source_root / "docs" / "MAINTAINER-GUIDE.md").read_text(encoding="utf-8").splitlines()
-overridden = [
-    line.strip()
-    for line in guide
-    if re.match(r"^\s*cmake -S \. -B build", line) and "DUSK_PLUGINS_PATH" in line
-]
+configure_commands = []
+for at, line in enumerate(guide):
+    if not re.match(r"^\s*cmake -S \. -B build", line):
+        continue
+    command = [line.strip()]
+    while command[-1].endswith("\\") and at + 1 < len(guide):
+        at += 1
+        command.append(guide[at].strip())
+    configure_commands.append(" ".join(command))
+assert configure_commands, "maintainer guide must show its configure commands"
+overridden = [c for c in configure_commands if "DUSK_PLUGINS_PATH" in c]
 assert not overridden, f"maintainer guide configure examples bypass DONOR_REV: {overridden}"
 PY

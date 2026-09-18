@@ -390,10 +390,11 @@ endif()
 #   1. -DDUSK_PLUGINS_PATH (explicit override, e.g. ../plugins to try donor edits)
 #   2. the commit named in DONOR_REV, fetched into the build tree. CI and release
 #      builds use the same commit, so a default local build matches them.
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/DONOR_REV" DUSKSTUDIO_DONOR_REV
-    LIMIT_COUNT 1 REGEX "^[0-9a-f]+$")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/DONOR_REV" DUSKSTUDIO_DONOR_REV)
+string(STRIP "${DUSKSTUDIO_DONOR_REV}" DUSKSTUDIO_DONOR_REV)
 string(LENGTH "${DUSKSTUDIO_DONOR_REV}" _duskstudio_donor_rev_length)
-if(NOT _duskstudio_donor_rev_length EQUAL 40)
+if(NOT _duskstudio_donor_rev_length EQUAL 40
+   OR NOT DUSKSTUDIO_DONOR_REV MATCHES "^[0-9a-f]+$")
     message(FATAL_ERROR "DONOR_REV must hold one full 40-character commit hash")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -444,8 +445,9 @@ else()
     else()
         message(WARNING
             "Could not fetch Dusk plugins ${DUSKSTUDIO_DONOR_REV} (needs git and "
-            "network access to github.com/dusk-audio/dusk-audio-plugins). Dusk "
-            "Studio will build but DSP cores will be unavailable until you set "
+            "network access to github.com/dusk-audio/dusk-audio-plugins). The "
+            "build will fail on the missing donor DSP headers until you "
+            "reconfigure with network access or set "
             "-DDUSK_PLUGINS_PATH=/path/to/plugins.")
     endif()
 endif()
