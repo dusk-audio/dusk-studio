@@ -5,11 +5,11 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [Unreleased]
+## [0.14.0] - 2026-09-18
 
-Work towards 1.0: the first five minutes of using Dusk Studio, offline
-instrument browsing, quitting cleanly by any route, and the release pipeline
-that will carry a signed 1.0.
+The first five minutes of using Dusk Studio, offline instrument browsing,
+quitting cleanly by any route, and a release pipeline that signs what it
+publishes.
 
 ### Added
 
