@@ -443,11 +443,10 @@ else()
         set(DUSK_PLUGINS_PATH "${_duskstudio_donor_dir}")
         message(STATUS "Using Dusk plugins ${DUSKSTUDIO_DONOR_REV} from: ${DUSK_PLUGINS_PATH}")
     else()
-        message(WARNING
+        message(FATAL_ERROR
             "Could not fetch Dusk plugins ${DUSKSTUDIO_DONOR_REV} (needs git and "
-            "network access to github.com/dusk-audio/dusk-audio-plugins). The "
-            "build will fail on the missing donor DSP headers until you "
-            "reconfigure with network access or set "
+            "network access to github.com/dusk-audio/dusk-audio-plugins). "
+            "Reconfigure with network access, or set "
             "-DDUSK_PLUGINS_PATH=/path/to/plugins.")
     endif()
 endif()
