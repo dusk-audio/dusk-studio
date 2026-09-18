@@ -5134,12 +5134,16 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                           const std::atomic<bool>* touched,
                                           std::atomic<float>& live)
             {
-                const auto& pts = session.track (t).automationLanes[(size_t) param].pointsForRead();
+                // passOpen first: once it reads down, the acquire makes the
+                // splice the recorder published before lowering it visible.
+                const auto& lane = session.track (t).automationLanes[(size_t) param];
                 const bool readsLane =
-                       amode == (int) AutomationMode::Read
-                    || (amode == (int) AutomationMode::Touch
-                        && touched != nullptr
-                        && ! touched->load (std::memory_order_acquire));
+                       (amode == (int) AutomationMode::Read
+                        || (amode == (int) AutomationMode::Touch
+                            && touched != nullptr
+                            && ! touched->load (std::memory_order_acquire)))
+                    && ! lane.passOpen.load (std::memory_order_acquire);
+                const auto& pts = lane.pointsForRead();
                 const float v = (readsLane && ! pts.empty())
                     ? evaluateLane (pts, blockStartSamples, param)
                     : manual.load (std::memory_order_relaxed);
@@ -5170,10 +5174,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                        const std::atomic<bool>& manual,
                                        std::atomic<bool>& live)
             {
-                const auto& pts = session.track (t).automationLanes[(size_t) param].pointsForRead();
+                const auto& lane = session.track (t).automationLanes[(size_t) param];
                 const bool readsLane =
-                       amode == (int) AutomationMode::Read
-                    || amode == (int) AutomationMode::Touch;
+                       (amode == (int) AutomationMode::Read
+                        || amode == (int) AutomationMode::Touch)
+                    && ! lane.passOpen.load (std::memory_order_acquire);
+                const auto& pts = lane.pointsForRead();
                 const bool effective = (readsLane && ! pts.empty())
                     ? (evaluateLane (pts, blockStartSamples, param) >= 0.5f)
                     : manual.load (std::memory_order_relaxed);
@@ -6145,29 +6151,35 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         {
             const int amode = params.automationMode.load (std::memory_order_acquire);
             {
-                const auto& pts = params.automationLanes[(size_t) AutomationParam::FaderDb].pointsForRead();
+                const auto& lane = params.automationLanes[(size_t) AutomationParam::FaderDb];
                 const bool touched = params.faderTouched.load (std::memory_order_acquire);
-                const bool readsLane = amode == (int) AutomationMode::Read
-                                     || (amode == (int) AutomationMode::Touch && ! touched);
+                const bool readsLane = (amode == (int) AutomationMode::Read
+                                        || (amode == (int) AutomationMode::Touch && ! touched))
+                                     && ! lane.passOpen.load (std::memory_order_acquire);
+                const auto& pts = lane.pointsForRead();
                 const float v = (readsLane && ! pts.empty())
                     ? evaluateLane (pts, blockStartSamples, AutomationParam::FaderDb)
                     : params.faderDb.load (std::memory_order_relaxed);
                 params.liveFaderDb.store (v, std::memory_order_relaxed);
             }
             {
-                const auto& pts = params.automationLanes[(size_t) AutomationParam::Pan].pointsForRead();
+                const auto& lane = params.automationLanes[(size_t) AutomationParam::Pan];
                 const bool touched = params.panTouched.load (std::memory_order_acquire);
-                const bool readsLane = amode == (int) AutomationMode::Read
-                                     || (amode == (int) AutomationMode::Touch && ! touched);
+                const bool readsLane = (amode == (int) AutomationMode::Read
+                                        || (amode == (int) AutomationMode::Touch && ! touched))
+                                     && ! lane.passOpen.load (std::memory_order_acquire);
+                const auto& pts = lane.pointsForRead();
                 const float v = (readsLane && ! pts.empty())
                     ? evaluateLane (pts, blockStartSamples, AutomationParam::Pan)
                     : params.pan.load (std::memory_order_relaxed);
                 params.livePan.store (v, std::memory_order_relaxed);
             }
             {
-                const auto& pts = params.automationLanes[(size_t) AutomationParam::Mute].pointsForRead();
-                const bool readsLane = amode == (int) AutomationMode::Read
-                                     || amode == (int) AutomationMode::Touch;
+                const auto& lane = params.automationLanes[(size_t) AutomationParam::Mute];
+                const bool readsLane = (amode == (int) AutomationMode::Read
+                                        || amode == (int) AutomationMode::Touch)
+                                     && ! lane.passOpen.load (std::memory_order_acquire);
+                const auto& pts = lane.pointsForRead();
                 const bool effective = (readsLane && ! pts.empty())
                     ? (evaluateLane (pts, blockStartSamples, AutomationParam::Mute) >= 0.5f)
                     : params.mute.load (std::memory_order_relaxed);
@@ -6282,10 +6294,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
         // FaderDb (continuous).
         {
-            const auto& pts = aparams.automationLanes[(size_t) AutomationParam::FaderDb].pointsForRead();
+            const auto& lane = aparams.automationLanes[(size_t) AutomationParam::FaderDb];
             const bool touched = aparams.faderTouched.load (std::memory_order_acquire);
-            const bool readsLane = amode == (int) AutomationMode::Read
-                                 || (amode == (int) AutomationMode::Touch && ! touched);
+            const bool readsLane = (amode == (int) AutomationMode::Read
+                                    || (amode == (int) AutomationMode::Touch && ! touched))
+                                 && ! lane.passOpen.load (std::memory_order_acquire);
+            const auto& pts = lane.pointsForRead();
             const float v = (readsLane && ! pts.empty())
                 ? evaluateLane (pts, blockStartSamples, AutomationParam::FaderDb)
                 : aparams.returnLevelDb.load (std::memory_order_relaxed);
@@ -6293,9 +6307,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         }
         // Mute (discrete).
         {
-            const auto& pts = aparams.automationLanes[(size_t) AutomationParam::Mute].pointsForRead();
-            const bool readsLane = amode == (int) AutomationMode::Read
-                                 || amode == (int) AutomationMode::Touch;
+            const auto& lane = aparams.automationLanes[(size_t) AutomationParam::Mute];
+            const bool readsLane = (amode == (int) AutomationMode::Read
+                                    || amode == (int) AutomationMode::Touch)
+                                 && ! lane.passOpen.load (std::memory_order_acquire);
+            const auto& pts = lane.pointsForRead();
             const bool effective = (readsLane && ! pts.empty())
                 ? (evaluateLane (pts, blockStartSamples, AutomationParam::Mute) >= 0.5f)
                 : aparams.mute.load (std::memory_order_relaxed);
@@ -6307,10 +6323,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     {
         auto& mparams = session.master();
         const int amode = mparams.automationMode.load (std::memory_order_acquire);
-        const auto& pts = mparams.automationLanes[(size_t) AutomationParam::FaderDb].pointsForRead();
+        const auto& lane = mparams.automationLanes[(size_t) AutomationParam::FaderDb];
         const bool touched = mparams.faderTouched.load (std::memory_order_acquire);
-        const bool readsLane = amode == (int) AutomationMode::Read
-                             || (amode == (int) AutomationMode::Touch && ! touched);
+        const bool readsLane = (amode == (int) AutomationMode::Read
+                                || (amode == (int) AutomationMode::Touch && ! touched))
+                             && ! lane.passOpen.load (std::memory_order_acquire);
+        const auto& pts = lane.pointsForRead();
         const float v = (readsLane && ! pts.empty())
             ? evaluateLane (pts, blockStartSamples, AutomationParam::FaderDb)
             : mparams.faderDb.load (std::memory_order_relaxed);

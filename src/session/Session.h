@@ -86,6 +86,10 @@ struct AutomationPoint
 struct AutomationLane
 {
     AtomicSnapshot<std::vector<AutomationPoint>> snapshot;
+    // Up while a WRITE or TOUCH pass is recording into this lane and until
+    // its splice is published (AutomationPassRecorder). The audio thread plays
+    // the control's own value instead of the lane meanwhile.
+    std::atomic<bool> passOpen { false };
 
     const std::vector<AutomationPoint>& pointsForRead() const noexcept { return *snapshot.read(); }
     const std::vector<AutomationPoint>& pointsConst()   const noexcept { return snapshot.current(); }
