@@ -1150,7 +1150,7 @@ To overdub a specific section without erasing material before or after:
 1. Set the **punch in** and **punch out** points. Drag across the timeline ruler and choose **Set punch in / out here**, or right-click the ruler at each point and choose **Set punch in here** and **Set punch out here**. You can also press **Shift+[** and **Shift+]** at the playhead. Every way turns punch on as soon as the in point sits before the out point.
 2. Check that the **Punch** button on the transport bar is lit. **P** or the button turns punch off and on again without moving the brackets.
 3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Each has an enable toggle in the same menu, so you can switch a roll off without losing its seconds value. Post-roll defaults to 0 (off).
-4. Press Record. Playback begins at the pre-roll position. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
+4. Press Record. Playback begins at the pre-roll position, or where the playhead already is if that is further back. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
 
 You can also right-click the ruler to set the punch in and out points separately. Punch arms automatically once the in point is before the out point; equal points leave it off.
 
