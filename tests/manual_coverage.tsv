@@ -15,9 +15,10 @@
 # gap      automatable, not yet automated
 # n/a      describes rather than promises (overview, advice, links)
 #
-# The two ceilings only move down. Covering a gap means lowering its ceiling in the same change.
-# ceiling gap 148
-# ceiling partial 52
+# The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
+# same change; a new gap raises one by hand, where review sees it.
+# ceiling gap 144
+# ceiling partial 54
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -141,7 +142,7 @@ The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	ARM refuses a track 
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	the refusal names the missing input and opens the input settings	gap
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	IN monitors the live input through the strip	auto	scenario:engine.pipeline_selftest
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	PRINT commits EQ, comp and insert to the recorded file	gap
-The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	FREEZE renders the track, bypasses its DSP, locks it, and is saved	partial	test:SessionSerializer round-trips track freeze state;test:A frozen track still refuses to arm with inputs available		freeze state persists and locks arming; the render and bypass are not tested
+The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	FREEZE renders the track, bypasses its DSP, locks it, and is saved	partial	test:SessionSerializer round-trips track freeze state;test:A frozen track still refuses to arm with inputs available;scenario:region.frozen_track_refuses_edits		freeze state persists and locks arming; the render and bypass are not tested
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	a frozen track still takes a hardware insert	gap
 The channel strip > Insert slot	one plugin or hardware insert with a 20 ms equal-power crossfade	auto	test:Crossfade: equal-power overlap holds constant power across window;test:Crossfade: at-boundary samples produce unity for both shapes
 The channel strip > Insert slot	right-click Add / Replace / Remove / Edit / hardware	gap
@@ -232,7 +233,7 @@ Recording > Where files are saved	session.json plus audio/ of 24-bit WAVs named 
 Recording > Where files are saved	MIDI is embedded in session.json	gap
 Recording > Take history	a take fully covering a region pushes it onto an 8-deep stack	partial	test:Loop audio history is newest-first capped and then retains compatible old takes;test:SessionSerializer round-trips active and historical take provenance		loop take stacking tested; a single overdub covering a region is not
 Recording > Take history	Alt+T and Alt+Shift+T cycle takes; the badge does too	gap
-Recording > Take history	deleting a region removes its stack; undo restores it	gap
+Recording > Take history	deleting a region removes its stack; undo restores it	auto	scenario:region.delete_restores_takes_on_undo
 Recording > Recording errors	a write failure at record start raises an alert listing the tracks	gap
 Recording > Recording errors	a mid-take error or MIDI overflow reports at Stop; written audio is kept	auto	test:RecordManager surfaces MIDI FIFO overflow at stopRecording;test:RecordManager clean MIDI take leaves overflow list empty
 
@@ -241,10 +242,10 @@ The tape strip > Layout	track column with number, colour, ARM, SOLO, MUTE	manual
 The tape strip > The ruler	click seeks; Shift-drag sets the loop	gap
 The tape strip > Regions	audio regions draw waveforms; MIDI regions draw a glyph	auto	test:Waveform peaks preserve channels, polarity, gain and the final partial bin;test:Waveform range queries match conservative sample extrema at every pyramid level
 The tape strip > Regions > Selecting and moving	click, Cmd-click toggles, drag moves with snap, edges trim, fade discs, middle-drag pans	partial	test:snapDelta: rounds positive deltas with half-step bias;test:snapDelta: sign-aware rounding for negative deltas		snap arithmetic tested; the gestures are not
-The tape strip > Regions > Splitting	Cmd/Ctrl+E splits the selected region at the playhead	gap
-The tape strip > Regions > Duplicating	Cmd+D places a copy right after the original	gap
+The tape strip > Regions > Splitting	Cmd/Ctrl+E splits the selected region at the playhead	partial	scenario:region.split_keeps_audio_continuous	the split, its undo and redo are tested; the shortcut reaching it is not
+The tape strip > Regions > Duplicating	Cmd+D places a copy right after the original	partial	scenario:region.paste_inserts_and_undo_removes	inserting the copy and its undo are tested; where Cmd+D places it is not
 The tape strip > Regions > Nudging	Cmd+arrows nudge a beat; Shift nudges a bar	gap
-The tape strip > Regions > Right-click menu	loop region, split, join, label, mute, lock, takes, reverse, colour, delete	gap
+The tape strip > Regions > Right-click menu	loop region, split, join, label, mute, lock, takes, reverse, colour, delete	partial	scenario:region.split_keeps_audio_continuous;scenario:region.join_rejoins_a_split;scenario:region.delete_restores_takes_on_undo;scenario:region.edit_undo_restores_every_field	split, join, delete and mute are tested; label, lock, takes, reverse, colour and loop region are not
 The tape strip > Regions > Take cycling	take submenu and Alt+T cycling	gap
 The tape strip > Markers	M drops a marker with a naming prompt; drag, rename, delete	gap
 The tape strip > Markers	Rewind and Forward jump between markers	gap
@@ -260,7 +261,7 @@ The tape strip > Import DP Song (experimental)	mixer, tempo, time signature and 
 The tape strip > Import DP Song (experimental)	a confirmation dialog shows what was found first	gap
 
 The audio region editor	double-click opens; Esc or outside click closes	gap
-The audio region editor > What's editable	trim, fades and gain are non-destructive; position	partial	test:SessionSerializer clamps out-of-range audio-region fields on load		stored region fields are bounded; the edits themselves are not tested
+The audio region editor > What's editable	trim, fades and gain are non-destructive; position	auto	scenario:region.edit_undo_restores_every_field;test:SessionSerializer clamps out-of-range audio-region fields on load
 The audio region editor > Layout	undo, redo, split, normalise, properties, zoom	gap
 The audio region editor > Layout	tempo edited on the ruler: add, move, delete changes; MIDI and click follow	auto	test:TempoMap: piecewise integration across a tempo change;test:TempoMap: ticks<->samples round-trips through a tempo change;test:TempoMap: setPoints sorts and clamps bpm, preserving positions
 The audio region editor > Layout	snap and grid resolution saved with the session	partial	test:stepForResolution: musical resolutions at 120 BPM / 48 kHz		grid steps tested; saving the choice is not

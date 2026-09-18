@@ -9,8 +9,9 @@ when:
   - a row cites a test, scenario, runner leg, ctest or script that does not
     exist;
   - a row's status and its evidence or note disagree;
-  - the number of gap or partial rows rises above the ceiling recorded in the
-    file, or falls below it without the ceiling being lowered to match.
+  - the number of gap or partial rows differs from the ceiling recorded in
+    the file. Covering a behaviour means lowering a ceiling in the same change;
+    a new gap means raising one by hand, where review can see it.
 
 Usage: manual_coverage.py <repo-root>
 """
@@ -230,7 +231,7 @@ def main():
             continue
         if counts[kind] > ceilings[kind]:
             errors.append(f"{counts[kind]} {kind} rows exceed the ceiling of {ceilings[kind]}: "
-                          "cover the new behaviour instead of adding a gap")
+                          "cover the behaviour, or raise the ceiling by hand and say why")
         elif counts[kind] < ceilings[kind]:
             errors.append(f"{kind} rows fell to {counts[kind]}: lower '# ceiling {kind}' "
                           f"from {ceilings[kind]} to {counts[kind]}")
