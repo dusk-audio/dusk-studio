@@ -22,7 +22,6 @@ concurrency:
 
 env:
   RELEASES_REPO: dusk-audio/dusk-studio-releases
-  DONOR_REV: 2693a8923388d0ca0bc4b080cade6a5187a51a51
   SODIUM_VERSION: 1.0.22
   SODIUM_SHA256: adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349
 
@@ -191,22 +190,8 @@ jobs:
               echo "ERROR: NEON SIMDNativeOps<long long> alias still missing after patch (awk anchor no longer matches the mirror header)." >&2; exit 1; }
           fi
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned to a specific donor SHA, mirroring the JUCE pin above. An
-        # unpinned `git clone` of main HEAD makes old tags non-reproducible:
-        # a later donor commit would silently change the DSP a past release
-        # was built from. To move the donor forward, bump DONOR_REV.
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins-main"
-          cd "${RUNNER_TEMP}/plugins-main"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
       - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
@@ -225,7 +210,7 @@ jobs:
           PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
           PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
           PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
-          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins-main
+          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins
         run: |
           if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
              || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
@@ -283,7 +268,7 @@ jobs:
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF"
           for option in DUSKSTUDIO_ENABLE_NATIVE_UI DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build-linux/CMakeCache.txt || {
@@ -345,7 +330,7 @@ jobs:
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF"
           cmake --build build-tests --target dusk-studio-tests -j6
           ctest --test-dir build-tests --output-on-failure
@@ -455,24 +440,8 @@ jobs:
             https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE"
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned to the same donor SHA the Linux job uses. An unpinned
-        # clone of main HEAD makes old tags non-reproducible and breaks the
-        # build outright once the donor relocates a consumed source file.
-        # To move the donor forward, bump DONOR_REV here and in the other
-        # release workflows together.
-        shell: bash
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins"
-          cd "${RUNNER_TEMP}/plugins"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
       - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
@@ -923,23 +892,8 @@ jobs:
             https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE"
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned to the same donor SHA the Linux job uses. An unpinned
-        # clone of main HEAD makes old tags non-reproducible and breaks the
-        # build outright once the donor relocates a consumed source file.
-        # To move the donor forward, bump DONOR_REV here and in the other
-        # release workflows together.
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins-main"
-          cd "${RUNNER_TEMP}/plugins-main"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
       - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
@@ -956,7 +910,7 @@ jobs:
           PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
           PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
           PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
-          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins-main
+          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins
         run: |
           if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
              || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
@@ -990,7 +944,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
             -DDUSKSTUDIO_CODESIGN_IDENTITY="-" \
             -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON \
@@ -1038,7 +992,7 @@ jobs:
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \

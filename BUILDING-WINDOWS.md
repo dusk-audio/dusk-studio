@@ -21,17 +21,18 @@ This document is aimed at a developer with a Windows machine who has been handed
 
 ## Repository layout
 
-Dusk Studio expects three sibling repositories to be present alongside its own checkout:
+Dusk Studio expects two sibling repositories to be present alongside its own checkout:
 
 ```
 C:\dev\
 ├── dusk-studio\       (this repo)
 ├── JUCE\              (JUCE 8.0.x, the framework)
-├── plugins\           (Dusk Audio plugins, donor DSP)
 └── DAF\               (framework, DGL, and in-tree widgets/ kit)
 ```
 
-CMake auto-discovers these. If you put them elsewhere, pass `-DJUCE_PATH=...`, `-DDUSK_PLUGINS_PATH=...`, and `-DDAF_PATH=...` at configure time.
+CMake auto-discovers these. If you put them elsewhere, pass `-DJUCE_PATH=...` and `-DDAF_PATH=...` at configure time.
+
+The Dusk Audio plugins repo (donor DSP) is not a sibling: configure fetches it into `build\_deps\dusk-plugins` at the commit named in [DONOR_REV](DONOR_REV), the same commit CI and every release build. That needs git and network access on the first configure. To build against your own plugins checkout instead, pass `-DDUSK_PLUGINS_PATH=C:/path/to/plugins`.
 
 ### Clone everything
 
@@ -41,20 +42,9 @@ Open Command Prompt (`cmd.exe`). All of these repos are public, no auth needed.
 cd C:\dev
 git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch 8.0.4 https://github.com/juce-framework/JUCE.git
-git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
-git -C plugins fetch --depth 1 origin 2693a8923388d0ca0bc4b080cade6a5187a51a51
-git -C plugins checkout --detach FETCH_HEAD
-git -C plugins rev-parse HEAD | findstr /x /c:"2693a8923388d0ca0bc4b080cade6a5187a51a51" >nul || (echo ERROR: donor checkout did not reach the pinned revision & exit /b 1)
 ```
 
 `--recurse-submodules` matters: `external/dusk-fizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1164](CMakeLists.txt#L1164)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.
-
-The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` and nothing else ([CMakeLists.txt:383-393](CMakeLists.txt#L383-L393)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find — and it warns rather than failing, leaving you with a recorder that has no EQ, compressor, or tape.
-
-The fetch, detached checkout and exact revision check are also mandatory. Dusk
-Studio consumes a framework-free compressor core that is present at this
-workflow-pinned revision but is not on the donor repository's current `main`.
-When that pin moves, update every workflow and this guide together.
 
 The Dusk Studio repo's own directory name (`dusk-studio\`) doesn't matter to the build, so rename it if you prefer.
 

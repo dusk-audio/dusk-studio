@@ -60,23 +60,8 @@ jobs:
             https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE"
 
-      - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned donor SHA (mirrors release.yml). main consumes source
-        # files the donor's main HEAD has since relocated, so an unpinned
-        # clone breaks configure. Bump every workflow's DONOR_REV together.
-        shell: bash
-        env:
-          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-          DONOR_REV: 2693a8923388d0ca0bc4b080cade6a5187a51a51
-        run: |
-          set -euo pipefail
-          git init -q "${RUNNER_TEMP}/plugins"
-          cd "${RUNNER_TEMP}/plugins"
-          git remote add origin "${DONOR_REPO}"
-          git fetch --depth 1 origin "${DONOR_REV}"
-          git checkout -q "${DONOR_REV}"
-          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
 
       - name: Clone DAF main
         uses: ./.github/actions/clone-daf-stack

@@ -158,9 +158,9 @@ JUCE (audio framework)
 
 Dusk Audio plugins (donor DSP cores)
   Version  : dusk-audio/plugins rev 2693a8923388d0ca0bc4b080cade6a5187a51a51
-             (DONOR_REV in the build and release workflows)
+             (the DONOR_REV file at the top of the Dusk Studio source)
   License  : GPL-3.0-or-later (matches Dusk Studio)
-  Path     : ../plugins/plugins/  (sibling checkout, all platforms)
+  Path     : plugins/ in the donor checkout, fetched at configure time
   Components used:
     - multi-q      (BritishEQProcessor)
     - multi-comp   (UniversalCompressor)

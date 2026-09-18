@@ -39,19 +39,19 @@ Here is the realistic ramp from zero to maintaining this codebase. Budget a few 
 Before reading any code, build it. You cannot learn a codebase you can't compile.
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDUSK_PLUGINS_PATH=../dusk-donor-pin
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
 
-JUCE, the Dusk plugins repo, and the DAF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../plugins`, `../DAF`). See Part 5 for what happens when discovery fails — it will, eventually, and the error messages are not always obvious.
+JUCE and the DAF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../DAF`); configure fetches the Dusk plugins repo itself at the commit in `DONOR_REV`. See Part 5 for what happens when discovery fails — it will, eventually, and the error messages are not always obvious.
 
 **Checkpoint:** the app launches, you can create a track, arm it, and play a click.
 
 ### Step 2 — Run the tests and the self-test (½ day)
 
 ```bash
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
 cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```
@@ -247,7 +247,7 @@ Per channel: **HPF → 4-band EQ → compressor (Opto/FET/VCA) → sends → pan
 
 ### Where the actual EQ/comp/tape code lives (vendored DSP)
 
-This is a gotcha that will confuse you the first time: **the EQ, compressor, and tape DSP are not in this repo.** They are header-only "cores" shared with the Dusk Audio plugins, pulled in from a sibling repo resolved at configure time (`-DDUSK_PLUGINS_PATH`, else `../plugins`). Classes like `UniversalCompressor`, `BritishEQProcessor`, `TubeEQProcessor`, and the TapeMachine processor come from there.
+This is a gotcha that will confuse you the first time: **the EQ, compressor, and tape DSP are not in this repo.** They are header-only "cores" shared with the Dusk Audio plugins, pulled in from the plugins repo at configure time (`-DDUSK_PLUGINS_PATH`, else fetched at the commit in `DONOR_REV`). Classes like `UniversalCompressor`, `BritishEQProcessor`, `TubeEQProcessor`, and the TapeMachine processor come from there.
 
 If `DUSK_PLUGINS_PATH` isn't found, the build defines `DUSKSTUDIO_HAS_DUSK_DSP=0` and you get a recorder with basic internal EQ and no comp/tape. So "where did the compressor go?" almost always means "the plugins repo wasn't discovered." Check the CMake configure output.
 
@@ -283,11 +283,11 @@ There is **one** oversampling control: the **Effect Oversampling** dropdown in A
 
 ```bash
 # app
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDUSK_PLUGINS_PATH=../dusk-donor-pin
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j6
 
 # tests
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
 cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```
@@ -299,7 +299,7 @@ CMake auto-detects three external repos at configure time, on top of three git s
 - **Submodules** (`external/clap`, `external/dusk-fizz`, `external/vst3sdk`): clone with `--recurse-submodules`, or run `git submodule update --init --recursive`. They fail in three different ways, which is worth knowing before you debug the wrong one. Missing `external/clap` is fatal — the native CLAP host defaults ON on Linux, macOS, and Windows, and the configure stops with a "CLAP headers missing" error. Missing `external/vst3sdk` is loud but survivable: a STATUS line, native VST3 disabled, unless you explicitly asked for `-DDUSKSTUDIO_NATIVE_VST3=ON`, which turns it fatal. Missing `external/dusk-fizz` says **nothing at all** — the block is wrapped in a bare `EXISTS` test, so SF2 / multisample support simply isn't in the binary.
 
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (a plugdata-team fork with ~5 local commits Dusk Studio depends on — XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
-- **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; else `../plugins`, and that is the whole list. Check out the `DONOR_REV` shared by the build and release workflows so every build uses the same DSP and layout. Missing entirely, configure only *warns*: you get a recorder with no EQ, comp, or tape rather than a failed build, so read the configure output.
+- **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure only *warns*: you get a recorder with no EQ, comp, or tape rather than a failed build, so read the configure output. To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together.
 - **DAF and its in-tree widgets** (the native UI): `-DDAF_PATH=…` wins, then
   `../DAF`, then `external/DAF`. Without DAF and `widgets/imgui/DearImGui.hpp`,
   `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults OFF and every native view is unavailable.
@@ -328,8 +328,8 @@ The cross-OS layout (development happens on macOS, Linux testing on a separate m
 
 | OS | App | Tests | JUCE | Plugins |
 |---|---|---|---|---|
-| macOS | `build/` | `build-tests/` | `../JUCE` (upstream) | `../plugins` |
-| Linux | `build/` | `build-tests/` | `../JUCE-wayland` (fork) | `../plugins` |
+| macOS | `build/` | `build-tests/` | `../JUCE` (upstream) | fetched at `DONOR_REV` |
+| Linux | `build/` | `build-tests/` | `../JUCE-wayland` (fork) | fetched at `DONOR_REV` |
 
 ### When to add a test
 
@@ -344,8 +344,8 @@ To add one: drop `tests/<unit>_<aspect>.cpp` following [tests/smoke_brickwall_li
 ### Sanitizers (your best debugging friends for this kind of code)
 
 ```bash
-cmake -S . -B build-asan -DDUSKSTUDIO_ENABLE_ASAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin   # use-after-free, overflow
-cmake -S . -B build-tsan -DDUSKSTUDIO_ENABLE_TSAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin   # data races (mutually exclusive with ASan)
+cmake -S . -B build-asan -DDUSKSTUDIO_ENABLE_ASAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON   # use-after-free, overflow
+cmake -S . -B build-tsan -DDUSKSTUDIO_ENABLE_TSAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON   # data races (mutually exclusive with ASan)
 ```
 
 TSan is the one that catches "I forgot this cross-thread field should be atomic" — the most common real bug class here.
@@ -479,11 +479,9 @@ current tag workflows publish, so nothing a tagged release produces uses it.
            "STOP: local Patreon name_overrides are not available to release workflows"
        )
    PY
-     DONOR_REV=$(sed -nE \
-       's/^[[:space:]]*DONOR_REV:[[:space:]]*([0-9a-f]{40})[[:space:]]*$/\1/p' \
-       .github/workflows/release.yml)
+     DONOR_REV=$(tr -d '[:space:]' < DONOR_REV)
      [[ "$DONOR_REV" =~ ^[0-9a-f]{40}$ ]] \
-       || { echo "STOP: release workflow has no valid DONOR_REV" >&2; exit 1; }
+       || { echo "STOP: DONOR_REV does not hold a valid commit" >&2; exit 1; }
      git -C ../plugins cat-file -e "$DONOR_REV^{commit}" 2>/dev/null \
        || git -C ../plugins fetch origin "$DONOR_REV"
      git -C ../plugins show "$DONOR_REV:plugins/shared/PatreonBackers.h"
@@ -497,8 +495,8 @@ current tag workflows publish, so nothing a tagged release produces uses it.
    the release workflows do not receive those mappings and would inject
    different display names. Clear the mappings only if the unmodified Patreon
    names are intended; otherwise stop and add reviewed workflow propagation.
-   The command reads `DONOR_REV` from the Linux release workflow; all donor
-   workflow pins must match. Compare the reported `champions`, `patrons`,
+   The command reads the donor commit from the `DONOR_REV` file, the one every
+   build and release workflow clones. Compare the reported `champions`, `patrons`,
    `supporters`, and `hugs` tiers with the
    header printed from that exact revision. The dry run does not rewrite
    supporter headers, but it can refresh the local Patreon access and refresh
@@ -848,10 +846,10 @@ window-activation smoke tests, and license checks all pass.
 ## Quick reference card
 
 ```bash
-BUILD APP        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDUSK_PLUGINS_PATH=../dusk-donor-pin && cmake --build build -j6
+BUILD APP        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j6
 RUN              ./build/DuskStudio_artefacts/Release/DuskStudio
 SELF-TEST        scripts/run-selftest-xvfb.sh
-BUILD TESTS      cmake -S . -B build-tests -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin && cmake --build build-tests --target dusk-studio-tests -j6
+BUILD TESTS      cmake -S . -B build-tests -DDUSKSTUDIO_BUILD_TESTS=ON && cmake --build build-tests --target dusk-studio-tests -j6
 RUN TESTS        ctest --test-dir build-tests --output-on-failure
 ASAN / TSAN      -DDUSKSTUDIO_ENABLE_ASAN=ON  /  -DDUSKSTUDIO_ENABLE_TSAN=ON
 OVERRIDE DEPS    -DJUCE_PATH=…  -DDUSK_PLUGINS_PATH=…

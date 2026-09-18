@@ -782,19 +782,18 @@ maintainer_guide = safe_selftest_callers["maintainer guide"].read_text(encoding=
 release_workflow = (source_root / ".github" / "workflows" / "release.yml").read_text(
     encoding="utf-8"
 )
-pinned_donor = re.search(
-    r"^\s*DONOR_REV:\s*([0-9a-f]{40})$", release_workflow, re.MULTILINE
+donor_rev = (source_root / "DONOR_REV").read_text(encoding="utf-8").strip()
+assert re.fullmatch(r"[0-9a-f]{40}", donor_rev), (
+    "DONOR_REV must hold one full donor commit hash"
 )
-assert pinned_donor, "release.yml must pin DONOR_REV"
-donor_pins = {}
+donor_workflows = set()
 for workflow_path in (source_root / ".github" / "workflows").glob("*.yml"):
-    pins = re.findall(
-        r"^\s*DONOR_REV:\s*([0-9a-f]{40})$",
-        workflow_path.read_text(encoding="utf-8"),
-        re.MULTILINE,
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    assert "DONOR_REV:" not in workflow_text and donor_rev not in workflow_text, (
+        f"{workflow_path.name} must take the donor revision from DONOR_REV"
     )
-    if pins:
-        donor_pins[workflow_path.name] = pins
+    if "uses: ./.github/actions/clone-donor" in workflow_text:
+        donor_workflows.add(workflow_path.name)
 expected_donor_workflows = {
     "linux-build.yml",
     "linux-sanitizer.yml",
@@ -803,15 +802,9 @@ expected_donor_workflows = {
     "release.yml",
     "windows-tests.yml",
 }
-assert set(donor_pins) == expected_donor_workflows, (
+assert donor_workflows == expected_donor_workflows, (
     "exactly the release and test workflows that consume donor source must "
-    f"pin DONOR_REV: {donor_pins.keys()}"
-)
-assert all(
-    pins and set(pins) == {pinned_donor.group(1)}
-    for pins in donor_pins.values()
-), (
-    f"DONOR_REV drift across workflows: {donor_pins}"
+    f"clone it through .github/actions/clone-donor: {sorted(donor_workflows)}"
 )
 
 # The Linux and Raspberry Pi legs build against the Dusk-owned JUCE mirror by
@@ -1013,26 +1006,10 @@ assert len(set(sodium_pins.values())) == 1, (
 )
 for guide_name in ("BUILDING-LINUX.md", "BUILDING-WINDOWS.md"):
     guide = (source_root / guide_name).read_text(encoding="utf-8")
-    assert (
-        f"git -C plugins fetch --depth 1 origin {pinned_donor.group(1)}" in guide
-    ), f"{guide_name} must fetch the workflow-pinned donor revision"
-    assert "git -C plugins checkout --detach FETCH_HEAD" in guide, (
-        f"{guide_name} must check out the fetched donor revision"
+    assert donor_rev not in guide, (
+        f"{guide_name} must leave the donor revision to DONOR_REV"
     )
-linux_guide = (source_root / "BUILDING-LINUX.md").read_text(encoding="utf-8")
-assert (
-    f'test "$(git -C plugins rev-parse HEAD)" = {pinned_donor.group(1)}'
-    in linux_guide
-), "BUILDING-LINUX.md must verify the workflow-pinned donor revision"
 windows_guide = (source_root / "BUILDING-WINDOWS.md").read_text(encoding="utf-8")
-windows_pin_check = (
-    'git -C plugins rev-parse HEAD | findstr /x /c:'
-    f'"{pinned_donor.group(1)}" >nul || '
-    '(echo ERROR: donor checkout did not reach the pinned revision & exit /b 1)'
-)
-assert windows_pin_check in windows_guide, (
-    "BUILDING-WINDOWS.md must fail when the donor revision does not match"
-)
 cmake_source = (source_root / "CMakeLists.txt").read_text(encoding="utf-8")
 assert "DUSKSTUDIO_REQUIRE_ASIO=OFF" not in cmake_source, (
     "CMake must not offer an ASIO-less Windows build"
@@ -1096,8 +1073,8 @@ release_section = release_section_match.group("body")
 assert "env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run" in release_section, (
     "Part 10 must retain the local Patreon freshness check"
 )
-assert ".github/workflows/release.yml" in release_section, (
-    "Part 10 must read the donor pin from a release workflow"
+assert "DONOR_REV=$(tr -d '[:space:]' < DONOR_REV)" in release_section, (
+    "Part 10 must read the donor revision from DONOR_REV"
 )
 assert 'cat-file -e "$DONOR_REV^{commit}"' in release_section, (
     "Part 10 must avoid turning the maintainer donor into a shallow checkout"
@@ -1105,7 +1082,7 @@ assert 'cat-file -e "$DONOR_REV^{commit}"' in release_section, (
 assert 'git -C ../plugins show "$DONOR_REV:plugins/shared/PatreonBackers.h"' in release_section, (
     "Part 10 must print the supporter header from the pinned donor revision"
 )
-assert "STOP: release workflow has no valid DONOR_REV" in release_section, (
+assert "STOP: DONOR_REV does not hold a valid commit" in release_section, (
     "Part 10 must stop instead of reading the donor index when pin parsing fails"
 )
 patreon_command = "env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run"
@@ -1128,7 +1105,7 @@ assert override_stop in patreon_block, (
 ordered_patreon_steps = [
     "set -e",
     override_stop,
-    "DONOR_REV=$(sed -nE",
+    "DONOR_REV=$(tr -d '[:space:]' < DONOR_REV)",
     '[[ "$DONOR_REV" =~ ^[0-9a-f]{40}$ ]]',
     'cat-file -e "$DONOR_REV^{commit}"',
     'git -C ../plugins show "$DONOR_REV:plugins/shared/PatreonBackers.h"',
@@ -1517,14 +1494,14 @@ assert re.search(
     release_workflow,
 ), "the tag workflow must run the release metadata checker against the tag and its commit date"
 
-# Every single-line configure example in the maintainer guide has to name the
-# donor pin: the sibling ../plugins has drifted past it, and an example without
-# the flag builds against the wrong DSP.
+# Configure examples in the maintainer guide leave the donor to DONOR_REV: an
+# explicit DUSK_PLUGINS_PATH builds whatever that checkout holds, not the
+# commit CI and releases build.
 guide = (source_root / "docs" / "MAINTAINER-GUIDE.md").read_text(encoding="utf-8").splitlines()
-unpinned = [
+overridden = [
     line.strip()
     for line in guide
-    if re.match(r"^\s*cmake -S \. -B build", line) and "DUSK_PLUGINS_PATH" not in line
+    if re.match(r"^\s*cmake -S \. -B build", line) and "DUSK_PLUGINS_PATH" in line
 ]
-assert not unpinned, f"maintainer guide configure examples without the donor pin: {unpinned}"
+assert not overridden, f"maintainer guide configure examples bypass DONOR_REV: {overridden}"
 PY
