@@ -43,9 +43,13 @@ function Read-RegressStderr($state, $ms) {
 
 # A scriptblock delegate (EnumWindows and friends) throws under iex, so the
 # P/Invoke surface stays limited to this direct call.
-if (-not ('Regress.Foreground' -as [type])) {
-    Add-Type -Namespace Regress -Name Foreground -MemberDefinition @'
+# A type added under a name the guest console already holds from an earlier run
+# keeps that run's members, so a changed surface needs a new name.
+if (-not ('Regress.ForegroundOwner' -as [type])) {
+    Add-Type -Namespace Regress -Name ForegroundOwner -MemberDefinition @'
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
 '@
 }
 
@@ -117,9 +121,15 @@ try {
     }
     Start-Sleep -Seconds 3
     # The handoff is supposed to bring the running window forward, which is the
-    # half of the check a bare "B exited 0" cannot see.
-    $rgForeground = [Regress.Foreground]::GetForegroundWindow()
-    $rgLog += "A after handoff: alive=$(-not $rgFirst.HasExited) foreground=$rgForeground wanted=$rgHwnd`n"
+    # half of the check a bare "B exited 0" cannot see. Checked by owning
+    # process: the handle A reported at startup is not the one it holds by now.
+    $rgForeground = [Regress.ForegroundOwner]::GetForegroundWindow()
+    $rgForegroundPid = 0
+    [void][Regress.ForegroundOwner]::GetWindowThreadProcessId($rgForeground, [ref]$rgForegroundPid)
+    $rgForegroundTitle = New-Object System.Text.StringBuilder 256
+    [void][Regress.ForegroundOwner]::GetWindowText($rgForeground, $rgForegroundTitle, 256)
+    $rgForegroundName = try { (Get-Process -Id $rgForegroundPid).ProcessName } catch { '?' }
+    $rgLog += "A after handoff: alive=$(-not $rgFirst.HasExited) foreground=$rgForegroundName($rgForegroundPid) '$($rgForegroundTitle.ToString())' A=$($rgFirst.Id)`n"
     $rgAlive = -not $rgFirst.HasExited
 
     # Clean shutdown is phase 3's job; here the instance is only torn down.
@@ -144,7 +154,7 @@ try {
     $rgLog += "A load markers: session.json at $rgSessionAt, handoff.json at $rgHandoffAt, ordered=$rgHandoffLoaded`n"
 
     if ($rgSessionLoaded -and $rgHandedOff -and $rgSecond.ExitCode -eq 0 -and $rgAlive `
-            -and $rgHwnd -ne [IntPtr]::Zero -and $rgForeground -eq $rgHwnd -and $rgHandoffLoaded) {
+            -and $rgHwnd -ne [IntPtr]::Zero -and $rgForegroundPid -eq $rgFirst.Id -and $rgHandoffLoaded) {
         $rgResult = 'PASS'
     }
 } catch {
