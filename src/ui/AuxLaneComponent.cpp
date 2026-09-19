@@ -650,16 +650,17 @@ void AuxLaneComponent::recordAutomation (AutomationParam param, bool recording, 
     auto& automation = lane.params.automationLanes[(size_t) param];
     if (recording)
     {
+        const bool touch = lane.params.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Touch;
         recorder.record (automation, engine.getTransport().getPlayhead(), value,
                          engine.getSession().tempoBpm.load (std::memory_order_relaxed),
-                         engine.getTransport().getLocateCount());
+                         engine.getTransport().getLocateCount(),
+                         touch ? (std::int64_t) (engine.getCurrentSampleRate()
+                                                 * AutomationPassRecorder::kTouchReturnSeconds)
+                               : 0);
     }
-    else if (recorder.active())
+    else
     {
-        const bool touch = lane.params.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Touch;
-        recorder.finish (automation, touch ? (std::int64_t) (engine.getCurrentSampleRate()
-                                                             * AutomationPassRecorder::kTouchReturnSeconds)
-                                           : 0);
+        recorder.finish (automation);
     }
 }
 
