@@ -175,14 +175,13 @@ struct MainComponent::ScenarioAuxLaneHandle final : scenario::AuxLaneHandle
        #endif
     }
 
+    // The lane's own remove path: it detaches the editors and suspends audio
+    // around the teardown, clears the slot's references and rebuilds, one
+    // message-loop tick later.
     void unloadSlot (int slot) override
     {
-        owner.engine.getAuxLaneStrip (lane).unloadNativeClap (slot);
-        auto& params = owner.session.auxLane (lane);
-        params.nativeClapPath[(std::size_t) slot].clear();
-        params.nativeClapPluginId[(std::size_t) slot].clear();
-        params.nativeClapStateBase64[(std::size_t) slot].clear();
-        rebuildSlots();
+        if (slot < 0 || slot >= AuxLaneParams::kMaxLanePlugins) return;
+        if (auto* component = laneComponent()) component->unloadSlotForScenario (slot);
     }
 
     void rebuildSlots() override

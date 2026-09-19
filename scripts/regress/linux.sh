@@ -91,6 +91,10 @@ run_build() {
 check_configure() {
     local want dir cached head rc=0
     want="$(tr -d '[:space:]' < "${REPO_ROOT}/DONOR_REV")"
+    if [[ ! "$want" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "error: DONOR_REV does not hold a 40-character commit: '${want}'" >&2
+        return 1
+    fi
     for dir in build build-tests; do
         if [[ ! -f "${REPO_ROOT}/${dir}/CMakeCache.txt" ]]; then
             local extra=""

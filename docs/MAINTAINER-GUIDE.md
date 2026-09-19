@@ -578,7 +578,8 @@ xvfb_run 300 env DUSKSTUDIO_RUN_SCENARIOS=gui DUSKSTUDIO_FIXTURE_DIR="$FIX" "$AP
 
 `all` runs every headless scenario except the ones tagged `helper` (set-up
 steps for the black-box legs, run by name or `tag:helper`);
-`gui` runs the window-driven cases and `gui:<terms>` a subset of them. A name
+`gui` runs the window-driven cases and `gui:<terms>` a subset of them (the
+runner runs them only with `--gui-scenarios`). A name
 that does not exist exits 2 before anything runs. The report is one line per
 scenario, `[PASS] name (ms)` / `[FAIL] name: reason (ms)` / `[SKIP] name:
 reason`, with the notes a failing scenario recorded indented underneath, then

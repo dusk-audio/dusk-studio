@@ -87,6 +87,10 @@ ScenarioResult runTimingBound (ScenarioContext& ctx)
     for (int t = 0; t < slots; ++t)
         engine.getChannelStrip (t).unloadNativeLv2();
 
+    if (fsError)
+        return ScenarioResult::fail ("could not walk the session state directory: " + fsError.message());
+    if (storedFiles == 0)
+        return ScenarioResult::fail ("the saves stored no state files, so there was nothing to time");
     if (slowestMs >= kBudgetMs)
         return ScenarioResult::fail ("a session save took " + std::to_string (slowestMs)
                                      + " ms, over the " + std::to_string (kBudgetMs)

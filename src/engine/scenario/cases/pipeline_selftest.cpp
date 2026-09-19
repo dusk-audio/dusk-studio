@@ -35,6 +35,17 @@ const ScenarioRegistrar resetRegistrar { Scenario {
         session.master().faderDb.store (-18.0f);
         session.master().liveFaderDb.store (-15.0f);
         session.master().mute.store (true);
+        auto& aux = session.auxLane (0).params;
+        aux.returnLevelDb.store (-12.0f);
+        aux.liveReturnLevelDb.store (-12.0f);
+        aux.mute.store (true);
+        aux.liveMute.store (true);
+        aux.outputPair.store (3);
+        aux.faderTouched.store (true);
+        aux.automationMode.store ((int) AutomationMode::Read);
+        aux.automationLanes[0].publishPoints ({ { 0, 0.5f, 120.0f } });
+        session.track (0).automationMode.store ((int) AutomationMode::Read);
+        session.track (0).automationLanes[0].publishPoints ({ { 0, 0.5f, 120.0f } });
         world.reset();
 
         const auto matches = [&ctx] (float actual, float expected)
@@ -62,6 +73,17 @@ const ScenarioRegistrar resetRegistrar { Scenario {
         matches (session.master().liveFaderDb.load(), defaults.master().liveFaderDb.load());
         ctx.expect (session.master().mute.load() == defaults.master().mute.load(),
                     "master mute survived the world reset");
+        const auto& auxDefaults = defaults.auxLane (0).params;
+        matches (aux.returnLevelDb.load(), auxDefaults.returnLevelDb.load());
+        matches (aux.liveReturnLevelDb.load(), auxDefaults.liveReturnLevelDb.load());
+        ctx.expect (aux.mute.load() == auxDefaults.mute.load() && aux.liveMute.load() == auxDefaults.liveMute.load()
+                        && aux.outputPair.load() == auxDefaults.outputPair.load()
+                        && aux.faderTouched.load() == auxDefaults.faderTouched.load(),
+                    "an aux return's mute, output or touch survived the world reset");
+        ctx.expect (aux.automationMode.load() == (int) AutomationMode::Off && aux.automationLanes[0].pointsConst().empty()
+                        && session.track (0).automationMode.load() == (int) AutomationMode::Off
+                        && session.track (0).automationLanes[0].pointsConst().empty(),
+                    "automation survived the world reset");
         return ctx.verdict();
     }
 } };

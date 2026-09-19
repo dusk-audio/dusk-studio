@@ -58,11 +58,13 @@ public:
     // show and hides them when the stage goes away.
     void refreshEditorsForShowState();
 
-    // Scenario-harness only: rebuild the lane's slot row, embed a loaded slot's
-    // editor, and load a native CLAP without the picker; the bool returns say
+    // Scenario-harness only: rebuild the lane's slot row, unload a slot the way
+    // its remove button does, embed a loaded slot's editor, and load a native
+    // CLAP without the picker; the bool returns say
     // whether the thing is there afterwards. std types, not JUCE ones, so
     // JUCE-free scenario code can call them.
     void rebuildSlotsForScenario();
+    void unloadSlotForScenario (int slotIdx) { unloadSlot (slotIdx); }
     bool attachEditorForSlotForScenario (int slotIdx);
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     bool loadNativeClapForSlotForScenario (int slotIdx,

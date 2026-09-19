@@ -6,7 +6,9 @@
 #include "../../dsp/ChannelStrip.h"
 #include "../../session/Session.h"
 
+#include <array>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -53,6 +55,12 @@ void clearPluginState (AuxLane& lane, int slot)
     lane.nativeVst3StateBase64[s].clear();
     lane.nativeAuIdentifier[s].clear();
     lane.nativeAuStateBase64[s].clear();
+}
+
+void clearAutomation (std::array<AutomationLane, kNumAutomationParams>& lanes)
+{
+    for (auto& lane : lanes)
+        lane.publishPoints ({});
 }
 } // namespace
 
@@ -123,6 +131,10 @@ void ScenarioWorld::reset()
         for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
             strip.busAssign[(std::size_t) b].store (false, std::memory_order_relaxed);
 
+        // A lane left in READ would play its ride into every later scenario.
+        track.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        clearAutomation (track.automationLanes);
+
         track.regions.clear();
         track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
 
@@ -150,18 +162,32 @@ void ScenarioWorld::reset()
 
     for (int b = 0; b < Session::kNumBuses; ++b)
     {
-        sessionRef.bus (b).strip.mute.store (false, std::memory_order_relaxed);
-        sessionRef.bus (b).strip.solo.store (false, std::memory_order_relaxed);
+        auto& busStrip = sessionRef.bus (b).strip;
+        busStrip.mute.store (false, std::memory_order_relaxed);
+        busStrip.solo.store (false, std::memory_order_relaxed);
+        busStrip.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        clearAutomation (busStrip.automationLanes);
     }
 
     sessionRef.master().faderDb.store (0.0f, std::memory_order_relaxed);
     sessionRef.master().liveFaderDb.store (0.0f, std::memory_order_relaxed);
     sessionRef.master().mute.store (false, std::memory_order_relaxed);
+    sessionRef.master().automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+    clearAutomation (sessionRef.master().automationLanes);
 
     for (int lane = 0; lane < Session::kNumAuxLanes; ++lane)
     {
         auto& auxStrip = engineRef.getAuxLaneStrip (lane);
         auto& auxParams = sessionRef.auxLane (lane);
+        auto& returnParams = auxParams.params;
+        returnParams.returnLevelDb.store (0.0f, std::memory_order_relaxed);
+        returnParams.liveReturnLevelDb.store (0.0f, std::memory_order_relaxed);
+        returnParams.mute.store (false, std::memory_order_relaxed);
+        returnParams.liveMute.store (false, std::memory_order_relaxed);
+        returnParams.outputPair.store (-1, std::memory_order_relaxed);
+        returnParams.faderTouched.store (false, std::memory_order_relaxed);
+        returnParams.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        clearAutomation (returnParams.automationLanes);
         for (int slot = 0; slot < AuxLaneStrip::kMaxPlugins; ++slot)
         {
             auxStrip.unloadNativeClap (slot);
@@ -171,6 +197,9 @@ void ScenarioWorld::reset()
             auxStrip.getPluginSlot (slot).unload();
             auxStrip.insertMode[(std::size_t) slot].store (AuxLaneStrip::kInsertEmpty,
                                                            std::memory_order_release);
+            auxParams.hardwareInserts[(std::size_t) slot].enabled.store (false, std::memory_order_release);
+            auxParams.hardwareInserts[(std::size_t) slot].routing.publish (
+                std::make_unique<HardwareInsertRouting>());
             clearPluginState (auxParams, slot);
         }
     }

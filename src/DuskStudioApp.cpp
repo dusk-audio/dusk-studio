@@ -2420,7 +2420,8 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     // session directory. A launch that finds an instance already running
     // hands the session over (-> anotherInstanceStarted) and exits. Placed
     // after every headless env-gate above so self-test / bounce / perf runs
-    // never take part in the handshake.
+    // never take part in the handshake, and a GUI scenario run skips it: handed
+    // to an instance already running, it would exit 0 having run nothing.
     //
     // What travels is the resolved path, quoted, not the raw tokens: the
     // running instance would resolve a relative one against its own working
@@ -2429,8 +2430,9 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     const auto handoffPath = sessionPathFromCommandLine (commandLine).getFullPathName();
     const auto handoff = handoffPath.isNotEmpty() ? handoffPath.quoted().toStdString()
                                                   : std::string();
-    if (! single_instance::acquire (handoff,
-                                    [this] (std::string cl) { anotherInstanceStarted (cl); }))
+    if (! guiScenarioRun
+        && ! single_instance::acquire (handoff,
+                                       [this] (std::string cl) { anotherInstanceStarted (cl); }))
     {
         quit();
         return;

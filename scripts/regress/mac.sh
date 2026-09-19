@@ -226,6 +226,17 @@ BIN="\$HOME/${MAC_REPO}/build/DuskStudio_artefacts/Release/DuskStudio.app/Conten
 RC_FILE="\$(mktemp -t duskstudio-selftest-rc)"
 LOG_FILE="\$(mktemp -t duskstudio-selftest-log)"
 PID_FILE="\$(mktemp -t duskstudio-selftest-pid)"
+CHILD=""
+# However the remote shell ends - done, timed out, or dropped with the ssh
+# session - the app goes and so do its files.
+cleanup() {
+    APP_PID="\$(cat "\$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "\$APP_PID" && ! -f "\$RC_FILE" ]]; then kill -9 "\$APP_PID" 2>/dev/null || true; fi
+    if [[ -n "\$CHILD" ]]; then wait "\$CHILD" 2>/dev/null || true; fi
+    rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP INT TERM
 rm -f "\$RC_FILE"
 # The subshell records the app's own pid: killing the subshell alone would
 # orphan a hung DuskStudio.
@@ -247,7 +258,6 @@ while [[ ! -f "\$RC_FILE" ]]; do
         wait "\$CHILD" 2>/dev/null || true
         echo "error: self-test still running after 420 s" >&2
         sed 's/^/  /' "\$LOG_FILE" >&2
-        rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
         exit 124
     fi
     sleep 2
@@ -256,7 +266,6 @@ done
 wait "\$CHILD" 2>/dev/null || true
 RC="\$(cat "\$RC_FILE")"
 grep -E '^\[(PASS|FAIL|SKIP)\]|^Total' "\$LOG_FILE" || sed 's/^/  /' "\$LOG_FILE"
-rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
 exit "\$RC"
 REMOTE
 }
@@ -272,11 +281,20 @@ REPO="\$HOME/${MAC_REPO}"
 BIN="\$REPO/build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
 [[ -x "\$BIN" ]] || { echo "error: scenario binary missing: \$BIN" >&2; exit 1; }
 SANDBOX_DIR="\$(mktemp -d -t duskstudio-scenarios-env)"
-trap 'rm -rf "\$SANDBOX_DIR"' EXIT
-mkdir -m 700 "\$SANDBOX_DIR"/{home,config,data,cache,state,runtime}
 RC_FILE="\$(mktemp -t duskstudio-scenarios-rc)"
 LOG_FILE="\$(mktemp -t duskstudio-scenarios-log)"
 PID_FILE="\$(mktemp -t duskstudio-scenarios-pid)"
+CHILD=""
+cleanup() {
+    APP_PID="\$(cat "\$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "\$APP_PID" && ! -f "\$RC_FILE" ]]; then kill -9 "\$APP_PID" 2>/dev/null || true; fi
+    if [[ -n "\$CHILD" ]]; then wait "\$CHILD" 2>/dev/null || true; fi
+    rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
+    rm -rf "\$SANDBOX_DIR"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP INT TERM
+mkdir -m 700 "\$SANDBOX_DIR"/{home,config,data,cache,state,runtime}
 rm -f "\$RC_FILE"
 (
     set +e
@@ -304,7 +322,6 @@ while [[ ! -f "\$RC_FILE" ]]; do
         wait "\$CHILD" 2>/dev/null || true
         echo "error: scenario suite still running after 600 s" >&2
         sed 's/^/  /' "\$LOG_FILE" >&2
-        rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
         exit 124
     fi
     sleep 2
@@ -313,7 +330,6 @@ done
 wait "\$CHILD" 2>/dev/null || true
 RC="\$(cat "\$RC_FILE")"
 grep -E '^\[(PASS|FAIL|SKIP)\]|^=== scenarios: ' "\$LOG_FILE" || sed 's/^/  /' "\$LOG_FILE"
-rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
 exit "\$RC"
 REMOTE
 }

@@ -7,6 +7,7 @@
 #include "../../session/Session.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <system_error>
 #include <utility>
@@ -124,13 +125,17 @@ void ScenarioContext::later (int ms, std::function<void()> fn)
 void ScenarioContext::waitUntil (std::function<bool()> pred, int timeoutMs,
                                  std::function<void()> onReady, std::string timeoutMessage)
 {
+    // Wall-clock deadline: a loaded host stretches every poll interval, so
+    // counting polls would let a wait run well past its timeout.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds (timeoutMs);
+
     // The pending timer holds the poller; the poller holds itself weakly, so it
     // lives exactly as long as it has another poll to schedule.
-    auto poller = std::make_shared<std::function<void (int)>>();
-    std::weak_ptr<std::function<void (int)>> weakPoller = poller;
+    auto poller = std::make_shared<std::function<void()>>();
+    std::weak_ptr<std::function<void()>> weakPoller = poller;
 
-    *poller = [this, pred = std::move (pred), timeoutMs, onReady = std::move (onReady),
-               timeoutMessage = std::move (timeoutMessage), weakPoller] (int elapsedMs)
+    *poller = [this, pred = std::move (pred), deadline, onReady = std::move (onReady),
+               timeoutMessage = std::move (timeoutMessage), weakPoller]
     {
         if (completed) return;
 
@@ -140,17 +145,17 @@ void ScenarioContext::waitUntil (std::function<bool()> pred, int timeoutMs,
             return;
         }
 
-        if (elapsedMs >= timeoutMs)
+        if (std::chrono::steady_clock::now() >= deadline)
         {
             complete (ScenarioResult::fail (timeoutMessage));
             return;
         }
 
         if (auto next = weakPoller.lock())
-            later (kPollMs, [next, elapsedMs] { (*next) (elapsedMs + kPollMs); });
+            later (kPollMs, [next] { (*next)(); });
     };
 
-    (*poller) (0);
+    (*poller)();
 }
 
 void ScenarioContext::complete (ScenarioResult result)

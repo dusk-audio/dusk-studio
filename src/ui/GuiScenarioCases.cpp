@@ -102,6 +102,7 @@ struct EditorLeg
     std::filesystem::path file;
     std::string pluginId;
     Format format;
+    bool hasEditor = false;
     bool loaded = false;
     bool editorSeen = false;
     bool editorUnavailable = false;
@@ -126,22 +127,29 @@ std::optional<ScenarioResult> runEditorOpenCloseLoop (GuiHost& host, ScenarioCon
     if (strip == nullptr)
         return ScenarioResult::skip ("the console has no strip to drive");
 
-    struct Candidate { const char* label; const char* fixture; const char* pluginId; Format format; };
-    // multi_bus.clap ships no CLAP_EXT_GUI, so it covers the refused-open half;
-    // no_window.clap does report a GUI, so it is the CLAP fixture whose editor
-    // teardown actually runs.
+    struct Candidate
+    {
+        const char* label; const char* fixture; const char* pluginId; Format format;
+        bool hasEditor;
+    };
+    // multi_bus.clap ships no CLAP_EXT_GUI, the LV2 fixture no UI and the VST3
+    // one only a lifecycle-probe view with no platform to attach to, so they
+    // cover the refused-open half. no_window.clap reports a GUI, so it is the
+    // fixture whose editor teardown actually runs, and on a display that can
+    // embed editors it has to open.
     constexpr Candidate kCandidates[] = {
-        { "CLAP",           "multi_bus.clap", "studio.dusk.test.multi-bus",     Format::Clap },
-        { "CLAP/no-window", "no_window.clap", "studio.dusk.test.no-window",     Format::Clap },
-        { "LV2",            "file_state.lv2", "urn:duskstudio:test:control-state", Format::Lv2 },
-        { "VST3",           "relayout.vst3",  "",                               Format::Vst3 },
+        { "CLAP",           "multi_bus.clap", "studio.dusk.test.multi-bus",        Format::Clap, false },
+        { "CLAP/no-window", "no_window.clap", "studio.dusk.test.no-window",        Format::Clap, true  },
+        { "LV2",            "file_state.lv2", "urn:duskstudio:test:control-state", Format::Lv2,  false },
+        { "VST3",           "relayout.vst3",  "",                                  Format::Vst3, false },
     };
 
     auto legs = std::make_shared<std::vector<EditorLeg>>();
     for (const auto& candidate : kCandidates)
     {
         if (const auto file = ctx.fixture (candidate.fixture))
-            legs->push_back ({ candidate.label, *file, candidate.pluginId, candidate.format });
+            legs->push_back ({ candidate.label, *file, candidate.pluginId, candidate.format,
+                               candidate.hasEditor });
         else
             ctx.note (std::string (candidate.label) + ": " + candidate.fixture
                       + " did not resolve");
@@ -176,9 +184,8 @@ std::optional<ScenarioResult> runEditorOpenCloseLoop (GuiHost& host, ScenarioCon
                     return;
                 }
 
-                // Not a failure: a fixture with no editor to embed says so
-                // through the alert, and the rest of its cycles have nothing
-                // left to close.
+                // Judged at the end: an editorless fixture says so through the
+                // alert, and the rest of its cycles have nothing left to close.
                 leg.editorUnavailable = true;
                 ctx.note (leg.label + ": no editor came up, so its close cycles were skipped");
                 dismissAlert (host);
@@ -206,7 +213,11 @@ std::optional<ScenarioResult> runEditorOpenCloseLoop (GuiHost& host, ScenarioCon
     {
         int opened = 0;
         for (const auto& leg : *legs)
+        {
             if (leg.editorSeen) ++opened;
+            else if (leg.loaded && leg.hasEditor && host.canEmbedPluginEditors())
+                ctx.expect (false, leg.label + ": its editor did not open on a display that embeds editors");
+        }
 
         ctx.expect (host.modalStackEmpty(), "the run left a modal up");
         if (opened == 0 && ctx.verdict().status == ScenarioStatus::Pass)

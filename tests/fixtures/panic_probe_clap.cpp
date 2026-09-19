@@ -27,6 +27,7 @@ enum ParamId : clap_id
 
 struct Voice
 {
+    int16_t port = -1;
     int16_t key = -1;
     int16_t channel = -1;
 };
@@ -43,23 +44,27 @@ struct PluginData
     std::uint32_t cc123Seen = 0;
     std::uint32_t noteOffsSeen = 0;
 
-    void addVoice (int16_t key, int16_t channel) noexcept
+    // A voice is per note port: the same key and channel on two ports are two
+    // voices, so a choke that reaches only one port leaves the other held.
+    void addVoice (int16_t port, int16_t key, int16_t channel) noexcept
     {
         for (std::uint32_t i = 0; i < voiceCount; ++i)
-            if (voices[i].key == key && voices[i].channel == channel) return;
+            if (voices[i].port == port && voices[i].key == key && voices[i].channel == channel)
+                return;
         if (voiceCount >= kMaxVoices) return;
-        voices[voiceCount++] = { key, channel };
+        voices[voiceCount++] = { port, key, channel };
     }
 
-    // -1 is the CLAP wildcard for key / channel; a raw MIDI note-off always
-    // names both.
-    void removeVoices (int16_t key, int16_t channel) noexcept
+    // -1 is the CLAP wildcard for port / key / channel; a raw MIDI note-off
+    // always names the key and channel.
+    void removeVoices (int16_t port, int16_t key, int16_t channel) noexcept
     {
         std::uint32_t kept = 0;
         for (std::uint32_t i = 0; i < voiceCount; ++i)
         {
             const auto& v = voices[i];
-            const bool matches = (key < 0 || v.key == key)
+            const bool matches = (port < 0 || v.port == port)
+                              && (key < 0 || v.key == key)
                               && (channel < 0 || v.channel == channel);
             if (! matches) voices[kept++] = v;
         }
@@ -201,14 +206,14 @@ void handleNoteEvent (PluginData& data, const clap_event_header_t* header)
     switch (header->type)
     {
         case CLAP_EVENT_NOTE_ON:
-            data.addVoice (note->key, note->channel);
+            data.addVoice (note->port_index, note->key, note->channel);
             break;
         case CLAP_EVENT_NOTE_OFF:
-            data.removeVoices (note->key, note->channel);
+            data.removeVoices (note->port_index, note->key, note->channel);
             ++data.noteOffsSeen;
             break;
         case CLAP_EVENT_NOTE_CHOKE:
-            data.removeVoices (note->key, note->channel);
+            data.removeVoices (note->port_index, note->key, note->channel);
             ++data.chokesSeen;
             break;
         default:
@@ -220,6 +225,7 @@ void handleMidiEvent (PluginData& data, const clap_event_header_t* header)
 {
     const auto* midi = reinterpret_cast<const clap_event_midi_t*> (header);
     const auto status = (std::uint8_t) (midi->data[0] & 0xF0u);
+    const auto port = (int16_t) midi->port_index;
     const auto channel = (int16_t) (midi->data[0] & 0x0Fu);
     const auto d1 = midi->data[1];
     const auto d2 = midi->data[2];
@@ -236,11 +242,11 @@ void handleMidiEvent (PluginData& data, const clap_event_header_t* header)
     }
     else if (status == 0x90 && d2 > 0)
     {
-        data.addVoice ((int16_t) d1, channel);
+        data.addVoice (port, (int16_t) d1, channel);
     }
     else if (status == 0x80 || (status == 0x90 && d2 == 0))
     {
-        data.removeVoices ((int16_t) d1, channel);
+        data.removeVoices (port, (int16_t) d1, channel);
         ++data.noteOffsSeen;
     }
 }

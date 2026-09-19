@@ -151,10 +151,14 @@ ScenarioResult editUndoRestoresEveryField (ScenarioContext& ctx)
 
     ctx.expect (undo.perform (new RegionEditAction (ctx.session(), ctx.engine(), kTrack, 0, before, after)),
                 "the edit was refused");
+    if (! ctx.expect (regs.size() == 1, "the edit changed the number of regions"))
+        return ctx.verdict();
     ctx.expect (sameSpan (regs[0], 5000, 30000, 2000) && regs[0].fadeInSamples == 480
                     && regs[0].fadeOutSamples == 960 && nearly (regs[0].gainDb, -6.0f) && regs[0].muted,
                 "the edit did not apply every field");
     ctx.expect (undo.undo(), "undo was refused");
+    if (! ctx.expect (regs.size() == 1, "undo changed the number of regions"))
+        return ctx.verdict();
     ctx.expect (sameSpan (regs[0], 1000, 48000, 0) && regs[0].fadeInSamples == 0
                     && regs[0].fadeOutSamples == 0 && nearly (regs[0].gainDb, 0.0f) && ! regs[0].muted,
                 "undo did not restore every field");
