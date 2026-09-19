@@ -1193,7 +1193,8 @@ Each region keeps a stack of up to **8 previous takes**. When you record a new t
 
 Current limits:
 
-- When a new take covers only part of an older region, the covered part of the older region is not kept in take history. To get it back, use **Undo** (Cmd+Z / Ctrl+Z) right after recording. The audio file itself stays on disk.
+- When a new take covers only the start or the end of an older region, the older region is trimmed to meet it and the covered part is not kept in take history. To get it back, use **Undo** (Cmd+Z / Ctrl+Z) right after recording. The audio file itself stays on disk.
+- A punch that falls inside an older region is different: the older region carries on either side of it, and the stretch the punch replaced goes onto the new take's stack, so **Alt+T** brings it back.
 - Deleting a region deletes its whole take stack. **Undo** restores it.
 
 To cycle through takes:

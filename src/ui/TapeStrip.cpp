@@ -1210,21 +1210,14 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
     // hit.op == None (audio-only hit test) would swallow clicks on MIDI regions
     // and box-select drags.
 
-    // Take-history badge: rotate to the next take (FIFO - front of
-    // previousTakes surfaces, current goes to the back). Wrapped in a
-    // RegionEditAction so Cmd+Z reverts the rotation, like the Takes menu.
+    // Take-history badge: the same forward step as Alt+T, wrapped in a
+    // RegionEditAction so Cmd+Z reverts it, like the Takes menu.
     if (hit.op == RegionOp::TakeBadge)
     {
-        const auto& cur = session.track (hit.track).regions[(size_t) hit.regionIdx];
-        if (! cur.previousTakes.empty())
+        const AudioRegion before = session.track (hit.track).regions[(size_t) hit.regionIdx];
+        AudioRegion after = before;
+        if (cycleTake (after, true))
         {
-            AudioRegion before = cur;
-            AudioRegion after  = cur;
-            TakeRef next = std::move (after.previousTakes.front());
-            after.previousTakes.erase (after.previousTakes.begin());
-            swapAudioTakePayload (after, next);
-            after.previousTakes.push_back (std::move (next));
-
             selectedTrack  = hit.track;
             selectedRegion = hit.regionIdx;
             selectedMidiTrack  = -1;
@@ -4330,39 +4323,27 @@ bool TapeStrip::nudgeSelectedRegion (std::int64_t deltaSamples)
     return true;
 }
 
-bool TapeStrip::cycleSelectedTakeForward()
+bool TapeStrip::cycleSelectedTake (bool forward)
 {
-    // Audio take cycle: rotate the take stack so the next previous take
-    // becomes live and the displaced live drops to the back of the
-    // stack. Walks every selected region and applies the rotation.
-    // No-op when no region in the selection has take history.
-    // MIDI fallback: when the selection is a MIDI region (no audio
-    // RegionId), rotate the MIDI take stack instead.
+    // Every selected audio region with history steps through its take stack,
+    // as one undo step. A selected MIDI region is the fallback when no audio
+    // region in the selection has history.
     auto selection = allSelectedRegions();
     bool didAny = false;
     auto& um = engine.getUndoManager();
-    if (! selection.empty())
+    for (const auto& id : selection)
     {
-        for (const auto& id : selection)
-        {
-            const auto& regs = session.track (id.track).regions;
-            if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
-            const auto& cur = regs[(size_t) id.regionIdx];
-            if (cur.previousTakes.empty()) continue;
+        const auto& regs = session.track (id.track).regions;
+        if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
+        const AudioRegion before = regs[(size_t) id.regionIdx];
+        AudioRegion after = before;
+        if (! cycleTake (after, forward)) continue;
 
-            AudioRegion before = cur;
-            AudioRegion after  = cur;
-            TakeRef chosen = std::move (after.previousTakes.front());
-            after.previousTakes.erase (after.previousTakes.begin());
-            swapAudioTakePayload (after, chosen);
-            after.previousTakes.push_back (std::move (chosen));
-
-            if (! didAny) um.beginNewTransaction ("Cycle take");
-            um.perform (new RegionEditAction (session, engine,
-                                                id.track, id.regionIdx,
-                                                before, after));
-            didAny = true;
-        }
+        if (! didAny) um.beginNewTransaction ("Cycle take");
+        um.perform (new RegionEditAction (session, engine,
+                                            id.track, id.regionIdx,
+                                            before, after));
+        didAny = true;
     }
     if (! didAny
         && selectedMidiTrack >= 0 && selectedMidiTrack < Session::kNumTracks
@@ -4371,88 +4352,10 @@ bool TapeStrip::cycleSelectedTakeForward()
         const auto& curList = session.track (selectedMidiTrack).midiRegions.current();
         if (selectedMidiRegion < (int) curList.size())
         {
-            const auto& cur = curList[(size_t) selectedMidiRegion];
-            if (! cur.previousTakes.empty())
+            const MidiRegion before = curList[(size_t) selectedMidiRegion];
+            MidiRegion after = before;
+            if (cycleTake (after, forward))
             {
-                MidiRegion before = cur;
-                MidiRegion after  = cur;
-                MidiTakeRef chosen = std::move (after.previousTakes.front());
-                after.previousTakes.erase (after.previousTakes.begin());
-                swapMidiTakePayload (after, chosen);
-                after.previousTakes.push_back (std::move (chosen));
-
-                const double sr = engine.getCurrentSampleRate();
-                const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
-                if (sr > 0.0 && bpm > 0.0f)
-                {
-                    const double samplesPerTick =
-                        (sr * 60.0) / ((double) bpm * (double) kMidiTicksPerQuarter);
-                    after.lengthInSamples = (std::int64_t) std::llround (
-                        (double) after.lengthInTicks * samplesPerTick);
-                }
-
-                um.beginNewTransaction ("Cycle take");
-                um.perform (new MidiRegionEditAction (session, engine,
-                                                        selectedMidiTrack, selectedMidiRegion,
-                                                        before, after));
-                didAny = true;
-            }
-        }
-    }
-    if (didAny) repaint();
-    return didAny;
-}
-
-bool TapeStrip::cycleSelectedTakeBackward()
-{
-    // Reverse-cycle: the LAST previous take becomes live; the displaced
-    // live drops to the FRONT of the stack. Symmetric to forward cycle
-    // so the user can step in either direction through the history.
-    auto selection = allSelectedRegions();
-    bool didAny = false;
-    auto& um = engine.getUndoManager();
-    if (! selection.empty())
-    {
-        for (const auto& id : selection)
-        {
-            const auto& regs = session.track (id.track).regions;
-            if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
-            const auto& cur = regs[(size_t) id.regionIdx];
-            if (cur.previousTakes.empty()) continue;
-
-            AudioRegion before = cur;
-            AudioRegion after  = cur;
-            TakeRef chosen = std::move (after.previousTakes.back());
-            after.previousTakes.pop_back();
-            swapAudioTakePayload (after, chosen);
-            after.previousTakes.insert (
-                after.previousTakes.begin(), std::move (chosen));
-
-            if (! didAny) um.beginNewTransaction ("Cycle take");
-            um.perform (new RegionEditAction (session, engine,
-                                                id.track, id.regionIdx,
-                                                before, after));
-            didAny = true;
-        }
-    }
-    if (! didAny
-        && selectedMidiTrack >= 0 && selectedMidiTrack < Session::kNumTracks
-        && selectedMidiRegion >= 0)
-    {
-        const auto& curList = session.track (selectedMidiTrack).midiRegions.current();
-        if (selectedMidiRegion < (int) curList.size())
-        {
-            const auto& cur = curList[(size_t) selectedMidiRegion];
-            if (! cur.previousTakes.empty())
-            {
-                MidiRegion before = cur;
-                MidiRegion after  = cur;
-                MidiTakeRef chosen = std::move (after.previousTakes.back());
-                after.previousTakes.pop_back();
-                swapMidiTakePayload (after, chosen);
-                after.previousTakes.insert (after.previousTakes.begin(),
-                                              std::move (chosen));
-
                 const double sr = engine.getCurrentSampleRate();
                 const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
                 if (sr > 0.0 && bpm > 0.0f)

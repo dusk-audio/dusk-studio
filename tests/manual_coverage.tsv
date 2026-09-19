@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 144
-# ceiling partial 54
+# ceiling gap 140
+# ceiling partial 56
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -103,7 +103,7 @@ The interface > The four stages	entering or leaving MASTERING stops the transpor
 The interface > The transport bar	Stop silences held notes even on muted or soloed-out tracks	auto	scenario:midi.panic_all_paths;test:muted MIDI strips still process transport panic events;test:synth unit stops on the transport's all-notes-off
 The interface > The transport bar	Stop returns the playhead per Playhead on Stop; a second Stop goes to bar 1	auto	test:Stop on a rolling transport follows the Playhead on Stop setting;test:Stop pressed while stopped returns to zero whatever the setting;test:A locate during playback becomes the point Stop returns to
 The interface > The transport bar	a chase-driven stop leaves the playhead where the master stopped	gap
-The interface > The transport bar	Rewind and Forward tap to markers, hold to scrub at 10x	partial	test:McuReceiver: REWIND / FAST-FORWARD publish held-state on press and release		surface press/hold state tested; marker jumps and scrub speed are not
+The interface > The transport bar	Rewind and Forward tap to markers, hold to scrub at 10x	partial	test:McuReceiver: REWIND / FAST-FORWARD publish held-state on press and release;scenario:marker.rewind_forward_jump		surface press/hold state and marker jumps tested; the 180 ms hold threshold and 10x scrub are not
 The interface > The transport bar	Play snaps to loop start when outside the loop	gap
 The interface > The transport bar	Record needs an armed track	auto	test:An audio track cannot arm while the device offers no inputs;test:A track whose input the device does not offer cannot arm
 The interface > The transport bar	Punch right-click menu sets pre-roll and post-roll	gap
@@ -231,8 +231,9 @@ Recording > Loop recording	silent audio passes kept; empty MIDI passes dropped	a
 Recording > Loop recording	a loop under 128 samples does not record	gap
 Recording > Where files are saved	session.json plus audio/ of 24-bit WAVs named by track and time	partial	test:RecordManager writes mono input back accurately;test:RecordManager writes stereo L+R interleaving in order		sample accuracy tested; the 24-bit format and the filename pattern are not
 Recording > Where files are saved	MIDI is embedded in session.json	gap
-Recording > Take history	a take fully covering a region pushes it onto an 8-deep stack	partial	test:Loop audio history is newest-first capped and then retains compatible old takes;test:SessionSerializer round-trips active and historical take provenance		loop take stacking tested; a single overdub covering a region is not
-Recording > Take history	Alt+T and Alt+Shift+T cycle takes; the badge does too	gap
+Recording > Take history	a take fully covering a region pushes it onto an 8-deep stack	auto	scenario:take.full_cover_pushes_onto_stack;scenario:take.stack_keeps_newest_eight;test:Loop audio history is newest-first capped and then retains compatible old takes;test:SessionSerializer round-trips active and historical take provenance
+Recording > Take history	Alt+T and Alt+Shift+T cycle takes; the badge does too	partial	scenario:take.cycle_steps_through_the_stack		the step both shortcuts and the badge take through the stack is tested; the key binding and the badge click are not
+Recording > Take history	a take over one end of an older region trims it and keeps none of it; a punch inside keeps the covered part	auto	scenario:take.edge_overdub_trims_neighbour;scenario:take.punch_inside_keeps_covered_slice
 Recording > Take history	deleting a region removes its stack; undo restores it	auto	scenario:region.delete_restores_takes_on_undo
 Recording > Recording errors	a write failure at record start raises an alert listing the tracks	gap
 Recording > Recording errors	a mid-take error or MIDI overflow reports at Stop; written audio is kept	auto	test:RecordManager surfaces MIDI FIFO overflow at stopRecording;test:RecordManager clean MIDI take leaves overflow list empty
@@ -246,9 +247,9 @@ The tape strip > Regions > Splitting	Cmd/Ctrl+E splits the selected region at th
 The tape strip > Regions > Duplicating	Cmd+D places a copy right after the original	partial	scenario:region.paste_inserts_and_undo_removes	inserting the copy and its undo are tested; where Cmd+D places it is not
 The tape strip > Regions > Nudging	Cmd+arrows nudge a beat; Shift nudges a bar	gap
 The tape strip > Regions > Right-click menu	loop region, split, join, label, mute, lock, takes, reverse, colour, delete	partial	scenario:region.split_keeps_audio_continuous;scenario:region.join_rejoins_a_split;scenario:region.delete_restores_takes_on_undo;scenario:region.edit_undo_restores_every_field	split, join, delete and mute are tested; label, lock, takes, reverse, colour and loop region are not
-The tape strip > Regions > Take cycling	take submenu and Alt+T cycling	gap
-The tape strip > Markers	M drops a marker with a naming prompt; drag, rename, delete	gap
-The tape strip > Markers	Rewind and Forward jump between markers	gap
+The tape strip > Regions > Take cycling	take submenu and Alt+T cycling	partial	scenario:take.cycle_steps_through_the_stack		the Alt+T step through the stack is tested; the Takes submenu is not
+The tape strip > Markers	M drops a marker with a naming prompt; drag, rename, delete	partial	scenario:marker.add_move_remove_undo		the add, move, rename and delete behind them are tested with undo; the M key, the naming prompt and the drag gesture are not
+The tape strip > Markers	Rewind and Forward jump between markers	auto	scenario:marker.rewind_forward_jump
 The tape strip > Markers	the mini timeline shows every marker and brightens the current section	gap
 The tape strip > Loop and punch brackets	brackets draw solid when on and hollow when off	manual			visual; checked by screenshot review
 The tape strip > Loop and punch brackets	[ ] and Shift+[ ] set brackets; Clear loop and Clear punch	auto	test:Transport: a loop bracket placed by hand turns loop on once in is before out;test:Transport: a punch bracket placed by hand arms punch once in is before out
