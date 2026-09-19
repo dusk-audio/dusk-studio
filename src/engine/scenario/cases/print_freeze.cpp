@@ -222,8 +222,8 @@ Click playClick (ScenarioContext& ctx, std::int64_t through)
 }
 
 // FREEZE renders the track and plays the render with the track's DSP out of
-// the way, at 1x and at 4x: the frozen track is heard, and turning an EQ band
-// up does not touch it.
+// the way, at every oversampling factor: the frozen track is heard where it was
+// heard live, and turning an EQ band up does not touch it.
 std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
 {
     static constexpr std::int64_t kStart = 24000;
@@ -250,7 +250,7 @@ std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
         int factor;
         std::int64_t live = -1;
     };
-    auto passes = std::make_shared<std::vector<Pass>> (std::vector<Pass> { { 1 }, { 4 } });
+    auto passes = std::make_shared<std::vector<Pass>> (std::vector<Pass> { { 1 }, { 2 }, { 4 } });
     auto next = std::make_shared<std::function<void (std::size_t)>>();
     std::weak_ptr<std::function<void (std::size_t)>> weakNext = next;
 
@@ -319,6 +319,9 @@ std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
                                return;
                            }
                            engine.commitFreeze (kTrack, out, length);
+                           // A render hands the engine back to the device, whose
+                           // restart re-prepares it; this world has no device.
+                           engine.prepareForSelfTest (kRate, kFrames);
                            ctx.expect (session.track (kTrack).frozen.load(),
                                        std::to_string (done.factor) + "x: the track is not frozen");
                            ctx.expect (std::filesystem::exists (pathOf (out)),
@@ -333,7 +336,8 @@ std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
                            ctx.note (label + "live click at " + std::to_string (done.live) + ", frozen at "
                                      + std::to_string (frozen.at) + " peak " + std::to_string (frozen.peak)
                                      + ", with HF +15 dB peak " + std::to_string (boosted.peak));
-                           ctx.expect (frozen.at >= 0, label + "the frozen track is silent");
+                           ctx.expect (frozen.at >= 0 && std::abs (frozen.at - done.live) <= 1,
+                                       label + "the frozen track does not sound where it did");
                            ctx.expect (std::abs (boosted.peak - frozen.peak) < 1.0e-4f,
                                        label + "the channel EQ still acts on the frozen track");
                            (*self) (index + 1);

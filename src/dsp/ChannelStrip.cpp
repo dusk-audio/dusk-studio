@@ -373,6 +373,12 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     osLatencySamples = (factor > 1)
         ? std::min (kMaxOsLatency, (int) std::lround (oversampler.latency()))
         : 0;
+    for (auto* line : { &frozenAlignL, &frozenAlignR })
+    {
+        line->setMaximumDelayInSamples (kMaxOsLatency);
+        line->reset();
+        line->setDelay (osLatencySamples);
+    }
 
     const double prepSr = sampleRate * (double) factor;
     const int    prepBs = bsClamped * factor;
@@ -1615,6 +1621,14 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 eq.processBlock (eqIn, eqOut, 2, numSamples);
                 if (compEnabled)
                     runCompStereo (L, R, numSamples);
+            }
+        }
+        else if (osLatencySamples > 0)
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                frozenAlignL.pushSample (L[i]);  L[i] = frozenAlignL.popSample();
+                frozenAlignR.pushSample (R[i]);  R[i] = frozenAlignR.popSample();
             }
         }
 

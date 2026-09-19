@@ -467,6 +467,13 @@ private:
     static constexpr int kMaxOsLatency = 32;
     int          osLatencySamples = 0;
 
+    // A frozen track skips the oversampled EQ/comp, so without this its audio
+    // would lead the live strips by the oversampler's latency. The freeze
+    // render trims that latency from the WAV; playback puts back the amount the
+    // live path has at the current factor.
+    dusk::audio::IntDelayLine frozenAlignL;
+    dusk::audio::IntDelayLine frozenAlignR;
+
     // Empty buffer for the channel insert plugin; PluginSlot's
     // processBlock requires a MidiBuffer& even when the insert is an
     // effect. Held as member so the audio thread never default-constructs.
