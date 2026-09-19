@@ -370,9 +370,15 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     oversampler.setFactor (factor);
     oversampler.prepare (bsClamped);
     osMonoScratchR.assign ((size_t) bsClamped, 0.0f);
+#if DUSKSTUDIO_HAS_DUSK_DSP
     osLatencySamples = (factor > 1)
         ? std::min (kMaxOsLatency, (int) std::lround (oversampler.latency()))
         : 0;
+#else
+    // Without the donor DSP the oversampled EQ/comp never runs, so nothing is
+    // delayed by it.
+    osLatencySamples = 0;
+#endif
     for (auto* line : { &frozenAlignL, &frozenAlignR })
     {
         line->setMaximumDelayInSamples (kMaxOsLatency);
@@ -918,6 +924,27 @@ void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noex
     else                            pdcSilentRun = 0;
 }
 
+int ChannelStrip::getInsertPluginLatencySamples() const noexcept
+{
+    // A native or built-in insert replaces the JUCE slot (which then reports
+    // 0). Native slots report zero while bypassed or quarantined because both
+    // paths pass dry audio without delay.
+    if (isBuiltinLoaded()) return builtinSlot.getLatencySamples();
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    if (isNativeAuLoaded()) return nativeAuSlot.getLatencySamples();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    if (isNativeVst3Loaded()) return nativeVst3Slot.getLatencySamples();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (isNativeLv2Loaded()) return nativeLv2Slot.getLatencySamples();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    if (isNativeClapLoaded()) return nativeClapSlot.getLatencySamples();
+#endif
+    return pluginSlot.getLatencySamples();
+}
+
 void ChannelStrip::drainPdcForSkip() noexcept
 {
     // Same series-tail length the per-track silent skip uses: PDC delay and
@@ -934,6 +961,8 @@ void ChannelStrip::drainPdcForSkip() noexcept
         pdcDelayL.reset();
         pdcDelayR.reset();
         oversampler.reset();
+        frozenAlignL.reset();
+        frozenAlignR.reset();
         pdcSilentRun = requiredDrain;
     }
 }

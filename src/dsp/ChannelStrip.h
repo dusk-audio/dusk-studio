@@ -79,6 +79,9 @@ public:
     // How far the always-oversampled EQ/comp stage delays the strip's output
     // at the prepared factor, rounded; 0 at 1x.
     int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
+    // The latency of the plug-in the insert runs in plug-in mode: a loaded
+    // native or built-in instance, otherwise the JUCE slot's.
+    int getInsertPluginLatencySamples() const noexcept;
 
     // Native CLAP host path (replaces JUCE hosting for this insert when loaded). When
     // a native CLAP is loaded, the insert pass runs through it instead of pluginSlot.

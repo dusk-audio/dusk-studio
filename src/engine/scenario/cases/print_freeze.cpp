@@ -58,18 +58,19 @@ double fileRms (const std::filesystem::path& path, std::int64_t from, std::int64
     return std::sqrt (sum / (double) (to - from));
 }
 
+// Everything the cases here change on track 1 is put back as it was when the
+// case ends.
 void restoreStrip (ScenarioContext& ctx)
 {
     auto& track = ctx.session().track (kTrack);
     auto& strip = track.strip;
-    ctx.cleanup ([&track, &strip]
-    {
-        track.printEffects.store (false);
-        strip.eqEnabled.store (false);
-        strip.hpfEnabled.store (false);
-        strip.hpfFreq.store (20.0f);
-        strip.compEnabled.store (false);
-    });
+    for (auto* value : { &track.mode, &track.inputSource, &strip.compMode })
+        ctx.keep (*value);
+    for (auto* value : { &track.printEffects, &track.recordArmed, &strip.eqEnabled,
+                         &strip.hpfEnabled, &strip.compEnabled })
+        ctx.keep (*value);
+    for (auto* value : { &strip.hpfFreq, &strip.compFetThresholdDb, &strip.hfGainDb })
+        ctx.keep (*value);
 }
 
 // ------------------------------------------------------------------ PRINT
@@ -147,8 +148,6 @@ ScenarioResult printCommitsTheStrip (ScenarioContext& ctx)
     strip.eqEnabled.store (false);
     strip.compEnabled.store (true);
     strip.compMode.store (1);
-    const float fetThreshold = strip.compFetThresholdDb.load();
-    ctx.cleanup ([&strip, fetThreshold] { strip.compFetThresholdDb.store (fetThreshold); });
     strip.compFetThresholdDb.store (-30.0f);
     const auto* compressed = recordTone (ctx, 1000.0, 0.5f, 1.0);
     if (ctx.expect (compressed != nullptr, "recording with the compressor on made no take"))
@@ -233,10 +232,9 @@ std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
     auto& engine = ctx.engine();
     const int factorWas = session.oversamplingFactor.load();
     auto& strip = session.track (kTrack).strip;
-    ctx.cleanup ([&engine, &session, &strip, factorWas]
+    restoreStrip (ctx);
+    ctx.cleanup ([&engine, &session, factorWas]
     {
-        strip.eqEnabled.store (false);
-        strip.hfGainDb.store (0.0f);
         engine.unfreezeTrack (kTrack);
         session.oversamplingFactor.store (factorWas);
         engine.prepareForSelfTest (kRate, kFrames);

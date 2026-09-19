@@ -1192,8 +1192,10 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         session.track (trackIndex).mode.load (std::memory_order_relaxed)
             == (int) Track::Mode::Midi;
     const auto& frozenStrip = engine.getChannelStrip (trackIndex);
+    const bool pluginInsert = frozenStrip.insertMode.load (std::memory_order_relaxed)
+                                  == ChannelStrip::kInsertPlugin;
     const std::int64_t leadIn =
-        (isMidiTrack ? 0 : (std::int64_t) frozenStrip.getPluginSlot().getLatencySamples())
+        (isMidiTrack || ! pluginInsert ? 0 : (std::int64_t) frozenStrip.getInsertPluginLatencySamples())
         + (std::int64_t) frozenStrip.getOversamplingLatencySamples();
     const std::int64_t toRender = lenSamples + leadIn;
 

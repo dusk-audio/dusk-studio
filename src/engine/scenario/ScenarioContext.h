@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -79,6 +80,15 @@ public:
     // watchdog - before the result is reported, so what a deferred case owns
     // is released even when a wait times out. Latest registered runs first.
     void cleanup (std::function<void()> fn);
+
+    // Puts value back to what it holds now when the scenario ends, however it
+    // ends.
+    template <typename T>
+    void keep (std::atomic<T>& value)
+    {
+        const T was = value.load();
+        cleanup ([&value, was] { value.store (was); });
+    }
 
     // Records message as a note when condition is false and remembers the
     // first such message, so one broken expectation does not hide the shape of

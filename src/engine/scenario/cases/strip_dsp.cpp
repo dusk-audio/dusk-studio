@@ -77,39 +77,28 @@ Levels playTone (ScenarioContext& ctx, double hz, float ampL, float ampR)
 
 // Track 1 hears its live input (mono from input 1, or stereo from inputs 1 and
 // 2) with its DSP flat, and the master adds nothing of its own. Everything the
-// case changes on the strip, a bus or the master goes back when it ends.
+// cases here change on the track, its strip, bus 1 or the master is put back as
+// it was when the case ends.
 void liveInput (ScenarioContext& ctx, Track::Mode mode)
 {
     auto& session = ctx.session();
     auto& track = session.track (kTrack);
     auto& strip = track.strip;
+    auto& bus = session.bus (0).strip;
     auto& master = session.master();
 
-    const bool masterEq = master.eqEnabled.load();
-    const bool masterComp = master.compEnabled.load();
-    const bool masterTape = master.tapeEnabled.load();
-    ctx.cleanup ([&session, &strip, &master, masterEq, masterComp, masterTape]
-    {
-        strip.eqEnabled.store (false);
-        strip.hpfEnabled.store (false);
-        strip.hpfFreq.store (20.0f);
-        strip.lpfEnabled.store (false);
-        strip.lpfFreq.store (20000.0f);
-        strip.phaseInvert.store (false);
-        strip.compEnabled.store (false);
-        strip.compMode.store (0);
-        strip.auxSendsBypassed.store (false);
-        strip.auxSendPreFader[0].store (false);
-        master.monoSum.store (false);
-        master.eqEnabled.store (masterEq);
-        master.compEnabled.store (masterComp);
-        master.tapeEnabled.store (masterTape);
-        auto& bus = session.bus (0).strip;
-        bus.eqEnabled.store (false);
-        bus.eqLfGainDb.store (0.0f);
-        bus.eqMidGainDb.store (0.0f);
-        bus.eqHfGainDb.store (0.0f);
-    });
+    for (auto* value : { &track.mode, &track.inputSource, &track.inputSourceR, &strip.compMode,
+                         &strip.compFetRatio })
+        ctx.keep (*value);
+    for (auto* value : { &track.inputMonitor, &strip.busAssign[0], &strip.auxSendsBypassed,
+                         &strip.auxSendPreFader[0], &strip.eqEnabled, &strip.hpfEnabled,
+                         &strip.lpfEnabled, &strip.phaseInvert, &strip.compEnabled, &bus.eqEnabled,
+                         &master.monoSum, &master.eqEnabled, &master.compEnabled, &master.tapeEnabled })
+        ctx.keep (*value);
+    for (auto* value : { &strip.faderDb, &strip.pan, &strip.auxSendDb[0], &strip.hpfFreq, &strip.lpfFreq,
+                         &strip.compFetThresholdDb, &strip.compVcaThreshDb, &strip.compVcaRatio,
+                         &bus.eqLfGainDb, &bus.eqMidGainDb, &bus.eqHfGainDb })
+        ctx.keep (*value);
 
     track.mode.store ((int) mode);
     track.inputSource.store (-2);
@@ -303,17 +292,6 @@ ScenarioResult compModesKeepTheirSettings (ScenarioContext& ctx)
 {
     liveInput (ctx, Track::Mode::Mono);
     auto& strip = ctx.session().track (kTrack).strip;
-    const float fetThreshold = strip.compFetThresholdDb.load();
-    const int fetRatio = strip.compFetRatio.load();
-    const float vcaThreshold = strip.compVcaThreshDb.load();
-    const float vcaRatio = strip.compVcaRatio.load();
-    ctx.cleanup ([&strip, fetThreshold, fetRatio, vcaThreshold, vcaRatio]
-    {
-        strip.compFetThresholdDb.store (fetThreshold);
-        strip.compFetRatio.store (fetRatio);
-        strip.compVcaThreshDb.store (vcaThreshold);
-        strip.compVcaRatio.store (vcaRatio);
-    });
 
     strip.compEnabled.store (true);
     strip.compMode.store (1);

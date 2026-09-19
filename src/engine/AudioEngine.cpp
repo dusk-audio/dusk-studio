@@ -1051,31 +1051,7 @@ void AudioEngine::recomputePdc() noexcept
         else if (! midi && ! frozen)
         {
             if (mode == ChannelStrip::kInsertPlugin)
-            {
-                lat = strip.getPluginSlot().getLatencySamples();
-                // A native insert replaces the JUCE slot (which then reports 0),
-                // so its effective latency must feed PDC instead. Native slots
-                // report zero while bypassed or quarantined because both paths
-                // pass dry audio without delay.
-#if DUSKSTUDIO_HAS_NATIVE_CLAP
-                if (strip.isNativeClapLoaded())
-                    lat = strip.getNativeClapSlot().getLatencySamples();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_LV2
-                if (strip.isNativeLv2Loaded())
-                    lat = strip.getNativeLv2Slot().getLatencySamples();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-                if (strip.isNativeVst3Loaded())
-                    lat = strip.getNativeVst3Slot().getLatencySamples();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_AU
-                if (strip.isNativeAuLoaded())
-                    lat = strip.getNativeAuSlot().getLatencySamples();
-#endif
-                if (strip.isBuiltinLoaded())
-                    lat = strip.getBuiltinSlot().getLatencySamples();
-            }
+                lat = strip.getInsertPluginLatencySamples();
         }
         latency[t] = std::clamp (lat, 0, ChannelStrip::kMaxPdcSamples);
     }
