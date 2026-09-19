@@ -119,7 +119,7 @@ Switch to **MIXING** stage. The input block on each strip collapses into a small
 
 Mix top-down: shape EQ first, then ride the compressor, then balance with faders. Save your aux sends for finishing touches (reverb on aux 1, tape delay on aux 2, etc.).
 
-For console-style automation, click the small mode label below a fader to cycle through OFF / READ / WRITE / TOUCH. WRITE records every move while the transport rolls; TOUCH only writes while you are physically touching the control.
+For console-style automation, click the small mode label below a fader and pick OFF, READ, WRITE or TOUCH from the menu. WRITE records every move while the transport rolls; TOUCH only writes while you are physically touching the control.
 
 ## Bounce
 
@@ -127,7 +127,7 @@ When the mix is where you want it, hit **Cmd+B** to open the bounce dialog. Pick
 
 ![Bounce dialog with a destination filename.](docs/images/qg-07-bounce-dialog.png)
 
-If you want the bounce to also pass through a mastering chain (5-band EQ, multiband compressor, brickwall limiter, LUFS metering), switch to **MASTERING** stage, click **Load latest mixdown** to pull in the bounce you just made, dial the chain in, then **Export master…** to render the final file.
+If you want the bounce to also pass through a mastering chain (5-band EQ, multiband compressor, brickwall limiter, LUFS metering), switch to **MASTERING** stage, click **Load latest mixdown** to pull in the bounce you just made (it looks for `mixdown.wav`, then `bounce.wav`, the bounce dialog's default name), dial the chain in, then **Export master…** to render the final file.
 
 That is the whole loop: arm → record → overdub → mix → bounce. Everything below in this manual is a deeper reference on one of those steps.
 
@@ -264,7 +264,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 | #   | Name              | Description                                                                                 |
 | --- | ----------------- | ------------------------------------------------------------------------------------------- |
-| 1   | File picker       | Load any stereo WAV; **Load latest mixdown** grabs the newest bounce in the session folder. |
+| 1   | File picker       | Load any stereo WAV; **Load latest mixdown** loads `mixdown.wav` from the session folder, or `bounce.wav` if there is none. |
 | 2   | Transport         | Play / stop / loop on the loaded file. Recording is disabled in this stage.                 |
 | 3   | Waveform          | Stereo overview with the playhead.                                                          |
 | 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±12 dB per band.                                          |
@@ -497,7 +497,7 @@ All seven are saved with the session, so a project that syncs to an external clo
 
 ### Advanced
 
-- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus EQ and compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. The master tape is the exception: it anti-aliases locally at a fixed internal rate and ignores this setting.
+- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus EQ and compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Each oversampled stage adds about half a millisecond of delay at 2× and 4×; delay compensation keeps tracks, buses and aux returns lined up, and bounces trim it out. The master tape is the exception: it anti-aliases locally at a fixed internal rate and ignores this setting.
 - **Multicore DSP**: spreads the per-block DSP of the 24 channel strips across several CPU cores instead of running them all on the single audio thread. **Auto** (default) uses *cores − 2* worker threads on machines with 4 or more cores — leaving one core for the interface and one for the operating system — and falls back to single-core on smaller machines. **Off** forces the single-core path; you can also pin an explicit worker count. This is a **per-machine** setting: it is stored on this computer and is **not** saved in the session, so a project made on a many-core workstation will not overload a smaller machine (a 4-core Raspberry Pi 5, say) when you open it there. The bus, aux, and master stages always run on the audio thread; only the channel strips fan out, and on a quad-core machine that heavy strip work runs roughly three times faster. Hosted plugins on those strips process on the worker threads too; in the unlikely event a specific plugin misbehaves with this enabled, switch it Off.
 - **Recording offset**: a manual correction, in samples, subtracted from where each newly recorded audio take is placed on the timeline. Use it when your monitoring path adds a round-trip delay that isn't already reported — analog converters, an external effects loop, or a plugin that under-reports its latency — so what you played lands back in time instead of slightly late. A positive value pulls takes earlier; the take is never moved before sample 0 — a take that would land entirely before it is discarded with a warning. It affects **audio** takes only — MIDI is captured with no converter delay and is left where it was played. **To calibrate**: route your interface's output back into an input (a physical loopback cable, or the same converter you monitor through), record the metronome click for a few bars, then open the take in the audio editor and read off, in samples, how far the recorded click sits after the beat it should land on. Enter that number here. The value is **per-machine** — it describes this desk's I/O latency, not the session — and applies to the next take, no restart needed.
 - **Run self-test**: runs Dusk Studio's headless audio engine against a synthetic test signal and reports pass/fail. The suite includes a determinism check that the multicore mix matches the single-core mix sample-for-sample (within floating-point rounding). As with the bindings panel, the settings panel steps out of the way while the self-test is open and comes back when you close it.
@@ -847,7 +847,7 @@ A vertical fader with a range of **−∞ dB** (true mute, below −90 dB floor)
 - Click the dB readout beneath the fader to type a precise value.
 - Right-click to enter MIDI Learn mode (the next CC you move binds to this fader).
 
-The fader is automatable. The automation modes are **OFF** (no automation), **READ** (play back recorded automation), **WRITE** (record automation continuously while transport rolls), and **TOUCH** (record while you are touching the control; revert to read when you release). Click the small mode label below the fader to cycle, or right-click to pick from a menu.
+The fader is automatable. The automation modes are **OFF** (no automation), **READ** (play back recorded automation), **WRITE** (record automation continuously while transport rolls), and **TOUCH** (record while you are touching the control; revert to read when you release). Click the small mode label below the fader to pick a mode from a menu.
 
 ## Mute, Solo, Phase
 
@@ -998,7 +998,7 @@ Each lane is divided into three columns:
 - **Mute** button.
 - **Return fader**: −∞ to +12 dB. This is the level of the aux's processed output into the master.
 - **Output meter**: pre-master return level.
-- **Automation mode**: same OFF / READ / WRITE / TOUCH cycle as channel faders.
+- **Automation mode**: the same OFF / READ / WRITE / TOUCH menu as the channel faders.
 - **Output**: where this aux lane's processed mix is sent. **Master only** (default) folds it into the main mix as usual. Pick a hardware pair (Out 1-2, Out 3-4, …) to also send the lane to that physical output — a headphone / cue feed. The hardware tap is taken *before* the return fader and Mute, so those still govern only the fold into the master while the cue keeps playing. Build the cue from each channel's **pre-fader** aux send (right-click a send knob to flip it pre-fader) so riding the main mix doesn't change what the performer hears. Enable the extra outputs first in **Audio settings** (the Output menu lists whatever output pairs the device currently has open).
 
 ### Plugin chain (centre column)
@@ -1029,7 +1029,7 @@ The **MASTERING** stage is a separate signal path. It does not play your tracks;
 ## Loading a mix
 
 - **Load mix…**: opens a file chooser. Pick any WAV, AIFF, FLAC, or OGG file.
-- **Load latest mixdown**: automatically loads the most recently exported bounce from the current session's bounce folder.
+- **Load latest mixdown**: loads `mixdown.wav` from the session folder (what **Mixdown** writes), or `bounce.wav`, the bounce dialog's default name, if there is no mixdown.
 
 The source file path is displayed below the buttons.
 
@@ -1150,7 +1150,7 @@ To overdub a specific section without erasing material before or after:
 1. Set the **punch in** and **punch out** points. Drag across the timeline ruler and choose **Set punch in / out here**, or right-click the ruler at each point and choose **Set punch in here** and **Set punch out here**. You can also press **Shift+[** and **Shift+]** at the playhead. Every way turns punch on as soon as the in point sits before the out point.
 2. Check that the **Punch** button on the transport bar is lit. **P** or the button turns punch off and on again without moving the brackets.
 3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Each has an enable toggle in the same menu, so you can switch a roll off without losing its seconds value. Post-roll defaults to 0 (off).
-4. Press Record. Playback begins at the pre-roll position. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
+4. Press Record. Playback begins at the pre-roll position, or where the playhead already is if that is further back. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
 
 You can also right-click the ruler to set the punch in and out points separately. Punch arms automatically once the in point is before the out point; equal points leave it off.
 
@@ -1477,7 +1477,7 @@ The keyboard is a transport-bar tool rather than part of the piano roll: it open
 
 # Mixing
 
-![A fader's automation mode label, cycling READ / WRITE / TOUCH.](docs/images/mm-01-automation-modes.png)
+![A fader's automation mode label in READ, WRITE and TOUCH.](docs/images/mm-01-automation-modes.png)
 
 Mixing is the act of balancing your tracks, shaping them with EQ and dynamics, placing them in the stereo field, and gluing the whole thing together on the buses and master.
 
@@ -1520,10 +1520,10 @@ There is no PFL (pre-fader listen) or AFL (after-fader listen) mode, and no dry 
 
 ## Automation
 
-Each channel strip, each bus, and the master strip have an automation mode button below the fader. Cycle through:
+Each channel strip, each bus, each aux return, and the master strip have an automation mode button below the fader. Click it to pick a mode:
 
 - **OFF**: the fader does what you do. No recording, no playback of past rides.
-- **READ**: previously recorded automation drives the fader during playback. You can move the fader to "preview" but your changes are not recorded.
+- **READ**: previously recorded automation drives the fader during playback. The automated controls are locked, and nothing you do is recorded.
 - **WRITE**: every fader movement is recorded for as long as the transport rolls. Existing automation in the region played over is overwritten.
 - **TOUCH**: while you are touching the fader, your movement is recorded. When you let go, the automation reverts to the previously recorded value via a short ramp.
 
@@ -2091,7 +2091,7 @@ The metronome never prints in any bounce: it is a monitoring aid, mixed in after
 
 ## Where bounces go
 
-By default, bounces are written to the session folder itself (the same directory that holds `session.json`). The bounce dialog opens a file browser there so you can rename or redirect each export; **New folder…** in its bottom-left corner creates a subfolder and jumps into it, handy for keeping stem sets together. The most-recent bounce in the session folder is what the mastering stage's **Load latest mixdown** button picks up.
+By default, bounces are written to the session folder itself (the same directory that holds `session.json`). The bounce dialog opens a file browser there so you can rename or redirect each export; **New folder…** in its bottom-left corner creates a subfolder and jumps into it, handy for keeping stem sets together. The mastering stage's **Load latest mixdown** button loads `mixdown.wav` from the session folder, or `bounce.wav` if there is no mixdown; a bounce saved under any other name opens with **Load mix…** instead.
 
 \newpage
 

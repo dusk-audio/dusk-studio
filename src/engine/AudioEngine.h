@@ -298,6 +298,17 @@ public:
     // the Playhead on Stop setting says; pressed while already stopped, the
     // playhead returns to zero.
     void pressStop();
+
+    // Message-thread transport work the audio thread cannot do itself, run from
+    // the UI's timer: the punch post-roll auto-stop, then a playhead a sync
+    // chase asked for, then a queued transport action (a MIDI binding, or the
+    // chased master starting or stopping). Says what the UI has to follow up.
+    struct TransportService
+    {
+        bool stopped = false;
+        bool recordRequested = false;
+    };
+    TransportService serviceTransportRequests();
     void record();
 
     // Message thread. Detach + reattach the audio callback so DSP re-prepares
@@ -460,6 +471,16 @@ public:
     {
         return master.getTapeLatencySamples();
     }
+
+    // How far behind the timeline each point a render can capture runs, in
+    // samples; a bounce drops that many from the head of what it takes there.
+    // A track's output carries its plugin compensation and its oversampler; a
+    // bus adds its own oversampler; an aux return waits for the deepest lane
+    // and the bus alignment; the mix adds the master's oversampler and tape.
+    int getTrackOutputLatencySamples() const noexcept;
+    int getBusOutputLatencySamples() const noexcept;
+    int getAuxReturnLatencySamples() const noexcept;
+    int getMixLatencySamples() const noexcept;
 
     // Offline-render only - call with the audio callback DETACHED. The
     // in-callback relatch of the master-stage PDC is gated on a stopped
@@ -688,10 +709,11 @@ private:
     // path, flamming it against the dry mix. Compensation: once tracks and
     // buses have summed into the mix, the dry mix waits for the deepest
     // lane (masterDryPdc*) and each lane return waits for (deepest - own)
-    // (auxReturnPdc*), so wet and dry land together. Targets are written by
-    // recomputePdc; the audio thread relatches ONLY while the transport is
-    // stopped - the master path is rarely silent, and a mid-roll retarget
-    // would click. Zero targets skip the delay processing entirely.
+    // plus the bus alignment (auxReturnPdc*), so wet and dry land together.
+    // Targets are written by recomputePdc; the audio thread relatches ONLY
+    // while the transport is stopped - the master path is rarely silent, and a
+    // mid-roll retarget would click. Zero targets skip the delay processing
+    // entirely.
     using MasterPdcDelay = dusk::audio::IntDelayLine;
     MasterPdcDelay masterDryPdcL;
     MasterPdcDelay masterDryPdcR;
@@ -701,6 +723,14 @@ private:
     std::array<std::atomic<int>, Session::kNumAuxLanes> auxReturnPdcTarget {};
     int masterDryPdcApplied = 0;                                   // audio thread only
     std::array<int, Session::kNumAuxLanes> auxReturnPdcApplied {}; // audio thread only
+
+    // Every bus's oversampler delays its output, bypassed or not, so a
+    // bus-routed track would trail a direct one by that much. The direct
+    // tracks and every aux return wait the same amount before the buses join.
+    // Set at prepare; 0 at 1x, which skips the delay.
+    MasterPdcDelay busAlignL;
+    MasterPdcDelay busAlignR;
+    std::atomic<int> busAlignSamples { 0 };
 
     // Render-time oversampling override (0 = use session factor). See
     // setRenderOversamplingOverride.

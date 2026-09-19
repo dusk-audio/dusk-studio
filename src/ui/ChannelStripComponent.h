@@ -5,6 +5,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <string>
 #include "CompMeterStrip.h"
 #include "SplitModuleButton.h"
 #include "ConsoleLayout.h"
@@ -12,6 +13,7 @@
 #include "imgui/DafEditorHost.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
+#include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
 
@@ -57,6 +59,12 @@ public:
     bool hasOpenPluginEditorForScenario() const noexcept;
     // The open CLAP editor is a container the plug-in never put a window in.
     bool pluginWindowMissingForScenario() const noexcept;
+    // Click MUTE / SOLO as the mouse would; the click lands on a later tick.
+    void clickMuteForScenario();
+    void clickSoloForScenario();
+    // Scenario-harness only: the mode label and whether the fader takes input.
+    std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
+    bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -223,11 +231,16 @@ private:
     juce::TextButton autoModeButton { "OFF" };
     void showAutoModeMenu();
     void setAutoMode (AutomationMode mode);
+    // Shows mode on the label and locks the automated controls in READ. The
+    // timer calls it too, so a mode set anywhere else (drawing automation arms
+    // READ) shows up here.
+    void applyAutoMode (int mode);
+    int appliedAutoMode = -1;
     void refreshAutoModeButton();
-    // Strict ascending order - evaluateLane's binary search depends on
-    // it. Same-sample writes coalesce; loop wraparound truncates future
-    // points.
-    void captureWritePoint (AutomationParam param, float denormValue);
+    // Feeds param's WRITE / TOUCH pass while recording is true; the first
+    // call with it false splices the pass into the lane.
+    void recordAutomation (AutomationParam param, bool recording, float value);
+    AutomationPassRecorders passRecorders = makeAutomationPassRecorders();
     // Gated by small delta so the timer doesn't churn setValue when
     // manual mode just mirrors the user's setpoint.
     float displayedLiveFaderDb = 0.0f;

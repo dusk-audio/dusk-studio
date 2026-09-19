@@ -48,6 +48,8 @@ public:
     float pump (int numBlocks);
     // Stages events on an input, then drives exactly one block.
     float pumpWithMidi (int inputIdx, dusk::MidiBuffer events);
+    // What the last pumped block wrote to an output channel.
+    const std::vector<float>& lastBlock (int channel) const { return outputs[(std::size_t) channel]; }
 
     std::optional<std::filesystem::path> fixture (const std::string& logical) const;
 

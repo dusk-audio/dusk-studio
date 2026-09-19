@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
@@ -65,6 +66,9 @@ public:
     // JUCE-free scenario code can call them.
     void rebuildSlotsForScenario();
     void unloadSlotForScenario (int slotIdx) { unloadSlot (slotIdx); }
+    // The mode label and whether the return fader takes input.
+    std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
+    bool faderEnabledForScenario() const { return returnFader.isEnabled(); }
     bool attachEditorForSlotForScenario (int slotIdx);
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     bool loadNativeClapForSlotForScenario (int slotIdx,
@@ -141,7 +145,15 @@ private:
 
     void showAutoModeMenu();
     void setAutoMode (AutomationMode m);
-    void captureWritePoint (AutomationParam param, float denormValue);
+    // Shows mode on the label and locks the return fader and mute in READ.
+    // The timer calls it too, so a mode set anywhere else (a session load,
+    // which does not rebuild the aux lanes) shows up here.
+    void applyAutoMode (int mode);
+    int appliedAutoMode = -1;
+    // Feeds param's WRITE / TOUCH pass while recording is true; the first
+    // call with it false splices the pass into the lane.
+    void recordAutomation (AutomationParam param, bool recording, float value);
+    AutomationPassRecorders passRecorders = makeAutomationPassRecorders();
 
     // Cue/headphone output-pair picker. Rebuilt from the live device's output
     // channels (so it tracks outputs the user enables in Audio settings).

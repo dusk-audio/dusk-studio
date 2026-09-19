@@ -830,78 +830,16 @@ void TransportBar::timerCallback()
 
     refreshButtonStates();
 
-    // Auto-punch post-roll: while recording with punch enabled and the
-    // playhead has crossed punchOut + postRoll samples, auto-stop. Done
-    // here on the message thread so the stop's teardown is safe.
-    // postRoll == 0 disables the auto-stop (matches the previous behaviour
-    // where punch never auto-stopped); punch-disabled and loop recording also
-    // disable it.
+    // Post-roll auto-stop and whatever the audio thread queued for the
+    // message thread (a chase locate, a MIDI-bound transport action).
     {
-        auto& transport = engine.getTransport();
-        if (transport.isRecording() && transport.isPunchEnabled()
-            && ! engine.isLoopRecordingActive())
-        {
-            const auto pIn  = transport.getPunchIn();
-            const auto pOut = transport.getPunchOut();
-            const float postRoll = engine.getSession().postRollEnabled.load (std::memory_order_relaxed)
-                                     ? engine.getSession().postRollSeconds.load (std::memory_order_relaxed)
-                                     : 0.0f;
-            if (pOut > pIn && postRoll > 0.0f && sr > 0.0)
-            {
-                const auto stopAt = pOut + (std::int64_t) ((double) postRoll * sr);
-                if (engine.getTransport().getPlayhead() >= stopAt)
-                {
-                    engine.pressStop();
-                    notifyRecordStopped();
-                }
-            }
-        }
+        const auto serviced = engine.serviceTransportRequests();
+        if (serviced.stopped)         notifyRecordStopped();
+        if (serviced.recordRequested) surfaceRecordSetupFailures();
     }
 
-    // Drain the audio-thread queues for the MIDI controller infrastructure.
-    // Both are atom-based handoffs - no allocation, no contention.
     {
         auto& s = engine.getSession();
-
-        // Playhead locate queue: MTC chase pokes a target sample value
-        // on the audio thread; Transport::setPlayhead isn't RT-safe so
-        // we drain it here. -1 sentinel means "nothing pending". The
-        // locate runs BEFORE pendingTransportAction so a combined
-        // "locate + play" rising-edge from MTC chase lands the playhead
-        // first and then engine.play() picks it up.
-        if (const auto target = s.pendingTransportPlayhead.exchange (
-                (std::int64_t) -1, std::memory_order_relaxed); target >= 0)
-        {
-            engine.getTransport().locate (target);
-        }
-
-        // Transport-action queue: a binding hit on the audio thread (which
-        // can't safely call engine.play/stop/record) pokes the queue; we
-        // call the right method here on the message thread, then clear.
-        const auto pending = (PendingTransportAction)
-            s.pendingTransportAction.exchange ((int) PendingTransportAction::None,
-                                                  std::memory_order_relaxed);
-        switch (pending)
-        {
-            case PendingTransportAction::Play:   engine.play();   break;
-            case PendingTransportAction::Stop:   engine.pressStop(); notifyRecordStopped(); break;
-            // The master decides where the song is, so a chase stop leaves the
-            // playhead where the master stopped it.
-            case PendingTransportAction::SyncStop: engine.stop(); notifyRecordStopped(); break;
-            case PendingTransportAction::Record: engine.record(); surfaceRecordSetupFailures(); break;
-            case PendingTransportAction::Toggle:
-                if (engine.getTransport().isStopped()) engine.play();
-                else                                    { engine.pressStop(); notifyRecordStopped(); }
-                break;
-            case PendingTransportAction::LoopToggle:
-            {
-                auto& tr = engine.getTransport();
-                tr.setLoopEnabled (! tr.isLoopEnabled());
-                s.savedLoopEnabled = tr.isLoopEnabled();
-                break;
-            }
-            case PendingTransportAction::None:   break;
-        }
 
         // Learn capture: when learnPending is set and the audio thread has
         // stamped a captured (channel, dataNumber, trigger), append a

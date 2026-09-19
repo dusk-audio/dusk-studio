@@ -993,13 +993,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     autoModeButton.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
     autoModeButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff909094));
     autoModeButton.onClick = [this] { showAutoModeMenu(); };
-    {
-        const int amode = params.automationMode.load (std::memory_order_relaxed);
-        autoModeButton.setButtonText (amode == (int) AutomationMode::Off   ? "Off"
-                                       : amode == (int) AutomationMode::Read  ? "R"
-                                       : amode == (int) AutomationMode::Write ? "W"
-                                                                              : "T");
-    }
+    applyAutoMode (params.automationMode.load (std::memory_order_relaxed));
     addAndMakeVisible (autoModeButton);
 
     muteButton.setClickingTogglesState (true);
@@ -1053,6 +1047,7 @@ MasterStripComponent::~MasterStripComponent()
     // before any modal / member teardown so the timer thread can't
     // fire on objects we're about to clean up.
     stopTimer();
+    recordFader (false, 0.0f);
     if (tapeMachineDim != nullptr)
         tapeMachineDim->onClick = nullptr;
     if (auto* m = tapeMachineModal.getComponent())
@@ -1134,6 +1129,7 @@ void MasterStripComponent::timerCallback()
         const bool isWrite = amode == (int) AutomationMode::Write;
         const bool isTouch = amode == (int) AutomationMode::Touch;
         const bool playing = engine.getTransport().isPlaying();
+        applyAutoMode (amode);
 
         const float live    = params.liveFaderDb.load (std::memory_order_relaxed);
         const bool  touched = params.faderTouched.load (std::memory_order_relaxed);
@@ -1150,9 +1146,8 @@ void MasterStripComponent::timerCallback()
             displayedLiveFaderDb = live;
         }
 
-        const bool capturing = playing && (isWrite || (isTouch && touched));
-        if (capturing)
-            captureFaderWritePoint (params.faderDb.load (std::memory_order_relaxed));
+        recordFader (playing && (isWrite || (isTouch && touched)),
+                     params.faderDb.load (std::memory_order_relaxed));
     }
 
     // Master mute / mono toggle visual sync - poll the atoms so any MIDI
@@ -1239,59 +1234,38 @@ void MasterStripComponent::showAutoModeMenu()
 
 void MasterStripComponent::setAutoMode (AutomationMode m)
 {
-    // Release-store on the mode word so any pending captureFaderWritePoint
-    // appends from a Write/Touch pass are visible before the audio thread's
-    // next acquire-load. Thinning is intentionally NOT triggered here -
-    // handleWritePassComplete rewrites lane wholesale and would race
-    // the audio thread; the safe entry point is File ▸ Optimize automation,
-    // which gates on transport-stopped + all modes Off.
+    // A pass this mode change ends is spliced on the next timer tick.
     params.automationMode.store ((int) m, std::memory_order_release);
-    autoModeButton.setButtonText (m == AutomationMode::Off   ? "Off"
-                                   : m == AutomationMode::Read  ? "R"
-                                   : m == AutomationMode::Write ? "W"
-                                                                : "T");
+    applyAutoMode ((int) m);
 }
 
-void MasterStripComponent::captureFaderWritePoint (float denormDb)
+void MasterStripComponent::applyAutoMode (int mode)
 {
-    const float lo = ChannelStripParams::kFaderMinDb;
-    const float hi = ChannelStripParams::kFaderMaxDb;
-    const float v  = jlimit (0.0f, 1.0f, (denormDb - lo) / (hi - lo));
+    faderSlider.setEnabled (mode != (int) AutomationMode::Read);
+    if (mode == appliedAutoMode) return;
+    appliedAutoMode = mode;
+    autoModeButton.setButtonText (mode == (int) AutomationMode::Off   ? "Off"
+                                   : mode == (int) AutomationMode::Read  ? "R"
+                                   : mode == (int) AutomationMode::Write ? "W"
+                                                                         : "T");
+}
 
-    auto& lane = params.automationLanes[(size_t) AutomationParam::FaderDb].mutableForWritePass();  // in-place; audio does not read this lane in Write/Touch-touched
-    AutomationPoint pt;
-    pt.timeSamples   = engine.getTransport().getPlayhead();
-    pt.value         = v;
-    pt.recordedAtBPM = session.tempoBpm.load (std::memory_order_relaxed);
-
-    // Pre-filter: delta + max-span. Master fader is the most-rideable
-    // single control on a session, so the savings here matter most.
-    if (! lane.empty())
+void MasterStripComponent::recordFader (bool recording, float db)
+{
+    auto& lane = params.automationLanes[(size_t) AutomationParam::FaderDb];
+    if (recording)
     {
-        constexpr float kDeltaEps = 0.001f;
-        constexpr std::int64_t kMaxSpanSamples = 22050;
-        const auto& last = lane.back();
-        if (std::abs (pt.value - last.value) < kDeltaEps
-            && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
-            return;
+        faderRecorder.record (lane, engine.getTransport().getPlayhead(), db,
+                              session.tempoBpm.load (std::memory_order_relaxed),
+                              engine.getTransport().getLocateCount());
     }
-
-    if (! lane.empty() && lane.back().timeSamples >= pt.timeSamples)
+    else if (faderRecorder.active())
     {
-        if (lane.back().timeSamples > pt.timeSamples)
-        {
-            auto cutoff = std::lower_bound (lane.begin(), lane.end(),
-                pt.timeSamples,
-                [] (const AutomationPoint& a, std::int64_t t) { return a.timeSamples < t; });
-            lane.erase (cutoff, lane.end());
-        }
-        if (! lane.empty() && lane.back().timeSamples == pt.timeSamples)
-        {
-            lane.back() = pt;
-            return;
-        }
+        const bool touch = params.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Touch;
+        faderRecorder.finish (lane, touch ? (std::int64_t) (engine.getCurrentSampleRate()
+                                                            * AutomationPassRecorder::kTouchReturnSeconds)
+                                          : 0);
     }
-    lane.push_back (pt);
 }
 
 void MasterStripComponent::paint (juce::Graphics& g)

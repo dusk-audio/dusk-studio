@@ -3,12 +3,92 @@
 #include "../../AudioEngine.h"
 #include "../../../dsp/ChannelStrip.h"
 
+#include <array>
+#include <cmath>
+#include <memory>
 #include <string>
 
 namespace duskstudio::scenario
 {
 namespace
 {
+ScenarioResult auxReturnAtPdcLimit (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    const int savedFactor = session.oversamplingFactor.load();
+    ctx.cleanup ([&engine, &session, savedFactor]
+    {
+        engine.setAuxStemCapture (1, nullptr, nullptr);
+        session.oversamplingFactor.store (savedFactor);
+        for (int a = 0; a < 2; ++a)
+        {
+            session.auxLane (a).hardwareInserts[0].enabled.store (false);
+            session.auxLane (a).hardwareInserts[0].routing.publish (
+                std::make_unique<HardwareInsertRouting>());
+            engine.getAuxLaneStrip (a).insertMode[0].store (AuxLaneStrip::kInsertEmpty);
+        }
+        engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+    });
+
+    for (int a = 0; a < 2; ++a)
+    {
+        auto& hardware = session.auxLane (a).hardwareInserts[0];
+        HardwareInsertRouting routing;
+        routing.latencySamples = a == 0 ? ChannelStrip::kMaxPdcSamples : 0;
+        if (a == 1) { routing.inputChL = 0; routing.inputChR = 1; }
+        hardware.routing.publish (std::make_unique<HardwareInsertRouting> (routing));
+        hardware.enabled.store (true);
+        engine.getAuxLaneStrip (a).insertMode[0].store (AuxLaneStrip::kInsertHardware);
+    }
+
+    constexpr int kFrames = ScenarioContext::kBlockSize;
+    std::array<float, kFrames> inL {}, inR {}, outL {}, outR {}, wetL {}, wetR {};
+    const float* inputs[] = { inL.data(), inR.data() };
+    float* outputs[] = { outL.data(), outR.data() };
+    engine.setAuxStemCapture (1, wetL.data(), wetR.data());
+
+    for (int factor : { 1, 2, 4 })
+    {
+        session.oversamplingFactor.store (factor);
+        engine.prepareForSelfTest (ScenarioContext::kSampleRate, kFrames);
+        ctx.pump (8);
+        engine.applyMasterPdcTargetsNow();
+        ctx.expect (engine.getMasterDryPdcTargetSamples() == ChannelStrip::kMaxPdcSamples,
+                    "the deepest aux lane did not reach the PDC limit");
+        const int expected = engine.getAuxReturnLatencySamples()
+                           - engine.getTrackOutputLatencySamples();
+        int peakAtL = -1, peakAtR = -1;
+        float peakL = 0.0f, peakR = 0.0f;
+        for (int block = 0; block <= expected / kFrames + 1; ++block)
+        {
+            inL.fill (0.0f); inR.fill (0.0f);
+            wetL.fill (0.0f); wetR.fill (0.0f);
+            if (block == 0) { inL[0] = 0.5f; inR[0] = 0.25f; }
+            engine.audioDeviceIOCallback (inputs, 2, outputs, 2, kFrames, {});
+            for (int i = 0; i < kFrames; ++i)
+            {
+                if (std::abs (wetL[(size_t) i]) > peakL)
+                { peakL = std::abs (wetL[(size_t) i]); peakAtL = block * kFrames + i; }
+                if (std::abs (wetR[(size_t) i]) > peakR)
+                { peakR = std::abs (wetR[(size_t) i]); peakAtR = block * kFrames + i; }
+            }
+        }
+        ctx.note (std::to_string (factor) + "x: aux impulse L=" + std::to_string (peakAtL)
+                  + " R=" + std::to_string (peakAtR) + " expected=" + std::to_string (expected));
+        ctx.expect (peakL > 0.1f && peakR > 0.1f, "the aux return was silent");
+        ctx.expect (peakAtL == expected && peakAtR == expected,
+                    "the aux return lost bus alignment at the PDC limit");
+    }
+    engine.setAuxStemCapture (1, nullptr, nullptr);
+    return ctx.verdict();
+}
+
+const ScenarioRegistrar auxPdcRegistrar { Scenario {
+    "engine.aux_return_at_pdc_limit", { "engine", "pdc" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return auxReturnAtPdcLimit (ctx); }
+} };
+
 #if DUSKSTUDIO_HAS_NATIVE_VST3
 constexpr int kOfflineStrip = 0;
 constexpr int kOtherStrip   = 3;

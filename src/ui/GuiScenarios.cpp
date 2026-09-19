@@ -2,10 +2,12 @@
 
 #include "AuxLaneComponent.h"
 #include "AuxView.h"
+#include "BusComponent.h"
 #include "ChannelStripComponent.h"
 #include "ConsoleView.h"
 #include "EmbeddedModal.h"
 #include "GuiHost.h"
+#include "MasterStripComponent.h"
 #include "PlatformWindowing.h"
 #include "../engine/scenario/SuiteRunner.h"
 
@@ -147,6 +149,16 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         return false;
     }
 
+    void clickMute() override
+    {
+        if (auto* component = strip()) component->clickMuteForScenario();
+    }
+
+    void clickSolo() override
+    {
+        if (auto* component = strip()) component->clickSoloForScenario();
+    }
+
     ChannelStripComponent* strip() const
     {
         return owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index)
@@ -232,6 +244,31 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return handle->laneComponent() != nullptr ? handle.get() : nullptr;
     }
 
+    bool automationView (StripKind kind, int index,
+                         std::string& label, bool& faderEnabled) override
+    {
+        const auto read = [&label, &faderEnabled] (const auto* component)
+        {
+            if (component == nullptr) return false;
+            label = component->autoModeLabelForScenario();
+            faderEnabled = component->faderEnabledForScenario();
+            return true;
+        };
+        auto* console = owner.consoleView.get();
+        switch (kind)
+        {
+            case StripKind::Channel:
+                return read (console != nullptr ? console->getStripComponent (index) : nullptr);
+            case StripKind::Bus:
+                return read (console != nullptr ? console->getBusComponent (index) : nullptr);
+            case StripKind::Master:
+                return read (console != nullptr ? console->getMasterStripComponent() : nullptr);
+            case StripKind::Aux:
+                return read (owner.auxView != nullptr ? owner.auxView->getLaneComponent (index) : nullptr);
+        }
+        return false;
+    }
+
     bool canEmbedPluginEditors() const override
     {
         auto* peer = owner.getPeer();
@@ -248,6 +285,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         auto& stack = EmbeddedModal::activeModalStack();
         if (! stack.empty()) stack.back()->close();
+    }
+
+    void autosaveTick() override { owner.writeAutosave(); }
+
+    bool openSession (const std::filesystem::path& sessionJson) override
+    {
+        return owner.loadSessionFromJson (hostFile (sessionJson));
+    }
+
+    bool answerRecovery (Recovery choice) override
+    {
+        return owner.answerRecoveryPrompt ((int) choice);
     }
 
     MainComponent& owner;

@@ -7,7 +7,11 @@
 #include "../engine/scenario/cases/OopStubHarness.h"
 #include "../dsp/ChannelStrip.h"
 #include "../session/Session.h"
+#include "../session/SessionSerializer.h"
 
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
@@ -15,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -631,7 +636,412 @@ std::optional<ScenarioResult> runOopEditorFailureNoStrand (GuiHost& host, Scenar
 }
 #endif
 
+// -------------------------------------------------------------- automation
+
+bool laneHolds (const std::vector<AutomationPoint>& points, AutomationParam param, float value, float tolerance)
+{
+    return std::any_of (points.begin(), points.end(), [&] (const AutomationPoint& point)
+    {
+        return std::abs (denormalizeAutomationValue (param, point.value) - value) < tolerance;
+    });
+}
+
+bool timesAscend (const std::vector<AutomationPoint>& points)
+{
+    for (std::size_t i = 1; i < points.size(); ++i)
+        if (points[i].timeSamples <= points[i - 1].timeSamples) return false;
+    return true;
+}
+
+// The strips' own timers record the rides while the transport rolls. Write
+// takes the fader, pan, mute and solo; Touch records the fader and pan while
+// held and returns to the earlier ride on release; a mute click in Touch
+// records nothing; a bus's fader, pan and mute, the master fader and an aux
+// return's level and mute record like a track's; a Write pass leaves the ride
+// after where it stopped alone.
+std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr float kDbTolerance = 0.05f;
+    // The aux lanes record from their own strips, which the Aux stage builds
+    // the first time it is shown and which keep running once it is hidden.
+    host.switchToStage (GuiHost::Stage::Aux);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    auto* strip = host.strip (kStripIndex);
+    if (strip == nullptr)
+        return ScenarioResult::skip ("the console has no strip to drive");
+
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (kStripIndex);
+    auto& params = track.strip;
+    auto& bus = session.bus (0).strip;
+    auto& master = session.master();
+    auto& aux = session.auxLane (0).params;
+
+    const auto lane = [&track] (AutomationParam p) -> auto&
+    { return track.automationLanes[(std::size_t) p]; };
+    const auto clearAll = [&track, &bus, &master, &aux]
+    {
+        track.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        bus.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        master.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        aux.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        for (auto& l : track.automationLanes) l.publishPoints ({});
+        for (auto& l : bus.automationLanes) l.publishPoints ({});
+        for (auto& l : master.automationLanes) l.publishPoints ({});
+        for (auto& l : aux.automationLanes) l.publishPoints ({});
+    };
+    ctx.cleanup ([&engine, &session, &params, &bus, &master, &aux, clearAll]
+    {
+        engine.stop();
+        clearAll();
+        params.faderDb.store (0.0f, std::memory_order_relaxed);
+        params.pan.store (0.0f, std::memory_order_relaxed);
+        params.faderTouched.store (false, std::memory_order_relaxed);
+        params.panTouched.store (false, std::memory_order_relaxed);
+        params.mute.store (false, std::memory_order_relaxed);
+        session.setTrackSoloed (kStripIndex, false);
+        bus.faderDb.store (0.0f, std::memory_order_relaxed);
+        bus.pan.store (0.0f, std::memory_order_relaxed);
+        bus.mute.store (false, std::memory_order_relaxed);
+        master.faderDb.store (0.0f, std::memory_order_relaxed);
+        aux.returnLevelDb.store (0.0f, std::memory_order_relaxed);
+        aux.mute.store (false, std::memory_order_relaxed);
+    });
+
+    struct Marks
+    {
+        std::size_t muteCount = 0;
+        std::int64_t stoppedAt = 0;
+    };
+    auto marks = std::make_shared<Marks>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto roll = [&engine]
+    {
+        engine.getTransport().setPlayhead (0);
+        engine.play();
+    };
+
+    // First pass, WRITE: two positions for each continuous control, and a
+    // mute on and off, a solo on.
+    steps->push_back ({ 0, [&params, &track, &bus, &master, &aux, clearAll, roll]
+    {
+        clearAll();
+        for (auto* mode : { &track.automationMode, &bus.automationMode,
+                            &master.automationMode, &aux.automationMode })
+            mode->store ((int) AutomationMode::Write, std::memory_order_release);
+        params.faderDb.store (-20.0f, std::memory_order_relaxed);
+        params.pan.store (-0.5f, std::memory_order_relaxed);
+        bus.faderDb.store (-8.0f, std::memory_order_relaxed);
+        bus.pan.store (-0.5f, std::memory_order_relaxed);
+        master.faderDb.store (-2.0f, std::memory_order_relaxed);
+        aux.returnLevelDb.store (-12.0f, std::memory_order_relaxed);
+        roll();
+    } });
+    steps->push_back ({ 400, [&params, &bus, &master, &aux, strip]
+    {
+        params.faderDb.store (-10.0f, std::memory_order_relaxed);
+        params.pan.store (0.5f, std::memory_order_relaxed);
+        bus.faderDb.store (-4.0f, std::memory_order_relaxed);
+        bus.pan.store (0.5f, std::memory_order_relaxed);
+        bus.mute.store (true, std::memory_order_relaxed);
+        master.faderDb.store (-4.0f, std::memory_order_relaxed);
+        aux.returnLevelDb.store (-6.0f, std::memory_order_relaxed);
+        aux.mute.store (true, std::memory_order_relaxed);
+        strip->clickMute();
+    } });
+    steps->push_back ({ 400, [&bus, &aux, strip]
+    {
+        strip->clickMute();
+        strip->clickSolo();
+        bus.mute.store (false, std::memory_order_relaxed);
+        aux.mute.store (false, std::memory_order_relaxed);
+    } });
+    // The strips splice a pass on their first timer tick after the stop.
+    steps->push_back ({ 400, [&engine] { engine.stop(); } });
+    steps->push_back ({ 100, [&ctx, &params, &track, &bus, &master, &aux, lane, marks, roll]
+    {
+        const auto& fader = lane (AutomationParam::FaderDb).pointsConst();
+        ctx.expect (laneHolds (fader, AutomationParam::FaderDb, -20.0f, kDbTolerance)
+                        && laneHolds (fader, AutomationParam::FaderDb, -10.0f, kDbTolerance)
+                        && timesAscend (fader),
+                    "WRITE did not record both fader positions in order");
+        const auto& pan = lane (AutomationParam::Pan).pointsConst();
+        ctx.expect (laneHolds (pan, AutomationParam::Pan, -0.5f, 0.01f)
+                        && laneHolds (pan, AutomationParam::Pan, 0.5f, 0.01f),
+                    "WRITE did not record both pan positions");
+        const auto onThenOff = [] (const std::vector<AutomationPoint>& points)
+        {
+            const auto on = std::find_if (points.begin(), points.end(),
+                                          [] (const AutomationPoint& p) { return p.value > 0.5f; });
+            return on != points.end()
+                && std::any_of (on, points.end(), [] (const AutomationPoint& p) { return p.value < 0.5f; });
+        };
+        const auto& mute = lane (AutomationParam::Mute).pointsConst();
+        ctx.expect (onThenOff (mute), "WRITE did not record the mute going on and off");
+        ctx.expect (laneHolds (lane (AutomationParam::Solo).pointsConst(), AutomationParam::Solo, 1.0f, 0.1f),
+                    "WRITE did not record the solo");
+        const auto& busFader = bus.automationLanes[(std::size_t) AutomationParam::FaderDb].pointsConst();
+        ctx.expect (laneHolds (busFader, AutomationParam::FaderDb, -8.0f, kDbTolerance)
+                        && laneHolds (busFader, AutomationParam::FaderDb, -4.0f, kDbTolerance),
+                    "a bus fader in WRITE did not record");
+        const auto& busPan = bus.automationLanes[(std::size_t) AutomationParam::Pan].pointsConst();
+        ctx.expect (laneHolds (busPan, AutomationParam::Pan, -0.5f, 0.01f)
+                        && laneHolds (busPan, AutomationParam::Pan, 0.5f, 0.01f),
+                    "a bus pan in WRITE did not record");
+        ctx.expect (onThenOff (bus.automationLanes[(std::size_t) AutomationParam::Mute].pointsConst()),
+                    "a bus mute in WRITE did not record going on and off");
+        const auto& masterFader = master.automationLanes[(std::size_t) AutomationParam::FaderDb].pointsConst();
+        ctx.expect (laneHolds (masterFader, AutomationParam::FaderDb, -2.0f, kDbTolerance)
+                        && laneHolds (masterFader, AutomationParam::FaderDb, -4.0f, kDbTolerance),
+                    "the master fader in WRITE did not record");
+        const auto& auxReturn = aux.automationLanes[(std::size_t) AutomationParam::FaderDb].pointsConst();
+        ctx.expect (laneHolds (auxReturn, AutomationParam::FaderDb, -12.0f, kDbTolerance)
+                        && laneHolds (auxReturn, AutomationParam::FaderDb, -6.0f, kDbTolerance),
+                    "an aux return in WRITE did not record");
+        ctx.expect (onThenOff (aux.automationLanes[(std::size_t) AutomationParam::Mute].pointsConst()),
+                    "an aux mute in WRITE did not record going on and off");
+        marks->muteCount = mute.size();
+
+        // Second pass, TOUCH: hold the fader and pan for the first part only.
+        track.automationMode.store ((int) AutomationMode::Touch, std::memory_order_release);
+        for (auto* mode : { &bus.automationMode, &master.automationMode, &aux.automationMode })
+            mode->store ((int) AutomationMode::Off, std::memory_order_release);
+        params.faderTouched.store (true, std::memory_order_relaxed);
+        params.faderDb.store (-3.0f, std::memory_order_relaxed);
+        params.panTouched.store (true, std::memory_order_relaxed);
+        params.pan.store (-0.8f, std::memory_order_relaxed);
+        roll();
+    } });
+    steps->push_back ({ 250, [&params, strip]
+    {
+        params.faderTouched.store (false, std::memory_order_relaxed);
+        params.panTouched.store (false, std::memory_order_relaxed);
+        strip->clickMute();
+    } });
+    // The first pass rode -10 dB from 400 ms on.
+    steps->push_back ({ 700, [&ctx, &engine, &params]
+    {
+        const float live = params.liveFaderDb.load (std::memory_order_relaxed);
+        ctx.note ("TOUCH: the fader plays " + std::to_string (live) + " dB after the release");
+        ctx.expect (std::abs (live - (-10.0f)) < 0.5f,
+                    "after TOUCH let go the fader did not return to the earlier ride (-10 dB)");
+        engine.stop();
+    } });
+    steps->push_back ({ 100, [&ctx, &params, &track, lane, marks, roll, strip]
+    {
+        ctx.expect (laneHolds (lane (AutomationParam::FaderDb).pointsConst(), AutomationParam::FaderDb,
+                               -3.0f, kDbTolerance),
+                    "TOUCH did not record the fader while it was held");
+        ctx.expect (laneHolds (lane (AutomationParam::Pan).pointsConst(), AutomationParam::Pan, -0.8f, 0.01f),
+                    "TOUCH did not record the pan while it was held");
+        ctx.expect (lane (AutomationParam::Mute).pointsConst().size() == marks->muteCount,
+                    "a mute click in TOUCH was recorded");
+        strip->clickMute();
+
+        // Third pass, WRITE over the start only.
+        track.automationMode.store ((int) AutomationMode::Write, std::memory_order_release);
+        params.faderDb.store (-15.0f, std::memory_order_relaxed);
+        roll();
+    } });
+    steps->push_back ({ 250, [&engine, marks]
+    {
+        engine.stop();
+        marks->stoppedAt = engine.getTransport().getPlayhead();
+    } });
+    steps->push_back ({ 100, [&ctx, &track, lane, marks]
+    {
+        const auto& fader = lane (AutomationParam::FaderDb).pointsConst();
+        const auto stoppedAt = marks->stoppedAt;
+        ctx.note ("third pass stopped at " + std::to_string (stoppedAt) + "; the lane ends at "
+                  + (fader.empty() ? std::string ("-") : std::to_string (fader.back().timeSamples)));
+        ctx.expect (std::any_of (fader.begin(), fader.end(),
+                                 [stoppedAt] (const AutomationPoint& p) { return p.timeSamples > stoppedAt + 4800; }),
+                    "a WRITE pass erased the automation after where it stopped");
+        ctx.expect (timesAscend (fader), "the fader lane is out of time order");
+        track.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+    } });
+
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+// A mode set outside a strip's own menu - drawing automation arms READ, a
+// session load sets the aux lanes it does not rebuild - shows on every strip's
+// label within a tick, and READ locks every strip's fader.
+std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioContext& ctx)
+{
+    struct Probe { GuiHost::StripKind kind; int index; const char* name; };
+    static constexpr Probe kProbes[] = {
+        { GuiHost::StripKind::Channel, kStripIndex, "channel" },
+        { GuiHost::StripKind::Bus,     0,           "bus" },
+        { GuiHost::StripKind::Master,  0,           "master" },
+        { GuiHost::StripKind::Aux,     0,           "aux return" },
+    };
+
+    // The aux lanes are built the first time their stage shows, and keep
+    // running once it is hidden.
+    host.switchToStage (GuiHost::Stage::Aux);
+    host.switchToStage (GuiHost::Stage::Mixing);
+
+    auto& session = ctx.session();
+    const std::array<std::atomic<int>*, 4> modes {
+        &session.track (kStripIndex).automationMode, &session.bus (0).strip.automationMode,
+        &session.master().automationMode, &session.auxLane (0).params.automationMode };
+    const auto setAll = [modes] (AutomationMode mode)
+    {
+        for (auto* m : modes) m->store ((int) mode, std::memory_order_release);
+    };
+    ctx.cleanup ([setAll] { setAll (AutomationMode::Off); });
+
+    const auto check = [&ctx, &host] (bool read)
+    {
+        for (const auto& probe : kProbes)
+        {
+            std::string label;
+            bool faderEnabled = false;
+            const std::string name (probe.name);
+            if (! ctx.expect (host.automationView (probe.kind, probe.index, label, faderEnabled),
+                              name + ": the strip is not built"))
+                continue;
+            ctx.expect (! label.empty() && label.front() == (read ? 'R' : 'O'),
+                        name + ": the mode label shows '" + label + "'");
+            ctx.expect (faderEnabled != read, name + (read ? ": the fader takes input in READ"
+                                                           : ": the fader stayed locked after READ"));
+        }
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [setAll] { setAll (AutomationMode::Read); } });
+    steps->push_back ({ 150, [check, setAll] { check (true); setAll (AutomationMode::Off); } });
+    steps->push_back ({ 150, [check] { check (false); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+// ---------------------------------------------------------------- autosave
+
+bool nearly (float a, float b) { return std::abs (a - b) < 1.0e-4f; }
+
+// Track 1's fader as a session file holds it; a large sentinel when the file
+// will not load.
+float savedFaderOf (const std::filesystem::path& sessionJson)
+{
+    Session probe;
+    if (! SessionSerializer::load (probe, sessionJson)) return 1000.0f;
+    return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
+}
+
+// The heartbeat writes session.json.autosave only when the session changed
+// since the last save or autosave, never touches session.json and leaves no
+// temp file behind. Opening a session whose autosave says something else
+// offers recovery, and each answer does what the prompt says.
+std::optional<ScenarioResult> runAutosave (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    static constexpr float kEdited = -12.0f;
+    static constexpr float kLater  = -6.0f;
+
+    auto& session = ctx.session();
+    auto& fader = session.track (0).strip.faderDb;
+    const float original = fader.load (std::memory_order_relaxed);
+    const auto originalDir = currentSessionDirectory (session);
+    ctx.cleanup ([&session, &fader, original, originalDir]
+    {
+        fader.store (original, std::memory_order_relaxed);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto dir = ctx.tempDir() / "autosaved";
+    std::error_code error;
+    fs::create_directories (dir, error);
+    const auto sessionJson = dir / "session.json";
+    const auto autosave = dir / "session.json.autosave";
+    if (! SessionSerializer::save (session, sessionJson))
+        return ScenarioResult::fail ("could not write the session to open");
+    if (! host.openSession (sessionJson) || ! host.modalStackEmpty())
+        return ScenarioResult::fail ("the session did not open without a prompt");
+
+    host.autosaveTick();
+    ctx.expect (! fs::exists (autosave, error), "the heartbeat wrote an autosave for an unchanged session");
+
+    fader.store (kEdited, std::memory_order_relaxed);
+    host.autosaveTick();
+    ctx.expect (fs::exists (autosave, error), "the heartbeat did not write the change");
+    ctx.expect (! fs::exists (dir / "session.json.autosave.tmp", error), "the autosave left its temp file behind");
+    ctx.expect (nearly (savedFaderOf (autosave), kEdited), "the autosave does not hold the change");
+    ctx.expect (nearly (savedFaderOf (sessionJson), original), "the heartbeat touched session.json");
+
+    fs::remove (autosave, error);
+    host.autosaveTick();
+    ctx.expect (! fs::exists (autosave, error), "the heartbeat rewrote a state it had already written");
+
+    // Recover: the autosave's state loads and becomes session.json.
+    SessionSerializer::save (session, autosave);
+    if (! ctx.expect (host.openSession (sessionJson) && ! host.modalStackEmpty(),
+                      "a session with a newer autosave opened without offering recovery"))
+        return ctx.verdict();
+    ctx.expect (host.answerRecovery (GuiHost::Recovery::Recover), "the recovery prompt was not the modal up");
+    ctx.expect (nearly (fader.load (std::memory_order_relaxed), kEdited), "Recover did not load the autosave");
+    ctx.expect (nearly (savedFaderOf (sessionJson), kEdited), "Recover did not write the recovered state to session.json");
+    ctx.expect (! fs::exists (autosave, error), "Recover left the autosave behind");
+
+    // Load saved session: session.json wins and the autosave is discarded.
+    fader.store (kLater, std::memory_order_relaxed);
+    SessionSerializer::save (session, autosave);
+    if (ctx.expect (host.openSession (sessionJson) && ! host.modalStackEmpty(),
+                    "the second newer autosave offered no recovery"))
+    {
+        host.answerRecovery (GuiHost::Recovery::LoadSaved);
+        ctx.expect (nearly (fader.load (std::memory_order_relaxed), kEdited), "Load saved session did not load session.json");
+        ctx.expect (! fs::exists (autosave, error), "Load saved session kept the autosave");
+    }
+
+    // Cancel: nothing loads and the recovery point stays.
+    fader.store (kLater, std::memory_order_relaxed);
+    SessionSerializer::save (session, autosave);
+    fader.store (kEdited, std::memory_order_relaxed);
+    if (ctx.expect (host.openSession (sessionJson) && ! host.modalStackEmpty(),
+                    "the third newer autosave offered no recovery"))
+    {
+        host.answerRecovery (GuiHost::Recovery::Cancel);
+        ctx.expect (host.modalStackEmpty(), "Cancel left the prompt up");
+        ctx.expect (fs::exists (autosave, error), "Cancel discarded the autosave");
+    }
+    return ctx.verdict();
+}
+
 // ------------------------------------------------------------- registration
+
+const ScenarioRegistrar automation { Scenario {
+    "gui.automation_write_and_touch",
+    { "gui", "automation" },
+    Needs::Engine | Needs::Gui,
+    {},
+    {},
+    60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAutomation (host, ctx); }
+} };
+
+const ScenarioRegistrar modeShown { Scenario {
+    "gui.automation_mode_shown_on_every_strip",
+    { "gui", "automation" },
+    Needs::Engine | Needs::Gui,
+    {},
+    {},
+    20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runModeShownOnEveryStrip (host, ctx); }
+} };
+
+const ScenarioRegistrar autosave { Scenario {
+    "gui.autosave_writes_and_recovers",
+    { "gui", "session", "autosave" },
+    Needs::Engine | Needs::Gui,
+    {},
+    {},
+    60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAutosave (host, ctx); }
+} };
 
 const ScenarioRegistrar editorLoop { Scenario {
     "gui.editor_open_close_loop",

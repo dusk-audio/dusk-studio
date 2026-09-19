@@ -40,6 +40,10 @@ public:
     // SIP gate (mute/solo) before invoking.
     void processInPlace (float* L, float* R, int numSamples) noexcept;
 
+    // How far the bus delays its output at the prepared oversampling factor,
+    // comp on or off; 0 at 1x.
+    int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
+
 private:
     const BusParams* paramsRef = nullptr;
     dusk::audio::SmoothedValue<float> faderGain { 1.0f };

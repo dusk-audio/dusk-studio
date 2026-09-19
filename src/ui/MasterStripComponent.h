@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
+#include <string>
+#include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
 #include "CompMeterStrip.h"
@@ -28,6 +30,10 @@ public:
 
     void setCompactVu (bool compact);
     void setCompactMode (bool compact);
+
+    // Scenario-harness only: the mode label and whether the fader takes input.
+    std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
+    bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
 
 private:
     bool compactVu = false;
@@ -103,7 +109,14 @@ private:
 
     void showAutoModeMenu();
     void setAutoMode (AutomationMode m);
-    void captureFaderWritePoint (float denormDb);
+    // Shows mode on the label and locks the fader in READ. The timer calls it
+    // too, so a mode set anywhere else (a session load) shows up here.
+    void applyAutoMode (int mode);
+    int appliedAutoMode = -1;
+    // Feeds the fader's WRITE / TOUCH pass while recording is true; the
+    // first call with it false splices the pass into the lane.
+    void recordFader (bool recording, float db);
+    AutomationPassRecorder faderRecorder { AutomationParam::FaderDb };
 
     std::unique_ptr<AnalogVuMeter> vuMeter;
 

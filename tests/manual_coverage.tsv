@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 140
-# ceiling partial 56
+# ceiling gap 126
+# ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -37,8 +37,8 @@ Quick Guide > Overdub	record a second track over playback of the first	gap
 Quick Guide > Overdub	up to 8 inputs recorded at once	gap
 Quick Guide > Overdub	Shift+[ and Shift+] set punch; punch turns itself on	auto	test:Transport: a punch bracket placed by hand arms punch once in is before out
 Quick Guide > Mix	MIXING swaps the input block for aux sends	gap
-Quick Guide > Mix	automation mode label cycles OFF / READ / WRITE / TOUCH	gap
-Quick Guide > Bounce	Cmd+B bounces a 24-bit WAV (or MP3 by extension) into the session folder	partial	test:LameMp3Writer emits a valid 48k/320k MP3 carrying the signal		MP3 encoding tested; the offline WAV bounce itself is not
+Quick Guide > Mix	the automation mode label picks OFF / READ / WRITE / TOUCH from a menu	gap
+Quick Guide > Bounce	Cmd+B bounces a 24-bit WAV (or MP3 by extension) into the session folder	partial	test:LameMp3Writer emits a valid 48k/320k MP3 carrying the signal;scenario:bounce.master_mix_file;scenario:bounce.mp3_by_format		the WAV and MP3 renders are tested; Cmd+B, the dialog and the extension-to-format choice are not
 Quick Guide > Bounce	Load latest mixdown then Export master	gap
 
 Names and Functions of Parts > The main window	menu bar, stage selector, bank selector, transport, tape toggle, console	manual			figure callouts; checked against the running app by screenshot review
@@ -88,6 +88,7 @@ Getting started > Configuring audio > General	MIDI soft takeover keeps a control
 Getting started > Configuring audio > General	autosave cadence 15 s to 5 min	gap
 Getting started > Configuring audio > General	scan plugins on startup	gap
 Getting started > Configuring audio > Advanced	effect oversampling 1x/2x/4x drives every EQ and comp but not the tape	partial	test:TapeMachineDSP ignores the oversampling choice;test:BusStrip: comp-off EQ response is independent of OS factor		tape and bus behaviour tested; the channel and master fan-out is not
+Getting started > Configuring audio > Advanced	oversampling latency is compensated: bus-routed and direct tracks stay aligned, bounces trim it	auto	scenario:mix.bus_routed_lands_with_direct;scenario:bounce.renders_land_on_the_timeline;scenario:bounce.export_master_in_place
 Getting started > Configuring audio > Advanced	multicore DSP matches single-core output	auto	scenario:engine.pipeline_selftest;test:AudioWorkerPool: every lane runs exactly once per block over a soak
 Getting started > Configuring audio > Advanced	recording offset shifts audio takes earlier, never MIDI	auto	test:Latency offset shifts committed audio start earlier;test:Latency offset larger than start clamps audio to zero and trims head;test:Latency offset exceeding take length commits no region;test:Latency offset does not move MIDI region placement
 Getting started > Configuring audio > Advanced	Run self-test reports pass or fail	auto	scenario:engine.pipeline_selftest
@@ -102,9 +103,9 @@ The interface > The four stages	Cmd/Ctrl+1..4 change stage, plain digits change 
 The interface > The four stages	entering or leaving MASTERING stops the transport; changing stage saves and closes the notepad	gap
 The interface > The transport bar	Stop silences held notes even on muted or soloed-out tracks	auto	scenario:midi.panic_all_paths;test:muted MIDI strips still process transport panic events;test:synth unit stops on the transport's all-notes-off
 The interface > The transport bar	Stop returns the playhead per Playhead on Stop; a second Stop goes to bar 1	auto	test:Stop on a rolling transport follows the Playhead on Stop setting;test:Stop pressed while stopped returns to zero whatever the setting;test:A locate during playback becomes the point Stop returns to
-The interface > The transport bar	a chase-driven stop leaves the playhead where the master stopped	gap
+The interface > The transport bar	a chase-driven stop leaves the playhead where the master stopped	auto	scenario:transport.chase_stop_leaves_playhead
 The interface > The transport bar	Rewind and Forward tap to markers, hold to scrub at 10x	partial	test:McuReceiver: REWIND / FAST-FORWARD publish held-state on press and release;scenario:marker.rewind_forward_jump		surface press/hold state and marker jumps tested; the 180 ms hold threshold and 10x scrub are not
-The interface > The transport bar	Play snaps to loop start when outside the loop	gap
+The interface > The transport bar	Play snaps to loop start when outside the loop	auto	scenario:transport.play_snaps_to_loop_start
 The interface > The transport bar	Record needs an armed track	auto	test:An audio track cannot arm while the device offers no inputs;test:A track whose input the device does not offer cannot arm
 The interface > The transport bar	Punch right-click menu sets pre-roll and post-roll	gap
 The interface > The transport bar	metronome clicks when enabled and rolling	auto	test:Metronome: enabled + rolling emits clicks;test:Metronome: disabled + not rolling stays silent
@@ -165,14 +166,14 @@ The channel strip > Pan	equal-power with a 3 dB centre dip	auto	test:BusStrip: c
 The channel strip > Pan	a stereo track pans by balance; hard left silences R	gap
 The channel strip > Fader	-inf to +12 dB; unity at 0 dB	auto	scenario:engine.pipeline_selftest;test:FaderBindingMap: CC/Note fader binds stay linear -90..+12 dB
 The channel strip > Fader	click the readout to type; right-click for MIDI Learn	gap
-The channel strip > Fader	automation modes OFF / READ / WRITE / TOUCH	partial	test:evaluateLane: continuous interpolation + hold-first/last;test:AutomationLane: mutableForWritePass appends in place, no swap		lane storage and playback tested; recording in WRITE and TOUCH is not
+The channel strip > Fader	automation modes OFF / READ / WRITE / TOUCH	auto	test:evaluateLane: continuous interpolation + hold-first/last;scenario:automation.read_plays_the_lanes;scenario:automation.write_splices_its_span;scenario:automation.touch_glides_back;scenario:gui.automation_write_and_touch
 The channel strip > Mute, Solo, Phase	mute silences; solo is additive solo-in-place	auto	scenario:engine.pipeline_selftest
 The channel strip > Mute, Solo, Phase	phase inverts polarity before the insert	gap
 The channel strip > Bus assigns	assigning a bus removes the direct master send	auto	scenario:engine.pipeline_selftest
 The channel strip > Meters	pre-fader input while armed or IN, otherwise post-fader	auto	test:Track meter source follows tracking controls without changing mix metering
 The channel strip > Meters	clip bar holds for one second	gap
 
-The bus strips	each bus has an automation mode for fader, pan and mute	gap
+The bus strips	each bus has an automation mode for fader, pan and mute	auto	scenario:automation.read_plays_the_lanes;scenario:gui.automation_write_and_touch
 The bus strips > Signal flow	EQ, comp, pan, fader, then master; mute and solo gate the sum	auto	test:BusStrip: unity fader + center pan + flat EQ + comp off ~= passthrough;test:BusStrip: -6 dB fader halves the signal;scenario:engine.pipeline_selftest
 The bus strips > 3-band EQ	LF, MID, HF at +/-9 dB	gap
 The bus strips > Bus compressor	glue comp ranges, 4:1 default, auto release, stereo link	auto	test:Bus mode matches analytic reduction at the chosen ratio;test:comp A/B: Bus matches JUCE;test:Bus comp stereo-links L/R: a loud L pulls down a quiet R
@@ -191,7 +192,7 @@ The master strip > Output meters	peak and VU meters, GR meter	partial	test:meter
 
 Aux lanes	AUX stage shows one full-width lane chosen by four selectors	gap
 Aux lanes > Aux lane layout	three columns: return, insert, sources	manual			layout; checked by screenshot review
-Aux lanes > Aux lane layout > Return strip (left column)	rename, mute, return fader, meter, automation	gap
+Aux lanes > Aux lane layout > Return strip (left column)	rename, mute, return fader, meter, automation	partial	scenario:automation.read_plays_the_lanes;scenario:gui.automation_write_and_touch		the return level and mute automation are tested; rename, the mute button, the fader range and the meter are not
 Aux lanes > Aux lane layout > Return strip (left column)	Output sends the lane to a hardware pair tapped before fader and mute	auto	test:tapStereoPairInto accumulates onto the routed pair;test:output pair encode/decode round-trips
 Aux lanes > Aux lane layout > Plugin chain (centre column)	one insert with a 20 ms crossfade; built-in controls fill the lane	auto	test:Crossfade: equal-power overlap holds constant power across window;test:the aux lane view gives every shown parameter one control inside the lane;test:the aux lane view's knobs stay full size down to the smallest window
 Aux lanes > Aux lane layout > Plugin chain (centre column)	an editor attach failure logs without a dialog	auto	scenario:gui.aux_attach_failure_no_modal;test:aux lane editor attach never raises a modal
@@ -210,7 +211,7 @@ The mastering stage > Mastering chain > Brickwall limiter	true-peak ceiling, thr
 The mastering stage > Loudness metering	momentary, short-term, integrated LUFS and true peak per BS.1770	auto	test:LoudnessMeter K-weighting matches the JUCE-designed filters;test:LoudnessMeter integrated equals momentary on a uniform program;test:LoudnessMeter relative gate excludes quiet material;test:LoudnessMeter true peak tracks a hot signal;test:LoudnessMeter gating is exact for windows sitting on the threshold
 The mastering stage > Loudness metering	Reset integrated; silence does not consume the hour	auto	test:LoudnessMeter requestReset zeroes readings and drops the history;test:LoudnessMeter silence does not consume integrated capacity
 The mastering stage > Loudness metering	platform presets colour-code the readings	gap
-The mastering stage > Exporting the master	WAV 24-bit, WAV 16-bit 44.1 kHz dithered, MP3 320; cancellable	partial	test:LameMp3Writer emits a valid 48k/320k MP3 carrying the signal		MP3 encoding tested; the export render, the 16-bit dither and cancel are not
+The mastering stage > Exporting the master	WAV 24-bit, WAV 16-bit 44.1 kHz dithered, MP3 320; cancellable	partial	test:LameMp3Writer emits a valid 48k/320k MP3 carrying the signal;scenario:bounce.export_master_post_limiter;scenario:bounce.cancel_leaves_no_file		the 16-bit 44.1 kHz export and cancel (on the shared render loop) are tested; the 24-bit and MP3 presets and the dither's noise shape are not
 
 Recording	five-step workflow	n/a			walkthrough; each step is held in the sections below
 Recording > Setting the input	follow-track default; stereo picks two inputs; MIDI port and channel	auto	test:A stereo track's right input follows wherever the left one resolves;test:Seam resolves saved identifiers back to bank indices
@@ -219,16 +220,16 @@ Recording > Setting the input > MIDI hot-plug	the port list only rebuilds while 
 Recording > Arming a track	Record does nothing until a track is armed	gap
 Recording > Monitor mode	IN monitors through EQ, comp and insert	auto	scenario:engine.pipeline_selftest
 Recording > Print mode	PRINT records the processed signal; off records dry	gap
-Recording > Count-in	one bar of click before the take; playhead rolls back a bar	partial	test:LoopTimeline keeps count-in before loop start linear until loop end		count-in against a loop tested; the plain count-in and its click are not
+Recording > Count-in	one bar of click before the take; playhead rolls back a bar	auto	scenario:transport.count_in_rolls_back_a_bar;test:LoopTimeline keeps count-in before loop start linear until loop end
 Recording > Punch recording	punch arms once in is before out; P toggles	auto	test:Transport: a punch bracket placed by hand arms punch once in is before out;test:Transport: punch range + enable round-trip
-Recording > Punch recording	pre-roll plays before the punch, post-roll rolls past it	gap
+Recording > Punch recording	pre-roll plays before the punch, post-roll rolls past it	auto	scenario:transport.punch_pre_and_post_roll
 Recording > Punch recording	recording starts and stops exactly at the punch samples	auto	scenario:engine.pipeline_selftest;test:Loop capture snapshots and writes only the effective punch intersection
-Recording > Punch recording	64-sample raised-cosine fades at both punch edges	partial	test:FadeShape::RaisedCosine has zero slope at both endpoints;test:FadeShape::RaisedCosine is 0.5 at t=0.5		the fade shape is tested; its use at the punch edges is not
+Recording > Punch recording	64-sample raised-cosine fades at both punch edges	auto	scenario:transport.punch_pre_and_post_roll;test:FadeShape::RaisedCosine has zero slope at both endpoints;test:FadeShape::RaisedCosine is 0.5 at t=0.5
 Recording > Loop recording	loop turns on once in is before out; L toggles	auto	test:Transport: a loop bracket placed by hand turns loop on once in is before out;test:Transport: loop range + enable round-trip
 Recording > Loop recording	each pass becomes a take; current plus eight kept	auto	test:Loop audio stores two full passes as one spool with exact take offsets;test:Loop audio retention drops oldest passes after current plus eight prior;test:Loop audio history is newest-first capped and then retains compatible old takes;scenario:engine.pipeline_selftest
 Recording > Loop recording	with punch, each pass records only the overlap	auto	test:Loop capture snapshots and writes only the effective punch intersection;test:Loop capture plan rejects an empty effective punch intersection
 Recording > Loop recording	silent audio passes kept; empty MIDI passes dropped	auto	test:Loop audio retains a silent pass and trims latency per pass;test:Loop MIDI ignores a truly empty pass and keeps a final partial pass
-Recording > Loop recording	a loop under 128 samples does not record	gap
+Recording > Loop recording	a loop under 128 samples does not record	auto	scenario:transport.short_loop_refused
 Recording > Where files are saved	session.json plus audio/ of 24-bit WAVs named by track and time	partial	test:RecordManager writes mono input back accurately;test:RecordManager writes stereo L+R interleaving in order		sample accuracy tested; the 24-bit format and the filename pattern are not
 Recording > Where files are saved	MIDI is embedded in session.json	gap
 Recording > Take history	a take fully covering a region pushes it onto an 8-deep stack	auto	scenario:take.full_cover_pushes_onto_stack;scenario:take.stack_keeps_newest_eight;test:Loop audio history is newest-first capped and then retains compatible old takes;test:SessionSerializer round-trips active and historical take provenance
@@ -285,8 +286,8 @@ Mixing > A suggested order of operations	mixing advice	n/a			advice
 Mixing > Aux sends in detail	post-fader follows the fader; pre-fader ignores it	gap
 Mixing > Bus routing	bus assignment replaces the direct master send	auto	scenario:engine.pipeline_selftest
 Mixing > Solo and PFL	solo-in-place, additive, no PFL	auto	scenario:engine.pipeline_selftest
-Mixing > Automation	OFF, READ, WRITE, TOUCH for fader, pan, mute and solo	partial	test:evaluateLane: continuous interpolation + hold-first/last;test:evaluateLane: discrete holds previous (step), thresholds at 0.5;test:Session load publishes each automation lane exactly once		lane playback and discrete holds tested; writing in WRITE and TOUCH is not
-Mixing > Automation	mute and solo record only in WRITE	gap
+Mixing > Automation	OFF, READ, WRITE, TOUCH for fader, pan, mute and solo	auto	test:evaluateLane: continuous interpolation + hold-first/last;test:evaluateLane: discrete holds previous (step), thresholds at 0.5;scenario:automation.read_plays_the_lanes;scenario:automation.write_splices_its_span;scenario:automation.touch_glides_back;scenario:automation.loop_wrap_closes_the_pass;scenario:automation.locate_ends_the_pass;scenario:gui.automation_write_and_touch
+Mixing > Automation	mute and solo record only in WRITE	auto	scenario:gui.automation_write_and_touch
 Mixing > Automation > Editing breakpoints in the region editor	add, drag, delete and draw points; stopped transport only; drawing arms READ	gap
 Mixing > Automation > Editing breakpoints in the region editor	a drawn stroke is thinned to a clean set	auto	test:thinAutomationLane: collinear interior points are dropped;test:thinAutomationLane: sine-shaped lane keeps the peak + endpoints;test:thinAutomationLane: discrete lanes are NOT thinned
 
@@ -338,7 +339,7 @@ Plugins > Multi-sample instruments > Instrument library	an unreadable folder is 
 Hardware inserts > Configuring an insert	output, volumes, input, latency, dry/wet, stereo, mid/side, mono	auto	test:HardwareInsertSlot: dryWet=0 returns dry signal unchanged at zero latency;test:HardwareInsertSlot: Mid/Side encode + decode round-trip is unity gain;test:HardwareInsertSlot: outputGain and inputGain compose independently;test:HardwareInsertSlot: invalid routing falls through to dry-only path
 Hardware inserts > Auto-measuring latency	Ping measures the round trip; reports silence and invalid routing	auto	test:HardwareInsertSlot: ping measures loopback round-trip exactly;test:HardwareInsertSlot: ping with silent return reports -1;test:HardwareInsertSlot: ping with invalid input routing reports -2;test:HardwareInsertSlot: ping correlation budget matches callback contract
 Hardware inserts > Latency compensation	the dry path is delayed to match; PDC across tracks to the deepest latency	auto	test:HardwareInsertSlot: dry-path delay aligns dry with hardware latency;test:PDC: every track compensates to the deepest latency;test:PDC: a single latency source delays everyone else;test:PDC: all-zero latency yields no compensation
-Hardware inserts > Latency compensation	offline inserts add no PDC; bounces trim the compensation out	partial	scenario:plugin.offline_insert_no_pdc		offline inserts tested; trimming PDC out of bounces is not
+Hardware inserts > Latency compensation	offline inserts add no PDC; bounces trim the compensation out	auto	scenario:plugin.offline_insert_no_pdc;scenario:bounce.pdc_trimmed_from_render
 
 Sync to external gear > MIDI Clock	chase tempo from F8 averaged over 24 ticks; big jumps skipped	gap
 Sync to external gear > MIDI Clock	emit 24 PPQN clock with Start and Stop	auto	test:MidiClockEmitter: integer samples-per-clock has no drift;test:MidiClockEmitter: fractional samples-per-clock has no systematic drift;test:MidiClockEmitter: transport edges emit Start / Stop
@@ -361,21 +362,21 @@ Saving and loading sessions > Save commands	Save is atomic: temp file, fsync, re
 Saving and loading sessions > Save commands	Save As copies audio into the new folder	auto	test:consolidateInto copies session audio and repoints the model;test:consolidateInto pulls external files into audio/ with collision suffixes
 Saving and loading sessions > Save commands	Open loads a session by folder	partial	test:SessionSerializer round-trip preserves transport + per-track state		loading tested; the Open command is walked by hand
 Saving and loading sessions > Save commands	templates name and colour tracks only	auto	test:applying a template names every track;test:templates differ from Blank where they name instruments
-Saving and loading sessions > Autosave	writes session.json.autosave atomically on a timer, skipping idle sessions	gap
-Saving and loading sessions > Autosave	a newer autosave is offered for recovery; Recover writes it to session.json	gap
+Saving and loading sessions > Autosave	writes session.json.autosave atomically on a timer, skipping idle sessions	auto	scenario:gui.autosave_writes_and_recovers
+Saving and loading sessions > Autosave	a newer autosave is offered for recovery; Recover writes it to session.json	auto	scenario:gui.autosave_writes_and_recovers
 Saving and loading sessions > What's in a session	tracks, regions, mixer, plugins, transport, markers, bindings, sync, mastering source	partial	test:SessionSerializer round-trip preserves transport + per-track state;test:SessionSerializer round-trips the MTC sync settings;test:SessionSerializer round-trips MCU input/output identifiers + assign mode;test:mastering source file does not survive loading a session without one		tracks, transport, sync and MCU round-trip; markers, bindings and region fields are not asserted
 Saving and loading sessions > What's in a session	a damaged or partial session still loads safely	auto	test:SessionSerializer::load survives truncated JSON;test:SessionSerializer::load survives empty / non-JSON garbage;test:loading a session without section keys resets those sections;test:SessionSerializer rejects future-version sessions;bb:bb-damaged-recent
 Saving and loading sessions > Backing up	copying the folder is a complete backup	n/a			advice; relative paths are held under Where sessions live
 
-Bouncing and exporting > Bouncing the mix	offline render to 24-bit WAV at the session rate, or MP3 by extension, with a 5 s tail	gap
+Bouncing and exporting > Bouncing the mix	offline render to 24-bit WAV at the session rate, or MP3 by extension, with a 5 s tail	partial	scenario:bounce.master_mix_file;scenario:bounce.mp3_by_format		rate, 24-bit stereo, the 5 s tail and the MP3 container are tested; the choice by file extension happens in the dialog and is not
 Bouncing and exporting > Bouncing the mix	the device detaches for the render and reattaches after	gap
 Bouncing and exporting > Bouncing the mix	Mixdown renders mixdown.wav and opens it in MASTERING	gap
 Bouncing and exporting > Bouncing the mix	Bounce stems: one file per track, bus and aux, named by pattern	auto	test:collectStemTargets: tracks then buses then auxes, gated on routing;test:stemOutputFile builds <dir>/<base>_<NN>_<safe>.wav;test:namedStemOutputFile builds <dir>/<base>_<tag>_<safe>.wav
-Bouncing and exporting > Bouncing the mix	stems are sample-aligned and reconstruct the pre-master mix	gap
+Bouncing and exporting > Bouncing the mix	stems are sample-aligned and reconstruct the pre-master mix	auto	scenario:bounce.stems_rebuild_the_mix;scenario:bounce.renders_land_on_the_timeline
 Bouncing and exporting > Bouncing the mix	hardware inserts offer a realtime bounce	partial	test:anyHardwareInsertActive follows rendered tracks and aux lanes		the detection is tested; the realtime bounce is not
-Bouncing and exporting > Bouncing the mix	the metronome never prints	gap
-Bouncing and exporting > Bouncing the master vs the mastering chain	bounce captures post-master; Export master captures post-limiter	gap
-Bouncing and exporting > Where bounces go	bounces land in the session folder; the newest is what Load latest mixdown picks	gap
+Bouncing and exporting > Bouncing the mix	the metronome never prints	auto	scenario:bounce.metronome_never_prints
+Bouncing and exporting > Bouncing the master vs the mastering chain	bounce captures post-master; Export master captures post-limiter	auto	scenario:bounce.captures_post_master_fader;scenario:bounce.export_master_post_limiter
+Bouncing and exporting > Where bounces go	bounces land in the session folder; Load latest mixdown loads mixdown.wav, else bounce.wav	gap
 
 Keyboard reference > File	Cmd+N, O, S, Shift+S, I, B, Q	gap
 Keyboard reference > Edit	undo, redo, copy, cut, paste, duplicate, delete, split, nudge, take cycling	gap
@@ -419,7 +420,7 @@ Messages > Recording	recording alerts	n/a			index; entries are held below
 Messages > Recording > Recording setup failed	lists the tracks that could not start	gap
 Messages > Recording > Recording errors	reports per-track errors after the take	auto	test:RecordManager surfaces MIDI FIFO overflow at stopRecording
 Messages > Session	session alerts	n/a			index; entries are held below
-Messages > Session > Recover from autosave?	offered when the autosave is newer; three choices	gap
+Messages > Session > Recover from autosave?	offered when the autosave is newer; three choices	auto	scenario:gui.autosave_writes_and_recovers
 Messages > Session > Save changes before quitting?	quitting with changes prompts; logout and SIGTERM count as quitting	auto	bb:bb-clean-quit;bb:bb-quit-twice;test:Staged shutdown prints every phase marker the quit legs assert on
 Messages > Session > Save failed	an unwritable session.json raises the alert and keeps the session in memory	gap
 Messages > Session > Missing audio files	lists the files a loaded session cannot find	auto	test:unresolvable region path is reported as missing
@@ -448,5 +449,5 @@ Appendix A — Parameter ranges and defaults > Bus strip	every bus parameter wit
 Appendix A — Parameter ranges and defaults > Aux return lane	aux return ranges and defaults	partial	test:SessionSerializer::load rejects non-finite transport and aux values		non-finite values are rejected; ranges and defaults are not checked
 Appendix A — Parameter ranges and defaults > Master bus	every master parameter within its range and at its default	partial	test:SessionSerializer::load clamps out-of-range master values;test:SessionSerializer::load defaults present invalid master floats		clamping and defaults for invalid values tested; the table's defaults are not checked
 Appendix A — Parameter ranges and defaults > Mastering chain	every mastering parameter within its range and at its default	partial	test:SessionSerializer::load clamps out-of-range mastering values;test:SessionSerializer::load defaults present invalid mastering values		clamping tested; the table's defaults are not checked
-Appendix B — File formats	session JSON, 24-bit WAV takes and bounces, embedded MIDI, XML cache, JSON bindings	partial	test:writeAtomic creates a new target and leaves no tmp behind;test:FileImporter: a matching 32-bit source is not truncated to 24-bit		atomic JSON and import format tested; take and bounce formats are not
+Appendix B — File formats	session JSON, 24-bit WAV takes and bounces, embedded MIDI, XML cache, JSON bindings	partial	test:writeAtomic creates a new target and leaves no tmp behind;test:FileImporter: a matching 32-bit source is not truncated to 24-bit;scenario:bounce.master_mix_file		atomic JSON, import format and the 24-bit bounce are tested; the take format is not
 Appendix C — Glossary	definitions	n/a			reference

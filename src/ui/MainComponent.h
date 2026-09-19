@@ -104,6 +104,9 @@ private:
     struct ScenarioGuiHost;
     struct ScenarioStripHandle;
     struct ScenarioAuxLaneHandle;
+    // Presses a button on the open autosave recovery prompt: 0 Recover,
+    // 1 Load saved session, 2 Cancel. False when no prompt is up.
+    bool answerRecoveryPrompt (int choice);
 
     void openAudioSettings();
     void closeAudioSettings();

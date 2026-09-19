@@ -1130,9 +1130,36 @@ void AudioEngine::recomputePdc() noexcept
         deepestAux = std::max (deepestAux, auxLat[a]);
     }
     masterDryPdcTarget.store (deepestAux, std::memory_order_relaxed);
+    // Sends leave the strips with the direct tracks, so the returns also wait
+    // for the bus alignment the direct tracks get.
+    const int busAlign = busAlignSamples.load (std::memory_order_relaxed);
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
-        auxReturnPdcTarget[(size_t) a].store (deepestAux - auxLat[a],
-                                               std::memory_order_relaxed);
+        auxReturnPdcTarget[(size_t) a].store (
+            deepestAux - auxLat[a] + busAlign,
+            std::memory_order_relaxed);
+}
+
+int AudioEngine::getTrackOutputLatencySamples() const noexcept
+{
+    return getAggregatePdcLatencySamples() + strips[0].getOversamplingLatencySamples();
+}
+
+int AudioEngine::getBusOutputLatencySamples() const noexcept
+{
+    return getTrackOutputLatencySamples() + busStrips[0].getOversamplingLatencySamples();
+}
+
+int AudioEngine::getAuxReturnLatencySamples() const noexcept
+{
+    return getTrackOutputLatencySamples() + getMasterDryPdcTargetSamples()
+         + busAlignSamples.load (std::memory_order_relaxed);
+}
+
+int AudioEngine::getMixLatencySamples() const noexcept
+{
+    return getTrackOutputLatencySamples() + busAlignSamples.load (std::memory_order_relaxed)
+         + getMasterDryPdcTargetSamples() + master.getOversamplingLatencySamples()
+         + getMasterTapeLatencySamples();
 }
 
 void AudioEngine::applyMasterPdcTargetsNow() noexcept
@@ -1581,6 +1608,57 @@ void AudioEngine::pressStop()
         session.lastClickedTimelineSample.load (std::memory_order_relaxed));
     if (target.has_value())
         transport.setPlayhead (*target);
+}
+
+AudioEngine::TransportService AudioEngine::serviceTransportRequests()
+{
+    TransportService done;
+
+    // Auto-punch post-roll: stop once the playhead passes punch-out plus the
+    // post-roll. A post-roll of 0 keeps rolling, and so does loop recording.
+    if (transport.isRecording() && transport.isPunchEnabled() && ! isLoopRecordingActive())
+    {
+        const auto pIn  = transport.getPunchIn();
+        const auto pOut = transport.getPunchOut();
+        const float postRoll = session.postRollEnabled.load (std::memory_order_relaxed)
+                                 ? session.postRollSeconds.load (std::memory_order_relaxed)
+                                 : 0.0f;
+        const double sr = getCurrentSampleRate();
+        if (pOut > pIn && postRoll > 0.0f && sr > 0.0
+            && transport.getPlayhead() >= pOut + (std::int64_t) ((double) postRoll * sr))
+        {
+            pressStop();
+            done.stopped = true;
+        }
+    }
+
+    // Acquire the action before reading its published playhead, then locate
+    // before dispatch so a chase's locate-and-play lands first.
+    const auto pending = (PendingTransportAction) session.pendingTransportAction.exchange (
+        (int) PendingTransportAction::None, std::memory_order_acquire);
+    if (const auto target = session.pendingTransportPlayhead.exchange (
+            (std::int64_t) -1, std::memory_order_relaxed); target >= 0)
+        transport.locate (target);
+
+    switch (pending)
+    {
+        case PendingTransportAction::Play:   play(); break;
+        case PendingTransportAction::Stop:   pressStop(); done.stopped = true; break;
+        // The master decides where the song is, so a chase stop leaves the
+        // playhead where the master stopped it.
+        case PendingTransportAction::SyncStop: stop(); done.stopped = true; break;
+        case PendingTransportAction::Record: record(); done.recordRequested = true; break;
+        case PendingTransportAction::Toggle:
+            if (transport.isStopped()) play();
+            else                       { pressStop(); done.stopped = true; }
+            break;
+        case PendingTransportAction::LoopToggle:
+            transport.setLoopEnabled (! transport.isLoopEnabled());
+            session.savedLoopEnabled = transport.isLoopEnabled();
+            break;
+        case PendingTransportAction::None:   break;
+    }
+    return done;
 }
 
 void AudioEngine::restartDspWhenIdle()
@@ -3254,6 +3332,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
 
     for (auto& s : strips)        s.prepare (sr, bs, oxFactor);
     for (auto& a : busStrips)     a.prepare (sr, bs, oxFactor);
+    busAlignSamples.store (busStrips[0].getOversamplingLatencySamples(), std::memory_order_relaxed);
     for (auto& a : auxLaneStrips) a.prepare (sr, bs);
     collectDeferredNativeRestoreFailures();
     master.prepare (sr, bs, oxFactor);
@@ -3292,17 +3371,24 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     masteringPlayer.prepare (bs, sr);
 
     {
-        auto prepPdc = [] (MasterPdcDelay& d)
+        auto prepPdc = [] (MasterPdcDelay& d, int capacity = ChannelStrip::kMaxPdcSamples)
         {
-            d.setMaximumDelayInSamples (ChannelStrip::kMaxPdcSamples);
+            d.setMaximumDelayInSamples (capacity);
             d.reset();
         };
         prepPdc (masterDryPdcL);
         prepPdc (masterDryPdcR);
+        prepPdc (busAlignL);
+        prepPdc (busAlignR);
+        busAlignL.setDelay (busAlignSamples.load (std::memory_order_relaxed));
+        busAlignR.setDelay (busAlignSamples.load (std::memory_order_relaxed));
+        // Bus alignment is fixed until the next prepare, when these buffers resize too.
+        const int auxCapacity = ChannelStrip::kMaxPdcSamples
+                              + busAlignSamples.load (std::memory_order_relaxed);
         for (int a = 0; a < Session::kNumAuxLanes; ++a)
         {
-            prepPdc (auxReturnPdcL[(size_t) a]);
-            prepPdc (auxReturnPdcR[(size_t) a]);
+            prepPdc (auxReturnPdcL[(size_t) a], auxCapacity);
+            prepPdc (auxReturnPdcR[(size_t) a], auxCapacity);
         }
         masterDryPdcApplied = 0;
         auxReturnPdcApplied.fill (0);
@@ -3936,7 +4022,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     std::memory_order_relaxed);
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Play,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
                 mtcDriftWindowFrames = 0;
                 lastSeenMtcFrames    = mtcFrames;
             }
@@ -3948,7 +4034,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 // master scrubbing back leaves Dusk Studio rolling forward.
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::SyncStop,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
                 mtcDriftWindowFrames = 0;
             }
             else if (mtcRolling && ! reversed && sPerFrame > 0.0)
@@ -4014,13 +4100,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             {
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Play,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
             }
             else if (! extRolling && lastExtRolling)
             {
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::SyncStop,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
             }
         }
         lastExtRolling = extRolling;
@@ -4355,19 +4441,19 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     {
                         case MidiBindingTarget::TransportPlay:
                             session.pendingTransportAction.store (
-                                (int) PendingTransportAction::Play, std::memory_order_relaxed);
+                                (int) PendingTransportAction::Play, std::memory_order_release);
                             break;
                         case MidiBindingTarget::TransportStop:
                             session.pendingTransportAction.store (
-                                (int) PendingTransportAction::Stop, std::memory_order_relaxed);
+                                (int) PendingTransportAction::Stop, std::memory_order_release);
                             break;
                         case MidiBindingTarget::TransportRecord:
                             session.pendingTransportAction.store (
-                                (int) PendingTransportAction::Record, std::memory_order_relaxed);
+                                (int) PendingTransportAction::Record, std::memory_order_release);
                             break;
                         case MidiBindingTarget::TransportToggle:
                             session.pendingTransportAction.store (
-                                (int) PendingTransportAction::Toggle, std::memory_order_relaxed);
+                                (int) PendingTransportAction::Toggle, std::memory_order_release);
                             break;
 
                         case MidiBindingTarget::TrackFader:
@@ -5048,12 +5134,16 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                           const std::atomic<bool>* touched,
                                           std::atomic<float>& live)
             {
-                const auto& pts = session.track (t).automationLanes[(size_t) param].pointsForRead();
+                // passOpen first: once it reads down, the acquire makes the
+                // splice the recorder published before lowering it visible.
+                const auto& lane = session.track (t).automationLanes[(size_t) param];
                 const bool readsLane =
-                       amode == (int) AutomationMode::Read
-                    || (amode == (int) AutomationMode::Touch
-                        && touched != nullptr
-                        && ! touched->load (std::memory_order_acquire));
+                       (amode == (int) AutomationMode::Read
+                        || (amode == (int) AutomationMode::Touch
+                            && touched != nullptr
+                            && ! touched->load (std::memory_order_acquire)))
+                    && ! lane.passOpen.load (std::memory_order_acquire);
+                const auto& pts = lane.pointsForRead();
                 const float v = (readsLane && ! pts.empty())
                     ? evaluateLane (pts, blockStartSamples, param)
                     : manual.load (std::memory_order_relaxed);
@@ -5084,10 +5174,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                        const std::atomic<bool>& manual,
                                        std::atomic<bool>& live)
             {
-                const auto& pts = session.track (t).automationLanes[(size_t) param].pointsForRead();
+                const auto& lane = session.track (t).automationLanes[(size_t) param];
                 const bool readsLane =
-                       amode == (int) AutomationMode::Read
-                    || amode == (int) AutomationMode::Touch;
+                       (amode == (int) AutomationMode::Read
+                        || amode == (int) AutomationMode::Touch)
+                    && ! lane.passOpen.load (std::memory_order_acquire);
+                const auto& pts = lane.pointsForRead();
                 const bool effective = (readsLane && ! pts.empty())
                     ? (evaluateLane (pts, blockStartSamples, param) >= 0.5f)
                     : manual.load (std::memory_order_relaxed);
@@ -6032,6 +6124,21 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
     perfLap (PerfSections::kMeterRecordTail);
 
+    // Only the direct tracks are in the mix yet; they wait for the bus
+    // oversamplers so the bus-routed tracks land with them (busAlignSamples).
+    if (busAlignSamples.load (std::memory_order_relaxed) > 0)
+    {
+        auto* mL = mixL.data();
+        auto* mR = mixR.data();
+        for (int i = 0; i < numSamples; ++i)
+        {
+            busAlignL.pushSample (mL[i]);
+            busAlignR.pushSample (mR[i]);
+            mL[i] = busAlignL.popSample();
+            mR[i] = busAlignR.popSample();
+        }
+    }
+
     for (int a = 0; a < Session::kNumBuses; ++a)
     {
         const auto& params = session.bus (a).strip;
@@ -6044,29 +6151,35 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         {
             const int amode = params.automationMode.load (std::memory_order_acquire);
             {
-                const auto& pts = params.automationLanes[(size_t) AutomationParam::FaderDb].pointsForRead();
+                const auto& lane = params.automationLanes[(size_t) AutomationParam::FaderDb];
                 const bool touched = params.faderTouched.load (std::memory_order_acquire);
-                const bool readsLane = amode == (int) AutomationMode::Read
-                                     || (amode == (int) AutomationMode::Touch && ! touched);
+                const bool readsLane = (amode == (int) AutomationMode::Read
+                                        || (amode == (int) AutomationMode::Touch && ! touched))
+                                     && ! lane.passOpen.load (std::memory_order_acquire);
+                const auto& pts = lane.pointsForRead();
                 const float v = (readsLane && ! pts.empty())
                     ? evaluateLane (pts, blockStartSamples, AutomationParam::FaderDb)
                     : params.faderDb.load (std::memory_order_relaxed);
                 params.liveFaderDb.store (v, std::memory_order_relaxed);
             }
             {
-                const auto& pts = params.automationLanes[(size_t) AutomationParam::Pan].pointsForRead();
+                const auto& lane = params.automationLanes[(size_t) AutomationParam::Pan];
                 const bool touched = params.panTouched.load (std::memory_order_acquire);
-                const bool readsLane = amode == (int) AutomationMode::Read
-                                     || (amode == (int) AutomationMode::Touch && ! touched);
+                const bool readsLane = (amode == (int) AutomationMode::Read
+                                        || (amode == (int) AutomationMode::Touch && ! touched))
+                                     && ! lane.passOpen.load (std::memory_order_acquire);
+                const auto& pts = lane.pointsForRead();
                 const float v = (readsLane && ! pts.empty())
                     ? evaluateLane (pts, blockStartSamples, AutomationParam::Pan)
                     : params.pan.load (std::memory_order_relaxed);
                 params.livePan.store (v, std::memory_order_relaxed);
             }
             {
-                const auto& pts = params.automationLanes[(size_t) AutomationParam::Mute].pointsForRead();
-                const bool readsLane = amode == (int) AutomationMode::Read
-                                     || amode == (int) AutomationMode::Touch;
+                const auto& lane = params.automationLanes[(size_t) AutomationParam::Mute];
+                const bool readsLane = (amode == (int) AutomationMode::Read
+                                        || amode == (int) AutomationMode::Touch)
+                                     && ! lane.passOpen.load (std::memory_order_acquire);
+                const auto& pts = lane.pointsForRead();
                 const bool effective = (readsLane && ! pts.empty())
                     ? (evaluateLane (pts, blockStartSamples, AutomationParam::Mute) >= 0.5f)
                     : params.mute.load (std::memory_order_relaxed);
@@ -6181,10 +6294,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
         // FaderDb (continuous).
         {
-            const auto& pts = aparams.automationLanes[(size_t) AutomationParam::FaderDb].pointsForRead();
+            const auto& lane = aparams.automationLanes[(size_t) AutomationParam::FaderDb];
             const bool touched = aparams.faderTouched.load (std::memory_order_acquire);
-            const bool readsLane = amode == (int) AutomationMode::Read
-                                 || (amode == (int) AutomationMode::Touch && ! touched);
+            const bool readsLane = (amode == (int) AutomationMode::Read
+                                    || (amode == (int) AutomationMode::Touch && ! touched))
+                                 && ! lane.passOpen.load (std::memory_order_acquire);
+            const auto& pts = lane.pointsForRead();
             const float v = (readsLane && ! pts.empty())
                 ? evaluateLane (pts, blockStartSamples, AutomationParam::FaderDb)
                 : aparams.returnLevelDb.load (std::memory_order_relaxed);
@@ -6192,9 +6307,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         }
         // Mute (discrete).
         {
-            const auto& pts = aparams.automationLanes[(size_t) AutomationParam::Mute].pointsForRead();
-            const bool readsLane = amode == (int) AutomationMode::Read
-                                 || amode == (int) AutomationMode::Touch;
+            const auto& lane = aparams.automationLanes[(size_t) AutomationParam::Mute];
+            const bool readsLane = (amode == (int) AutomationMode::Read
+                                    || amode == (int) AutomationMode::Touch)
+                                 && ! lane.passOpen.load (std::memory_order_acquire);
+            const auto& pts = lane.pointsForRead();
             const bool effective = (readsLane && ! pts.empty())
                 ? (evaluateLane (pts, blockStartSamples, AutomationParam::Mute) >= 0.5f)
                 : aparams.mute.load (std::memory_order_relaxed);
@@ -6206,10 +6323,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     {
         auto& mparams = session.master();
         const int amode = mparams.automationMode.load (std::memory_order_acquire);
-        const auto& pts = mparams.automationLanes[(size_t) AutomationParam::FaderDb].pointsForRead();
+        const auto& lane = mparams.automationLanes[(size_t) AutomationParam::FaderDb];
         const bool touched = mparams.faderTouched.load (std::memory_order_acquire);
-        const bool readsLane = amode == (int) AutomationMode::Read
-                             || (amode == (int) AutomationMode::Touch && ! touched);
+        const bool readsLane = (amode == (int) AutomationMode::Read
+                                || (amode == (int) AutomationMode::Touch && ! touched))
+                             && ! lane.passOpen.load (std::memory_order_acquire);
+        const auto& pts = lane.pointsForRead();
         const float v = (readsLane && ! pts.empty())
             ? evaluateLane (pts, blockStartSamples, AutomationParam::FaderDb)
             : mparams.faderDb.load (std::memory_order_relaxed);
@@ -6435,10 +6554,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         if (offlineRender)
             clickRolling = false;
 
-        // The click mixes post-master, AFTER the master-stage aux PDC delayed
-        // the program by masterDryPdcApplied - reference the click to the
-        // delayed position or it leads everything it's supposed to mark.
-        metronome.process (blockStartSamples - (std::int64_t) masterDryPdcApplied,
+        // The post-master click follows every mix delay. Master-stage PDC
+        // uses the applied delay because its target can change mid-roll.
+        const int mixLatency = getTrackOutputLatencySamples()
+                             + busAlignSamples.load (std::memory_order_relaxed)
+                             + masterDryPdcApplied + master.getOversamplingLatencySamples()
+                             + getMasterTapeLatencySamples();
+        metronome.process (blockStartSamples - (std::int64_t) mixLatency,
                             clickRolling,
                             mixL.data(), mixR.data(), numSamples,
                             /*forceEnable*/ inCountIn);

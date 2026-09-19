@@ -331,15 +331,11 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     {
         const bool newState = muteButton.getToggleState();
         lane.params.mute.store (newState, std::memory_order_relaxed);
-
-        // WRITE only: drop a discrete mute point at the playhead. Touch is
-        // excluded because the audio thread reads the discrete lane in Touch
-        // (routeDiscrete, no `touched` gate), so a Touch-mode push_back would
-        // race that read. Write reads `manual`, so there's no overlap.
-        const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
-        const bool playing = engine.getTransport().isPlaying();
-        if (playing && amode == (int) AutomationMode::Write)
-            captureWritePoint (AutomationParam::Mute, newState ? 1.0f : 0.0f);
+        // The timer records mute in WRITE too; recording the click as well
+        // lands the change where it was made, not up to a tick later.
+        if (engine.getTransport().isPlaying()
+            && lane.params.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Write)
+            recordAutomation (AutomationParam::Mute, true, newState ? 1.0f : 0.0f);
     };
     muteButton.addMouseListener (this, false);
     addAndMakeVisible (muteButton);
@@ -350,13 +346,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     autoModeButton.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
     autoModeButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff909094));
     autoModeButton.onClick = [this] { showAutoModeMenu(); };
-    {
-        const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
-        autoModeButton.setButtonText (amode == (int) AutomationMode::Off   ? "Off"
-                                       : amode == (int) AutomationMode::Read  ? "R"
-                                       : amode == (int) AutomationMode::Write ? "W"
-                                                                              : "T");
-    }
+    applyAutoMode (lane.params.automationMode.load (std::memory_order_relaxed));
     addAndMakeVisible (autoModeButton);
 
     // Cue/headphone output routing. "Master only" = no hardware tap; any other
@@ -486,6 +476,8 @@ AuxLaneComponent::~AuxLaneComponent()
     // eventually, but base-class destruction runs AFTER member
     // destruction - leaving a window for a UAF.
     stopTimer();
+    for (int p = 0; p < kNumAutomationParams; ++p)
+        recordAutomation ((AutomationParam) p, false, 0.0f);
     for (auto& s : slots)
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -521,6 +513,7 @@ void AuxLaneComponent::timerCallback()
     // is mode-agnostic - gated only on the user not dragging - so a
     // MIDI-bound aux return moves the on-screen fader in Off mode too.
     const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
+    applyAutoMode (amode);
     const bool isWrite = amode == (int) AutomationMode::Write;
     const bool isTouch = amode == (int) AutomationMode::Touch;
     const bool playing = engine.getTransport().isPlaying();
@@ -538,10 +531,8 @@ void AuxLaneComponent::timerCallback()
             displayedLiveReturnLevelDb = live;
         }
 
-        const bool capturing = playing && (isWrite || (isTouch && touched));
-        if (capturing)
-            captureWritePoint (AutomationParam::FaderDb,
-                                lane.params.returnLevelDb.load (std::memory_order_relaxed));
+        recordAutomation (AutomationParam::FaderDb, playing && (isWrite || (isTouch && touched)),
+                          lane.params.returnLevelDb.load (std::memory_order_relaxed));
     }
 
     // Mute visual sync - read the manual atom in Off / Write so we
@@ -551,7 +542,6 @@ void AuxLaneComponent::timerCallback()
     // since the engine drives mute from the automation lane there.
     // Mirrors the track-strip fix in ChannelStripComponent.
     {
-        const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
         const bool laneDrives =
                amode == (int) AutomationMode::Read
             || amode == (int) AutomationMode::Touch;
@@ -561,6 +551,8 @@ void AuxLaneComponent::timerCallback()
         if (muteButton.getToggleState() != effective)
             muteButton.setToggleState (effective, juce::dontSendNotification);
     }
+    recordAutomation (AutomationParam::Mute, playing && isWrite,
+                      lane.params.mute.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
 
     // Rebuild the output-pair menu when the device's ACTIVE output set changes
     // (e.g. the user enabled/swapped outputs in Audio settings - the physical
@@ -634,88 +626,41 @@ void AuxLaneComponent::showAutoModeMenu()
 
 void AuxLaneComponent::setAutoMode (AutomationMode m)
 {
-    // See ChannelStripComponent::setAutoMode for the full rationale -
-    // auto-thin on mode-flip is racy until lanes move to AtomicSnapshot.
-    // Pre-filter at capture time handles the worst bloat; File ▸
-    // Optimize automation is the safe explicit RDP entrypoint.
+    // A pass this mode change ends is spliced on the next timer tick.
     lane.params.automationMode.store ((int) m, std::memory_order_release);
-    autoModeButton.setButtonText (m == AutomationMode::Off   ? "Off"
-                                   : m == AutomationMode::Read  ? "R"
-                                   : m == AutomationMode::Write ? "W"
-                                                                : "T");
+    applyAutoMode ((int) m);
 }
 
-void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormValue)
+void AuxLaneComponent::applyAutoMode (int mode)
 {
-    auto normalize = [] (AutomationParam p, float v) -> float
-    {
-        switch (p)
-        {
-            case AutomationParam::FaderDb:
-            {
-                const float lo = ChannelStripParams::kFaderMinDb;
-                const float hi = ChannelStripParams::kFaderMaxDb;
-                return std::clamp ((v - lo) / (hi - lo), 0.0f, 1.0f);
-            }
-            case AutomationParam::Mute:
-                return v >= 0.5f ? 1.0f : 0.0f;
-            // The other AutomationParam values (Pan, Solo, AuxSend*) are
-            // valid in the enum but don't apply to aux lanes. captureWritePoint
-            // is never called for them; the explicit cases silence
-            // -Wswitch-enum.
-            case AutomationParam::Pan:
-            case AutomationParam::Solo:
-            case AutomationParam::AuxSend1:
-            case AutomationParam::AuxSend2:
-            case AutomationParam::AuxSend3:
-            case AutomationParam::AuxSend4:
-            case AutomationParam::kCount:
-                break;
-        }
-        return 0.0f;
-    };
+    const bool interactive = mode != (int) AutomationMode::Read;
+    returnFader.setEnabled (interactive);
+    muteButton .setEnabled (interactive);
+    if (mode == appliedAutoMode) return;
+    appliedAutoMode = mode;
+    autoModeButton.setButtonText (mode == (int) AutomationMode::Off   ? "Off"
+                                   : mode == (int) AutomationMode::Read  ? "R"
+                                   : mode == (int) AutomationMode::Write ? "W"
+                                                                         : "T");
+}
 
-    // In-place append/erase via mutableForWritePass: sound only because the
-    // audio thread does not read this lane in Write/Touch-touched mode.
-    auto& laneRef = lane.params.automationLanes[(size_t) param].mutableForWritePass();
-    AutomationPoint pt;
-    pt.timeSamples   = engine.getTransport().getPlayhead();
-    pt.value         = normalize (param, denormValue);
-    pt.recordedAtBPM = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
-
-    // Pre-filter: skip near-identical samples close in time. Same shape
-    // as the per-channel captureWritePoint pre-filter; spec lines
-    // 750-753 (delta + max-span before RDP). The pt.timeSamples >=
-    // last.timeSamples guard keeps us from short-circuiting after a
-    // loop-wrap or transport rewind - those need the truncation block
-    // below to drop the now-stale future points.
-    if (isContinuousParam (param) && ! laneRef.empty())
+void AuxLaneComponent::recordAutomation (AutomationParam param, bool recording, float value)
+{
+    auto& recorder = passRecorders[(size_t) param];
+    auto& automation = lane.params.automationLanes[(size_t) param];
+    if (recording)
     {
-        constexpr float kDeltaEps = 0.001f;
-        constexpr std::int64_t kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
-        const auto& last = laneRef.back();
-        if (std::abs (pt.value - last.value) < kDeltaEps
-            && pt.timeSamples >= last.timeSamples
-            && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
-            return;
+        recorder.record (automation, engine.getTransport().getPlayhead(), value,
+                         engine.getSession().tempoBpm.load (std::memory_order_relaxed),
+                         engine.getTransport().getLocateCount());
     }
-
-    if (! laneRef.empty() && laneRef.back().timeSamples >= pt.timeSamples)
+    else if (recorder.active())
     {
-        if (laneRef.back().timeSamples > pt.timeSamples)
-        {
-            auto cutoff = std::lower_bound (laneRef.begin(), laneRef.end(),
-                pt.timeSamples,
-                [] (const AutomationPoint& a, std::int64_t t) { return a.timeSamples < t; });
-            laneRef.erase (cutoff, laneRef.end());
-        }
-        if (! laneRef.empty() && laneRef.back().timeSamples == pt.timeSamples)
-        {
-            laneRef.back() = pt;
-            return;
-        }
+        const bool touch = lane.params.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Touch;
+        recorder.finish (automation, touch ? (std::int64_t) (engine.getCurrentSampleRate()
+                                                             * AutomationPassRecorder::kTouchReturnSeconds)
+                                           : 0);
     }
-    laneRef.push_back (pt);
 }
 
 void AuxLaneComponent::refreshSlotControls (int i)

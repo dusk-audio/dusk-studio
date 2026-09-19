@@ -739,15 +739,11 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     {
         const bool newState = muteButton.getToggleState();
         bus.strip.mute.store (newState, std::memory_order_release);
-        // WRITE only: the audio thread reads the discrete mute lane in Touch
-        // (routeDiscrete has no `touched` gate), so a Touch-mode capture would
-        // push_back into a vector it is mid-read on. Write reads `manual`, so
-        // the append never overlaps a lane read.
-        const int m = bus.strip.automationMode.load (std::memory_order_relaxed);
-        const bool capturing = engine.getTransport().isPlaying()
-                             && m == (int) AutomationMode::Write;
-        if (capturing)
-            captureWritePoint (AutomationParam::Mute, newState ? 1.0f : 0.0f);
+        // The timer records mute in WRITE too; recording the click as well
+        // lands the change where it was made, not up to a tick later.
+        if (engine.getTransport().isPlaying()
+            && bus.strip.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Write)
+            recordAutomation (AutomationParam::Mute, true, newState ? 1.0f : 0.0f);
     };
     addAndMakeVisible (muteButton);
 
@@ -773,7 +769,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     addAndMakeVisible (autoModeButton);
     // Apply the restored mode (not just the button visuals) so a bus loaded in
     // READ opens with its fader / pan / mute already disabled.
-    setAutoMode ((AutomationMode) bus.strip.automationMode.load (std::memory_order_relaxed));
+    applyAutoMode (bus.strip.automationMode.load (std::memory_order_relaxed));
 
     // Mouse listeners so the strip's mouseDown sees right-clicks on each
     // child (e.eventComponent identifies which control was hit). Matches
@@ -837,77 +833,27 @@ BusComponent::~BusComponent()
     // own destructor calls stopTimer too but that's the BASE-class
     // destructor - it runs AFTER derived-class members destruct.
     stopTimer();
+    for (int p = 0; p < kNumAutomationParams; ++p)
+        recordAutomation ((AutomationParam) p, false, 0.0f);
 }
 
-void BusComponent::captureWritePoint (AutomationParam param, float denormValue)
+void BusComponent::recordAutomation (AutomationParam param, bool recording, float value)
 {
-    // Denormalize -> 0..1 lane storage. Mirrors ChannelStripComponent's
-    // capture; buses only automate FaderDb / Pan / Mute.
-    auto normalize = [] (AutomationParam p, float v) -> float
+    auto& recorder = passRecorders[(size_t) param];
+    auto& lane = bus.strip.automationLanes[(size_t) param];
+    if (recording)
     {
-        switch (p)
-        {
-            case AutomationParam::FaderDb:
-            {
-                const float lo = ChannelStripParams::kFaderMinDb;
-                const float hi = ChannelStripParams::kFaderMaxDb;
-                return jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
-            }
-            case AutomationParam::Pan:
-                return jlimit (0.0f, 1.0f, (v + 1.0f) * 0.5f);
-            case AutomationParam::Mute:
-                return v >= 0.5f ? 1.0f : 0.0f;
-            // Buses don't automate solo or aux sends.
-            case AutomationParam::Solo:
-            case AutomationParam::AuxSend1:
-            case AutomationParam::AuxSend2:
-            case AutomationParam::AuxSend3:
-            case AutomationParam::AuxSend4:
-            case AutomationParam::kCount:
-                break;
-        }
-        return 0.0f;
-    };
-
-    auto& lane = bus.strip.automationLanes[(size_t) param].mutableForWritePass();  // in-place; audio does not read this lane in Write/Touch-touched
-    AutomationPoint pt;
-    pt.timeSamples   = engine.getTransport().getPlayhead();
-    pt.value         = normalize (param, denormValue);
-    pt.recordedAtBPM = sessionRef.tempoBpm.load (std::memory_order_relaxed);
-
-    // Pre-filter: drop near-identical continuous samples close in time
-    // (timer noise when the control hasn't moved). Discrete params keep
-    // every transition.
-    if (isContinuousParam (param) && ! lane.empty())
-    {
-        constexpr float kDeltaEps = 0.001f;
-        constexpr std::int64_t kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
-        const auto& last = lane.back();
-        if (std::abs (pt.value - last.value) < kDeltaEps
-            && pt.timeSamples >= last.timeSamples
-            && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
-            return;
+        recorder.record (lane, engine.getTransport().getPlayhead(), value,
+                         sessionRef.tempoBpm.load (std::memory_order_relaxed),
+                         engine.getTransport().getLocateCount());
     }
-
-    // Keep the ascending-time invariant evaluateLane's binary search needs.
-    // A backward playhead (loop wrap / rewind) truncates the now-future tail
-    // then appends; a same-sample hit replaces in place.
-    if (! lane.empty() && lane.back().timeSamples >= pt.timeSamples)
+    else if (recorder.active())
     {
-        if (lane.back().timeSamples > pt.timeSamples)
-        {
-            auto cutoff = std::lower_bound (lane.begin(), lane.end(),
-                pt.timeSamples,
-                [] (const AutomationPoint& a, std::int64_t t) { return a.timeSamples < t; });
-            lane.erase (cutoff, lane.end());
-        }
-        if (! lane.empty() && lane.back().timeSamples == pt.timeSamples)
-        {
-            lane.back() = pt;
-            return;
-        }
+        const bool touch = bus.strip.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Touch;
+        recorder.finish (lane, touch ? (std::int64_t) (engine.getCurrentSampleRate()
+                                                        * AutomationPassRecorder::kTouchReturnSeconds)
+                                     : 0);
     }
-    lane.push_back (pt);
 }
 
 void BusComponent::showAutoModeMenu()
@@ -933,17 +879,22 @@ void BusComponent::showAutoModeMenu()
 
 void BusComponent::setAutoMode (AutomationMode mode)
 {
-    // release-store so the audio thread's acquire-load of the new mode sees
-    // every lane append made during the Write/Touch pass that just ended.
+    // A pass this mode change ends is spliced on the next timer tick.
     bus.strip.automationMode.store ((int) mode, std::memory_order_release);
+    applyAutoMode ((int) mode);
+}
 
-    // Read disables the automated controls (fader / pan / mute). Solo isn't
+void BusComponent::applyAutoMode (int mode)
+{
+    // READ locks the automated controls (fader / pan / mute). Solo isn't
     // automated, so it stays interactive in every mode.
-    const bool interactive = mode != AutomationMode::Read;
+    const bool interactive = mode != (int) AutomationMode::Read;
     faderSlider.setEnabled (interactive);
     panKnob    .setEnabled (interactive);
     muteButton .setEnabled (interactive);
 
+    if (mode == appliedAutoMode) return;
+    appliedAutoMode = mode;
     refreshAutoModeButton();
 }
 
@@ -1042,12 +993,13 @@ void BusComponent::timerCallback()
     // them every block: Off mirrors the setpoint, so MIDI-bound moves still
     // sync here; Read/Touch-untouched carry the lane value). Gate the visual
     // update on the user NOT grabbing that control so we never fight a
-    // gesture. Capture appends to the lane when playing in Write, or in Touch
-    // while the control is held.
+    // gesture. A pass records while playing in Write, or in Touch while the
+    // control is held.
     const int  amode   = bus.strip.automationMode.load (std::memory_order_relaxed);
     const bool isWrite  = amode == (int) AutomationMode::Write;
     const bool isTouch  = amode == (int) AutomationMode::Touch;
     const bool playing  = engine.getTransport().isPlaying();
+    applyAutoMode (amode);
     {
         const float live    = bus.strip.liveFaderDb.load (std::memory_order_relaxed);
         const bool  touched = bus.strip.faderTouched.load (std::memory_order_relaxed);
@@ -1062,9 +1014,8 @@ void BusComponent::timerCallback()
         else if (touched)
             displayedLiveFaderDb = live;
 
-        if (playing && (isWrite || (isTouch && touched)))
-            captureWritePoint (AutomationParam::FaderDb,
-                                bus.strip.faderDb.load (std::memory_order_relaxed));
+        recordAutomation (AutomationParam::FaderDb, playing && (isWrite || (isTouch && touched)),
+                          bus.strip.faderDb.load (std::memory_order_relaxed));
     }
     {
         const float live    = bus.strip.livePan.load (std::memory_order_relaxed);
@@ -1077,9 +1028,8 @@ void BusComponent::timerCallback()
         else if (touched)
             displayedLivePan = live;
 
-        if (playing && (isWrite || (isTouch && touched)))
-            captureWritePoint (AutomationParam::Pan,
-                                bus.strip.pan.load (std::memory_order_relaxed));
+        recordAutomation (AutomationParam::Pan, playing && (isWrite || (isTouch && touched)),
+                          bus.strip.pan.load (std::memory_order_relaxed));
     }
     {
         // Mute display follows the active source: the lane value in
@@ -1093,6 +1043,8 @@ void BusComponent::timerCallback()
                                    : bus.strip.mute.load (std::memory_order_relaxed);
         if (muteButton.getToggleState() != m)
             muteButton.setToggleState (m, juce::dontSendNotification);
+        recordAutomation (AutomationParam::Mute, playing && isWrite,
+                          bus.strip.mute.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
     }
     {
         const bool s = bus.strip.solo.load (std::memory_order_relaxed);

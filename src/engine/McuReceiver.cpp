@@ -366,17 +366,17 @@ void McuReceiver::handleNotePress (int noteNumber, bool pressed) noexcept
             case mcu::btn::Play:
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Play,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
                 return;
             case mcu::btn::Stop:
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Stop,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
                 return;
             case mcu::btn::Record:
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Record,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
                 return;
             case mcu::btn::Loop:
                 // Flipping savedLoopEnabled here wouldn't take effect (the
@@ -385,7 +385,7 @@ void McuReceiver::handleNotePress (int noteNumber, bool pressed) noexcept
                 // Transport API.
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::LoopToggle,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
                 return;
             default: break;
         }

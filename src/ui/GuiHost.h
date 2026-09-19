@@ -42,6 +42,10 @@ public:
     // The value behind the open editor, by control name. False when no editor
     // is up, or the plug-in has no such control.
     virtual bool readEditorControl (const std::string& name, double& valueOut) const = 0;
+
+    // Click MUTE / SOLO as the mouse would; the click lands on a later tick.
+    virtual void clickMute() = 0;
+    virtual void clickSolo() = 0;
 };
 
 // One aux lane's plug-in slots.
@@ -74,9 +78,25 @@ public:
     virtual StripHandle*   strip   (int index) = 0;
     virtual AuxLaneHandle* auxLane (int index) = 0;
 
+    // A strip's automation mode as the strip itself shows it: the mode label,
+    // and whether its fader takes input (READ locks it). False when that strip
+    // is not built.
+    enum class StripKind { Channel, Bus, Master, Aux };
+    virtual bool automationView (StripKind kind, int index,
+                                 std::string& label, bool& faderEnabled) = 0;
+
     virtual bool canEmbedPluginEditors() const = 0;
     virtual bool modalStackEmpty() const = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.
     virtual void closeTopModal() = 0;
+
+    // One tick of the autosave heartbeat, as its timer runs it.
+    virtual void autosaveTick() = 0;
+    // Opens a session the way File > Open does: a newer autosave beside it
+    // raises the recovery prompt instead of loading.
+    virtual bool openSession (const std::filesystem::path& sessionJson) = 0;
+    // Answers the recovery prompt; false when none is up.
+    enum class Recovery { Recover, LoadSaved, Cancel };
+    virtual bool answerRecovery (Recovery) = 0;
 };
 } // namespace duskstudio::scenario

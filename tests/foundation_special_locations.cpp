@@ -154,6 +154,21 @@ TEST_CASE ("dusk::fs special locations match juce::File", "[foundation][fs]")
         REQUIRE_FALSE (ec);
     }
 
+    SECTION ("createUniqueTempDirectory names carry the process id")
+    {
+#if defined(_WIN32)
+        const auto process = std::to_string ((unsigned long) GetCurrentProcessId());
+#else
+        const auto process = std::to_string ((long) ::getpid());
+#endif
+        const auto dir = fs::createUniqueTempDirectory ("dusk-fs-pid-");
+        REQUIRE_FALSE (dir.empty());
+        REQUIRE (dir.filename().u8string().rfind ("dusk-fs-pid-" + process + "-", 0) == 0);
+        std::error_code ec;
+        stdfs::remove_all (dir, ec);
+        REQUIRE_FALSE (ec);
+    }
+
     SECTION ("currentExecutablePath points at the same file as juce")
     {
         // JUCE resolves via dladdr (path relative to CWD); dusk reads /proc/self/exe.

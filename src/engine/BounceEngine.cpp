@@ -432,19 +432,15 @@ void BounceEngine::run()
         engine.getMasteringPlayer().play();
     }
 
-    // PDC lead-in: cross-track compensation delays the master mix by the
-    // deepest track latency, the master-stage aux PDC delays it again by the
-    // deepest aux-lane latency, and the master tape stage holds its own
-    // constant delay whether or not it is engaged. Render that many extra
-    // samples and discard them up front so the file isn't shifted. The
-    // MasteringChain path bypasses the channel strips and aux lanes, but it
-    // still runs the master, so it carries the tape's share alone.
-    const std::int64_t masterTapeLead = (std::int64_t) engine.getMasterTapeLatencySamples();
+    // Lead-in: everything between the timeline and the captured output delays
+    // it - plugin compensation, the oversamplers, the master-stage aux delay
+    // and the tape (see getMixLatencySamples). Render that many extra samples
+    // and drop them up front so the file isn't shifted. The mastering stage
+    // runs the player straight into the mastering chain, so only the chain's
+    // own latency applies there.
     const std::int64_t leadIn = (renderMode == Mode::MasteringChain)
-                                 ? masterTapeLead
-                                 : (std::int64_t) engine.getAggregatePdcLatencySamples()
-                                     + (std::int64_t) engine.getMasterDryPdcTargetSamples()
-                                     + masterTapeLead;
+                                 ? (std::int64_t) engine.getMasteringChain().getLatencySamples()
+                                 : (std::int64_t) engine.getMixLatencySamples();
     const std::int64_t toRender = totalSamples + leadIn;
 
     std::int64_t done    = 0;   // samples processed through the engine
@@ -602,13 +598,14 @@ void BounceEngine::clearAllStemTaps()
 
 std::int64_t BounceEngine::leadInFor (StemTarget::Kind kind) const
 {
-    const auto trackLead = (std::int64_t) engine.getAggregatePdcLatencySamples();
-    // Track and bus stems are captured before the master, so they miss both the
-    // master-stage aux delay and the tape stage's own.
-    if (kind == StemTarget::Kind::Track || kind == StemTarget::Kind::Bus)
-        return trackLead;
-    return trackLead + (std::int64_t) engine.getMasterDryPdcTargetSamples()
-         + (std::int64_t) engine.getMasterTapeLatencySamples();
+    switch (kind)
+    {
+        case StemTarget::Kind::Track: return engine.getTrackOutputLatencySamples();
+        case StemTarget::Kind::Bus:   return engine.getBusOutputLatencySamples();
+        case StemTarget::Kind::Aux:   return engine.getAuxReturnLatencySamples();
+        case StemTarget::Kind::Mix:   break;
+    }
+    return engine.getMixLatencySamples();
 }
 
 bool BounceEngine::runStemsMode()
