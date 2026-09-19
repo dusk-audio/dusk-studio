@@ -455,3 +455,246 @@ TEST_CASE ("SessionSerializer preserves XML fallback for rejected structured des
 
     dir.deleteRecursively();
 }
+
+// The manual lists markers, MIDI bindings and fader-group membership among the
+// things a session holds. Each has its own serialiser branch, so each is its
+// own way to lose user work on the next load.
+TEST_CASE ("SessionSerializer round-trips markers, bindings and fader groups",
+           "[session][serializer]")
+{
+    using duskstudio::MidiBinding;
+    using duskstudio::MidiBindingTarget;
+    using duskstudio::MidiBindingTrigger;
+    using duskstudio::MidiButtonMode;
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    a.addMarker (48000, "Verse");
+    a.addMarker (96000, "Chorus");
+    a.getMarkers()[1].colour = juce::Colour (0xff20c0a0);
+
+    MidiBinding fader;
+    fader.channel = 3;
+    fader.dataNumber = 22;
+    fader.trigger = MidiBindingTrigger::CC;
+    fader.target = MidiBindingTarget::TrackFader;
+    fader.targetIndex = 5;
+    MidiBinding mute;
+    mute.channel = 0;
+    mute.dataNumber = 41;
+    mute.trigger = MidiBindingTrigger::Note;
+    mute.target = MidiBindingTarget::TrackMute;
+    mute.targetIndex = 2;
+    mute.buttonMode = MidiButtonMode::Toggle;
+    a.midiBindings.publish (std::make_unique<std::vector<MidiBinding>> (
+        std::vector<MidiBinding> { fader, mute }));
+
+    a.track (0).strip.faderGroupId.store (4);
+    a.track (7).strip.faderGroupId.store (4);
+
+    REQUIRE (SessionSerializer::save (a, target));
+    auto b = std::make_unique<Session>();
+    REQUIRE (SessionSerializer::load (*b, target));
+
+    REQUIRE (b->getMarkers().size() == 2);
+    CHECK (b->getMarkers()[0].name == "Verse");
+    CHECK (b->getMarkers()[0].timelineSamples == 48000);
+    CHECK (b->getMarkers()[1].name == "Chorus");
+    CHECK (b->getMarkers()[1].timelineSamples == 96000);
+    CHECK (b->getMarkers()[1].colour == juce::Colour (0xff20c0a0));
+
+    const auto& bindings = b->midiBindings.current();
+    REQUIRE (bindings.size() == 2);
+    CHECK (bindings[0].channel == 3);
+    CHECK (bindings[0].dataNumber == 22);
+    CHECK (bindings[0].trigger == MidiBindingTrigger::CC);
+    CHECK (bindings[0].target == MidiBindingTarget::TrackFader);
+    CHECK (bindings[0].targetIndex == 5);
+    CHECK (bindings[1].dataNumber == 41);
+    CHECK (bindings[1].trigger == MidiBindingTrigger::Note);
+    CHECK (bindings[1].target == MidiBindingTarget::TrackMute);
+    CHECK (bindings[1].targetIndex == 2);
+    CHECK (bindings[1].buttonMode == MidiButtonMode::Toggle);
+
+    CHECK (b->track (0).strip.faderGroupId.load() == 4);
+    CHECK (b->track (7).strip.faderGroupId.load() == 4);
+    CHECK (b->track (1).strip.faderGroupId.load() == 0);
+
+    dir.deleteRecursively();
+}
+
+// Every region field the manual promises: fades and their auto flag, gain,
+// label, colour, mute, lock and the take history under it.
+TEST_CASE ("SessionSerializer round-trips every region field", "[session][serializer]")
+{
+    using duskstudio::AudioRegion;
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+    using duskstudio::TakeRef;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    a.setSessionDirectory (dir);
+    AudioRegion region;
+    region.file = dir.getChildFile ("audio").getChildFile ("take01.wav");
+    region.timelineStart = 12000;
+    region.lengthInSamples = 48000;
+    region.sourceOffset = 2400;
+    region.numChannels = 2;
+    region.fadeInSamples = 480;
+    region.fadeOutSamples = 960;
+    region.fadeInAuto = true;
+    region.gainDb = -3.5f;
+    region.customColour = juce::Colour (0xff804020);
+    region.label = "Chorus double";
+    region.muted = true;
+    region.locked = true;
+    TakeRef older;
+    older.file = dir.getChildFile ("audio").getChildFile ("take00.wav");
+    older.sourceOffset = 100;
+    older.lengthInSamples = 24000;
+    region.previousTakes.push_back (older);
+    a.track (3).regions.push_back (region);
+
+    REQUIRE (SessionSerializer::save (a, target));
+    auto b = std::make_unique<Session>();
+    b->setSessionDirectory (dir);
+    REQUIRE (SessionSerializer::load (*b, target));
+
+    REQUIRE (b->track (3).regions.size() == 1);
+    const auto& r = b->track (3).regions[0];
+    CHECK (r.file.getFileName() == "take01.wav");
+    CHECK (r.timelineStart == 12000);
+    CHECK (r.lengthInSamples == 48000);
+    CHECK (r.sourceOffset == 2400);
+    CHECK (r.numChannels == 2);
+    CHECK (r.fadeInSamples == 480);
+    CHECK (r.fadeOutSamples == 960);
+    CHECK (r.fadeInAuto);
+    CHECK_FALSE (r.fadeOutAuto);
+    CHECK_THAT (r.gainDb, WithinAbs (-3.5f, 1.0e-6f));
+    CHECK (r.customColour == juce::Colour (0xff804020));
+    CHECK (r.label == "Chorus double");
+    CHECK (r.muted);
+    CHECK (r.locked);
+    REQUIRE (r.previousTakes.size() == 1);
+    CHECK (r.previousTakes[0].file.getFileName() == "take00.wav");
+    CHECK (r.previousTakes[0].sourceOffset == 100);
+    CHECK (r.previousTakes[0].lengthInSamples == 24000);
+
+    dir.deleteRecursively();
+}
+
+// A save that cannot write says so and leaves the session it was handed alone,
+// which is what lets the alert offer Save As on a still-complete session.
+TEST_CASE ("SessionSerializer save failure keeps the session and its temporary copy",
+           "[session][serializer]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    // A non-empty directory where the session file belongs: the atomic replace
+    // cannot put a file over it on any platform, and unlike an empty one it
+    // cannot be cleared out of the way either.
+    const auto target = dir.getChildFile ("session.json");
+    REQUIRE (target.createDirectory());
+    REQUIRE (target.getChildFile ("keep.txt").replaceWithText ("keep"));
+
+    Session a;
+    a.tempoBpm.store (132.0f);
+    a.track (2).strip.faderDb.store (-7.5f);
+    a.addMarker (24000, "Intro");
+
+    CHECK_FALSE (SessionSerializer::save (a, target));
+    CHECK_FALSE (target.existsAsFile());
+    // The temporary stays on purpose when the replace fails: it is a complete,
+    // fsynced copy of what the save was asked to write.
+    const auto kept = dir.getChildFile ("session.json.tmp");
+    REQUIRE (kept.existsAsFile());
+    CHECK (kept.loadFileAsString().contains ("\"markers\""));
+    CHECK_THAT (a.tempoBpm.load(), WithinAbs (132.0f, 1.0e-6f));
+    CHECK_THAT (a.track (2).strip.faderDb.load(), WithinAbs (-7.5f, 1.0e-6f));
+    REQUIRE (a.getMarkers().size() == 1);
+    CHECK (a.getMarkers()[0].name == "Intro");
+
+    dir.deleteRecursively();
+}
+
+// The mixer half of what a session holds: bus and master parameters, and each
+// aux lane's name, colour and return.
+TEST_CASE ("SessionSerializer round-trips the mixer", "[session][serializer]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    auto& bus = a.bus (1).strip;
+    bus.faderDb.store (-4.5f);
+    bus.pan.store (0.3f);
+    bus.mute.store (true);
+    bus.eqEnabled.store (true);
+    bus.eqLfGainDb.store (6.0f);
+    bus.eqMidGainDb.store (-2.5f);
+    bus.eqHfGainDb.store (3.5f);
+    bus.compEnabled.store (true);
+    bus.compThreshDb.store (-12.0f);
+
+    auto& master = a.master();
+    master.faderDb.store (-1.5f);
+    master.monoSum.store (true);
+    master.tapeEnabled.store (true);
+    master.eqEnabled.store (true);
+    master.eqLfBoost.store (4.0f);
+    master.eqHfBoostFreq.store (12000.0f);
+    master.compEnabled.store (true);
+
+    auto& aux = a.auxLane (2);
+    aux.name = "Plate";
+    aux.colour = juce::Colour (0xff3050b0);
+    aux.params.returnLevelDb.store (-6.0f);
+    aux.params.mute.store (true);
+    aux.params.outputPair.store (3);
+
+    REQUIRE (SessionSerializer::save (a, target));
+    auto b = std::make_unique<Session>();
+    REQUIRE (SessionSerializer::load (*b, target));
+
+    const auto& busB = b->bus (1).strip;
+    CHECK_THAT (busB.faderDb.load(), WithinAbs (-4.5f, 1.0e-6f));
+    CHECK_THAT (busB.pan.load(), WithinAbs (0.3f, 1.0e-6f));
+    CHECK (busB.mute.load());
+    CHECK (busB.eqEnabled.load());
+    CHECK_THAT (busB.eqLfGainDb.load(), WithinAbs (6.0f, 1.0e-6f));
+    CHECK_THAT (busB.eqMidGainDb.load(), WithinAbs (-2.5f, 1.0e-6f));
+    CHECK_THAT (busB.eqHfGainDb.load(), WithinAbs (3.5f, 1.0e-6f));
+    CHECK (busB.compEnabled.load());
+    CHECK_THAT (busB.compThreshDb.load(), WithinAbs (-12.0f, 1.0e-6f));
+
+    const auto& masterB = b->master();
+    CHECK_THAT (masterB.faderDb.load(), WithinAbs (-1.5f, 1.0e-6f));
+    CHECK (masterB.monoSum.load());
+    CHECK (masterB.tapeEnabled.load());
+    CHECK (masterB.eqEnabled.load());
+    CHECK_THAT (masterB.eqLfBoost.load(), WithinAbs (4.0f, 1.0e-6f));
+    CHECK_THAT (masterB.eqHfBoostFreq.load(), WithinAbs (12000.0f, 1.0e-6f));
+    CHECK (masterB.compEnabled.load());
+
+    const auto& auxB = b->auxLane (2);
+    CHECK (auxB.name == "Plate");
+    CHECK (auxB.colour == juce::Colour (0xff3050b0));
+    CHECK_THAT (auxB.params.returnLevelDb.load(), WithinAbs (-6.0f, 1.0e-6f));
+    CHECK (auxB.params.mute.load());
+    CHECK (auxB.params.outputPair.load() == 3);
+
+    dir.deleteRecursively();
+}
