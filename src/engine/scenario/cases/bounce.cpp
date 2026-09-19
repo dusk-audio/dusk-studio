@@ -234,7 +234,8 @@ std::optional<ScenarioResult> mp3Bounce (ScenarioContext& ctx)
         const bool frameSync = got >= 2 && head[0] == 0xFF && (head[1] & 0xE0) == 0xE0;
         ctx.expect (id3 || frameSync, "the .mp3 bounce does not start like an MP3 stream");
         std::error_code fsError;
-        ctx.expect (std::filesystem::file_size (out, fsError) > 4096, "the MP3 bounce is nearly empty");
+        const auto size = std::filesystem::file_size (out, fsError);
+        ctx.expect (! fsError && size > 4096, "the MP3 bounce is missing or nearly empty");
         ctx.complete (ctx.verdict());
     });
     return std::nullopt;
