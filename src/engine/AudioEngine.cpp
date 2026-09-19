@@ -2,6 +2,7 @@
 #include "BounceEngine.h"
 #include "GeneratedMidiBudget.h"
 #include "LoopTimeline.h"
+#include "MidiPanic.h"
 #include "PdcMath.h"
 #include "PluginStateDiagnostics.h"
 #include "RtPriority.h"
@@ -5322,8 +5323,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         constexpr int kGeneratedEventBytes = 6 + 3;
         constexpr int kGeneratedMidiBudget = 2 * (int) dusk::kMidiBlockBytes;
         constexpr int kMidiScheduleScanBudget = 32768;
-        constexpr int kHangingResetMessageCount = 16 * 3;
-        constexpr int kHangingResetBytes = kHangingResetMessageCount
+        constexpr int kHangingResetBytes = midi::kHangingResetMessageCount
                                          * kGeneratedEventBytes;
         static_assert (kGeneratedMidiBudget
                        >= (8192 / kMinLoopRecordSamples + 1)
@@ -5370,23 +5370,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // capacity before it can consume the shared generated-event budget.
             if (! generatedMidiBudget.consumeStructural (kHangingResetBytes))
                 return false;
-            for (int ch = 1; ch <= 16; ++ch)
-            {
-                const std::array<std::uint8_t, 3> sustainOff {
-                    (std::uint8_t) (0xB0 | (ch - 1)), 64, 0 };
-                const std::array<std::uint8_t, 3> allNotesOff {
-                    (std::uint8_t) (0xB0 | (ch - 1)), 123, 0 };
-                const std::array<std::uint8_t, 3> allSoundOff {
-                    (std::uint8_t) (0xB0 | (ch - 1)), 120, 0 };
-                if (! perTrackMidi[(size_t) t].addEvent (
-                        sustainOff.data(), (int) sustainOff.size(), sampleOffset)
-                    || ! perTrackMidi[(size_t) t].addEvent (
-                        allNotesOff.data(), (int) allNotesOff.size(), sampleOffset)
-                    || ! perTrackMidi[(size_t) t].addEvent (
-                        allSoundOff.data(), (int) allSoundOff.size(), sampleOffset))
-                    return false;
-            }
-            return true;
+            return midi::emitHangingReset (perTrackMidi[(size_t) t], sampleOffset);
         };
         if (midiTrack && perTrackFlush && ! emitHangingMidiReset (0))
             midiBufferOverflow = true;

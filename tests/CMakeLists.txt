@@ -67,7 +67,9 @@ add_executable(dusk-studio-tests
     ipc_param_push_queue.cpp
     ipc_windows_backend_contract.cpp
     single_instance_windows_contract.cpp
+    stderr_marker_contract.cpp
     clap_editor_lifecycle.cpp
+    panic_probe_fixtures.cpp
     plugin_state_diagnostics.cpp
     channel_strip_midi_gate.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/ChannelStrip.cpp
@@ -371,6 +373,30 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-multi-bus-clap-fixture>")
     add_dependencies(dusk-studio-tests dusk-studio-multi-bus-clap-fixture)
 
+    # These two land beside the multi-bus fixture at the build root rather than
+    # in this subdirectory, so DUSKSTUDIO_FIXTURE_DIR=<build-tests> resolves all
+    # three the same way. The generator expression keeps a multi-config
+    # generator from appending /<Config> to that path.
+    add_library(dusk-studio-panic-probe-clap-fixture MODULE
+        fixtures/panic_probe_clap.cpp)
+    add_library(dusk-studio-no-window-clap-fixture MODULE
+        fixtures/no_window_clap.cpp)
+    foreach(clapFixture
+            dusk-studio-panic-probe-clap-fixture
+            dusk-studio-no-window-clap-fixture)
+        set_target_properties(${clapFixture} PROPERTIES
+            PREFIX ""
+            SUFFIX ".clap"
+            LIBRARY_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}>")
+        target_compile_features(${clapFixture} PRIVATE cxx_std_17)
+        target_include_directories(${clapFixture} PRIVATE
+            ${CMAKE_SOURCE_DIR}/external/clap/include)
+        add_dependencies(dusk-studio-tests ${clapFixture})
+    endforeach()
+    target_compile_definitions(dusk-studio-tests PRIVATE
+        DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-panic-probe-clap-fixture>"
+        DUSKSTUDIO_NO_WINDOW_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-no-window-clap-fixture>")
+
     if(APPLE)
         # The directory-bundle resolver test needs a valid Mach-O image that
         # dlopen can safely inspect. Copying the running test executable aborts
@@ -518,28 +544,53 @@ if(DUSKSTUDIO_NATIVE_VST3)
         PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
     get_target_property(DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE
         dusk-studio-runtime-relayout-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+
+    smtg_add_vst3plugin(dusk-studio-panic-probe-vst3-fixture
+        fixtures/panic_probe_vst3.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/common/pluginview.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/moduleinit.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/pluginfactory.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstbus.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstcomponentbase.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstparameters.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstsinglecomponenteffect.cpp)
+    target_link_libraries(dusk-studio-panic-probe-vst3-fixture
+        PRIVATE dusk-vst3-hosting)
+    target_compile_definitions(dusk-studio-panic-probe-vst3-fixture
+        PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
+    get_target_property(DUSKSTUDIO_PANIC_PROBE_VST3_BUNDLE
+        dusk-studio-panic-probe-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+
     if(MSVC)
         # The SDK compiles its plug-in targets with /Zi in Release. Under Ninja
-        # the fixture's translation units then race for one vc140.pdb (C1041),
+        # a fixture's translation units then race for one vc140.pdb (C1041),
         # and sccache cannot cache /Zi objects. Embed the debug info instead.
-        get_target_property(DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS
-            dusk-studio-runtime-relayout-vst3-fixture COMPILE_OPTIONS)
-        list(TRANSFORM DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS REPLACE "/Zi" "/Z7")
-        set_target_properties(dusk-studio-runtime-relayout-vst3-fixture
-            PROPERTIES COMPILE_OPTIONS "${DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS}")
-        if(NOT CMAKE_CONFIGURATION_TYPES)
-            # The SDK places the Windows bundle by looping over
-            # CMAKE_CONFIGURATION_TYPES, so with a single-config generator the
-            # module lands in VST3/ while SMTG_PLUGIN_PACKAGE_PATH, which the
-            # tests load, still names the bundle. Put it where the tests look.
-            get_target_property(DUSKSTUDIO_RELAYOUT_FIXTURE_CONTENTS
-                dusk-studio-runtime-relayout-vst3-fixture SMTG_PLUGIN_PACKAGE_CONTENTS)
-            get_target_property(DUSKSTUDIO_RELAYOUT_FIXTURE_ARCH
-                dusk-studio-runtime-relayout-vst3-fixture SMTG_WIN_ARCHITECTURE_NAME)
-            set_target_properties(dusk-studio-runtime-relayout-vst3-fixture
-                PROPERTIES LIBRARY_OUTPUT_DIRECTORY
-                    "${DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE}/${DUSKSTUDIO_RELAYOUT_FIXTURE_CONTENTS}/${DUSKSTUDIO_RELAYOUT_FIXTURE_ARCH}")
-        endif()
+        foreach(vst3Fixture
+                dusk-studio-runtime-relayout-vst3-fixture
+                dusk-studio-panic-probe-vst3-fixture)
+            get_target_property(DUSKSTUDIO_VST3_FIXTURE_OPTIONS ${vst3Fixture} COMPILE_OPTIONS)
+            if(DUSKSTUDIO_VST3_FIXTURE_OPTIONS)
+                list(TRANSFORM DUSKSTUDIO_VST3_FIXTURE_OPTIONS REPLACE "/Zi" "/Z7")
+                set_target_properties(${vst3Fixture}
+                    PROPERTIES COMPILE_OPTIONS "${DUSKSTUDIO_VST3_FIXTURE_OPTIONS}")
+            endif()
+            if(NOT CMAKE_CONFIGURATION_TYPES)
+                # The SDK places the Windows bundle by looping over
+                # CMAKE_CONFIGURATION_TYPES, so with a single-config generator the
+                # module lands in VST3/ while SMTG_PLUGIN_PACKAGE_PATH, which the
+                # tests load, still names the bundle. Put it where the tests look.
+                get_target_property(DUSKSTUDIO_VST3_FIXTURE_BUNDLE
+                    ${vst3Fixture} SMTG_PLUGIN_PACKAGE_PATH)
+                get_target_property(DUSKSTUDIO_VST3_FIXTURE_CONTENTS
+                    ${vst3Fixture} SMTG_PLUGIN_PACKAGE_CONTENTS)
+                get_target_property(DUSKSTUDIO_VST3_FIXTURE_ARCH
+                    ${vst3Fixture} SMTG_WIN_ARCHITECTURE_NAME)
+                set_target_properties(${vst3Fixture}
+                    PROPERTIES LIBRARY_OUTPUT_DIRECTORY
+                        "${DUSKSTUDIO_VST3_FIXTURE_BUNDLE}/${DUSKSTUDIO_VST3_FIXTURE_CONTENTS}/${DUSKSTUDIO_VST3_FIXTURE_ARCH}")
+            endif()
+        endforeach()
     endif()
 
     target_sources(dusk-studio-tests PRIVATE
@@ -555,8 +606,11 @@ if(DUSKSTUDIO_NATIVE_VST3)
     target_link_libraries(dusk-studio-tests PRIVATE dusk-vst3-hosting)
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_NATIVE_VST3=1
-        DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH="${DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE}")
-    add_dependencies(dusk-studio-tests dusk-studio-runtime-relayout-vst3-fixture)
+        DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH="${DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE}"
+        DUSKSTUDIO_PANIC_PROBE_VST3_FIXTURE_PATH="${DUSKSTUDIO_PANIC_PROBE_VST3_BUNDLE}")
+    add_dependencies(dusk-studio-tests
+        dusk-studio-runtime-relayout-vst3-fixture
+        dusk-studio-panic-probe-vst3-fixture)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_sources(dusk-studio-tests PRIVATE vst3_hostcontext_runloop.cpp)
     endif()
@@ -823,4 +877,21 @@ if(UNIX)
     else()
         message(WARNING "release-mechanics contract test skipped: bash or python3 not found")
     endif()
+endif()
+
+# Every behaviour MANUAL.md documents has a row in manual_coverage.tsv naming
+# the test that proves it, or why nothing automated can. Python only, so it
+# runs on every platform.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME manual-coverage-contract
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/manual_coverage.py"
+                "${CMAKE_SOURCE_DIR}")
+    add_test(NAME manual-coverage-checker
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/manual_coverage.py"
+                --self-test)
+else()
+    message(WARNING "manual coverage contract skipped: python3 not found")
 endif()

@@ -1,7 +1,10 @@
 #include "MainComponent.h"
+#include <cerrno>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>  // std::getenv (DUSKSTUDIO_USE_OOP_PLUGINS)
+#include <cstring>
 #include "AppConfig.h"
 #if __has_include("BinaryData.h")
  #include "BinaryData.h"
@@ -50,6 +53,7 @@
 #include "../engine/FileImporter.h"
 #include "../engine/PlaybackEngine.h"
 #include "../engine/PluginStateDiagnostics.h"
+#include "../engine/ShutdownPhases.h"
 #include "ImportTargetPicker.h"
 #include "DpImportDialog.h"
 #include "../engine/DpImporter.h"
@@ -890,14 +894,14 @@ MainComponent::MainComponent()
     // dialog-pending flag isn't set yet that call latches startupScanTriggered
     // and shows the scan modal over the still-blank canvas, defeating the
     // startup-dialog gate. We're pending iff the picker will actually appear:
-    // no DUSKSTUDIO_LOAD_SESSION and no DUSKSTUDIO_SKIP_STARTUP_DIALOG.
-    {
-        const char* loadPathEnv = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
-        const bool willLoadSession = (loadPathEnv != nullptr && *loadPathEnv);
-        startupDialogPending = (! willLoadSession
-                                && std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
-                                && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr);
-    }
+    // no DUSKSTUDIO_LOAD_SESSION and no DUSKSTUDIO_SKIP_STARTUP_DIALOG, and
+    // neither of the two harnesses whose work the picker would sit on top of.
+    const char* const loadSessionPath = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
+    const bool willLoadSession = (loadSessionPath != nullptr && *loadSessionPath);
+    startupDialogPending = (! willLoadSession
+                            && std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
+                            && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr
+                            && std::getenv ("DUSKSTUDIO_RUN_SCENARIOS") == nullptr);
 
     setSize (w, h);
 
@@ -1012,10 +1016,38 @@ MainComponent::MainComponent()
     // benchmarking the load path (the [Dusk Studio/Load] timing line ends
     // up in the parent terminal) and for scripted reproductions of
     // user-reported regressions.
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+
+    // DUSKSTUDIO_QUIT_AFTER_MS=<ms>[,<ms>...] asks for a quit through the real
+    // shutdown sequence after each delay, so a scripted run exits the way the
+    // titlebar X does and prints the same phase markers. A second value lands on
+    // the shutdown latch, which is the re-entry path.
+    const auto armScriptedQuit = [safeThis]
+    {
+        const char* const spec = std::getenv ("DUSKSTUDIO_QUIT_AFTER_MS");
+        if (spec == nullptr) return;
+
+        for (const char* field = spec;;)
+        {
+            char* end = nullptr;
+            errno = 0;
+            const long ms = std::strtol (field, &end, 10);
+            if (end != field && (*end == ',' || *end == '\0')
+                && errno != ERANGE && ms >= 0 && ms <= INT_MAX)
+                dusk::Timer::callAfterDelay ((int) ms, [safeThis]
+                {
+                    if (safeThis != nullptr) safeThis->requestQuit();
+                });
+            const char* const comma = std::strchr (field, ',');
+            if (comma == nullptr) break;
+            field = comma + 1;
+        }
+    };
+
     // startupDialogPending was already set before setSize() above (so the
     // scan-kicking resized() saw the gate); the routing here just decides what
-    // the first tick does. Capture mode suppresses the picker too - its modal
-    // would overlay the snapshots (mirrors the CAPTURE_DIR guard in the scan
+    // the first tick does. Capture and scenario runs suppress the picker too -
+    // its modal would overlay their work (mirrors the same guards in the scan
     // path).
     //
     // The last branch is not a no-op: only the picker's dismissal hands
@@ -1023,22 +1055,30 @@ MainComponent::MainComponent()
     // window with nothing focused, and every shortcut in the manual is dead
     // until the user happens to click the canvas.
     {
-        const char* loadPath = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
-        const bool loadsSession = loadPath != nullptr && *loadPath;
-        juce::String pathStr (loadsSession ? loadPath : "");
-        const bool wantsPicker = ! loadsSession
+        const std::string pathStr (willLoadSession ? loadSessionPath : "");
+        const bool wantsPicker = ! willLoadSession
                               && std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
-                              && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr;
+                              && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr
+                              && std::getenv ("DUSKSTUDIO_RUN_SCENARIOS") == nullptr;
 
-        juce::Component::SafePointer<MainComponent> safeThis (this);
-        dusk::callAsync ([safeThis, pathStr, loadsSession, wantsPicker]
+        dusk::callAsync ([safeThis, pathStr, loadsSession = willLoadSession, wantsPicker,
+                          armScriptedQuit]
         {
             auto* const self = safeThis.getComponent();
             if (self == nullptr) return;
 
-            if (loadsSession)      self->loadSessionFromJson (juce::File (pathStr));
-            else if (wantsPicker)  self->launchStartupDialog();
-            else                   self->focusMainCanvas();
+            if (loadsSession)
+            {
+                self->loadSessionFromJson (juce::File (pathStr), armScriptedQuit);
+            }
+            else if (wantsPicker)
+            {
+                self->launchStartupDialog();
+            }
+            else
+            {
+                self->focusMainCanvas();
+            }
         });
     }
 
@@ -1054,13 +1094,31 @@ MainComponent::MainComponent()
         // the same env var (resized() can fire mid-ctor, so a member flag set
         // here would be too late).
         juce::String dirStr (capDir);
-        juce::Component::SafePointer<MainComponent> safeThis (this);
         dusk::Timer::callAfterDelay (1500, [safeThis, dirStr]
         {
             if (safeThis != nullptr)
                 safeThis->captureScreenshots (juce::File (dirStr));
         });
     }
+
+    // The GUI half of the scenario suite. Same shape as the capture hook above:
+    // the app leaves a gui selection alone so the window can come up, and the
+    // run starts once it has. The picker and the startup scan are suppressed for
+    // any DUSKSTUDIO_RUN_SCENARIOS.
+    if (const char* scenarioSpec = std::getenv ("DUSKSTUDIO_RUN_SCENARIOS");
+        scenarioSpec != nullptr && std::strncmp (scenarioSpec, "gui", 3) == 0)
+    {
+        std::string spec (scenarioSpec);
+        dusk::Timer::callAfterDelay (1500, [safeThis, spec]
+        {
+            if (safeThis != nullptr) safeThis->runGuiScenarios (spec);
+        });
+    }
+
+    // With no session to load there is nothing for the quit to be relative to,
+    // so it counts from here instead.
+    if (! willLoadSession)
+        armScriptedQuit();
 
     // Cross-OS cursor overlay. Mounted last so it sits above every
     // other MainComponent child + paints the Grab / Cut / Draw glyph
@@ -1749,11 +1807,12 @@ void MainComponent::syncBankButtons (int desiredCount)
 
 void MainComponent::maybeStartStartupPluginScan()
 {
-    // Screenshot-capture mode never scans - its progress modal would overlay
-    // the full-window snapshots. Guard on the env var directly because
-    // resized() (which calls us) can fire mid-ctor, before the capture hook
-    // gets a chance to latch any member flag.
-    if (std::getenv ("DUSKSTUDIO_CAPTURE_DIR") != nullptr) return;
+    // Screenshot-capture and scenario runs never scan - the progress modal would
+    // overlay the full-window snapshots and the scenario steps alike. Guard on
+    // the env vars directly because resized() (which calls us) can fire mid-ctor,
+    // before either hook gets a chance to latch any member flag.
+    if (std::getenv ("DUSKSTUDIO_CAPTURE_DIR") != nullptr
+        || std::getenv ("DUSKSTUDIO_RUN_SCENARIOS") != nullptr) return;
 
     if (startupScanTriggered) return;
     // Defer while the startup dialog is up - dismissStartupDialog() re-invokes
@@ -2613,6 +2672,12 @@ std::vector<imgui::RecentSession> demoStartupRecents()
 
 void MainComponent::launchStartupDialog()
 {
+    // Startup markers. A scripted launch cannot see the picker, so it reads which
+    // way this went off stderr; the recents count is what the panel will list.
+    std::fprintf (stderr, "[Dusk Studio/startup] picker requested recents=%d\n",
+                  (int) RecentSessions::load().size());
+    std::fflush (stderr);
+
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
     // Nothing to show and nothing to choose, so the bootstrap default session is
     // what the DAW opens with - the same outcome as skipping the dialog. Kick the
@@ -2620,15 +2685,23 @@ void MainComponent::launchStartupDialog()
     // before the first resized(), so clearing it here leaves nobody to start one.
     // Skipping by environment variable never raises the gate at all, which is why
     // only this path needs the call.
+    std::fprintf (stderr, "[Dusk Studio/startup] picker unavailable on this display\n");
+    std::fflush (stderr);
     startupDialogPending = false;
     focusMainCanvas();
     maybeStartStartupPluginScan();
    #else
     if (openStartupPanel (false))
+    {
+        std::fprintf (stderr, "[Dusk Studio/startup] picker shown\n");
+        std::fflush (stderr);
         return;
+    }
 
     // A display that cannot carry the panel must not leave the app looking wedged
     // behind a dim overlay, so the launch continues as if the dialog was skipped.
+    std::fprintf (stderr, "[Dusk Studio/startup] picker unavailable on this display\n");
+    std::fflush (stderr);
     startupDialogPending = false;
     focusMainCanvas();
     setStatusText ("Startup dialog unavailable on this display; opened the default session");
@@ -3563,42 +3636,36 @@ void MainComponent::beginSafeShutdown()
     // finish the teardown. That stays a single entry into the sequence:
     // the phases below span message-loop ticks, and a second entry would
     // re-run them over a tree the first one has already dismantled.
-    auto markPhase = [] (const char* msg)
-    {
-        std::fprintf (stderr, "[Dusk Studio/shutdown] %s\n", msg);
-        std::fflush (stderr);
-    };
-
     if (shutdownInProgress)
     {
-        markPhase ("re-entry ignored: shutdown already in progress");
+        shutdown::emitPhase ("re-entry ignored: shutdown already in progress");
         return;
     }
     shutdownInProgress = true;
 
-    markPhase ("phase 1: stop autosave timer");
+    shutdown::emitPhase ("phase 1: stop autosave timer");
     stopTimer();
 
-    markPhase ("phase 1b: close native session notepad");
+    shutdown::emitPhase ("phase 1b: close native session notepad");
     dismissNotepad (true);
 
-    markPhase ("phase 2: stop transport (commits in-flight recording)");
+    shutdown::emitPhase ("phase 2: stop transport (commits in-flight recording)");
     auto& transport = engine.getTransport();
     if (transport.isRecording() || transport.isPlaying())
         engine.stop();
 
     if (! engineDetached)
     {
-        markPhase ("phase 3: detach audio callback");
+        shutdown::emitPhase ("phase 3: detach audio callback");
         engine.detachAudioCallback();
         engineDetached = true;
     }
     else
     {
-        markPhase ("phase 3: audio callback already detached (skipping)");
+        shutdown::emitPhase ("phase 3: audio callback already detached (skipping)");
     }
 
-    markPhase ("phase 3b: release plugin resources (setActive(false) on each)");
+    shutdown::emitPhase ("phase 3b: release plugin resources (setActive(false) on each)");
     // Quiesce every plugin BEFORE editor windows + engine destructors
     // start running. Diva's terminate() (called inside its destructor)
     // tries to talk back to the host's VST3 context; that's only safe
@@ -3607,7 +3674,7 @@ void MainComponent::beginSafeShutdown()
     // __cxa_pure_virtual on session shutdown.
     engine.releaseAllPluginResources();
 
-    markPhase ("phase 4: drop plugin editor windows");
+    shutdown::emitPhase ("phase 4: drop plugin editor windows");
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors (NativeEditorTeardown::LeakForExit);
     // JUCE AUX plugin editors tear down fine with the normal ~MainWindow -> ~AuxView
@@ -3619,13 +3686,13 @@ void MainComponent::beginSafeShutdown()
     if (auxView != nullptr)
         auxView->dropAllNativeEditors (NativeEditorTeardown::LeakForExit);
 
-    markPhase ("phase 5: flush window operations");
+    shutdown::emitPhase ("phase 5: flush window operations");
     duskstudio::platform::flushWindowOperations();
 
     // Walk every juce::TopLevelWindow so any future window class
     // (mastering popout, file dialog left open) inherits the
     // protection without per-site plumbing.
-    markPhase ("phase 5b: clear keyboard focus from every top-level window");
+    shutdown::emitPhase ("phase 5b: clear keyboard focus from every top-level window");
     for (int i = juce::TopLevelWindow::getNumTopLevelWindows(); --i >= 0;)
         if (auto* w = juce::TopLevelWindow::getTopLevelWindow (i))
             duskstudio::platform::prepareForTopLevelDestruction (*w);
@@ -3641,31 +3708,23 @@ void MainComponent::beginSafeShutdown()
         auto* self = safeThis.getComponent();
         if (self == nullptr) return;
 
-        auto mark = [] (const char* msg)
-        {
-            std::fprintf (stderr, "[Dusk Studio/shutdown] %s\n", msg);
-            std::fflush (stderr);
-        };
-
-        mark ("phase 6: hide main window");
+        shutdown::emitPhase ("phase 6: hide main window");
         if (auto* tlw = self->getTopLevelComponent())
             tlw->setVisible (false);
         duskstudio::platform::flushWindowOperations();
 
         duskstudio::platform::clearXInputFocus();
 
-        mark ("phase 7: defer systemRequestedQuit to next message-loop tick");
+        shutdown::emitPhase ("phase 7: defer systemRequestedQuit to next message-loop tick");
         dusk::callAsync ([]
         {
-            std::fprintf (stderr,
-                          "[Dusk Studio/shutdown] phase 7b: posting systemRequestedQuit\n");
-            std::fflush (stderr);
+            shutdown::emitPhase ("phase 7b: posting systemRequestedQuit");
             if (auto* app = juce::JUCEApplicationBase::getInstance())
                 app->systemRequestedQuit();
         });
     });
 
-    markPhase ("phase 8: beginSafeShutdown returning to message loop (yield to mutter)");
+    shutdown::emitPhase ("phase 8: beginSafeShutdown returning to message loop (yield to mutter)");
 }
 
 void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
@@ -3782,11 +3841,13 @@ void MainComponent::openSessionPath (const juce::File& path)
     }
 }
 
-bool MainComponent::loadSessionFromJson (const juce::File& sessionJson)
+bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
+                                         std::function<void()> onComplete)
 {
     if (! sessionJson.existsAsFile())
     {
         setStatusForPath ("No session at", sessionJson);
+        if (onComplete) onComplete();
         return false;
     }
 
@@ -3808,46 +3869,52 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson)
         body->setSize (560, 280);
 
         auto* raw = body.get();
-        raw->onRecover = [safe, sessionJson, dir, autosave]
+        raw->onRecover = [safe, dir, autosave, onComplete]
         {
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
                 self->finishLoadingSessionFrom (autosave, dir);
                 self->maybeStartStartupPluginScan();   // deferred past the recovery prompt
+                if (onComplete) onComplete();
             }
         };
-        raw->onLoad = [safe, sessionJson, dir]
+        raw->onLoad = [safe, sessionJson, dir, onComplete]
         {
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
                 self->finishLoadingSessionFrom (sessionJson, dir);
                 self->maybeStartStartupPluginScan();
+                if (onComplete) onComplete();
             }
         };
-        raw->onCancel = [safe]
+        raw->onCancel = [safe, onComplete]
         {
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
                 self->maybeStartStartupPluginScan();
+                if (onComplete) onComplete();
             }
         };
 
         recoveryModal.show (*this, std::move (body),
-                              [safe]
+                              [safe, onComplete]
                               {
                                   if (auto* self = safe.getComponent())
                                   {
                                       self->recoveryModal.close();
                                       self->maybeStartStartupPluginScan();
+                                      if (onComplete) onComplete();
                                   }
                               });
         return true;
     }
 
-    return finishLoadingSessionFrom (sessionJson, dir);
+    const bool loaded = finishLoadingSessionFrom (sessionJson, dir);
+    if (onComplete) onComplete();
+    return loaded;
 }
 
 bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,

@@ -487,6 +487,17 @@ void PluginSlot::clearAutoBypass() noexcept
    #endif
 }
 
+int PluginSlot::getRemoteChildPid() const noexcept
+{
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // currentRemote, not ownedRemote, so this reports a pid exactly when
+    // isRemote() is true.
+    if (auto* r = currentRemote.load (std::memory_order_acquire))
+        return r->getChildPid();
+   #endif
+    return -1;
+}
+
 bool PluginSlot::showRemoteEditor (std::uint64_t& windowIdOut,
                                      int& widthOut, int& heightOut)
 {

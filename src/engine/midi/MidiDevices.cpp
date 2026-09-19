@@ -204,6 +204,27 @@ MidiOutputBank::~MidiOutputBank()
     stopPump();
 }
 
+void MidiOutputBank::installBackend (std::unique_ptr<IMidiOutputBackend> backendIn)
+{
+    if (backendIn == nullptr) return;
+
+    {
+        // Retract the open flags, then discard the queued blocks, then swap:
+        // the same order rebuild() needs, for the same reason - both the flags
+        // and the queued port indices belong to the outgoing backend. The mutex
+        // excludes the pump, which may be inside a send on it right now.
+        const std::lock_guard<std::mutex> lock (bankMutex);
+        numOpenFlags.store (0, std::memory_order_release);
+        queueGeneration.fetch_add (1, std::memory_order_release);
+        readCount.store (writeCount.load (std::memory_order_acquire), std::memory_order_release);
+        backend->closeAll();
+        devices.clear();
+        backend = std::move (backendIn);
+    }
+
+    rebuild();
+}
+
 void MidiOutputBank::rebuild()
 {
     // Mutating the bank is safe only with the audio callback detached (the audio

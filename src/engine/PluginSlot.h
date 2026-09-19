@@ -143,6 +143,11 @@ public:
        #endif
     }
 
+    // OS pid of the sandboxed child hosting this slot, or -1 when the slot is
+    // not remote (also -1 on Windows, which tracks the child by handle).
+    // Message thread.
+    int getRemoteChildPid() const noexcept;
+
     // OOP editor RPC. No-op for in-process / non-OOP platforms.
     // windowIdOut: native window handle (X11 Window packed as uint64_t).
     bool showRemoteEditor (std::uint64_t& windowIdOut, int& widthOut, int& heightOut);

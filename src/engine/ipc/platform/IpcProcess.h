@@ -62,6 +62,18 @@ public:
 
     bool isAlive() const noexcept { return alive; }
 
+    // OS process id of the live child, or -1 when none is running. Windows
+    // packs an opaque state pointer into the same field and tracks the child by
+    // handle, so it has no pid to report.
+    int getPid() const noexcept
+    {
+       #if defined(_WIN32)
+        return -1;
+       #else
+        return alive && pid > 0 ? (int) pid : -1;
+       #endif
+    }
+
 private:
     // intptr_t (not int) so the Windows impl can pack a heap pointer
     // to its WinProcessState block here without truncation on x64.

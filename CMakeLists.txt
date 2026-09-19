@@ -734,6 +734,32 @@ target_sources(DuskStudio PRIVATE
     src/engine/sfz/SfzLibrary.cpp
     src/ui/multisample/SfzLibraryPanel.cpp
     src/engine/RecordManager.cpp
+    src/engine/ShutdownPhases.cpp
+    src/engine/scenario/ScenarioContext.cpp
+    src/engine/scenario/ScenarioFixtures.cpp
+    src/engine/scenario/ScenarioWorld.cpp
+    src/engine/scenario/SuiteRunner.cpp
+    src/engine/scenario/cases/clap_choke_on_stop_loop_jump.cpp
+    src/engine/scenario/cases/clap_state_roundtrip.cpp
+    src/engine/scenario/cases/clone_track_keeps_native_state.cpp
+    src/engine/scenario/cases/engine_muted_midi_track_skips_chain.cpp
+    src/engine/scenario/cases/import_smf_irregular.cpp
+    src/engine/scenario/cases/lv2_file_state_inside_session.cpp
+    src/engine/scenario/cases/lv2_large_store_timing_bound.cpp
+    src/engine/scenario/cases/lv2_params_numbering_stable.cpp
+    src/engine/scenario/cases/midi_out_dense_block.cpp
+    src/engine/scenario/cases/midi_panic_all_paths.cpp
+    src/engine/scenario/cases/mint_oop_fixture.cpp
+    src/engine/scenario/cases/offline_insert_no_pdc.cpp
+    src/engine/scenario/cases/oop_killed_child_bypasses.cpp
+    src/engine/scenario/cases/oop_load_does_not_block_message_thread.cpp
+    src/engine/scenario/cases/oop_quit_during_load_bounded.cpp
+    src/engine/scenario/cases/oop_rapid_switching_safe.cpp
+    src/engine/scenario/cases/pipeline_selftest.cpp
+    src/engine/scenario/cases/region_editing.cpp
+    src/engine/scenario/cases/scan_cancel_au.cpp
+    src/engine/scenario/cases/scan_cancel_lv2.cpp
+    src/engine/scenario/cases/vst3_noteoff_fallback.cpp
     src/dsp/AuxLaneStrip.cpp
     src/dsp/BusStrip.cpp
     src/dsp/BrickwallLimiter.cpp
@@ -779,6 +805,8 @@ target_sources(DuskStudio PRIVATE
     src/ui/DimOverlay.cpp
     src/ui/HardwareInsertEditor.cpp
     src/ui/ImportTargetPicker.cpp
+    src/ui/GuiScenarios.cpp
+    src/ui/GuiScenarioCases.cpp
     src/ui/MainComponent.cpp
     src/ui/ScreenshotCapture.cpp
     src/ui/MultiImportTargetPicker.cpp

@@ -429,6 +429,339 @@ General approach: reproduce in a test if at all possible (the suite runs in mill
 
 ---
 
+## Part 9b - Regression run across platforms
+
+After a fix wave, `scripts/regress.sh` re-verifies the tree on all three target
+platforms from the Linux box. Each platform runs a list of *legs*; every leg
+prints one `PASS` / `FAIL` / `WARN` / `SKIP` line, the run ends with a summary
+table, and the script exits non-zero if any leg failed. Re-running is safe: no
+leg prompts, and each one either recreates its inputs or checks them.
+
+```bash
+scripts/regress.sh                       # linux (the default target)
+scripts/regress.sh linux --perf          # plus the headless engine perf suite
+scripts/regress.sh linux --vst3 ~/.vst3/Multi-Q.vst3
+scripts/regress.sh linux --scenarios-only
+scripts/regress.sh mac
+scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
+scripts/regress.sh windows --release-run 1234567890
+scripts/regress.sh all --perf --msi /path/to/installer.msi
+```
+
+`all` routes each option to the platform that owns it, so one command line can
+carry Linux, macOS and Windows options at once. An option no platform claims is
+a usage error rather than a silently ignored word.
+
+Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
+`scripts/regress/{linux,mac,windows}.sh` over the shared leg bookkeeping in
+`scripts/regress/common.sh`, the private-display plumbing in
+`scripts/regress/xvfb.sh` and the scenario legs in
+`scripts/regress/scenarios.sh`, plus the guest-side helpers in
+`scripts/regress/windows/`.
+
+### Linux
+
+Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
+`timeout` and `flock`.
+
+| Leg | What it proves |
+|---|---|
+| `configure-check` | both build dirs build the donor from `DONOR_REV`: no `DUSK_PLUGINS_PATH` override, and `_deps/dusk-plugins` checked out at that commit. Any other donor changes the DSP under test, and the failure then reads as a Dusk Studio regression. A mismatch aborts the run before anything is built. |
+| `build-app` / `build-tests` | both targets compile at `-j6`. |
+| `ctest` | the Catch2 suite in `build-tests/`. |
+| `juce-gate` | `tools/juce-gate.sh`: no file gained JUCE and no listed file gained occurrences. |
+| `selftest-xvfb` | `scripts/run-selftest-xvfb.sh` - the headless audio self-test on a private X display. |
+| `ipc-selftest` | `DUSKSTUDIO_RUN_IPC_SELFTEST=1`: the shm + futex round-trip against the `dusk-studio-plugin-host` stub. |
+| `ipc-host-test` | `DUSKSTUDIO_IPC_HOST_TEST=<plugin>`: a real plugin loaded out-of-process, 1000 stereo blocks, signal asserted modified. Uses `--vst3`, else the first `~/.vst3/*.vst3`; `SKIP` when there is none. |
+| `perf-suite` | `DUSKSTUDIO_RUN_PERF_TEST=1` across the (rate, buffer, load) matrix. Off unless `--perf`. |
+| `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
+| `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-quit-twice`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
+| `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui`: the plugin-editor scenarios that need a window. Off unless `--gui-scenarios` - it is the slowest leg and the most sensitive to GLX under Xvfb. |
+| `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
+| `github-ruleset` | the `main` ruleset requires the six CI checks a merge has to pass (Linux amd64 and arm64, macOS, Windows, TSan, ASan+UBSan); `WARN` names the missing ones. Needs an authenticated `gh`. Off unless `--release-checks`. |
+| `patreon-freshness` | Part 10 step 2: no local name overrides, the supporter header at the donor pin, the Patreon dry run. `WARN` when the dry run refreshed tokens, which means the Actions secrets need updating before the tag. Off unless `--release-checks`. |
+
+`--no-scenarios` leaves the scenario legs out of the run entirely.
+`--release-checks` adds the three pre-tag legs; they touch the network and, in
+the Patreon case, the local token pair, so they are not part of a default run.
+`--scenarios-only` runs nothing but them, against whatever binary is already in
+`build/`; the compile and self-test legs are reported as `SKIP` so the table
+still says what was not run. `build-tests/` has to exist either way: it is half
+of `DUSKSTUDIO_FIXTURE_DIR`, which is how the app binary finds the test
+fixtures.
+
+Everything from `selftest-xvfb` down runs on a private Xvfb display with
+`WAYLAND_DISPLAY` unset - the binary aborts against a live Wayland session, so
+no leg may ever launch it on the desktop.
+
+`DUSK_REGRESS_BUILD_LOCK=/path/to/lockfile` wraps the two compile legs in
+`flock` when something else may be building the same tree.
+
+#### Scenario legs
+
+The `bb-*` legs run several real app processes at once on one shared Xvfb
+display, so each leg gets a throwaway directory and a private environment:
+
+- Private `XDG_RUNTIME_DIR`, mode 0700. `makeSocketPath` in
+  [src/util/SingleInstance.cpp](../src/util/SingleInstance.cpp) keys the
+  single-instance slot on `$XDG_RUNTIME_DIR/dusk-studio/instance-<hash of
+  DISPLAY>.sock`, so a per-leg runtime dir is what stops a leg handing a session
+  to - or stealing one from - the copy of Dusk Studio you have open.
+- Private `HOME` and `XDG_CONFIG_HOME`, mode 0700. `dusk::fs::userConfigDir()`
+  resolves `$HOME/.config` and does **not** read `XDG_CONFIG_HOME`, so only a
+  private `HOME` keeps Recent Sessions, `app-config.properties` and crash logs
+  out of your profile. It also means the legs start with no plugin cache, which
+  is why they start in well under a second.
+- A private copy of `scripts/regress/sessions/minimal/session.json` per leg. The
+  checked-in file is never loaded in place: an autosave tick would write
+  `session.json.autosave` into the working tree.
+- One stdout and one stderr file per process, never merged. Marker order is an
+  assertion in the quit legs, and interleaving two processes destroys it. Every
+  `.err` file is dumped when a leg fails.
+- Every wait carries an explicit budget in seconds, and each leg has an overall
+  deadline that caps the waits inside it.
+- Child processes are found with `pgrep -P <app pid>`. Never a bare `pkill` or
+  `pkill -f`: it would take down the maintainer's own session along with the leg.
+- `DUSK_REGRESS_SCENARIO_KEEP=1` keeps each leg's directory instead of deleting
+  it, and prints the path.
+
+`bb-crash-relaunch` is the one to watch. The POSIX handoff has no
+acknowledgement, so two instances racing for a slot a killed instance left
+behind is the leg most likely to flake. It fails with both processes' stderr and
+is not retried; re-run it ten times before trusting a change to that path.
+
+`bb-damaged-recent` needs the startup picker, and GLX under Xvfb is not
+guaranteed on every host (the same caveat that keeps DAF/DGL windows in the
+hardware pass). The leg accepts either `picker shown` or `picker unavailable on
+this display` - what it will not accept is neither. Set
+`DUSK_REGRESS_REQUIRE_PICKER=1` on a host where GLX does work to demand the
+first.
+
+Legs whose app-side seam is not in the binary report `SKIP` with the name of
+what is missing (`DUSKSTUDIO_QUIT_AFTER_MS`, the `[Dusk Studio/startup]`
+markers, the `session.mint_oop_fixture` scenario) rather than passing on an
+assertion that never ran.
+
+`bash scripts/regress/scenarios.sh` runs just these legs and prints the same
+table; `--app <binary>` points it at a build other than `build/`.
+
+CI runs only the headless half: `.github/workflows/linux-build.yml` has a
+`Scenario suite (xvfb)` step carrying `continue-on-error: true`, so a scenario
+failure there is reported without failing the job. It becomes a required check
+once it has run clean for a week. The `bb-*` legs stay local - they need
+`pgrep -P`, `kill -9` and several app processes running at once.
+
+#### Writing a scenario
+
+The in-app suite lives in [src/engine/scenario/](../src/engine/scenario/):
+one `cases/<name>.cpp` per scenario, registered with a file-static
+`ScenarioRegistrar` and listed in the root `CMakeLists.txt`. Names are
+`area.what_it_checks` (`midi.panic_all_paths`, `oop.killed_child_bypasses`,
+`gui.clap_no_window_message`); the area is what `tag:` and the runner scripts
+group on.
+
+Running it, always on a private display:
+
+```bash
+source scripts/regress/common.sh; source scripts/regress/xvfb.sh
+export PIPEWIRE_RUNTIME_DIR=$XDG_RUNTIME_DIR
+export HOME=$(mktemp -d) XDG_RUNTIME_DIR=$(mktemp -d)
+export XDG_CONFIG_HOME=$HOME/.config XDG_DATA_HOME=$HOME/.local/share \
+       XDG_CACHE_HOME=$HOME/.cache XDG_STATE_HOME=$HOME/.local/state
+FIX="$PWD/build-tests:$PWD/tests/fixtures"
+APP=build/DuskStudio_artefacts/Release/DuskStudio
+xvfb_run 60  env DUSKSTUDIO_RUN_SCENARIOS=list "$APP"
+xvfb_run 600 env DUSKSTUDIO_RUN_SCENARIOS=all DUSKSTUDIO_FIXTURE_DIR="$FIX" "$APP"
+xvfb_run 300 env DUSKSTUDIO_RUN_SCENARIOS=midi.panic_all_paths,tag:lv2 DUSKSTUDIO_FIXTURE_DIR="$FIX" "$APP"
+xvfb_run 300 env DUSKSTUDIO_RUN_SCENARIOS=gui DUSKSTUDIO_FIXTURE_DIR="$FIX" "$APP"
+```
+
+`all` runs every headless scenario except the ones tagged `helper` (set-up
+steps for the black-box legs, run by name or `tag:helper`);
+`gui` runs the window-driven cases and `gui:<terms>` a subset of them (the
+runner runs them only with `--gui-scenarios`). A name
+that does not exist exits 2 before anything runs. The report is one line per
+scenario, `[PASS] name (ms)` / `[FAIL] name: reason (ms)` / `[SKIP] name:
+reason`, with the notes a failing scenario recorded indented underneath, then
+`=== scenarios: N pass, M fail, K skip ===`; the exit status is 0 only when
+nothing failed, and 3 when nothing passed or failed (every selected scenario
+skipped, or the selection matched none), since a run that verified nothing is
+not a pass. The private `HOME` matters: the app reads
+Recent Sessions and the plug-in cache from `$HOME/.config`, and a scripted
+run must not touch yours. A desktop session exports the `XDG_*_HOME`
+variables as absolute paths into the real home, so they move with it.
+`PIPEWIRE_RUNTIME_DIR` keeps the real runtime directory for PipeWire alone:
+without it the engine cannot find the PipeWire socket, falls back to ALSA and
+opens your sound card directly.
+
+A headless case gets a `ScenarioContext`: `session()` and `engine()` prepared
+offline (no device; `pump(n)` drives the audio callback itself and returns the
+peak, `pumpWithMidi(input, buffer)` stages events first), `fixture("name")`
+resolved through `DUSKSTUDIO_FIXTURE_DIR` against the table in
+`ScenarioFixtures.cpp`, `tempDir()` and a scratch session directory already
+set, `expect(condition, message)` and `verdict()` for the assertions, `note()`
+for breadcrumbs that only print on failure, `cleanup(fn)` for anything that
+must be released however the case ends, and `later(ms, fn)` /
+`waitUntil(pred, timeoutMs, onReady, message)` for anything asynchronous. A
+case that defers returns `std::nullopt` from `run` and finishes through
+`ctx.complete()`; the runner's watchdog turns a case that never completes into
+a FAIL. Never sleep, never block the loop, never touch `src/ui`. Between
+scenarios `ScenarioWorld::reset()` puts the world back: transport, every track
+and bus, every native and JUCE insert on strips and aux lanes, insert modes,
+MIDI routing, persisted plug-in identities and the session directory. List the
+fixtures a case needs in its `Scenario` so it skips with the fixture's name
+when the file is absent, and gate on `DUSKSTUDIO_HAS_NATIVE_*` with a skip on
+the other side.
+
+A GUI case lives in [src/ui/GuiScenarioCases.cpp](../src/ui/GuiScenarioCases.cpp),
+fills `runGui` instead of `run`, and talks to the window only through
+`scenario::GuiHost` ([src/ui/GuiHost.h](../src/ui/GuiHost.h)): strips, aux
+lanes, editors and the modal stack in std types. It cleans up after itself;
+there is no reset between GUI cases. Every file under `src/engine/scenario/`
+and the three GUI files are JUCE-free by construction and the gate keeps them
+that way; the engine members they need that carry framework types are reached
+through `auto`.
+
+[docs/scenario-coverage.md](scenario-coverage.md) maps every release
+checklist item to the scenario, black-box leg or unit test that covers it, or
+says why it stays manual. When a fix lands, land its scenario (or extend one)
+and update that table in the same change.
+
+### macOS
+
+The M3 Air (`marc@macbook-air.local`) is a headless build node: key auth, no
+sudo ever, toolchain in `~/bin` and `~/tools`, and no GNU `timeout` - remote
+deadlines are a poll loop over a completion marker.
+
+Prerequisites: an ssh key on the node, a clean `~/src/dusk-studio` working tree
+(submodule pointers may drift; tracked files may not), `~/mac-configure.sh`
+(takes the build dir as `$1` and passes `-DDAF_PATH`, no donor flag), and a
+`~/src/DAF` checkout on `main`. The donor needs no checkout of its own: configure
+fetches `DONOR_REV` into each build tree's `_deps`.
+
+The commit under test never goes through GitHub: it is pushed straight over ssh
+to `refs/heads/regress-<short sha>` in the node's checkout. The node's previous
+branch and submodule commits are recorded at the start and restored on exit,
+including when a leg fails.
+
+| Leg | What it proves |
+|---|---|
+| `mac-preflight` | node reachable, review model unloaded from ollama (it pins several GB and a `-j6` build would swap against it), working tree clean. |
+| `push-head` / `mac-checkout` | the node builds this exact commit. `WARN` when a submodule cannot be synced to the recorded pin. |
+| `daf-main` | `~/src/DAF` fast-forwarded to the tip of `main`, which is what CI builds against. Best effort: a node that cannot reach GitHub is a `WARN`, not a failure. DAF is left where it lands, not put back. |
+| `configure-app` / `configure-tests` | both trees configure through `~/mac-configure.sh`. |
+| `donor-check` | both trees build the donor from `DONOR_REV`: no cached `DUSK_PLUGINS_PATH`, and `_deps/dusk-plugins` at that commit. |
+| `build-app` / `build-tests` / `ctest` | the same build and test surface as CI's macOS job. |
+| `selftest` | `DUSKSTUDIO_RUN_SELFTEST=1` against the built `.app`, behind a marker-file deadline. |
+| `scenarios` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the same `.app`, behind the same marker-file deadline, with `DUSKSTUDIO_FIXTURE_DIR` pointed at the node's `build-tests` tree and `tests/fixtures`. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary. Skipped cases go into the leg's note - this node builds no LV2 host, so the LV2 cases skip there and the AU scan case runs only there. |
+
+What it cannot prove: **anything with a window**. Launching the GUI from an ssh
+session aborts in the main window constructor on that node, and it does so on
+`main` too, so it is the environment and not the build. That covers both
+`gui-launch` and `scenarios-gui`, the GUI half of the scenario suite. Those legs
+report `SKIP` rather than a false failure; run them by hand from a console
+session on the Air:
+
+```bash
+cd ~/src/dusk-studio
+APP=./build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio
+"$APP"                                                    # gui-launch
+DUSKSTUDIO_RUN_SCENARIOS=gui \
+  DUSKSTUDIO_FIXTURE_DIR="$PWD/build-tests:$PWD/tests/fixtures" \
+  "$APP"                                                  # scenarios-gui
+```
+
+The IPC self-test is Linux-only code and is skipped for that reason, not this one.
+
+### Windows
+
+The libvirt domain `win11` on this box has no qemu-guest-agent and no SSH. The
+channel is: `virsh send-key` types into a guest PowerShell console, an HTTP
+server on `192.168.122.1:8000` serves the phase scripts and the payload, a
+collector on `:9000` receives each phase's POSTed report, and `virsh screenshot`
+shows what the guest is actually doing. Both servers are stopped on exit with
+self-excluding `pkill` patterns.
+
+Prerequisites: libvirt access to `win11` without sudo (`qemu:///system`), the
+guest running, `7z`, `zip`, `python3` (Pillow for the PNG screenshots), `gh`
+authenticated for `--release-run`. Nothing has to be set up inside the guest:
+the phases bring their own session, and none of them clicks anything.
+
+The payload is built on the host: the MSI is unpacked with `7z`, the flattened
+`CM_FP_bin.*` names are put back into `bin/`, the plugin host is renamed to
+`dusk-studio-plugin-host.exe` (the app looks for it beside itself under that
+name), `scripts/regress/sessions/minimal/session.json` is copied in as
+`regress-session/session.json` for phase 3 to load, and the result is zipped.
+The guest unpacks it to `%LOCALAPPDATA%\DuskStudio-regress`, which needs no
+elevation - installing into `C:\Program Files` would need UAC, which must not
+be auto-accepted.
+
+| Leg | What it proves |
+|---|---|
+| `payload` | the installer unpacks to a runnable `bin/` tree with both executables. |
+| `host-servers` | the script and report channels are listening on `192.168.122.1`. |
+| `guest-wake` | the domain is running and its display is not blanked. Screenshot in the run directory. |
+| `console-probe` | a fresh PowerShell console is up and accepting typed input, before any phase is typed into it. |
+| `phase1-selftest` | headless `DUSKSTUDIO_RUN_SELFTEST=1` with stdout and stderr captured through `ProcessStartInfo` redirection: exit code 0, at least one `[PASS]`, no `[FAIL]`. |
+| `phase2-handoff` | the first instance opens the shipped session through `DUSKSTUDIO_LOAD_SESSION` and the phase waits for its `[Dusk Studio/Load] session.json` line, then a second launch carrying `handoff.json` hands over and exits 0 within 30 s while the first instance stays alive, `GetForegroundWindow()` is its window afterwards, and its stderr shows `[Dusk Studio/Load] handoff.json` after the first load - the handoff is supposed to raise the window and load the path, which the exit code alone cannot see. |
+| `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
+| `ipc-selftest` | `SKIP`. `DUSKSTUDIO_RUN_IPC_SELFTEST` never returns on Windows (issue #504), so the out-of-process transport is only compile- and contract-verified there. Remove the skip when #504 closes. |
+
+Every phase opens its own console from the Start menu: a phase that calls
+`SetForegroundWindow` steals focus, so the next `send-key` would land in the
+wrong window. Constraints the guest-side scripts have to respect, all of them
+things that have already gone wrong here:
+
+- `$host` is a read-only PowerShell automatic variable; a script assigning it
+  dies before its POST.
+- `iex` runs in the console's session scope, so variables survive between
+  phases. Every script assigns its own before reading them.
+- A P/Invoke with a PowerShell scriptblock delegate (`EnumWindows`) throws under
+  `iex`. The P/Invoke surface stays limited to direct calls.
+- `WM_CLOSE` on a fresh launch is swallowed while the startup picker is open:
+  `requestQuit` returns with a modal up. That is why phase 3 passes the session
+  in through `DUSKSTUDIO_LOAD_SESSION`, which skips the picker entirely. No
+  phase depends on a screen coordinate or on synthesized mouse input.
+- Redirected stderr cannot be read with `ReadToEndAsync` while the app is still
+  running: that task only completes when the pipe closes. Phase 3 drains it one
+  bounded `ReadLineAsync` at a time, which is how it can wait for a marker mid
+  run.
+
+Screenshots, the raw report and the served payload all stay in the run
+directory printed at the end (`/tmp/dusk-regress-windows-<timestamp>/`). If a
+phase times out, read its screenshot before re-running: something else driving
+the VM has been the cause before.
+
+Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`.
+
+### Adding a leg
+
+1. Write the check as a shell function in the platform's script that returns 0
+   for pass, non-zero for fail, and prints its own detail.
+2. Register it with `regress_leg "<name>" <function>` in leg order, or
+   `regress_leg_soft` when a `warn:` line in its output should downgrade it to
+   `WARN` instead of failing the run, or `regress_skip "<name>" "<reason>"` when
+   the environment cannot run it. A `SKIP` needs a reason that says what to run
+   by hand instead.
+3. For a Windows leg, add a `.ps1` under `scripts/regress/windows/`, map it to a
+   short served name in `install_scripts` (the name is typed one keystroke at a
+   time), and end it with the two contract lines the runner waits for:
+
+   ```
+   REGRESS-PHASE <name> RESULT PASS|FAIL
+   REGRESS-PHASE <name> END
+   ```
+
+   The host substitutes `@@HOSTIP@@`, `@@ROOT@@` and `@@ZIP@@` when serving, so
+   those values are not duplicated per script.
+4. `bash -n` and `shellcheck` every script you touched.
+5. If the leg greps a string out of the app's output, pin that string in
+   [tests/stderr_marker_contract.cpp](../tests/stderr_marker_contract.cpp). A
+   reworded marker still compiles and still runs; without the contract case the
+   leg quietly stops asserting anything and keeps passing.
+
+---
+
 ## Part 10 - Release
 
 ### Release order
