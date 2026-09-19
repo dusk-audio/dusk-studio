@@ -448,7 +448,7 @@ bb_damaged_recent_body() {
     mkdir -p "$BB_SDIR/home/.config/Dusk Studio" || return 1
     printf '%s\n' "$dir" >"$BB_SDIR/home/.config/Dusk Studio/recent.txt" || return 1
 
-    bb_spawn A "DUSKSTUDIO_QUIT_AFTER_MS=12000" -- || return 1
+    bb_spawn A -- || return 1
     bb_wait_marker A "[Dusk Studio/startup] picker requested recents=1" 90 || return 1
 
     # GLX under Xvfb is not guaranteed, so on some hosts the picker legitimately
@@ -464,7 +464,10 @@ bb_damaged_recent_body() {
 
     sleep 8
     bb_alive A || { bb_fail "the picker took the window down with it"; return 1; }
-    bb_wait_exit A 60 || return 1
+    # The markers are the assertion; how the app then quits is the quit legs'
+    # job, and SIGTERM has no handler (#507), so its status says nothing.
+    kill "${BB_PID[A]}" 2>/dev/null || true
+    bb_wait_exit A 30 || true
     return 0
 }
 
@@ -650,6 +653,9 @@ regress_scenarios_run() {
         for leg in "${SCENARIO_BB_LEG_NAMES[@]}"; do
             regress_skip "$leg" "no Xvfb display"
         done
+        if ((want_gui)); then
+            regress_skip "scenarios-gui" "no Xvfb display"
+        fi
         trap - EXIT
         return 0
     fi

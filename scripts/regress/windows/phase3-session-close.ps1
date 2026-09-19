@@ -18,7 +18,7 @@ function Invoke-RegressPost($text) {
 
 # The plugin host inherits the app's redirected handles, so a pipe can stay
 # open after the app itself has exited; a bounded wait keeps that from hanging
-# the phase. Stop-RegressChildren closes the usual holder first.
+# the phase.
 function Stop-RegressChildren {
     Get-Process dusk-studio-plugin-host -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
@@ -52,6 +52,7 @@ if (-not ('Regress.User32' -as [type])) {
 '@
 }
 
+$rgApp = $null
 try {
     Get-Process DuskStudio -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
@@ -114,12 +115,9 @@ try {
         $rgLog += "exit=$($rgApp.ExitCode) after ${rgElapsed}s`n"
     } else {
         $rgLog += "still running 50 s after WM_CLOSE`n"
-        try { $rgApp.Kill() } catch { }
-        $rgApp.WaitForExit(10000) | Out-Null
     }
     $rgStderr = Read-RegressStderr $rgErrState 2000
 
-    Stop-RegressChildren
     Set-Content -Path "$rgRoot\phase3.log" -Value ((Read-RegressTask $rgOut 10000) + "`n---stderr---`n" + $rgStderr)
     $rgMarkers = $rgStderr -split "`n" | Select-String -Pattern '\[Dusk Studio/(shutdown|Load)\]'
     $rgLog += (($rgMarkers | ForEach-Object { '  ' + $_.Line.Trim() }) -join "`n") + "`n"
@@ -133,6 +131,12 @@ try {
     }
 } catch {
     $rgLog += "phase3 failed: $_`n"
+} finally {
+    if ($null -ne $rgApp -and -not $rgApp.HasExited) {
+        try { $rgApp.Kill() } catch { }
+        $rgApp.WaitForExit(10000) | Out-Null
+    }
+    Stop-RegressChildren
 }
 
 $rgLog += "REGRESS-PHASE phase3 RESULT $rgResult`nREGRESS-PHASE phase3 END`n"

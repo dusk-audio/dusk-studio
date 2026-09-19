@@ -16,7 +16,10 @@ constexpr int kFixtureLatencySamples = 64;
 
 ScenarioResult runOfflineInsert (ScenarioContext& ctx)
 {
-    const auto fixture = *ctx.fixture ("relayout.vst3");
+    const auto fixturePath = ctx.fixture ("relayout.vst3");
+    if (! fixturePath)
+        return ScenarioResult::skip ("missing fixture: relayout.vst3");
+    const auto fixture = *fixturePath;
     auto& engine = ctx.engine();
 
     // The fixture reports latency only with "Latency Mode" on, and the host reads

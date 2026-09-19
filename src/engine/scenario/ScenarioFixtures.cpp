@@ -33,6 +33,7 @@ constexpr FixtureCandidate kCandidates[] = {
     { "panic_probe.clap", "dusk-studio-panic-probe-clap-fixture.clap" },
     { "panic_probe.clap", "tests/dusk-studio-panic-probe-clap-fixture.clap" },
     { "panic_probe.vst3", "VST3/Release/dusk-studio-panic-probe-vst3-fixture.vst3" },
+    { "panic_probe.vst3", "VST3/dusk-studio-panic-probe-vst3-fixture.vst3" },
     { "no_window.clap",   "dusk-studio-no-window-clap-fixture.clap" },
     { "no_window.clap",   "tests/dusk-studio-no-window-clap-fixture.clap" },
 };

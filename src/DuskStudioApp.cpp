@@ -2550,6 +2550,7 @@ void DuskStudioApp::shutdown()
     vst3EditorTest.reset();         // dev VST3-editor test path: window first, then instance/bundle
 #endif
     bounceTest.reset();             // headless bounce harness: worker joined, then engine/session
+    scenarioRunner.reset();
 
     // Detach the logger after UI and engine teardown. Its storage is retained
     // for any logging calls still in progress.

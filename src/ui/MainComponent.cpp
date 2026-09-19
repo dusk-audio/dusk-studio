@@ -1,4 +1,6 @@
 #include "MainComponent.h"
+#include <cerrno>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>  // std::getenv (DUSKSTUDIO_USE_OOP_PLUGINS)
@@ -1028,15 +1030,17 @@ MainComponent::MainComponent()
         for (const char* field = spec;;)
         {
             char* end = nullptr;
+            errno = 0;
             const long ms = std::strtol (field, &end, 10);
-            if (end == field) break;      // not a number: stop rather than spin
-            if (ms >= 0)
+            if (end != field && (*end == ',' || *end == '\0')
+                && errno != ERANGE && ms >= 0 && ms <= INT_MAX)
                 dusk::Timer::callAfterDelay ((int) ms, [safeThis]
                 {
                     if (safeThis != nullptr) safeThis->requestQuit();
                 });
-            if (*end != ',') break;
-            field = end + 1;
+            const char* const comma = std::strchr (field, ',');
+            if (comma == nullptr) break;
+            field = comma + 1;
         }
     };
 
@@ -1065,10 +1069,7 @@ MainComponent::MainComponent()
 
             if (loadsSession)
             {
-                self->loadSessionFromJson (juce::File (pathStr));
-                // Armed from here, not the constructor, so a scripted quit that
-                // has to outlast the load is timed against the load.
-                armScriptedQuit();
+                self->loadSessionFromJson (juce::File (pathStr), armScriptedQuit);
             }
             else if (wantsPicker)
             {
@@ -3840,11 +3841,13 @@ void MainComponent::openSessionPath (const juce::File& path)
     }
 }
 
-bool MainComponent::loadSessionFromJson (const juce::File& sessionJson)
+bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
+                                         std::function<void()> onComplete)
 {
     if (! sessionJson.existsAsFile())
     {
         setStatusForPath ("No session at", sessionJson);
+        if (onComplete) onComplete();
         return false;
     }
 
@@ -3866,46 +3869,52 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson)
         body->setSize (560, 280);
 
         auto* raw = body.get();
-        raw->onRecover = [safe, sessionJson, dir, autosave]
+        raw->onRecover = [safe, dir, autosave, onComplete]
         {
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
                 self->finishLoadingSessionFrom (autosave, dir);
                 self->maybeStartStartupPluginScan();   // deferred past the recovery prompt
+                if (onComplete) onComplete();
             }
         };
-        raw->onLoad = [safe, sessionJson, dir]
+        raw->onLoad = [safe, sessionJson, dir, onComplete]
         {
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
                 self->finishLoadingSessionFrom (sessionJson, dir);
                 self->maybeStartStartupPluginScan();
+                if (onComplete) onComplete();
             }
         };
-        raw->onCancel = [safe]
+        raw->onCancel = [safe, onComplete]
         {
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
                 self->maybeStartStartupPluginScan();
+                if (onComplete) onComplete();
             }
         };
 
         recoveryModal.show (*this, std::move (body),
-                              [safe]
+                              [safe, onComplete]
                               {
                                   if (auto* self = safe.getComponent())
                                   {
                                       self->recoveryModal.close();
                                       self->maybeStartStartupPluginScan();
+                                      if (onComplete) onComplete();
                                   }
                               });
         return true;
     }
 
-    return finishLoadingSessionFrom (sessionJson, dir);
+    const bool loaded = finishLoadingSessionFrom (sessionJson, dir);
+    if (onComplete) onComplete();
+    return loaded;
 }
 
 bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,

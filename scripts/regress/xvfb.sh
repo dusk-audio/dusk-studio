@@ -13,6 +13,9 @@ XVFB_DISPLAY=""
 XVFB_PID=""
 XVFB_DISPLAY_FILE=""
 XVFB_LOG_FILE=""
+XVFB_LIBGL_SAVED=0
+XVFB_LIBGL_WAS_SET=""
+XVFB_LIBGL_VALUE=""
 
 # Starts Xvfb on a display it picks itself (-displayfd) and waits for it to
 # report the display back, which it only does once the display accepts clients.
@@ -43,6 +46,9 @@ xvfb_session_start() {
     XVFB_DISPLAY=":${display_number}"
     # Xvfb has no GPU, so GL has to resolve to llvmpipe instead of probing for a
     # hardware driver it cannot open.
+    XVFB_LIBGL_WAS_SET="${LIBGL_ALWAYS_SOFTWARE+x}"
+    XVFB_LIBGL_VALUE="${LIBGL_ALWAYS_SOFTWARE-}"
+    XVFB_LIBGL_SAVED=1
     export LIBGL_ALWAYS_SOFTWARE=1
     return 0
 }
@@ -62,7 +68,16 @@ xvfb_session_stop() {
     XVFB_PID=""
     XVFB_DISPLAY_FILE=""
     XVFB_LOG_FILE=""
-    unset LIBGL_ALWAYS_SOFTWARE
+    if ((XVFB_LIBGL_SAVED)); then
+        if [[ -n "$XVFB_LIBGL_WAS_SET" ]]; then
+            export LIBGL_ALWAYS_SOFTWARE="$XVFB_LIBGL_VALUE"
+        else
+            unset LIBGL_ALWAYS_SOFTWARE
+        fi
+    fi
+    XVFB_LIBGL_SAVED=0
+    XVFB_LIBGL_WAS_SET=""
+    XVFB_LIBGL_VALUE=""
     return 0
 }
 

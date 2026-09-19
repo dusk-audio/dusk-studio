@@ -105,6 +105,8 @@ const std::filesystem::path& ScenarioContext::tempDir()
 
 void ScenarioContext::setSessionDirectory (const std::filesystem::path& dir)
 {
+    std::error_code error;
+    std::filesystem::create_directories (dir, error);
     scenarioSessionDir = dir;
     applySessionDirectory (sessionRef, dir);
 }

@@ -209,7 +209,7 @@ std::optional<ScenarioResult> runEditorOpenCloseLoop (GuiHost& host, ScenarioCon
             if (leg.editorSeen) ++opened;
 
         ctx.expect (host.modalStackEmpty(), "the run left a modal up");
-        if (opened == 0)
+        if (opened == 0 && ctx.verdict().status == ScenarioStatus::Pass)
         {
             ctx.complete (ScenarioResult::skip (
                 "no fixture editor could be embedded on this display"));
@@ -275,6 +275,11 @@ std::optional<ScenarioResult> runAuxAttachFailure (GuiHost& host, ScenarioContex
 
 std::optional<ScenarioResult> runClapNoWindowMessage (GuiHost& host, ScenarioContext& ctx)
 {
+   #if ! DUSKSTUDIO_HAS_NATIVE_CLAP
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("built without native CLAP hosting");
+   #else
     static constexpr int kBlankNoticeTimeoutMs = 20000;
 
     const auto fixture = ctx.fixture ("no_window.clap");
@@ -318,12 +323,18 @@ std::optional<ScenarioResult> runClapNoWindowMessage (GuiHost& host, ScenarioCon
                        "the host never noticed the plug-in had put no window in the container");
     });
     return std::nullopt;
+   #endif
 }
 
 // ------------------------------------------------ LV2 editor reflects state
 
 std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, ScenarioContext& ctx)
 {
+   #if ! DUSKSTUDIO_HAS_NATIVE_LV2
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("built without native LV2 hosting");
+   #else
     static constexpr double kGain = 0.75;
     static constexpr double kTolerance = 1.0e-4;
 
@@ -340,7 +351,6 @@ std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, Scenario
         return ScenarioResult::fail ("the fixture did not load: " + error);
     strip->refreshInsertButton();
 
-   #if DUSKSTUDIO_HAS_NATIVE_LV2
     auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeLv2Slot();
     bool moved = false;
     for (int i = 0; i < slot.paramCount(); ++i)
@@ -354,11 +364,6 @@ std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, Scenario
         strip->unloadNativePlugins();
         return ScenarioResult::fail ("the fixture exposes no Gain control");
     }
-   #else
-    strip->unloadNativePlugins();
-    return ScenarioResult::skip ("built without native LV2 hosting");
-   #endif
-
     ctx.later (200, [&ctx, &host, strip]
     {
         if (! strip->openEditor())
@@ -390,6 +395,7 @@ std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, Scenario
         });
     });
     return std::nullopt;
+   #endif
 }
 
 // ------------------------------------------------------ sandboxed editors
@@ -398,11 +404,11 @@ std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, Scenario
 // Both sandboxed cases put the app's own plug-in manager into sandbox mode for
 // the length of one scenario, so both hand it back exactly as it was on every
 // way out, the watchdog's included: the context runs this when the case ends.
-void restoreInProcessHosting (ScenarioContext& ctx, PluginSlot& slot)
+void restoreInProcessHosting (ScenarioContext& ctx, PluginSlot& slot, bool oopWasEnabled)
 {
     slot.unload();
     auto& manager = ctx.engine().getPluginManager();
-    manager.setOopEnabled (false);
+    manager.setOopEnabled (oopWasEnabled);
     manager.setHostExecutableOverride ({}, {});
 }
 
@@ -412,6 +418,7 @@ struct SandboxState
     bool loadOk = false;
     std::string loadError;
     int childPid = -1;
+    bool editorOpenFailed = false;
     bool childDiedEarly = false;
 };
 
@@ -448,7 +455,7 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
                                                   .getFullPathName())>;
     HostString loadError;
     auto probe = manager.createPluginInstance (
-        HostFile (fixture->u8string().c_str()),
+        HostFile (HostString::fromUTF8 (fixture->u8string().c_str())),
         ScenarioContext::kSampleRate, ScenarioContext::kBlockSize, loadError);
     if (probe == nullptr)
         return ScenarioResult::skip ("the fixture did not load through the JUCE host: "
@@ -457,8 +464,15 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
     probe.reset();
 
     auto state = std::make_shared<SandboxState>();
+    const bool oopWasEnabled = manager.isOopEnabled();
     oopstub::useStub (manager, *childBinary, "--ipc-host");
-    ctx.cleanup ([&ctx, &slot] { restoreInProcessHosting (ctx, slot); });
+    ctx.cleanup ([&ctx, &host, strip, &slot, oopWasEnabled]
+    {
+        strip->closeEditor();
+        dismissAlert (host);
+        restoreInProcessHosting (ctx, slot, oopWasEnabled);
+        strip->refreshInsertButton();
+    });
 
     slot.loadFromDescriptorAsync (descriptor, [state] (bool ok, auto error)
     {
@@ -488,10 +502,13 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
         strip->refreshInsertButton();
 
         auto steps = std::make_shared<std::vector<Step>>();
-        steps->push_back ({ 200, [&ctx, strip]
+        steps->push_back ({ 200, [&ctx, strip, state]
         {
             if (! strip->openEditor())
+            {
                 ctx.note ("the sandboxed editor did not come up on this display");
+                state->editorOpenFailed = true;
+            }
         } });
         steps->push_back ({ 600, [&host, strip] { strip->closeEditor(); dismissAlert (host); } });
         steps->push_back ({ 300, [&slot, state]
@@ -510,6 +527,15 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
                 ctx.complete (ScenarioResult::skip (
                     "the sandbox child exited before the editor was closed, so the "
                     "ordering could not be observed"));
+                return;
+            }
+
+            if (state->editorOpenFailed)
+            {
+                strip->refreshInsertButton();
+                ctx.complete (host.canEmbedPluginEditors()
+                    ? ScenarioResult::fail ("the sandboxed editor did not open")
+                    : ScenarioResult::skip ("this display cannot embed plug-in editors"));
                 return;
             }
 
@@ -544,14 +570,16 @@ std::optional<ScenarioResult> runOopEditorFailureNoStrand (GuiHost& host, Scenar
         return ScenarioResult::skip ("the console has no strip to drive");
 
     auto& engine = ctx.engine();
+    auto& manager = engine.getPluginManager();
     auto& slot = engine.getChannelStrip (kStripIndex).getPluginSlot();
     slot.unload();
 
     auto state = std::make_shared<SandboxState>();
     // The one stub mode that answers the load and then hands back a reply the
     // editor RPC cannot read, which is the failure this covers.
-    oopstub::useStub (engine.getPluginManager(), *childBinary, "--ipc-load-reply-stub");
-    ctx.cleanup ([&ctx, &slot] { restoreInProcessHosting (ctx, slot); });
+    const bool oopWasEnabled = manager.isOopEnabled();
+    oopstub::useStub (manager, *childBinary, "--ipc-load-reply-stub");
+    ctx.cleanup ([&ctx, &slot, oopWasEnabled] { restoreInProcessHosting (ctx, slot, oopWasEnabled); });
 
     slot.loadFromDescriptorAsync (oopstub::stubDescriptor(), [state] (bool ok, auto error)
     {

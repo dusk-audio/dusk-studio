@@ -74,6 +74,7 @@ public:
     virtual StripHandle*   strip   (int index) = 0;
     virtual AuxLaneHandle* auxLane (int index) = 0;
 
+    virtual bool canEmbedPluginEditors() const = 0;
     virtual bool modalStackEmpty() const = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.
     virtual void closeTopModal() = 0;

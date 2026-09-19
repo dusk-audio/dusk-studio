@@ -570,9 +570,11 @@ if(DUSKSTUDIO_NATIVE_VST3)
                 dusk-studio-runtime-relayout-vst3-fixture
                 dusk-studio-panic-probe-vst3-fixture)
             get_target_property(DUSKSTUDIO_VST3_FIXTURE_OPTIONS ${vst3Fixture} COMPILE_OPTIONS)
-            list(TRANSFORM DUSKSTUDIO_VST3_FIXTURE_OPTIONS REPLACE "/Zi" "/Z7")
-            set_target_properties(${vst3Fixture}
-                PROPERTIES COMPILE_OPTIONS "${DUSKSTUDIO_VST3_FIXTURE_OPTIONS}")
+            if(DUSKSTUDIO_VST3_FIXTURE_OPTIONS)
+                list(TRANSFORM DUSKSTUDIO_VST3_FIXTURE_OPTIONS REPLACE "/Zi" "/Z7")
+                set_target_properties(${vst3Fixture}
+                    PROPERTIES COMPILE_OPTIONS "${DUSKSTUDIO_VST3_FIXTURE_OPTIONS}")
+            endif()
             if(NOT CMAKE_CONFIGURATION_TYPES)
                 # The SDK places the Windows bundle by looping over
                 # CMAKE_CONFIGURATION_TYPES, so with a single-config generator the

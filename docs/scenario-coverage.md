@@ -5,7 +5,7 @@ person. Buckets: **unit** (Catch2, every ctest run), **scenario** (in-app
 suite, `DUSKSTUDIO_RUN_SCENARIOS`), **bb** (black-box leg in
 `scripts/regress/scenarios.sh`), **windows** / **mac** (a phase of that
 platform's runner), **manual** (with the reason). Run everything with
-`scripts/regress.sh all --gui-scenarios --msi <installer>`.
+`scripts/regress.sh all --release-checks --gui-scenarios --msi <installer>`.
 
 ## Launch, sessions, single instance
 
@@ -78,7 +78,7 @@ platform's runner), **manual** (with the reason). Run everything with
 
 Manual items: 7, 10, 17, 34, 35, 36, 38, 40. Every other row runs through
 the runner of the platform that owns it, so `scripts/regress.sh all
---gui-scenarios --msi <installer>` covers them all; the headless scenarios
+--release-checks --gui-scenarios --msi <installer>` covers them all; the headless scenarios
 also run in CI.
 
 ## Release mechanics
@@ -91,7 +91,6 @@ What the pre-tag audit checks by hand, and what runs it now.
 | VERSION, changelog date, AppStream entry and notes summary agree | `scripts/release-metadata-check.sh`: in `release_mechanics` on every ctest, as the `release-metadata` leg, and in the tag workflow's preflight against the tagged commit's date |
 | the `main` ruleset requires every CI check (#442) | `github-ruleset` leg, `WARN` with the missing names |
 | Patreon freshness before a tag | `patreon-freshness` leg, opt-in through `--release-checks` |
-| the six release assets | `scripts/verify-release-assets.sh` inside the tag workflow |
+| the seven release assets | `scripts/verify-release-assets.sh` inside the tag workflow |
 | configure examples leave the donor to `DONOR_REV` | `release_mechanics` over the maintainer guide |
 | deferred issues stay visible | #508 is the `gui.oop_editor_closes_before_child` SKIP and #504 the Windows `ipc-selftest` SKIP on every run; #507 needs a Known Issues line by hand |
-

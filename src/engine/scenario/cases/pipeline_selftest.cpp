@@ -1,8 +1,10 @@
 #include "../Scenario.h"
 #include "../ScenarioContext.h"
+#include "../ScenarioWorld.h"
 #include "../../AudioEngine.h"
 #include "../../AudioPipelineSelfTest.h"
 
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -10,6 +12,60 @@ namespace duskstudio::scenario
 {
 namespace
 {
+const ScenarioRegistrar resetRegistrar { Scenario {
+    "engine.scenario_world_resets_mix", { "engine", "selftest" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+        ScenarioWorld world;
+        auto& session = world.session();
+        const Session defaults;
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            auto& track = session.track (t);
+            track.name = "changed";
+            auto& strip = track.strip;
+            strip.faderDb.store (-12.0f); strip.liveFaderDb.store (-9.0f);
+            strip.pan.store (0.5f); strip.livePan.store (-0.5f);
+            for (int a = 0; a < ChannelStripParams::kNumAuxSends; ++a)
+            {
+                strip.auxSendDb[(size_t) a].store (-3.0f);
+                strip.liveAuxSendDb[(size_t) a].store (-6.0f);
+            }
+        }
+        session.master().faderDb.store (-18.0f);
+        session.master().liveFaderDb.store (-15.0f);
+        session.master().mute.store (true);
+        world.reset();
+
+        const auto matches = [&ctx] (float actual, float expected)
+        {
+            ctx.expect (std::abs (actual - expected) < 1.0e-6f,
+                        "a continuous mix value survived the world reset");
+        };
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            const auto& strip = session.track (t).strip;
+            const auto& expected = defaults.track (t).strip;
+            ctx.expect (session.track (t).name == defaults.track (t).name,
+                        "a track name survived the world reset");
+            matches (strip.faderDb.load(), expected.faderDb.load());
+            matches (strip.liveFaderDb.load(), expected.liveFaderDb.load());
+            matches (strip.pan.load(), expected.pan.load());
+            matches (strip.livePan.load(), expected.livePan.load());
+            for (int a = 0; a < ChannelStripParams::kNumAuxSends; ++a)
+            {
+                matches (strip.auxSendDb[(size_t) a].load(), expected.auxSendDb[(size_t) a].load());
+                matches (strip.liveAuxSendDb[(size_t) a].load(), expected.liveAuxSendDb[(size_t) a].load());
+            }
+        }
+        matches (session.master().faderDb.load(), defaults.master().faderDb.load());
+        matches (session.master().liveFaderDb.load(), defaults.master().liveFaderDb.load());
+        ctx.expect (session.master().mute.load() == defaults.master().mute.load(),
+                    "master mute survived the world reset");
+        return ctx.verdict();
+    }
+} };
+
 template <typename Fn>
 void forEachLine (const std::string& text, Fn&& fn)
 {

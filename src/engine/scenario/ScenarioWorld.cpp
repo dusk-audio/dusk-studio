@@ -7,6 +7,7 @@
 #include "../../session/Session.h"
 
 #include <cstddef>
+#include <string>
 #include <vector>
 
 namespace duskstudio::scenario
@@ -98,6 +99,18 @@ void ScenarioWorld::reset()
         track.inputMonitor.store (false, std::memory_order_relaxed);
         track.inputSource.store (-2, std::memory_order_relaxed);
         track.frozen.store (false, std::memory_order_relaxed);
+        track.name = std::to_string (t + 1);
+        strip.faderDb.store (0.0f, std::memory_order_relaxed);
+        strip.liveFaderDb.store (0.0f, std::memory_order_relaxed);
+        strip.pan.store (0.0f, std::memory_order_relaxed);
+        strip.livePan.store (0.0f, std::memory_order_relaxed);
+        for (int a = 0; a < ChannelStripParams::kNumAuxSends; ++a)
+        {
+            strip.auxSendDb[(std::size_t) a].store (ChannelStripParams::kAuxSendOffDb,
+                                                   std::memory_order_relaxed);
+            strip.liveAuxSendDb[(std::size_t) a].store (ChannelStripParams::kAuxSendOffDb,
+                                                       std::memory_order_relaxed);
+        }
         strip.mute.store (false, std::memory_order_relaxed);
         strip.solo.store (false, std::memory_order_relaxed);
         // The routed twins the audio thread actually gates on. They only catch
@@ -140,6 +153,10 @@ void ScenarioWorld::reset()
         sessionRef.bus (b).strip.mute.store (false, std::memory_order_relaxed);
         sessionRef.bus (b).strip.solo.store (false, std::memory_order_relaxed);
     }
+
+    sessionRef.master().faderDb.store (0.0f, std::memory_order_relaxed);
+    sessionRef.master().liveFaderDb.store (0.0f, std::memory_order_relaxed);
+    sessionRef.master().mute.store (false, std::memory_order_relaxed);
 
     for (int lane = 0; lane < Session::kNumAuxLanes; ++lane)
     {

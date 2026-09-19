@@ -143,7 +143,9 @@ private:
 
     bool saveSessionTo (const juce::File& sessionDir);
     void saveAsPrompt();
-    bool loadSessionFromJson (const juce::File& sessionJson);
+    // onComplete runs after the load attempt or any recovery-prompt choice.
+    bool loadSessionFromJson (const juce::File& sessionJson,
+                              std::function<void()> onComplete = {});
     // Tail-half called either directly (no autosave) or from the
     // recovery prompt callback.
     bool finishLoadingSessionFrom (const juce::File& sessionJson,

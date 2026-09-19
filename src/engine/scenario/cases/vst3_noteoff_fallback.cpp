@@ -5,6 +5,7 @@
  #include "../../vst3/Vst3Bundle.h"
 #endif
 
+#include <cmath>
 #include <string>
 
 namespace duskstudio::scenario
@@ -87,11 +88,13 @@ ScenarioResult runNoteOffFallback (ScenarioContext& ctx)
     engine.stop();
     ctx.pump (kSettleBlocks);
 
-    ctx.note ("after stop: heldNotes=" + std::to_string (heldNotes (slot))
+    const double afterStop = heldNotes (slot);
+    ctx.note ("after stop: heldNotes=" + std::to_string (afterStop)
               + " outLDb=" + std::to_string (strip.getOutLDb()));
     // No CC 120 / 123 mapping on this plugin, so the only thing that can release
     // the voices is the host turning the panic into per-note note-offs.
-    ctx.expect (heldNotes (slot) <= 0.0, "the voices survived the panic");
+    ctx.expect (std::fpclassify (afterStop) == FP_ZERO,
+                "the voice counter was unavailable or voices survived the panic");
 
     const int silentAfter = midiprobe::pumpUntilSilent (ctx, kTrackIndex, kSilenceBlocks);
     ctx.note ("the strip fell silent " + std::to_string (silentAfter)

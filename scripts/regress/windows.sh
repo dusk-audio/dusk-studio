@@ -45,8 +45,10 @@ done
 
 [[ -n "$MSI_PATH" || -n "$RELEASE_RUN" ]] \
     || regress_die "the windows target needs --msi <path> or --release-run <run id>"
-regress_require virsh python3 7z zip
-[[ -n "$RELEASE_RUN" ]] && regress_require gh
+regress_require virsh python3 7z zip ss
+if [[ -n "$RELEASE_RUN" ]]; then
+    regress_require gh
+fi
 
 RUN_DIR="${TMPDIR:-/tmp}/dusk-regress-windows-$(date +%Y%m%d-%H%M%S)"
 SERVE_DIR="${RUN_DIR}/www"
@@ -60,8 +62,12 @@ COLLECTOR_PID=""
 # Runs from the EXIT trap, where set -e is still live: every kill has to be
 # tolerant of finding nothing, or a clean teardown exits the script non-zero.
 stop_servers() {
-    [[ -n "$HTTP_PID" ]] && { kill "$HTTP_PID" 2>/dev/null || true; }
-    [[ -n "$COLLECTOR_PID" ]] && { kill "$COLLECTOR_PID" 2>/dev/null || true; }
+    if [[ -n "$HTTP_PID" ]]; then
+        kill "$HTTP_PID" 2>/dev/null || true
+    fi
+    if [[ -n "$COLLECTOR_PID" ]]; then
+        kill "$COLLECTOR_PID" 2>/dev/null || true
+    fi
     # Bracketed first character so the pattern cannot match this pkill's own
     # command line and take the calling shell down with it.
     pkill -f "[c]ollector\.py --bind ${HOST_IP}" 2>/dev/null || true

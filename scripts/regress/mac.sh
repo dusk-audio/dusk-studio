@@ -229,7 +229,15 @@ PID_FILE="\$(mktemp -t duskstudio-selftest-pid)"
 rm -f "\$RC_FILE"
 # The subshell records the app's own pid: killing the subshell alone would
 # orphan a hung DuskStudio.
-( DUSKSTUDIO_RUN_SELFTEST=1 "\$BIN" >"\$LOG_FILE" 2>&1 & APP=\$!; echo "\$APP" >"\$PID_FILE"; wait "\$APP"; echo \$? >"\$RC_FILE" ) &
+(
+    set +e
+    DUSKSTUDIO_RUN_SELFTEST=1 "\$BIN" >"\$LOG_FILE" 2>&1 &
+    APP=\$!
+    echo "\$APP" >"\$PID_FILE"
+    wait "\$APP"
+    APP_RC=\$?
+    echo "\$APP_RC" >"\$RC_FILE"
+) &
 CHILD=\$!
 WAITED=0
 while [[ ! -f "\$RC_FILE" ]]; do
@@ -263,13 +271,30 @@ set -euo pipefail
 REPO="\$HOME/${MAC_REPO}"
 BIN="\$REPO/build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
 [[ -x "\$BIN" ]] || { echo "error: scenario binary missing: \$BIN" >&2; exit 1; }
+SANDBOX_DIR="\$(mktemp -d -t duskstudio-scenarios-env)"
+trap 'rm -rf "\$SANDBOX_DIR"' EXIT
+mkdir -m 700 "\$SANDBOX_DIR"/{home,config,data,cache,state,runtime}
 RC_FILE="\$(mktemp -t duskstudio-scenarios-rc)"
 LOG_FILE="\$(mktemp -t duskstudio-scenarios-log)"
 PID_FILE="\$(mktemp -t duskstudio-scenarios-pid)"
 rm -f "\$RC_FILE"
-( DUSKSTUDIO_RUN_SCENARIOS=all \
-  DUSKSTUDIO_FIXTURE_DIR="\$REPO/build-tests:\$REPO/tests/fixtures" \
-  "\$BIN" >"\$LOG_FILE" 2>&1 & APP=\$!; echo "\$APP" >"\$PID_FILE"; wait "\$APP"; echo \$? >"\$RC_FILE" ) &
+(
+    set +e
+    env HOME="\$SANDBOX_DIR/home" \
+        XDG_CONFIG_HOME="\$SANDBOX_DIR/config" \
+        XDG_DATA_HOME="\$SANDBOX_DIR/data" \
+        XDG_CACHE_HOME="\$SANDBOX_DIR/cache" \
+        XDG_STATE_HOME="\$SANDBOX_DIR/state" \
+        XDG_RUNTIME_DIR="\$SANDBOX_DIR/runtime" \
+        DUSKSTUDIO_RUN_SCENARIOS=all \
+        DUSKSTUDIO_FIXTURE_DIR="\$REPO/build-tests:\$REPO/tests/fixtures" \
+        "\$BIN" >"\$LOG_FILE" 2>&1 &
+    APP=\$!
+    echo "\$APP" >"\$PID_FILE"
+    wait "\$APP"
+    APP_RC=\$?
+    echo "\$APP_RC" >"\$RC_FILE"
+) &
 CHILD=\$!
 WAITED=0
 while [[ ! -f "\$RC_FILE" ]]; do

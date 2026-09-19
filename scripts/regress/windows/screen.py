@@ -16,8 +16,12 @@ import os
 
 
 def capture_ppm(domain, connect, path):
-    subprocess.run(['virsh', '-c', connect, 'screenshot', domain, path],
-                   check=True, capture_output=True)
+    proc = subprocess.run(['virsh', '-c', connect, 'screenshot', domain, path],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        print(proc.stderr, file=sys.stderr, end='')
+        raise RuntimeError(f'virsh screenshot for domain {domain!r} failed '
+                           f'with exit status {proc.returncode}')
 
 
 def mean_level(path):

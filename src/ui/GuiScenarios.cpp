@@ -6,6 +6,7 @@
 #include "ConsoleView.h"
 #include "EmbeddedModal.h"
 #include "GuiHost.h"
+#include "PlatformWindowing.h"
 #include "../engine/scenario/SuiteRunner.h"
 
 #include <array>
@@ -33,7 +34,7 @@ using HostString = std::decay_t<decltype (std::declval<const Session&>()
 
 HostFile hostFile (const std::filesystem::path& path)
 {
-    return HostFile (path.u8string().c_str());
+    return HostFile (HostString::fromUTF8 (path.u8string().c_str()));
 }
 } // namespace
 
@@ -230,6 +231,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (handle == nullptr)
             handle = std::make_unique<ScenarioAuxLaneHandle> (owner, index);
         return handle->laneComponent() != nullptr ? handle.get() : nullptr;
+    }
+
+    bool canEmbedPluginEditors() const override
+    {
+        auto* peer = owner.getPeer();
+        return peer != nullptr && peer->getNativeHandle() != nullptr
+            && platform::hasUsableDisplay();
     }
 
     bool modalStackEmpty() const override
