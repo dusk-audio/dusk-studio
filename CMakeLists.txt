@@ -759,6 +759,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/oop_quit_during_load_bounded.cpp
     src/engine/scenario/cases/oop_rapid_switching_safe.cpp
     src/engine/scenario/cases/pipeline_selftest.cpp
+    src/engine/scenario/cases/print_freeze.cpp
     src/engine/scenario/cases/region_editing.cpp
     src/engine/scenario/cases/scan_cancel_au.cpp
     src/engine/scenario/cases/scan_cancel_lv2.cpp
