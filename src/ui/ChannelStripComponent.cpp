@@ -911,7 +911,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     autoModeButton.setColour (juce::TextButton::buttonColourId,   juce::Colours::transparentBlack);
     autoModeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (autoModeButton);
-    refreshAutoModeButton();
+    applyAutoMode (track.automationMode.load (std::memory_order_relaxed));
     displayedLiveFaderDb = track.strip.liveFaderDb.load (std::memory_order_relaxed);
     displayedLivePan     = track.strip.livePan    .load (std::memory_order_relaxed);
 
@@ -4997,6 +4997,7 @@ void ChannelStripComponent::timerCallback()
         const bool isWrite = amode == (int) AutomationMode::Write;
         const bool isTouch = amode == (int) AutomationMode::Touch;
         const bool playing = engine.getTransport().isPlaying();
+        applyAutoMode (amode);
 
         // Fader animate / capture. Animate whenever liveFaderDb diverges
         // from what we've drawn AND the user isn't dragging - this covers
@@ -5170,11 +5171,15 @@ void ChannelStripComponent::setAutoMode (AutomationMode mode)
 {
     // A pass this mode change ends is spliced on the next timer tick.
     track.automationMode.store ((int) mode, std::memory_order_release);
+    applyAutoMode ((int) mode);
+}
 
-    // Read mode disables every automated control (spec: "User cannot
-    // override"). Off / Write / Touch leave them interactive so the
-    // user can either ride them (Write) or grab to override (Touch).
-    const bool interactive = mode != AutomationMode::Read;
+void ChannelStripComponent::applyAutoMode (int mode)
+{
+    // READ plays the lanes, so the controls they drive are locked; the other
+    // modes leave them to the user. Every tick, so a send knob built later
+    // picks the lock up too.
+    const bool interactive = mode != (int) AutomationMode::Read;
     faderSlider.setEnabled (interactive);
     panKnob    .setEnabled (interactive);
     muteButton .setEnabled (interactive);
@@ -5182,6 +5187,8 @@ void ChannelStripComponent::setAutoMode (AutomationMode mode)
     for (auto& knob : auxKnobs)
         if (knob != nullptr) knob->setEnabled (interactive);
 
+    if (mode == appliedAutoMode) return;
+    appliedAutoMode = mode;
     refreshAutoModeButton();
 }
 

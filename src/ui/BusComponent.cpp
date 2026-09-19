@@ -769,7 +769,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     addAndMakeVisible (autoModeButton);
     // Apply the restored mode (not just the button visuals) so a bus loaded in
     // READ opens with its fader / pan / mute already disabled.
-    setAutoMode ((AutomationMode) bus.strip.automationMode.load (std::memory_order_relaxed));
+    applyAutoMode (bus.strip.automationMode.load (std::memory_order_relaxed));
 
     // Mouse listeners so the strip's mouseDown sees right-clicks on each
     // child (e.eventComponent identifies which control was hit). Matches
@@ -881,14 +881,20 @@ void BusComponent::setAutoMode (AutomationMode mode)
 {
     // A pass this mode change ends is spliced on the next timer tick.
     bus.strip.automationMode.store ((int) mode, std::memory_order_release);
+    applyAutoMode ((int) mode);
+}
 
-    // Read disables the automated controls (fader / pan / mute). Solo isn't
+void BusComponent::applyAutoMode (int mode)
+{
+    // READ locks the automated controls (fader / pan / mute). Solo isn't
     // automated, so it stays interactive in every mode.
-    const bool interactive = mode != AutomationMode::Read;
+    const bool interactive = mode != (int) AutomationMode::Read;
     faderSlider.setEnabled (interactive);
     panKnob    .setEnabled (interactive);
     muteButton .setEnabled (interactive);
 
+    if (mode == appliedAutoMode) return;
+    appliedAutoMode = mode;
     refreshAutoModeButton();
 }
 
@@ -993,6 +999,7 @@ void BusComponent::timerCallback()
     const bool isWrite  = amode == (int) AutomationMode::Write;
     const bool isTouch  = amode == (int) AutomationMode::Touch;
     const bool playing  = engine.getTransport().isPlaying();
+    applyAutoMode (amode);
     {
         const float live    = bus.strip.liveFaderDb.load (std::memory_order_relaxed);
         const bool  touched = bus.strip.faderTouched.load (std::memory_order_relaxed);

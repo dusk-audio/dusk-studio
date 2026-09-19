@@ -5,6 +5,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <string>
 #include "CompMeterStrip.h"
 #include "SplitModuleButton.h"
 #include "ConsoleLayout.h"
@@ -61,6 +62,9 @@ public:
     // Click MUTE / SOLO as the mouse would; the click lands on a later tick.
     void clickMuteForScenario();
     void clickSoloForScenario();
+    // Scenario-harness only: the mode label and whether the fader takes input.
+    std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
+    bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -227,6 +231,11 @@ private:
     juce::TextButton autoModeButton { "OFF" };
     void showAutoModeMenu();
     void setAutoMode (AutomationMode mode);
+    // Shows mode on the label and locks the automated controls in READ. The
+    // timer calls it too, so a mode set anywhere else (drawing automation arms
+    // READ) shows up here.
+    void applyAutoMode (int mode);
+    int appliedAutoMode = -1;
     void refreshAutoModeButton();
     // Feeds param's WRITE / TOUCH pass while recording is true; the first
     // call with it false splices the pass into the lane.
