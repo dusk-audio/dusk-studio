@@ -1632,13 +1632,14 @@ AudioEngine::TransportService AudioEngine::serviceTransportRequests()
         }
     }
 
-    // Before the action, so a chase's locate-and-play lands first.
+    // Acquire the action before reading its published playhead, then locate
+    // before dispatch so a chase's locate-and-play lands first.
+    const auto pending = (PendingTransportAction) session.pendingTransportAction.exchange (
+        (int) PendingTransportAction::None, std::memory_order_acquire);
     if (const auto target = session.pendingTransportPlayhead.exchange (
             (std::int64_t) -1, std::memory_order_relaxed); target >= 0)
         transport.locate (target);
 
-    const auto pending = (PendingTransportAction) session.pendingTransportAction.exchange (
-        (int) PendingTransportAction::None, std::memory_order_relaxed);
     switch (pending)
     {
         case PendingTransportAction::Play:   play(); break;
@@ -4021,7 +4022,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     std::memory_order_relaxed);
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Play,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
                 mtcDriftWindowFrames = 0;
                 lastSeenMtcFrames    = mtcFrames;
             }
@@ -4033,7 +4034,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 // master scrubbing back leaves Dusk Studio rolling forward.
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::SyncStop,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
                 mtcDriftWindowFrames = 0;
             }
             else if (mtcRolling && ! reversed && sPerFrame > 0.0)
@@ -4099,13 +4100,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             {
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Play,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
             }
             else if (! extRolling && lastExtRolling)
             {
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::SyncStop,
-                    std::memory_order_relaxed);
+                    std::memory_order_release);
             }
         }
         lastExtRolling = extRolling;
@@ -4440,19 +4441,19 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     {
                         case MidiBindingTarget::TransportPlay:
                             session.pendingTransportAction.store (
-                                (int) PendingTransportAction::Play, std::memory_order_relaxed);
+                                (int) PendingTransportAction::Play, std::memory_order_release);
                             break;
                         case MidiBindingTarget::TransportStop:
                             session.pendingTransportAction.store (
-                                (int) PendingTransportAction::Stop, std::memory_order_relaxed);
+                                (int) PendingTransportAction::Stop, std::memory_order_release);
                             break;
                         case MidiBindingTarget::TransportRecord:
                             session.pendingTransportAction.store (
-                                (int) PendingTransportAction::Record, std::memory_order_relaxed);
+                                (int) PendingTransportAction::Record, std::memory_order_release);
                             break;
                         case MidiBindingTarget::TransportToggle:
                             session.pendingTransportAction.store (
-                                (int) PendingTransportAction::Toggle, std::memory_order_relaxed);
+                                (int) PendingTransportAction::Toggle, std::memory_order_release);
                             break;
 
                         case MidiBindingTarget::TrackFader:
@@ -6535,10 +6536,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         if (offlineRender)
             clickRolling = false;
 
-        // The click mixes post-master, AFTER the master-stage aux PDC delayed
-        // the program by masterDryPdcApplied - reference the click to the
-        // delayed position or it leads everything it's supposed to mark.
-        metronome.process (blockStartSamples - (std::int64_t) masterDryPdcApplied,
+        // The post-master click follows every mix delay. Master-stage PDC
+        // uses the applied delay because its target can change mid-roll.
+        const int mixLatency = getTrackOutputLatencySamples()
+                             + busAlignSamples.load (std::memory_order_relaxed)
+                             + masterDryPdcApplied + master.getOversamplingLatencySamples()
+                             + getMasterTapeLatencySamples();
+        metronome.process (blockStartSamples - (std::int64_t) mixLatency,
                             clickRolling,
                             mixL.data(), mixR.data(), numSamples,
                             /*forceEnable*/ inCountIn);

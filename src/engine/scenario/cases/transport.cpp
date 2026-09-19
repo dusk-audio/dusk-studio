@@ -5,6 +5,7 @@
 #include "../../../session/Session.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -68,6 +69,58 @@ ScenarioResult playSnapsToLoopStart (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+ScenarioResult clickFollowsBusAlignment (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const int factorWas = session.oversamplingFactor.load();
+    const bool enabledWas = session.metronomeEnabled.load();
+    const bool playingWas = session.metronomeClickWhilePlaying.load();
+    const float bpmWas = session.tempoBpm.load();
+    const float volumeWas = session.metronomeVolDb.load();
+    ctx.cleanup ([&session, &engine, factorWas, enabledWas, playingWas, bpmWas, volumeWas]
+    {
+        engine.stop();
+        session.oversamplingFactor.store (factorWas);
+        engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+        session.metronomeEnabled.store (enabledWas);
+        session.metronomeClickWhilePlaying.store (playingWas);
+        session.tempoBpm.store (bpmWas);
+        session.metronomeVolDb.store (volumeWas);
+    });
+    session.metronomeEnabled.store (true);
+    session.metronomeClickWhilePlaying.store (true);
+    session.tempoBpm.store (120.0f);
+    session.metronomeVolDb.store (0.0f);
+
+    for (int factor : { 1, 2, 4 })
+    {
+        engine.stop();
+        session.oversamplingFactor.store (factor);
+        engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+        engine.applyMasterPdcTargetsNow();
+        constexpr int kLeadIn = 100;
+        transport.setPlayhead (kSecond / 2 - kLeadIn);
+        engine.play();
+        ctx.pump (1);
+        // The sine click is zero at its first sample and audible at the next.
+        const int expected = kLeadIn + 1 + engine.getMixLatencySamples();
+        for (int channel = 0; channel < 2; ++channel)
+        {
+            const auto& block = ctx.lastBlock (channel);
+            const auto first = std::find_if (block.begin(), block.end(),
+                                            [] (float v) { return std::abs (v) > 1.0e-5f; });
+            const int onset = first == block.end() ? -1 : (int) (first - block.begin());
+            ctx.expect (onset == expected,
+                        std::to_string (factor) + "x click on channel " + std::to_string (channel)
+                            + " starts at " + std::to_string (onset)
+                            + ", expected " + std::to_string (expected));
+        }
+    }
+    return ctx.verdict();
+}
+
 // Count-in rolls the playhead back one bar and clicks through it, metronome
 // off or not; the take itself starts where Record was pressed.
 ScenarioResult countInRollsBackABar (ScenarioContext& ctx)
@@ -76,8 +129,12 @@ ScenarioResult countInRollsBackABar (ScenarioContext& ctx)
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
     const bool countInWas = session.countInEnabled.load (std::memory_order_relaxed);
-    ctx.cleanup ([&session, countInWas]
-                 { session.countInEnabled.store (countInWas, std::memory_order_relaxed); });
+    const bool metronomeWas = session.metronomeEnabled.load (std::memory_order_relaxed);
+    ctx.cleanup ([&session, countInWas, metronomeWas]
+    {
+        session.countInEnabled.store (countInWas, std::memory_order_relaxed);
+        session.metronomeEnabled.store (metronomeWas, std::memory_order_relaxed);
+    });
     session.countInEnabled.store (true, std::memory_order_relaxed);
     session.metronomeEnabled.store (false, std::memory_order_relaxed);
 
@@ -223,6 +280,7 @@ ScenarioResult shortLoopRefused (ScenarioContext& ctx)
     engine.record();
     ctx.expect (transport.isRecording() && refusal.empty(), "a 128-sample loop was refused");
     engine.stop();
+    engine.setRecordBlockedSink ({});
     return ctx.verdict();
 }
 
@@ -236,11 +294,17 @@ ScenarioResult chaseStopLeavesPlayhead (ScenarioContext& ctx)
 
     const auto rollThenStop = [&] (PendingTransportAction action)
     {
-        transport.setPlayhead (kSecond / 10);
-        engine.play();
+        transport.setPlayhead (0);
+        session.pendingTransportPlayhead.store (kSecond / 10, std::memory_order_relaxed);
+        session.pendingTransportAction.store ((int) PendingTransportAction::Play,
+                                              std::memory_order_release);
+        engine.serviceTransportRequests();
+        ctx.expect (transport.isPlaying() && transport.getPlayhead() == kSecond / 10
+                        && transport.getRollStart() == kSecond / 10,
+                    "the queued play did not start at its published playhead");
         ctx.pump (50);
         const auto rolledTo = transport.getPlayhead();
-        session.pendingTransportAction.store ((int) action, std::memory_order_relaxed);
+        session.pendingTransportAction.store ((int) action, std::memory_order_release);
         const bool stopped = engine.serviceTransportRequests().stopped;
         ctx.expect (stopped && transport.isStopped(), "the queued stop did not stop the transport");
         return std::make_pair (rolledTo, transport.getPlayhead());
@@ -268,6 +332,9 @@ const ScenarioRegistrar snapRegistrar { Scenario {
 const ScenarioRegistrar countInRegistrar { Scenario {
     "transport.count_in_rolls_back_a_bar", { "transport", "record", "metronome" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (countInRollsBackABar, ctx); } } };
+const ScenarioRegistrar clickAlignmentRegistrar { Scenario {
+    "transport.click_follows_bus_alignment", { "transport", "metronome", "pdc" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (clickFollowsBusAlignment, ctx); } } };
 const ScenarioRegistrar punchRegistrar { Scenario {
     "transport.punch_pre_and_post_roll", { "transport", "record", "punch" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (punchPreAndPostRoll, ctx); } } };
