@@ -34,18 +34,20 @@ public:
     // Adds value (in the control's own units: dB, pan, 0/1) at playhead.
     // locates is the transport's seek count. A seek, or a playhead behind the
     // pass as after a loop wrap, closes the pass first and starts a new one,
-    // so what a seek skipped over keeps its earlier ride.
+    // so what a seek skipped over keeps its earlier ride. returnSamples is how
+    // long the lane takes to get back to what it held after the pass - 0 for
+    // WRITE, the TOUCH glide otherwise - and the pass keeps the one it opened
+    // with, so a mode change before it ends does not change how it ends.
     void record (AutomationLane& lane, std::int64_t playhead, float value, float bpm,
-                 std::uint32_t locates);
+                 std::uint32_t locates, std::int64_t returnSamples);
 
-    // Splices the pass into the lane and publishes it. returnSamples is how
-    // long the lane takes to get back to what it held after the pass: 0 for
-    // WRITE, the TOUCH glide otherwise. No-op when no pass is open. A lane
-    // something else replaced meanwhile (a session load) drops the pass
-    // instead, so one session's ride never lands in another's.
-    void finish (AutomationLane& lane, std::int64_t returnSamples);
+    // Splices the pass into the lane and publishes it. No-op when no pass is
+    // open. A lane something else replaced meanwhile (a session load) drops
+    // the pass instead, so one session's ride never lands in another's.
+    void finish (AutomationLane& lane);
 
 private:
+    void close (AutomationLane& lane, std::int64_t returnSamples);
     void drop (AutomationLane& lane) noexcept;
 
     AutomationParam param;
@@ -53,6 +55,7 @@ private:
     const std::vector<AutomationPoint>* base = nullptr;
     std::int64_t spanEnd = 0;
     std::uint32_t passLocates = 0;
+    std::int64_t passReturn = 0;
     float lastValue = 0.0f;
     float lastBpm = 120.0f;
 };

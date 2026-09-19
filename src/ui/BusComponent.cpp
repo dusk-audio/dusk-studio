@@ -843,16 +843,17 @@ void BusComponent::recordAutomation (AutomationParam param, bool recording, floa
     auto& lane = bus.strip.automationLanes[(size_t) param];
     if (recording)
     {
+        const bool touch = bus.strip.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Touch;
         recorder.record (lane, engine.getTransport().getPlayhead(), value,
                          sessionRef.tempoBpm.load (std::memory_order_relaxed),
-                         engine.getTransport().getLocateCount());
+                         engine.getTransport().getLocateCount(),
+                         touch ? (std::int64_t) (engine.getCurrentSampleRate()
+                                                 * AutomationPassRecorder::kTouchReturnSeconds)
+                               : 0);
     }
-    else if (recorder.active())
+    else
     {
-        const bool touch = bus.strip.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Touch;
-        recorder.finish (lane, touch ? (std::int64_t) (engine.getCurrentSampleRate()
-                                                        * AutomationPassRecorder::kTouchReturnSeconds)
-                                     : 0);
+        recorder.finish (lane);
     }
 }
 

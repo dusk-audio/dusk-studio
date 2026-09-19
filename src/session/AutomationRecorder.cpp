@@ -15,12 +15,13 @@ constexpr float kMovedEpsilon = 0.001f;
 } // namespace
 
 void AutomationPassRecorder::record (AutomationLane& lane, std::int64_t playhead,
-                                     float value, float bpm, std::uint32_t locates)
+                                     float value, float bpm, std::uint32_t locates,
+                                     std::int64_t returnSamples)
 {
     if (active() && &lane.pointsConst() != base)
         drop (lane);
     if (active() && (playhead < spanEnd || locates != passLocates))
-        finish (lane, 0);
+        close (lane, 0);
 
     AutomationPoint point;
     point.timeSamples = playhead;
@@ -32,6 +33,7 @@ void AutomationPassRecorder::record (AutomationLane& lane, std::int64_t playhead
         lane.passOpen.store (true, std::memory_order_release);
         base = &lane.pointsConst();
         passLocates = locates;
+        passReturn = returnSamples;
         pass.push_back (point);
     }
     else if (pass.back().timeSamples == playhead)
@@ -60,7 +62,12 @@ void AutomationPassRecorder::drop (AutomationLane& lane) noexcept
     lane.passOpen.store (false, std::memory_order_release);
 }
 
-void AutomationPassRecorder::finish (AutomationLane& lane, std::int64_t returnSamples)
+void AutomationPassRecorder::finish (AutomationLane& lane)
+{
+    close (lane, passReturn);
+}
+
+void AutomationPassRecorder::close (AutomationLane& lane, std::int64_t returnSamples)
 {
     if (! active()) return;
     if (&lane.pointsConst() != base)
