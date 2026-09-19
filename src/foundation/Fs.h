@@ -332,20 +332,29 @@ inline std::filesystem::path tempDir()
 #endif
 }
 
+// The name carries the process id, so processes running side by side (ctest
+// runs cases that way) never build the same one. A name that is taken - even
+// by a directory another process is removing as we look, which reports as an
+// error rather than as an existing directory - moves on to the next.
 inline std::filesystem::path createUniqueTempDirectory (std::string_view prefix)
 {
     static std::atomic<std::uint64_t> sequence { 0 };
     const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto base = tempDir();
+#if defined(_WIN32)
+    const auto process = std::to_string ((unsigned long) GetCurrentProcessId());
+#else
+    const auto process = std::to_string ((long) ::getpid());
+#endif
 
     for (int attempt = 0; attempt < 128; ++attempt)
     {
         const auto ticket = sequence.fetch_add (1, std::memory_order_relaxed);
-        const auto candidate = base / (std::string (prefix) + std::to_string (tick)
+        const auto candidate = base / (std::string (prefix) + process + "-" + std::to_string (tick)
                                         + "-" + std::to_string (ticket));
         std::error_code error;
         if (std::filesystem::create_directory (candidate, error)) return candidate;
-        if (error) return {};
+        if (error && error != std::errc::file_exists) return {};
     }
     return {};
 }
