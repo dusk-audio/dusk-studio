@@ -8,6 +8,11 @@
 #include <algorithm>
 #include <filesystem>
 
+#if ! defined (_WIN32)
+ #include <sys/stat.h>
+ #include <unistd.h>
+#endif
+
 namespace
 {
 juce::File makeScratch()
@@ -107,3 +112,32 @@ TEST_CASE ("Clean out reports nothing for a session with no audio directory",
 
     dir.deleteRecursively();
 }
+
+#if ! defined (_WIN32)
+// A directory that cannot be read is not an empty one: saying "already clean"
+// there would tell the user their session holds no stale takes when nothing
+// was actually looked at.
+TEST_CASE ("Clean out reports a directory it cannot read", "[session][cleanout]")
+{
+    using duskstudio::Session;
+
+    if (::geteuid() == 0)
+        SKIP ("root reads a directory whatever its permissions say");
+
+    const auto dir = makeScratch();
+    const auto audio = dir.getChildFile ("audio");
+    audio.createDirectory();
+    writeWav (audio, "orphan.wav", 128);
+
+    Session session;
+    session.setSessionDirectory (dir);
+    REQUIRE (::chmod (audio.getFullPathName().toRawUTF8(), 0) == 0);
+
+    const auto found = duskstudio::findUnreferencedAudio (session);
+    CHECK (found.scanFailed);
+    CHECK (found.files.empty());
+
+    ::chmod (audio.getFullPathName().toRawUTF8(), 0700);
+    dir.deleteRecursively();
+}
+#endif

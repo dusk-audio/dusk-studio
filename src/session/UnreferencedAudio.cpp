@@ -33,7 +33,13 @@ UnreferencedAudio findUnreferencedAudio (const Session& session)
     UnreferencedAudio found;
     const auto audioDir = pathOf (session.getAudioDirectory());
     std::error_code error;
-    if (! std::filesystem::is_directory (audioDir, error)) return found;
+    if (! std::filesystem::is_directory (audioDir, error))
+    {
+        // A session that has recorded nothing yet has no audio directory, which
+        // is not a failure; anything else is.
+        found.scanFailed = error && error != std::errc::no_such_file_or_directory;
+        return found;
+    }
 
     std::vector<std::filesystem::path> referenced;
     const auto remember = [&referenced] (const std::filesystem::path& path)
@@ -56,12 +62,17 @@ UnreferencedAudio findUnreferencedAudio (const Session& session)
          it.increment (error))
     {
         const auto path = it->path().lexically_normal();
-        if (! it->is_regular_file (error) || ! isWav (path)) continue;
+        std::error_code entryError;
+        const bool regular = it->is_regular_file (entryError);
+        if (entryError) { found.scanFailed = true; continue; }
+        if (! regular || ! isWav (path)) continue;
         if (std::find (referenced.begin(), referenced.end(), path) != referenced.end()) continue;
+        const auto size = std::filesystem::file_size (path, entryError);
+        if (entryError) { found.scanFailed = true; continue; }
         found.files.push_back (path);
-        const auto size = std::filesystem::file_size (path, error);
-        if (! error) found.totalBytes += (std::int64_t) size;
+        found.totalBytes += (std::int64_t) size;
     }
+    if (error) found.scanFailed = true;
     return found;
 }
 } // namespace duskstudio

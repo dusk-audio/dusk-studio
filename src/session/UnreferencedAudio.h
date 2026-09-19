@@ -16,6 +16,10 @@ struct UnreferencedAudio
 {
     std::vector<std::filesystem::path> files;
     std::int64_t totalBytes = 0;
+    // The directory could not be read (permissions, a broken mount). An empty
+    // list then means "could not tell", not "nothing to clean", and the files
+    // listed are only what was reached before the walk stopped.
+    bool scanFailed = false;
 };
 
 UnreferencedAudio findUnreferencedAudio (const Session& session);

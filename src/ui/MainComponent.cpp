@@ -5546,6 +5546,16 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
 
 void MainComponent::cleanOutUnreferencedFiles()
 {
+    const auto unreferenced = findUnreferencedAudio (session);
+    if (unreferenced.scanFailed)
+    {
+        showDuskAlert (*this, "Clean out",
+                          "Could not read this session's audio directory, so "
+                          "there is no telling what is unreferenced. Check the "
+                          "folder's permissions and that its drive is still "
+                          "connected, then try again.");
+        return;
+    }
     if (! session.getAudioDirectory().isDirectory())
     {
         showDuskAlert (*this, "Clean out",
@@ -5554,7 +5564,6 @@ void MainComponent::cleanOutUnreferencedFiles()
         return;
     }
 
-    const auto unreferenced = findUnreferencedAudio (session);
     if (unreferenced.files.empty())
     {
         showDuskAlert (*this, "Clean out",
