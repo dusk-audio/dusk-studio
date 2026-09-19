@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 116
+# ceiling gap 115
 # ceiling partial 55
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -364,7 +364,7 @@ Saving and loading sessions > Save commands	Open loads a session by folder	parti
 Saving and loading sessions > Save commands	templates name and colour tracks only	auto	test:applying a template names every track;test:templates differ from Blank where they name instruments
 Saving and loading sessions > Autosave	writes session.json.autosave atomically on a timer, skipping idle sessions	auto	scenario:gui.autosave_writes_and_recovers
 Saving and loading sessions > Autosave	a newer autosave is offered for recovery; Recover writes it to session.json	auto	scenario:gui.autosave_writes_and_recovers
-Saving and loading sessions > What's in a session	tracks, regions, mixer, plugins, transport, markers, bindings, sync, mastering source	partial	test:SessionSerializer round-trip preserves transport + per-track state;test:SessionSerializer round-trips the MTC sync settings;test:SessionSerializer round-trips MCU input/output identifiers + assign mode;test:mastering source file does not survive loading a session without one		tracks, transport, sync and MCU round-trip; markers, bindings and region fields are not asserted
+Saving and loading sessions > What's in a session	tracks, regions, mixer, plugins, transport, markers, bindings, sync, mastering source	auto	test:SessionSerializer round-trip preserves transport + per-track state;test:SessionSerializer round-trips every region field;test:SessionSerializer round-trips the mixer;test:SessionSerializer round-trips markers, bindings and fader groups;test:SessionSerializer round-trips the MTC sync settings;test:SessionSerializer round-trips MCU input/output identifiers + assign mode;test:mastering source file does not survive loading a session without one;test:SessionSerializer round-trips structured plugin descriptors and legacy fallback
 Saving and loading sessions > What's in a session	a damaged or partial session still loads safely	auto	test:SessionSerializer::load survives truncated JSON;test:SessionSerializer::load survives empty / non-JSON garbage;test:loading a session without section keys resets those sections;test:SessionSerializer rejects future-version sessions;bb:bb-damaged-recent
 Saving and loading sessions > Backing up	copying the folder is a complete backup	n/a			advice; relative paths are held under Where sessions live
 
@@ -422,7 +422,7 @@ Messages > Recording > Recording errors	reports per-track errors after the take	
 Messages > Session	session alerts	n/a			index; entries are held below
 Messages > Session > Recover from autosave?	offered when the autosave is newer; three choices	auto	scenario:gui.autosave_writes_and_recovers
 Messages > Session > Save changes before quitting?	quitting with changes prompts; logout and SIGTERM count as quitting	auto	bb:bb-clean-quit;bb:bb-quit-twice;test:Staged shutdown prints every phase marker the quit legs assert on
-Messages > Session > Save failed	an unwritable session.json raises the alert and keeps the session in memory	gap
+Messages > Session > Save failed	an unwritable session.json raises the alert and keeps the session in memory	partial	test:SessionSerializer save failure keeps the session and its temporary copy		the refusal and the untouched in-memory session are tested; the alert itself is UI
 Messages > Session > Missing audio files	lists the files a loaded session cannot find	auto	test:unresolvable region path is reported as missing
 Messages > Session > Clean out	no audio dir, nothing to clean, or confirm deleting unreferenced files	gap
 Messages > Session > Optimize automation	refused while playing or in Read/Touch; reports the thinning	partial	test:thinAutomationLane: collinear interior points are dropped		the thinning is tested; the refusals are not
