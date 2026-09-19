@@ -993,13 +993,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     autoModeButton.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
     autoModeButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff909094));
     autoModeButton.onClick = [this] { showAutoModeMenu(); };
-    {
-        const int amode = params.automationMode.load (std::memory_order_relaxed);
-        autoModeButton.setButtonText (amode == (int) AutomationMode::Off   ? "Off"
-                                       : amode == (int) AutomationMode::Read  ? "R"
-                                       : amode == (int) AutomationMode::Write ? "W"
-                                                                              : "T");
-    }
+    applyAutoMode (params.automationMode.load (std::memory_order_relaxed));
     addAndMakeVisible (autoModeButton);
 
     muteButton.setClickingTogglesState (true);
@@ -1135,6 +1129,7 @@ void MasterStripComponent::timerCallback()
         const bool isWrite = amode == (int) AutomationMode::Write;
         const bool isTouch = amode == (int) AutomationMode::Touch;
         const bool playing = engine.getTransport().isPlaying();
+        applyAutoMode (amode);
 
         const float live    = params.liveFaderDb.load (std::memory_order_relaxed);
         const bool  touched = params.faderTouched.load (std::memory_order_relaxed);
@@ -1241,10 +1236,18 @@ void MasterStripComponent::setAutoMode (AutomationMode m)
 {
     // A pass this mode change ends is spliced on the next timer tick.
     params.automationMode.store ((int) m, std::memory_order_release);
-    autoModeButton.setButtonText (m == AutomationMode::Off   ? "Off"
-                                   : m == AutomationMode::Read  ? "R"
-                                   : m == AutomationMode::Write ? "W"
-                                                                : "T");
+    applyAutoMode ((int) m);
+}
+
+void MasterStripComponent::applyAutoMode (int mode)
+{
+    faderSlider.setEnabled (mode != (int) AutomationMode::Read);
+    if (mode == appliedAutoMode) return;
+    appliedAutoMode = mode;
+    autoModeButton.setButtonText (mode == (int) AutomationMode::Off   ? "Off"
+                                   : mode == (int) AutomationMode::Read  ? "R"
+                                   : mode == (int) AutomationMode::Write ? "W"
+                                                                         : "T");
 }
 
 void MasterStripComponent::recordFader (bool recording, float db)

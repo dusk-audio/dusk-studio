@@ -104,6 +104,10 @@ private:
 
     void showAutoModeMenu();
     void setAutoMode (AutomationMode m);
+    // Shows mode on the label and locks the fader in READ. The timer calls it
+    // too, so a mode set anywhere else (a session load) shows up here.
+    void applyAutoMode (int mode);
+    int appliedAutoMode = -1;
     // Feeds the fader's WRITE / TOUCH pass while recording is true; the
     // first call with it false splices the pass into the lane.
     void recordFader (bool recording, float db);

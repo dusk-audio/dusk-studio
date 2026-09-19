@@ -1520,10 +1520,10 @@ There is no PFL (pre-fader listen) or AFL (after-fader listen) mode, and no dry 
 
 ## Automation
 
-Each channel strip, each bus, and the master strip have an automation mode button below the fader. Click it to pick a mode:
+Each channel strip, each bus, each aux return, and the master strip have an automation mode button below the fader. Click it to pick a mode:
 
 - **OFF**: the fader does what you do. No recording, no playback of past rides.
-- **READ**: previously recorded automation drives the fader during playback. Nothing you do is recorded, and on channel and bus strips the automated controls are locked.
+- **READ**: previously recorded automation drives the fader during playback. The automated controls are locked, and nothing you do is recorded.
 - **WRITE**: every fader movement is recorded for as long as the transport rolls. Existing automation in the region played over is overwritten.
 - **TOUCH**: while you are touching the fader, your movement is recorded. When you let go, the automation reverts to the previously recorded value via a short ramp.
 

@@ -346,13 +346,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     autoModeButton.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
     autoModeButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff909094));
     autoModeButton.onClick = [this] { showAutoModeMenu(); };
-    {
-        const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
-        autoModeButton.setButtonText (amode == (int) AutomationMode::Off   ? "Off"
-                                       : amode == (int) AutomationMode::Read  ? "R"
-                                       : amode == (int) AutomationMode::Write ? "W"
-                                                                              : "T");
-    }
+    applyAutoMode (lane.params.automationMode.load (std::memory_order_relaxed));
     addAndMakeVisible (autoModeButton);
 
     // Cue/headphone output routing. "Master only" = no hardware tap; any other
@@ -519,6 +513,7 @@ void AuxLaneComponent::timerCallback()
     // is mode-agnostic - gated only on the user not dragging - so a
     // MIDI-bound aux return moves the on-screen fader in Off mode too.
     const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
+    applyAutoMode (amode);
     const bool isWrite = amode == (int) AutomationMode::Write;
     const bool isTouch = amode == (int) AutomationMode::Touch;
     const bool playing = engine.getTransport().isPlaying();
@@ -633,10 +628,20 @@ void AuxLaneComponent::setAutoMode (AutomationMode m)
 {
     // A pass this mode change ends is spliced on the next timer tick.
     lane.params.automationMode.store ((int) m, std::memory_order_release);
-    autoModeButton.setButtonText (m == AutomationMode::Off   ? "Off"
-                                   : m == AutomationMode::Read  ? "R"
-                                   : m == AutomationMode::Write ? "W"
-                                                                : "T");
+    applyAutoMode ((int) m);
+}
+
+void AuxLaneComponent::applyAutoMode (int mode)
+{
+    const bool interactive = mode != (int) AutomationMode::Read;
+    returnFader.setEnabled (interactive);
+    muteButton .setEnabled (interactive);
+    if (mode == appliedAutoMode) return;
+    appliedAutoMode = mode;
+    autoModeButton.setButtonText (mode == (int) AutomationMode::Off   ? "Off"
+                                   : mode == (int) AutomationMode::Read  ? "R"
+                                   : mode == (int) AutomationMode::Write ? "W"
+                                                                         : "T");
 }
 
 void AuxLaneComponent::recordAutomation (AutomationParam param, bool recording, float value)
