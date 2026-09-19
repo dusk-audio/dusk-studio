@@ -66,6 +66,9 @@ public:
     // JUCE-free scenario code can call them.
     void rebuildSlotsForScenario();
     void unloadSlotForScenario (int slotIdx) { unloadSlot (slotIdx); }
+    // The mode label and whether the return fader takes input.
+    std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
+    bool faderEnabledForScenario() const { return returnFader.isEnabled(); }
     bool attachEditorForSlotForScenario (int slotIdx);
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     bool loadNativeClapForSlotForScenario (int slotIdx,

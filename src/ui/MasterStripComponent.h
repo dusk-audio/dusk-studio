@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
+#include <string>
 #include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
@@ -29,6 +30,10 @@ public:
 
     void setCompactVu (bool compact);
     void setCompactMode (bool compact);
+
+    // Scenario-harness only: the mode label and whether the fader takes input.
+    std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
+    bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
 
 private:
     bool compactVu = false;

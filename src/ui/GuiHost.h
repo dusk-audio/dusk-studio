@@ -78,6 +78,13 @@ public:
     virtual StripHandle*   strip   (int index) = 0;
     virtual AuxLaneHandle* auxLane (int index) = 0;
 
+    // A strip's automation mode as the strip itself shows it: the mode label,
+    // and whether its fader takes input (READ locks it). False when that strip
+    // is not built.
+    enum class StripKind { Channel, Bus, Master, Aux };
+    virtual bool automationView (StripKind kind, int index,
+                                 std::string& label, bool& faderEnabled) = 0;
+
     virtual bool canEmbedPluginEditors() const = 0;
     virtual bool modalStackEmpty() const = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.

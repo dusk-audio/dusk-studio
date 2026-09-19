@@ -10,6 +10,8 @@
 #include "../session/SessionSerializer.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
@@ -864,6 +866,59 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
     return std::nullopt;
 }
 
+// A mode set outside a strip's own menu - drawing automation arms READ, a
+// session load sets the aux lanes it does not rebuild - shows on every strip's
+// label within a tick, and READ locks every strip's fader.
+std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioContext& ctx)
+{
+    struct Probe { GuiHost::StripKind kind; int index; const char* name; };
+    static constexpr Probe kProbes[] = {
+        { GuiHost::StripKind::Channel, kStripIndex, "channel" },
+        { GuiHost::StripKind::Bus,     0,           "bus" },
+        { GuiHost::StripKind::Master,  0,           "master" },
+        { GuiHost::StripKind::Aux,     0,           "aux return" },
+    };
+
+    // The aux lanes are built the first time their stage shows, and keep
+    // running once it is hidden.
+    host.switchToStage (GuiHost::Stage::Aux);
+    host.switchToStage (GuiHost::Stage::Mixing);
+
+    auto& session = ctx.session();
+    const std::array<std::atomic<int>*, 4> modes {
+        &session.track (kStripIndex).automationMode, &session.bus (0).strip.automationMode,
+        &session.master().automationMode, &session.auxLane (0).params.automationMode };
+    const auto setAll = [modes] (AutomationMode mode)
+    {
+        for (auto* m : modes) m->store ((int) mode, std::memory_order_release);
+    };
+    ctx.cleanup ([setAll] { setAll (AutomationMode::Off); });
+
+    const auto check = [&ctx, &host] (bool read)
+    {
+        for (const auto& probe : kProbes)
+        {
+            std::string label;
+            bool faderEnabled = false;
+            const std::string name (probe.name);
+            if (! ctx.expect (host.automationView (probe.kind, probe.index, label, faderEnabled),
+                              name + ": the strip is not built"))
+                continue;
+            ctx.expect (! label.empty() && label.front() == (read ? 'R' : 'O'),
+                        name + ": the mode label shows '" + label + "'");
+            ctx.expect (faderEnabled != read, name + (read ? ": the fader takes input in READ"
+                                                           : ": the fader stayed locked after READ"));
+        }
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [setAll] { setAll (AutomationMode::Read); } });
+    steps->push_back ({ 150, [check, setAll] { check (true); setAll (AutomationMode::Off); } });
+    steps->push_back ({ 150, [check] { check (false); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
 // ---------------------------------------------------------------- autosave
 
 bool nearly (float a, float b) { return std::abs (a - b) < 1.0e-4f; }
@@ -966,6 +1021,16 @@ const ScenarioRegistrar automation { Scenario {
     {},
     60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAutomation (host, ctx); }
+} };
+
+const ScenarioRegistrar modeShown { Scenario {
+    "gui.automation_mode_shown_on_every_strip",
+    { "gui", "automation" },
+    Needs::Engine | Needs::Gui,
+    {},
+    {},
+    20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runModeShownOnEveryStrip (host, ctx); }
 } };
 
 const ScenarioRegistrar autosave { Scenario {
