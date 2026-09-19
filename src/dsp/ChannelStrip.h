@@ -79,6 +79,9 @@ public:
     // How far the always-oversampled EQ/comp stage delays the strip's output
     // at the prepared factor, rounded; 0 at 1x.
     int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
+    // The latency of the plug-in the insert runs in plug-in mode: a loaded
+    // native or built-in instance, otherwise the JUCE slot's.
+    int getInsertPluginLatencySamples() const noexcept;
 
     // Native CLAP host path (replaces JUCE hosting for this insert when loaded). When
     // a native CLAP is loaded, the insert pass runs through it instead of pluginSlot.
@@ -466,6 +469,13 @@ private:
     // 23 (2x) / lround(26.5)=27 (4x) base-rate samples.
     static constexpr int kMaxOsLatency = 32;
     int          osLatencySamples = 0;
+
+    // A frozen track skips the oversampled EQ/comp, so without this its audio
+    // would lead the live strips by the oversampler's latency. The freeze
+    // render trims that latency from the WAV; playback puts back the amount the
+    // live path has at the current factor.
+    dusk::audio::IntDelayLine frozenAlignL;
+    dusk::audio::IntDelayLine frozenAlignR;
 
     // Empty buffer for the channel insert plugin; PluginSlot's
     // processBlock requires a MidiBuffer& even when the insert is an
