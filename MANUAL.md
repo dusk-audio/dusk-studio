@@ -887,11 +887,11 @@ pan → fader → master   (mute and solo gate the sum into master)
 
 ## 3-band EQ
 
-A simplified British EQ with three bands at fixed musical defaults. Gain range is ±9 dB per band (a Mixbus-style restrained range — buses don't need wide cuts and boosts).
+A simplified British EQ with three bands at fixed musical defaults. Gain range is ±9 dB per band (a Mixbus-style restrained range — buses don't need wide cuts and boosts). As on the channel EQ, the curves follow the console's own markings rather than textbook filters, so the ±9 dB marks move each band by about 7 dB at its centre.
 
-- **LF**: low shelf.
-- **MID**: peaking.
-- **HF**: high shelf.
+- **LF**: low shelf at 300 Hz.
+- **MID**: peaking at 800 Hz.
+- **HF**: high shelf at 2 kHz.
 
 ## Bus compressor
 
