@@ -16,6 +16,7 @@
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::scenario
@@ -59,14 +60,27 @@ double fileRms (const std::filesystem::path& path, std::int64_t from, std::int64
 }
 
 // Everything the cases here change on track 1 is put back as it was when the
-// case ends.
+// case ends. Registered first, so it runs after the value restores below.
 void restoreStrip (ScenarioContext& ctx)
 {
-    auto& track = ctx.session().track (kTrack);
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
     auto& strip = track.strip;
+    // The takes and the click sit in the scenario's own scratch, which goes with
+    // it, so the regions go back as they were and the readers are reopened
+    // against them: nothing is left holding a reader on a file about to vanish.
+    // Arming goes back through the session so armedTrackCount stays in step.
+    auto regionsWere = track.regions;
+    const bool armedWas = track.recordArmed.load();
+    ctx.cleanup ([&ctx, &session, regionsWere = std::move (regionsWere), armedWas]
+    {
+        session.track (kTrack).regions = regionsWere;
+        session.setTrackArmed (kTrack, armedWas);
+        ctx.engine().getPlaybackEngine().preparePlayback();
+    });
     for (auto* value : { &track.mode, &track.inputSource, &strip.compMode })
         ctx.keep (*value);
-    for (auto* value : { &track.printEffects, &track.recordArmed, &strip.eqEnabled,
+    for (auto* value : { &track.printEffects, &strip.eqEnabled,
                          &strip.hpfEnabled, &strip.compEnabled })
         ctx.keep (*value);
     for (auto* value : { &strip.hpfFreq, &strip.compFetThresholdDb, &strip.hfGainDb })
