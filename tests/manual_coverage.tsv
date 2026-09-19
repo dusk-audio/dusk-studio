@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 117
+# ceiling gap 116
 # ceiling partial 55
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -160,7 +160,7 @@ The channel strip > Compressor	shared knobs route to the active mode; makeup ran
 The channel strip > Compressor > Opto (optical style)	threshold and makeup only; program-dependent reduction	auto	test:comp ratio / attack / release no-op in Opto;test:Opto reduction grows with peak-reduction control;test:Opto sustained material keeps afterglow GR after burst;test:comp A/B: Opto matches JUCE
 The channel strip > Compressor > FET (classic FET style)	stepped ratio including All; attack and release ranges	auto	test:comp ratio nudge steps the FET switch one rung and scales VCA;test:FET compresses with sub-unity slope above threshold;test:FET attack lands in the expected order of magnitude;test:comp A/B: FET matches JUCE
 The channel strip > Compressor > VCA (Classic 160-style)	ranges, soft knee, adaptive or classic detector	auto	test:VCA static curve matches analytic reduction;test:VCA OverEasy engages below threshold while hard knee does not;test:VCA detector mode toggle modifies static curve profile;test:VCA attack/release land in the expected order of magnitude;test:comp A/B: VCA matches JUCE
-The channel strip > Compressor > VCA (Classic 160-style)	60 Hz sidechain HPF in VCA only	gap
+The channel strip > Compressor > VCA (Classic 160-style)	60 Hz sidechain HPF in VCA only	auto	scenario:strip.vca_sidechain_ignores_bass
 The channel strip > Aux sends (MIXING stage)	four sends, -60 to +6 dB or OFF, post-fader default, right-click pre	partial	scenario:engine.pipeline_selftest;test:collectStemTargets: send at the off sentinel stays inactive;scenario:strip.sends_pre_post_and_bypass		send routing, OFF and post-fader by default with pre-fader on request are tested; the -60 to +6 dB knob range and the right-click toggle are UI
 The channel strip > Pan	equal-power with a 3 dB centre dip	auto	test:BusStrip: center pan is unity on both channels (equal-power law);scenario:engine.pipeline_selftest
 The channel strip > Pan	a stereo track pans by balance; hard left silences R	auto	scenario:strip.stereo_pan_is_balance

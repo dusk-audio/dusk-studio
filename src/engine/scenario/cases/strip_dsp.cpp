@@ -320,6 +320,42 @@ ScenarioResult compModesKeepTheirSettings (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// How far the compressor pulls a tone down, against the same tone uncompressed.
+double reduction (ScenarioContext& ctx, int mode, double hz)
+{
+    auto& strip = ctx.session().track (kTrack).strip;
+    strip.compEnabled.store (false);
+    const double dry = playTone (ctx, hz, 0.5f, 0.0f).left;
+    strip.compMode.store (mode);
+    strip.compEnabled.store (true);
+    const double wet = playTone (ctx, hz, 0.5f, 0.0f).left;
+    strip.compEnabled.store (false);
+    return db (wet, dry);
+}
+
+// VCA mode's sidechain has a 60 Hz high-pass, so bass below it barely drives
+// the compressor; FET's has none.
+ScenarioResult vcaSidechainIgnoresBass (ScenarioContext& ctx)
+{
+    liveInput (ctx, Track::Mode::Mono);
+    auto& strip = ctx.session().track (kTrack).strip;
+    strip.compFetThresholdDb.store (-30.0f);
+    strip.compVcaThreshDb.store (-30.0f);
+    strip.compVcaRatio.store (10.0f);
+
+    const double vcaBass = reduction (ctx, 2, 25.0);
+    const double vcaMid = reduction (ctx, 2, 1000.0);
+    const double fetBass = reduction (ctx, 1, 25.0);
+    const double fetMid = reduction (ctx, 1, 1000.0);
+    ctx.note ("gain change at 25 Hz / 1 kHz: VCA " + std::to_string (vcaBass) + " / "
+              + std::to_string (vcaMid) + " dB, FET " + std::to_string (fetBass) + " / "
+              + std::to_string (fetMid) + " dB");
+    ctx.expect (vcaMid < -6.0, "VCA did not compress a 1 kHz tone above its threshold");
+    ctx.expect (vcaBass - vcaMid > 6.0, "VCA compressed 25 Hz about as hard as 1 kHz, so its sidechain passes bass");
+    ctx.expect (std::abs (fetBass - fetMid) < 6.0, "FET treated 25 Hz differently, as if its sidechain were filtered");
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
@@ -346,5 +382,8 @@ const ScenarioRegistrar sendsRegistrar { Scenario {
 const ScenarioRegistrar compModesRegistrar { Scenario {
     "strip.comp_modes_keep_their_settings", { "strip", "comp", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (compModesKeepTheirSettings, ctx); } } };
+const ScenarioRegistrar vcaRegistrar { Scenario {
+    "strip.vca_sidechain_ignores_bass", { "strip", "comp", "dsp" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (vcaSidechainIgnoresBass, ctx); } } };
 } // namespace
 } // namespace duskstudio::scenario
