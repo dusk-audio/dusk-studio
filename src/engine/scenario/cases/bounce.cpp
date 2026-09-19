@@ -514,6 +514,10 @@ std::optional<ScenarioResult> rendersLandOnTheTimeline (ScenarioContext& ctx)
     const auto landed = [&ctx] (const std::vector<float>& samples, std::int64_t from, std::int64_t to,
                                 std::int64_t want, const std::string& label)
     {
+        from = std::clamp (from, std::int64_t { 0 }, (std::int64_t) samples.size());
+        to = std::clamp (to, from, (std::int64_t) samples.size());
+        if (! ctx.expect (from < to, label + ": the impulse search range is empty"))
+            return;
         const std::vector<float> window (samples.begin() + from, samples.begin() + to);
         const auto at = from + argmaxAbs (window);
         ctx.note (label + ": impulse at " + std::to_string (at));
@@ -649,8 +653,11 @@ ScenarioResult busRoutedLandsWithDirect (ScenarioContext& ctx)
     session.track (1).strip.busAssign[0].store (true, std::memory_order_relaxed);
 
     const int savedFactor = session.oversamplingFactor.load (std::memory_order_relaxed);
-    ctx.cleanup ([&session, savedFactor]
-                 { session.oversamplingFactor.store (savedFactor, std::memory_order_relaxed); });
+    ctx.cleanup ([&session, &engine, savedFactor]
+    {
+        session.oversamplingFactor.store (savedFactor, std::memory_order_relaxed);
+        engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+    });
 
     const auto landsAt = [&] (int audibleTrack)
     {

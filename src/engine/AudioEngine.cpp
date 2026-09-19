@@ -1135,7 +1135,7 @@ void AudioEngine::recomputePdc() noexcept
     const int busAlign = busAlignSamples.load (std::memory_order_relaxed);
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
         auxReturnPdcTarget[(size_t) a].store (
-            std::min (deepestAux - auxLat[a] + busAlign, ChannelStrip::kMaxPdcSamples),
+            deepestAux - auxLat[a] + busAlign,
             std::memory_order_relaxed);
 }
 
@@ -3320,9 +3320,9 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     masteringPlayer.prepare (bs, sr);
 
     {
-        auto prepPdc = [] (MasterPdcDelay& d)
+        auto prepPdc = [] (MasterPdcDelay& d, int capacity = ChannelStrip::kMaxPdcSamples)
         {
-            d.setMaximumDelayInSamples (ChannelStrip::kMaxPdcSamples);
+            d.setMaximumDelayInSamples (capacity);
             d.reset();
         };
         prepPdc (masterDryPdcL);
@@ -3331,10 +3331,13 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         prepPdc (busAlignR);
         busAlignL.setDelay (busAlignSamples.load (std::memory_order_relaxed));
         busAlignR.setDelay (busAlignSamples.load (std::memory_order_relaxed));
+        // Bus alignment is fixed until the next prepare, when these buffers resize too.
+        const int auxCapacity = ChannelStrip::kMaxPdcSamples
+                              + busAlignSamples.load (std::memory_order_relaxed);
         for (int a = 0; a < Session::kNumAuxLanes; ++a)
         {
-            prepPdc (auxReturnPdcL[(size_t) a]);
-            prepPdc (auxReturnPdcR[(size_t) a]);
+            prepPdc (auxReturnPdcL[(size_t) a], auxCapacity);
+            prepPdc (auxReturnPdcR[(size_t) a], auxCapacity);
         }
         masterDryPdcApplied = 0;
         auxReturnPdcApplied.fill (0);
