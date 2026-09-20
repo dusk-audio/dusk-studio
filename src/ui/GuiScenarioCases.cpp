@@ -937,6 +937,74 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI || ! DUSKSTUDIO_HAS_ALSA
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings and ALSA sequencer");
+   #else
+    snd_seq_t* raw = nullptr;
+    if (snd_seq_open (&raw, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) < 0)
+        return ScenarioResult::skip ("ALSA sequencer is unavailable");
+    auto seq = std::shared_ptr<snd_seq_t> (raw, [] (snd_seq_t* value) { snd_seq_close (value); });
+    const auto name = "dusk-rescan-" + std::to_string (snd_seq_client_id (seq.get()));
+    snd_seq_set_client_name (seq.get(), name.c_str());
+    auto port = std::make_shared<int> (-1);
+    auto& engine = ctx.engine();
+    const auto originalPosition = engine.getTransport().getPlayhead();
+    ctx.cleanup ([&host, &engine, seq, port, originalPosition]
+    {
+        host.closeAudioSettings();
+        engine.stop();
+        engine.getTransport().setPlayhead (originalPosition);
+        if (*port >= 0) snd_seq_delete_simple_port (seq.get(), *port);
+        engine.refreshMidiInputs();
+    });
+    const auto listed = [&engine, name]
+    {
+        const auto& outputs = engine.getMidiOutputDevices();
+        return std::any_of (outputs.begin(), outputs.end(), [&name] (const auto& output)
+        { return output.name.find (name) != std::string::npos; });
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx, &engine]
+    {
+        ctx.expect (host.openAudioSettings(), "native audio settings did not open");
+        engine.play();
+    } });
+    steps->push_back ({ 200, [seq, port, &ctx]
+    {
+        *port = snd_seq_create_simple_port (seq.get(), "destination",
+            SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
+            SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+        ctx.expect (*port >= 0, "could not create the private MIDI destination");
+    } });
+    steps->push_back ({ 700, [&host, &ctx, &engine, listed]
+    {
+        ctx.expect (engine.getTransport().isPlaying(), "fixture was not playing");
+        ctx.expect (! listed(), "automatic hot-plug refreshed the port before Rescan");
+        ctx.expect (host.clickAudioSettingsControl ("rescan"), "Rescan devices button was not drawn");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &engine, listed]
+    {
+        ctx.expect (listed(), "Rescan devices did not enumerate the new MIDI destination");
+        host.closeAudioSettings();
+        engine.stop();
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (! host.audioSettingsOpen(), "audio settings did not finish closing"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsRescan { Scenario {
+    "gui.settings_rescan_devices", { "gui", "settings", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsRescan (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runSettingsMidiBindings (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI

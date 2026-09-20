@@ -183,12 +183,14 @@ public:
 
     bool controlPointForScenario (const std::string& control, ImVec2& point) const override
     {
-        if (control != "midi-bindings" || scenarioMidiBindings.x <= 0.0f) return false;
-        point = scenarioMidiBindings;
-        return true;
+        if (control == "midi-bindings") point = scenarioMidiBindings;
+        else if (control == "rescan") point = scenarioRescan;
+        else return false;
+        return point.x > 0.0f;
     }
 
     ImVec2 scenarioMidiBindings {};
+    ImVec2 scenarioRescan {};
 
     ImVec2 preferredSize() const override { return ImVec2 (kPanelW, panelHeight()); }
 
@@ -316,6 +318,9 @@ private:
                          "headphone / cue feed).");
             if (buttonAt ("##rescan", top, 140.0f, kRowH, "Rescan devices"))
                 deferred ([this] { applyRescan(); });
+            const auto first = ImGui::GetItemRectMin();
+            const auto last = ImGui::GetItemRectMax();
+            scenarioRescan = { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f };
             formTooltip ("Re-enumerate audio backends, devices and MIDI ports. Use after "
                          "plugging in or removing a USB / Thunderbolt audio interface. On "
                          "Linux, MIDI controllers are picked up on their own once the "
