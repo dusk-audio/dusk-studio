@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 71
+# ceiling gap 70
 # ceiling partial 50
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -376,7 +376,7 @@ Bouncing and exporting > Bouncing the mix	stems are sample-aligned and reconstru
 Bouncing and exporting > Bouncing the mix	hardware inserts offer a realtime bounce	partial	test:anyHardwareInsertActive follows rendered tracks and aux lanes		the detection is tested; the realtime bounce is not
 Bouncing and exporting > Bouncing the mix	the metronome never prints	auto	scenario:bounce.metronome_never_prints
 Bouncing and exporting > Bouncing the master vs the mastering chain	bounce captures post-master; Export master captures post-limiter	auto	scenario:bounce.captures_post_master_fader;scenario:bounce.export_master_post_limiter
-Bouncing and exporting > Where bounces go	bounces land in the session folder; Load latest mixdown loads mixdown.wav, else bounce.wav	gap
+Bouncing and exporting > Where bounces go	bounces land in the session folder; Load latest mixdown loads mixdown.wav, else bounce.wav	auto	scenario:gui.mixdown_handoff		actual Mixdown writes the session folder; Load latest mixdown button selects bounce.wav alone and prefers mixdown.wav when both exist
 
 Keyboard reference > File	Cmd+N, O, S, Shift+S, I, B, Q	gap
 Keyboard reference > Edit	undo, redo, copy, cut, paste, duplicate, delete, split, nudge, take cycling	gap

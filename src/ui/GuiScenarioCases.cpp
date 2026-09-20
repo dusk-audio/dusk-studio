@@ -1846,7 +1846,7 @@ std::optional<ScenarioResult> runMixdownHandoff (GuiHost& host, ScenarioContext&
         {
             ctx.waitUntil ([&host, &player]
             { return host.stageViewMatches (GuiHost::Stage::Mastering) && player.isLoaded(); }, 5000,
-                [&ctx, &player]
+                [&host, &ctx, &player]
                 {
                     const auto expected = ctx.session().getSessionDirectory().getChildFile ("mixdown.wav");
                     ctx.expect (player.getLoadedFile() == expected, "Mastering loaded a different file than mixdown.wav");
@@ -1858,7 +1858,45 @@ std::optional<ScenarioResult> runMixdownHandoff (GuiHost& host, ScenarioContext&
                                     "Mixdown did not write stereo 24-bit audio");
                         ctx.expect (reader->info().numFrames >= 4800, "Mixdown truncated the session");
                     }
-                    ctx.complete (ctx.verdict());
+                    const auto fallback = expected.getSiblingFile ("bounce.wav");
+                    if (! ctx.expect (! fallback.existsAsFile(), "the fixture already has a fallback bounce"))
+                    {
+                        ctx.complete (ctx.verdict());
+                        return;
+                    }
+                    ctx.cleanup ([expected, fallback]
+                    {
+                        if (! expected.existsAsFile()) fallback.moveFileTo (expected);
+                        else fallback.deleteFile();
+                    });
+                    auto steps = std::make_shared<std::vector<Step>>();
+                    steps->push_back ({ 100, [&host, &ctx, &player, expected, fallback]
+                    {
+                        player.unloadFile();
+                        ctx.expect (expected.moveFileTo (fallback), "could not prepare the fallback-only fixture");
+                        ctx.expect (host.clickMasteringButton ("Load latest mixdown"), "Load latest mixdown is unavailable");
+                    } });
+                    steps->push_back ({ 200, [&ctx, &player, fallback]
+                    {
+                        ctx.expect (player.isLoaded() && player.getLoadedFile() == fallback,
+                                    "Load latest mixdown did not fall back to bounce.wav");
+                        ctx.expect (ctx.session().mastering().sourceFile == fallback,
+                                    "the session did not retain the fallback source");
+                    } });
+                    steps->push_back ({ 100, [&host, &ctx, &player, expected, fallback]
+                    {
+                        player.unloadFile();
+                        ctx.expect (fallback.copyFileTo (expected), "could not prepare both mix candidates");
+                        ctx.expect (host.clickMasteringButton ("Load latest mixdown"), "Load latest mixdown is unavailable");
+                    } });
+                    steps->push_back ({ 200, [&ctx, &player, expected]
+                    {
+                        ctx.expect (player.isLoaded() && player.getLoadedFile() == expected,
+                                    "Load latest mixdown did not prefer mixdown.wav over bounce.wav");
+                        ctx.expect (ctx.session().mastering().sourceFile == expected,
+                                    "the session did not retain the preferred source");
+                    } });
+                    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
                 }, "closing the completed Mixdown did not load Mastering");
         }, "Mixdown did not expose its completion Close button");
     return std::nullopt;
