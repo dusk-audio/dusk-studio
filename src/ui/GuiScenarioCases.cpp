@@ -1712,5 +1712,55 @@ const ScenarioRegistrar pianoRollNoteKeys { Scenario {
     {}, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoRollNoteKeys (host, ctx); }
 } };
+std::optional<ScenarioResult> runAudioEditorLifecycle (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& track = ctx.session().track (0);
+    const bool expanded = host.timelineViewMatches (true);
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&host, &track, expanded, regions = track.regions]
+    {
+        host.closeAudioEditor();
+        track.regions = regions;
+        if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+    });
+    const auto path = ctx.tempDir() / "editor.wav";
+    auto writer = dusk::audio::FileWriter::create (path, { 48000.0, 1, 24 });
+    if (! ctx.expect (writer != nullptr, "could not create the audio editor fixture")) return ctx.verdict();
+    std::vector<float> silence (192000, 0.0f);
+    const float* channels[] { silence.data() };
+    if (! ctx.expect (writer->write (channels, 1, 192000), "could not write the audio editor fixture"))
+        return ctx.verdict();
+    writer.reset();
+    AudioRegion region;
+    region.file = decltype (region.file) (path.u8string().c_str());
+    region.lengthInSamples = 192000;
+    track.regions = { region };
+    track.mode.store ((int) Track::Mode::Mono);
+    track.frozen.store (false);
+    if (! expanded) host.pressKey ("T", 't');
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool escape : { true, false })
+    {
+        steps->push_back ({ 100, [&host, &ctx]
+        { ctx.expect (host.doubleClickAudioRegion (0, 0), "the audio region is not visible for double-click"); } });
+        steps->push_back ({ 300, [&host, &ctx, escape]
+        {
+            ctx.expect (host.audioEditorOpen(), "double-click did not open the audio editor");
+            ctx.expect (escape ? host.pressAudioEditorKey ("escape") : host.clickOutsideAudioEditor(),
+                        "the audio editor dismissal gesture was unavailable");
+        } });
+        steps->push_back ({ 300, [&host, &ctx]
+        { ctx.expect (! host.audioEditorOpen(), "the dismissal gesture left the audio editor open"); } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorLifecycle { Scenario {
+    "gui.audio_editor_lifecycle", { "gui", "editor" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorLifecycle (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

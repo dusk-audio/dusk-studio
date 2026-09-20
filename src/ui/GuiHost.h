@@ -112,6 +112,11 @@ public:
     virtual void openPianoRoll (int track, int region) = 0;
     virtual void closePianoRoll() = 0;
     virtual bool pressPianoRollKey (const std::string& description) = 0;
+    virtual bool doubleClickAudioRegion (int track, int region) = 0;
+    virtual bool audioEditorOpen() const = 0;
+    virtual void closeAudioEditor() = 0;
+    virtual bool pressAudioEditorKey (const std::string& description) = 0;
+    virtual bool clickOutsideAudioEditor() = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.
     virtual void closeTopModal() = 0;
 

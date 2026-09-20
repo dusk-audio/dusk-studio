@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 89
+# ceiling gap 88
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -262,7 +262,7 @@ The tape strip > Import DP Song (experimental)	clip placement from song.sys or b
 The tape strip > Import DP Song (experimental)	mixer, tempo, time signature and markers decoded	auto	test:DpImporter: decodes mixer fader/pan from song.sys;test:DpImporter: decodes 3-band EQ from song.sys;test:DpImporter: decodes song tempo from song.sys;test:DpImporter: decodes time signature from song.sys;test:DpImporter: decodes song markers
 The tape strip > Import DP Song (experimental)	a confirmation dialog shows what was found first	gap
 
-The audio region editor	double-click opens; Esc or outside click closes	gap
+The audio region editor	double-click opens; Esc or outside click closes	auto	scenario:gui.audio_editor_lifecycle		injects real peer mouse clicks on an audio region and the dim overlay, dispatches Escape, and checks animated teardown
 The audio region editor > What's editable	trim, fades and gain are non-destructive; position	auto	scenario:region.edit_undo_restores_every_field;test:SessionSerializer clamps out-of-range audio-region fields on load
 The audio region editor > Layout	undo, redo, split, normalise, properties, zoom	gap
 The audio region editor > Layout	tempo edited on the ruler: add, move, delete changes; MIDI and click follow	auto	test:TempoMap: piecewise integration across a tempo change;test:TempoMap: ticks<->samples round-trips through a tempo change;test:TempoMap: setPoints sorts and clamps bpm, preserving positions

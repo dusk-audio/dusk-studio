@@ -1,6 +1,8 @@
 #include "MainComponent.h"
 
 #include "AuxLaneComponent.h"
+#include "AudioRegionEditor.h"
+#include "DimOverlay.h"
 #include "AuxView.h"
 #include "BusComponent.h"
 #include "ChannelStripComponent.h"
@@ -17,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -50,6 +53,14 @@ bool dispatchKey (Owner& owner, bool (Owner::*handler) (const Key&),
 {
     const auto key = Key::createFromDescription (HostString (description.c_str()));
     return (owner.*handler) (Key (key.getKeyCode(), key.getModifiers(), text));
+}
+
+template <typename Peer, typename Source, typename Point, typename Modifiers, typename... Rest>
+void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modifiers, Rest...),
+                          float x, float y, bool down, std::int64_t time)
+{
+    (peer.*handler) (Source::mouse, Point (x, y), Modifiers (down ? Modifiers::leftButtonModifier : 0),
+                    1.0f, 0.0f, time, {}, 0);
 }
 } // namespace
 
@@ -460,6 +471,47 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     void autosaveTick() override { owner.writeAutosave(); }
     void openAbout() override { owner.menuItemSelected (2002, 2); }
+
+    bool clickAt (float x, float y, int count)
+    {
+        auto* peer = owner.getPeer();
+        if (peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        for (int click = 0; click < count; ++click)
+        {
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, true, time + click * 40);
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, false, time + click * 40 + 20);
+        }
+        return true;
+    }
+
+    bool doubleClickAudioRegion (int track, int region) override
+    {
+        if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;
+        const auto bounds = owner.tapeStrip->audioRegionScreenRect (track, region);
+        if (bounds.isEmpty()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
+        return clickAt (point.x, point.y, 2);
+    }
+
+    bool audioEditorOpen() const override { return owner.audioEditor != nullptr; }
+    void closeAudioEditor() override { owner.closeAudioEditor(); }
+
+    bool pressAudioEditorKey (const std::string& description) override
+    {
+        return owner.audioEditor != nullptr && owner.audioEditor->isShowing()
+            && dispatchKey (*owner.audioEditor, &AudioRegionEditor::keyPressed, description, 0);
+    }
+
+    bool clickOutsideAudioEditor() override
+    {
+        if (owner.audioEditorDim == nullptr) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (
+            owner.audioEditorDim.get(), owner.audioEditorDim->getLocalBounds().getTopLeft()).toFloat();
+        return clickAt (point.x + 2.0f, point.y + 2.0f, 1);
+    }
     void openPianoRoll (int track, int region) override { owner.openPianoRoll (track, region); }
     void closePianoRoll() override { owner.closePianoRoll(); }
 
