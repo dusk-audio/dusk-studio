@@ -572,7 +572,7 @@ From left to right:
 - **Metronome** (♩). Toggles the click. Right-click for click settings.
 - **C/I**. Toggles count-in (one bar of click before record starts).
 - **BPM**. The tempo at the playhead (it follows tempo-map changes). Double-click it to set the tempo directly (in a session with tempo changes, this edits the change governing the playhead); you can also set it from the timeline ruler. **TAP** sets the starting tempo.
-- **TAP**. Click on each beat; Dusk Studio averages the last four intervals over a two-second window and sets the tempo.
+- **TAP**. Click on each beat; Dusk Studio averages the last four intervals and sets the tempo. A gap longer than two seconds starts a new tap sequence.
 - **Time signature**. Click to choose from common signatures or enter a custom one.
 - **Clock display**. Shows the current playhead position. Right-click to flip between **Bars.Beats.Ticks** (e.g. `5.2.120`) and **mm:ss.mmm** (e.g. `01:23.456`).
 - **Tuner**. Opens a chromatic tuner that listens to the selected input.

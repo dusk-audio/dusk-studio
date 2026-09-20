@@ -201,10 +201,7 @@ private:
     // only-during-count-in / click-while-playing / polyphonic).
     void showMetronomeSettingsMenu();
 
-    // Each click stamps now() into the ring; within kTapTimeoutMs we
-    // average the last kTapWindow inter-tap intervals into the session
-    // BPM. After timeout the ring resets (user's starting a new pulse).
-    static constexpr int kTapWindow      = 4;
+    static constexpr int kTapWindow      = 5;
     static constexpr int kTapTimeoutMs   = 2000;
     std::array<std::int64_t, kTapWindow> tapStamps {};
     int  tapStampCount = 0;

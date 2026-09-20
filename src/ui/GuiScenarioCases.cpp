@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
@@ -1307,6 +1308,45 @@ const ScenarioRegistrar trackShortcuts { Scenario {
     "gui.keyboard_track_shortcuts", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runTrackShortcuts (host, ctx); }
+} };
+std::optional<ScenarioResult> runTapTempo (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    ctx.keep (session.tempoBpm);
+    ctx.cleanup ([&session, points = session.tempoMap.points()]
+                 { session.tempoMap.setPoints (points); });
+    session.tempoMap.setPoints ({});
+    auto stamps = std::make_shared<std::vector<double>>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const int delay : { 2200, 250, 500, 750, 1000, 300 })
+        steps->push_back ({ delay, [&host, &ctx, &session, stamps]
+        {
+            const auto now = std::chrono::steady_clock::now().time_since_epoch();
+            stamps->push_back (std::chrono::duration<double, std::milli> (now).count());
+            ctx.expect (host.pressKey ("B"), "tap tempo shortcut was not handled");
+            if (stamps->size() < 2) return;
+            const auto intervals = std::min<std::size_t> (4, stamps->size() - 1);
+            const double duration = stamps->back() - (*stamps)[stamps->size() - 1 - intervals];
+            const double expected = std::clamp (60000.0 * static_cast<double> (intervals) / duration,
+                                               30.0, 300.0);
+            ctx.expect (std::abs (session.tempoBpm.load() - expected) < 2.0,
+                        "TAP did not average the most recent four intervals");
+        } });
+    steps->push_back ({ 2200, [&host, &ctx, &session]
+    {
+        const float before = session.tempoBpm.load();
+        ctx.expect (host.pressKey ("B"), "first tap after timeout was not handled");
+        ctx.expect (std::abs (session.tempoBpm.load() - before) < 0.001f,
+                    "a first tap after timeout changed the tempo");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar tapTempo { Scenario {
+    "gui.tap_tempo_intervals", { "gui", "keyboard", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTapTempo (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario
