@@ -216,7 +216,8 @@ void MidiBindingsPanel::importPreset()
             if (auto* tlw = self->getTopLevelComponent())
                 showDuskAlert (*tlw, "Import failed",
                                   "Could not read bindings from " + file.getFullPathName()
-                                      + ". File is missing or malformed.");
+                                      + ". File is missing, malformed, or written by a newer "
+                                        "version of Dusk Studio.");
             return;
         }
         // An empty parsed vector is a valid "clear all bindings" preset.
