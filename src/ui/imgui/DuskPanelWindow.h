@@ -19,6 +19,7 @@ class DuskPanelView
 {
 public:
     virtual ~DuskPanelView() = default;
+    virtual bool controlPointForScenario (const std::string&, ImVec2&) const { return false; }
 
     // The body's size in design pixels, before the window's scale. Read every frame,
     // so a view whose layout depends on its own state (the comp editor's mode row)
@@ -140,6 +141,7 @@ public:
     void setGeometry (Geometry geometry);
     void close();
     bool isOpen() const noexcept;
+    bool clickControlForScenario (const std::string& control);
 
 private:
     struct Impl;

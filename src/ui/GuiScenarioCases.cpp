@@ -937,6 +937,48 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runSettingsMidiBindings (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("built without native settings UI");
+   #else
+    ctx.cleanup ([&host]
+    {
+        if (host.midiBindingsOpen()) host.closeTopModal();
+        host.closeAudioSettings();
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "native audio settings did not open"); } });
+    steps->push_back ({ 400, [&host, &ctx]
+    { ctx.expect (host.clickAudioSettingsControl ("midi-bindings"), "MIDI Bindings button was not drawn"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.midiBindingsOpen(), "MIDI Bindings button did not open its panel");
+        ctx.expect (! host.audioSettingsOpen(), "settings did not step aside for MIDI Bindings");
+        ctx.expect (host.clickModalButton ("Done"), "MIDI Bindings Done button was not visible");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (! host.midiBindingsOpen(), "Done did not close MIDI Bindings");
+        ctx.expect (host.audioSettingsOpen(), "Done did not return to audio settings");
+        host.closeAudioSettings();
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (! host.audioSettingsOpen(), "audio settings did not finish closing"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsMidiBindings { Scenario {
+    "gui.settings_midi_bindings", { "gui", "settings", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsMidiBindings (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_ALSA

@@ -95,6 +95,12 @@ public:
     virtual bool faderEditing (int index) const = 0;
     virtual double faderValue (int index) const = 0;
 
+    virtual bool openAudioSettings() = 0;
+    virtual bool audioSettingsOpen() const = 0;
+    virtual void closeAudioSettings() = 0;
+    virtual bool clickAudioSettingsControl (const std::string& control) = 0;
+    virtual bool midiBindingsOpen() const = 0;
+
     virtual bool meterClip (int index) = 0;
     virtual bool openMidiIo (int index) = 0;
     virtual bool clickMidiSelector (int index, int kind) = 0;

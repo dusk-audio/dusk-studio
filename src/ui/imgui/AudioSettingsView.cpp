@@ -181,6 +181,15 @@ public:
         deviceManager.removeChangeListener (this);
     }
 
+    bool controlPointForScenario (const std::string& control, ImVec2& point) const override
+    {
+        if (control != "midi-bindings" || scenarioMidiBindings.x <= 0.0f) return false;
+        point = scenarioMidiBindings;
+        return true;
+    }
+
+    ImVec2 scenarioMidiBindings {};
+
     ImVec2 preferredSize() const override { return ImVec2 (kPanelW, panelHeight()); }
 
     // Escape belongs to an open dropdown first. Dear ImGui closes that popup while it
@@ -348,6 +357,9 @@ private:
                                     top + ctx.s (kRowH) - ctx.s (2.0f)),
                             "MIDI Bindings..."))
                 deferred ([this] { if (host.openMidiBindings) host.openMidiBindings(); });
+            const auto first = ImGui::GetItemRectMin();
+            const auto last = ImGui::GetItemRectMax();
+            scenarioMidiBindings = { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f };
             formTooltip ("Open the MIDI Bindings panel: list everything currently mapped, "
                          "remove individual bindings, or clear all. Use right-click on any "
                          "fader / knob / button to add new bindings.");

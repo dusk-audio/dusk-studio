@@ -1,5 +1,8 @@
 #include "MainComponent.h"
 #include "BounceDialog.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "imgui/DuskPanelWindow.h"
+#endif
 
 #include "AuxLaneComponent.h"
 #include "AuxView.h"
@@ -365,6 +368,27 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     { return owner.consoleView->getStripComponent (index)->faderEditingForScenario(); }
     double faderValue (int index) const override
     { return owner.consoleView->getStripComponent (index)->faderValueForScenario(); }
+
+    bool openAudioSettings() override { owner.openAudioSettings(); return audioSettingsOpen(); }
+    void closeAudioSettings() override { owner.closeAudioSettings(); }
+    bool audioSettingsOpen() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.audioSettingsWindow != nullptr && owner.audioSettingsWindow->isOpen();
+       #else
+        return false;
+       #endif
+    }
+    bool clickAudioSettingsControl (const std::string& control) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return audioSettingsOpen() && owner.audioSettingsWindow->clickControlForScenario (control);
+       #else
+        (void) control;
+        return false;
+       #endif
+    }
+    bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 
     bool openMidiIo (int index) override
     { return owner.consoleView->getStripComponent (index)->openIoConfigPopupForCapture ((int) Track::Mode::Midi) != nullptr; }

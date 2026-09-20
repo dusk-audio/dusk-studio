@@ -101,11 +101,33 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         PanelWidget (DGL::Window& window, Impl& ownerRef)
             : DGL::ImGuiTopLevelWidget (window, 13.0f), owner (ownerRef) {}
 
+        void clickForScenario (ImVec2 point)
+        {
+            MotionEvent motion;
+            motion.pos = { point.x, point.y };
+            motion.absolutePos = motion.pos;
+            onMotion (motion);
+            MouseEvent click;
+            click.button = DGL::kMouseButtonLeft;
+            click.pos = motion.pos;
+            click.absolutePos = motion.pos;
+            click.press = true;
+            onMouse (click);
+            releasePending = true;
+        }
+
     protected:
         void onImGuiDisplay() override
         {
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()),
                         static_cast<float> (getWindow().getScaleFactor()));
+            if (releasePending)
+            {
+                releasePending = false;
+                MouseEvent release;
+                release.button = DGL::kMouseButtonLeft;
+                onMouse (release);
+            }
         }
 
         void onDisplay() override
@@ -117,6 +139,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
     private:
         Impl& owner;
+        bool releasePending = false;
     };
 
     Impl (std::string className, std::string logTag, std::string displayName)
@@ -298,6 +321,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     // Declared last so the host - whose teardown reaches back through the callbacks
     // below - is destroyed before the state those callbacks touch.
     Callbacks callbacks;
+    PanelWidget* scenarioWidget = nullptr;
     std::unique_ptr<DuskPanelView> view;
     dw::Fonts fonts;
     dw::KnobAtlas knobAtlas;
@@ -317,11 +341,13 @@ DuskPanelWindow::DuskPanelWindow (std::string className, std::string logTag,
     {
         auto widget = std::unique_ptr<Impl::PanelWidget> (new Impl::PanelWidget (window, *impl));
         impl->buildFonts (static_cast<float> (window.getScaleFactor()));
+        impl->scenarioWidget = widget.get();
         return std::unique_ptr<DGL::TopLevelWidget> (widget.release());
     };
     callbacks.checkGraphics = [] (const char*, const char*) { return std::string(); };
     callbacks.widgetReleased = [this]
     {
+        impl->scenarioWidget = nullptr;
         // The fonts and the baked dome live in the atlas the widget owned.
         impl->fonts = {};
         impl->knobAtlas = {};
@@ -402,4 +428,13 @@ bool DuskPanelWindow::isOpen() const noexcept
     return impl->host.isOpen();
 }
 
+bool DuskPanelWindow::clickControlForScenario (const std::string& control)
+{
+    ImVec2 point;
+    if (! isOpen() || impl->view == nullptr || impl->scenarioWidget == nullptr
+        || ! impl->view->controlPointForScenario (control, point)) return false;
+    if (auto* window = impl->host.window()) window->focus();
+    impl->scenarioWidget->clickForScenario (point);
+    return true;
+}
 } // namespace duskstudio::imgui
