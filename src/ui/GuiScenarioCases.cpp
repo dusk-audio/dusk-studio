@@ -919,6 +919,89 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runPianoSelection (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no open modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        host.pianoNotePointer (1200, 60, false);
+        host.closePiano();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    MidiRegion region;
+    region.lengthInTicks = 7680;
+    region.lengthInSamples = session.ticksToSamples (region.lengthInTicks, engine.getCurrentSampleRate());
+    region.notes = { { 1, 60, 100, 1200, 480 }, { 1, 64, 90, 2400, 480 }, { 1, 67, 80, 3600, 480 } };
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::initializer_list<MidiRegion> { region }));
+    session.midiEditorSnap = true;
+    if (! host.openPiano (0, 0)) return ScenarioResult::fail ("piano roll did not open");
+    const auto select = [&host, &ctx] (std::int64_t tick, int pitch, int modifiers, std::vector<int> expected)
+    {
+        ctx.expect (host.pianoNotePointer (tick, pitch, true, modifiers), "note click failed");
+        host.pianoNotePointer (tick, pitch, false, modifiers);
+        auto actual = host.pianoSelection();
+        std::sort (actual.begin(), actual.end());
+        ctx.expect (actual == expected, "note click produced the wrong selection");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("G", 'g'), "Grab key was not handled"); } });
+    steps->push_back ({ 150, [select] { select (1320, 60, 0, { 0 }); } });
+    steps->push_back ({ 150, [select] { select (2520, 64, 1, { 0, 1 }); } });
+    steps->push_back ({ 150, [select] { select (2520, 64, 1, { 0 }); } });
+    steps->push_back ({ 150, [select] { select (2520, 64, 2, { 0, 1 }); } });
+    steps->push_back ({ 150, [select] { select (1320, 60, 2, { 1 }); } });
+    steps->push_back ({ 150, [select] { select (1320, 60, 0, { 0 }); } });
+    steps->push_back ({ 150, [&host] { host.pianoNotePointer (1320, 60, true); } });
+    steps->push_back ({ 150, [&host] { host.pianoNotePointer (1700, 62, true); } });
+    steps->push_back ({ 150, [&host] { host.pianoNotePointer (1700, 62, false); } });
+    steps->push_back ({ 150, [&ctx, &session]
+    {
+        const auto& notes = session.track (0).midiRegions.current()[0].notes;
+        ctx.expect (notes.size() == 3, "move changed note count");
+        if (notes.size() != 3) return;
+        ctx.expect (notes[0].startTick == 1560 && notes[0].noteNumber == 62 && notes[0].lengthInTicks == 480,
+                    "body drag did not snap movement and transpose the note");
+        ctx.expect (notes[1].startTick == 2400 && notes[2].startTick == 3600, "move changed unselected notes");
+    } });
+    steps->push_back ({ 150, [&host] { host.pianoNotePointer (2040, 62, true); } });
+    steps->push_back ({ 150, [&host] { host.pianoNotePointer (2520, 62, true); } });
+    steps->push_back ({ 150, [&host] { host.pianoNotePointer (2520, 62, false); } });
+    steps->push_back ({ 150, [&ctx, &session]
+    {
+        const auto& note = session.track (0).midiRegions.current()[0].notes[0];
+        ctx.expect (note.startTick == 1560 && note.lengthInTicks == 960, "right-edge drag did not resize the note");
+    } });
+    steps->push_back ({ 150, [&host] { host.pianoNotePointer (1000, 69, true); } });
+    steps->push_back ({ 150, [&host] { host.pianoNotePointer (4200, 59, true); } });
+    steps->push_back ({ 150, [&host] { host.pianoNotePointer (4200, 59, false); } });
+    steps->push_back ({ 150, [&ctx, &host]
+    {
+        auto selected = host.pianoSelection();
+        std::sort (selected.begin(), selected.end());
+        ctx.expect (selected == std::vector<int> { 0, 1, 2 }, "rubber band did not select all enclosed notes");
+        ctx.expect (host.pressPeerKey ("backspace", '\b'), "Backspace was not handled");
+    } });
+    steps->push_back ({ 150, [&ctx, &session]
+    { ctx.expect (session.track (0).midiRegions.current()[0].notes.empty(), "Backspace did not delete selected notes"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoSelection { Scenario {
+    "gui.piano_selection", { "gui", "piano" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoSelection (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPianoCcEditing (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

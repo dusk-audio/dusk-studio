@@ -51,11 +51,16 @@ bool dispatchKey (Owner& owner, bool (Owner::*handler) (const Key&),
 
 template <typename Peer, typename Source, typename Point, typename Modifiers, typename... Rest>
 void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modifiers, Rest...),
-                          float x, float y, bool down, std::int64_t time)
+                          float x, float y, bool down, std::int64_t time, int modifiers = 0)
 {
-    const int flags = down ? Modifiers::leftButtonModifier : 0;
+    const int flags = (down ? Modifiers::leftButtonModifier : 0)
+                    | ((modifiers & 1) != 0 ? Modifiers::shiftModifier : 0)
+                    | ((modifiers & 2) != 0 ? Modifiers::commandModifier : 0);
+    const auto saved = Modifiers::currentModifiers;
+    Modifiers::currentModifiers = Modifiers (flags);
     (peer.*handler) (Source::mouse, Point (x, y) * peer.getComponent().getDesktopScaleFactor(), Modifiers (flags),
                     1.0f, 0.0f, time, {}, 0);
+    Modifiers::currentModifiers = saved;
 }
 
 } // namespace
@@ -254,7 +259,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         using Peer = std::remove_pointer_t<decltype (peer)>;
         return dispatchKey (*peer, &Peer::handleKeyPress, description, text);
     }
-    bool pianoPointer (int x, int y, bool down)
+    bool pianoPointer (int x, int y, bool down, int modifiers = 0)
     {
         auto* editor = owner.pianoRoll.get();
         auto* peer = owner.getPeer();
@@ -264,7 +269,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         using Peer = std::remove_pointer_t<decltype (peer)>;
         const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
             std::chrono::system_clock::now().time_since_epoch()).count();
-        dispatchMouseButton (*peer, &Peer::handleMouseEvent, point.x, point.y, down, time);
+        dispatchMouseButton (*peer, &Peer::handleMouseEvent, point.x, point.y, down, time, modifiers);
         return true;
     }
     bool clickPianoCcToggle() override
@@ -278,6 +283,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (owner.pianoRoll == nullptr) return false;
         const auto point = owner.pianoRoll->ccPointForScenario (tick, value);
         return pianoPointer (point.x, point.y, down);
+    }
+    bool pianoNotePointer (std::int64_t tick, int pitch, bool down, int modifiers) override
+    {
+        if (owner.pianoRoll == nullptr) return false;
+        const auto point = owner.pianoRoll->notePointForScenario (tick, pitch);
+        return pianoPointer (point.x, point.y, down, modifiers);
+    }
+    std::vector<int> pianoSelection() const override
+    {
+        return owner.pianoRoll != nullptr ? owner.pianoRoll->selectionForScenario() : std::vector<int> {};
     }
     int pianoCcController() const override
     {

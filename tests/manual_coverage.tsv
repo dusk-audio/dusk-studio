@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 102
+# ceiling gap 101
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -273,7 +273,7 @@ The audio region editor > Editing gestures	trim handles, gain line, range select
 The piano roll	double-click a MIDI region opens it	gap
 The piano roll > Layout	toolbar, ruler, keyboard, grid, velocity strip, CC lane	manual			layout; checked by screenshot review
 The piano roll > Creating notes	click an empty cell creates a note at the snap length and velocity 100	gap
-The piano roll > Selecting and moving	click, Shift-click, Cmd-click, drag, resize, rubber band, delete	gap
+The piano roll > Selecting and moving	click, Shift-click, Cmd-click, drag, resize, rubber band, delete	auto	scenario:gui.piano_selection
 The piano roll > Transposing and nudging	arrows transpose a semitone and nudge a grid step	gap
 The piano roll > Velocity	velocity bars 1-127; resizable strip	gap
 The piano roll > CC editing	CC lane: pick a controller, draw and edit events	auto	scenario:gui.piano_cc_editing

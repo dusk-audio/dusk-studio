@@ -1421,9 +1421,9 @@ Click an empty grid cell to create a 1/4-note at that pitch and tick (or whateve
 ## Selecting and moving
 
 - Click a note to select it.
-- **Shift+click** adds to the selection.
+- **Shift+click** toggles a note in or out of the selection.
 - **Cmd/Ctrl+click** toggles selection.
-- Drag a selected note's body to move it (snaps to grid; hold **Cmd** to bypass snap).
+- Drag a selected note's body to move it (snaps to the enabled grid).
 - Drag a selected note's right edge to resize.
 - Drag in empty grid space to rubber-band select.
 - **Backspace** or **Delete** deletes the selection.

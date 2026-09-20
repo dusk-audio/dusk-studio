@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // What a GUI scenario is allowed to touch. Everything a case would otherwise
 // reach through the component tree, expressed in std types so the cases stay
@@ -80,6 +81,8 @@ public:
     virtual bool pianoCcPointer (std::int64_t tick, int value, bool down) = 0;
     virtual bool pressPeerKey (const std::string& description, char text) = 0;
     virtual int pianoCcController() const = 0;
+    virtual bool pianoNotePointer (std::int64_t tick, int pitch, bool down, int modifiers = 0) = 0;
+    virtual std::vector<int> pianoSelection() const = 0;
     virtual bool clickTimeFormat() = 0;
     virtual std::string clockText() const = 0;
 

@@ -354,6 +354,9 @@ public:
                 + (int) std::round ((1.0 - value / 127.0) * ccStripH));
     }
     int ccControllerForScenario() const { return activeCcController; }
+    auto notePointForScenario (std::int64_t tick, int pitch) const
+    { return getLocalBounds().getTopLeft().translated (xForTick (tick), yForNoteNumber (pitch) + kNoteHeight / 2); }
+    const auto& selectionForScenario() const { return selectedNotes; }
 
 private:
     // Note grid (excludes toolbar / ruler / keyboard column / velocity +
