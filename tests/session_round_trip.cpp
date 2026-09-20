@@ -146,6 +146,50 @@ TEST_CASE ("SessionSerializer round-trips the MTC sync settings",
     REQUIRE (b.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed) == 3);
 }
 
+// The seven MIDI Sync settings travel with the session. A file that predates
+// any of them has to land on the defaults: inheriting the sync source of
+// whatever session was open before would have the new one chasing a master it
+// never named.
+TEST_CASE ("SessionSerializer round-trips the clock sync settings",
+           "[session][serializer][sync]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("dusk-clocksync-"
+                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
+    dir.createDirectory();
+    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    a.setSessionDirectory (dir);
+    a.syncSourceInputIdentifier = "drum-machine-out";
+    a.externalSyncFollowsTempo.store (false, std::memory_order_relaxed);
+    a.externalSyncChasesTransport.store (true, std::memory_order_relaxed);
+    a.syncOutputIdentifier = "slave-in";
+    a.syncOutputEmitClock.store (true, std::memory_order_relaxed);
+    REQUIRE (SessionSerializer::save (a, target));
+
+    Session b;
+    b.setSessionDirectory (dir);
+    REQUIRE (SessionSerializer::load (b, target));
+    CHECK (b.syncSourceInputIdentifier == "drum-machine-out");
+    CHECK_FALSE (b.externalSyncFollowsTempo.load (std::memory_order_relaxed));
+    CHECK (b.externalSyncChasesTransport.load (std::memory_order_relaxed));
+    CHECK (b.syncOutputIdentifier == "slave-in");
+    CHECK (b.syncOutputEmitClock.load (std::memory_order_relaxed));
+
+    REQUIRE (target.replaceWithText (R"({"version":3,"transport":{}})"));
+    REQUIRE (SessionSerializer::load (b, target));
+    CHECK (b.syncSourceInputIdentifier.isEmpty());
+    CHECK (b.externalSyncFollowsTempo.load (std::memory_order_relaxed));
+    CHECK_FALSE (b.externalSyncChasesTransport.load (std::memory_order_relaxed));
+    CHECK (b.syncOutputIdentifier.isEmpty());
+    CHECK_FALSE (b.syncOutputEmitClock.load (std::memory_order_relaxed));
+}
+
 TEST_CASE ("SessionSerializer save is atomic - tmp file gone after success",
            "[session][serializer]")
 {

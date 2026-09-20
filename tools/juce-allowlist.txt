@@ -1,4 +1,4 @@
-src/DuskStudioApp.cpp	112
+src/DuskStudioApp.cpp	111
 src/DuskStudioApp.h	7
 src/dsp/AuxLaneStrip.cpp	17
 src/dsp/AuxLaneStrip.h	23
@@ -45,8 +45,8 @@ src/engine/multisample/Sf2ToSfz.cpp	7
 src/engine/multisample/Sf2ToSfz.h	4
 src/foundation/MessageThread.cpp	4
 src/session/MarkerEditActions.h	4
-src/session/MidiBindings.cpp	47
-src/session/MidiBindings.h	10
+src/session/MidiBindings.cpp	44
+src/session/MidiBindings.h	8
 src/session/ParamEditAction.h	2
 src/session/RegionEditActions.cpp	32
 src/session/RegionEditActions.h	16

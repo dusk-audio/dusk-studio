@@ -178,6 +178,38 @@ TEST_CASE ("PluginSlot completes an out-of-process load off the message thread")
     CHECK (slot.isRemote());
 }
 
+// With no child binary where the loader looks, the sandbox is simply not
+// available: the load must still take the in-process path rather than fail or
+// wait on a host that will never answer.
+TEST_CASE ("PluginSlot falls back to in-process when the host binary is missing")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    PluginManager manager;
+    manager.setOopEnabled (true);
+    manager.setHostExecutableOverride (
+        (juce::File::getSpecialLocation (juce::File::tempDirectory)
+            .getChildFile ("dusk-studio-plugin-host-that-is-not-there")
+            .getFullPathName()).toStdString(),
+        "--ipc-load-reply-stub");
+
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+
+    bool completed = false;
+    slot.loadFromDescriptorAsync (sandboxTestDescriptor(),
+                                  [&] (bool, juce::String) { completed = true; });
+
+    pumpUntil ([&] { return completed; }, std::chrono::seconds (15));
+
+    CHECK (completed);
+    // The descriptor names a plugin that does not exist either, so the
+    // in-process load it fell back to fails on its own terms. What matters is
+    // that it never went remote and never waited for a handshake.
+    CHECK_FALSE (slot.isRemote());
+}
+
 // The same async load, with the device callback already running across it. A
 // child spawned from the load worker dies with that worker, which the startup
 // restore never sees because it spawns from the message thread. Needs the stub

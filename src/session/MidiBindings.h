@@ -1,7 +1,11 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+
+#include "SessionLayout.h"
+
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace duskstudio
@@ -254,6 +258,33 @@ constexpr bool needsPackedBusEqIndex (MidiBindingTarget t) noexcept
     return t == MidiBindingTarget::BusEqGain;
 }
 
+// Highest legal targetIndex for a target. The session loader and the preset
+// importer both gate on this: the dispatch bounds-checks every read, but a
+// bank-relative binding has activeBank * kBankSize added to its index before
+// any of those checks, so an index left untrusted overflows the add rather
+// than failing it. Targets that ignore the field report the track range.
+constexpr int maxTargetIndexFor (MidiBindingTarget t) noexcept
+{
+    if (needsBusIndex (t))            return SessionLayout::kNumBuses - 1;
+    if (needsPackedBusEqIndex (t))    return SessionLayout::kNumBuses * kBusEqBands - 1;
+    if (needsAuxLaneIndex (t))        return kPackedAuxLanes - 1;
+    if (needsPackedTrackAuxIndex (t)) return SessionLayout::kNumTracks * kPackedAuxLanes - 1;
+    if (needsPackedTrackEqIndex (t))  return SessionLayout::kNumTracks * kPackedEqBands - 1;
+    if (t == MidiBindingTarget::TrackAuxSendBank)
+        return SessionLayout::kBankSize * kPackedAuxLanes - 1;
+    if (t == MidiBindingTarget::TrackEqGainBank
+        || t == MidiBindingTarget::TrackEqFreqBank
+        || t == MidiBindingTarget::TrackEqQBank)
+        return SessionLayout::kBankSize * kPackedEqBands - 1;
+    if (isBankRelativeTarget (t))     return SessionLayout::kBankSize - 1;
+    return SessionLayout::kNumTracks - 1;
+}
+
+// TrackPluginParam only. Wide enough for a plugin with hundreds of
+// parameters; narrow enough that a hand-edited file can't hand the host a
+// nonsense parameter id.
+constexpr int kMaxBindingParamIndex = 65535;
+
 struct MidiBinding
 {
     int channel = 0;                 // 0 = any; 1..16 = filter
@@ -362,8 +393,8 @@ juce::String describeBindingSource (const MidiBinding& b);
 // Preset .json: top-level object with `format_version` + `midi_bindings`
 // array (matches the embedded session form). std::nullopt = malformed /
 // wrong schema; empty vector = well-formed "clear all".
-juce::String serializeBindingsPreset (const std::vector<MidiBinding>& binds);
-std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::String& json);
+std::string serializeBindingsPreset (const std::vector<MidiBinding>& binds);
+std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const std::string& json);
 
 class Session;
 } // namespace duskstudio

@@ -210,13 +210,14 @@ void MidiBindingsPanel::importPreset()
         auto* self = safe.getComponent();
         if (self == nullptr || file == juce::File()) return;
         const auto json = file.loadFileAsString();
-        auto parsed = deserializeBindingsPreset (json);
+        auto parsed = deserializeBindingsPreset (json.toStdString());
         if (! parsed.has_value())
         {
             if (auto* tlw = self->getTopLevelComponent())
                 showDuskAlert (*tlw, "Import failed",
                                   "Could not read bindings from " + file.getFullPathName()
-                                      + ". File is missing or malformed.");
+                                      + ". File is missing, malformed, or written by a newer "
+                                        "version of Dusk Studio.");
             return;
         }
         // An empty parsed vector is a valid "clear all bindings" preset.
