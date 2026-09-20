@@ -95,6 +95,8 @@ public:
     virtual bool faderEditing (int index) const = 0;
     virtual double faderValue (int index) const = 0;
 
+    virtual bool meterClip (int index) = 0;
+
     virtual bool groupChipView (int index, std::string& text, int& master, bool& filled) = 0;
 
     virtual bool canEmbedPluginEditors() const = 0;

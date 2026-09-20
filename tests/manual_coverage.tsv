@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 96
+# ceiling gap 95
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -171,7 +171,7 @@ The channel strip > Mute, Solo, Phase	mute silences; solo is additive solo-in-pl
 The channel strip > Mute, Solo, Phase	phase inverts polarity before the insert	partial	scenario:strip.phase_inverts		the polarity flip is tested; that it comes before the insert is not
 The channel strip > Bus assigns	assigning a bus removes the direct master send	auto	scenario:engine.pipeline_selftest
 The channel strip > Meters	pre-fader input while armed or IN, otherwise post-fader	auto	test:Track meter source follows tracking controls without changing mix metering
-The channel strip > Meters	clip bar holds for one second	gap
+The channel strip > Meters	clip bar holds for one second	auto	scenario:gui.meter_clip_hold
 
 The bus strips	each bus has an automation mode for fader, pan and mute	auto	scenario:automation.read_plays_the_lanes;scenario:gui.automation_write_and_touch
 The bus strips > Signal flow	EQ, comp, pan, fader, then master; mute and solo gate the sum	auto	test:BusStrip: unity fader + center pan + flat EQ + comp off ~= passthrough;test:BusStrip: -6 dB fader halves the signal;scenario:engine.pipeline_selftest

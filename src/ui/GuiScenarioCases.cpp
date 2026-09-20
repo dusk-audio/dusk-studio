@@ -1094,6 +1094,85 @@ const ScenarioRegistrar groupChips { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runGroupChips (host, ctx); }
 } };
 
+std::optional<ScenarioResult> runMeterClip (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    const auto originalStage = engine.getStage();
+    const auto originalPosition = engine.getTransport().getPlayhead();
+    const auto originalRegions = track.regions;
+    ctx.cleanup ([&host, &engine, &track, originalStage, originalPosition, originalRegions]
+    {
+        engine.stop();
+        track.regions = originalRegions;
+        engine.getPlaybackEngine().preparePlayback();
+        engine.getTransport().setPlayhead (originalPosition);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux
+                            : GuiHost::Stage::Mastering);
+    });
+    ctx.keep (track.mode);
+    ctx.keep (track.strip.faderDb);
+    ctx.keep (track.strip.mute);
+    ctx.keep (track.recordArmed);
+    ctx.keep (track.inputMonitor);
+    ctx.keep (track.automationMode);
+    track.recordArmed.store (false);
+    track.inputMonitor.store (false);
+    track.automationMode.store ((int) AutomationMode::Off);
+    ctx.keep (session.master().mute);
+    session.master().mute.store (true);
+    engine.stop();
+    const auto rate = engine.getCurrentSampleRate();
+    const auto frames = static_cast<std::int64_t> (rate * 5.0);
+    std::vector<float> samples ((size_t) frames);
+    for (std::int64_t i = 0; i < frames; ++i)
+        samples[(size_t) i] = 0.8f * static_cast<float> (std::sin (6.283185307179586 * 440.0 * static_cast<double> (i) / rate));
+    const auto path = ctx.tempDir() / "stage-tone.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = rate;
+    spec.numChannels = 1;
+    spec.bitsPerSample = 32;
+    auto writer = dusk::audio::FileWriter::create (path, spec);
+    const float* channels[] = { samples.data() };
+    if (writer == nullptr || ! writer->write (channels, 1, frames) || ! writer->flush())
+        return ScenarioResult::fail ("could not write the playback tone");
+    writer.reset();
+    AudioRegion region;
+    using File = std::decay_t<decltype (region.file)>;
+    region.file = File (path.u8string().c_str());
+    region.lengthInSamples = frames;
+    region.numChannels = 1;
+    track.regions = { region };
+    track.mode.store ((int) Track::Mode::Mono);
+    track.strip.faderDb.store (12.0f);
+    track.strip.mute.store (false);
+    host.switchToStage (GuiHost::Stage::Recording);
+    engine.getTransport().setPlayhead (0);
+    engine.play();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &engine, &ctx]
+    {
+        ctx.expect (engine.getChannelStrip (0).getOutLDb() > 0.0f, "fixture did not cross 0 dBFS");
+        ctx.expect (host.meterClip (0), "overload did not light the red clip bar");
+        engine.stop();
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.meterClip (0), "clip bar cleared before one second"); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    { ctx.expect (! host.meterClip (0), "clip bar did not clear after one second"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar meterClip { Scenario {
+    "gui.meter_clip_hold", { "gui", "meter" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMeterClip (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runStageAudioFlow (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -67,6 +68,7 @@ public:
     auto faderPointForScenario (bool readout) const { return (readout ? faderValueLabel.getBounds() : faderSlider.getBounds()).getCentre(); }
     bool faderEditingForScenario() const { return faderValueLabel.isBeingEdited(); }
     double faderValueForScenario() const { return faderSlider.getValue(); }
+    bool meterClipForScenario();
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
 
     void paint (juce::Graphics&) override;
@@ -123,6 +125,7 @@ private:
     float displayedInputRDb = -100.0f;
     float inputPeakHoldRDb  = -100.0f;
     int   inputPeakHoldRFrames = 0;
+    std::chrono::steady_clock::time_point meterClipUntil {};
 
     juce::Label nameLabel;
 

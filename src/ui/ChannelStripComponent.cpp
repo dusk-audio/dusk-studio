@@ -4975,11 +4975,12 @@ void ChannelStripComponent::timerCallback()
     const float lDb = showInput ? track.meterInputDb.load (std::memory_order_relaxed)
                                 : (stereoMode ? outL : std::max (outL, outR));
     smoothMeter (lDb, displayedInputDb, inputPeakHoldDb, inputPeakHoldFrames);
+    const float rDb = showInput ? track.meterInputRDb.load (std::memory_order_relaxed) : outR;
+    if (lDb >= 0.0f || (stereoMode && rDb >= 0.0f))
+        meterClipUntil = std::chrono::steady_clock::now() + std::chrono::seconds (1);
 
     if (stereoMode)
     {
-        const float rDb = showInput ? track.meterInputRDb.load (std::memory_order_relaxed)
-                                    : outR;
         smoothMeter (rDb, displayedInputRDb, inputPeakHoldRDb, inputPeakHoldRFrames);
     }
     else
@@ -6006,6 +6007,13 @@ bool ChannelStripComponent::groupChipViewForScenario (std::string& text, int& ma
                       && withinBlendRounding (pixel.getBlue(), expected.getBlue()));
 }
 
+bool ChannelStripComponent::meterClipForScenario()
+{
+    if (! isShowing() || inputMeterArea.isEmpty()) return false;
+    const auto image = createComponentSnapshot (getLocalBounds());
+    return image.getPixelAt (inputMeterArea.getCentreX(), inputMeterArea.getY() + 2).getARGB() == 0xffff2020;
+}
+
 void ChannelStripComponent::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (1.5f);
@@ -6224,6 +6232,11 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         else
         {
             drawBar (inputMeterArea.toFloat(), displayedInputDb, inputPeakHoldDb);
+        }
+        if (std::chrono::steady_clock::now() < meterClipUntil)
+        {
+            g.setColour (decltype (track.colour) (0xffff2020));
+            g.fillRect (inputMeterArea.withHeight (4).reduced (1, 0));
         }
     }
 

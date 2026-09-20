@@ -366,6 +366,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     double faderValue (int index) const override
     { return owner.consoleView->getStripComponent (index)->faderValueForScenario(); }
 
+    bool meterClip (int index) override
+    { return owner.consoleView->getStripComponent (index)->meterClipForScenario(); }
+
     bool groupChipView (int index, std::string& text, int& master, bool& filled) override
     {
         auto* strip = owner.consoleView->getStripComponent (index);
