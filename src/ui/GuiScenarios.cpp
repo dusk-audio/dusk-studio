@@ -6,6 +6,9 @@
 
 #include "AuxLaneComponent.h"
 #include "AuxView.h"
+#include "AudioRegionEditor.h"
+#include "PianoRollComponent.h"
+#include "TapeStrip.h"
 #include "BusComponent.h"
 #include "ChannelStripComponent.h"
 #include "ConsoleView.h"
@@ -412,6 +415,32 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     double uiScale() const override { return embedscale::globalScale(); }
     void restoreUiScale (float scale) override { owner.restoreUiScaleForScenario (scale); }
+    int tapeExpansionState() const override
+    {
+        const bool displayed = owner.tapeStrip->isVisible() && ! owner.tapeStrip->getBounds().isEmpty();
+        return (owner.tapeStripExpanded ? 2 : 0) + (displayed ? 1 : 0);
+    }
+    int timelineChaseState() const override
+    { return (owner.hdrChaseBtn.getToggleState() ? 2 : 0) + (owner.tapeStrip->isChaseEnabled() ? 1 : 0); }
+    bool openRegionEditor (int track, int region, bool midi) override
+    {
+        if (midi) { owner.openPianoRoll (track, region); return owner.pianoRoll != nullptr; }
+        owner.openAudioEditor (track, region);
+        return owner.audioEditor != nullptr;
+    }
+    int regionEditorChase() const override
+    {
+        const auto read = [this] (const auto* editor)
+        {
+            if (editor == nullptr) return -1;
+            for (auto* child : editor->getChildren())
+                if (const auto* button = dynamic_cast<const decltype (owner.hdrChaseBtn)*> (child))
+                    if (button->getButtonText() == "Chase") return button->getToggleState() ? 1 : 0;
+            return -1;
+        };
+        return owner.pianoRoll != nullptr ? read (owner.pianoRoll.get()) : read (owner.audioEditor.get());
+    }
+    void closeRegionEditors() override { owner.closePianoRoll(); owner.closeAudioEditor(); }
     bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 
     bool openMidiIo (int index) override

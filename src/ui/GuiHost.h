@@ -103,6 +103,11 @@ public:
     virtual bool pointerAudioSettings (const std::string& control, float position, bool pressed) = 0;
     virtual double uiScale() const = 0;
     virtual void restoreUiScale (float scale) = 0;
+    virtual int tapeExpansionState() const = 0;
+    virtual int timelineChaseState() const = 0;
+    virtual bool openRegionEditor (int track, int region, bool midi) = 0;
+    virtual int regionEditorChase() const = 0;
+    virtual void closeRegionEditors() = 0;
     virtual bool midiBindingsOpen() const = 0;
 
     virtual bool meterClip (int index) = 0;

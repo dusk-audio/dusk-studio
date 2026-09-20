@@ -186,6 +186,8 @@ public:
         if (control == "midi-bindings") point = scenarioMidiBindings;
         else if (control == "rescan") point = scenarioRescan;
         else if (control == "autosave") point = scenarioAutosave;
+        else if (control == "tape-default") point = scenarioTape;
+        else if (control == "follow-default") point = scenarioFollow;
         else if (control == "ui-scale")
             point = { scenarioScaleFirst.x + (scenarioScaleLast.x - scenarioScaleFirst.x)
                         * std::clamp (position, 0.0f, 1.0f),
@@ -197,6 +199,7 @@ public:
     ImVec2 scenarioMidiBindings {};
     ImVec2 scenarioRescan {};
     ImVec2 scenarioAutosave {};
+    ImVec2 scenarioTape {}, scenarioFollow {};
     ImVec2 scenarioScaleFirst {}, scenarioScaleLast {};
 
     ImVec2 preferredSize() const override { return ImVec2 (kPanelW, panelHeight()); }
@@ -446,6 +449,10 @@ private:
             if (toggleAt (top, generalToggleX, "##tape-strip",
                           "Expand tape strip by default", tapeStripExpanded))
                 appconfig::setTapeStripExpandedDefault (tapeStripExpanded);
+            const auto first = ImGui::GetItemRectMin();
+            const auto last = ImGui::GetItemRectMax();
+            scenarioTape = ImGui::IsItemVisible()
+                ? ImVec2 { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f } : ImVec2 {};
             formTooltip ("When on, the TIMELINE tape strip starts expanded on every app "
                          "launch. Saved per-machine; takes effect on next launch.");
         }
@@ -454,6 +461,10 @@ private:
             if (toggleAt (top, generalToggleX, "##follow-playhead",
                           "Follow playhead by default", followPlayhead))
                 appconfig::setFollowPlayheadDefault (followPlayhead);
+            const auto first = ImGui::GetItemRectMin();
+            const auto last = ImGui::GetItemRectMax();
+            scenarioFollow = ImGui::IsItemVisible()
+                ? ImVec2 { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f } : ImVec2 {};
             formTooltip ("When on, the timeline and editors start with Chase engaged, "
                          "scrolling to keep the playhead in view during playback. Saved "
                          "per-machine; takes effect on next launch.");

@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 90
+# ceiling gap 89
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -82,7 +82,7 @@ Getting started > Configuring audio > Control surface	MCU input and output enabl
 Getting started > Configuring audio > MIDI bindings	button opens the MIDI Bindings panel	auto	scenario:gui.settings_midi_bindings
 Getting started > Configuring audio > MIDI sync	the seven sync settings are saved with the session	auto	test:SessionSerializer round-trips the MTC sync settings;test:SessionSerializer round-trips the clock sync settings
 Getting started > Configuring audio > General	UI scale previews live and saves per machine	auto	scenario:gui.settings_ui_scale
-Getting started > Configuring audio > General	Expand tape strip and Follow playhead defaults	gap
+Getting started > Configuring audio > General	Expand tape strip and Follow playhead defaults	auto	scenario:gui.settings_defaults;script:tests/gui_settings_defaults.sh
 Getting started > Configuring audio > General	Playhead on Stop choices	auto	test:Stop on a rolling transport follows the Playhead on Stop setting;test:Stop pressed while stopped returns to zero whatever the setting;test:The persisted Playhead on Stop values keep their meaning;test:A saved stop behaviour keeps its meaning
 Getting started > Configuring audio > General	MIDI soft takeover keeps a control dormant until it crosses the value	auto	test:FaderBindingMap: apply and pickup inverse agree (soft-takeover symmetry)
 Getting started > Configuring audio > General	autosave cadence 15 s to 5 min	auto	scenario:gui.settings_autosave_cadence

@@ -939,6 +939,97 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runSettingsDefaults (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings");
+   #else
+    auto& session = ctx.session();
+    const bool tape = appconfig::getTapeStripExpandedDefault();
+    const bool follow = appconfig::getFollowPlayheadDefault();
+    ctx.expect (host.tapeExpansionState() == (tape ? 3 : 0), "launch ignored the tape-strip default");
+    ctx.expect (host.timelineChaseState() == (follow ? 3 : 0), "launch ignored the timeline Chase default");
+    const auto config = dusk::fs::userConfigDir() / "Dusk Studio" / "app-config.properties";
+    const bool hadConfig = std::filesystem::exists (config);
+    const auto configText = dusk::fs::loadFileAsString (config);
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, config, hadConfig, configText, originalDir, restore]
+    {
+        host.closeRegionEditors();
+        host.closeAudioSettings();
+        if (hadConfig) dusk::fs::writeStringToFile (config, configText);
+        else { std::error_code error; std::filesystem::remove (config, error); }
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    MidiRegion midi;
+    midi.lengthInSamples = 48000;
+    midi.lengthInTicks = 960;
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { midi }));
+    const auto wave = ctx.tempDir() / "silence.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = 48000;
+    spec.numChannels = 1;
+    auto writer = dusk::audio::FileWriter::create (wave, spec);
+    std::vector<float> silence (48000, 0.0f);
+    const float* channels[] = { silence.data() };
+    if (! writer || ! writer->write (channels, 1, 48000) || ! writer->flush())
+        return ScenarioResult::fail ("could not create the audio editor fixture");
+    writer.reset();
+    AudioRegion audio;
+    using File = std::decay_t<decltype (audio.file)>;
+    audio.file = File (wave.u8string().c_str());
+    audio.lengthInSamples = 48000;
+    audio.numChannels = 1;
+    session.track (1).regions = { audio };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool isMidi : { true, false })
+    {
+        steps->push_back ({ 200, [&host, &ctx, isMidi]
+        { ctx.expect (host.openRegionEditor (isMidi ? 0 : 1, 0, isMidi), "region editor did not open"); } });
+        steps->push_back ({ 200, [&host, &ctx, follow]
+        {
+            ctx.expect (host.regionEditorChase() == (follow ? 1 : 0), "editor ignored the Chase default");
+            host.closeRegionEditors();
+        } });
+    }
+    for (const bool inverted : { true, false })
+    {
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
+        steps->push_back ({ 200, [&host] { host.inputAudioSettings ("scroll-down"); } });
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickAudioSettingsControl ("tape-default"), "tape default checkbox was not visible"); } });
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickAudioSettingsControl ("follow-default"), "follow default checkbox was not visible"); } });
+        steps->push_back ({ 200, [&host, &ctx, tape, follow, inverted]
+        {
+            ctx.expect (appconfig::getTapeStripExpandedDefault() == (inverted ? ! tape : tape),
+                        "tape default did not persist through the checkbox");
+            ctx.expect (appconfig::getFollowPlayheadDefault() == (inverted ? ! follow : follow),
+                        "follow default did not persist through the checkbox");
+            ctx.expect (host.tapeExpansionState() == (tape ? 3 : 0), "default changed the existing timeline layout");
+            ctx.expect (host.timelineChaseState() == (follow ? 3 : 0), "default changed existing timeline Chase");
+            host.closeAudioSettings();
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsDefaults { Scenario {
+    "gui.settings_defaults", { "gui", "settings" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsDefaults (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runSettingsUiScale (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI

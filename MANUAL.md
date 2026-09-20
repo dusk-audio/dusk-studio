@@ -488,7 +488,7 @@ All seven are saved with the session, so a project that syncs to an external clo
 ### General
 
 - **UI scale**: a global zoom factor for the entire interface. The interface previews changes live while you adjust the slider; the final value is saved per-machine when you release it.
-- **Expand tape strip by default**: show the tape strip on every session open.
+- **Expand tape strip by default**: show the tape strip on every app launch. Per-machine; takes effect on next launch.
 - **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
 - **Playhead on Stop**: where the playhead lands when you press Stop. **Return to where play or record started** is the default: the playhead goes back to where playback or the take began, or to where you last moved it during playback, so Play hears the take you just made. A punch take begins at the punch-in point and a loop take at the loop start; count-in and pre-roll do not count. The other choices are **Stay where it is (pause)**, **Return to start (rewind to 0)** and **Return to last clicked point**. Pressing Stop while already stopped returns to bar 1 whatever this says. Per-machine; takes effect immediately.
 - **MIDI soft takeover (pickup)**: when on, a knob or fader bound with MIDI Learn stays dormant until the physical control crosses the parameter's current position, instead of snapping the parameter on first touch. Applies to continuous mixer targets (faders, pans, sends, EQ, comp, master); plugin-parameter bindings always track directly. Per-machine; takes effect immediately.
