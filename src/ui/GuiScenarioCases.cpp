@@ -2,6 +2,7 @@
 
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
+#include "../engine/audiofile/FileWriter.h"
 #include "../engine/scenario/Scenario.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/cases/OopStubHarness.h"
@@ -1545,6 +1546,71 @@ const ScenarioRegistrar sunsetTrackDefaults { Scenario {
     "gui.sunset_track_defaults", { "gui", "plugin" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runSunsetTrackDefaults (host, ctx); }
+} };
+std::optional<ScenarioResult> runMasteringTransport (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& player = ctx.engine().getMasteringPlayer();
+    auto& transport = ctx.engine().getTransport();
+    if (! ctx.expect (! player.isLoaded(), "the fixture already has a mastering file")) return ctx.verdict();
+    const auto path = ctx.tempDir() / "mastering.wav";
+    auto writer = dusk::audio::FileWriter::create (path, { 48000.0, 2, 24 });
+    if (! ctx.expect (writer != nullptr, "could not create the mastering fixture")) return ctx.verdict();
+    std::vector<float> silence (480000, 0.0f);
+    const float* channels[] { silence.data(), silence.data() };
+    if (! ctx.expect (writer->write (channels, 2, 480000), "could not write the mastering fixture"))
+        return ctx.verdict();
+    writer.reset();
+    const auto stage = ctx.engine().getStage();
+    ctx.cleanup ([&host, &player, &transport, stage, state = transport.getState(), position = transport.getPlayhead()]
+    {
+        player.stop();
+        player.unloadFile();
+        switch (stage)
+        {
+            case AudioEngine::Stage::Recording: host.switchToStage (GuiHost::Stage::Recording); break;
+            case AudioEngine::Stage::Mixing: host.switchToStage (GuiHost::Stage::Mixing); break;
+            case AudioEngine::Stage::Aux: host.switchToStage (GuiHost::Stage::Aux); break;
+            case AudioEngine::Stage::Mastering: host.switchToStage (GuiHost::Stage::Mastering); break;
+        }
+        transport.setPlayhead (position);
+        transport.setState (state);
+    });
+    host.switchToStage (GuiHost::Stage::Mastering);
+    if (! ctx.expect (host.loadMasteringFile (path), "Load mix did not accept the fixture")) return ctx.verdict();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickMasteringButton ("Play"), "Play is unavailable"); } });
+    steps->push_back ({ 150, [&host, &ctx, &player, &transport]
+    {
+        ctx.expect (player.isPlaying() && player.getPlayhead() > 0, "Play did not advance the mastering player");
+        ctx.expect (transport.isStopped(), "mastering Play started multitrack playback");
+        ctx.expect (host.clickMasteringButton ("Stop"), "Stop is unavailable");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, &player]
+    {
+        ctx.expect (! player.isPlaying(), "Stop did not stop the mastering player");
+        player.setPlayhead (96000);
+        ctx.expect (host.clickMasteringButton ("|<<"), "Rewind is unavailable");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, &player]
+    {
+        ctx.expect (player.getPlayhead() == 0, "Rewind did not return to the start");
+        ctx.expect (host.pressKey ("spacebar", ' '), "Space was not handled in Mastering");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &player, &transport]
+    {
+        ctx.expect (player.isPlaying() && player.getPlayhead() > 0, "Space did not play the loaded mix");
+        ctx.expect (transport.isStopped(), "Space in Mastering started multitrack playback");
+        ctx.expect (host.pressKey ("spacebar", ' '), "second Space was not handled");
+        ctx.expect (! player.isPlaying(), "second Space did not stop the loaded mix");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringTransport { Scenario {
+    "gui.mastering_transport", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringTransport (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario

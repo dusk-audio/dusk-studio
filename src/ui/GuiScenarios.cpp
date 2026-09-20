@@ -460,6 +460,25 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     void autosaveTick() override { owner.writeAutosave(); }
     void openAbout() override { owner.menuItemSelected (2002, 2); }
 
+    bool loadMasteringFile (const std::filesystem::path& path) override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->loadFile (hostFile (path));
+    }
+
+    bool clickMasteringButton (const std::string& label) override
+    {
+        if (owner.masteringView == nullptr) return false;
+        for (auto* child : owner.masteringView->getChildren())
+            if (auto* button = dynamic_cast<decltype (owner.recordingStageBtn)*> (child);
+                button != nullptr && button->isShowing() && button->isEnabled()
+                && button->getButtonText().toStdString() == label)
+            {
+                button->triggerClick();
+                return true;
+            }
+        return false;
+    }
+
     bool openSession (const std::filesystem::path& sessionJson) override
     {
         return owner.loadSessionFromJson (hostFile (sessionJson));
