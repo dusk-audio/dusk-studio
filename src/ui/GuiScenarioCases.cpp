@@ -2180,5 +2180,56 @@ const ScenarioRegistrar recordingUndoKey { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runRecordingUndoKey (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runMidiActivityLed (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (0);
+    auto* strip = host.strip (0);
+    if (! ctx.expect (strip != nullptr, "the MIDI activity fixture has no strip")) return ctx.verdict();
+    ctx.keep (track.midiInputIndex);
+    ctx.keep (track.midiChannel);
+    ctx.cleanup ([&host, strip, mode = track.mode.load()]
+    {
+        host.closeTopModal();
+        strip->restoreTrackMode (mode);
+    });
+    host.switchToStage (GuiHost::Stage::Recording);
+    track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    track.midiChannel.store (1);
+    if (! ctx.expect (strip->openInputSettings ((int) Track::Mode::Midi), "could not open MIDI input settings"))
+        return ctx.verdict();
+    auto seen = std::make_shared<bool> (false);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [strip, &ctx]
+    { ctx.expect (strip->midiActivityVisible(), "the MIDI input activity LED is not visible"); } });
+    for (const bool matching : { false, true })
+    {
+        steps->push_back ({ 100, [seen] { *seen = false; } });
+        for (int event = 0; event < 30; ++event)
+            steps->push_back ({ 10, [&engine, strip, seen, matching]
+            {
+                *seen = *seen || strip->midiActivityLit();
+                const std::uint8_t cc[] { static_cast<std::uint8_t> (matching ? 0xb0 : 0xb1), 1, 64 };
+                engine.postVirtualKeyboardMidi (cc, 3);
+            } });
+        steps->push_back ({ 10, [strip, seen, matching, &ctx]
+        {
+            *seen = *seen || strip->midiActivityLit();
+            ctx.expect (*seen == matching, matching ? "matching MIDI traffic never lit the activity LED"
+                                                    : "the activity LED accepted a filtered MIDI channel");
+        } });
+        steps->push_back ({ 100, [strip, &ctx]
+        { ctx.expect (! strip->midiActivityLit(), "the activity LED stayed lit after traffic stopped"); } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar midiActivityLed { Scenario {
+    "gui.midi_activity_led", { "gui", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMidiActivityLed (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

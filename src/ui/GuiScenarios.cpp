@@ -201,10 +201,21 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         return component != nullptr && component->inputSettingsOpenForScenario();
     }
 
+    bool openInputSettings (int mode) override
+    {
+        auto* component = strip();
+        return component != nullptr && component->openIoConfigPopupForCapture (mode) != nullptr;
+    }
+
     void loadBuiltin (const std::string& id) override
     {
         if (auto* component = strip()) component->loadBuiltinForScenario (id);
     }
+
+    bool midiActivityVisible() const override
+    { auto* component = strip(); return component != nullptr && component->midiActivityVisibleForScenario(); }
+    bool midiActivityLit() const override
+    { auto* component = strip(); return component != nullptr && component->midiActivityLitForScenario(); }
 
     void clickMonitor() override
     {

@@ -49,7 +49,10 @@ public:
     virtual void clickSolo() = 0;
     virtual bool clickArm() = 0;
     virtual bool armLit() const = 0;
+    virtual bool midiActivityVisible() const = 0;
+    virtual bool midiActivityLit() const = 0;
     virtual bool inputSettingsOpen() const = 0;
+    virtual bool openInputSettings (int mode) = 0;
     virtual void loadBuiltin (const std::string& id) = 0;
     virtual void clickMonitor() = 0;
     virtual void restoreTrackMode (int mode) = 0;

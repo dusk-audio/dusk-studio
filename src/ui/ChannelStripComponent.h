@@ -69,6 +69,8 @@ public:
         return true;
     }
     bool armLitForScenario() const { return armButton.getToggleState(); }
+    bool midiActivityVisibleForScenario() const { return midiActivityLed.isShowing(); }
+    bool midiActivityLitForScenario() const { return midiActivityLed.lit; }
     bool inputSettingsOpenForScenario() const { return ioConfigModal.isOpen(); }
     void loadBuiltinForScenario (const std::string& id) { loadBuiltinForChannel (id); }
     void clickMonitorForScenario() { monitorButton.triggerClick(); }
