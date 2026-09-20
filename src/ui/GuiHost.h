@@ -125,6 +125,9 @@ public:
     virtual bool loadMasteringFile (const std::filesystem::path& path) = 0;
     virtual bool clickMasteringButton (const std::string& label) = 0;
     virtual void openPianoRoll (int track, int region) = 0;
+    virtual bool doubleClickMidiRegion (int track, int region) = 0;
+    virtual int pianoRollRegion() const = 0;
+    virtual bool pianoRollOpen() const = 0;
     virtual void closePianoRoll() = 0;
     virtual bool pressPianoRollKey (const std::string& description) = 0;
     virtual bool doubleClickAudioRegion (int track, int region) = 0;

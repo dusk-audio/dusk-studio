@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 75
+# ceiling gap 73
 # ceiling partial 50
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -270,7 +270,7 @@ The audio region editor > Layout	snap and grid resolution saved with the session
 The audio region editor > Editing gestures	fade discs with five curve shapes	auto	test:FadeShape: every shape is 0 at t=0 and 1 at t=1;test:FadeShape: equal-power crossfade sums to constant power;test:FadeShape: exp/log are inverses around the diagonal;test:buildFadeCurve: shape is honoured (equal-power bows above linear)
 The audio region editor > Editing gestures	trim handles, gain line, range select, next/previous region, delete	gap
 
-The piano roll	double-click a MIDI region opens it	gap
+The piano roll	double-click a MIDI region opens it	auto	scenario:gui.piano_roll_navigation		actual peer double-click on a timeline MIDI region opens the piano roll
 The piano roll > Layout	toolbar, ruler, keyboard, grid, velocity strip, CC lane	manual			layout; checked by screenshot review
 The piano roll > Creating notes	click an empty cell creates a note at the snap length and velocity 100	gap
 The piano roll > Selecting and moving	click, Shift-click, Cmd-click, drag, resize, rubber band, delete	gap
@@ -280,7 +280,7 @@ The piano roll > CC editing	CC lane: pick a controller, draw and edit events	gap
 The piano roll > Quantize and scale	Q quantizes with strength; S picks a scale; L cycles CC; C cycles colour	gap
 The piano roll > Zoom and scroll	zoom, fit and scroll keys	gap
 The piano roll > Step record	notes entered at the cursor; the cursor advances a step	gap
-The piano roll > Navigation	Cmd+] and Cmd+[ move between MIDI regions	gap
+The piano roll > Navigation	Cmd+] and Cmd+[ move between MIDI regions	auto	scenario:gui.piano_roll_navigation		both navigation directions select the expected region and preserve notes
 
 Mixing > A suggested order of operations	mixing advice	n/a			advice
 Mixing > Aux sends in detail	post-fader follows the fader; pre-fader ignores it	auto	scenario:strip.sends_pre_post_and_bypass		measured aux audio at unity, -6, -12, -24 dB and fully down

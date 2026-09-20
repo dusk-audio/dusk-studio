@@ -2372,5 +2372,61 @@ const ScenarioRegistrar tapeNudgeKeys { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runTapeNudgeKeys (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runPianoRollNavigation (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& track = ctx.session().track (0);
+    const bool expanded = host.timelineViewMatches (true);
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&host, &track, expanded, regions = track.midiRegions.current()]
+    {
+        host.closePianoRoll();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+        if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+    });
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
+    MidiRegion first;
+    first.lengthInTicks = 1920;
+    first.lengthInSamples = static_cast<std::int64_t> (ctx.engine().getCurrentSampleRate() * 2.0);
+    first.notes = { { 1, 60, 100, 240, 120 } };
+    auto second = first;
+    second.timelineStart = first.lengthInSamples * 2;
+    second.notes[0].noteNumber = 67;
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { first, second }));
+    if (! expanded) host.pressKey ("T", 't');
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.doubleClickMidiRegion (0, 0), "the first MIDI region was not visible for double-click"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.pianoRollOpen() && host.pianoRollRegion() == 0, "double-click did not open the first MIDI region");
+        ctx.expect (host.pressPeerKey ("command + ]", ']'), "the piano roll did not handle next region");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.pianoRollRegion() == 1, "next region did not select the second MIDI region");
+        ctx.expect (host.pressPeerKey ("command + [", '['), "the piano roll did not handle previous region");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &track, first, second]
+    {
+        ctx.expect (host.pianoRollRegion() == 0, "previous region did not return to the first MIDI region");
+        const auto& regions = track.midiRegions.current();
+        ctx.expect (regions.size() == 2 && regions[0].notes == first.notes && regions[1].notes == second.notes,
+                    "navigation changed MIDI notes");
+        ctx.expect (host.pressPianoRollKey ("escape"), "the piano roll did not handle Escape");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (! host.pianoRollOpen(), "Escape did not close the piano roll"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoRollNavigation { Scenario {
+    "gui.piano_roll_navigation", { "gui", "midi", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoRollNavigation (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

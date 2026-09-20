@@ -630,6 +630,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     void openPianoRoll (int track, int region) override { owner.openPianoRoll (track, region); }
     void closePianoRoll() override { owner.closePianoRoll(); }
+    int pianoRollRegion() const override { return owner.pianoRollRegionIdx; }
+    bool pianoRollOpen() const override { return owner.pianoRoll != nullptr; }
+    bool doubleClickMidiRegion (int track, int region) override
+    {
+        if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;
+        const auto bounds = owner.tapeStrip->midiRegionScreenRect (track, region);
+        if (bounds.isEmpty()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
+        return clickAt (point.x, point.y, 2);
+    }
 
     bool pressPianoRollKey (const std::string& description) override
     {
