@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 85
+# ceiling gap 84
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -196,7 +196,7 @@ Aux lanes > Aux lane layout > Return strip (left column)	rename, mute, return fa
 Aux lanes > Aux lane layout > Return strip (left column)	Output sends the lane to a hardware pair tapped before fader and mute	auto	test:tapStereoPairInto accumulates onto the routed pair;test:output pair encode/decode round-trips
 Aux lanes > Aux lane layout > Plugin chain (centre column)	one insert with a 20 ms crossfade; built-in controls fill the lane	auto	test:Crossfade: equal-power overlap holds constant power across window;test:the aux lane view gives every shown parameter one control inside the lane;test:the aux lane view's knobs stay full size down to the smallest window
 Aux lanes > Aux lane layout > Plugin chain (centre column)	an editor attach failure logs without a dialog	auto	scenario:gui.aux_attach_failure_no_modal;test:aux lane editor attach never raises a modal
-Aux lanes > Aux lane layout > Sources panel (right column)	lists every channel sending to the lane with its level	gap
+Aux lanes > Aux lane layout > Sources panel (right column)	lists every channel sending to the lane with its level	auto	scenario:gui.aux_sources
 
 The mastering stage	separate path; entering or leaving stops the transport	gap
 The mastering stage > Loading a mix	Load mix and Load latest mixdown	gap

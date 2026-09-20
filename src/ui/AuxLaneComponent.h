@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 #include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "DuskComboBox.h"
@@ -70,6 +71,8 @@ public:
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
     bool faderEnabledForScenario() const { return returnFader.isEnabled(); }
     bool attachEditorForSlotForScenario (int slotIdx);
+    bool captureSourcesForScenario (bool enabled);
+    std::vector<std::string> sourceRowsForScenario() const;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     bool loadNativeClapForSlotForScenario (int slotIdx,
                                            const std::filesystem::path& clapFile,

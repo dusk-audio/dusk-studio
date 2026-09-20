@@ -236,6 +236,18 @@ struct MainComponent::ScenarioAuxLaneHandle final : scenario::AuxLaneHandle
         return component != nullptr && component->attachEditorForSlotForScenario (slot);
     }
 
+    bool captureSources (bool enabled) override
+    {
+        auto* component = laneComponent();
+        return component != nullptr && component->captureSourcesForScenario (enabled);
+    }
+
+    std::vector<std::string> sourceRows() const override
+    {
+        auto* component = laneComponent();
+        return component != nullptr ? component->sourceRowsForScenario() : std::vector<std::string>();
+    }
+
     AuxLaneComponent* laneComponent() const
     {
         return owner.auxView != nullptr ? owner.auxView->getLaneComponent (lane) : nullptr;

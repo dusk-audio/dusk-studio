@@ -939,6 +939,71 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runAuxSources (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        if (auto* lane = host.auxLane (0)) lane->captureSources (false);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    for (int i = 0; i < Session::kNumTracks; ++i)
+    {
+        auto& track = session.track (i);
+        track.name = i == 0 ? "Lead voice" : std::to_string (i + 1);
+        track.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        track.strip.auxSendDb[0].store (i % 2 == 0 ? -6.0f : ChannelStripParams::kAuxSendOffDb);
+        track.strip.auxSendDb[1].store (-3.0f);
+    }
+    host.switchToStage (GuiHost::Stage::Aux);
+    auto* lane = host.auxLane (0);
+    if (lane == nullptr || ! lane->captureSources (true))
+        return ScenarioResult::fail ("first aux Sources panel is not showing");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 500, [lane, &ctx, &session]
+    {
+        const auto rows = lane->sourceRows();
+        ctx.expect (rows.size() == Session::kNumTracks, "Sources did not paint all 24 channel rows");
+        for (int i = 0; i < Session::kNumTracks && i < (int) rows.size(); ++i)
+        {
+            const auto number = std::to_string (i + 1);
+            const auto expected = number + "\t" + (i == 0 ? "Lead voice" : "Trk " + number)
+                                  + (i % 2 == 0 ? "\t-6.0 dB\tmeter" : "\t-inf\tmeter");
+            ctx.expect (rows[(std::size_t) i] == expected, "unexpected source row: " + rows[(std::size_t) i]);
+        }
+        session.track (0).strip.auxSendDb[0].store (ChannelStripParams::kAuxSendOffDb);
+        session.track (23).strip.auxSendDb[0].store (-3.5f);
+        session.track (23).name = "Last channel";
+    } });
+    steps->push_back ({ 500, [lane, &ctx]
+    {
+        const auto rows = lane->sourceRows();
+        ctx.expect (! rows.empty() && rows.front() == "1\tLead voice\t-inf\tmeter",
+                    "Sources did not refresh a disabled send");
+        ctx.expect (rows.size() == Session::kNumTracks && rows.back() == "24\tLast channel\t-3.5 dB\tmeter",
+                    "Sources did not refresh the last channel name and send level");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar auxSources { Scenario {
+    "gui.aux_sources", { "gui", "aux" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAuxSources (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_MULTISAMPLE

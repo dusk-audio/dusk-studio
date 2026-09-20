@@ -63,6 +63,8 @@ public:
     // modal, so rebuilding the row is what tries the attach.
     virtual void rebuildSlots() = 0;
     virtual bool attachEditor (int slot) = 0;
+    virtual bool captureSources (bool enabled) = 0;
+    virtual std::vector<std::string> sourceRows() const = 0;
 };
 
 class GuiHost
