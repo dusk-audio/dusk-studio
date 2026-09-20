@@ -7,6 +7,7 @@
 #include "ConsoleView.h"
 #include "EmbeddedModal.h"
 #include "DuskContextMenu.h"
+#include "DpImportDialog.h"
 #include "TapeStrip.h"
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
@@ -304,6 +305,50 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto point = owner.getTopLevelComponent()->getLocalPoint (body,
             body->getLocalBounds().getTopLeft().translated (x, y)).toFloat();
         return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+    }
+    bool clickFileMenu() override
+    {
+        if (! owner.menuBar.isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (&owner.menuBar,
+            owner.menuBar.getLocalBounds().getTopLeft().translated (20, owner.menuBar.getHeight() / 2)).toFloat();
+        return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+    }
+    bool focusFileName() override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        for (auto* container : stack.back()->getBody()->getChildren())
+            for (auto* child : container->getChildren())
+                if (auto* editor = dynamic_cast<decltype (owner.statusLabel.getCurrentTextEditor())> (child);
+                    editor != nullptr && editor->isShowing() && ! editor->isReadOnly())
+                {
+                    const auto point = owner.getTopLevelComponent()->getLocalPoint (
+                        editor, editor->getLocalBounds().getCentre()).toFloat();
+                    return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+                }
+        return false;
+    }
+    bool clickModalButton (const std::string& label) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        for (auto* child : stack.back()->getBody()->getChildren())
+            if (auto* button = dynamic_cast<decltype (owner.recordingStageBtn)*> (child);
+                button != nullptr && button->isShowing() && button->isEnabled()
+                && button->getButtonText().toStdString() == label)
+            {
+                const auto point = owner.getTopLevelComponent()->getLocalPoint (
+                    button, button->getLocalBounds().getCentre()).toFloat();
+                return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+            }
+        return false;
+    }
+    std::vector<std::string> dpImportSummary() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* dialog = dynamic_cast<const DpImportDialog*> (stack.back()->getBody());
+        return dialog != nullptr ? dialog->summaryForScenario() : std::vector<std::string> {};
     }
     bool clickPianoCcToggle() override
     {

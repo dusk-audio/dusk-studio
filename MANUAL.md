@@ -1323,7 +1323,7 @@ Drop audio or MIDI files onto the tape strip. If you drop one file, the **Import
 
 ## Import DP Song (experimental)
 
-**File → Import DP Song (experimental)…** reads a raw TASCAM DP-24 / DP-24SD / DP-32 song folder straight off the SD card — for when the device is gone and you can't run its own AudioDepot export. Point it at a `MUSIC/<SongName>/` folder and it reconstructs the session: each recorded audio fragment lands on its own track, with the correct sample rate, bit depth and stereo pairing.
+**File → Import DP Song (experimental)…** reads a raw TASCAM DP-24 / DP-24SD / DP-32 song folder straight off the SD card — for when the device is gone and you can't run its own AudioDepot export. Choose any WAV or `.sys` file inside a `MUSIC/<SongName>/` folder and it reconstructs the session: each recorded audio fragment lands on its own track, with the correct sample rate, bit depth and stereo pairing.
 
 A confirmation dialog first shows what was found — track count, format, stereo pairs, and any warnings — before anything is imported.
 

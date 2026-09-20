@@ -2,6 +2,7 @@
 
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
+#include "../engine/audiofile/FileWriter.h"
 #include "../engine/scenario/Scenario.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/cases/OopStubHarness.h"
@@ -16,6 +17,8 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -919,6 +922,90 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no open modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    for (const auto* name : { "ZZ0000_1.wav", "ZZ0001_1.wav", "ZZ0001_2.wav", "ZZ0003_2.wav" })
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 1;
+        spec.bitsPerSample = 16;
+        auto writer = dusk::audio::FileWriter::create (ctx.tempDir() / name, spec);
+        std::array<float, 256> silence {};
+        const float* channels[] = { silence.data() };
+        if (! writer || ! writer->write (channels, 1, 256) || ! writer->flush())
+            return ScenarioResult::fail ("could not create DP audio fixture");
+    }
+    const auto read = [] (const std::filesystem::path& path)
+    {
+        std::ifstream input (path);
+        return std::string (std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>());
+    };
+    const auto before = read (restore);
+    const auto unchanged = [&ctx, &session, before, read]
+    {
+        const auto after = ctx.tempDir() / "after.json";
+        ctx.expect (SessionSerializer::save (session, after), "could not save comparison snapshot");
+        ctx.expect (! before.empty() && read (after) == before, "DP confirmation changed the session before import");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickFileMenu(), "File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Import DP Song (experimental)..."), "DP import menu item is unavailable"); } });
+    steps->push_back ({ 250, [&host, &ctx]
+    {
+        ctx.expect (host.focusFileName(), "DP file browser did not open");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : (ctx.tempDir() / "ZZ0000_1.wav").string())
+            host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+        ctx.expect (host.clickModalButton ("Open"), "DP browser Open button is unavailable");
+    } });
+    steps->push_back ({ 500, [&host, &ctx, unchanged]
+    {
+        const auto text = host.dpImportSummary();
+        if (ctx.expect (text.size() == 3, "DP confirmation is not visible and ready to import"))
+        {
+            ctx.expect (text[0] == "Import DP Song", "DP confirmation title is wrong");
+            for (const auto* part : { "3 tracks", "1 stereo pair", "48.0 kHz / 16-bit" })
+                ctx.expect (text[1].find (part) != std::string::npos, std::string ("DP summary omits ") + part);
+            ctx.expect (text[2].find ("ZZ0003: right channel without left; imported as mono.") != std::string::npos,
+                        "DP confirmation omits the orphan-channel warning");
+        }
+        unchanged();
+        ctx.expect (host.clickModalButton ("Cancel"), "DP confirmation Cancel is unavailable");
+    } });
+    steps->push_back ({ 250, [&host, &ctx, unchanged]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left the DP confirmation open");
+        unchanged();
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar dpImportConfirmation { Scenario {
+    "gui.dp_import_confirmation", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runDpImportConfirmation (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runTapeRuler (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
@@ -1068,7 +1155,9 @@ std::optional<ScenarioResult> runPianoSelection (GuiHost& host, ScenarioContext&
     steps->push_back ({ 150, [&host] { host.pianoNotePointer (2520, 62, false); } });
     steps->push_back ({ 150, [&ctx, &session]
     {
-        const auto& note = session.track (0).midiRegions.current()[0].notes[0];
+        const auto& notes = session.track (0).midiRegions.current()[0].notes;
+        if (! ctx.expect (! notes.empty(), "resize removed the note")) return;
+        const auto& note = notes[0];
         ctx.expect (note.startTick == 1560 && note.lengthInTicks == 960, "right-edge drag did not resize the note");
     } });
     steps->push_back ({ 150, [&host] { host.pianoNotePointer (1000, 69, true); } });

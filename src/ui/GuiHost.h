@@ -87,6 +87,10 @@ public:
     virtual bool tapeRulerPointer (float fraction, bool down, bool shift = false) = 0;
     virtual std::int64_t tapeRulerSample (float fraction) const = 0;
     virtual bool clickContextMenuItem (const std::string& text) = 0;
+    virtual bool clickFileMenu() = 0;
+    virtual bool focusFileName() = 0;
+    virtual bool clickModalButton (const std::string& label) = 0;
+    virtual std::vector<std::string> dpImportSummary() const = 0;
     virtual bool clickTimeFormat() = 0;
     virtual std::string clockText() const = 0;
 

@@ -4,6 +4,8 @@
 #include "../engine/DpImporter.h"
 #include <algorithm>
 #include <functional>
+#include <string>
+#include <vector>
 
 namespace duskstudio
 {
@@ -126,6 +128,12 @@ public:
         r.removeFromBottom (10);
 
         warnings.setBounds (r);
+    }
+
+    std::vector<std::string> summaryForScenario() const
+    {
+        if (! isShowing() || ! importButton.isEnabled()) return {};
+        return { title.getText().toStdString(), summary.getText().toStdString(), warnings.getText().toStdString() };
     }
 
 private:
