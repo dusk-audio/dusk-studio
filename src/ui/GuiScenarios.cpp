@@ -13,6 +13,7 @@
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
 #include "PlatformWindowing.h"
+#include "NativeEditorEmbedScale.h"
 #include "TransportBar.h"
 #include "../engine/scenario/SuiteRunner.h"
 
@@ -397,6 +398,20 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
        #endif
     }
+    bool pointerAudioSettings (const std::string& control, float position, bool pressed) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return audioSettingsOpen()
+            && owner.audioSettingsWindow->pointerControlForScenario (control, position, pressed);
+       #else
+        (void) control;
+        (void) position;
+        (void) pressed;
+        return false;
+       #endif
+    }
+    double uiScale() const override { return embedscale::globalScale(); }
+    void restoreUiScale (float scale) override { owner.restoreUiScaleForScenario (scale); }
     bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 
     bool openMidiIo (int index) override

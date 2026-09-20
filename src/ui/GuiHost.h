@@ -100,6 +100,9 @@ public:
     virtual void closeAudioSettings() = 0;
     virtual bool clickAudioSettingsControl (const std::string& control) = 0;
     virtual bool inputAudioSettings (const std::string& input) = 0;
+    virtual bool pointerAudioSettings (const std::string& control, float position, bool pressed) = 0;
+    virtual double uiScale() const = 0;
+    virtual void restoreUiScale (float scale) = 0;
     virtual bool midiBindingsOpen() const = 0;
 
     virtual bool meterClip (int index) = 0;

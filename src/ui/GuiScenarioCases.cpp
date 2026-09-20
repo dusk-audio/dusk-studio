@@ -939,6 +939,67 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runSettingsUiScale (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings");
+   #else
+    const auto originalScale = static_cast<float> (host.uiScale());
+    const auto originalSaved = appconfig::getUiScaleOverride();
+    const auto config = dusk::fs::userConfigDir() / "Dusk Studio" / "app-config.properties";
+    const bool hadConfig = std::filesystem::exists (config);
+    const auto configText = dusk::fs::loadFileAsString (config);
+    ctx.cleanup ([&host, originalScale, config, hadConfig, configText]
+    {
+        host.closeAudioSettings();
+        host.restoreUiScale (originalScale);
+        if (hadConfig) dusk::fs::writeStringToFile (config, configText);
+        else { std::error_code error; std::filesystem::remove (config, error); }
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("scroll-down"); } });
+    for (const float position : { 0.4f, 0.5f, 0.6f, 0.7f })
+        steps->push_back ({ 200, [&host, &ctx, position]
+        { ctx.expect (host.pointerAudioSettings ("ui-scale", position, true),
+                      "the UI scale slider was not visible"); } });
+    steps->push_back ({ 300, [&host, &ctx, originalSaved]
+    {
+        ctx.expect (host.uiScale() > 1.3 && host.uiScale() < 1.6,
+                    "dragging did not preview the global UI scale");
+        ctx.expect (nearly (appconfig::getUiScaleOverride(), originalSaved),
+                    "the UI scale was persisted before release");
+        ctx.expect (host.pointerAudioSettings ("ui-scale", 0.7f, false),
+                    "the scale slider could not receive release");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        const auto saved = appconfig::getUiScaleOverride();
+        ctx.expect (saved > 1.5f && saved < 1.6f, "release did not persist the slider value");
+        ctx.expect (std::abs (host.uiScale() - saved) < 0.001,
+                    "the persisted scale differs from the displayed interface");
+        host.closeAudioSettings();
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (! host.audioSettingsOpen(), "settings did not close");
+        ctx.expect (std::abs (host.uiScale() - appconfig::getUiScaleOverride()) < 0.001,
+                    "closing Settings discarded the scale");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsUiScale { Scenario {
+    "gui.settings_ui_scale", { "gui", "settings" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsUiScale (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI

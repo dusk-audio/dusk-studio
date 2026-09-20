@@ -116,6 +116,20 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             releasePending = true;
         }
 
+        void pointerForScenario (ImVec2 point, bool pressed)
+        {
+            MotionEvent motion;
+            motion.pos = { point.x, point.y };
+            motion.absolutePos = motion.pos;
+            onMotion (motion);
+            MouseEvent button;
+            button.button = DGL::kMouseButtonLeft;
+            button.pos = motion.pos;
+            button.absolutePos = motion.pos;
+            button.press = pressed;
+            onMouse (button);
+        }
+
         bool inputForScenario (const std::string& input)
         {
             if (input == "scroll-down")
@@ -474,5 +488,13 @@ bool DuskPanelWindow::inputForScenario (const std::string& input)
 {
     if (! isOpen() || impl->scenarioWidget == nullptr) return false;
     return impl->scenarioWidget->inputForScenario (input);
+}
+bool DuskPanelWindow::pointerControlForScenario (const std::string& control, float position, bool pressed)
+{
+    ImVec2 point;
+    if (! isOpen() || impl->view == nullptr || impl->scenarioWidget == nullptr
+        || ! impl->view->controlPointForScenario (control, point, position)) return false;
+    impl->scenarioWidget->pointerForScenario (point, pressed);
+    return true;
 }
 } // namespace duskstudio::imgui

@@ -181,11 +181,15 @@ public:
         deviceManager.removeChangeListener (this);
     }
 
-    bool controlPointForScenario (const std::string& control, ImVec2& point) const override
+    bool controlPointForScenario (const std::string& control, ImVec2& point, float position) const override
     {
         if (control == "midi-bindings") point = scenarioMidiBindings;
         else if (control == "rescan") point = scenarioRescan;
         else if (control == "autosave") point = scenarioAutosave;
+        else if (control == "ui-scale")
+            point = { scenarioScaleFirst.x + (scenarioScaleLast.x - scenarioScaleFirst.x)
+                        * std::clamp (position, 0.0f, 1.0f),
+                      (scenarioScaleFirst.y + scenarioScaleLast.y) * 0.5f };
         else return false;
         return point.x > 0.0f;
     }
@@ -193,6 +197,7 @@ public:
     ImVec2 scenarioMidiBindings {};
     ImVec2 scenarioRescan {};
     ImVec2 scenarioAutosave {};
+    ImVec2 scenarioScaleFirst {}, scenarioScaleLast {};
 
     ImVec2 preferredSize() const override { return ImVec2 (kPanelW, panelHeight()); }
 
@@ -512,6 +517,8 @@ private:
                 ImVec2 (x + ctx.s (kSliderW) - ctx.s (kControlInset) * 2.0f,
                         top + ctx.s (kRowH) - ctx.s (2.0f)),
                 uiScale, appconfig::kUiScaleMin, appconfig::kUiScaleMax, "%.2fx");
+            scenarioScaleFirst = ImGui::IsItemVisible() ? ImGui::GetItemRectMin() : ImVec2 {};
+            scenarioScaleLast = ImGui::IsItemVisible() ? ImGui::GetItemRectMax() : ImVec2 {};
             formTooltip ("Multiplier applied on top of the OS-reported display DPI. 1.00x "
                          "= follow the OS. Range 0.50x to 2.00x.");
             applyUiScale (moved);
