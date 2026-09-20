@@ -473,6 +473,33 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     void openAbout() override { owner.menuItemSelected (2002, 2); }
     void startMixdown() override { owner.menuItemSelected (1010, 0); }
 
+    int activeAuxLane() const override
+    { return owner.auxView != nullptr ? owner.auxView->getActiveLane() : -1; }
+
+    bool clickAuxSelector (int index) override
+    {
+        auto* button = owner.auxView != nullptr ? owner.auxView->selectorForScenario (index) : nullptr;
+        if (button == nullptr || ! button->isShowing() || ! button->isEnabled()) return false;
+        button->triggerClick();
+        return true;
+    }
+
+    bool auxLaneLayoutMatches (int index) const override
+    {
+        auto* view = owner.auxView.get();
+        if (view == nullptr || ! view->isShowing() || view->getActiveLane() != index) return false;
+        for (int lane = 0; lane < Session::kNumAuxLanes; ++lane)
+        {
+            auto* body = view->getLaneComponent (lane);
+            auto* button = view->selectorForScenario (lane);
+            if (body == nullptr || button == nullptr || ! button->isShowing()
+                || body->isShowing() != (lane == index) || button->getToggleState() != (lane == index)) return false;
+            if (lane == index && (body->getWidth() < view->getWidth() - 24
+                                  || body->getHeight() <= 0 || body->getY() < button->getBottom())) return false;
+        }
+        return true;
+    }
+
     bool clickAt (float x, float y, int count)
     {
         auto* peer = owner.getPeer();

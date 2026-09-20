@@ -108,6 +108,9 @@ public:
     virtual bool clickModalButton (const std::string& label) = 0;
     virtual void openAbout() = 0;
     virtual void startMixdown() = 0;
+    virtual int activeAuxLane() const = 0;
+    virtual bool clickAuxSelector (int index) = 0;
+    virtual bool auxLaneLayoutMatches (int index) const = 0;
     virtual bool loadMasteringFile (const std::filesystem::path& path) = 0;
     virtual bool clickMasteringButton (const std::string& label) = 0;
     virtual void openPianoRoll (int track, int region) = 0;

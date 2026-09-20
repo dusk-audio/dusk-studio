@@ -1822,5 +1822,46 @@ const ScenarioRegistrar mixdownHandoff { Scenario {
     {}, {}, 40000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMixdownHandoff (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runAuxSelectors (GuiHost& host, ScenarioContext& ctx)
+{
+    const auto stage = ctx.engine().getStage();
+    host.switchToStage (GuiHost::Stage::Aux);
+    const int original = host.activeAuxLane();
+    ctx.cleanup ([&host, original, stage]
+    {
+        host.switchToStage (GuiHost::Stage::Aux);
+        host.clickAuxSelector (original);
+        switch (stage)
+        {
+            case AudioEngine::Stage::Recording: host.switchToStage (GuiHost::Stage::Recording); break;
+            case AudioEngine::Stage::Mixing: host.switchToStage (GuiHost::Stage::Mixing); break;
+            case AudioEngine::Stage::Aux: break;
+            case AudioEngine::Stage::Mastering: host.switchToStage (GuiHost::Stage::Mastering); break;
+        }
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const int lane : { 3, 1, 0, 2 })
+    {
+        steps->push_back ({ 100, [&host, &ctx, lane]
+        { ctx.expect (host.clickAuxSelector (lane), "the AUX selector is unavailable"); } });
+        steps->push_back ({ 100, [&host, &ctx, lane]
+        {
+            ctx.expect (host.auxLaneLayoutMatches (lane), "AUX did not show exactly the selected lane at full width");
+            host.switchToStage (GuiHost::Stage::Mixing);
+        } });
+        steps->push_back ({ 100, [&host] { host.switchToStage (GuiHost::Stage::Aux); } });
+        steps->push_back ({ 100, [&host, &ctx, lane]
+        { ctx.expect (host.auxLaneLayoutMatches (lane), "changing stages lost the selected AUX lane"); } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar auxSelectors { Scenario {
+    "gui.aux_selectors", { "gui", "aux" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAuxSelectors (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

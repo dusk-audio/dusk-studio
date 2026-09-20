@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 85
+# ceiling gap 84
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -190,7 +190,7 @@ The master strip > Master fader	-inf to +12 dB	auto	scenario:engine.pipeline_sel
 The master strip > Mono	sums L+R to mono on both outputs	auto	scenario:master.mono_sums
 The master strip > Output meters	peak and VU meters, GR meter	partial	test:meter ballistics attack instantly and release over time		ballistics tested; the master readings are not asserted
 
-Aux lanes	AUX stage shows one full-width lane chosen by four selectors	gap
+Aux lanes	AUX stage shows one full-width lane chosen by four selectors	auto	scenario:gui.aux_selectors		all four selector buttons, exclusive lane visibility, full width and selection retention across stage changes
 Aux lanes > Aux lane layout	three columns: return, insert, sources	manual			layout; checked by screenshot review
 Aux lanes > Aux lane layout > Return strip (left column)	rename, mute, return fader, meter, automation	partial	scenario:automation.read_plays_the_lanes;scenario:gui.automation_write_and_touch		the return level and mute automation are tested; rename, the mute button, the fader range and the meter are not
 Aux lanes > Aux lane layout > Return strip (left column)	Output sends the lane to a hardware pair tapped before fader and mute	auto	test:tapStereoPairInto accumulates onto the routed pair;test:output pair encode/decode round-trips
