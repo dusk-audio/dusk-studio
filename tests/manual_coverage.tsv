@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 78
+# ceiling gap 77
 # ceiling partial 50
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -417,7 +417,7 @@ Accessibility > What's still rough	known gaps	n/a			describes what is not yet su
 Accessibility > Filing issues	where to report	n/a			link
 
 Messages > Recording	recording alerts	n/a			index; entries are held below
-Messages > Recording > Recording setup failed	lists the tracks that could not start	gap
+Messages > Recording > Recording setup failed	lists the tracks that could not start	auto	scenario:gui.recording_setup_alert		Record button against an obstructed temporary audio directory; alert names both failed writers and OK dismisses it
 Messages > Recording > Recording errors	reports per-track errors after the take	auto	test:RecordManager surfaces MIDI FIFO overflow at stopRecording
 Messages > Session	session alerts	n/a			index; entries are held below
 Messages > Session > Recover from autosave?	offered when the autosave is newer; three choices	auto	scenario:gui.autosave_writes_and_recovers

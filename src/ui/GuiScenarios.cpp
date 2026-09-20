@@ -320,6 +320,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.transportBar != nullptr && owner.transportBar->clickTimeFormatForScenario();
     }
+    bool clickRecord() override
+    { return owner.transportBar != nullptr && owner.transportBar->clickRecordForScenario(); }
 
     int consolePageCount() const override { return owner.consoleView->numBanks(); }
     bool consolePageMatches (int index) const override

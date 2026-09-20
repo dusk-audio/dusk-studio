@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -2230,6 +2231,70 @@ const ScenarioRegistrar midiActivityLed { Scenario {
     "gui.midi_activity_led", { "gui", "midi" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMidiActivityLed (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runRecordingSetupAlert (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    ctx.keep (session.countInEnabled);
+    session.countInEnabled.store (false);
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        const bool armed = session.track (index).recordArmed.load();
+        ctx.cleanup ([&session, index, armed] { session.setTrackArmed (index, armed); });
+        session.setTrackArmed (index, false);
+    }
+    const auto audioDir = std::filesystem::u8path (session.getAudioDirectory().getFullPathName().toStdString());
+    std::error_code error;
+    if (! ctx.expect (std::filesystem::remove (audioDir, error) && ! error,
+                     "the temporary audio directory was not empty")) return ctx.verdict();
+    ctx.cleanup ([&host, &engine, audioDir]
+    {
+        engine.stop();
+        host.closeTopModal();
+        std::error_code ignored;
+        std::filesystem::remove (audioDir, ignored);
+        std::filesystem::create_directories (audioDir, ignored);
+    });
+    {
+        std::ofstream obstruction (audioDir);
+        obstruction << "not a directory";
+        if (! ctx.expect (obstruction.good(), "could not create the audio-directory obstruction")) return ctx.verdict();
+    }
+    for (const int index : { 0, 2 })
+    {
+        auto& track = session.track (index);
+        ctx.keep (track.mode);
+        ctx.keep (track.inputSource);
+        track.mode.store ((int) Track::Mode::Mono);
+        track.inputSource.store (0);
+        session.setTrackArmed (index, true);
+    }
+    if (! ctx.expect (host.clickRecord(), "the Record button is unavailable")) return ctx.verdict();
+    ctx.waitUntil ([&host] { return ! host.modalStackEmpty(); }, 3000,
+        [&host, &ctx, &engine]
+        {
+            const auto text = host.modalText();
+            ctx.expect (text.find ("Recording setup failed\n") == 0
+                        && text.find ("Tracks 1, 3") != std::string::npos,
+                        "the setup failure did not name the two failed tracks");
+            ctx.expect (engine.getRecordManager().getLastSetupFailures() == std::vector<int> { 0, 2 },
+                        "the dialog did not correspond to the failed writers");
+            ctx.expect (text.find ("NOT capturing audio") != std::string::npos,
+                        "the setup failure did not explain the capture loss");
+            engine.stop();
+            ctx.expect (host.clickModalButton ("OK"), "the setup failure has no usable OK button");
+            ctx.waitUntil ([&host] { return host.modalStackEmpty(); }, 3000,
+                           [&ctx] { ctx.complete (ctx.verdict()); }, "OK did not dismiss the setup failure");
+        }, "failed writers did not produce a recording setup alert");
+    return std::nullopt;
+}
+
+const ScenarioRegistrar recordingSetupAlert { Scenario {
+    "gui.recording_setup_alert", { "gui", "recording", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRecordingSetupAlert (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario

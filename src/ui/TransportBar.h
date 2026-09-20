@@ -81,6 +81,12 @@ public:
         timeFormatToggle.triggerClick();
         return true;
     }
+    bool clickRecordForScenario()
+    {
+        if (! recordButton.isShowing() || ! recordButton.isEnabled()) return false;
+        recordButton.triggerClick();
+        return true;
+    }
     std::string clockTextForScenario() const { return clockLabel.getText().toStdString(); }
 
     // Hard-coding tuner X from outside is fragile - the right-anchored
