@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 87
+# ceiling gap 86
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -330,7 +330,7 @@ Plugins > Plugin state in sessions	identity and state blob saved; a native plugi
 Plugins > Plugin state in sessions	a missing plugin goes offline and its state round-trips	auto	test:PluginSlot failed restore preserves the exact unnormalised reference and state;test:PluginSlot migrates valid legacy XML to a structured offline descriptor
 Plugins > Plugin state in sessions	rejected state leaves the slot offline and names the slot, format and reason	auto	test:native restore rejection unloads the slot and preserves the saved-state reason;test:aux native-state rejection diagnostics identify lane and slot
 Plugins > Multi-sample instruments	SFZ, SF2 and ARIA banks load; overrides for volume, tune, polyphony	auto	test:DuskMultisampleProcessor round-trips overrides through state;test:DuskMultisampleProcessor clamps out-of-range state;test:Sf2ToSfz: converts FluidR3 preset 0 to SFZ + WAVs;test:AriaBank preselects the program that owns the loaded SFZ
-Plugins > Multi-sample instruments	choosing a soundfont on an audio track converts it to MIDI	gap
+Plugins > Multi-sample instruments	choosing a soundfont on an audio track converts it to MIDI	auto	scenario:gui.soundfont_conversion
 Plugins > Multi-sample instruments	SF2 presets sorted program-first, drums last; a bad preset falls back to preset 0	auto	test:SF2 presets sort by program, then bank (variants grouped);test:SF2 sort keeps percussion (bank 128) after melodic;test:DuskMultisampleProcessor: an unplayable saved SF2 preset falls back to preset zero
 Plugins > Multi-sample instruments	a failed load keeps the last good file and preset	auto	test:DuskMultisampleProcessor preserves its persisted path after a failed load;test:DuskMultisampleProcessor: failed loadState leaves the old SF2's preset untouched;test:DuskMultisampleProcessor: failed SFZ browse preserves the retained SF2 preset
 Plugins > Multi-sample instruments > Instrument library	lists installed soundfonts; filter; rescan; added folders remembered	auto	test:SfzLibrary lists only soundfonts;test:SfzLibrary filtering is case-insensitive and clears back to everything;test:Soundfont library roots round-trip;test:SfzLibrary default roots are absolute and distinct

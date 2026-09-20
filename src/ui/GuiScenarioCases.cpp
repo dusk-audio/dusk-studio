@@ -939,6 +939,80 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_MULTISAMPLE
+    return ScenarioResult::skip ("built without multisample instruments");
+   #else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    auto& strip = engine.getChannelStrip (0);
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    if (track.mode.load() == (int) Track::Mode::Midi || track.midiInputIndex.load() >= 0)
+        return ScenarioResult::skip ("requires an audio track with no MIDI input");
+    if (strip.getPluginSlot().isLoaded()) return ScenarioResult::skip ("requires an empty standard plugin slot");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    const auto soundfont = ctx.tempDir() / "Conversion fixture.sfz";
+    if (! SessionSerializer::save (session, restore)
+        || ! dusk::fs::writeStringToFile (soundfont, "<region> key=60 sample=*sine\n"))
+        return ScenarioResult::fail ("could not prepare the soundfont fixture");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        if (auto* component = host.strip (0)) component->closeEditor();
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickInsert (0), "insert button did not receive a click"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Soundfont (.sfz / .sf2 / .bank.xml)"), "soundfont chooser did not open"); } });
+    steps->push_back ({ 150, [&host, &ctx, soundfont]
+    {
+        ctx.expect (host.focusFileName(), "soundfont filename entry was not available");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : soundfont.string())
+            host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the soundfont path"); } });
+    steps->push_back ({ 1200, [&ctx, &engine, &track, &strip, soundfont]
+    {
+        ctx.expect (strip.isNativeMultisampleLoaded(), "soundfont was not loaded");
+        ctx.expect (! strip.nativeMultisampleReloadFailed(), "soundfont reported a load failure");
+        ctx.expect (strip.getNativeMultisampleSlot().getLoadedSoundfontPath() == soundfont.string(),
+                    "loaded soundfont path differs from the chosen file");
+        ctx.expect (track.nativeMultisamplePath.toStdString() == soundfont.string(),
+                    "session did not retain the soundfont path");
+        ctx.expect (track.mode.load() == (int) Track::Mode::Midi, "audio track did not convert to MIDI");
+        ctx.expect (engine.getVirtualKeyboardInputIndex() >= 0
+                    && track.midiInputIndex.load() == engine.getVirtualKeyboardInputIndex(),
+                    "converted track did not select the virtual keyboard");
+        ctx.expect (track.inputMonitor.load(), "converted track did not enable input monitoring");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar soundfontConversion { Scenario {
+    "gui.soundfont_conversion", { "gui", "plugins", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSoundfontConversion (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPluginBrowseFile (GuiHost& host, ScenarioContext& ctx)
 {
     const auto fixture = ctx.fixture ("relayout.vst3");
