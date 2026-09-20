@@ -1063,7 +1063,7 @@ the **FFT** button in the panel's top-left.
 
 The UniversalCompressor in Multiband mode provides four frequency bands with independent dynamics controls. The editor exposes the per-band controls and crossovers; the bus compressor settings do not apply to this stage.
 
-**Presets** (dropdown in the comp panel header): nine genre starting points transcribed from the Tascam DP-24/32 multiband compression chart — Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. Picking one writes the three-band threshold / ratio / attack / release / makeup and the two crossovers into the multiband comp, with the high-mid band disabled so it behaves as the original 3-band (Low / Mid / High) preset. It's a one-shot apply — tweak any band afterwards and the dropdown returns to the placeholder. A few presets specify a high crossover (above 5 kHz) that the mid/high split clamps slightly.
+**Presets** (dropdown in the comp panel header): nine genre starting points transcribed from the Tascam DP-24/32 multiband compression chart — Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. Picking one writes the chart's threshold / ratio / attack / release / makeup and crossovers into the multiband comp. High-Mid is disabled when the chart's high crossover is at or below 5 kHz; above that, it stays enabled with the same settings as Low-Mid. It's a one-shot apply — tweak any band afterwards and the dropdown returns to the placeholder. The crossover spacing rule in Appendix A can raise the effective high split above the chart value.
 
 ### Brickwall limiter
 
@@ -2709,7 +2709,22 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Limiter   | Drive                            | 0 to +20 dB   | 0 dB        |
 | Limiter   | Release                          | 10–1000 ms     | 100 ms      |
 
-The compressor uses the multiband editor described in the mastering chapter; its per-band ranges and defaults are not tabulated here.
+The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These are the editor's control ranges; the DSP keeps each crossover at least 1.5 times the preceding crossover. At least two bands must remain enabled.
+
+| Multiband control | Range | Default |
+| ----------------- | ----- | ------- |
+| Crossover 1 | 20–500 Hz | 200 Hz |
+| Crossover 2 | 200 Hz–5 kHz | 2 kHz |
+| Crossover 3 | 2–16 kHz | 8 kHz |
+| Each band: enable | Off / On | On |
+| Each band: solo | Off / On | Off |
+| Each band: threshold | −60 to 0 dB | −20 dB |
+| Each band: ratio | 1:1–20:1 | 4:1 |
+| Each band: attack | 0.1–100 ms | 10 ms |
+| Each band: release | 10–1000 ms | 100 ms |
+| Each band: makeup | −12 to +12 dB | 0 dB |
+| Output | −24 to +24 dB | 0 dB |
+| Mix | 0–100% | 100% |
 
 \newpage
 

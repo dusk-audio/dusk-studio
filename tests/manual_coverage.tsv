@@ -18,7 +18,7 @@
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
 # ceiling gap 104
-# ceiling partial 56
+# ceiling partial 55
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -448,6 +448,6 @@ Appendix A — Parameter ranges and defaults > Channel strip	every channel param
 Appendix A — Parameter ranges and defaults > Bus strip	every bus parameter within its range and at its default	auto	test:Appendix A: bus defaults and load ranges		Session defaults, numeric load endpoints/clamps and toggles; ranges describe controls, not quantized DSP timing/ratio.
 Appendix A — Parameter ranges and defaults > Aux return lane	aux return ranges and defaults	partial	test:Appendix A: aux return defaults and load ranges		Return fader and mute defaults/endpoints tested; insert mode default and choices still need engine coverage.
 Appendix A — Parameter ranges and defaults > Master bus	every master parameter within its range and at its default	auto	test:Appendix A: master defaults and load ranges		Session defaults, numeric load endpoints/clamps, listed frequency choices and toggles; ranges describe controls.
-Appendix A — Parameter ranges and defaults > Mastering chain	every mastering parameter within its range and at its default	partial	test:Appendix A: mastering defaults and load ranges		EQ and limiter session defaults/load endpoints and enable toggles tested; active multiband compressor per-band controls are not tabulated or tested here.
+Appendix A — Parameter ranges and defaults > Mastering chain	every mastering parameter within its range and at its default	auto	test:Appendix A: mastering defaults and load ranges;test:Appendix A: active multiband compressor defaults and control ranges		EQ/limiter session defaults and load bounds; active multiband processor defaults, declared control ranges and endpoint writes.
 Appendix B — File formats	session JSON, 24-bit WAV takes and bounces, embedded MIDI, XML cache, JSON bindings	partial	test:writeAtomic creates a new target and leaves no tmp behind;test:FileImporter: a matching 32-bit source is not truncated to 24-bit;scenario:bounce.master_mix_file		atomic JSON, import format and the 24-bit bounce are tested; the take format is not
 Appendix C — Glossary	definitions	n/a			reference
