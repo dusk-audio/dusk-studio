@@ -69,6 +69,8 @@ public:
     bool faderEditingForScenario() const { return faderValueLabel.isBeingEdited(); }
     double faderValueForScenario() const { return faderSlider.getValue(); }
     bool meterClipForScenario();
+    auto* midiSelectorForScenario (int kind)
+    { return kind == 0 ? &midiInputSelector : kind == 1 ? &midiChannelSelector : &midiOutputSelector; }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
 
     void paint (juce::Graphics&) override;

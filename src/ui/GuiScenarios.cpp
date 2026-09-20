@@ -366,6 +366,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     double faderValue (int index) const override
     { return owner.consoleView->getStripComponent (index)->faderValueForScenario(); }
 
+    bool openMidiIo (int index) override
+    { return owner.consoleView->getStripComponent (index)->openIoConfigPopupForCapture ((int) Track::Mode::Midi) != nullptr; }
+    bool clickMidiSelector (int index, int kind) override
+    {
+        auto* combo = owner.consoleView->getStripComponent (index)->midiSelectorForScenario (kind);
+        if (! combo->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (combo, combo->getLocalBounds().getCentre()).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+    std::string midiSelectorText (int index, int kind) const override
+    { return owner.consoleView->getStripComponent (index)->midiSelectorForScenario (kind)->getText().toStdString(); }
+
     bool meterClip (int index) override
     { return owner.consoleView->getStripComponent (index)->meterClipForScenario(); }
 

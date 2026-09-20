@@ -25,6 +25,10 @@
 #include <utility>
 #include <vector>
 
+#if DUSKSTUDIO_HAS_ALSA
+ #include <alsa/asoundlib.h>
+#endif
+
 #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (_WIN32)
  #include <cerrno>
  #include <csignal>
@@ -932,6 +936,130 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     if (! SessionSerializer::load (probe, sessionJson)) return 1000.0f;
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
+
+std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_ALSA
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("virtual MIDI destination fixture requires ALSA sequencer");
+   #else
+    snd_seq_t* raw = nullptr;
+    if (snd_seq_open (&raw, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) < 0)
+        return ScenarioResult::skip ("ALSA sequencer is unavailable");
+    auto seq = std::shared_ptr<snd_seq_t> (raw, [] (snd_seq_t* value) { snd_seq_close (value); });
+    const auto name = "dusk-selector-" + std::to_string (snd_seq_client_id (seq.get()));
+    snd_seq_set_client_name (seq.get(), name.c_str());
+    const int port = snd_seq_create_simple_port (seq.get(), "destination",
+        SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
+        SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+    if (port < 0) return ScenarioResult::fail ("could not create the private MIDI destination");
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (0);
+    const auto originalStage = engine.getStage();
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restoreFile = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restoreFile))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &engine, seq, port, originalDir, restoreFile, originalStage]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        snd_seq_delete_simple_port (seq.get(), port);
+        engine.refreshMidiInputs();
+        host.openSession (restoreFile);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    ctx.keep (track.mode);
+    ctx.keep (track.midiInputIndex);
+    ctx.keep (track.midiOutputIndex);
+    ctx.keep (track.midiChannel);
+    ctx.keep (track.inputMonitor);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.midiInputIndex.store (-1);
+    track.midiOutputIndex.store (-1);
+    track.midiInputIdentifier.clear();
+    track.midiOutputIdentifier.clear();
+    track.inputMonitor.store (true);
+    engine.refreshMidiInputs();
+    const auto& outputs = engine.getMidiOutputDevices();
+    int destination = -1;
+    for (int i = 0; i < (int) outputs.size(); ++i)
+        if (outputs[(size_t) i].name.find (name) != std::string::npos) destination = i;
+    if (destination < 0) return ScenarioResult::fail ("private MIDI destination was not enumerated");
+    const auto destinationId = outputs[(size_t) destination].identifier;
+    const int keyboard = engine.getVirtualKeyboardInputIndex();
+    if (keyboard < 0) return ScenarioResult::fail ("virtual keyboard was not enumerated");
+    const auto keyboardId = engine.getMidiInputDevices()[(size_t) keyboard].identifier;
+    host.switchToStage (GuiHost::Stage::Recording);
+    const int maxRows = std::max ({ 17, (int) engine.getMidiInputDevices().size() + 1, (int) outputs.size() + 1 });
+    const auto select = [&host, maxRows] (int row)
+    {
+        for (int i = 0; i < maxRows; ++i) host.pressPeerKey ("cursor up");
+        for (int i = 0; i < row; ++i) host.pressPeerKey ("cursor down");
+        host.pressPeerKey ("Return");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx] { ctx.expect (host.openMidiIo (0), "MIDI I/O popup did not open"); } });
+    for (const auto choice : { std::pair<int, int> { 0, keyboard + 1 }, { 1, 3 }, { 2, destination + 1 } })
+    {
+        steps->push_back ({ 100, [&host, &ctx, choice]
+        { ctx.expect (host.clickMidiSelector (0, choice.first), "MIDI selector was not visible"); } });
+        steps->push_back ({ 100, [select, choice] { select (choice.second); } });
+    }
+    steps->push_back ({ 150, [&host, &track, &engine, &ctx, keyboard, keyboardId, destination, destinationId]
+    {
+        ctx.expect (track.midiInputIndex.load() == keyboard && track.midiInputIdentifier.toStdString() == keyboardId,
+                    "input picker did not select and identify the virtual keyboard");
+        ctx.expect (host.midiSelectorText (0, 0) == "Virtual Keyboard (Dusk Studio)", "input picker displayed the wrong port");
+        ctx.expect (track.midiChannel.load() == 3 && host.midiSelectorText (0, 1) == "Ch 3", "channel picker did not select channel 3");
+        ctx.expect (track.midiOutputIndex.load() == destination && track.midiOutputIdentifier.toStdString() == destinationId,
+                    "output picker did not select and identify the destination");
+        const std::uint8_t rejected[] = { 0xb1, 74, 100 };
+        const std::uint8_t accepted[] = { 0xb2, 74, 101 };
+        engine.postVirtualKeyboardMidi (rejected, 3);
+        engine.postVirtualKeyboardMidi (accepted, 3);
+    } });
+    steps->push_back ({ 300, [seq, &ctx]
+    {
+        bool accepted = false;
+        bool rejected = false;
+        snd_seq_event_t* event = nullptr;
+        while (snd_seq_event_input (seq.get(), &event) >= 0)
+            if (event != nullptr && event->type == SND_SEQ_EVENT_CONTROLLER && event->data.control.param == 74)
+            {
+                accepted |= event->data.control.channel == 2 && event->data.control.value == 101;
+                rejected |= event->data.control.channel == 1 && event->data.control.value == 100;
+            }
+        ctx.expect (accepted, "selected MIDI output did not receive the accepted channel");
+        ctx.expect (! rejected, "channel filter passed the rejected channel to MIDI out");
+    } });
+    for (int kind : { 0, 1, 2 })
+    {
+        steps->push_back ({ 100, [&host, kind] { host.clickMidiSelector (0, kind); } });
+        steps->push_back ({ 100, [select] { select (0); } });
+    }
+    steps->push_back ({ 100, [&host, &track, &ctx]
+    {
+        ctx.expect (track.midiInputIndex.load() == -1 && track.midiInputIdentifier.isEmpty()
+                    && host.midiSelectorText (0, 0) == "None", "input None did not clear the route");
+        ctx.expect (track.midiChannel.load() == 0 && host.midiSelectorText (0, 1) == "Omni", "Omni did not clear the channel filter");
+        ctx.expect (track.midiOutputIndex.load() == -1 && track.midiOutputIdentifier.isEmpty()
+                    && host.midiSelectorText (0, 2) == "None", "output None did not clear the route");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar midiSelectors { Scenario {
+    "gui.midi_io_selectors", { "gui", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMidiSelectors (host, ctx); }
+} };
 
 std::optional<ScenarioResult> runFaderEntry (GuiHost& host, ScenarioContext& ctx)
 {

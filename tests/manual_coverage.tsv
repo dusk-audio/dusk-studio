@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 95
+# ceiling gap 94
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -135,7 +135,7 @@ The channel strip	split buttons: status light bypasses, label opens the editor, 
 The channel strip	compact AUX bypass mutes all four sends and restores their levels	partial	scenario:strip.sends_pre_post_and_bypass		the bypass and the restored levels are tested; the compact button itself is UI
 The channel strip > Track name and colour	click renames; right-click for the 12-hue palette	partial	test:track context-menu rename opens after modal focus restoration		rename path tested; the palette and region colouring are not
 The channel strip > Input block (RECORDING stage)	Mono, Stereo and MIDI modes; In N (follow) default	auto	test:A stereo track's right input follows wherever the left one resolves;test:A stereo track needs both of its inputs on the device
-The channel strip > Input block (RECORDING stage)	MIDI port, channel filter and MIDI out	gap
+The channel strip > Input block (RECORDING stage)	MIDI port, channel filter and MIDI out	auto	scenario:gui.midi_io_selectors
 The channel strip > Input block (RECORDING stage)	activity LED blinks when MIDI arrives	gap
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	ARM refuses with no input device and says so	auto	test:An audio track cannot arm while the device offers no inputs;test:An audio track arms once the device reports capture channels;test:Arming is allowed before a device has reported its capture width
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	losing the inputs disarms audio tracks and spares MIDI	auto	test:Losing the capture channels disarms the audio tracks and spares MIDI;test:A narrower device disarms only the tracks it cannot feed

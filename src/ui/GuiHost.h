@@ -96,6 +96,9 @@ public:
     virtual double faderValue (int index) const = 0;
 
     virtual bool meterClip (int index) = 0;
+    virtual bool openMidiIo (int index) = 0;
+    virtual bool clickMidiSelector (int index, int kind) = 0;
+    virtual std::string midiSelectorText (int index, int kind) const = 0;
 
     virtual bool groupChipView (int index, std::string& text, int& master, bool& filled) = 0;
 
