@@ -69,6 +69,14 @@ public:
     bool faderEditingForScenario() const { return faderValueLabel.isBeingEdited(); }
     double faderValueForScenario() const { return faderSlider.getValue(); }
     auto insertPointForScenario() const { return pluginSlotButton.getBounds().getCentre(); }
+    auto* moduleButtonForScenario (int module)
+    {
+        return module == 0 ? (compactMode ? &eqCompactButton : eqHeaderBtn.get())
+             : module == 1 ? (compactMode ? &compCompactButton : compModeButton.get())
+             : compactMode ? &auxCompactButton : nullptr;
+    }
+    bool moduleEditorOpenForScenario (int module) const;
+    void closeModuleEditorsForScenario();
     bool meterClipForScenario();
     auto* midiSelectorForScenario (int kind)
     { return kind == 0 ? &midiInputSelector : kind == 1 ? &midiChannelSelector : &midiOutputSelector; }

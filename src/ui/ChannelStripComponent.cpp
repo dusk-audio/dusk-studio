@@ -4103,6 +4103,24 @@ void ChannelStripComponent::openCompEditorForCapture (const std::string& capture
    #endif
 }
 
+bool ChannelStripComponent::moduleEditorOpenForScenario (int module) const
+{
+    if (module == 0) return eqEditorModal.isOpen();
+    if (module == 2) return auxEditorModal.isOpen();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return compEditorWindow != nullptr && compEditorWindow->isOpen();
+   #else
+    return false;
+   #endif
+}
+
+void ChannelStripComponent::closeModuleEditorsForScenario()
+{
+    eqEditorModal.close();
+    auxEditorModal.close();
+    closeCompEditorPopup();
+}
+
 void ChannelStripComponent::closeCompEditorForCapture()
 {
     closeCompEditorPopup();

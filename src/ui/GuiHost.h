@@ -119,6 +119,10 @@ public:
     virtual bool scrollPiano (float delta, bool command, bool shift) = 0;
     virtual bool clickPianoFit() = 0;
     virtual bool focusPiano() = 0;
+    virtual bool setStripCompact (int track, bool compact) = 0;
+    virtual bool clickStripModule (int track, int module, bool label, bool right) = 0;
+    virtual bool stripModuleEditorOpen (int track, int module) const = 0;
+    virtual void closeStripModuleEditors (int track) = 0;
     virtual bool clickInsert (int track, bool right = false) = 0;
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
     virtual bool clickPickerRow (const std::string& text) = 0;

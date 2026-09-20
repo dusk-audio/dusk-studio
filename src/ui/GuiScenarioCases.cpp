@@ -939,6 +939,88 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runSplitModuleButtons (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    const bool originalCompact = host.setStripCompact (0, true);
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore, originalCompact]
+    {
+        host.closeStripModuleEditors (0);
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.setStripCompact (0, originalCompact);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    auto& params = session.track (0).strip;
+    params.eqEnabled.store (true);
+    params.compEnabled.store (true);
+    params.auxSendsBypassed.store (false);
+    for (int send = 0; send < 4; ++send) params.auxSendDb[(size_t) send].store (-3.0f * (send + 1));
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool compact : { true, false })
+    {
+        steps->push_back ({ 200, [&host, compact] { host.setStripCompact (0, compact); } });
+        for (int module = 0; module < (compact ? 3 : 2); ++module)
+        {
+            for (const bool bypassed : { true, false })
+            {
+                steps->push_back ({ 200, [&host, &ctx, module]
+                { ctx.expect (host.clickStripModule (0, module, false, false), "status light is unavailable"); } });
+                steps->push_back ({ 200, [&host, &ctx, &params, module, bypassed]
+                {
+                    const bool actual = module == 0 ? ! params.eqEnabled.load()
+                                      : module == 1 ? ! params.compEnabled.load() : params.auxSendsBypassed.load();
+                    ctx.expect (actual == bypassed, "status light did not toggle section bypass");
+                    for (int editor = 0; editor < 3; ++editor)
+                        ctx.expect (! host.stripModuleEditorOpen (0, editor), "status light opened an editor");
+                    for (int send = 0; send < 4; ++send)
+                        ctx.expect (std::abs (params.auxSendDb[(size_t) send].load() + 3.0f * (send + 1)) < 0.001f,
+                                    "bypass changed a send level");
+                } });
+            }
+            steps->push_back ({ 200, [&host, &ctx, module]
+            { ctx.expect (host.clickStripModule (0, module, true, false), "module label is unavailable"); } });
+            steps->push_back ({ 500, [&host, &ctx, module]
+            {
+                ctx.expect (host.stripModuleEditorOpen (0, module), "module label did not open its editor");
+                host.closeStripModuleEditors (0);
+            } });
+            for (const bool label : { false, true })
+            {
+                steps->push_back ({ 200, [&host, &ctx, module, label]
+                { ctx.expect (host.clickStripModule (0, module, label, true), "module right-click failed"); } });
+                steps->push_back ({ 200, [&host, &ctx, module]
+                { ctx.expect (host.clickContextMenuItem (module == 2 ? "Open AUX editor..." : "Open editor..."),
+                              "section menu did not offer its editor"); } });
+                steps->push_back ({ 500, [&host, &ctx, module]
+                {
+                    ctx.expect (host.stripModuleEditorOpen (0, module), "section menu did not open its editor");
+                    host.closeStripModuleEditors (0);
+                } });
+            }
+        }
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar splitModuleButtons { Scenario {
+    "gui.split_module_buttons", { "gui", "strip" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSplitModuleButtons (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runInsertContextMenu (GuiHost& host, ScenarioContext& ctx)
 {
     const auto fixture = ctx.fixture ("relayout.vst3");

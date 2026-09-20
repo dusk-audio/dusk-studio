@@ -535,6 +535,33 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return clickAt (point.x, point.y, 1);
     }
     void closeRegionEditors() override { owner.closePianoRoll(); owner.closeAudioEditor(); }
+    bool setStripCompact (int track, bool compact) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        if (strip == nullptr) return false;
+        const bool original = strip->isCompactMode();
+        strip->setCompactMode (compact);
+        return original;
+    }
+    bool clickStripModule (int track, int module, bool label, bool right) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        auto* button = strip != nullptr ? strip->moduleButtonForScenario (module) : nullptr;
+        if (button == nullptr || ! button->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (button,
+            button->getLocalBounds().getRelativePoint (label ? 0.6f : 0.1f, 0.5f)).toFloat();
+        return clickAt (point.x, point.y, 1, right);
+    }
+    bool stripModuleEditorOpen (int track, int module) const override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip != nullptr && strip->moduleEditorOpenForScenario (module);
+    }
+    void closeStripModuleEditors (int track) override
+    {
+        if (auto* strip = owner.consoleView->getStripComponent (track))
+            strip->closeModuleEditorsForScenario();
+    }
     bool clickInsert (int track, bool right) override
     {
         auto* strip = owner.consoleView->getStripComponent (track);
