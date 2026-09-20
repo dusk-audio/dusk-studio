@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 89
+# ceiling gap 88
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -298,7 +298,7 @@ Plugins > Scanning	scanners find bundles on their search paths	auto	test:ClapSca
 Plugins > Scanning	caches and their fallbacks; stale locations pruned	auto	test:native plugin cache round-trips descriptors and prunes stale locations;test:PluginManager falls back from malformed native JSON without erasing cache;test:PluginManager imports a legacy native XML cache once and prunes stale rows
 Plugins > Scanning	a probe that never finishes is ended after 30 s and quarantined	auto	test:Plugin scan watchdog times out a silent child;test:Plugin scan watchdog cancels a silent child
 Plugins > Scanning	scan plugins on startup reports to the log	gap
-Plugins > Loading a plugin	filter, manufacturer groups, format tags, click to load	gap
+Plugins > Loading a plugin	filter, manufacturer groups, format tags, click to load	auto	scenario:gui.plugin_picker_filter_and_load;script:tests/gui_plugin_picker.sh
 Plugins > Loading a plugin	pickers filter effects from instruments; built-ins pinned at the top	auto	test:built-in picker rows are filtered by slot kind;test:synth unit reaches an instrument picker and not an effect one;test:DAF units with their own editor remain in the built-in picker
 Plugins > Loading a plugin	Browse file loads a plugin by path	gap
 Plugins > Built-in insert units	built-ins load like plugins, need no scan, and save with the session	auto	test:built-in slot loads a unit without touching disk;test:built-in registry resolves units by id;test:SessionSerializer round-trips a built-in insert on a track and an aux slot

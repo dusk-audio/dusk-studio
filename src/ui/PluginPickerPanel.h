@@ -5,6 +5,7 @@
 #include "../engine/PluginDescriptor.h"
 
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace duskstudio
@@ -43,6 +44,14 @@ public:
                        Kind kind,
                        Callbacks cb);
     ~PluginPickerPanel() override;
+
+    struct ScenarioRow
+    {
+        bool header;
+        std::string text;
+        int x, y;
+    };
+    std::vector<ScenarioRow> rowsForScenario() const;
 
     void paint (juce::Graphics&) override;
     void resized() override;

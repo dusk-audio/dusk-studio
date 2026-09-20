@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 // What a GUI scenario is allowed to touch. Everything a case would otherwise
 // reach through the component tree, expressed in std types so the cases stay
@@ -108,6 +109,9 @@ public:
     virtual bool openRegionEditor (int track, int region, bool midi) = 0;
     virtual int regionEditorChase() const = 0;
     virtual void closeRegionEditors() = 0;
+    virtual bool clickInsert (int track) = 0;
+    virtual std::vector<std::string> pickerRows (bool headers) const = 0;
+    virtual bool clickPickerRow (const std::string& text) = 0;
     virtual bool midiBindingsOpen() const = 0;
 
     virtual bool meterClip (int index) = 0;

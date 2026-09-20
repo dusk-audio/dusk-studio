@@ -68,6 +68,7 @@ public:
     auto faderPointForScenario (bool readout) const { return (readout ? faderValueLabel.getBounds() : faderSlider.getBounds()).getCentre(); }
     bool faderEditingForScenario() const { return faderValueLabel.isBeingEdited(); }
     double faderValueForScenario() const { return faderSlider.getValue(); }
+    auto insertPointForScenario() const { return pluginSlotButton.getBounds().getCentre(); }
     bool meterClipForScenario();
     auto* midiSelectorForScenario (int kind)
     { return kind == 0 ? &midiInputSelector : kind == 1 ? &midiChannelSelector : &midiOutputSelector; }

@@ -939,6 +939,107 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runPluginPicker (GuiHost& host, ScenarioContext& ctx)
+{
+    const auto fixture = ctx.fixture ("multi_bus.clap");
+    const auto descriptions = ctx.engine().getPluginManager().getClapEffectDescriptions();
+    if (! fixture || std::none_of (descriptions.begin(), descriptions.end(), [] (const auto& row)
+        { return row.name == "Picker Alpha"; }))
+        return ScenarioResult::skip ("requires the seeded plugin-picker cache");
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        if (auto* strip = host.strip (0)) { strip->closeEditor(); strip->unloadNativePlugins(); }
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    const auto filter = [&host, &ctx] (const std::string& value)
+    {
+        ctx.expect (host.clickModalAt (0.3f, 0.1f), "picker filter did not receive focus");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        host.pressPeerKey ("Backspace");
+        for (const char ch : value) host.pressPeerKey (std::string (1, ch), ch);
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickInsert (0), "insert button did not receive a click"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Plugin (VST3 / CLAP / LV2 / AU)"), "insert chooser did not open"); } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        const auto headers = host.pickerRows (true);
+        ctx.expect (! headers.empty() && headers.front() == "BUILT-IN", "built-in group was not first");
+        filter ("picker");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        ctx.expect (host.pickerRows (true) == std::vector<std::string> { "SCENARIO MAKER A", "SCENARIO MAKER B" },
+                    "manufacturer headings did not group the matching plugins");
+        ctx.expect (host.pickerRows (false) == std::vector<std::string> { "Picker Alpha  (CLAP)", "Picker Beta  (LV2-Native)" },
+                    "filtered plugin rows omitted names or format labels");
+        filter ("pIcKeR aLpHa");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        ctx.expect (host.pickerRows (false) == std::vector<std::string> { "Picker Alpha  (CLAP)" },
+                    "name filter was not case insensitive");
+        filter ("no-such-picker-plugin");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        ctx.expect (host.pickerRows (true).empty() && host.pickerRows (false).empty(),
+                    "unmatched filter retained rows or empty groups");
+        filter ("picker");
+        ctx.expect (host.clickModalButton ("Group: Maker"), "grouping button was missing");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        ctx.expect (host.pickerRows (true) == std::vector<std::string> { "DELAY", "EQ" },
+                    "type grouping did not use plugin categories");
+        filter ("");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        const auto headers = host.pickerRows (true);
+        ctx.expect (! headers.empty() && headers.front() == "BUILT-IN", "type grouping displaced built-in units");
+        filter ("Picker Alpha");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickPickerRow ("Picker Alpha  (CLAP)"), "plugin row did not receive a click"); } });
+    steps->push_back ({ 500, [&host, &ctx, &engine, &session, fixture]
+    {
+        ctx.expect (host.pickerRows (true).empty() && host.pickerRows (false).empty(),
+                    "picking a plugin did not dismiss the picker");
+        ctx.expect (engine.getChannelStrip (0).isNativeClapLoaded(), "picker did not load the native CLAP instance");
+        ctx.expect (session.track (0).nativeClapPath.toStdString() == fixture->string()
+                    && session.track (0).nativeClapPluginId.toStdString() == "studio.dusk.test.multi-bus",
+                    "the picked plugin identity was not saved to the track");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pluginPicker { Scenario {
+    "gui.plugin_picker_filter_and_load", { "gui", "plugins" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPluginPicker (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runSettingsDefaults (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI

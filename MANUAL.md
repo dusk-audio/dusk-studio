@@ -1586,7 +1586,7 @@ A plugin that never finishes being probed — most often one waiting on a licenc
 In the **plugin picker** modal:
 
 - Use the filter field at the top to narrow by name.
-- The list is grouped by manufacturer. Click a manufacturer to expand or collapse.
+- The list is grouped under manufacturer headings. Click **Group: Maker** to switch to grouping by plugin type; click **Group: Type** to return to manufacturer grouping. The **Built-In** section stays at the top.
 - Each row shows the plugin name and its format (VST3 / LV2 / AudioUnit / CLAP / LV2-Native / VST3-Native / Built-In).
 - Click a row to load and dismiss.
 

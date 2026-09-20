@@ -8,6 +8,7 @@
 #include "AuxView.h"
 #include "AudioRegionEditor.h"
 #include "PianoRollComponent.h"
+#include "PluginPickerPanel.h"
 #include "TapeStrip.h"
 #include "BusComponent.h"
 #include "ChannelStripComponent.h"
@@ -441,6 +442,38 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return owner.pianoRoll != nullptr ? read (owner.pianoRoll.get()) : read (owner.audioEditor.get());
     }
     void closeRegionEditors() override { owner.closePianoRoll(); owner.closeAudioEditor(); }
+    bool clickInsert (int track) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        if (strip == nullptr || ! strip->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (strip, strip->insertPointForScenario()).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+    std::vector<std::string> pickerRows (bool headers) const override
+    {
+        std::vector<std::string> rows;
+        const auto& stack = EmbeddedModal::activeModalStack();
+        for (const auto* modal : stack)
+            if (const auto* picker = dynamic_cast<PluginPickerPanel*> (modal->getBody()))
+                for (const auto& row : picker->rowsForScenario())
+                    if (row.header == headers) rows.push_back (row.text);
+        return rows;
+    }
+    bool clickPickerRow (const std::string& text) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return false;
+        if (auto* picker = dynamic_cast<PluginPickerPanel*> (stack.back()->getBody()))
+            for (const auto& row : picker->rowsForScenario())
+                if (! row.header && row.text == text)
+                {
+                    auto local = picker->getLocalBounds().getCentre();
+                    local.setXY (row.x, row.y);
+                    const auto point = owner.getTopLevelComponent()->getLocalPoint (picker, local).toFloat();
+                    return clickAt (point.x, point.y, 1);
+                }
+        return false;
+    }
     bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 
     bool openMidiIo (int index) override

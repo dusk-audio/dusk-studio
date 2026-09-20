@@ -153,6 +153,22 @@ public:
         return total + 6;
     }
 
+    std::vector<ScenarioRow> rowsForScenario() const
+    {
+        std::vector<ScenarioRow> rows;
+        int y = 6 - scrollOffset;
+        for (const auto& entry : visibleEntries)
+        {
+            const int height = entry.isHeader ? kHeaderH : kRowH;
+            if (y >= 0 && y + height <= getHeight())
+                rows.push_back ({ entry.isHeader,
+                    (entry.isHeader ? entry.text.toUpperCase() : entry.text).toStdString(),
+                    getX() + (getWidth() - kScrollbarW) / 2, getY() + y + height / 2 });
+            y += height;
+        }
+        return rows;
+    }
+
     void resized() override { clampScroll(); }
 
     void paint (juce::Graphics& g) override
@@ -370,6 +386,11 @@ PluginPickerPanel::PluginPickerPanel (std::vector<PluginDescriptor> descriptions
 }
 
 PluginPickerPanel::~PluginPickerPanel() = default;
+
+std::vector<PluginPickerPanel::ScenarioRow> PluginPickerPanel::rowsForScenario() const
+{
+    return listBody->rowsForScenario();
+}
 
 void PluginPickerPanel::paint (juce::Graphics& g)
 {
