@@ -1011,7 +1011,59 @@ std::optional<ScenarioResult> runAutosave (GuiHost& host, ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+std::optional<ScenarioResult> runStageViews (GuiHost& host, ScenarioContext& ctx)
+{
+    using Stage = GuiHost::Stage;
+    auto original = Stage::Recording;
+    switch (ctx.engine().getStage())
+    {
+        case AudioEngine::Stage::Recording: break;
+        case AudioEngine::Stage::Mixing: original = Stage::Mixing; break;
+        case AudioEngine::Stage::Aux: original = Stage::Aux; break;
+        case AudioEngine::Stage::Mastering: original = Stage::Mastering; break;
+    }
+    auto& transport = ctx.engine().getTransport();
+    ctx.cleanup ([&host, &transport, original, state = transport.getState(),
+                  position = transport.getPlayhead()]
+    {
+        host.switchToStage (original);
+        transport.setPlayhead (position);
+        transport.setState (state);
+    });
+    transport.setState (Transport::State::Stopped);
+
+    auto run = std::make_shared<std::function<void (std::size_t)>>();
+    std::weak_ptr<std::function<void (std::size_t)>> weakRun = run;
+    *run = [&host, &ctx, weakRun] (std::size_t index)
+    {
+        constexpr std::array<Stage, 6> stages { Stage::Mixing, Stage::Recording, Stage::Aux,
+                                               Stage::Mastering, Stage::Mixing, Stage::Recording };
+        if (index == stages.size()) { ctx.complete (ctx.verdict()); return; }
+        const auto stage = stages[index];
+        if (! ctx.expect (host.clickStage (stage), "the stage button is not visible"))
+        { ctx.complete (ctx.verdict()); return; }
+        ctx.waitUntil ([&host, stage] { return host.stageViewMatches (stage); }, 3000,
+            [&host, &ctx, stage, index, next = weakRun.lock()]
+            {
+                if (stage == Stage::Recording || stage == Stage::Mixing)
+                    for (int track = 0; track < Session::kNumTracks; ++track)
+                        ctx.expect (host.stripStageControlsMatch (track, stage == Stage::Mixing),
+                                    "tracking controls or aux sends are wrong on strip "
+                                    + std::to_string (track + 1));
+                (*next) (index + 1);
+            }, "the stage click did not select its button and show only its view");
+    };
+    (*run) (0);
+    return std::nullopt;
+}
+
 // ------------------------------------------------------------- registration
+
+const ScenarioRegistrar stageViews { Scenario {
+    "gui.stage_views_and_controls", { "gui", "stage" }, Needs::Engine | Needs::Gui,
+    {}, {}, 25000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStageViews (host, ctx); }
+} };
 
 std::optional<ScenarioResult> runClockFormats (GuiHost& host, ScenarioContext& ctx)
 {

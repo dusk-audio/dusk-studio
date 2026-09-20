@@ -8,10 +8,12 @@
 #include "EmbeddedModal.h"
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
+#include "MasteringView.h"
 #include "PlatformWindowing.h"
 #include "TransportBar.h"
 #include "../engine/scenario/SuiteRunner.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <filesystem>
@@ -233,8 +235,59 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     void switchToStage (Stage stage) override
     {
-        owner.switchToStage (stage == Stage::Aux ? AudioEngine::Stage::Aux
-                                                 : AudioEngine::Stage::Mixing);
+        switch (stage)
+        {
+            case Stage::Recording: owner.switchToStage (AudioEngine::Stage::Recording); break;
+            case Stage::Mixing: owner.switchToStage (AudioEngine::Stage::Mixing); break;
+            case Stage::Aux: owner.switchToStage (AudioEngine::Stage::Aux); break;
+            case Stage::Mastering: owner.switchToStage (AudioEngine::Stage::Mastering); break;
+        }
+    }
+
+    bool clickStage (Stage stage) override
+    {
+        auto* button = &owner.recordingStageBtn;
+        switch (stage)
+        {
+            case Stage::Recording: break;
+            case Stage::Mixing: button = &owner.mixingStageBtn; break;
+            case Stage::Aux: button = &owner.auxStageBtn; break;
+            case Stage::Mastering: button = &owner.masteringStageBtn; break;
+        }
+        if (! button->isShowing()) return false;
+        button->triggerClick();
+        return true;
+    }
+
+    bool stageViewMatches (Stage stage) const override
+    {
+        const auto showing = [] (const auto& component)
+        { return component != nullptr && component->isShowing(); };
+        const bool console = stage == Stage::Recording || stage == Stage::Mixing;
+        return showing (owner.consoleView) == console
+            && showing (owner.transportBar) == console
+            && showing (owner.auxView) == (stage == Stage::Aux)
+            && showing (owner.masteringView) == (stage == Stage::Mastering)
+            && owner.recordingStageBtn.getToggleState() == (stage == Stage::Recording)
+            && owner.mixingStageBtn.getToggleState() == (stage == Stage::Mixing)
+            && owner.auxStageBtn.getToggleState() == (stage == Stage::Aux)
+            && owner.masteringStageBtn.getToggleState() == (stage == Stage::Mastering);
+    }
+
+    bool stripStageControlsMatch (int index, bool mixing) const override
+    {
+        auto* console = owner.consoleView.get();
+        if (console == nullptr || index < 0 || index >= Session::kNumTracks) return false;
+        const int page = console->getBank();
+        const int activeBank = owner.session.activeBank.load();
+        const int surfaceBank = owner.session.mcu.bank.load();
+        console->setBank (index / std::max (1, console->bankStride()));
+        const auto* component = console->getStripComponent (index);
+        const bool matches = component != nullptr && component->stageControlsMatchForScenario (mixing);
+        console->setBank (page);
+        owner.session.activeBank.store (activeBank);
+        owner.session.mcu.bank.store (surfaceBank);
+        return matches;
     }
 
     scenario::StripHandle* strip (int index) override

@@ -94,6 +94,18 @@ public:
     void setMixingMode (bool mixing);
     bool isMixingMode() const noexcept { return mixingMode; }
 
+    bool stageControlsMatchForScenario (bool mixing) const
+    {
+        if (! isShowing() || mixingMode != mixing) return false;
+        if (ioConfigButton.isShowing() != ! mixing || modeSelector.isShowing() != ! mixing
+            || monitorButton.isShowing() != ! mixing || armButton.isShowing() != ! mixing
+            || printButton.isShowing() != ! mixing) return false;
+        if (compactMode) return auxCompactButton.isShowing();
+        for (const auto& knob : auxKnobs)
+            if (knob == nullptr || ! knob->isShowing()) return false;
+        return true;
+    }
+
     void setHorizontalDensity (consolelayout::HorizontalDensity density);
 
 private:
