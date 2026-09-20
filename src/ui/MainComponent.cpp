@@ -1533,7 +1533,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     {
         auto& transport = engine.getTransport();
         if (transport.isRecording()) { engine.pressStop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
-        else                         engine.record();
+        else
+        {
+            engine.record();
+            if (transportBar != nullptr) transportBar->surfaceRecordSetupFailures();
+        }
         return true;
     }
 

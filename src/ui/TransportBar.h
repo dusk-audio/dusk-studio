@@ -114,6 +114,7 @@ public:
     // knows the take is partial before relying on it. Safe no-op when
     // no errors are pending.
     void notifyRecordStopped();
+    void surfaceRecordSetupFailures();
 
     // Re-sync the cached time-signature button text from session.beatsPerBar /
     // beatUnit. Call after changing the time signature outside this bar (e.g. a
@@ -123,12 +124,6 @@ public:
 private:
     void timerCallback() override;
     void refreshButtonStates();
-
-    // After engine.record(), RecordManager populates getLastSetupFailures
-    // with armed tracks whose writer couldn't be set up (disk full,
-    // permission denied, missing audio dir). AlertWindow lists them so
-    // the user doesn't think a silently-dropped take was captured.
-    void surfaceRecordSetupFailures();
 
     // MCU REW/FFWD reuse the on-screen Rewind/Forward tap behaviour so the
     // control surface and the on-screen buttons never diverge.

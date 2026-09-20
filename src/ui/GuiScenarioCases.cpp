@@ -2233,7 +2233,7 @@ const ScenarioRegistrar midiActivityLed { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runMidiActivityLed (host, ctx); }
 } };
 
-std::optional<ScenarioResult> runRecordingSetupAlert (GuiHost& host, ScenarioContext& ctx)
+std::optional<ScenarioResult> runRecordingSetupAlert (GuiHost& host, ScenarioContext& ctx, bool keyboard = false)
 {
     auto& session = ctx.session();
     auto& engine = ctx.engine();
@@ -2271,7 +2271,8 @@ std::optional<ScenarioResult> runRecordingSetupAlert (GuiHost& host, ScenarioCon
         track.inputSource.store (0);
         session.setTrackArmed (index, true);
     }
-    if (! ctx.expect (host.clickRecord(), "the Record button is unavailable")) return ctx.verdict();
+    if (! ctx.expect (keyboard ? host.pressKey ("R", 'r') : host.clickRecord(),
+                     "the recording input was not handled")) return ctx.verdict();
     ctx.waitUntil ([&host] { return ! host.modalStackEmpty(); }, 3000,
         [&host, &ctx, &engine]
         {
@@ -2295,6 +2296,12 @@ const ScenarioRegistrar recordingSetupAlert { Scenario {
     "gui.recording_setup_alert", { "gui", "recording", "messages" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runRecordingSetupAlert (host, ctx); }
+} };
+
+const ScenarioRegistrar recordingSetupAlertKey { Scenario {
+    "gui.recording_setup_alert_key", { "gui", "recording", "messages", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRecordingSetupAlert (host, ctx, true); }
 } };
 
 std::optional<ScenarioResult> runTapeNudgeKeys (GuiHost& host, ScenarioContext& ctx)

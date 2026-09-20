@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 76
+# ceiling gap 75
 # ceiling partial 50
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -236,7 +236,7 @@ Recording > Take history	a take fully covering a region pushes it onto an 8-deep
 Recording > Take history	Alt+T and Alt+Shift+T cycle takes; the badge does too	partial	scenario:take.cycle_steps_through_the_stack		the step both shortcuts and the badge take through the stack is tested; the key binding and the badge click are not
 Recording > Take history	a take over one end of an older region trims it and keeps none of it; a punch inside keeps the covered part	auto	scenario:take.edge_overdub_trims_neighbour;scenario:take.punch_inside_keeps_covered_slice
 Recording > Take history	deleting a region removes its stack; undo restores it	auto	scenario:region.delete_restores_takes_on_undo
-Recording > Recording errors	a write failure at record start raises an alert listing the tracks	gap
+Recording > Recording errors	a write failure at record start raises an alert listing the tracks	auto	scenario:gui.recording_setup_alert;scenario:gui.recording_setup_alert_key		both the Record button and R name failed writers after an audio-directory obstruction
 Recording > Recording errors	a mid-take error or MIDI overflow reports at Stop; written audio is kept	auto	test:RecordManager surfaces MIDI FIFO overflow at stopRecording;test:RecordManager clean MIDI take leaves overflow list empty
 
 The tape strip	collapsed by default; strips compact when it opens	auto	scenario:gui.timeline_drawer		checks launch state, T and command-backslash toggles, actual timeline visibility and compact state on all 24 strips
