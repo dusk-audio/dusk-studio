@@ -205,7 +205,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiSyncReceiver.cpp
-    ${CMAKE_SOURCE_DIR}/src/session/MidiBindings.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/MidiBindingsPreset.cpp
     ${CMAKE_SOURCE_DIR}/src/session/UnreferencedAudio.cpp
     session_templates.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionTemplates.cpp)

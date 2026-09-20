@@ -2539,7 +2539,7 @@ Two variants:
 ### MIDI bindings export / import failed
 
 - **Export**: "Could not write to [path]" — disk full or permission denied.
-- **Import**: "Could not read bindings from [path]. File is missing or malformed." — bad JSON or missing file.
+- **Import**: "Could not read bindings from [path]. File is missing or malformed." — bad JSON, a missing file, or a preset written in a format this version does not read.
 - **Buttons**: OK.
 
 ## Plugins

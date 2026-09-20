@@ -784,6 +784,7 @@ target_sources(DuskStudio PRIVATE
     src/session/RegionEditActions.cpp
     src/dsp/ChordAnalyzer.cpp
     src/session/MidiBindings.cpp
+    src/session/MidiBindingsPreset.cpp
     src/session/Session.cpp
     src/session/SessionSerializer.cpp
     src/session/UnreferencedAudio.cpp

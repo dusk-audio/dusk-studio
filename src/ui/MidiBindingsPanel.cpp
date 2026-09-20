@@ -210,7 +210,7 @@ void MidiBindingsPanel::importPreset()
         auto* self = safe.getComponent();
         if (self == nullptr || file == juce::File()) return;
         const auto json = file.loadFileAsString();
-        auto parsed = deserializeBindingsPreset (json);
+        auto parsed = deserializeBindingsPreset (json.toStdString());
         if (! parsed.has_value())
         {
             if (auto* tlw = self->getTopLevelComponent())

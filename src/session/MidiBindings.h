@@ -2,6 +2,7 @@
 
 #include <juce_core/juce_core.h>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace duskstudio
@@ -362,8 +363,8 @@ juce::String describeBindingSource (const MidiBinding& b);
 // Preset .json: top-level object with `format_version` + `midi_bindings`
 // array (matches the embedded session form). std::nullopt = malformed /
 // wrong schema; empty vector = well-formed "clear all".
-juce::String serializeBindingsPreset (const std::vector<MidiBinding>& binds);
-std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::String& json);
+std::string serializeBindingsPreset (const std::vector<MidiBinding>& binds);
+std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const std::string& json);
 
 class Session;
 } // namespace duskstudio

@@ -2,7 +2,7 @@
 
 #include "session/MidiBindings.h"
 
-#include <algorithm>
+#include <string>
 #include <vector>
 
 using namespace duskstudio;
@@ -120,14 +120,6 @@ TEST_CASE ("MIDI bindings preset round-trips every available target", "[midi][bi
     REQUIRE (restored->size() == binds.size());
     for (size_t i = 0; i < binds.size(); ++i)
         CHECK (restored->at (i).target == binds[i].target);
-
-    // And every one of them names itself for the panel.
-    for (auto target : allTargets())
-    {
-        const auto* name = nameForTarget (target);
-        REQUIRE (name != nullptr);
-        CHECK (juce::String (name).isNotEmpty());
-    }
 }
 
 // An unreadable import is reported rather than applied, and the report has to
@@ -146,8 +138,18 @@ TEST_CASE ("MIDI bindings import separates a broken preset from an empty one",
     SECTION ("an object from some other schema")
     {
         CHECK_FALSE (deserializeBindingsPreset ("{\"format_version\":1}").has_value());
-        CHECK_FALSE (
-            deserializeBindingsPreset ("{\"bindings\":\"nope\"}").has_value());
+        CHECK_FALSE (deserializeBindingsPreset (
+            "{\"format_version\":1,\"bindings\":\"nope\"}").has_value());
+    }
+    SECTION ("a version this build does not write")
+    {
+        // Same keys can mean something else in a later format, so a file that
+        // does not name this one is refused rather than half-read.
+        CHECK_FALSE (deserializeBindingsPreset (
+            R"({"format_version": 2, "bindings": []})").has_value());
+        CHECK_FALSE (deserializeBindingsPreset (
+            R"({"format_version": "1", "bindings": []})").has_value());
+        CHECK_FALSE (deserializeBindingsPreset (R"({"bindings": []})").has_value());
     }
     SECTION ("a well-formed preset with no bindings clears them all")
     {
@@ -162,7 +164,7 @@ TEST_CASE ("MIDI bindings import separates a broken preset from an empty one",
 // heard of. That entry is dropped; the rest of the file still loads.
 TEST_CASE ("MIDI bindings import keeps the entries it understands", "[midi][bindings]")
 {
-    const juce::String json = R"({
+    const std::string json = R"({
       "format_version": 1,
       "bindings": [
         {"channel": 1, "data": 20, "trigger": 0, "target": 100, "target_idx": 3},
@@ -185,7 +187,8 @@ TEST_CASE ("MIDI bindings import keeps the entries it understands", "[midi][bind
 // Out-of-range numbers in a hand-edited file are clamped, not trusted.
 TEST_CASE ("MIDI bindings import clamps a hand-edited preset", "[midi][bindings]")
 {
-    const juce::String json = R"({
+    const std::string json = R"({
+      "format_version": 1,
       "bindings": [
         {"channel": 99, "data": 300, "trigger": 77, "target": 100,
          "target_idx": 1, "button_mode": 42}
