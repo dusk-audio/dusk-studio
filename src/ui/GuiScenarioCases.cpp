@@ -2067,5 +2067,83 @@ const ScenarioRegistrar audioEditorKeys { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorKeys (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runRecordingUndoKey (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    auto& track = session.track (0);
+    ctx.keep (track.mode);
+    ctx.keep (track.midiInputIndex);
+    ctx.keep (session.countInEnabled);
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        const bool armed = session.track (index).recordArmed.load();
+        ctx.cleanup ([&session, index, armed] { session.setTrackArmed (index, armed); });
+        session.setTrackArmed (index, false);
+    }
+    ctx.cleanup ([&engine, &transport, &track, regions = track.midiRegions.current(),
+                  loop = transport.isLoopEnabled(), punch = transport.isPunchEnabled(),
+                  position = transport.getPlayhead()]
+    {
+        const std::uint8_t off[] { 0x80, 64, 0 };
+        engine.postVirtualKeyboardMidi (off, 3);
+        engine.stop();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+        transport.setLoopEnabled (loop);
+        transport.setPunchEnabled (punch);
+        transport.setPlayhead (position);
+        engine.getUndoManager().clearUndoHistory();
+    });
+    engine.stop();
+    transport.setPlayhead (0);
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    session.countInEnabled.store (false);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+    session.setTrackArmed (0, true);
+    engine.getUndoManager().clearUndoHistory();
+    host.switchToStage (GuiHost::Stage::Recording);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressKey ("R", 'r'), "the Record key was not handled"); } });
+    steps->push_back ({ 100, [&engine, &transport, &ctx]
+    {
+        ctx.expect (transport.isRecording(), "R did not start the armed MIDI recording");
+        const std::uint8_t on[] { 0x90, 64, 100 };
+        engine.postVirtualKeyboardMidi (on, 3);
+    } });
+    steps->push_back ({ 150, [&engine]
+    {
+        const std::uint8_t off[] { 0x80, 64, 0 };
+        engine.postVirtualKeyboardMidi (off, 3);
+    } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressKey ("spacebar", ' '), "Space did not stop recording"); } });
+    steps->push_back ({ 100, [&host, &ctx, &track, &transport]
+    {
+        ctx.expect (transport.isStopped(), "recording did not stop");
+        const auto& regions = track.midiRegions.current();
+        if (ctx.expect (regions.size() == 1, "recording did not commit exactly one MIDI region"))
+            ctx.expect (regions[0].notes.size() == 1 && regions[0].notes[0].noteNumber == 64,
+                        "recording did not retain the virtual keyboard note");
+        ctx.expect (host.pressKey ("command + Z"), "the recording Undo shortcut was not handled");
+    } });
+    steps->push_back ({ 100, [&ctx, &track]
+    {
+        ctx.expect (track.midiRegions.current().empty(), "Cmd+Z did not undo the recorded take");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar recordingUndoKey { Scenario {
+    "gui.recording_undo_key", { "gui", "recording", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRecordingUndoKey (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario
