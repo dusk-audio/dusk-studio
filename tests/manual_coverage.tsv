@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 80
-# ceiling partial 53
+# ceiling gap 79
+# ceiling partial 50
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -42,7 +42,7 @@ Quick Guide > Bounce	Cmd+B bounces a 24-bit WAV (or MP3 by extension) into the s
 Quick Guide > Bounce	Load latest mixdown then Export master	gap
 
 Names and Functions of Parts > The main window	menu bar, stage selector, bank selector, transport, tape toggle, console	manual			figure callouts; checked against the running app by screenshot review
-Names and Functions of Parts > The main window	Cmd/Ctrl+1..4 switch stages; plain 1..8 pick pages	partial	test:Bank mapping: plain digits select exactly pages one through eight		page digits tested; the stage shortcuts are not
+Names and Functions of Parts > The main window	Cmd/Ctrl+1..4 switch stages; plain 1..8 pick pages	auto	test:Bank mapping: plain digits select exactly pages one through eight;scenario:gui.mastering_transport
 Names and Functions of Parts > The transport bar	transport callouts (stop, rewind, play, forward, record, loop, punch, keyboard, notepad, click, count-in, BPM, TAP, meter, clock, tuner, zoom)	n/a			figure; each control is held under The interface > The transport bar
 Names and Functions of Parts > The channel strip — MIXING stage	mixing-stage callouts	n/a			figure; each control is held under The channel strip
 Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	moving one member moves every member by the same dB	auto	test:setTrackFaderGrouped shifts group peers by the same dB delta
@@ -97,9 +97,9 @@ The interface > Window layout	bank selector pages the console by what fits; Eigh
 The interface > Window layout	surface bank and screen page stay in step	auto	test:Bank mapping: screen page resolves to the bank holding its first track;test:Bank mapping: hardware bank resolves to the page showing its first track;test:Console bank state: surface Bank Left and Right map at stride three
 The interface > Window layout	modals centre over a dimmed backdrop; Esc or outside click dismisses	partial	test:EmbeddedModal::close: drain destroys the body exactly once		modal teardown tested; Esc and outside-click dismissal are not
 The interface > Window layout	DSP readout shows load and dropout counters; double-click resets them	gap
-The interface > The four stages	switching stage keeps audio flowing	gap
+The interface > The four stages	switching among Recording, Mixing and Aux keeps audio flowing	gap
 The interface > The four stages	Settings > Quickstart opens the shipped quickstart, or greys out when absent	partial	ctest:install-linux;ctest:package-contents-checker		the file is shipped and located; the menu opening it is walked by hand (#623)
-The interface > The four stages	Cmd/Ctrl+1..4 change stage, plain digits change page, ? opens shortcuts	partial	test:Bank mapping: plain digits select exactly pages one through eight		page digits tested; stage keys and ? are not
+The interface > The four stages	Cmd/Ctrl+1..4 change stage, plain digits change page, ? opens shortcuts	auto	test:Bank mapping: plain digits select exactly pages one through eight;scenario:gui.mastering_transport
 The interface > The four stages	entering or leaving MASTERING stops the transport; changing stage saves and closes the notepad	gap
 The interface > The transport bar	Stop silences held notes even on muted or soloed-out tracks	auto	scenario:midi.panic_all_paths;test:muted MIDI strips still process transport panic events;test:synth unit stops on the transport's all-notes-off
 The interface > The transport bar	Stop returns the playhead per Playhead on Stop; a second Stop goes to bar 1	auto	test:Stop on a rolling transport follows the Playhead on Stop setting;test:Stop pressed while stopped returns to zero whatever the setting;test:A locate during playback becomes the point Stop returns to
@@ -198,7 +198,7 @@ Aux lanes > Aux lane layout > Plugin chain (centre column)	one insert with a 20 
 Aux lanes > Aux lane layout > Plugin chain (centre column)	an editor attach failure logs without a dialog	auto	scenario:gui.aux_attach_failure_no_modal;test:aux lane editor attach never raises a modal
 Aux lanes > Aux lane layout > Sources panel (right column)	lists every channel sending to the lane with its level	gap
 
-The mastering stage	separate path; entering or leaving stops the transport	gap
+The mastering stage	separate path; entering or leaving stops the transport	auto	scenario:gui.mastering_transport		stage keys stop the playing source on either side of Mastering; Mastering playback leaves multitrack stopped
 The mastering stage > Loading a mix	Load mix and Load latest mixdown	gap
 The mastering stage > Loading a mix	a source at another rate plays at the right speed	auto	test:MasteringPlayer resamples a source whose rate differs from the device
 The mastering stage > Transport	play, stop, rewind; Space drives the mastering player	auto	scenario:gui.mastering_transport		loads a WAV, clicks Play/Stop/Rewind and dispatches Space; the mastering playhead moves while the multitrack transport stays stopped
@@ -382,7 +382,7 @@ Keyboard reference > File	Cmd+N, O, S, Shift+S, I, B, Q	gap
 Keyboard reference > Edit	undo, redo, copy, cut, paste, duplicate, delete, split, nudge, take cycling	gap
 Keyboard reference > Transport	Space, R, Home, ., L, P, C, M, [ ], Shift+[ ], K, Shift+arrows, B, Shift+C, F, Shift+M, U	gap
 Keyboard reference > Tracks	A, S, X act on the focused strip	auto	scenario:gui.keyboard_track_shortcuts		keyboard focus traverses all 24 strips in Recording and Mixing; A/S/X toggle only the focused track and preserve the armed-track counter
-Keyboard reference > Stages & banks	Cmd+1..4 stages; 1..8 pages	partial	test:Bank mapping: plain digits select exactly pages one through eight		page digits tested; stage keys are not
+Keyboard reference > Stages & banks	Cmd+1..4 stages; 1..8 pages	auto	test:Bank mapping: plain digits select exactly pages one through eight;scenario:gui.mastering_transport
 Keyboard reference > Timeline	T, = + - 0, Cmd-wheel, Shift-wheel, middle-drag	gap
 Keyboard reference > Region editor	Cmd+E, G, Cmd+] [, Esc	auto	scenario:gui.audio_editor_keys		mouse-placed edit cursor, split source continuity, Grab, adjacent region navigation and Escape
 Keyboard reference > Piano roll	arrows, Q, S, V, G, L, C, Cmd+A/C/X/V/D/Z, Home, End, Cmd+] [, Esc	gap

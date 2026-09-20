@@ -538,7 +538,7 @@ The readout in the menu bar's right corner shows the device state (`Audio: 48 kH
 
 ## The four stages
 
-Only one stage is visible at a time, but the same engine drives all four. Switching stages is purely a UI change; audio keeps flowing.
+Only one stage is visible at a time. RECORDING, MIXING and AUX share the mix engine, so audio keeps flowing when switching among them. MASTERING has a separate playback path; entering or leaving it stops playback.
 
 - **RECORDING** shows each channel strip's input source, arm button, monitor toggle, and "print" toggle (for whether EQ and compression are committed to the recorded file or kept live).
 - **MIXING** replaces the input block with the channel's four aux send knobs. Inserts and EQ stay on screen.

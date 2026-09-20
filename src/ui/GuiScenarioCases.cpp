@@ -1564,6 +1564,7 @@ std::optional<ScenarioResult> runMasteringTransport (GuiHost& host, ScenarioCont
     const auto stage = ctx.engine().getStage();
     ctx.cleanup ([&host, &player, &transport, stage, state = transport.getState(), position = transport.getPlayhead()]
     {
+        host.closeTopModal();
         player.stop();
         player.unloadFile();
         switch (stage)
@@ -1576,7 +1577,12 @@ std::optional<ScenarioResult> runMasteringTransport (GuiHost& host, ScenarioCont
         transport.setPlayhead (position);
         transport.setState (state);
     });
-    host.switchToStage (GuiHost::Stage::Mastering);
+    ctx.cleanup (host.preserveKeyboardFocus());
+    host.switchToStage (GuiHost::Stage::Recording);
+    ctx.expect (host.pressKey ("spacebar", ' ') && transport.isPlaying(), "Space did not start multitrack playback");
+    ctx.expect (host.pressKey ("command + 3") && host.stageViewMatches (GuiHost::Stage::Mastering),
+                "Cmd+3 did not select Mastering");
+    ctx.expect (transport.isStopped(), "entering Mastering did not stop multitrack playback");
     if (! ctx.expect (host.loadMasteringFile (path), "Load mix did not accept the fixture")) return ctx.verdict();
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickMasteringButton ("Play"), "Play is unavailable"); } });
@@ -1604,6 +1610,35 @@ std::optional<ScenarioResult> runMasteringTransport (GuiHost& host, ScenarioCont
         ctx.expect (host.pressKey ("spacebar", ' '), "second Space was not handled");
         ctx.expect (! player.isPlaying(), "second Space did not stop the loaded mix");
     } });
+    steps->push_back ({ 100, [&host, &ctx, &player]
+    {
+        ctx.expect (host.pressKey ("spacebar", ' ') && player.isPlaying(), "could not restart Mastering before leaving");
+        ctx.expect (host.pressKey ("command + 1") && host.stageViewMatches (GuiHost::Stage::Recording),
+                    "Cmd+1 did not select Recording");
+        ctx.expect (! player.isPlaying(), "leaving Mastering did not stop its player");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, &transport]
+    {
+        ctx.expect (transport.isStopped(), "leaving Mastering started multitrack playback");
+        ctx.expect (host.pressKey ("command + 2") && host.stageViewMatches (GuiHost::Stage::Mixing),
+                    "Cmd+2 did not select Mixing");
+        for (int page = 0; page < host.consolePageCount(); ++page)
+            ctx.expect (host.pressKey (std::to_string (page + 1), (char) ('1' + page)) && host.consolePageMatches (page),
+                        "a plain digit did not select its visible console page");
+        ctx.expect (host.pressKey ("command + 4") && host.stageViewMatches (GuiHost::Stage::Aux),
+                    "Cmd+4 did not select Aux");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (host.pressKey ("shift + /", '?'), "the shortcuts key was not handled");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (host.shortcutsOpen(), "? did not open Keyboard Shortcuts");
+        host.closeTopModal();
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (! host.shortcutsOpen(), "Keyboard Shortcuts cleanup left the panel open"); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }

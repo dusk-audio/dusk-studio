@@ -84,6 +84,8 @@ public:
     virtual bool stripStageControlsMatch (int index, bool mixing) const = 0;
     virtual bool pressKey (const std::string& description, char text = 0) = 0;
     virtual std::function<void()> preserveKeyboardFocus() = 0;
+    virtual int consolePageCount() const = 0;
+    virtual bool consolePageMatches (int index) const = 0;
     virtual bool timelineViewMatches (bool expanded) const = 0;
     virtual bool stripCompact (int index) const = 0;
 
@@ -107,6 +109,7 @@ public:
     virtual std::string modalText() const = 0;
     virtual bool clickModalButton (const std::string& label) = 0;
     virtual void openAbout() = 0;
+    virtual bool shortcutsOpen() const = 0;
     virtual void startMixdown() = 0;
     virtual bool fullScreen() const = 0;
     virtual bool pressPeerKey (const std::string& description, char text = 0) = 0;

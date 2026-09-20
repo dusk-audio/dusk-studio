@@ -310,6 +310,21 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return owner.transportBar != nullptr && owner.transportBar->clickTimeFormatForScenario();
     }
 
+    int consolePageCount() const override { return owner.consoleView->numBanks(); }
+    bool consolePageMatches (int index) const override
+    {
+        auto* view = owner.consoleView.get();
+        if (view == nullptr || ! view->isShowing() || view->getBank() != index) return false;
+        const auto range = view->rangeForBank (index);
+        for (int track = 0; track < Session::kNumTracks; ++track)
+        {
+            auto* strip = view->getStripComponent (track);
+            if (strip == nullptr || strip->isShowing() != (track + 1 >= range.first && track + 1 <= range.second))
+                return false;
+        }
+        return true;
+    }
+
     bool timelineViewMatches (bool expanded) const override
     {
         return owner.tapeStrip != nullptr && owner.tapeStripExpanded == expanded
@@ -471,6 +486,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     void autosaveTick() override { owner.writeAutosave(); }
     void openAbout() override { owner.menuItemSelected (2002, 2); }
+    bool shortcutsOpen() const override { return owner.shortcutsModal.isOpen(); }
     void startMixdown() override { owner.menuItemSelected (1010, 0); }
 
     bool fullScreen() const override
