@@ -75,6 +75,14 @@ public:
     void openTimeSigMenu();
     void toggleTimeFormat();
 
+    bool clickTimeFormatForScenario()
+    {
+        if (! timeFormatToggle.isShowing()) return false;
+        timeFormatToggle.triggerClick();
+        return true;
+    }
+    std::string clockTextForScenario() const { return clockLabel.getText().toStdString(); }
+
     // Hard-coding tuner X from outside is fragile - the right-anchored
     // cluster (BPM / tap / time-sig / mode toggles) shifts the tuner
     // left by ~376 px in expanded mode and ~280 px in compact mode.

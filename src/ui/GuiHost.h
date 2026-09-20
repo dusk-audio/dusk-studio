@@ -73,6 +73,9 @@ public:
     enum class Stage { Mixing, Aux };
     virtual void switchToStage (Stage) = 0;
 
+    virtual bool clickTimeFormat() = 0;
+    virtual std::string clockText() const = 0;
+
     // Null when the index is out of range, or the stage that realises the
     // component is not the one currently shown.
     virtual StripHandle*   strip   (int index) = 0;

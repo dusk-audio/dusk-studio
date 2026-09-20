@@ -74,6 +74,8 @@ add_executable(dusk-studio-tests
     plugin_state_diagnostics.cpp
     channel_strip_midi_gate.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/ChannelStrip.cpp
+    insert_mode_defaults.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/AuxLaneStrip.cpp
     channel_strip_context_rename.cpp
     snap_helpers.cpp
     fade_shapes.cpp
@@ -93,6 +95,7 @@ add_executable(dusk-studio-tests
     session_transport_bounds.cpp
     session_corrupted_recovery.cpp
     session_clamp_corrupt_values.cpp
+    session_appendix_parameters.cpp
     session_format_version.cpp
     session_write_atomic.cpp
     session_portable_paths.cpp

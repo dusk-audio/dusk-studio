@@ -268,7 +268,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 2   | Transport         | Play / stop / loop on the loaded file. Recording is disabled in this stage.                 |
 | 3   | Waveform          | Stereo overview with the playhead.                                                          |
 | 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±12 dB per band.                                          |
-| 5   | Bus compressor    | Same UniversalCompressor as elsewhere, tuned to mastering defaults.                         |
+| 5   | Multiband compressor | Four bands with independent dynamics controls.                         |
 | 6   | Brickwall limiter | True-peak, 4× oversampled lookahead (see the mastering chapter).                            |
 | 7   | Loudness panel    | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770).             |
 | 8   | Export master…    | Renders the chain offline to a stereo file.                                                 |
@@ -1054,16 +1054,16 @@ the **FFT** button in the panel's top-left.
 | Band | Type       | Default freq | Gain   | Q       |
 | ---- | ---------- | ------------ | ------ | ------- |
 | 0    | Low shelf  | 50 Hz        | ±12 dB | n/a     |
-| 1    | Peaking    | 250 Hz       | ±12 dB | 0.4–4.0 |
-| 2    | Peaking    | 1 kHz        | ±12 dB | 0.4–4.0 |
-| 3    | Peaking    | 4 kHz        | ±12 dB | 0.4–4.0 |
+| 1    | Peaking    | 250 Hz       | ±12 dB | 0.3–6.0 |
+| 2    | Peaking    | 1 kHz        | ±12 dB | 0.3–6.0 |
+| 3    | Peaking    | 4 kHz        | ±12 dB | 0.3–6.0 |
 | 4    | High shelf | 12 kHz       | ±12 dB | n/a     |
 
-### Bus compressor
+### Multiband compressor
 
-The same UniversalCompressor in Bus mode as the channel / master compressors, but tuned to mastering defaults: 2:1 ratio, 30 ms attack, 250 ms release, auto-release on. Apply 0.5–2 dB of gain reduction to glue a final mix without squashing transients.
+The UniversalCompressor in Multiband mode provides four frequency bands with independent dynamics controls. The editor exposes the per-band controls and crossovers; the bus compressor settings do not apply to this stage.
 
-**Presets** (dropdown in the comp panel header): nine genre starting points transcribed from the Tascam DP-24/32 multiband compression chart — Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. Picking one writes the three-band threshold / ratio / attack / release / makeup and the two crossovers into the multiband comp, with the high-mid band disabled so it behaves as the original 3-band (Low / Mid / High) preset. It's a one-shot apply — tweak any band afterwards and the dropdown returns to the placeholder. A few presets specify a high crossover (above 5 kHz) that the mid/high split clamps slightly.
+**Presets** (dropdown in the comp panel header): nine genre starting points transcribed from the Tascam DP-24/32 multiband compression chart — Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. Picking one writes the chart's threshold / ratio / attack / release / makeup and crossovers into the multiband comp. High-Mid is disabled when the chart's high crossover is at or below 5 kHz; above that, it stays enabled with the same settings as Low-Mid. It's a one-shot apply — tweak any band afterwards and the dropdown returns to the placeholder. The crossover spacing rule in Appendix A can raise the effective high split above the chart value.
 
 ### Brickwall limiter
 
@@ -1071,7 +1071,7 @@ A true-peak brickwall limiter with lookahead. **Enabled by default.** It runs th
 
 - **Ceiling**: −12 to 0 dB. Default **−0.3 dB** (matches the headroom expected by most streaming platforms).
 - **Threshold**: 0 to −20 dB (drag the handle on the input meter). Pull it down to drive more signal into the ceiling — louder and denser. (Internally it adds up to +20 dB of input gain; the ceiling then holds the peak.)
-- **Release**: 50 to 300 ms. The release is program-dependent — it recovers quickly from brief transients (keeping them open) and more slowly from deep, sustained reduction (no pumping on dense, bass-heavy material).
+- **Release**: 10 to 1000 ms. The release is program-dependent — it recovers quickly from brief transients (keeping them open) and more slowly from deep, sustained reduction (no pumping on dense, bass-heavy material).
 - **Lookahead**: 0.1 to 10 ms (default **2 ms**). More lookahead lets the gain finish ramping further ahead of each peak, catching transients more cleanly, at the cost of more latency.
 - **Mode**: shapes the hold + release character — **Modern** (balanced default), **Transparent** (fast recovery, minimal pumping), **Punchy** (longer hold, denser).
 - **Stereo link**: on (default) matches the gain reduction across L/R to preserve the stereo image; off limits each channel independently.
@@ -2633,7 +2633,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | VCA      | Soft knee      | Off / On                      | Off      |
 | VCA      | Detector       | Adaptive / Classic            | Adaptive |
 | Comp     | Makeup         | −40 to +40 dB (Opto), −20 to +20 dB (FET / VCA) | 0 dB |
-| Send 1–4 | Level          | −60 to +6 dB (or OFF)         | OFF      |
+| Send 1–4 | Level          | −60 to +6 dB (−60 selects OFF)         | OFF      |
 | Send 1–4 | Pre/Post       | Pre / Post                    | Post     |
 | Pan      | Position       | −1.0 to +1.0                  | 0        |
 | Fader    | Level          | −∞ to +12 dB                  | 0 dB     |
@@ -2650,7 +2650,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | EQ MID | Gain         | ±9 dB         | 0 dB    |
 | EQ HF  | Gain         | ±9 dB         | 0 dB    |
 | Comp   | Enable       | Off / On      | Off     |
-| Comp   | Threshold    | −30 to +15 dB | 0 dB    |
+| Comp   | Threshold    | −60 to 0 dB | 0 dB    |
 | Comp   | Ratio        | 1:1–10:1      | 4:1     |
 | Comp   | Attack       | 0.1–50 ms     | 10 ms   |
 | Comp   | Release      | 50–1000 ms    | 100 ms  |
@@ -2665,7 +2665,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 
 | Block        | Param  | Range                     | Default |
 | ------------ | ------ | ------------------------- | ------- |
-| Insert       | Mode   | Empty / Plugin / Hardware | Plugin  |
+| Insert       | Mode   | Empty / Plugin / Hardware | Empty   |
 | Return fader | Level  | −∞ to +12 dB              | 0 dB    |
 | Mute         | On/Off | Off / On                  | Off     |
 
@@ -2684,7 +2684,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Program EQ   | HF Atten      | 0–10                       | 0       |
 | Program EQ   | HF Atten Freq | 5, 10, 20 kHz              | 10 kHz  |
 | Comp         | Enable        | Off / On                   | Off     |
-| Comp         | Threshold     | −30 to +15 dB              | 0 dB    |
+| Comp         | Threshold     | −60 to 0 dB              | 0 dB    |
 | Comp         | Ratio         | 1:1–10:1                   | 4:1     |
 | Comp         | Attack        | 0.1–50 ms                  | 10 ms   |
 | Comp         | Release       | 50–1000 ms                 | 100 ms  |
@@ -2699,21 +2699,32 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | --------- | -------------------------------- | ------------- | ----------- |
 | EQ        | Enable                           | Off / On      | Off         |
 | EQ band 0 | Low shelf, 50 Hz, ±12 dB         |               | 0 dB        |
-| EQ band 1 | Peaking, 250 Hz, ±12 dB, Q 0.4–4 |               | 0 dB, Q 1.0 |
-| EQ band 2 | Peaking, 1 kHz, ±12 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
-| EQ band 3 | Peaking, 4 kHz, ±12 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
+| EQ band 1 | Peaking, 250 Hz, ±12 dB, Q 0.3–6 |               | 0 dB, Q 1.0 |
+| EQ band 2 | Peaking, 1 kHz, ±12 dB, Q 0.3–6  |               | 0 dB, Q 1.0 |
+| EQ band 3 | Peaking, 4 kHz, ±12 dB, Q 0.3–6  |               | 0 dB, Q 1.0 |
 | EQ band 4 | High shelf, 12 kHz, ±12 dB       |               | 0 dB        |
 | Comp      | Enable                           | Off / On      | Off         |
-| Comp      | Threshold                        | −30 to +15 dB | 0 dB        |
-| Comp      | Ratio                            | 1:1–10:1      | 2:1         |
-| Comp      | Attack                           | 0.1–50 ms     | 30 ms       |
-| Comp      | Release                          | 50–1000 ms    | 250 ms      |
-| Comp      | Auto release                     | Off / On      | On          |
-| Comp      | Makeup                           | −10 to +20 dB | 0 dB        |
 | Limiter   | Enable                           | Off / On      | On          |
 | Limiter   | Ceiling                          | −12 to 0 dB   | −0.3 dB     |
 | Limiter   | Drive                            | 0 to +20 dB   | 0 dB        |
-| Limiter   | Release                          | 50–300 ms     | 100 ms      |
+| Limiter   | Release                          | 10–1000 ms     | 100 ms      |
+
+The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These are the editor's control ranges; the DSP keeps each crossover at least 1.5 times the preceding crossover. At least two bands must remain enabled.
+
+| Multiband control | Range | Default |
+| ----------------- | ----- | ------- |
+| Crossover 1 | 20–500 Hz | 200 Hz |
+| Crossover 2 | 200 Hz–5 kHz | 2 kHz |
+| Crossover 3 | 2–16 kHz | 8 kHz |
+| Each band: enable | Off / On | On |
+| Each band: solo | Off / On | Off |
+| Each band: threshold | −60 to 0 dB | −20 dB |
+| Each band: ratio | 1:1–20:1 | 4:1 |
+| Each band: attack | 0.1–100 ms | 10 ms |
+| Each band: release | 10–1000 ms | 100 ms |
+| Each band: makeup | −12 to +12 dB | 0 dB |
+| Output | −24 to +24 dB | 0 dB |
+| Mix | 0–100% | 100% |
 
 \newpage
 

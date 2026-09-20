@@ -12,6 +12,63 @@
 
 using Catch::Matchers::WithinAbs;
 
+TEST_CASE ("Appendix A: active multiband compressor defaults and control ranges",
+           "[MasteringChain][appendix]")
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    duskstudio::MasteringChain chain;
+    chain.prepare (48000.0, 512, 1);
+    auto* processor = chain.getCompProcessor();
+    REQUIRE (processor != nullptr);
+    auto& parameters = processor->getParameters();
+    const auto* mode = parameters.getRawParameterValue ("mode");
+    const auto* autoMakeup = parameters.getRawParameterValue ("auto_makeup");
+    REQUIRE (mode != nullptr);
+    REQUIRE (autoMakeup != nullptr);
+    REQUIRE_THAT (mode->load(), WithinAbs (7, 1e-6));
+    REQUIRE_THAT (autoMakeup->load(), WithinAbs (0, 1e-6));
+
+    auto check = [&] (const juce::String& id, float low, float high, float initial)
+    {
+        CAPTURE (id.toStdString());
+        auto* parameter = parameters.getParameter (id);
+        auto* value = parameters.getRawParameterValue (id);
+        REQUIRE (parameter != nullptr);
+        REQUIRE (value != nullptr);
+        // Snapping a 0.1 dB interval can leave a sub-micro dB residue with fused arithmetic.
+        CHECK_THAT (value->load(), WithinAbs (initial, 1e-6)
+                                  || Catch::Matchers::WithinRel (initial, 1e-6f));
+        const auto& range = parameter->getNormalisableRange();
+        CHECK_THAT (range.start, WithinAbs (low, 1e-5));
+        CHECK_THAT (range.end, WithinAbs (high, 1e-5));
+        parameter->setValueNotifyingHost (0.0f);
+        CHECK_THAT (value->load(), WithinAbs (low, 1e-5));
+        parameter->setValueNotifyingHost (1.0f);
+        CHECK_THAT (value->load(), WithinAbs (high, 1e-5));
+        parameter->setValueNotifyingHost (parameter->convertTo0to1 (initial));
+    };
+
+    check ("mb_crossover_1", 20, 500, 200);
+    check ("mb_crossover_2", 200, 5000, 2000);
+    check ("mb_crossover_3", 2000, 16000, 8000);
+    check ("mb_output", -24, 24, 0);
+    check ("mix", 0, 100, 100);
+    for (const auto* band : { "low", "lowmid", "highmid", "high" })
+    {
+        const auto prefix = juce::String ("mb_") + band;
+        check (prefix + "_threshold", -60, 0, -20);
+        check (prefix + "_ratio", 1, 20, 4);
+        check (prefix + "_attack", 0.1f, 100, 10);
+        check (prefix + "_release", 10, 1000, 100);
+        check (prefix + "_makeup", -12, 12, 0);
+        check (prefix + "_enabled", 0, 1, 1);
+        check (prefix + "_solo", 0, 1, 0);
+    }
+#else
+    SKIP ("requires the mastering compressor donor");
+#endif
+}
+
 namespace
 {
 constexpr double kSr    = 48000.0;

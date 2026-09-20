@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 105
-# ceiling partial 57
+# ceiling gap 103
+# ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -111,7 +111,7 @@ The interface > The transport bar	Punch right-click menu sets pre-roll and post-
 The interface > The transport bar	metronome clicks when enabled and rolling	auto	test:Metronome: enabled + rolling emits clicks;test:Metronome: disabled + not rolling stays silent
 The interface > The transport bar	TAP averages the last four intervals into a tempo	gap
 The interface > The transport bar	BPM double-click edits the tempo governing the playhead	gap
-The interface > The transport bar	clock flips between Bars.Beats.Ticks and mm:ss.mmm	gap
+The interface > The transport bar	clock flips between Bars.Beats.Ticks and mm:ss.mmm	auto	scenario:gui.clock_format_roundtrip
 The interface > The transport bar	tuner reads the selected input's pitch	auto	test:PitchDetector: recovers a harmonic tone within a few cents;test:PitchDetector: accurate across the 50-1500 Hz range;test:PitchDetector: silence reports 0 Hz
 The interface > The transport bar	Snap toggle and grid resolution	auto	test:stepForResolution: musical resolutions at 120 BPM / 48 kHz;test:stepForResolution: triplets are 2/3 of the base;test:stepForResolution: dotted resolutions are 3/2 of the base;test:snapAbsolute: rounds to nearest grid point
 The interface > The transport bar	Chase scrolls the timeline to keep the playhead in view	auto	test:The view holds still while the playhead is inside it;test:The page turns as the playhead nears the right edge;test:A playhead left of the view brings the view back to it
@@ -205,8 +205,8 @@ The mastering stage > Transport	play, stop, rewind; Space drives the mastering p
 The mastering stage > Waveform	click to seek	gap
 The mastering stage > Mastering chain	three sections each with an enable	auto	test:the mastering EQ header engages the section;test:the mastering limiter header engages the section
 The mastering stage > Mastering chain > Digital 5-band EQ	five bands at the documented types; FFT analyser	auto	test:MasteringDigitalEq magnitudeDb matches expected RBJ response;test:MasteringDigitalEq processInPlace applies the shared response;test:MasteringDigitalEq oversampling de-crams an HF bell;test:the mastering EQ curve follows a band moved in the view
-The mastering stage > Mastering chain > Bus compressor	mastering defaults; comp over silence adds no noise	auto	test:MasteringChain: comp over silent input adds no noise floor
-The mastering stage > Mastering chain > Bus compressor	nine genre presets write the multiband comp	auto	test:multiband comp presets stay within donor parameter ranges
+The mastering stage > Mastering chain > Multiband compressor	comp over silence adds no noise	auto	test:MasteringChain: comp over silent input adds no noise floor
+The mastering stage > Mastering chain > Multiband compressor	nine genre presets write the multiband comp	auto	test:multiband comp presets stay within donor parameter ranges
 The mastering stage > Mastering chain > Brickwall limiter	true-peak ceiling, threshold, program-dependent release, lookahead, modes, stereo link	auto	test:BrickwallLimiter: controls inter-sample (true) peaks;test:BrickwallLimiter: sample peaks above ceiling are clamped;test:BrickwallLimiter: release is program-dependent (deep GR recovers slower);test:BrickwallLimiter: lookahead is adjustable and holds the ceiling across its range;test:BrickwallLimiter: every mode holds the ceiling;test:BrickwallLimiter: stereo-link off limits channels independently;test:MasteringChain: hot input stays finite and at/below the ceiling
 The mastering stage > Loudness metering	momentary, short-term, integrated LUFS and true peak per BS.1770	auto	test:LoudnessMeter K-weighting matches the JUCE-designed filters;test:LoudnessMeter integrated equals momentary on a uniform program;test:LoudnessMeter relative gate excludes quiet material;test:LoudnessMeter true peak tracks a hot signal;test:LoudnessMeter gating is exact for windows sitting on the threshold
 The mastering stage > Loudness metering	Reset integrated; silence does not consume the hour	auto	test:LoudnessMeter requestReset zeroes readings and drops the history;test:LoudnessMeter silence does not consume integrated capacity
@@ -444,10 +444,10 @@ Messages > Tempo > Confirm tempo change	changing BPM with tempo-locked MIDI asks
 Messages > Startup	startup messages	n/a			index; entries are held below
 Messages > Startup > Empty recents	No recent sessions yet	gap
 
-Appendix A — Parameter ranges and defaults > Channel strip	every channel parameter within its range and at its default	partial	test:SessionSerializer::load clamps corrupt strip and hardware values;test:comp reset defaults match a fresh strip's per-mode values		ranges are clamped on load and comp defaults match; the other defaults are not checked against this table
-Appendix A — Parameter ranges and defaults > Bus strip	every bus parameter within its range and at its default	gap
-Appendix A — Parameter ranges and defaults > Aux return lane	aux return ranges and defaults	partial	test:SessionSerializer::load rejects non-finite transport and aux values		non-finite values are rejected; ranges and defaults are not checked
-Appendix A — Parameter ranges and defaults > Master bus	every master parameter within its range and at its default	partial	test:SessionSerializer::load clamps out-of-range master values;test:SessionSerializer::load defaults present invalid master floats		clamping and defaults for invalid values tested; the table's defaults are not checked
-Appendix A — Parameter ranges and defaults > Mastering chain	every mastering parameter within its range and at its default	partial	test:SessionSerializer::load clamps out-of-range mastering values;test:SessionSerializer::load defaults present invalid mastering values		clamping tested; the table's defaults are not checked
+Appendix A — Parameter ranges and defaults > Channel strip	every channel parameter within its range and at its default	auto	test:Appendix A: channel defaults and load ranges;test:Appendix A: channel insert defaults to Plugin and routes every mode		Session defaults and load bounds; fresh insert default and dry/plugin/hardware audio routing after mode changes.
+Appendix A — Parameter ranges and defaults > Bus strip	every bus parameter within its range and at its default	auto	test:Appendix A: bus defaults and load ranges		Session defaults, numeric load endpoints/clamps and toggles; ranges describe controls, not quantized DSP timing/ratio.
+Appendix A — Parameter ranges and defaults > Aux return lane	aux return ranges and defaults	auto	test:Appendix A: aux return defaults and load ranges;test:Appendix A: aux insert defaults to Empty and routes every mode		Return fader/mute defaults and load bounds; fresh insert default and dry/plugin/hardware audio routing after mode changes.
+Appendix A — Parameter ranges and defaults > Master bus	every master parameter within its range and at its default	auto	test:Appendix A: master defaults and load ranges		Session defaults, numeric load endpoints/clamps, listed frequency choices and toggles; ranges describe controls.
+Appendix A — Parameter ranges and defaults > Mastering chain	every mastering parameter within its range and at its default	auto	test:Appendix A: mastering defaults and load ranges;test:Appendix A: active multiband compressor defaults and control ranges		EQ/limiter session defaults and load bounds; active multiband processor defaults, declared control ranges and endpoint writes.
 Appendix B — File formats	session JSON, 24-bit WAV takes and bounces, embedded MIDI, XML cache, JSON bindings	partial	test:writeAtomic creates a new target and leaves no tmp behind;test:FileImporter: a matching 32-bit source is not truncated to 24-bit;scenario:bounce.master_mix_file		atomic JSON, import format and the 24-bit bounce are tested; the take format is not
 Appendix C — Glossary	definitions	n/a			reference
