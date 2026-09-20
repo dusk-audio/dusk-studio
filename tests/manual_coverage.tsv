@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 99
+# ceiling gap 98
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -140,7 +140,7 @@ The channel strip > Input block (RECORDING stage)	activity LED blinks when MIDI 
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	ARM refuses with no input device and says so	auto	test:An audio track cannot arm while the device offers no inputs;test:An audio track arms once the device reports capture channels;test:Arming is allowed before a device has reported its capture width
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	losing the inputs disarms audio tracks and spares MIDI	auto	test:Losing the capture channels disarms the audio tracks and spares MIDI;test:A narrower device disarms only the tracks it cannot feed
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	ARM refuses a track whose input is missing or None	auto	test:A track whose input the device does not offer cannot arm;test:A track set to no input cannot arm;test:A MIDI track arms with no audio inputs
-The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	the refusal names the missing input and opens the input settings	gap
+The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	the refusal names the missing input and opens the input settings	auto	scenario:gui.arm_input_refusal		clicks ARM with an unavailable input and None, checks the alert and unlit ARM, clicks OK and verifies input settings open
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	IN monitors the live input through the strip	auto	scenario:engine.pipeline_selftest
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	PRINT commits EQ, comp and insert to the recorded file	partial	scenario:strip.print_commits_the_strip		the EQ and the compressor are tested in the take; the insert is not
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	FREEZE renders the track, bypasses its DSP, locks it, and is saved	auto	test:SessionSerializer round-trips track freeze state;test:A frozen track still refuses to arm with inputs available;scenario:region.frozen_track_refuses_edits;scenario:strip.freeze_renders_and_bypasses

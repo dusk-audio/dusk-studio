@@ -62,6 +62,14 @@ public:
     // Click MUTE / SOLO as the mouse would; the click lands on a later tick.
     void clickMuteForScenario();
     void clickSoloForScenario();
+    bool clickArmForScenario()
+    {
+        if (! armButton.isShowing()) return false;
+        armButton.triggerClick();
+        return true;
+    }
+    bool armLitForScenario() const { return armButton.getToggleState(); }
+    bool inputSettingsOpenForScenario() const { return ioConfigModal.isOpen(); }
     // Scenario-harness only: the mode label and whether the fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }

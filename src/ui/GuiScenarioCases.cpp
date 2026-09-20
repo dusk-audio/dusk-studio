@@ -1348,5 +1348,71 @@ const ScenarioRegistrar tapTempo { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runTapTempo (host, ctx); }
 } };
+std::optional<ScenarioResult> runArmInputRefusal (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&session, &track, channels = session.deviceCaptureChannels.load(),
+                  mode = track.mode.load(), input = track.inputSource.load(), armed = track.recordArmed.load()]
+    {
+        session.deviceCaptureChannels.store (channels);
+        track.mode.store (mode);
+        track.inputSource.store (input);
+        session.setTrackArmed (0, armed);
+    });
+    const auto stage = ctx.engine().getStage();
+    ctx.cleanup ([&host, stage]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        switch (stage)
+        {
+            case AudioEngine::Stage::Recording: host.switchToStage (GuiHost::Stage::Recording); break;
+            case AudioEngine::Stage::Mixing: host.switchToStage (GuiHost::Stage::Mixing); break;
+            case AudioEngine::Stage::Aux: host.switchToStage (GuiHost::Stage::Aux); break;
+            case AudioEngine::Stage::Mastering: host.switchToStage (GuiHost::Stage::Mastering); break;
+        }
+    });
+    host.switchToStage (GuiHost::Stage::Recording);
+    session.deviceCaptureChannels.store (1);
+    track.mode.store ((int) Track::Mode::Mono);
+    track.frozen.store (false);
+    session.setTrackArmed (0, false);
+    auto* strip = host.strip (0);
+    if (! ctx.expect (strip != nullptr, "the recording strip is missing")) return ctx.verdict();
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const int input : { 7, -1 })
+    {
+        steps->push_back ({ 100, [&ctx, &track, strip, input]
+        {
+            track.inputSource.store (input);
+            ctx.expect (strip->clickArm(), "ARM is not visible");
+        } });
+        steps->push_back ({ 100, [&host, &ctx, &track, strip, input]
+        {
+            ctx.expect (! track.recordArmed.load() && ! strip->armLit(),
+                        "a refused input left ARM enabled");
+            const auto text = host.modalText();
+            ctx.expect (text.find ("No input for " + track.name.toStdString()) != std::string::npos,
+                        "the refusal did not name the track");
+            const auto reason = input == -1 ? "has no input selected" : "records from In 8, and the audio device has 1 input(s)";
+            ctx.expect (text.find (reason) != std::string::npos, "the refusal did not explain the missing input");
+            ctx.expect (host.clickModalButton ("OK"), "the refusal has no usable OK button");
+        } });
+        steps->push_back ({ 100, [&host, &ctx, strip]
+        {
+            ctx.expect (strip->inputSettingsOpen(), "acknowledging the refusal did not open input settings");
+            host.closeTopModal();
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar armInputRefusal { Scenario {
+    "gui.arm_input_refusal", { "gui", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runArmInputRefusal (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

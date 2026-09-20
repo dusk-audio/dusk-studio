@@ -47,6 +47,9 @@ public:
     // Click MUTE / SOLO as the mouse would; the click lands on a later tick.
     virtual void clickMute() = 0;
     virtual void clickSolo() = 0;
+    virtual bool clickArm() = 0;
+    virtual bool armLit() const = 0;
+    virtual bool inputSettingsOpen() const = 0;
 };
 
 // One aux lane's plug-in slots.
@@ -95,6 +98,8 @@ public:
 
     virtual bool canEmbedPluginEditors() const = 0;
     virtual bool modalStackEmpty() const = 0;
+    virtual std::string modalText() const = 0;
+    virtual bool clickModalButton (const std::string& label) = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.
     virtual void closeTopModal() = 0;
 

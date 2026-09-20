@@ -171,6 +171,24 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         if (auto* component = strip()) component->clickSoloForScenario();
     }
 
+    bool clickArm() override
+    {
+        auto* component = strip();
+        return component != nullptr && component->clickArmForScenario();
+    }
+
+    bool armLit() const override
+    {
+        auto* component = strip();
+        return component != nullptr && component->armLitForScenario();
+    }
+
+    bool inputSettingsOpen() const override
+    {
+        auto* component = strip();
+        return component != nullptr && component->inputSettingsOpenForScenario();
+    }
+
     ChannelStripComponent* strip() const
     {
         return owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index)
@@ -370,6 +388,30 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool modalStackEmpty() const override
     {
         return EmbeddedModal::activeModalStack().empty();
+    }
+
+    std::string modalText() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* body = stack.back()->getBody();
+        return body == nullptr ? std::string {}
+                               : body->getTitle().toStdString() + "\n" + body->getDescription().toStdString();
+    }
+
+    bool clickModalButton (const std::string& label) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        for (auto* child : stack.back()->getBody()->getChildren())
+            if (auto* button = dynamic_cast<decltype (owner.recordingStageBtn)*> (child);
+                button != nullptr && button->isShowing() && button->isEnabled()
+                && button->getButtonText().toStdString() == label)
+            {
+                button->triggerClick();
+                return true;
+            }
+        return false;
     }
 
     void closeTopModal() override
