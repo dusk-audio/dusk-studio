@@ -205,3 +205,66 @@ TEST_CASE ("MIDI bindings import clamps a hand-edited preset", "[midi][bindings]
     CHECK (b.buttonMode == MidiButtonMode::Toggle);
     CHECK (b.isValid());
 }
+
+// A target index past its range is not a binding anyone could have made in the
+// app, and a bank-relative one has the active bank added to it before the
+// dispatch bounds-checks anything. Those entries never reach the vector.
+TEST_CASE ("MIDI bindings import drops an out-of-range target index", "[midi][bindings]")
+{
+    auto importOne = [] (int target, int idx)
+    {
+        return deserializeBindingsPreset (
+            R"({"format_version":1,"bindings":[{"channel":1,"data":20,"trigger":0,)"
+            "\"target\":" + std::to_string (target) + ",\"target_idx\":"
+            + std::to_string (idx) + "}]}");
+    };
+
+    SECTION ("past the track count")
+    {
+        const auto restored = importOne ((int) MidiBindingTarget::TrackFader,
+                                         SessionLayout::kNumTracks);
+        REQUIRE (restored.has_value());
+        CHECK (restored->empty());
+    }
+    SECTION ("past the bus count")
+    {
+        const auto restored = importOne ((int) MidiBindingTarget::BusMute,
+                                         SessionLayout::kNumBuses);
+        REQUIRE (restored.has_value());
+        CHECK (restored->empty());
+    }
+    SECTION ("a bank position that would overflow the bank offset")
+    {
+        const auto restored = importOne ((int) MidiBindingTarget::TrackFaderBank,
+                                         2147483647);
+        REQUIRE (restored.has_value());
+        CHECK (restored->empty());
+    }
+    SECTION ("negative")
+    {
+        const auto restored = importOne ((int) MidiBindingTarget::TrackPan, -1);
+        REQUIRE (restored.has_value());
+        CHECK (restored->empty());
+    }
+    SECTION ("the last legal index of each range still imports")
+    {
+        for (auto target : allTargets())
+        {
+            const auto restored = importOne ((int) target, maxTargetIndexFor (target));
+            REQUIRE (restored.has_value());
+            CHECK (restored->size() == 1);
+        }
+    }
+}
+
+// A plugin parameter id from a hand-edited file is clamped, not handed to the
+// host as written.
+TEST_CASE ("MIDI bindings import clamps the plugin parameter index", "[midi][bindings]")
+{
+    const auto restored = deserializeBindingsPreset (
+        R"({"format_version":1,"bindings":[{"channel":1,"data":20,"trigger":0,
+            "target":110,"target_idx":2,"param_idx":99999999}]})");
+    REQUIRE (restored.has_value());
+    REQUIRE (restored->size() == 1);
+    CHECK (restored->front().paramIndex == kMaxBindingParamIndex);
+}

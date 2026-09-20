@@ -28,6 +28,12 @@ namespace duskstudio
 {
 namespace json = ::dusk::json;
 
+// maxTargetIndexFor lives next to the binding types, which can't see the
+// session's counts, so it packs (track, aux) with its own lane constant.
+static_assert (kPackedAuxLanes == Session::kNumAuxLanes
+               && kPackedAuxLanes == ChannelStripParams::kNumAuxSends,
+               "binding aux-lane packing must match the session's aux lanes");
+
 namespace
 {
 // clamp with jlimit's argument order (lo, hi, value).
@@ -2679,40 +2685,13 @@ bool SessionSerializer::load (Session& s, const File& source)
                     default:
                         b.target = MidiBindingTarget::None; break;
                 }
-                // Bus targets index 0..kNumBuses-1; aux-send targets pack
-                // (track, aux) so range is 0..(kNumTracks*kNumAuxSends-1);
-                // bank-relative variants use position 0..kBankSize-1 (or a
-                // packed pos*N+sub range for the AuxSend/EqGain bank
-                // variants); everything else uses 0..kNumTracks-1 (global
-                // targets ignore the field).
-                const int rawIdx = json::getInt (v, "target_idx", 0);
-                const bool bankRelative = isBankRelativeTarget (b.target);
-                const int maxIdx = needsBusIndex (b.target)
-                    ? Session::kNumBuses - 1
-                    : (needsPackedBusEqIndex (b.target)
-                        ? Session::kNumBuses * kBusEqBands - 1
-                    : (needsAuxLaneIndex (b.target)
-                        ? Session::kNumAuxLanes - 1
-                        : (needsPackedTrackAuxIndex (b.target)
-                            ? Session::kNumTracks * ChannelStripParams::kNumAuxSends - 1
-                            : (needsPackedTrackEqIndex (b.target)
-                                ? Session::kNumTracks * kPackedEqBands - 1
-                                : (bankRelative
-                                    ? (b.target == MidiBindingTarget::TrackAuxSendBank
-                                        ? Session::kBankSize * kPackedAuxLanes - 1
-                                        : ((b.target == MidiBindingTarget::TrackEqGainBank
-                                            || b.target == MidiBindingTarget::TrackEqFreqBank
-                                            || b.target == MidiBindingTarget::TrackEqQBank)
-                                            ? Session::kBankSize * kPackedEqBands - 1
-                                            : Session::kBankSize - 1))
-                                    : Session::kNumTracks - 1)))));
-                b.targetIndex = jlimit (0, maxIdx, rawIdx);
+                b.targetIndex = jlimit (0, maxTargetIndexFor (b.target),
+                                        json::getInt (v, "target_idx", 0));
                 // paramIndex only meaningful for TrackPluginParam, but
-                // round-trip unconditionally for forward-compat. Clamp
-                // wide so future plugins with hundreds of params
-                // round-trip cleanly.
+                // round-trip unconditionally for forward-compat.
                 if (json::has (v, "param_idx"))
-                    b.paramIndex = jlimit (0, 65535, json::getInt (v, "param_idx", 0));
+                    b.paramIndex = jlimit (0, kMaxBindingParamIndex,
+                                           json::getInt (v, "param_idx", 0));
                 if (json::has (v, "button_mode"))
                     b.buttonMode = (MidiButtonMode) jlimit (0, 1, json::getInt (v, "button_mode", 0));
                 if (b.isValid())

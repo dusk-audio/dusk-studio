@@ -1,6 +1,9 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+
+#include "SessionLayout.h"
+
 #include <optional>
 #include <string>
 #include <vector>
@@ -254,6 +257,33 @@ constexpr bool needsPackedBusEqIndex (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::BusEqGain;
 }
+
+// Highest legal targetIndex for a target. The session loader and the preset
+// importer both gate on this: the dispatch bounds-checks every read, but a
+// bank-relative binding has activeBank * kBankSize added to its index before
+// any of those checks, so an index left untrusted overflows the add rather
+// than failing it. Targets that ignore the field report the track range.
+constexpr int maxTargetIndexFor (MidiBindingTarget t) noexcept
+{
+    if (needsBusIndex (t))            return SessionLayout::kNumBuses - 1;
+    if (needsPackedBusEqIndex (t))    return SessionLayout::kNumBuses * kBusEqBands - 1;
+    if (needsAuxLaneIndex (t))        return kPackedAuxLanes - 1;
+    if (needsPackedTrackAuxIndex (t)) return SessionLayout::kNumTracks * kPackedAuxLanes - 1;
+    if (needsPackedTrackEqIndex (t))  return SessionLayout::kNumTracks * kPackedEqBands - 1;
+    if (t == MidiBindingTarget::TrackAuxSendBank)
+        return SessionLayout::kBankSize * kPackedAuxLanes - 1;
+    if (t == MidiBindingTarget::TrackEqGainBank
+        || t == MidiBindingTarget::TrackEqFreqBank
+        || t == MidiBindingTarget::TrackEqQBank)
+        return SessionLayout::kBankSize * kPackedEqBands - 1;
+    if (isBankRelativeTarget (t))     return SessionLayout::kBankSize - 1;
+    return SessionLayout::kNumTracks - 1;
+}
+
+// TrackPluginParam only. Wide enough for a plugin with hundreds of
+// parameters; narrow enough that a hand-edited file can't hand the host a
+// nonsense parameter id.
+constexpr int kMaxBindingParamIndex = 65535;
 
 struct MidiBinding
 {

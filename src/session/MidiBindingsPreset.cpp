@@ -136,8 +136,13 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const std::st
             default:
                 continue; // skip this entry, unknown target
         }
-        b.targetIndex = dusk::json::getInt (v, "target_idx", 0);
-        b.paramIndex  = dusk::json::getInt (v, "param_idx", 0);
+        // Dropped rather than clamped: a clamped index binds a control the
+        // preset never named.
+        const int rawIdx = dusk::json::getInt (v, "target_idx", 0);
+        if (rawIdx < 0 || rawIdx > maxTargetIndexFor (b.target)) continue;
+        b.targetIndex = rawIdx;
+        b.paramIndex  = std::clamp (dusk::json::getInt (v, "param_idx", 0),
+                                    0, kMaxBindingParamIndex);
         if (v.contains ("button_mode"))
             b.buttonMode = (MidiButtonMode) std::clamp (dusk::json::getInt (v, "button_mode", 0), 0, 1);
         if (b.isValid()) out.push_back (b);
