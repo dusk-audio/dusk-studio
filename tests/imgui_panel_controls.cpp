@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <string>
+#include <vector>
 
 // The settings panels' form controls, driven with no window, no GL and no compositor:
 // a frame is submitted, synthetic pointer events are fed through Dear ImGui's own input
@@ -410,4 +411,62 @@ TEST_CASE ("formCombo on a disabled row does not open")
 
     REQUIRE_FALSE (picked);
     REQUIRE (selected == 1);
+}
+
+TEST_CASE ("empty startup recents paints its message and offers New or Open")
+{
+    HeadlessPanel panel;
+    auto view = makeStartupView ({}, { "Blank" }, nullptr, 0, 0, {});
+    const auto draw = [&] (dw::Context& ctx)
+    { view->draw (ctx, ImVec2 (20.0f, 20.0f), view->preferredSize()); };
+    panel.frame (draw);
+
+    std::vector<ImDrawVert> painted;
+    for (const auto& vertex : panel.drawList()->VtxBuffer)
+        if (vertex.col == IM_COL32 (0x70, 0x70, 0x78, 0xff)
+            && vertex.pos.x > 120.0f && vertex.pos.y < 400.0f)
+            painted.push_back (vertex);
+    ImDrawList expected (ImGui::GetDrawListSharedData());
+    expected._ResetForNewFrame();
+    expected.PushClipRectFullScreen();
+    expected.PushTextureID (ImGui::GetIO().Fonts->TexID);
+    expected.AddText (ImGui::GetIO().Fonts->Fonts.front(), 13.0f,
+                      ImVec2 (0.0f, 0.0f), IM_COL32_WHITE, "No recent sessions yet.");
+    REQUIRE (painted.size() == static_cast<std::size_t> (expected.VtxBuffer.Size));
+    REQUIRE_FALSE (painted.empty());
+    for (int i = 0; i < expected.VtxBuffer.Size; ++i)
+    {
+        const auto& actual = painted[static_cast<std::size_t> (i)];
+        const auto& reference = expected.VtxBuffer[i];
+        REQUIRE_THAT (actual.uv.x, WithinAbs (reference.uv.x, 1.0e-6));
+        REQUIRE_THAT (actual.uv.y, WithinAbs (reference.uv.y, 1.0e-6));
+        REQUIRE_THAT (actual.pos.x - painted.front().pos.x,
+                      WithinAbs (reference.pos.x - expected.VtxBuffer[0].pos.x, 0.01));
+        REQUIRE_THAT (actual.pos.y - painted.front().pos.y,
+                      WithinAbs (reference.pos.y - expected.VtxBuffer[0].pos.y, 0.01));
+    }
+    REQUIRE (view->chosenAction() == StartupAction::none);
+    const auto click = [&] (float x, float y)
+    {
+        panel.movePointer (ImVec2 (x, y));
+        panel.frame (draw);
+        panel.frame (draw);
+        panel.pressPointer (true);
+        panel.frame (draw);
+        panel.pressPointer (false);
+        panel.frame (draw);
+    };
+    SECTION ("Open requests a browser without a recent session")
+    {
+        click (70.0f, 200.0f);
+        REQUIRE (view->chosenAction() == StartupAction::openFile);
+    }
+    SECTION ("New offers a template without a recent session")
+    {
+        click (70.0f, 236.0f);
+        REQUIRE (view->chosenAction() == StartupAction::none);
+        click (250.0f, 100.0f);
+        REQUIRE (view->chosenAction() == StartupAction::newSession);
+        REQUIRE (view->chosenTemplate() == 0);
+    }
 }

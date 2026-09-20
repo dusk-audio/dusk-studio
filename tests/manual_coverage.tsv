@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 86
+# ceiling gap 85
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -442,7 +442,7 @@ Messages > Hardware insert	ping results: no input, failed, detected	auto	test:Ha
 Messages > Tempo	tempo alerts	n/a			index; entries are held below
 Messages > Tempo > Confirm tempo change	changing BPM with tempo-locked MIDI asks first; audio and markers stay put	partial	test:applyTempoChange halving BPM doubles locked region positions, leaves float regions;test:applyTempoChange round-trip 120-96-120 returns near-original positions		the retime is tested; the confirmation is not
 Messages > Startup	startup messages	n/a			index; entries are held below
-Messages > Startup > Empty recents	No recent sessions yet	gap
+Messages > Startup > Empty recents	No recent sessions yet	auto	test:empty startup recents paints its message and offers New or Open
 
 Appendix A — Parameter ranges and defaults > Channel strip	every channel parameter within its range and at its default	auto	test:Appendix A: channel defaults and load ranges;test:Appendix A: channel insert defaults to Plugin and routes every mode		Session defaults and load bounds; fresh insert default and dry/plugin/hardware audio routing after mode changes.
 Appendix A — Parameter ranges and defaults > Bus strip	every bus parameter within its range and at its default	auto	test:Appendix A: bus defaults and load ranges		Session defaults, numeric load endpoints/clamps and toggles; ranges describe controls, not quantized DSP timing/ratio.
