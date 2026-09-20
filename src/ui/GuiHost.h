@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <cstdint>
 #include <string>
 
 // What a GUI scenario is allowed to touch. Everything a case would otherwise
@@ -73,6 +74,12 @@ public:
     enum class Stage { Mixing, Aux };
     virtual void switchToStage (Stage) = 0;
 
+    virtual bool openPiano (int track, int region) = 0;
+    virtual void closePiano() = 0;
+    virtual bool clickPianoCcToggle() = 0;
+    virtual bool pianoCcPointer (std::int64_t tick, int value, bool down) = 0;
+    virtual bool pressPeerKey (const std::string& description, char text) = 0;
+    virtual int pianoCcController() const = 0;
     virtual bool clickTimeFormat() = 0;
     virtual std::string clockText() const = 0;
 

@@ -919,6 +919,74 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runPianoCcEditing (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no open modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        host.pianoCcPointer (1200, 64, false);
+        host.closePiano();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    MidiRegion region;
+    region.lengthInTicks = 7680;
+    region.lengthInSamples = session.ticksToSamples (region.lengthInTicks, engine.getCurrentSampleRate());
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::initializer_list<MidiRegion> { region }));
+    session.midiEditorSnap = true;
+    if (! host.openPiano (0, 0)) return ScenarioResult::fail ("piano roll did not open");
+    const auto check = [&ctx, &session] (size_t count, int controller, int value, std::int64_t tick)
+    {
+        const auto& events = session.track (0).midiRegions.current()[0].ccs;
+        ctx.expect (events.size() == count, "unexpected number of CC events");
+        const auto event = std::find_if (events.begin(), events.end(), [controller, tick] (const auto& cc)
+        { return cc.controller == controller && cc.atTick == tick; });
+        if (! ctx.expect (event != events.end(), "CC event has wrong controller or tick")) return;
+        ctx.expect (event->channel == 1, "CC event has wrong MIDI channel");
+        ctx.expect (std::abs (event->value - value) <= 1,
+                    "painted CC position has wrong value: " + std::to_string (event->value));
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickPianoCcToggle(), "CC toolbar button is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (host.pianoCcController() == 1, "default CC is not Mod Wheel");
+        ctx.expect (host.pianoCcPointer (1200, 64, true), "CC click failed");
+        host.pianoCcPointer (1200, 64, false);
+    } });
+    steps->push_back ({ 150, [check, &host] { check (1, 1, 64, 1200); host.pianoCcPointer (1200, 64, true); } });
+    steps->push_back ({ 150, [&host] { host.pianoCcPointer (1200, 100, true); } });
+    steps->push_back ({ 150, [&host] { host.pianoCcPointer (1200, 100, false); } });
+    steps->push_back ({ 150, [check, &host, &ctx]
+    {
+        check (1, 1, 100, 1200);
+        ctx.expect (host.pressPeerKey ("L", 'l'), "controller key was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        ctx.expect (host.pianoCcController() == 7, "controller did not change to Volume");
+        host.pianoCcPointer (2400, 32, true);
+        host.pianoCcPointer (2400, 32, false);
+    } });
+    steps->push_back ({ 150, [check] { check (2, 7, 32, 2400); check (2, 1, 100, 1200); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoCcEditing { Scenario {
+    "gui.piano_cc_editing", { "gui", "piano" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoCcEditing (host, ctx); }
+} };
+
 // ---------------------------------------------------------------- autosave
 
 bool nearly (float a, float b) { return std::abs (a - b) < 1.0e-4f; }

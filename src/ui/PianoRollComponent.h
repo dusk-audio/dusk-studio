@@ -346,6 +346,15 @@ public:
     // MainComponent calls when a global hotkey flips session.editMode
     // while the modal is open so the toolbar repaints.
     void syncEditModeToolbar();
+    auto ccTogglePointForScenario() const { return toggleCcButton.getBounds().getCentre(); }
+    auto ccPointForScenario (std::int64_t tick, int value) const
+    {
+        return getLocalBounds().getTopLeft().translated (xForTick (tick),
+            getHeight() - kStatusBarH - kScrollBarH - ccStripH
+                + (int) std::round ((1.0 - value / 127.0) * ccStripH));
+    }
+    int ccControllerForScenario() const { return activeCcController; }
+
 private:
     // Note grid (excludes toolbar / ruler / keyboard column / velocity +
     // CC strips / scrollbar / status bar). Used to gate edit-mode cursor

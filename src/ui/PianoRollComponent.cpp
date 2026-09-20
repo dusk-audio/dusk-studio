@@ -2270,7 +2270,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // (right of the keyboard, above the velocity / cc strips) so middle-
     // clicking the toolbar / keyboard / strips still does nothing.
     const int gridTop    = kToolbarHeight + kHeaderHeight;
-    const int ccTop      = getHeight() - kStatusBarH - ccStripH;
+    const int ccTop      = getHeight() - kStatusBarH - kScrollBarH - ccStripH;
     const int velTopY    = ccTop - velocityStripH;
     if (e.mods.isMiddleButtonDown()
         && e.x >= kKeyboardWidth
@@ -2368,7 +2368,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // Bottom-strip layout: status bar at the very bottom, CC lane
     // above it, velocity lane above the CC lane. Compute the rects
     // inline so they match paint().
-    const int  ccBottom    = getHeight() - kStatusBarH;
+    const int  ccBottom    = getHeight() - kStatusBarH - kScrollBarH;
     const auto ccArea = juce::Rectangle<int> (
         kKeyboardWidth, ccBottom - ccStripH,
         getWidth() - kKeyboardWidth, ccStripH);
@@ -2688,7 +2688,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
     {
         if (draggedCcIdx < 0 || draggedCcIdx >= (int) r->ccs.size()) return;
         const auto ccArea = juce::Rectangle<int> (
-            kKeyboardWidth, getHeight() - kStatusBarH - ccStripH,
+            kKeyboardWidth, getHeight() - kStatusBarH - kScrollBarH - ccStripH,
             getWidth() - kKeyboardWidth, ccStripH);
         const float frac = jlimit (0.0f, 1.0f,
             1.0f - ((float) (e.y - ccArea.getY())
@@ -2753,7 +2753,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
     else if (dragMode == DragMode::EditVelocity)
     {
         const auto velocityArea = juce::Rectangle<int> (
-            kKeyboardWidth, getHeight() - kStatusBarH - ccStripH - velocityStripH,
+            kKeyboardWidth, getHeight() - kStatusBarH - kScrollBarH - ccStripH - velocityStripH,
             getWidth() - kKeyboardWidth, velocityStripH);
         const float frac = jlimit (0.0f, 1.0f,
             1.0f - ((float) (e.y - velocityArea.getY())
@@ -2836,7 +2836,7 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
 
     // Resize-handle hover feedback for the velocity / cc lane top edges.
     // The handle is the kStripResizeGrabPx-tall strip above each lane.
-    const int ccTop  = getHeight() - kStatusBarH - ccStripH;
+    const int ccTop  = getHeight() - kStatusBarH - kScrollBarH - ccStripH;
     const int velTop = ccTop - velocityStripH;
     if (e.x >= kKeyboardWidth)
     {
@@ -3388,7 +3388,7 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
     // Wheel inside the velocity / cc strip = zoom that strip vertically.
     // Wheel-up grows, wheel-down shrinks. Same min/max envelope as the
     // drag-resize gesture so both gestures land in the same valid range.
-    const int ccTop  = getHeight() - kStatusBarH - ccStripH;
+    const int ccTop  = getHeight() - kStatusBarH - kScrollBarH - ccStripH;
     const int velTop = ccTop - velocityStripH;
     if (e.x >= kKeyboardWidth)
     {

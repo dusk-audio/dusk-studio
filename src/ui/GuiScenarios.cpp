@@ -9,11 +9,13 @@
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
 #include "PlatformWindowing.h"
+#include "PianoRollComponent.h"
 #include "TransportBar.h"
 #include "../engine/scenario/SuiteRunner.h"
 
 #include <array>
 #include <cstddef>
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -39,6 +41,23 @@ HostFile hostFile (const std::filesystem::path& path)
 {
     return HostFile (HostString::fromUTF8 (path.u8string().c_str()));
 }
+template <typename Owner, typename Key>
+bool dispatchKey (Owner& owner, bool (Owner::*handler) (const Key&),
+                  const std::string& description, char text)
+{
+    const auto key = Key::createFromDescription (HostString (description.c_str()));
+    return (owner.*handler) (Key (key.getKeyCode(), key.getModifiers(), text));
+}
+
+template <typename Peer, typename Source, typename Point, typename Modifiers, typename... Rest>
+void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modifiers, Rest...),
+                          float x, float y, bool down, std::int64_t time)
+{
+    const int flags = down ? Modifiers::leftButtonModifier : 0;
+    (peer.*handler) (Source::mouse, Point (x, y) * peer.getComponent().getDesktopScaleFactor(), Modifiers (flags),
+                    1.0f, 0.0f, time, {}, 0);
+}
+
 } // namespace
 
 struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
@@ -220,6 +239,50 @@ struct MainComponent::ScenarioAuxLaneHandle final : scenario::AuxLaneHandle
 struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 {
     explicit ScenarioGuiHost (MainComponent& ownerIn) : owner (ownerIn) {}
+
+    bool openPiano (int track, int region) override
+    {
+        if (owner.pianoRoll != nullptr) return false;
+        owner.openPianoRoll (track, region);
+        return owner.pianoRoll != nullptr;
+    }
+    void closePiano() override { owner.closePianoRoll(); }
+    bool pressPeerKey (const std::string& description, char text) override
+    {
+        auto* peer = owner.getPeer();
+        if (peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        return dispatchKey (*peer, &Peer::handleKeyPress, description, text);
+    }
+    bool pianoPointer (int x, int y, bool down)
+    {
+        auto* editor = owner.pianoRoll.get();
+        auto* peer = owner.getPeer();
+        if (editor == nullptr || peer == nullptr) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor,
+            editor->getLocalBounds().getTopLeft().translated (x, y)).toFloat();
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        dispatchMouseButton (*peer, &Peer::handleMouseEvent, point.x, point.y, down, time);
+        return true;
+    }
+    bool clickPianoCcToggle() override
+    {
+        if (owner.pianoRoll == nullptr) return false;
+        const auto point = owner.pianoRoll->ccTogglePointForScenario();
+        return pianoPointer (point.x, point.y, true) && pianoPointer (point.x, point.y, false);
+    }
+    bool pianoCcPointer (std::int64_t tick, int value, bool down) override
+    {
+        if (owner.pianoRoll == nullptr) return false;
+        const auto point = owner.pianoRoll->ccPointForScenario (tick, value);
+        return pianoPointer (point.x, point.y, down);
+    }
+    int pianoCcController() const override
+    {
+        return owner.pianoRoll != nullptr ? owner.pianoRoll->ccControllerForScenario() : -1;
+    }
 
     bool clickTimeFormat() override
     {
