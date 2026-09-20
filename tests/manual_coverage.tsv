@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 61
+# ceiling gap 60
 # ceiling partial 49
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -107,7 +107,7 @@ The interface > The transport bar	a chase-driven stop leaves the playhead where 
 The interface > The transport bar	Rewind and Forward tap to markers, hold to scrub at 10x	partial	test:McuReceiver: REWIND / FAST-FORWARD publish held-state on press and release;scenario:marker.rewind_forward_jump		surface press/hold state and marker jumps tested; the 180 ms hold threshold and 10x scrub are not
 The interface > The transport bar	Play snaps to loop start when outside the loop	auto	scenario:transport.play_snaps_to_loop_start
 The interface > The transport bar	Record needs an armed track	auto	test:An audio track cannot arm while the device offers no inputs;test:A track whose input the device does not offer cannot arm
-The interface > The transport bar	Punch right-click menu sets pre-roll and post-roll	gap
+The interface > The transport bar	Punch right-click menu sets pre-roll and post-roll	auto	scenario:gui.punch_menu		peer right-click opens Punch settings; enable rows toggle both ways, pre/post submenus select 2 s/5 s and Off, without toggling punch or leaving menus open
 The interface > The transport bar	metronome clicks when enabled and rolling	auto	test:Metronome: enabled + rolling emits clicks;test:Metronome: disabled + not rolling stays silent
 The interface > The transport bar	TAP averages the last four intervals into a tempo	auto	scenario:gui.tap_tempo_intervals		uneven B taps verify four-interval averaging, oldest-interval eviction and reset after a two-second gap
 The interface > The transport bar	BPM double-click edits the tempo governing the playhead	auto	scenario:gui.tempo_entry		peer double-click and text entry retain fractional constant tempo, then edit only the middle tempo-map point governing a stopped playhead

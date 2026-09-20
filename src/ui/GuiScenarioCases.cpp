@@ -2841,5 +2841,66 @@ const ScenarioRegistrar automationMenu { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAutomationMenu (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runPunchMenu (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    ctx.keep (session.preRollEnabled);
+    ctx.keep (session.postRollEnabled);
+    ctx.keep (session.preRollSeconds);
+    ctx.keep (session.postRollSeconds);
+    ctx.cleanup ([&host] { host.closeTopModal(); host.closeTopModal(); });
+    session.preRollEnabled.store (false);
+    session.postRollEnabled.store (false);
+    session.preRollSeconds.store (0.0f);
+    session.postRollSeconds.store (0.0f);
+    const bool punch = ctx.engine().getTransport().isPunchEnabled();
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool enabled : { true, false })
+        for (const bool post : { false, true })
+        {
+            steps->push_back ({ 500, [&host, &ctx]
+            { ctx.expect (host.rightClickPunch(), "the Punch button was unavailable for right-click"); } });
+            steps->push_back ({ 150, [&host, &ctx, post]
+            { ctx.expect (host.clickModalAt (0.5f, (post ? 112.0f : 48.0f) / 166.0f), "the roll enable row was unavailable"); } });
+            steps->push_back ({ 150, [&host, &ctx, &session, post, enabled, punch]
+            {
+                ctx.expect ((post ? session.postRollEnabled.load() : session.preRollEnabled.load()) == enabled,
+                            "the Punch menu did not toggle the selected roll mode");
+                ctx.expect (ctx.engine().getTransport().isPunchEnabled() == punch,
+                            "a Punch context-menu gesture toggled punch recording");
+                ctx.expect (host.modalStackEmpty(), "choosing a roll enable row left its menu open");
+            } });
+        }
+    for (const bool off : { false, true })
+        for (const bool post : { false, true })
+        {
+            steps->push_back ({ 500, [&host, &ctx]
+            { ctx.expect (host.rightClickPunch(), "the Punch button was unavailable for its preset menu"); } });
+            steps->push_back ({ 150, [&host, &ctx, post]
+            { ctx.expect (host.clickModalAt (0.5f, (post ? 144.0f : 80.0f) / 166.0f), "the roll-duration submenu was unavailable"); } });
+            steps->push_back ({ 150, [&host, &ctx, post, off]
+            {
+                const int row = off ? 0 : post ? 4 : 2;
+                ctx.expect (host.clickModalAt (0.5f, (static_cast<float> (row) + 0.5f) / 6.0f),
+                            "the roll-duration preset was unavailable");
+            } });
+            steps->push_back ({ 150, [&host, &ctx, &session, post, off]
+            {
+                const float expected = off ? 0.0f : post ? 5.0f : 2.0f;
+                ctx.expect (std::abs ((post ? session.postRollSeconds.load() : session.preRollSeconds.load()) - expected) < 0.001f,
+                            "the Punch submenu did not set the selected roll duration");
+                ctx.expect (host.modalStackEmpty(), "choosing a preset left its parent or submenu open");
+            } });
+        }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar punchMenu { Scenario {
+    "gui.punch_menu", { "gui", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPunchMenu (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

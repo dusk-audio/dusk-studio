@@ -57,9 +57,10 @@ bool dispatchKey (Owner& owner, bool (Owner::*handler) (const Key&),
 
 template <typename Peer, typename Source, typename Point, typename Modifiers, typename... Rest>
 void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modifiers, Rest...),
-                          float x, float y, bool down, std::int64_t time)
+                          float x, float y, bool down, std::int64_t time, bool right = false)
 {
-    (peer.*handler) (Source::mouse, Point (x, y), Modifiers (down ? Modifiers::leftButtonModifier : 0),
+    const int flags = down ? (right ? Modifiers::rightButtonModifier : Modifiers::leftButtonModifier) : 0;
+    (peer.*handler) (Source::mouse, Point (x, y), Modifiers (flags),
                     1.0f, 0.0f, time, {}, 0);
 }
 
@@ -529,6 +530,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return clickAt (point.x, point.y, 2);
     }
 
+    bool rightClickPunch() override
+    {
+        auto* bar = owner.transportBar.get();
+        if (bar == nullptr || ! bar->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (bar, bar->punchPointForScenario()).toFloat();
+        return clickAt (point.x, point.y, 1, true);
+    }
+
     bool focusModalTextInput() override
     {
         const auto& stack = EmbeddedModal::activeModalStack();
@@ -614,7 +623,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return true;
     }
 
-    bool clickAt (float x, float y, int count)
+    bool clickAt (float x, float y, int count, bool right = false)
     {
         auto* peer = owner.getPeer();
         if (peer == nullptr) return false;
@@ -623,8 +632,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             std::chrono::system_clock::now().time_since_epoch()).count();
         for (int click = 0; click < count; ++click)
         {
-            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, true, time + click * 40);
-            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, false, time + click * 40 + 20);
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, true, time + click * 40, right);
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, false, time + click * 40 + 20, right);
         }
         return true;
     }

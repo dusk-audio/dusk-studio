@@ -89,6 +89,7 @@ public:
     }
     std::string clockTextForScenario() const { return clockLabel.getText().toStdString(); }
     auto bpmPointForScenario() const { return bpmValue.getBounds().getCentre(); }
+    auto punchPointForScenario() const { return punchButton.getBounds().getCentre(); }
 
     // Hard-coding tuner X from outside is fragile - the right-anchored
     // cluster (BPM / tap / time-sig / mode toggles) shifts the tuner
