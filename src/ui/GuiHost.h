@@ -99,6 +99,7 @@ public:
     virtual bool audioSettingsOpen() const = 0;
     virtual void closeAudioSettings() = 0;
     virtual bool clickAudioSettingsControl (const std::string& control) = 0;
+    virtual bool inputAudioSettings (const std::string& input) = 0;
     virtual bool midiBindingsOpen() const = 0;
 
     virtual bool meterClip (int index) = 0;

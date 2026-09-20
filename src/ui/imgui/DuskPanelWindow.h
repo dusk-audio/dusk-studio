@@ -142,6 +142,7 @@ public:
     void close();
     bool isOpen() const noexcept;
     bool clickControlForScenario (const std::string& control);
+    bool inputForScenario (const std::string& input);
 
 private:
     struct Impl;

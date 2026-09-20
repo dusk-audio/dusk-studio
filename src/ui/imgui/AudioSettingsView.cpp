@@ -185,12 +185,14 @@ public:
     {
         if (control == "midi-bindings") point = scenarioMidiBindings;
         else if (control == "rescan") point = scenarioRescan;
+        else if (control == "autosave") point = scenarioAutosave;
         else return false;
         return point.x > 0.0f;
     }
 
     ImVec2 scenarioMidiBindings {};
     ImVec2 scenarioRescan {};
+    ImVec2 scenarioAutosave {};
 
     ImVec2 preferredSize() const override { return ImVec2 (kPanelW, panelHeight()); }
 
@@ -494,6 +496,10 @@ private:
             labelled (top, "Autosave every");
             if (staticComboAt (top, "##autosave", kAutosaveItems, 5, autosave, 200.0f))
                 appconfig::setAutosaveIntervalSeconds (kAutosaveSeconds[autosave]);
+            const auto first = ImGui::GetItemRectMin();
+            const auto last = ImGui::GetItemRectMax();
+            scenarioAutosave = ImGui::IsItemVisible()
+                ? ImVec2 { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f } : ImVec2 {};
             formTooltip ("How often the session autosaves for crash recovery. Saved "
                          "per-machine; applies when this panel closes.");
         }

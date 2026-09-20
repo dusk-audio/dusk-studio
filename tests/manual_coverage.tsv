@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 92
+# ceiling gap 91
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -85,7 +85,7 @@ Getting started > Configuring audio > General	UI scale previews live and saves p
 Getting started > Configuring audio > General	Expand tape strip and Follow playhead defaults	gap
 Getting started > Configuring audio > General	Playhead on Stop choices	auto	test:Stop on a rolling transport follows the Playhead on Stop setting;test:Stop pressed while stopped returns to zero whatever the setting;test:The persisted Playhead on Stop values keep their meaning;test:A saved stop behaviour keeps its meaning
 Getting started > Configuring audio > General	MIDI soft takeover keeps a control dormant until it crosses the value	auto	test:FaderBindingMap: apply and pickup inverse agree (soft-takeover symmetry)
-Getting started > Configuring audio > General	autosave cadence 15 s to 5 min	gap
+Getting started > Configuring audio > General	autosave cadence 15 s to 5 min	auto	scenario:gui.settings_autosave_cadence
 Getting started > Configuring audio > General	scan plugins on startup	gap
 Getting started > Configuring audio > Advanced	effect oversampling 1x/2x/4x drives every EQ and comp but not the tape	partial	test:TapeMachineDSP ignores the oversampling choice;test:BusStrip: comp-off EQ response is independent of OS factor		tape and bus behaviour tested; the channel and master fan-out is not
 Getting started > Configuring audio > Advanced	oversampling latency is compensated: bus-routed and direct tracks stay aligned, bounces trim it	auto	scenario:mix.bus_routed_lands_with_direct;scenario:bounce.renders_land_on_the_timeline;scenario:bounce.export_master_in_place

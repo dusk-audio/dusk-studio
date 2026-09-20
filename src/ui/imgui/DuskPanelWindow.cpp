@@ -116,11 +116,43 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             releasePending = true;
         }
 
+        bool inputForScenario (const std::string& input)
+        {
+            if (input == "scroll-down")
+            {
+                MotionEvent motion;
+                motion.pos = { getWidth() * 0.5, getHeight() * 0.5 };
+                motion.absolutePos = motion.pos;
+                onMotion (motion);
+                ScrollEvent scroll;
+                scroll.pos = motion.pos;
+                scroll.absolutePos = motion.pos;
+                scroll.delta = { 0.0, -20.0 };
+                onScroll (scroll);
+                return true;
+            }
+            KeyboardEvent key;
+            if (input == "home") key.key = DGL::kKeyHome;
+            else if (input == "end") key.key = DGL::kKeyEnd;
+            else if (input == "enter") key.key = DGL::kKeyEnter;
+            else return false;
+            key.press = true;
+            onKeyboard (key);
+            keyRelease = key.key;
+            return true;
+        }
+
     protected:
         void onImGuiDisplay() override
         {
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()),
                         static_cast<float> (getWindow().getScaleFactor()));
+            if (keyRelease != 0)
+            {
+                KeyboardEvent key;
+                key.key = std::exchange (keyRelease, 0u);
+                onKeyboard (key);
+            }
             if (releasePending)
             {
                 releasePending = false;
@@ -140,6 +172,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     private:
         Impl& owner;
         bool releasePending = false;
+        unsigned int keyRelease = 0;
     };
 
     Impl (std::string className, std::string logTag, std::string displayName)
@@ -436,5 +469,10 @@ bool DuskPanelWindow::clickControlForScenario (const std::string& control)
     if (auto* window = impl->host.window()) window->focus();
     impl->scenarioWidget->clickForScenario (point);
     return true;
+}
+bool DuskPanelWindow::inputForScenario (const std::string& input)
+{
+    if (! isOpen() || impl->scenarioWidget == nullptr) return false;
+    return impl->scenarioWidget->inputForScenario (input);
 }
 } // namespace duskstudio::imgui

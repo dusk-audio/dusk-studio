@@ -1,4 +1,6 @@
 #include "GuiHost.h"
+#include "AppConfig.h"
+#include "../foundation/Fs.h"
 
 #include "../engine/AudioEngine.h"
 #include "../engine/audiofile/FileWriter.h"
@@ -936,6 +938,89 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     if (! SessionSerializer::load (probe, sessionJson)) return 1000.0f;
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
+
+std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings");
+   #else
+    namespace fs = std::filesystem;
+    auto& session = ctx.session();
+    const auto config = dusk::fs::userConfigDir() / "Dusk Studio" / "app-config.properties";
+    const bool hadConfig = fs::exists (config);
+    const auto configText = dusk::fs::loadFileAsString (config);
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, config, hadConfig, configText, originalDir, restore]
+    {
+        if (hadConfig) dusk::fs::writeStringToFile (config, configText);
+        else { std::error_code error; fs::remove (config, error); }
+        if (! host.audioSettingsOpen()) host.openAudioSettings();
+        host.closeAudioSettings();
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto dir = ctx.tempDir() / "cadence";
+    fs::create_directories (dir);
+    const auto saved = dir / "session.json";
+    const auto autosave = dir / "session.json.autosave";
+    session.track (0).strip.faderDb.store (0.0f);
+    if (! SessionSerializer::save (session, saved) || ! host.openSession (saved))
+        return ScenarioResult::fail ("could not open the autosave fixture");
+    appconfig::setAutosaveIntervalSeconds (300);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
+    steps->push_back ({ 200, [&host] { host.closeAudioSettings(); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "settings did not reopen"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.inputAudioSettings ("scroll-down"), "settings did not accept scrolling"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickAudioSettingsControl ("autosave"), "autosave dropdown is not visible"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("home"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("enter"); } });
+    steps->push_back ({ 200, [&ctx, &session]
+    {
+        ctx.expect (appconfig::getAutosaveIntervalSeconds() == 15,
+                    "the first autosave option did not select 15 seconds");
+        session.track (0).strip.faderDb.store (-12.0f);
+    } });
+    steps->push_back ({ 16000, [&host, &ctx, autosave]
+    {
+        ctx.expect (! fs::exists (autosave), "the new cadence applied before Settings closed");
+        host.closeAudioSettings();
+    } });
+    steps->push_back ({ 16000, [&host, &ctx, autosave, saved]
+    {
+        ctx.expect (fs::exists (autosave), "the real autosave timer did not adopt 15 seconds");
+        ctx.expect (nearly (savedFaderOf (autosave), -12.0f), "autosave omitted the edit");
+        ctx.expect (nearly (savedFaderOf (saved), 0.0f), "autosave changed the canonical session");
+        ctx.expect (host.openAudioSettings(), "settings did not reopen for the maximum cadence");
+    } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("scroll-down"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickAudioSettingsControl ("autosave"), "autosave dropdown is not visible"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("end"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("enter"); } });
+    steps->push_back ({ 200, [&ctx]
+    { ctx.expect (appconfig::getAutosaveIntervalSeconds() == 300,
+                  "the last autosave option did not select 5 minutes"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsAutosave { Scenario {
+    "gui.settings_autosave_cadence", { "gui", "settings", "autosave" }, Needs::Engine | Needs::Gui,
+    {}, {}, 45000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsAutosave (host, ctx); }
+} };
 
 std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext& ctx)
 {

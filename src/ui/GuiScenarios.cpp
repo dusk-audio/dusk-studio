@@ -388,6 +388,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
        #endif
     }
+    bool inputAudioSettings (const std::string& input) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return audioSettingsOpen() && owner.audioSettingsWindow->inputForScenario (input);
+       #else
+        (void) input;
+        return false;
+       #endif
+    }
     bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 
     bool openMidiIo (int index) override
