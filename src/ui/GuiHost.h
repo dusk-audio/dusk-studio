@@ -70,8 +70,9 @@ public:
     virtual ~GuiHost() = default;
 
     // The strip and aux components only exist while their stage is up.
-    enum class Stage { Mixing, Aux };
+    enum class Stage { Recording, Mixing, Aux, Mastering };
     virtual void switchToStage (Stage) = 0;
+    virtual bool clickStage (Stage) = 0;
 
     virtual bool clickTimeFormat() = 0;
     virtual std::string clockText() const = 0;

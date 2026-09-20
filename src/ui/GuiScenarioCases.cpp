@@ -1,6 +1,7 @@
 #include "GuiHost.h"
 
 #include "../engine/AudioEngine.h"
+#include "../engine/audiofile/FileWriter.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/scenario/Scenario.h"
 #include "../engine/scenario/ScenarioContext.h"
@@ -931,6 +932,90 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     if (! SessionSerializer::load (probe, sessionJson)) return 1000.0f;
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
+
+std::optional<ScenarioResult> runStageAudioFlow (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    const auto originalStage = engine.getStage();
+    const auto originalPosition = engine.getTransport().getPlayhead();
+    const auto originalRegions = track.regions;
+    ctx.cleanup ([&host, &engine, &track, originalStage, originalPosition, originalRegions]
+    {
+        engine.stop();
+        track.regions = originalRegions;
+        engine.getPlaybackEngine().preparePlayback();
+        engine.getTransport().setPlayhead (originalPosition);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux
+                            : GuiHost::Stage::Mastering);
+    });
+    ctx.keep (track.mode);
+    ctx.keep (track.strip.faderDb);
+    ctx.keep (track.strip.mute);
+    engine.stop();
+    const auto rate = engine.getCurrentSampleRate();
+    const auto frames = static_cast<std::int64_t> (rate * 5.0);
+    std::vector<float> samples ((size_t) frames);
+    for (std::int64_t i = 0; i < frames; ++i)
+        samples[(size_t) i] = 0.125f * static_cast<float> (std::sin (6.283185307179586 * 440.0 * static_cast<double> (i) / rate));
+    const auto path = ctx.tempDir() / "stage-tone.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = rate;
+    spec.numChannels = 1;
+    spec.bitsPerSample = 32;
+    auto writer = dusk::audio::FileWriter::create (path, spec);
+    const float* channels[] = { samples.data() };
+    if (writer == nullptr || ! writer->write (channels, 1, frames) || ! writer->flush())
+        return ScenarioResult::fail ("could not write the playback tone");
+    writer.reset();
+    AudioRegion region;
+    using File = std::decay_t<decltype (region.file)>;
+    region.file = File (path.u8string().c_str());
+    region.lengthInSamples = frames;
+    region.numChannels = 1;
+    track.regions = { region };
+    track.mode.store ((int) Track::Mode::Mono);
+    track.strip.faderDb.store (0.0f);
+    track.strip.mute.store (false);
+    host.switchToStage (GuiHost::Stage::Recording);
+    engine.getTransport().setPlayhead (0);
+    engine.play();
+    auto previousPosition = std::make_shared<std::int64_t> (0);
+    auto overruns = std::make_shared<int> (0);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&engine, overruns] { *overruns = engine.getXRunCount(); } });
+    for (auto stage : { GuiHost::Stage::Mixing, GuiHost::Stage::Aux, GuiHost::Stage::Recording,
+                        GuiHost::Stage::Aux, GuiHost::Stage::Mixing, GuiHost::Stage::Recording })
+    {
+        steps->push_back ({ 100, [&host, &ctx, stage]
+        { ctx.expect (host.clickStage (stage), "the stage button was not visible"); } });
+        steps->push_back ({ 150, [&ctx, &engine, previousPosition, overruns, stage]
+        {
+            const auto expected = stage == GuiHost::Stage::Recording ? AudioEngine::Stage::Recording
+                                : stage == GuiHost::Stage::Mixing ? AudioEngine::Stage::Mixing
+                                : AudioEngine::Stage::Aux;
+            ctx.expect (engine.getStage() == expected, "the stage button did not switch stages");
+            ctx.expect (engine.getTransport().isPlaying(), "switching stages stopped playback");
+            const auto at = engine.getTransport().getPlayhead();
+            ctx.expect (at > *previousPosition, "playback did not advance across a stage switch");
+            *previousPosition = at;
+            ctx.expect (engine.getChannelStrip (0).getOutLDb() > -30.0f,
+                        "the playback tone fell silent across a stage switch");
+            ctx.expect (engine.getXRunCount() == *overruns, "a stage switch caused an engine overrun");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar stageAudioFlow { Scenario {
+    "gui.stage_audio_flow", { "gui", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStageAudioFlow (host, ctx); }
+} };
 
 std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& ctx)
 {

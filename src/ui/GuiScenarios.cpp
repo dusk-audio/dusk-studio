@@ -234,8 +234,28 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     void switchToStage (Stage stage) override
     {
-        owner.switchToStage (stage == Stage::Aux ? AudioEngine::Stage::Aux
-                                                 : AudioEngine::Stage::Mixing);
+        switch (stage)
+        {
+            case Stage::Recording: owner.switchToStage (AudioEngine::Stage::Recording); break;
+            case Stage::Mixing: owner.switchToStage (AudioEngine::Stage::Mixing); break;
+            case Stage::Aux: owner.switchToStage (AudioEngine::Stage::Aux); break;
+            case Stage::Mastering: owner.switchToStage (AudioEngine::Stage::Mastering); break;
+        }
+    }
+
+    bool clickStage (Stage stage) override
+    {
+        auto* button = &owner.recordingStageBtn;
+        switch (stage)
+        {
+            case Stage::Recording: break;
+            case Stage::Mixing: button = &owner.mixingStageBtn; break;
+            case Stage::Aux: button = &owner.auxStageBtn; break;
+            case Stage::Mastering: button = &owner.masteringStageBtn; break;
+        }
+        if (! button->isShowing()) return false;
+        button->triggerClick();
+        return true;
     }
 
     scenario::StripHandle* strip (int index) override

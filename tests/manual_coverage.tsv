@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 99
+# ceiling gap 98
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -97,7 +97,7 @@ The interface > Window layout	bank selector pages the console by what fits; Eigh
 The interface > Window layout	surface bank and screen page stay in step	auto	test:Bank mapping: screen page resolves to the bank holding its first track;test:Bank mapping: hardware bank resolves to the page showing its first track;test:Console bank state: surface Bank Left and Right map at stride three
 The interface > Window layout	modals centre over a dimmed backdrop; Esc or outside click dismisses	partial	test:EmbeddedModal::close: drain destroys the body exactly once		modal teardown tested; Esc and outside-click dismissal are not
 The interface > Window layout	DSP readout shows load and dropout counters; double-click resets them	gap
-The interface > The four stages	switching stage keeps audio flowing	gap
+The interface > The four stages	switching among Recording, Mixing and Aux keeps audio flowing	auto	scenario:gui.stage_audio_flow		actual stage buttons preserve playback progress and audible strip level without engine overruns
 The interface > The four stages	Settings > Quickstart opens the shipped quickstart, or greys out when absent	partial	ctest:install-linux;ctest:package-contents-checker		the file is shipped and located; the menu opening it is walked by hand (#623)
 The interface > The four stages	Cmd/Ctrl+1..4 change stage, plain digits change page, ? opens shortcuts	partial	test:Bank mapping: plain digits select exactly pages one through eight		page digits tested; stage keys and ? are not
 The interface > The four stages	entering or leaving MASTERING stops the transport; changing stage saves and closes the notepad	gap
