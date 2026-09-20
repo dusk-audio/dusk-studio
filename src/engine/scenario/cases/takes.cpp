@@ -421,6 +421,91 @@ std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), Sc
     return body (ctx);
 }
 
+ScenarioResult secondTrackOverdub (ScenarioContext& ctx)
+{
+    constexpr int frames = ScenarioContext::kBlockSize;
+    constexpr int blocks = 64;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    session.countInEnabled.store (false);
+    session.master().eqEnabled.store (false);
+    session.master().compEnabled.store (false);
+    session.master().tapeEnabled.store (false);
+    for (int index = 0; index < 2; ++index)
+    {
+        auto& track = session.track (index);
+        track.mode.store ((int) Track::Mode::Mono);
+        track.inputSource.store (index);
+        track.printEffects.store (false);
+        track.inputMonitor.store (false);
+    }
+    std::array<float, frames> inputLeft {}, inputRight {}, outputLeft {}, outputRight {};
+    const float* inputs[] { inputLeft.data(), inputRight.data() };
+    float* outputs[] { outputLeft.data(), outputRight.data() };
+    for (std::size_t frame = 0; frame < inputLeft.size(); ++frame)
+        inputLeft[frame] = frame % 32 < 16 ? 0.1f : -0.1f;
+    session.setTrackArmed (0, true);
+    engine.record();
+    if (! ctx.expect (transport.isRecording(), "the first track did not start recording")) return ctx.verdict();
+    for (int block = 0; block < blocks; ++block)
+        engine.audioDeviceIOCallback (inputs, 2, outputs, 2, frames, {});
+    engine.stop();
+    if (! ctx.expect (session.track (0).regions.size() == 1, "the first take was not committed")) return ctx.verdict();
+    const auto first = session.track (0).regions.front();
+    session.setTrackArmed (0, false);
+    session.setTrackArmed (1, true);
+    inputLeft.fill (0.0f);
+    transport.setPlayhead (0);
+    transport.setLoopRange (0, frames * (blocks + 8));
+    transport.setLoopEnabled (true);
+    engine.record();
+    if (! ctx.expect (transport.isRecording(), "the overdub did not start recording")) return ctx.verdict();
+    double playbackEnergy = 0.0;
+    for (int block = 0; block < blocks; ++block)
+    {
+        for (std::size_t frame = 0; frame < inputRight.size(); ++frame)
+            inputRight[frame] = block < blocks / 2 ? 0.0f : frame % 16 < 8 ? 0.2f : -0.2f;
+        engine.audioDeviceIOCallback (inputs, 2, outputs, 2, frames, {});
+        if (block >= 16 && block < blocks / 2)
+            for (const float sample : outputLeft) playbackEnergy += static_cast<double> (sample) * sample;
+    }
+    engine.stop();
+    ctx.expect (playbackEnergy > 1.0, "track 1 was not audible during the silent-input half of the overdub");
+    ctx.expect (session.track (0).regions.size() == 1 && session.track (0).regions.front().file == first.file
+                && session.track (0).regions.front().lengthInSamples == first.lengthInSamples,
+                "overdubbing track 2 changed track 1's region");
+    if (! ctx.expect (session.track (1).regions.size() == 1, "the overdub did not commit one take to track 2"))
+        return ctx.verdict();
+    ctx.expect (session.track (1).regions.front().file != first.file, "the overdub reused the original take's file");
+    for (int index = 0; index < 2; ++index)
+    {
+        const auto& take = session.track (index).regions.front();
+        ctx.expect (take.timelineStart == 0 && take.lengthInSamples == frames * blocks,
+                    "the two tracks did not retain aligned take boundaries");
+        auto reader = dusk::audio::FileReader::open (take.file.getFullPathName().toStdString());
+        if (! ctx.expect (reader != nullptr, "a take has no readable WAV")) continue;
+        std::array<float, frames> recorded {};
+        float* destination[] { recorded.data() };
+        for (const int block : { 16, 48 })
+        {
+            ctx.expect (reader->read (destination, 1, block * frames, frames) == frames, "the take was truncated");
+            for (std::size_t frame = 0; frame < recorded.size(); ++frame)
+            {
+                const float expected = index == 0 ? (frame % 32 < 16 ? 0.1f : -0.1f)
+                                     : block < blocks / 2 ? 0.0f : (frame % 16 < 8 ? 0.2f : -0.2f);
+                if (! ctx.expect (std::abs (recorded[frame] - expected) < 1.0e-5f,
+                                  "a take changed source or captured the other track's playback")) break;
+            }
+        }
+    }
+    return ctx.verdict();
+}
+
+const ScenarioRegistrar overdubRegistrar { Scenario {
+    "record.second_track_overdub", { "record", "playback" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (secondTrackOverdub, ctx); } } };
+
 const ScenarioRegistrar fullCoverRegistrar { Scenario {
     "take.full_cover_pushes_onto_stack", { "take", "record", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (fullCoverPushesOntoStack, ctx); } } };
