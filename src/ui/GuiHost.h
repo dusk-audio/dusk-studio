@@ -96,6 +96,7 @@ public:
 
     virtual bool pressPeerKey (const std::string& description, char text = 0) = 0;
     virtual bool clickModalAt (float xFraction, float yFraction) = 0;
+    virtual bool clickContextMenuItem (const std::string& text) = 0;
     virtual bool clickFader (int index, bool readout, bool right = false) = 0;
     virtual bool faderEditing (int index) const = 0;
     virtual double faderValue (int index) const = 0;
@@ -114,8 +115,10 @@ public:
     virtual int regionEditorChase() const = 0;
     virtual void closeRegionEditors() = 0;
     virtual std::array<double, 4> pianoViewport() const = 0;
+    virtual std::array<int, 4> pianoOptions() const = 0;
     virtual bool scrollPiano (float delta, bool command, bool shift) = 0;
     virtual bool clickPianoFit() = 0;
+    virtual bool focusPiano() = 0;
     virtual bool clickInsert (int track) = 0;
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
     virtual bool clickPickerRow (const std::string& text) = 0;

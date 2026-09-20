@@ -14,6 +14,7 @@
 #include "ChannelStripComponent.h"
 #include "ConsoleView.h"
 #include "EmbeddedModal.h"
+#include "DuskContextMenu.h"
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
 #include "MasteringView.h"
@@ -379,6 +380,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return true;
     }
 
+    bool clickContextMenuItem (const std::string& text) override
+    {
+        int x = 0, y = 0;
+        if (! contextMenuItemPointForScenario (text, x, y)) return false;
+        auto* body = EmbeddedModal::activeModalStack().back()->getBody();
+        const auto local = body->getLocalBounds().getTopLeft().translated (x, y);
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (body, local).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+
     bool clickModalAt (float xFraction, float yFraction) override
     {
         const auto& stack = EmbeddedModal::activeModalStack();
@@ -486,6 +497,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             return -1;
         };
         return owner.pianoRoll != nullptr ? read (owner.pianoRoll.get()) : read (owner.audioEditor.get());
+    }
+    bool focusPiano() override
+    {
+        auto* editor = owner.pianoRoll.get();
+        if (editor == nullptr || ! editor->isShowing()) return false;
+        const auto local = editor->getLocalBounds().getTopLeft().translated (3, 3);
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor, local).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+    std::array<int, 4> pianoOptions() const override
+    {
+        return owner.pianoRoll != nullptr ? owner.pianoRoll->optionsForScenario() : std::array<int, 4> {};
     }
     std::array<double, 4> pianoViewport() const override
     {

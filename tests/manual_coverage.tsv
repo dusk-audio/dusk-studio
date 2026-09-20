@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 80
+# ceiling gap 79
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -277,7 +277,7 @@ The piano roll > Selecting and moving	click, Shift-click, Cmd-click, drag, resiz
 The piano roll > Transposing and nudging	arrows transpose a semitone and nudge a grid step	gap
 The piano roll > Velocity	velocity bars 1-127; resizable strip	gap
 The piano roll > CC editing	CC lane: pick a controller, draw and edit events	gap
-The piano roll > Quantize and scale	Q quantizes with strength; S picks a scale; L cycles CC; C cycles colour	gap
+The piano roll > Quantize and scale	Q quantizes with strength; S picks a scale; L cycles CC; C cycles colour	auto	scenario:gui.piano_options
 The piano roll > Zoom and scroll	zoom keys, fit button and wheel scrolling	auto	scenario:gui.piano_viewport
 The piano roll > Step record	notes enter at the playhead; the next chord advances a snap step	auto	scenario:gui.piano_step_record
 The piano roll > Navigation	Cmd+] and Cmd+[ move between MIDI regions	gap

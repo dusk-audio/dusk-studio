@@ -51,6 +51,8 @@ public:
                static_cast<double> (getWidth() - kKeyboardWidth - 8) }; }
     auto gridPointForScenario() const { return getLocalBounds().getRelativePoint (0.5f, 0.3f); }
     auto fitPointForScenario() const { return zoomFitButton.getBounds().getCentre(); }
+    std::array<int, 4> optionsForScenario() const
+    { return { static_cast<int> (scale), scaleRoot, activeCcController, static_cast<int> (colorMode) }; }
 
     // Host sets so Esc dismisses the overlay.
     std::function<void()> onCloseRequested;

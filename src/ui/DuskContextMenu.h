@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
+#include <string>
 
 namespace duskstudio
 {
@@ -42,4 +43,5 @@ void showContextMenu (const juce::PopupMenu& menu,
                        juce::Component& hostParent,
                        juce::Point<int> screenPos,
                        std::function<void (int)> onResult);
+bool contextMenuItemPointForScenario (const std::string& text, int& x, int& y);
 } // namespace duskstudio

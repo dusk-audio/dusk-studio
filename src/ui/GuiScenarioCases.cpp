@@ -939,6 +939,105 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runPianoOptions (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.closeRegionEditors();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    MidiRegion region;
+    region.lengthInTicks = 960;
+    region.lengthInSamples = session.ticksToSamples (960, engine.getCurrentSampleRate());
+    for (const auto tick : { 48, 196 })
+    {
+        MidiNote note;
+        note.noteNumber = 60;
+        note.velocity = 80;
+        note.startTick = tick;
+        note.lengthInTicks = 120;
+        region.notes.push_back (note);
+    }
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    host.switchToStage (GuiHost::Stage::Recording);
+    const auto checkTicks = [&ctx, &session] (int first, int second)
+    {
+        const auto& regions = session.track (0).midiRegions.current();
+        ctx.expect (regions.size() == 1 && regions.front().notes.size() == 2, "quantize changed note count");
+        if (regions.size() == 1 && regions.front().notes.size() == 2)
+        {
+            const auto& notes = regions.front().notes;
+            ctx.expect (notes[0].startTick == first && notes[1].startTick == second, "quantize used the wrong grid or strength");
+            ctx.expect (notes[0].lengthInTicks == 120 && notes[1].lengthInTicks == 120, "quantize changed note lengths");
+        }
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.focusPiano() && host.pressPeerKey ("Q", 'q'), "Q was not handled"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("1/16 @ 75%"), "75-percent quantize row was not clicked"); } });
+    steps->push_back ({ 150, [&host, &ctx, checkTicks]
+    {
+        checkTicks (12, 229);
+        ctx.expect (host.focusPiano() && host.pressPeerKey ("Q", 'q'), "second Q was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("1/16 @ 100%"), "full-strength quantize row was not clicked"); } });
+    steps->push_back ({ 150, [&host, &ctx, checkTicks]
+    {
+        checkTicks (0, 240);
+        ctx.expect (host.focusPiano() && host.pressPeerKey ("S", 's'), "S was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Major"), "Major scale submenu was not clicked"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("D"), "D scale root was not clicked"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        const auto options = host.pianoOptions();
+        ctx.expect (options[0] == 1 && options[1] == 2, "scale picker did not select D Major");
+    } });
+    for (const int controller : { 7, 11, 64, 74, 1 })
+    {
+        steps->push_back ({ 0, [&host, &ctx]
+        { ctx.expect (host.focusPiano() && host.pressPeerKey ("L", 'l'), "L was not handled"); } });
+        steps->push_back ({ 100, [&host, &ctx, controller]
+        { ctx.expect (host.pianoOptions()[2] == controller, "L cycled to the wrong CC"); } });
+    }
+    for (const int colour : { 1, 2, 0 })
+    {
+        steps->push_back ({ 0, [&host, &ctx]
+        { ctx.expect (host.focusPiano() && host.pressPeerKey ("C", 'c'), "C was not handled"); } });
+        steps->push_back ({ 100, [&host, &ctx, colour]
+        { ctx.expect (host.pianoOptions()[3] == colour, "C cycled to the wrong note-colour mode"); } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoOptions { Scenario {
+    "gui.piano_options", { "gui", "piano" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoOptions (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

@@ -1447,7 +1447,7 @@ The CC lane is also resizable.
 
 ## Quantize and scale
 
-- **Q**: opens a quantize popup. Pick the grid resolution and the strength (0 = none, 1 = full).
+- **Q**: opens a quantize popup with full-strength straight and triplet grids, plus 50% and 75% strength choices.
 - **S**: opens a scale picker. Pick a root and a scale (Major, Minor, modes). Non-scale notes display dimmed.
 - **L**: cycles the active CC controller in the CC lane (1, 7, 11, 64, 74).
 

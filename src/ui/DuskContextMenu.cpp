@@ -207,6 +207,25 @@ public:
         if (onPick && id != 0) onPick (id);
     }
 
+    bool itemPointForScenario (const std::string& text, int& x, int& y) const
+    {
+        int first = -1;
+        int last = -1;
+        for (int py = 0; py < getHeight(); ++py)
+        {
+            const int index = rowAtY (py);
+            if (index < 0) continue;
+            const auto& row = rowsData[(std::size_t) index];
+            if (! row.isEnabled || row.isSep || row.isHeader || row.text.toStdString() != text) continue;
+            if (first < 0) first = py;
+            last = py;
+        }
+        if (first < 0) return false;
+        x = getWidth() / 2;
+        y = (first + last) / 2;
+        return isShowing();
+    }
+
     bool keyPressed (const juce::KeyPress& k) override
     {
         if (k == juce::KeyPress::escapeKey)
@@ -368,5 +387,12 @@ void showContextMenu (const juce::PopupMenu& menu,
     auto* host = hostParent.getTopLevelComponent();
     if (host == nullptr) host = &hostParent;
     showContextMenuAt (menu, *host, screenPos, std::move (onResult));
+}
+bool contextMenuItemPointForScenario (const std::string& text, int& x, int& y)
+{
+    const auto& stack = EmbeddedModal::activeModalStack();
+    if (stack.empty()) return false;
+    const auto* menu = dynamic_cast<const DuskContextMenuPanel*> (stack.back()->getBody());
+    return menu != nullptr && menu->itemPointForScenario (text, x, y);
 }
 } // namespace duskstudio
