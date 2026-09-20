@@ -41,6 +41,7 @@
 #include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
 #include <algorithm>
+#include <stdexcept>
 #include <cstdio>
 
 namespace duskstudio
@@ -840,6 +841,27 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         };
         faderValueLabel.setText (formatDb (faderSlider.getValue()),
                                    juce::dontSendNotification);
+        faderValueLabel.setEditable (true, false, false);
+        faderValueLabel.onEditorShow = [this]
+        {
+            faderTextEditEnding = false;
+            faderSlider.onDragStart();
+        };
+        faderValueLabel.onEditorHide = [this] { faderTextEditEnding = true; };
+        faderValueLabel.onTextChange = [this]
+        {
+            const auto text = faderValueLabel.getText().trim().toStdString();
+            try
+            {
+                std::size_t used = 0;
+                const auto value = std::stod (text, &used);
+                if (used == text.size() && std::isfinite (value))
+                    faderSlider.setValue (value, juce::sendNotificationSync);
+            }
+            catch (const std::invalid_argument&) {}
+            catch (const std::out_of_range&) {}
+            refreshFaderValueLabel();
+        };
         addAndMakeVisible (faderValueLabel);
 
         // Update the standalone label whenever the slider value changes
@@ -4727,6 +4749,7 @@ int ChannelStripComponent::groupMasterIndex() const noexcept
 
 void ChannelStripComponent::refreshFaderValueLabel()
 {
+    if (faderValueLabel.isBeingEdited()) return;
     const double db = faderSlider.getValue();
     faderValueLabel.setText (db <= -89.95 ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                           : juce::String (db, 1),
@@ -5124,6 +5147,12 @@ void ChannelStripComponent::timerCallback()
                               track.strip.auxSendDb[(size_t) i].load (std::memory_order_relaxed));
         }
     }
+    if (faderTextEditEnding && ! faderValueLabel.isBeingEdited())
+    {
+        faderTextEditEnding = false;
+        faderSlider.onDragEnd();
+        refreshFaderValueLabel();
+    }
 }
 
 void ChannelStripComponent::recordAutomation (AutomationParam param, bool recording, float value)
@@ -5182,6 +5211,8 @@ void ChannelStripComponent::applyAutoMode (int mode)
     // picks the lock up too.
     const bool interactive = mode != (int) AutomationMode::Read;
     faderSlider.setEnabled (interactive);
+    if (! interactive && faderValueLabel.isBeingEdited()) faderValueLabel.hideEditor (true);
+    faderValueLabel.setEnabled (interactive);
     panKnob    .setEnabled (interactive);
     muteButton .setEnabled (interactive);
     soloButton .setEnabled (interactive);

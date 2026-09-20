@@ -933,6 +933,108 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runFaderEntry (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const auto bindings = session.midiBindings.current();
+    const auto originalStage = engine.getStage();
+    ctx.cleanup ([&host, &session, bindings, originalStage]
+    {
+        host.pressPeerKey ("Escape");
+        if (! host.modalStackEmpty()) host.closeTopModal();
+        session.midiBindings.mutate ([&] (auto& value) { value = bindings; });
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    ctx.keep (session.midiLearnPending);
+    ctx.keep (session.midiLearnCapture);
+    session.midiLearnPending.store (-1);
+    session.midiLearnCapture.store (0);
+    session.midiBindings.mutate ([] (auto& value) { value.clear(); });
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& track = session.track (t);
+        ctx.keep (track.strip.faderGroupId);
+        ctx.keep (track.strip.faderDb);
+        ctx.keep (track.automationMode);
+        track.strip.faderGroupId.store (t < 2 ? 1 : 0);
+        track.automationMode.store ((int) AutomationMode::Off);
+        track.strip.faderDb.store (-6.0f - (float) t * 3.0f);
+    }
+    host.switchToStage (GuiHost::Stage::Mixing);
+    const auto type = [&host] (const std::string& value)
+    {
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (char ch : value) host.pressPeerKey (std::string (1, ch), ch);
+        host.pressPeerKey ("Return", '\r');
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 250, [&host, &ctx] { ctx.expect (host.clickFader (0, true), "fader readout was not visible"); } });
+    steps->push_back ({ 100, [&host, &ctx, type]
+    {
+        ctx.expect (host.faderEditing (0), "clicking the fader readout did not open an editor");
+        if (host.faderEditing (0)) type ("-3.5");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &session]
+    {
+        ctx.expect (std::abs (session.track (0).strip.faderDb.load() + 3.5f) < 0.01f, "typed fader value was not applied");
+        ctx.expect (std::abs (session.track (1).strip.faderDb.load() + 6.5f) < 0.01f, "typed fader value lost the group offset");
+        ctx.expect (! session.track (0).strip.faderTouched.load(), "text entry left the fader touched");
+        session.track (0).automationMode.store ((int) AutomationMode::Read);
+    } });
+    steps->push_back ({ 100, [&host, &ctx] { host.clickFader (0, true); ctx.expect (! host.faderEditing (0), "READ allowed fader text editing"); } });
+    steps->push_back ({ 100, [&session]
+    {
+        session.track (0).automationMode.store ((int) AutomationMode::Off);
+        session.track (0).strip.faderGroupId.store (0);
+        session.track (1).strip.faderGroupId.store (0);
+    } });
+    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickFader (0, false, true), "could not right-click the fader"); } });
+    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickModalAt (0.5f, 48.0f / 102.0f), "MIDI Learn menu did not open"); } });
+    steps->push_back ({ 100, [&session, &engine, &ctx]
+    {
+        ctx.expect (session.midiLearnPending.load() == packLearnTarget (MidiBindingTarget::TrackFader, 0), "menu did not arm fader Learn");
+        const std::uint8_t cc[] = { 0xb2, 74, 64 };
+        engine.postVirtualKeyboardMidi (cc, 3);
+    } });
+    steps->push_back ({ 300, [&session, &engine, &ctx]
+    {
+        const auto& learned = session.midiBindings.current();
+        ctx.expect (learned.size() == 1 && learned[0].channel == 3 && learned[0].dataNumber == 74
+                    && learned[0].trigger == MidiBindingTrigger::CC && learned[0].target == MidiBindingTarget::TrackFader
+                    && learned[0].targetIndex == 0 && session.midiLearnPending.load() == -1, "CC did not learn the selected fader");
+        const std::uint8_t cc[] = { 0xb2, 74, 127 };
+        engine.postVirtualKeyboardMidi (cc, 3);
+    } });
+    steps->push_back ({ 300, [&host, &session, &engine, &ctx]
+    {
+        ctx.expect (std::abs (session.track (0).strip.faderDb.load() - 12.0f) < 0.01f
+                    && std::abs (host.faderValue (0) - 12.0) < 0.01, "learned CC did not raise the model and visible fader");
+        const std::uint8_t cc[] = { 0xb2, 74, 0 };
+        engine.postVirtualKeyboardMidi (cc, 3);
+    } });
+    steps->push_back ({ 300, [&host, &session, &ctx]
+    {
+        ctx.expect (std::abs (session.track (0).strip.faderDb.load() + 90.0f) < 0.01f
+                    && std::abs (host.faderValue (0) + 90.0) < 0.01, "learned CC did not lower the model and visible fader");
+        ctx.expect (std::abs (session.track (2).strip.faderDb.load() + 12.0f) < 0.01f, "fader Learn changed an unbound track");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar faderEntry { Scenario {
+    "gui.fader_entry_and_learn", { "gui", "fader", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFaderEntry (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runGroupChips (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();

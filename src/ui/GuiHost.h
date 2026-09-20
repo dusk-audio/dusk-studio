@@ -89,6 +89,12 @@ public:
     virtual bool automationView (StripKind kind, int index,
                                  std::string& label, bool& faderEnabled) = 0;
 
+    virtual bool pressPeerKey (const std::string& description, char text = 0) = 0;
+    virtual bool clickModalAt (float xFraction, float yFraction) = 0;
+    virtual bool clickFader (int index, bool readout, bool right = false) = 0;
+    virtual bool faderEditing (int index) const = 0;
+    virtual double faderValue (int index) const = 0;
+
     virtual bool groupChipView (int index, std::string& text, int& master, bool& filled) = 0;
 
     virtual bool canEmbedPluginEditors() const = 0;

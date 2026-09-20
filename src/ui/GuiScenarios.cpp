@@ -15,6 +15,8 @@
 
 #include <array>
 #include <cstddef>
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -40,6 +42,23 @@ HostFile hostFile (const std::filesystem::path& path)
 {
     return HostFile (HostString::fromUTF8 (path.u8string().c_str()));
 }
+template <typename Owner, typename Key>
+bool dispatchKey (Owner& owner, bool (Owner::*handler) (const Key&),
+                  const std::string& description, char text)
+{
+    const auto key = Key::createFromDescription (HostString (description.c_str()));
+    return (owner.*handler) (Key (key.getKeyCode(), key.getModifiers(), text));
+}
+
+template <typename Peer, typename Source, typename Point, typename Modifiers, typename... Rest>
+void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modifiers, Rest...),
+                          float x, float y, bool down, std::int64_t time, bool right = false)
+{
+    const int flags = down ? (right ? Modifiers::rightButtonModifier : Modifiers::leftButtonModifier) : 0;
+    (peer.*handler) (Source::mouse, Point (x, y) * peer.getComponent().getDesktopScaleFactor(), Modifiers (flags),
+                    1.0f, 0.0f, time, {}, 0);
+}
+
 } // namespace
 
 struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
@@ -300,6 +319,52 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         }
         return false;
     }
+
+    bool pressPeerKey (const std::string& description, char text) override
+    {
+        auto* peer = owner.getPeer();
+        if (peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        return dispatchKey (*peer, &Peer::handleKeyPress, description, text);
+    }
+
+    bool clickAt (float x, float y, int count, bool right = false)
+    {
+        auto* peer = owner.getPeer();
+        if (peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        for (int click = 0; click < count; ++click)
+        {
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, true, time + click * 40, right);
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, false, time + click * 40 + 20, right);
+        }
+        return true;
+    }
+
+    bool clickModalAt (float xFraction, float yFraction) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        auto* body = stack.back()->getBody();
+        const auto local = body->getLocalBounds().getRelativePoint (xFraction, yFraction);
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (body, local).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+
+    bool clickFader (int index, bool readout, bool right) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (index);
+        if (strip == nullptr || ! strip->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (strip, strip->faderPointForScenario (readout)).toFloat();
+        return clickAt (point.x, point.y, 1, right);
+    }
+
+    bool faderEditing (int index) const override
+    { return owner.consoleView->getStripComponent (index)->faderEditingForScenario(); }
+    double faderValue (int index) const override
+    { return owner.consoleView->getStripComponent (index)->faderValueForScenario(); }
 
     bool groupChipView (int index, std::string& text, int& master, bool& filled) override
     {

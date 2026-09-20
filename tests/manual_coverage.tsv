@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 97
+# ceiling gap 96
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -165,7 +165,7 @@ The channel strip > Aux sends (MIXING stage)	four sends, -60 to +6 dB or OFF, po
 The channel strip > Pan	equal-power with a 3 dB centre dip	auto	test:BusStrip: center pan is unity on both channels (equal-power law);scenario:engine.pipeline_selftest
 The channel strip > Pan	a stereo track pans by balance; hard left silences R	auto	scenario:strip.stereo_pan_is_balance
 The channel strip > Fader	-inf to +12 dB; unity at 0 dB	auto	scenario:engine.pipeline_selftest;test:FaderBindingMap: CC/Note fader binds stay linear -90..+12 dB
-The channel strip > Fader	click the readout to type; right-click for MIDI Learn	gap
+The channel strip > Fader	click the readout to type; right-click for MIDI Learn	auto	scenario:gui.fader_entry_and_learn
 The channel strip > Fader	automation modes OFF / READ / WRITE / TOUCH	auto	test:evaluateLane: continuous interpolation + hold-first/last;scenario:automation.read_plays_the_lanes;scenario:automation.write_splices_its_span;scenario:automation.touch_glides_back;scenario:gui.automation_write_and_touch
 The channel strip > Mute, Solo, Phase	mute silences; solo is additive solo-in-place	auto	scenario:engine.pipeline_selftest
 The channel strip > Mute, Solo, Phase	phase inverts polarity before the insert	partial	scenario:strip.phase_inverts		the polarity flip is tested; that it comes before the insert is not

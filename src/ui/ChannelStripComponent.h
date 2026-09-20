@@ -64,6 +64,9 @@ public:
     void clickSoloForScenario();
     // Scenario-harness only: the mode label and whether the fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
+    auto faderPointForScenario (bool readout) const { return (readout ? faderValueLabel.getBounds() : faderSlider.getBounds()).getCentre(); }
+    bool faderEditingForScenario() const { return faderValueLabel.isBeingEdited(); }
+    double faderValueForScenario() const { return faderSlider.getValue(); }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
 
     void paint (juce::Graphics&) override;
@@ -225,6 +228,7 @@ private:
     // Slider runs NoTextBox so the cap at min value doesn't overlap
     // the textbox area.
     juce::Label faderValueLabel;
+    bool faderTextEditEnding = false;
     juce::TextButton muteButton    { "M" };
     juce::TextButton soloButton    { "S" };
     juce::TextButton phaseButton   { juce::CharPointer_UTF8 ("\xc3\x98") };  // Ø
