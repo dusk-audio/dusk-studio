@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 // What a GUI scenario is allowed to touch. Everything a case would otherwise
 // reach through the component tree, expressed in std types so the cases stay
@@ -81,6 +82,8 @@ class GuiHost
 {
 public:
     virtual ~GuiHost() = default;
+
+    virtual const std::vector<std::string>& firstLaunchErrors() const = 0;
 
     enum class Stage { Recording, Mixing, Aux, Mastering };
     virtual void switchToStage (Stage) = 0;

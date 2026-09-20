@@ -60,7 +60,7 @@ void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modi
                           float x, float y, bool down, std::int64_t time, bool right = false)
 {
     const int flags = down ? (right ? Modifiers::rightButtonModifier : Modifiers::leftButtonModifier) : 0;
-    (peer.*handler) (Source::mouse, Point (x, y), Modifiers (flags),
+    (peer.*handler) (Source::mouse, Point (x, y) * peer.getComponent().getDesktopScaleFactor(), Modifiers (flags),
                     1.0f, 0.0f, time, {}, 0);
 }
 
@@ -70,7 +70,7 @@ void dispatchWheel (Peer& peer, void (Peer::*handler) (Source, Point, Time, cons
 {
     Wheel wheel {};
     wheel.deltaY = delta;
-    (peer.*handler) (Source::mouse, Point (x, y), time, wheel, 0);
+    (peer.*handler) (Source::mouse, Point (x, y) * peer.getComponent().getDesktopScaleFactor(), time, wheel, 0);
 }
 } // namespace
 
@@ -310,7 +310,28 @@ struct MainComponent::ScenarioAuxLaneHandle final : scenario::AuxLaneHandle
 
 struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 {
-    explicit ScenarioGuiHost (MainComponent& ownerIn) : owner (ownerIn) {}
+    explicit ScenarioGuiHost (MainComponent& ownerIn) : owner (ownerIn)
+    {
+        const auto check = [this] (bool passed, const char* error)
+        {
+            if (! passed) startupErrors.emplace_back (error);
+        };
+        check (owner.session.getSessionDirectory().getFileName().toStdString() == "Untitled",
+               "first launch did not create an Untitled session");
+        check (timelineViewMatches (false), "the first-launch tape strip was not collapsed");
+        check (stageViewMatches (Stage::Recording), "first launch did not show Recording");
+        check (owner.engine.getTransport().isStopped(), "first launch started the transport");
+        for (int index = 0; index < Session::kNumTracks; ++index)
+        {
+            const auto& track = owner.session.track (index);
+            check (track.regions.empty() && track.midiRegions.current().empty(),
+                   "first launch contained an audio or MIDI region");
+            check (! track.recordArmed.load(), "first launch armed a track");
+            check (strip (index) != nullptr, "first launch omitted a channel strip");
+        }
+    }
+
+    const std::vector<std::string>& firstLaunchErrors() const override { return startupErrors; }
 
     bool pressKey (const std::string& description, char text) override
     {
@@ -842,6 +863,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
 
     MainComponent& owner;
+    std::vector<std::string> startupErrors;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;
     std::array<std::unique_ptr<ScenarioAuxLaneHandle>, Session::kNumAuxLanes> lanes;
 };
