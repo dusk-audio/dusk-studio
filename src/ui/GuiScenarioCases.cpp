@@ -1863,5 +1863,77 @@ const ScenarioRegistrar auxSelectors { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAuxSelectors (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runAccessibleControls (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& strip = ctx.session().track (0).strip;
+    ctx.keep (strip.faderDb);
+    ctx.keep (strip.pan);
+    ctx.keep (strip.hpfFreq);
+    ctx.keep (strip.compFetRatio);
+    ctx.cleanup ([&host] { host.switchToStage (GuiHost::Stage::Recording); });
+    host.switchToStage (GuiHost::Stage::Recording);
+    std::string value, help;
+    for (int track = 1; track <= Session::kNumTracks; ++track)
+        for (const auto* suffix : { "fader", "pan", "mute", "solo", "record arm", "input monitor",
+                                   "high-pass filter frequency", "low-pass filter frequency", "insert slot" })
+        {
+            const auto title = "Track " + std::to_string (track) + " " + suffix;
+            ctx.expect (host.accessibleControl (title, value, help), "missing accessible name: " + title);
+        }
+    for (const auto* title : { "Play", "Stop", "Record", "Rewind", "Fast forward" })
+        ctx.expect (host.accessibleControl (title, value, help), std::string ("missing transport accessible name: ") + title);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    for (int track = 1; track <= Session::kNumTracks; ++track)
+        for (int aux = 1; aux <= Session::kNumAuxLanes; ++aux)
+        {
+            const auto title = "Track " + std::to_string (track) + " aux " + std::to_string (aux) + " send";
+            ctx.expect (host.accessibleControl (title, value, help), "missing accessible name: " + title);
+        }
+    host.switchToStage (GuiHost::Stage::Aux);
+    for (int aux = 1; aux <= Session::kNumAuxLanes; ++aux)
+        for (const auto* suffix : { "return fader", "mute", "plugin slot 1" })
+        {
+            const auto title = "Aux " + std::to_string (aux) + " " + suffix;
+            ctx.expect (host.accessibleControl (title, value, help), "missing accessible name: " + title);
+        }
+    host.switchToStage (GuiHost::Stage::Mixing);
+    auto steps = std::make_shared<std::vector<Step>>();
+    struct Value { const char* title; const char* input; const char* output; };
+    const Value values[] {
+        { "Track 1 fader", "-4.2", "-4.2 dB" },
+        { "Track 1 pan", "-0.42", "L42" },
+        { "Track 1 high-pass filter frequency", "OFF", "OFF" },
+        { "FET ratio", "0", "4:1" },
+        { "Track 1 fader", "-90", "-INF dB" },
+        { "Track 1 fader", "-96", "-INF dB" },
+        { "Track 1 fader", "-INF", "-INF dB" },
+        { "Track 1 fader", "-4.2", "-4.2 dB" },
+        { "Track 1 fader", "-INF dB", "-INF dB" }
+    };
+    for (const auto item : values)
+    {
+        steps->push_back ({ 100, [&host, &ctx, item]
+        { ctx.expect (host.setAccessibleValue (item.title, item.input), "the accessible value action is unavailable"); } });
+        steps->push_back ({ 100, [&host, &ctx, &strip, item]
+        {
+            std::string formatted, hint;
+            ctx.expect (host.accessibleControl (item.title, formatted, hint) && formatted == item.output,
+                        std::string (item.title) + " formatted value: expected " + item.output + ", got " + formatted);
+            ctx.expect (! hint.empty(), std::string (item.title) + " has no accessible help");
+            if (std::string (item.input).find ("-INF") == 0)
+                ctx.expect (std::abs (strip.faderDb.load() - ChannelStripParams::kFaderMinDb) < 0.001f,
+                            "the accessible -INF action did not mute the channel fader");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar accessibleControls { Scenario {
+    "gui.accessible_controls", { "gui", "accessibility" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAccessibleControls (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

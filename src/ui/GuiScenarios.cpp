@@ -473,6 +473,36 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     void openAbout() override { owner.menuItemSelected (2002, 2); }
     void startMixdown() override { owner.menuItemSelected (1010, 0); }
 
+    using Component = std::remove_pointer_t<decltype (std::declval<MainComponent&>().getChildComponent (0))>;
+    Component* findTitledControl (Component& root, const std::string& title)
+    {
+        if (root.getTitle().toStdString() == title) return &root;
+        for (auto* child : root.getChildren())
+            if (auto* found = findTitledControl (*child, title)) return found;
+        return nullptr;
+    }
+
+    bool accessibleControl (const std::string& title, std::string& value, std::string& help) override
+    {
+        auto* control = findTitledControl (owner, title);
+        auto* handler = control != nullptr ? control->getAccessibilityHandler() : nullptr;
+        if (handler == nullptr || handler->getTitle().toStdString() != title) return false;
+        help = handler->getHelp().toStdString();
+        auto* interface = handler->getValueInterface();
+        value = interface != nullptr ? interface->getCurrentValueAsString().toStdString() : std::string {};
+        return true;
+    }
+
+    bool setAccessibleValue (const std::string& title, const std::string& value) override
+    {
+        auto* control = findTitledControl (owner, title);
+        auto* handler = control != nullptr ? control->getAccessibilityHandler() : nullptr;
+        auto* interface = handler != nullptr ? handler->getValueInterface() : nullptr;
+        if (interface == nullptr || interface->isReadOnly()) return false;
+        interface->setValueAsString (HostString (value.c_str()));
+        return true;
+    }
+
     int activeAuxLane() const override
     { return owner.auxView != nullptr ? owner.auxView->getActiveLane() : -1; }
 

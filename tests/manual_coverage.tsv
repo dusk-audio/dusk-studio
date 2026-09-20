@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 84
+# ceiling gap 83
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -410,7 +410,7 @@ Troubleshooting > Audio device disconnected mid-session	reconnecting re-prepares
 Troubleshooting > Audio device in use, or won't open at startup	a busy device falls back and says which; saved setup untouched	auto	test:DeviceManager initialise: busy saved device falls back but keeps saved intent;test:startupDeviceMessage: fell back to a different device -> names both;test:startupDeviceMessage: same endpoint on a different backend alerts;test:backendFallbackNotice: a fallback names both backends
 Troubleshooting > Audio device in use, or won't open at startup	nothing opens: a clear warning; recording and plugin loading refused	partial	test:startupDeviceMessage: nothing opened -> silent-session warning		the warning is tested; refusing recording and plugin loads is not
 
-Accessibility > Current support	controls carry track-specific accessible names and formatted values	gap
+Accessibility > Current support	controls carry track-specific accessible names and formatted values	auto	scenario:gui.accessible_controls		actual control accessibility handlers, all track/aux names, transport names, formatted values and -INF text actions
 Accessibility > Current support	screen-reader behaviour on macOS and Windows	manual			needs a screen reader on a console session
 Accessibility > What's still rough	arrow keys move a focus ring across strips; A S X act on it	auto	test:Bank mapping: focused tracks cross three-strip page boundaries;test:Bank mapping: EightUp focus crosses hardware-bank boundaries
 Accessibility > What's still rough	known gaps	n/a			describes what is not yet supported

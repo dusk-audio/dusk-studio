@@ -111,6 +111,8 @@ public:
     virtual int activeAuxLane() const = 0;
     virtual bool clickAuxSelector (int index) = 0;
     virtual bool auxLaneLayoutMatches (int index) const = 0;
+    virtual bool accessibleControl (const std::string& title, std::string& value, std::string& help) = 0;
+    virtual bool setAccessibleValue (const std::string& title, const std::string& value) = 0;
     virtual bool loadMasteringFile (const std::filesystem::path& path) = 0;
     virtual bool clickMasteringButton (const std::string& label) = 0;
     virtual void openPianoRoll (int track, int region) = 0;
