@@ -1,4 +1,6 @@
-# Dusk Studio — instructions for Claude
+# Dusk Studio — instructions for coding agents
+
+This file is the single source of truth for every agent working in this repo. `AGENTS.md` is a symlink to it, so Claude Code and Codex read the same bytes; edit this file, never the link.
 
 Dusk Studio is a portastudio-style DAW for Linux, C++17. It is being actively de-JUCE'd (see **De-JUCE — no new JUCE** below; read it before writing any new code). The authoritative spec is [DuskStudio.md](DuskStudio.md). Read it before changing anything non-trivial.
 
@@ -8,7 +10,7 @@ Dusk Studio is a portastudio-style DAW for Linux, C++17. It is being actively de
 - **DSP**: extracted from the user's existing Dusk Audio plugins at `/home/marc/projects/plugins/`. Shared headers live (or will live) at `plugins/plugins/shared/dsp-cores/` so both Dusk Studio and the Dusk plugins are single-source-of-truth consumers. Configure fetches the plugins repo at the commit in [DONOR_REV](DONOR_REV) into `build/_deps/dusk-plugins`; `-DDUSK_PLUGINS_PATH=../plugins` builds against your plugins checkout instead, so header edits there reach the next Dusk Studio build.
 - **JUCE**: 8.x, resolved via `-DJUCE_PATH` or sibling `../JUCE` (same scheme as the Dusk plugins repo).
 - **Native plugin hosts** (Linux): CLAP (`src/engine/clap/`), LV2 (`src/engine/lv2/`, lilv/suil via pkg-config), VST3 (`src/engine/vst3/`, Steinberg SDK hosting subset via the `external/vst3sdk` submodule — Dusk-owned mirror `dusk-audio/vst3sdk`, tag `dusk-vst3sdk-v1`, GPL-3.0 arm). All implement `src/engine/hosting/INativeInstance`; compile gates `DUSKSTUDIO_HAS_NATIVE_{CLAP,LV2,VST3}` with `#else` stubs so other platforms build. GPL invariant: never bundle any third-party plugin in a distribution (see LICENSES.txt).
-- **Topology**: 24 channel strips (HPF → 4-band EQ → FET/Opto comp → sends → pan → bus assign → fader → mute/solo) → 4 aux buses (EQ + comp + fader) → master (Pultec EQ + bus comp + tape sat + fader). Three banks of 8 select which 8 strips the control surface drives at a time; the full 24 are visible on screen.
+- **Topology**: 24 channel strips (phase invert → insert → HPF → 4-band EQ → LPF → compressor (Opto/FET/VCA) → pan → fader; mute/solo/IN gate the accumulation and the master / bus 1-4 / aux-send branching happens at the strip output, not inline) → 4 aux buses (EQ + comp + fader) → master (Pultec EQ + bus comp + tape sat + fader). Three banks of 8 select which 8 strips the control surface drives at a time; the full 24 are visible on screen.
 
 ## De-JUCE — no new JUCE (READ FIRST)
 
@@ -79,14 +81,16 @@ Same build directory names on both OSes: `build/` (app) and `build-tests/` (Catc
 | Linux | `build/`  | `build-tests/`   | `../JUCE-wayland` (plugdata-team fork)   | fetched at `DONOR_REV`            |
 
 CMake auto-detects:
-- **JUCE** — on Linux it prefers `../JUCE-wayland` if present, falls back to `../JUCE`. The wayland fork has 5 local commits Dusk Studio depends on (XEmbed mapping, X11-on-Wayland fix, peer-creation latch — see [memory](../../.claude/projects/-home-marc-projects-Dusk Studio/memory/linux_juce_wayland_pin.md)) and a divergent `addDefaultFormatsToManager` free function.
+- **JUCE** — on Linux it prefers `../JUCE-wayland` if present, falls back to `../JUCE`. The wayland fork has 5 local commits Dusk Studio depends on (XEmbed mapping, X11-on-Wayland fix, peer-creation latch — see [memory](../../.claude/projects/-home-marc-projects-DuskStudio/memory/linux_juce_wayland_pin.md)) and a divergent `addDefaultFormatsToManager` free function.
 - **Plugins** — configure fetches the donor at the commit in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every build and release workflow clones through `.github/actions/clone-donor`. Nothing to check out by hand, and no donor worktrees. Donor `main` can't be used yet: it replaced the compressor core Dusk Studio builds against (the Multi-Comp 2 swap, #586). To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together. `-DDUSK_PLUGINS_PATH=../plugins` builds against your plugins checkout instead; a build dir configured with an old `-DDUSK_PLUGINS_PATH` keeps it cached until you reconfigure with `-UDUSK_PLUGINS_PATH`.
 
 The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/JuceCompat.h](src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and the `#if defined(__linux__)` lives in one place. Don't sprinkle new platform `#ifdef`s into call sites.
 
 ## Phase plan
 
-Phases 1a → 5 follow [DuskStudio.md](DuskStudio.md). Don't skip ahead. As of writing, Phase 1a (live mixer) and most of Phase 2 (multitrack recording + atomic JSON session save/load + autosave) are working. Phase 1b (send-bus plugin hosting on aux strips) and Phase 3 prep (take history) are the most recent additions. Phase 3 proper (markers, fader automation, punch+loop refinements) is next.
+Phases 1a → 5 of [DuskStudio.md](DuskStudio.md) have all shipped, so there is no phase to work toward: the live mixer, multitrack recording with atomic JSON save/load and autosave, send-bus plugin hosting, take history and loop-record take stacking, markers, console automation (Write / Read / Touch) with breakpoint editing, punch and loop, and MTC + MIDI Clock sync are working features. Check the feature table in [README.md](README.md) and the relevant chapter of [MANUAL.md](MANUAL.md) before assuming something is unbuilt.
+
+Current focus is milestone 0.14 (GitHub milestone #7): finish automated coverage of every behaviour MANUAL.md documents, close the open blockers, then bump and tag. The tag is gated on the maintainer's own manual pass on Linux, macOS and Windows - never tag or run a release flow on your own initiative.
 
 ## Audio thread rules (MANDATORY)
 
@@ -197,6 +201,23 @@ cmake --build build-tests --target dusk-studio-tests -j6 && ctest --test-dir bui
 
 If a change touches a unit that has tests, those tests must pass. If it touches a unit that *doesn't* have tests but easily could, add at least one.
 
+### The two contracts around the suite
+
+Both fail the build, and both are easy to forget because neither is about the code you changed.
+
+**README counts.** Adding, removing or renaming a `TEST_CASE`, `TEST_CASE_METHOD` or `SCENARIO` changes two lines in [README.md](README.md): "The C++ suite declares N Catch2 test cases across M test source files." and the `tests/` line in the source tree. Recount with:
+
+```bash
+git grep -hE '^[[:space:]]*(TEST_CASE|TEST_CASE_METHOD|SCENARIO)[[:space:]]*\(' -- 'tests/*.cpp' | wc -l
+git grep -lE '^[[:space:]]*(TEST_CASE|TEST_CASE_METHOD|SCENARIO)[[:space:]]*\(' -- 'tests/*.cpp' | wc -l
+```
+
+Then `ctest --test-dir build-tests -R release-mechanics-contract` must pass.
+
+**MANUAL coverage map.** [tests/manual_coverage.tsv](tests/manual_coverage.tsv) holds one row per behaviour MANUAL.md documents: `section`, `behaviour`, `status` (`auto` | `partial` | `manual` | `gap` | `n/a`), `evidence` (`;`-separated `test:` / `scenario:` / `bb:` / `ctest:` / `script:` tokens), `note`. Two ceiling lines near the top record the gap and partial counts, and `tests/manual_coverage.py` (ctest case `manual-coverage-contract`) fails when the rows and the ceilings disagree. **Covering a behaviour means lowering a ceiling in the same commit**; a new gap means raising one by hand, where review sees it. Verify with `python3 tests/manual_coverage.py .`.
+
+When the manual and the code disagree, decide which one is wrong and fix that one in the same change. MANUAL.md quotes UI strings verbatim, so changing an alert means changing the quoted line with it.
+
 ## Code style
 
 - **C++17.** No `concepts`, no `std::format`, no `std::ranges` outside of trivially-replaceable uses.
@@ -209,7 +230,7 @@ If a change touches a unit that has tests, those tests must pass. If it touches 
 
 ## Git
 
-- Never add a `Co-Authored-By: Claude` (or any Claude/Anthropic) trailer to commits. Commits are authored by the user only.
+- Never add an agent attribution trailer of any kind to a commit or PR body - no `Co-Authored-By`, no "Generated with", no tool name, whichever agent you are. Commits are authored by the user only.
 - Commits should be small and reviewable. Phase boundaries are natural commit boundaries.
 - Don't `git push` without explicit instruction. Don't force-push to `main` ever.
 
