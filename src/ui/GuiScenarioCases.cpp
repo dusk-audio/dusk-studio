@@ -2629,5 +2629,27 @@ const ScenarioRegistrar pianoVelocity { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoVelocity (host, ctx); }
 } };
+
+const ScenarioRegistrar firstLaunch { Scenario {
+    "gui.first_launch", { "gui", "startup" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+        ctx.expect (ctx.session().getSessionDirectory().getFileName().toStdString() == "Untitled",
+                    "first launch did not create an Untitled session");
+        ctx.expect (host.timelineViewMatches (false), "the first-launch tape strip was not collapsed");
+        ctx.expect (host.stageViewMatches (GuiHost::Stage::Recording), "first launch did not show Recording");
+        ctx.expect (ctx.engine().getTransport().isStopped(), "first launch started the transport");
+        for (int index = 0; index < Session::kNumTracks; ++index)
+        {
+            const auto& track = ctx.session().track (index);
+            ctx.expect (track.regions.empty() && track.midiRegions.current().empty(),
+                        "first launch contained an audio or MIDI region");
+            ctx.expect (! track.recordArmed.load(), "first launch armed a track");
+            ctx.expect (host.strip (index) != nullptr, "first launch omitted a channel strip");
+        }
+        return ctx.verdict();
+    }
+} };
 } // namespace
 } // namespace duskstudio::scenario

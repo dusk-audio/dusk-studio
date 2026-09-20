@@ -442,7 +442,7 @@ Verification protects against a bit-flipped download or a man-in-the-middle atta
 On first launch Dusk Studio opens a blank session named `Untitled`. The window is divided, top to bottom, into:
 
 - A thin menu bar (File, View, and Settings).
-- A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys **1–4**).
+- A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys **Cmd/Ctrl+1–4**).
 - A bank selector (only visible when the window is too narrow to show all 24 channel strips at once).
 - The transport bar.
 - The tape strip (the timeline view), collapsed by default.

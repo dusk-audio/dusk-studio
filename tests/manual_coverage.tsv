@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 68
+# ceiling gap 67
 # ceiling partial 49
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -68,7 +68,7 @@ Getting started > Installing Dusk Studio > macOS (DMG / .app)	DMG drag-install, 
 Getting started > Installing Dusk Studio > Windows (MSI installer)	MSI installs to Program Files with SmartScreen and UAC steps	manual			OS dialogs; walked on every release candidate (#623)
 Getting started > Installing Dusk Studio > Windows (MSI installer)	non-ASCII install, profile and bounce paths work	partial	test:LameMp3Writer writes and reopens a Unicode path;test:Utf8CommandLine keeps a non-ANSI plugin path intact		MP3 and plug-in host paths tested; install folder and profile paths are not
 Getting started > Installing Dusk Studio > Verifying your download	SHA256SUMS covers every asset and carries a detached signature	auto	ctest:release-mechanics-contract;script:scripts/verify-release-assets.sh
-Getting started > First launch	opens a blank Untitled session; tape strip collapsed	gap
+Getting started > First launch	opens a blank Untitled session; tape strip collapsed	auto	scenario:gui.first_launch		fresh private HOME starts with Untitled, no regions or armed tracks, all channel strips present, Recording visible and timeline collapsed
 Getting started > First launch	stage buttons switch the console view	auto	scenario:gui.stage_views_and_controls		clicks all four stage buttons and checks exclusive button selection and console, transport, aux and mastering visibility
 Getting started > Configuring audio	six-section settings panel	n/a			overview; each section is held below
 Getting started > Configuring audio > Audio	Windows prefers ASIO, then exclusive, shared, DirectSound	gap
