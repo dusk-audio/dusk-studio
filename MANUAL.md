@@ -1416,7 +1416,7 @@ Double-click a MIDI region to open the piano roll as a centred modal.
 
 ## Creating notes
 
-Click an empty grid cell to create a 1/4-note at that pitch and tick (or whatever your current snap denomination is). The note's velocity defaults to 100.
+In **Draw** mode (**D**), click an empty grid cell to create a note at that pitch and tick. Its length follows the current note-entry grid; with snap off, it defaults to a quarter note. The note's velocity defaults to 100.
 
 ## Selecting and moving
 

@@ -2589,8 +2589,8 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     n.startTick = jlimit<std::int64_t> (0,
         std::max ((std::int64_t) 0, r->lengthInTicks - 1),
         snapTick (rawStart, createSnap));
-    n.lengthInTicks = std::min ((std::int64_t) kMidiTicksPerQuarter,
-                                                  r->lengthInTicks - n.startTick);
+    const auto noteLength = createSnap > 0 ? createSnap : (std::int64_t) kMidiTicksPerQuarter;
+    n.lengthInTicks = std::min (noteLength, r->lengthInTicks - n.startTick);
     if (n.lengthInTicks <= 0) return;
     r->notes.push_back (n);
     const int newIdx = (int) r->notes.size() - 1;

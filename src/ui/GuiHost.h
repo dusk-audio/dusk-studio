@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -128,6 +129,7 @@ public:
     virtual bool doubleClickMidiRegion (int track, int region) = 0;
     virtual int pianoRollRegion() const = 0;
     virtual bool pianoRollOpen() const = 0;
+    virtual bool clickPianoGrid (std::int64_t tick, int pitch) = 0;
     virtual void closePianoRoll() = 0;
     virtual bool pressPianoRollKey (const std::string& description) = 0;
     virtual bool doubleClickAudioRegion (int track, int region) = 0;

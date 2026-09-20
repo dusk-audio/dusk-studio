@@ -77,6 +77,11 @@ public:
     static constexpr int kToolbarHeight     = 48;
     static constexpr int kHeaderHeight      = 28;
     static constexpr int kNoteHeight        = 16;
+    auto notePointForScenario (std::int64_t tick, int pitch) const
+    {
+        return getLocalBounds().getTopLeft().withX (xForTick (tick))
+                   .withY (yForNoteNumber (pitch) + kNoteHeight / 2);
+    }
     static constexpr int kNumKeys           = 128;
     static constexpr int kFullGridHeight    = kNumKeys * kNoteHeight;
     // Strip heights are runtime-mutable (drag top edge / wheel zoom).

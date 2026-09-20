@@ -2428,5 +2428,77 @@ const ScenarioRegistrar pianoRollNavigation { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoRollNavigation (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runPianoNoteCreation (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&host, &ctx, &track, mode = session.editMode, regions = track.midiRegions.current()]
+    {
+        host.closePianoRoll();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+        ctx.session().editMode = mode;
+        ctx.engine().getUndoManager().clearUndoHistory();
+    });
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
+    MidiRegion region;
+    region.lengthInTicks = 1920;
+    region.lengthInSamples = static_cast<std::int64_t> (ctx.engine().getCurrentSampleRate() * 2.0);
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    ctx.engine().getUndoManager().clearUndoHistory();
+    host.openPianoRoll (0, 0);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx, &session]
+    {
+        ctx.expect (host.pressPeerKey ("D", 'd') && session.editMode == EditMode::Draw, "D did not select Draw mode");
+        ctx.expect (host.pressPianoRollKey ("5"), "the sixteenth-note grid key was not handled");
+        ctx.expect (host.clickPianoGrid (240, 60), "the first empty note cell was not visible");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, &track]
+    {
+        const auto& regions = track.midiRegions.current();
+        if (ctx.expect (regions.size() == 1 && regions[0].notes.size() == 1, "the first grid click did not create one note"))
+        {
+            const auto& note = regions[0].notes[0];
+            ctx.expect (note.noteNumber == 60 && note.startTick == 240 && note.lengthInTicks == 120 && note.velocity == 100,
+                        "the new note did not use its cell, snap length and default velocity");
+        }
+        ctx.expect (host.pressPianoRollKey ("4"), "the eighth-note grid key was not handled");
+    } });
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.clickPianoGrid (960, 64), "the second empty note cell was not visible"); } });
+    steps->push_back ({ 100, [&host, &ctx, &track]
+    {
+        const auto& regions = track.midiRegions.current();
+        if (ctx.expect (regions.size() == 1 && regions[0].notes.size() == 2, "the second grid click did not create a second note"))
+        {
+            const auto& note = regions[0].notes[1];
+            ctx.expect (note.noteNumber == 64 && note.startTick == 960 && note.lengthInTicks == 240 && note.velocity == 100,
+                        "changing snap did not change the next note's duration");
+        }
+        ctx.expect (host.pressPianoRollKey ("0"), "the free-grid key was not handled");
+    } });
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.clickPianoGrid (1200, 67), "the free-grid note cell was not visible"); } });
+    steps->push_back ({ 100, [&ctx, &track]
+    {
+        const auto& regions = track.midiRegions.current();
+        if (ctx.expect (regions.size() == 1 && regions[0].notes.size() == 3, "the free-grid click did not create a third note"))
+            ctx.expect (regions[0].notes[2].noteNumber == 67 && regions[0].notes[2].lengthInTicks == 480
+                        && regions[0].notes[2].velocity == 100,
+                        "snap-off note creation did not retain the quarter-note default");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoNoteCreation { Scenario {
+    "gui.piano_note_creation", { "gui", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoNoteCreation (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario
