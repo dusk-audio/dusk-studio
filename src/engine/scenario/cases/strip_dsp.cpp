@@ -2,6 +2,7 @@
 #include "../ScenarioContext.h"
 #include "../../AudioEngine.h"
 #include "../../../session/Session.h"
+#include "../../../dsp/OutputPairRouting.h"
 
 #include <algorithm>
 #include <array>
@@ -375,6 +376,66 @@ std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), Sc
 {
     return body (ctx);
 }
+
+ScenarioResult masterOutputPair (ScenarioContext& ctx)
+{
+    liveInput (ctx, Track::Mode::Stereo);
+    auto& session = ctx.session();
+    ctx.keep (session.master().outputPair);
+    session.track (kTrack).inputSource.store (0);
+    session.track (kTrack).inputSourceR.store (1);
+    std::array<float, kFrames> inputLeft {}, inputRight {};
+    const float* inputs[] { inputLeft.data(), inputRight.data() };
+    std::array<std::array<float, kFrames>, 4> output {};
+    std::array<float*, 4> outputs {};
+    std::array<double, 2> reference {};
+    bool haveReference = false;
+    for (std::size_t channel = 0; channel < outputs.size(); ++channel) outputs[channel] = output[channel].data();
+    for (const auto pair : { std::array<int, 2> { 0, 1 }, { 2, 3 }, { 3, 2 }, { 0, 1 } })
+    {
+        session.master().outputPair.store (pair[0] == 0 ? -1 : outputpair::encodePair (pair[0], pair[1]));
+        std::array<double, 4> energy {};
+        double phase = 0.0;
+        for (int block = 0; block < kWarmBlocks + kMeasureBlocks; ++block)
+        {
+            for (int frame = 0; frame < kFrames; ++frame)
+            {
+                inputLeft[static_cast<std::size_t> (frame)] = 0.25f * static_cast<float> (std::sin (phase));
+                inputRight[static_cast<std::size_t> (frame)] = inputLeft[static_cast<std::size_t> (frame)] * 0.5f;
+                phase = std::fmod (phase + kTwoPi * 1000.0 / ScenarioContext::kSampleRate, kTwoPi);
+            }
+            ctx.engine().audioDeviceIOCallback (inputs, 2, outputs.data(), 4, kFrames, {});
+            if (block < kWarmBlocks) continue;
+            for (std::size_t channel = 0; channel < output.size(); ++channel)
+                for (const float sample : output[channel]) energy[channel] += static_cast<double> (sample) * sample;
+        }
+        if (! haveReference)
+        {
+            for (std::size_t channel = 0; channel < reference.size(); ++channel)
+                reference[channel] = std::sqrt (energy[channel] / (kMeasureBlocks * kFrames));
+            ctx.expect (reference[0] > 0.05 && reference[1] > 0.025
+                        && std::abs (reference[0] / reference[1] - 2.0) < 0.01,
+                        "the default output did not carry the distinct stereo input levels");
+            haveReference = true;
+        }
+        for (int channel = 0; channel < 4; ++channel)
+        {
+            const double measured = std::sqrt (energy[static_cast<std::size_t> (channel)] / (kMeasureBlocks * kFrames));
+            const double expected = channel == pair[0] ? reference[0]
+                                  : channel == pair[1] ? reference[1] : 0.0;
+            ctx.note ("pair " + std::to_string (pair[0]) + "/" + std::to_string (pair[1])
+                      + " output " + std::to_string (channel) + " RMS " + std::to_string (measured)
+                      + " expected " + std::to_string (expected));
+            ctx.expect (std::abs (measured - expected) < 0.0001,
+                        "the master signal did not reach only the selected output pair with correct left/right routing");
+        }
+    }
+    return ctx.verdict();
+}
+
+const ScenarioRegistrar outputPairRegistrar { Scenario {
+    "master.output_pair", { "master", "routing" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (masterOutputPair, ctx); } } };
 
 const ScenarioRegistrar filterRegistrar { Scenario {
     "strip.filter_ranges", { "strip", "dsp" }, Needs::Engine, {},
