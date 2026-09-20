@@ -94,6 +94,8 @@ public:
     void setMixingMode (bool mixing);
     bool isMixingMode() const noexcept { return mixingMode; }
 
+    bool groupChipViewForScenario (std::string& text, int& master, bool& filled);
+
     void setHorizontalDensity (consolelayout::HorizontalDensity density);
 
 private:
@@ -104,6 +106,7 @@ private:
     // Lowest track index sharing this strip's fader group (the group
     // "master" per DP-24 - it gets the filled chip), or -1 if ungrouped.
     int groupMasterIndex() const noexcept;
+    std::string groupChipText() const;
 
     int trackIndex;
     Track& track;

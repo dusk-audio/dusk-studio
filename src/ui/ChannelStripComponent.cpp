@@ -5951,6 +5951,30 @@ juce::Colour groupColour (int gid)
 }
 } // namespace
 
+std::string ChannelStripComponent::groupChipText() const
+{
+    const int group = track.strip.faderGroupId.load (std::memory_order_relaxed);
+    return group == 0 ? std::string {} : "G" + std::to_string (group);
+}
+
+bool ChannelStripComponent::groupChipViewForScenario (std::string& text, int& master, bool& filled)
+{
+    text = groupChipText();
+    master = groupMasterIndex();
+    filled = false;
+    if (text.empty()) return groupChipBounds.isEmpty();
+    if (! isShowing() || groupChipBounds.isEmpty()) return false;
+    const auto image = createComponentSnapshot (getLocalBounds());
+    const auto pixel = image.getPixelAt (groupChipBounds.getX() + 2, groupChipBounds.getCentreY());
+    const auto colour = groupColour (track.strip.faderGroupId.load (std::memory_order_relaxed));
+    filled = pixel == colour;
+    const auto expected = decltype (colour) (0xff1a1a1c).overlaidWith (colour.withAlpha (0.18f));
+    const auto withinBlendRounding = [] (int actual, int target) { return std::abs (actual - target) <= 2; };
+    return filled || (withinBlendRounding (pixel.getRed(), expected.getRed())
+                      && withinBlendRounding (pixel.getGreen(), expected.getGreen())
+                      && withinBlendRounding (pixel.getBlue(), expected.getBlue()));
+}
+
 void ChannelStripComponent::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (1.5f);
@@ -5986,7 +6010,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             }
             g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
             g.setColour (isMaster ? juce::Colours::black.withAlpha (0.85f) : col);
-            g.drawText ("G" + juce::String (gid), groupChipBounds,
+            g.drawText (groupChipText(), groupChipBounds,
                         juce::Justification::centred, false);
         }
     }

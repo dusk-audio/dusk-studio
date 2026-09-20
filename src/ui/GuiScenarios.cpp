@@ -301,6 +301,12 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
     }
 
+    bool groupChipView (int index, std::string& text, int& master, bool& filled) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (index);
+        return strip != nullptr && strip->groupChipViewForScenario (text, master, filled);
+    }
+
     bool canEmbedPluginEditors() const override
     {
         auto* peer = owner.getPeer();

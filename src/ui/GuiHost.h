@@ -89,6 +89,8 @@ public:
     virtual bool automationView (StripKind kind, int index,
                                  std::string& label, bool& faderEnabled) = 0;
 
+    virtual bool groupChipView (int index, std::string& text, int& master, bool& filled) = 0;
+
     virtual bool canEmbedPluginEditors() const = 0;
     virtual bool modalStackEmpty() const = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.

@@ -933,6 +933,65 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runGroupChips (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    const auto originalStage = ctx.engine().getStage();
+    ctx.cleanup ([&host, originalStage]
+    {
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux
+                            : GuiHost::Stage::Mastering);
+    });
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        ctx.keep (session.track (t).strip.faderGroupId);
+        session.track (t).strip.faderGroupId.store (0);
+    }
+    host.switchToStage (GuiHost::Stage::Mixing);
+    const auto check = [&host, &ctx] (int track, const std::string& expectedText, int expectedMaster, bool expectedFilled)
+    {
+        std::string text;
+        int master = -1;
+        bool filled = false;
+        ctx.expect (host.groupChipView (track, text, master, filled), "the group chip did not render its fill");
+        ctx.expect (text == expectedText, "the group chip label was wrong");
+        ctx.expect (master == expectedMaster, "the lowest group member was not the master");
+        ctx.expect (filled == expectedFilled, "the group chip used the wrong filled/outlined style");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (int group = 1; group <= 8; ++group)
+    {
+        steps->push_back ({ 100, [&session, group]
+        { session.track (1).strip.faderGroupId.store (group); } });
+        steps->push_back ({ 100, [&session, check, group]
+        {
+            check (1, "G" + std::to_string (group), 1, true);
+            session.track (0).strip.faderGroupId.store (group);
+        } });
+        steps->push_back ({ 100, [&session, check, group]
+        {
+            check (0, "G" + std::to_string (group), 0, true);
+            check (1, "G" + std::to_string (group), 0, false);
+            session.track (0).strip.faderGroupId.store (0);
+        } });
+        steps->push_back ({ 100, [check, group]
+        {
+            check (0, "", -1, false);
+            check (1, "G" + std::to_string (group), 1, true);
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar groupChips { Scenario {
+    "gui.fader_group_chips", { "gui", "groups" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runGroupChips (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runStageAudioFlow (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
