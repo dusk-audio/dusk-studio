@@ -85,9 +85,15 @@ public:
     auto velocityBoundsForScenario() const
     {
         return getLocalBounds().withTrimmedLeft (kKeyboardWidth)
-                   .withY (getHeight() - kStatusBarH - ccStripH - velocityStripH)
+                   .withY (getHeight() - kStatusBarH - kScrollBarH - ccStripH - velocityStripH)
                    .withHeight (velocityStripH);
     }
+    auto ccBoundsForScenario() const
+    {
+        return getLocalBounds().withTrimmedLeft (kKeyboardWidth)
+                   .withY (getHeight() - kStatusBarH - kScrollBarH - ccStripH).withHeight (ccStripH);
+    }
+    void toggleCcForScenario() { toggleCcButton.triggerClick(); }
     static constexpr int kNumKeys           = 128;
     static constexpr int kFullGridHeight    = kNumKeys * kNoteHeight;
     // Strip heights are runtime-mutable (drag top edge / wheel zoom).

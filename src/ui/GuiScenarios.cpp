@@ -643,6 +643,42 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return dragAt (start.x, start.y, start.x, start.y - static_cast<float> (pixels));
     }
 
+    bool togglePianoCc() override
+    {
+        if (owner.pianoRoll == nullptr) return false;
+        owner.pianoRoll->toggleCcForScenario();
+        return true;
+    }
+
+    int pianoCcHeight() const override
+    {
+        return owner.pianoRoll != nullptr ? owner.pianoRoll->ccBoundsForScenario().getHeight() : 0;
+    }
+
+    bool dragPianoCc (std::int64_t tick, float fraction) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        if (piano == nullptr || ! piano->isShowing()) return false;
+        const auto bounds = piano->ccBoundsForScenario();
+        if (bounds.isEmpty()) return false;
+        const auto local = piano->notePointForScenario (tick, 60).withY (bounds.getCentreY());
+        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano, local).toFloat();
+        const auto end = owner.getTopLevelComponent()->getLocalPoint (piano,
+            local.withY (bounds.getBottom() - static_cast<int> (fraction * static_cast<float> (bounds.getHeight())))).toFloat();
+        return dragAt (start.x, start.y, end.x, end.y);
+    }
+
+    bool resizePianoCc (int pixels) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        if (piano == nullptr || ! piano->isShowing()) return false;
+        const auto bounds = piano->ccBoundsForScenario();
+        if (bounds.isEmpty()) return false;
+        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano,
+            bounds.getTopLeft().translated (20, -2)).toFloat();
+        return dragAt (start.x, start.y, start.x, start.y - static_cast<float> (pixels));
+    }
+
     bool wheelPianoVelocity (float delta) override
     {
         auto* piano = owner.pianoRoll.get();

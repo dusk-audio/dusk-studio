@@ -1441,7 +1441,7 @@ The strip is resizable — drag its top edge up or down. Scroll-wheel inside the
 
 ## CC editing
 
-Open the **CC lane** below the velocity strip. Choose a controller from the dropdown (defaults to CC 1, Mod Wheel). Each CC event is a vertical bar; drag to adjust value, click empty grid to add a new event.
+Open the **CC lane** below the velocity strip. Press **L** to cycle the controller: CC 1 (Mod Wheel), 7 (Volume), 11 (Expression), 64 (Sustain), and 74 (Filter). The default is CC 1. Each CC event is a vertical bar; drag to adjust value, click empty grid to add a new event.
 
 The CC lane is also resizable.
 

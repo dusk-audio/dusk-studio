@@ -135,6 +135,10 @@ public:
     virtual bool resizePianoVelocity (int pixels) = 0;
     virtual bool wheelPianoVelocity (float delta) = 0;
     virtual int pianoVelocityHeight() const = 0;
+    virtual bool togglePianoCc() = 0;
+    virtual bool dragPianoCc (std::int64_t tick, float fraction) = 0;
+    virtual bool resizePianoCc (int pixels) = 0;
+    virtual int pianoCcHeight() const = 0;
     virtual void closePianoRoll() = 0;
     virtual bool pressPianoRollKey (const std::string& description) = 0;
     virtual bool doubleClickAudioRegion (int track, int region) = 0;

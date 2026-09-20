@@ -2651,5 +2651,79 @@ const ScenarioRegistrar firstLaunch { Scenario {
         return ctx.verdict();
     }
 } };
+
+std::optional<ScenarioResult> runPianoCc (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& track = ctx.session().track (0);
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&host, &ctx, &track, regions = track.midiRegions.current(), mode = ctx.session().editMode]
+    {
+        host.closePianoRoll();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+        ctx.session().editMode = mode;
+        ctx.engine().getUndoManager().clearUndoHistory();
+    });
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
+    MidiRegion region;
+    region.lengthInTicks = 1920;
+    region.lengthInSamples = static_cast<std::int64_t> (ctx.engine().getCurrentSampleRate() * 2.0);
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    ctx.engine().getUndoManager().clearUndoHistory();
+    host.openPianoRoll (0, 0);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.pressPeerKey ("G", 'g'), "G did not select Grab mode");
+        ctx.expect (host.togglePianoCc(), "the CC lane button was unavailable");
+    } });
+    for (const float fraction : { 1.1f, -0.1f, 0.75f })
+    {
+        steps->push_back ({ 500, [&host, &ctx, fraction]
+        { ctx.expect (host.dragPianoCc (240, fraction), "the CC lane was unavailable for drawing"); } });
+        steps->push_back ({ 100, [&ctx, &track, fraction]
+        {
+            const auto& events = track.midiRegions.current()[0].ccs;
+            if (! ctx.expect (events.size() == 1, "editing a CC bar did not keep exactly one event")) return;
+            const int expected = fraction > 1.0f ? 127 : fraction < 0.0f ? 0 : 95;
+            ctx.expect (events[0].controller == 1 && events[0].atTick == 240 && events[0].channel == 1
+                        && events[0].value == expected, "CC drawing did not preserve its controller/time or clamp its value");
+        } });
+    }
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("#6c", 'l'), "L did not select the next CC controller"); } });
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.dragPianoCc (960, 0.5f), "the second controller lane was unavailable"); } });
+    steps->push_back ({ 100, [&ctx, &track]
+    {
+        const auto& events = track.midiRegions.current()[0].ccs;
+        if (! ctx.expect (events.size() == 2, "drawing the second controller did not add one event")) return;
+        ctx.expect (events[0].controller == 1 && events[0].value == 95 && events[0].atTick == 240,
+                    "changing the active controller altered its previous event");
+        ctx.expect (events[1].controller == 7 && events[1].value == 64 && events[1].atTick == 960,
+                    "the selected controller was not used for the new CC bar");
+    } });
+    auto height = std::make_shared<int> (0);
+    steps->push_back ({ 500, [&host, &ctx, height]
+    {
+        *height = host.pianoCcHeight();
+        ctx.expect (host.resizePianoCc (24), "the CC strip resize handle was unavailable");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, height]
+    { ctx.expect (host.pianoCcHeight() == *height + 24, "dragging up did not grow the CC strip"); } });
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.resizePianoCc (-24), "the CC strip could not be shrunk"); } });
+    steps->push_back ({ 100, [&host, &ctx, height]
+    { ctx.expect (host.pianoCcHeight() == *height, "dragging down did not restore the CC strip"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoCc { Scenario {
+    "gui.piano_cc", { "gui", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoCc (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario
