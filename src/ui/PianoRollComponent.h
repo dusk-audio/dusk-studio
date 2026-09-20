@@ -82,6 +82,12 @@ public:
         return getLocalBounds().getTopLeft().withX (xForTick (tick))
                    .withY (yForNoteNumber (pitch) + kNoteHeight / 2);
     }
+    auto velocityBoundsForScenario() const
+    {
+        return getLocalBounds().withTrimmedLeft (kKeyboardWidth)
+                   .withY (getHeight() - kStatusBarH - ccStripH - velocityStripH)
+                   .withHeight (velocityStripH);
+    }
     static constexpr int kNumKeys           = 128;
     static constexpr int kFullGridHeight    = kNumKeys * kNoteHeight;
     // Strip heights are runtime-mutable (drag top edge / wheel zoom).

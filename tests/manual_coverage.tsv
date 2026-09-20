@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 70
+# ceiling gap 69
 # ceiling partial 50
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -275,7 +275,7 @@ The piano roll > Layout	toolbar, ruler, keyboard, grid, velocity strip, CC lane	
 The piano roll > Creating notes	Draw-mode click creates a note at the snap length and velocity 100	auto	scenario:gui.piano_note_creation		actual empty-grid clicks at two snap resolutions and with snap off, onset, pitch, duration and velocity
 The piano roll > Selecting and moving	click, Shift-click, Cmd-click, drag, resize, rubber band, delete	gap
 The piano roll > Transposing and nudging	arrows transpose a semitone and nudge a grid step	auto	scenario:gui.piano_roll_note_keys		selects two notes in the real editor, dispatches all four arrows, checks exact note fields and reverses each edit with command-Z
-The piano roll > Velocity	velocity bars 1-127; resizable strip	gap
+The piano roll > Velocity	velocity bars 1-127; resizable strip	auto	scenario:gui.piano_velocity		peer drags clamp velocity at 1 and 127 without changing neighboring notes; top-edge drags and wheel gestures resize the strip both ways
 The piano roll > CC editing	CC lane: pick a controller, draw and edit events	gap
 The piano roll > Quantize and scale	Q quantizes with strength; S picks a scale; L cycles CC; C cycles colour	gap
 The piano roll > Zoom and scroll	zoom, fit and scroll keys	gap

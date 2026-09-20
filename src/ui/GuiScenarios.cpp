@@ -62,6 +62,15 @@ void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modi
     (peer.*handler) (Source::mouse, Point (x, y), Modifiers (down ? Modifiers::leftButtonModifier : 0),
                     1.0f, 0.0f, time, {}, 0);
 }
+
+template <typename Peer, typename Source, typename Point, typename Time, typename Wheel>
+void dispatchWheel (Peer& peer, void (Peer::*handler) (Source, Point, Time, const Wheel&, int),
+                    float x, float y, std::int64_t time, float delta)
+{
+    Wheel wheel {};
+    wheel.deltaY = delta;
+    (peer.*handler) (Source::mouse, Point (x, y), time, wheel, 0);
+}
 } // namespace
 
 struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
@@ -592,6 +601,60 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (bounds.isEmpty()) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
         return clickAt (point.x, point.y, 1);
+    }
+
+    bool dragAt (float startX, float startY, float endX, float endY)
+    {
+        auto* peer = owner.getPeer();
+        if (peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        dispatchMouseButton (*peer, &Peer::handleMouseEvent, startX, startY, true, time);
+        dispatchMouseButton (*peer, &Peer::handleMouseEvent, endX, endY, true, time + 40);
+        dispatchMouseButton (*peer, &Peer::handleMouseEvent, endX, endY, false, time + 80);
+        return true;
+    }
+
+    int pianoVelocityHeight() const override
+    {
+        return owner.pianoRoll != nullptr ? owner.pianoRoll->velocityBoundsForScenario().getHeight() : 0;
+    }
+
+    bool dragPianoVelocity (std::int64_t tick, float fraction) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        if (piano == nullptr || ! piano->isShowing()) return false;
+        const auto bounds = piano->velocityBoundsForScenario();
+        const auto local = piano->notePointForScenario (tick, 60).withY (bounds.getCentreY());
+        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano, local).toFloat();
+        const auto end = owner.getTopLevelComponent()->getLocalPoint (piano,
+            local.withY (bounds.getBottom() - static_cast<int> (fraction * static_cast<float> (bounds.getHeight())))).toFloat();
+        return dragAt (start.x, start.y, end.x, end.y);
+    }
+
+    bool resizePianoVelocity (int pixels) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        if (piano == nullptr || ! piano->isShowing()) return false;
+        const auto bounds = piano->velocityBoundsForScenario();
+        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano,
+            bounds.getTopLeft().translated (20, -2)).toFloat();
+        return dragAt (start.x, start.y, start.x, start.y - static_cast<float> (pixels));
+    }
+
+    bool wheelPianoVelocity (float delta) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        auto* peer = owner.getPeer();
+        if (piano == nullptr || ! piano->isShowing() || peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (piano,
+            piano->velocityBoundsForScenario().getCentre()).toFloat();
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        dispatchWheel (*peer, &Peer::handleMouseWheel, point.x, point.y, time, delta);
+        return true;
     }
 
     bool doubleClickAudioRegion (int track, int region) override

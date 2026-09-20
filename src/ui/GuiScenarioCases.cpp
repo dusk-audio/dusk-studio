@@ -2549,5 +2549,85 @@ const ScenarioRegistrar pianoNoteCreation { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoNoteCreation (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runPianoVelocity (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& track = ctx.session().track (0);
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&host, &ctx, &track, regions = track.midiRegions.current()]
+    {
+        host.closePianoRoll();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+        ctx.engine().getUndoManager().clearUndoHistory();
+    });
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
+    MidiRegion region;
+    region.lengthInTicks = 1920;
+    region.lengthInSamples = static_cast<std::int64_t> (ctx.engine().getCurrentSampleRate() * 2.0);
+    MidiNote note;
+    note.noteNumber = 60;
+    note.startTick = 240;
+    note.lengthInTicks = 240;
+    note.velocity = 100;
+    note.channel = 2;
+    region.notes.push_back (note);
+    note.noteNumber = 64;
+    note.startTick = 960;
+    region.notes.push_back (note);
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    ctx.engine().getUndoManager().clearUndoHistory();
+    host.openPianoRoll (0, 0);
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const auto fraction : { 1.1f, -0.1f, 0.5f })
+    {
+        steps->push_back ({ 500, [&host, &ctx, fraction]
+        { ctx.expect (host.dragPianoVelocity (300, fraction), "the velocity bar was unavailable for dragging"); } });
+        steps->push_back ({ 100, [&ctx, &track, fraction]
+        {
+            const auto& notes = track.midiRegions.current()[0].notes;
+            if (! ctx.expect (notes.size() == 2, "velocity editing changed the note count")) return;
+            const int expected = fraction > 1.0f ? 127 : fraction < 0.0f ? 1 : 64;
+            ctx.expect (std::abs (notes[0].velocity - expected) <= (expected == 64 ? 1 : 0),
+                        "dragging the velocity bar did not set or clamp its value");
+            ctx.expect (notes[0].noteNumber == 60 && notes[0].startTick == 240
+                        && notes[0].lengthInTicks == 240 && notes[0].channel == 2,
+                        "velocity dragging changed the note's pitch, timing or channel");
+            ctx.expect (notes[1].velocity == 100 && notes[1].noteNumber == 64 && notes[1].startTick == 960,
+                        "velocity dragging altered the neighboring note");
+        } });
+    }
+    auto height = std::make_shared<int> (0);
+    steps->push_back ({ 500, [&host, &ctx, height]
+    {
+        *height = host.pianoVelocityHeight();
+        ctx.expect (host.resizePianoVelocity (24), "the velocity strip resize handle was unavailable");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, height]
+    { ctx.expect (host.pianoVelocityHeight() == *height + 24, "dragging up did not grow the velocity strip"); } });
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.resizePianoVelocity (-24), "the velocity strip could not be shrunk"); } });
+    steps->push_back ({ 100, [&host, &ctx, height]
+    {
+        ctx.expect (host.pianoVelocityHeight() == *height, "dragging down did not restore the velocity strip");
+        ctx.expect (host.wheelPianoVelocity (0.5f), "the velocity strip did not accept a wheel gesture");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, height]
+    {
+        ctx.expect (host.pianoVelocityHeight() == *height + 16, "wheel-up did not grow the velocity strip");
+        ctx.expect (host.wheelPianoVelocity (-0.5f), "the velocity strip did not accept wheel-down");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, height]
+    { ctx.expect (host.pianoVelocityHeight() == *height, "wheel-down did not restore the velocity strip"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoVelocity { Scenario {
+    "gui.piano_velocity", { "gui", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoVelocity (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario
