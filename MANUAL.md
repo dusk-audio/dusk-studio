@@ -1458,7 +1458,7 @@ The note-creation grid is set from the toolbar dropdown; there is no keyboard sh
 ## Zoom and scroll
 
 - **=** / **−**: zoom in / out.
-- **Cmd+0**: zoom to fit the region.
+- **Zoom fit** toolbar button: zoom to fit the region.
 - **Mouse wheel**: scroll vertically across the 128-key range.
 - **Cmd/Ctrl+wheel**: horizontal zoom.
 - **Shift+wheel**: horizontal scroll.

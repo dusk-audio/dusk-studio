@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
+#include <array>
 #include "DuskComboBox.h"
 #include "../foundation/MessageThread.h"
 #include "../session/Session.h"
@@ -45,6 +46,11 @@ public:
     void stepRecordNoteOn  (int noteNumber, int velocity);
     void stepRecordNoteOff (int noteNumber);
     void resetStepRecordState() noexcept;
+    std::array<double, 4> viewportForScenario() const
+    { return { pixelsPerTick, static_cast<double> (scrollX), static_cast<double> (scrollY),
+               static_cast<double> (getWidth() - kKeyboardWidth - 8) }; }
+    auto gridPointForScenario() const { return getLocalBounds().getRelativePoint (0.5f, 0.3f); }
+    auto fitPointForScenario() const { return zoomFitButton.getBounds().getCentre(); }
 
     // Host sets so Esc dismisses the overlay.
     std::function<void()> onCloseRequested;

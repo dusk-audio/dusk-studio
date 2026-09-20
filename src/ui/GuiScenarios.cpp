@@ -68,6 +68,21 @@ void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modi
                     1.0f, 0.0f, time, {}, 0);
 }
 
+template <typename Peer, typename Source, typename Point, typename Modifiers, typename... Rest,
+          typename Time, typename Wheel>
+void dispatchMouseWheel (Peer& peer, void (Peer::*mouse) (Source, Point, Modifiers, Rest...),
+                         void (Peer::*wheel) (Source, Point, Time, const Wheel&, int),
+                         float x, float y, float delta, bool command, bool shift, std::int64_t time)
+{
+    const auto point = Point (x, y) * peer.getComponent().getDesktopScaleFactor();
+    const int flags = (command ? Modifiers::commandModifier : 0) | (shift ? Modifiers::shiftModifier : 0);
+    const auto saved = Modifiers::currentModifiers;
+    Modifiers::currentModifiers = Modifiers (flags);
+    (peer.*mouse) (Source::mouse, point, Modifiers (flags), 1.0f, 0.0f, time, {}, 0);
+    (peer.*wheel) (Source::mouse, point, static_cast<Time> (time), Wheel { 0.0f, delta, false, false, false }, 0);
+    Modifiers::currentModifiers = saved;
+}
+
 } // namespace
 
 struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
@@ -471,6 +486,30 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             return -1;
         };
         return owner.pianoRoll != nullptr ? read (owner.pianoRoll.get()) : read (owner.audioEditor.get());
+    }
+    std::array<double, 4> pianoViewport() const override
+    {
+        return owner.pianoRoll != nullptr ? owner.pianoRoll->viewportForScenario() : std::array<double, 4> {};
+    }
+    bool scrollPiano (float delta, bool command, bool shift) override
+    {
+        auto* editor = owner.pianoRoll.get();
+        auto* peer = owner.getPeer();
+        if (editor == nullptr || ! editor->isShowing() || peer == nullptr) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor, editor->gridPointForScenario()).toFloat();
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        dispatchMouseWheel (*peer, &Peer::handleMouseEvent, &Peer::handleMouseWheel,
+                            point.x, point.y, delta, command, shift, time);
+        return true;
+    }
+    bool clickPianoFit() override
+    {
+        auto* editor = owner.pianoRoll.get();
+        if (editor == nullptr || ! editor->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor, editor->fitPointForScenario()).toFloat();
+        return clickAt (point.x, point.y, 1);
     }
     void closeRegionEditors() override { owner.closePianoRoll(); owner.closeAudioEditor(); }
     bool clickInsert (int track) override

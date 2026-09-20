@@ -939,6 +939,91 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        host.closeRegionEditors();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    MidiRegion region;
+    region.lengthInTicks = 100000;
+    region.lengthInSamples = session.ticksToSamples (region.lengthInTicks, engine.getCurrentSampleRate());
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    host.switchToStage (GuiHost::Stage::Recording);
+    auto before = std::make_shared<std::array<double, 4>>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        *before = host.pianoViewport();
+        ctx.expect (host.pressPeerKey ("=", '='), "zoom-in key was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        ctx.expect (host.pianoViewport()[0] > (*before)[0], "equals did not zoom in");
+        ctx.expect (host.pressPeerKey ("-", '-'), "zoom-out key was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        ctx.expect (std::abs (host.pianoViewport()[0] - (*before)[0]) < 1.0e-6, "minus did not restore the zoom");
+        *before = host.pianoViewport();
+        ctx.expect (host.scrollPiano (-1.0f, false, false), "vertical wheel was not delivered");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        const auto after = host.pianoViewport();
+        ctx.expect (after[2] > (*before)[2] && std::abs (after[0] - (*before)[0]) < 1.0e-6,
+                    "unmodified wheel did not scroll the pitch range");
+        *before = after;
+        ctx.expect (host.scrollPiano (-1.0f, false, true), "Shift wheel was not delivered");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        const auto after = host.pianoViewport();
+        ctx.expect (after[1] > (*before)[1] && std::abs (after[2] - (*before)[2]) < 0.1,
+                    "Shift wheel did not scroll horizontally");
+        *before = after;
+        ctx.expect (host.scrollPiano (1.0f, true, false), "command wheel was not delivered");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        const auto after = host.pianoViewport();
+        ctx.expect (after[0] > (*before)[0] && std::abs (after[2] - (*before)[2]) < 0.1,
+                    "command wheel did not zoom horizontally");
+        ctx.expect (host.clickPianoFit(), "Zoom fit button was not clicked");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        const auto after = host.pianoViewport();
+        ctx.expect (std::abs (after[1]) < 0.1, "Zoom fit did not return to the region start");
+        ctx.expect (std::abs (after[0] * 100000.0 - after[3]) < 1.0, "Zoom fit did not fit the whole region");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoViewport { Scenario {
+    "gui.piano_viewport", { "gui", "piano" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoViewport (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI

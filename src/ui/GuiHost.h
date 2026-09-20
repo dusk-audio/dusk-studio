@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -112,6 +113,9 @@ public:
     virtual bool openRegionEditor (int track, int region, bool midi) = 0;
     virtual int regionEditorChase() const = 0;
     virtual void closeRegionEditors() = 0;
+    virtual std::array<double, 4> pianoViewport() const = 0;
+    virtual bool scrollPiano (float delta, bool command, bool shift) = 0;
+    virtual bool clickPianoFit() = 0;
     virtual bool clickInsert (int track) = 0;
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
     virtual bool clickPickerRow (const std::string& text) = 0;
