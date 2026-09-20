@@ -109,6 +109,9 @@ public:
     virtual void openAbout() = 0;
     virtual bool loadMasteringFile (const std::filesystem::path& path) = 0;
     virtual bool clickMasteringButton (const std::string& label) = 0;
+    virtual void openPianoRoll (int track, int region) = 0;
+    virtual void closePianoRoll() = 0;
+    virtual bool pressPianoRollKey (const std::string& description) = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.
     virtual void closeTopModal() = 0;
 

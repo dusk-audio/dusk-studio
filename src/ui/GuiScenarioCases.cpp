@@ -1658,5 +1658,59 @@ const ScenarioRegistrar unarmedRecord { Scenario {
     {}, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runUnarmedRecord (host, ctx); }
 } };
+std::optional<ScenarioResult> runPianoRollNoteKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& track = ctx.session().track (0);
+    auto& undo = ctx.engine().getUndoManager();
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&host, &track, &undo, regions = track.midiRegions.current()]
+    {
+        host.closePianoRoll();
+        undo.clearUndoHistory();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+    });
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
+    MidiRegion region;
+    region.lengthInTicks = 1920;
+    region.lengthInSamples = static_cast<std::int64_t> (ctx.engine().getCurrentSampleRate() * 2.0);
+    region.notes = { { 1, 60, 101, 240, 120 }, { 3, 67, 85, 600, 240 } };
+    const auto original = region.notes;
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    undo.clearUndoHistory();
+    host.openPianoRoll (0, 0);
+    ctx.later (300, [&host, &ctx, &track, original]
+    {
+        ctx.expect (host.pressPianoRollKey ("command + A"), "the piano roll did not select all notes");
+        ctx.expect (host.pressPianoRollKey ("5"), "the piano roll did not select the sixteenth-note grid");
+        for (const auto& action : std::array<std::pair<const char*, int>, 4> {
+                 std::pair<const char*, int> { "cursor up", 1 }, { "cursor down", -1 },
+                 { "cursor right", 120 }, { "cursor left", -120 } })
+        {
+            ctx.expect (host.pressPianoRollKey ("command + A"), "the piano roll did not reselect notes after undo");
+            ctx.expect (host.pressPianoRollKey (action.first), std::string (action.first) + " was not handled");
+            auto expected = original;
+            for (auto& note : expected)
+                if (std::abs (action.second) == 1) note.noteNumber += action.second;
+                else note.startTick += action.second;
+            const auto& edited = track.midiRegions.current();
+            ctx.expect (edited.size() == 1 && edited[0].notes == expected,
+                        std::string (action.first) + " changed the wrong note fields or amount");
+            ctx.expect (host.pressPianoRollKey ("command + Z"), "the piano roll did not handle undo");
+            const auto& restored = track.midiRegions.current();
+            ctx.expect (restored.size() == 1 && restored[0].notes == original,
+                        "undo did not restore both notes exactly");
+        }
+        ctx.complete (ctx.verdict());
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoRollNoteKeys { Scenario {
+    "gui.piano_roll_note_keys", { "gui", "midi", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoRollNoteKeys (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

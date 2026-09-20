@@ -9,6 +9,7 @@
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
 #include "MasteringView.h"
+#include "PianoRollComponent.h"
 #include "PlatformWindowing.h"
 #include "TransportBar.h"
 #include "TapeStrip.h"
@@ -459,6 +460,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     void autosaveTick() override { owner.writeAutosave(); }
     void openAbout() override { owner.menuItemSelected (2002, 2); }
+    void openPianoRoll (int track, int region) override { owner.openPianoRoll (track, region); }
+    void closePianoRoll() override { owner.closePianoRoll(); }
+
+    bool pressPianoRollKey (const std::string& description) override
+    {
+        return owner.pianoRoll != nullptr && owner.pianoRoll->isShowing()
+            && dispatchKey (*owner.pianoRoll, &PianoRollComponent::keyPressed, description, 0);
+    }
 
     bool loadMasteringFile (const std::filesystem::path& path) override
     {
