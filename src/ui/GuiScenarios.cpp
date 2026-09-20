@@ -471,6 +471,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     void autosaveTick() override { owner.writeAutosave(); }
     void openAbout() override { owner.menuItemSelected (2002, 2); }
+    void startMixdown() override { owner.menuItemSelected (1010, 0); }
 
     bool clickAt (float x, float y, int count)
     {

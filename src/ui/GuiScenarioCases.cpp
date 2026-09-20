@@ -3,6 +3,7 @@
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/audiofile/FileWriter.h"
+#include "../engine/audiofile/FileReader.h"
 #include "../engine/scenario/Scenario.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/cases/OopStubHarness.h"
@@ -1761,6 +1762,65 @@ const ScenarioRegistrar audioEditorLifecycle { Scenario {
     "gui.audio_editor_lifecycle", { "gui", "editor" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorLifecycle (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runMixdownHandoff (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& player = ctx.engine().getMasteringPlayer();
+    auto& track = ctx.session().track (0);
+    if (! ctx.expect (! player.isLoaded(), "the fixture already has a mastering source")) return ctx.verdict();
+    ctx.keep (track.mode);
+    ctx.cleanup ([&host, &ctx, &track, &player, regions = track.regions,
+                  source = ctx.session().mastering().sourceFile]
+    {
+        host.closeTopModal();
+        player.stop();
+        player.unloadFile();
+        ctx.session().mastering().sourceFile = source;
+        host.switchToStage (GuiHost::Stage::Recording);
+        track.regions = regions;
+    });
+    const auto input = ctx.tempDir() / "bounce-source.wav";
+    auto writer = dusk::audio::FileWriter::create (input, { 48000.0, 1, 24 });
+    if (! ctx.expect (writer != nullptr, "could not create the bounce fixture")) return ctx.verdict();
+    std::vector<float> silence (4800, 0.0f);
+    const float* channels[] { silence.data() };
+    if (! ctx.expect (writer->write (channels, 1, 4800), "could not write the bounce fixture")) return ctx.verdict();
+    writer.reset();
+    AudioRegion region;
+    region.file = decltype (region.file) (input.u8string().c_str());
+    region.lengthInSamples = 4800;
+    track.regions = { region };
+    track.mode.store ((int) Track::Mode::Mono);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    host.startMixdown();
+    ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 30000,
+        [&host, &ctx, &player]
+        {
+            ctx.waitUntil ([&host, &player]
+            { return host.stageViewMatches (GuiHost::Stage::Mastering) && player.isLoaded(); }, 5000,
+                [&ctx, &player]
+                {
+                    const auto expected = ctx.session().getSessionDirectory().getChildFile ("mixdown.wav");
+                    ctx.expect (player.getLoadedFile() == expected, "Mastering loaded a different file than mixdown.wav");
+                    ctx.expect (ctx.session().mastering().sourceFile == expected, "the session did not retain the mixdown source");
+                    auto reader = dusk::audio::FileReader::open (expected.getFullPathName().toStdString());
+                    if (ctx.expect (reader != nullptr, "Mixdown did not write a readable WAV in the session folder"))
+                    {
+                        ctx.expect (reader->info().numChannels == 2 && reader->info().bitsPerSample == 24,
+                                    "Mixdown did not write stereo 24-bit audio");
+                        ctx.expect (reader->info().numFrames >= 4800, "Mixdown truncated the session");
+                    }
+                    ctx.complete (ctx.verdict());
+                }, "closing the completed Mixdown did not load Mastering");
+        }, "Mixdown did not expose its completion Close button");
+    return std::nullopt;
+}
+
+const ScenarioRegistrar mixdownHandoff { Scenario {
+    "gui.mixdown_handoff", { "gui", "bounce" }, Needs::Engine | Needs::Gui,
+    {}, {}, 40000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMixdownHandoff (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario
