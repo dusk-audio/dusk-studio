@@ -575,3 +575,48 @@ TEST_CASE ("McuReceiver: fader touch sense flips faderTouched latch", "[mcu][rec
     r.process (makeNoteOn (mcu::btn::FaderTouchMaster, 0x7F), 0);
     REQUIRE (s.master().faderTouched.load (std::memory_order_relaxed));
 }
+
+// The jog wheel scrubs the playhead. setPlayhead is not RT-safe, so the
+// receiver queues the destination on the same atom Rewind / FFwd use and the
+// message thread moves the transport; a queued value is what "scrubbed" looks
+// like from here.
+TEST_CASE ("McuReceiver: jog wheel scrubs the playhead", "[mcu][receiver]")
+{
+    Session s;
+    McuReceiver r (s);
+    constexpr std::int64_t kPerDetent = 2400;
+
+    SECTION ("a detent each way moves from where the block started")
+    {
+        r.process (makeCc (mcu::cc::JogWheel, 1), 48000);
+        CHECK (s.pendingTransportPlayhead.load (std::memory_order_relaxed)
+                   == 48000 + kPerDetent);
+
+        s.pendingTransportPlayhead.store (-1, std::memory_order_relaxed);
+        r.process (makeCc (mcu::cc::JogWheel, 0x40 | 1), 48000);
+        CHECK (s.pendingTransportPlayhead.load (std::memory_order_relaxed)
+                   == 48000 - kPerDetent);
+    }
+
+    SECTION ("a spin back past the start stops at zero")
+    {
+        r.process (makeCc (mcu::cc::JogWheel, 0x40 | 20), 1000);
+        CHECK (s.pendingTransportPlayhead.load (std::memory_order_relaxed) == 0);
+    }
+
+    SECTION ("detents in one block accumulate instead of overwriting")
+    {
+        juce::MidiBuffer mb;
+        mb.addEvent (juce::MidiMessage::controllerEvent (1, mcu::cc::JogWheel, 2), 0);
+        mb.addEvent (juce::MidiMessage::controllerEvent (1, mcu::cc::JogWheel, 3), 64);
+        r.process (toDusk (mb), 0);
+        CHECK (s.pendingTransportPlayhead.load (std::memory_order_relaxed)
+                   == 5 * kPerDetent);
+    }
+
+    SECTION ("a detent of zero queues nothing")
+    {
+        r.process (makeCc (mcu::cc::JogWheel, 0), 48000);
+        CHECK (s.pendingTransportPlayhead.load (std::memory_order_relaxed) == -1);
+    }
+}

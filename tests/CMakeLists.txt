@@ -123,6 +123,7 @@ add_executable(dusk-studio-tests
     midi_time_code_decode.cpp
     midi_time_code_emit.cpp
     midi_clock_drift.cpp
+    midi_sync_receiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiClockEmitter.cpp
     smpte_wrap.cpp
     automation_thinning.cpp
@@ -136,6 +137,7 @@ add_executable(dusk-studio-tests
     timeline_follow.cpp
     loop_timeline.cpp
     generated_midi_budget.cpp
+    midi_bindings_preset.cpp
     session_mcu_roundtrip.cpp
     console_bank_mapping.cpp
     track_meter_source.cpp
@@ -201,6 +203,8 @@ add_executable(dusk-studio-tests
     session_arm_input_gate.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/MidiSyncReceiver.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/MidiBindings.cpp
     ${CMAKE_SOURCE_DIR}/src/session/UnreferencedAudio.cpp
     session_templates.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionTemplates.cpp)

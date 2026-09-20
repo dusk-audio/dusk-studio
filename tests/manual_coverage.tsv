@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 114
-# ceiling partial 56
+# ceiling gap 108
+# ceiling partial 58
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -341,21 +341,21 @@ Hardware inserts > Auto-measuring latency	Ping measures the round trip; reports 
 Hardware inserts > Latency compensation	the dry path is delayed to match; PDC across tracks to the deepest latency	auto	test:HardwareInsertSlot: dry-path delay aligns dry with hardware latency;test:PDC: every track compensates to the deepest latency;test:PDC: a single latency source delays everyone else;test:PDC: all-zero latency yields no compensation
 Hardware inserts > Latency compensation	offline inserts add no PDC; bounces trim the compensation out	auto	scenario:plugin.offline_insert_no_pdc;scenario:bounce.pdc_trimmed_from_render
 
-Sync to external gear > MIDI Clock	chase tempo from F8 averaged over 24 ticks; big jumps skipped	gap
+Sync to external gear > MIDI Clock	chase tempo from F8 averaged over 24 ticks; big jumps skipped	auto	test:MidiSyncReceiver chases the tempo of the incoming clock;test:MidiSyncReceiver averages jitter out of the reported tempo;test:MidiSyncReceiver skips a clock interval that jumps;test:MidiSyncReceiver follows the transport bytes
 Sync to external gear > MIDI Clock	emit 24 PPQN clock with Start and Stop	auto	test:MidiClockEmitter: integer samples-per-clock has no drift;test:MidiClockEmitter: fractional samples-per-clock has no systematic drift;test:MidiClockEmitter: transport edges emit Start / Stop
 Sync to external gear > MIDI Time Code	chase MTC quarter frames at four rates with +2 frame compensation	auto	test:MidiTimeCodeReceiver decodes a forward QF sequence at all 4 frame rates;test:MidiTimeCodeReceiver: full-frame sysex emits instant SMPTE without +2;test:MidiTimeCodeReceiver: QF watchdog drops rolling on silence
 Sync to external gear > MIDI Time Code	emit quarter frames plus full-frame sysex on edges and jumps	auto	test:MidiTimeCodeEmitter: rising edge fires full-frame sysex;test:MidiTimeCodeEmitter: stopped transport emits nothing;test:MidiTimeCodeEmitter: round-trip through receiver recovers playhead;test:MTC emitter: SMPTE hours wrap at the 24h boundary
 Sync to external gear > Mackie Control surfaces	faders, bank and channel stepping, mute/solo/arm/select, assign modes, transport, touch	auto	test:McuReceiver: fader pitch-bend writes faderDb on banked strip;test:McuReceiver: bank LEFT / RIGHT step session.mcu.bank;test:McuReceiver: mute / solo / arm button toggles;test:McuReceiver: SELECT button drives selectedChannel + banking;test:McuReceiver: assign-mode buttons set mcu.assignMode;test:McuReceiver: PLAY / STOP / RECORD buttons enqueue pendingTransportAction;test:McuReceiver: fader touch sense flips faderTouched latch
 Sync to external gear > Mackie Control surfaces	compressor assign mode maps encoders per mode; pushes reset	auto	test:McuReceiver: V-pot rotate (COMP mode) threshold moves the audible param;test:McuReceiver: V-pot rotate (COMP mode) ratio / attack / release follow the mode;test:McuReceiver: V-pot push (COMP mode) resets to the mode's own default
 Sync to external gear > Mackie Control surfaces	fader taper puts printed 0 at 0 dB	auto	test:McuFaderTaper: 0 dB sits at the printed unity position (~3/4 throw);test:McuFaderTaper: pitch-bend round-trips through dB exactly for every code
-Sync to external gear > Mackie Control surfaces	jog wheel scrubs the playhead	gap
+Sync to external gear > Mackie Control surfaces	jog wheel scrubs the playhead	auto	test:McuReceiver: jog wheel scrubs the playhead
 
-MIDI bindings > Learning a binding	right-click MIDI Learn binds the next control moved	gap
+MIDI bindings > Learning a binding	right-click MIDI Learn binds the next control moved	partial	scenario:midi.learn_captures_the_next_control	the engine captures the next control moved; the right-click menu and the panel writing the binding are not
 MIDI bindings > Learning a binding	MIDI Learn last-touched plugin parameter, every native host	gap
-MIDI bindings > Trigger types	CC, note, 14-bit pitch bend, MMC	partial	test:FaderBindingMap: PitchBend fader binds ride the Mackie taper;test:FaderBindingMap: CC/Note fader binds stay linear -90..+12 dB		CC, note and pitch-bend fader mapping tested; MMC is not
-MIDI bindings > Button modes	press triggers on the rising edge; toggle on every message	gap
-MIDI bindings > Available targets	every listed target reachable; banked variants follow the surface bank	partial	test:comp makeup binding pair matches the per-mode CC ranges;test:comp threshold binding pair sweeps the mode's dB domain;test:Console bank state: surface Bank Left and Right map at stride three		comp and fader targets and banking tested; most targets are not
-MIDI bindings > The MIDI Bindings panel	lists bindings; remove, export, import, clear all	gap
+MIDI bindings > Trigger types	CC, note, 14-bit pitch bend, MMC	auto	test:FaderBindingMap: PitchBend fader binds ride the Mackie taper;test:FaderBindingMap: CC/Note fader binds stay linear -90..+12 dB;scenario:midi.bindings_reach_their_targets
+MIDI bindings > Button modes	press triggers on the rising edge; toggle on every message	auto	scenario:midi.button_modes
+MIDI bindings > Available targets	every listed target reachable; banked variants follow the surface bank	partial	test:comp makeup binding pair matches the per-mode CC ranges;test:comp threshold binding pair sweeps the mode's dB domain;test:Console bank state: surface Bank Left and Right map at stride three;test:MIDI bindings preset round-trips every available target;scenario:midi.bindings_reach_their_targets;scenario:midi.banked_binding_follows_the_surface_bank	comp, fader, pan, mute and transport targets and banking are driven; the rest are held only by the preset round-trip
+MIDI bindings > The MIDI Bindings panel	lists bindings; remove, export, import, clear all	partial	test:MIDI bindings preset round-trips every field;test:MIDI bindings preset round-trips every available target;test:MIDI bindings import separates a broken preset from an empty one	export and import of the preset file and clear-all are tested; the panel list and its remove button are not
 
 Saving and loading sessions > Where sessions live	a session is a folder with relative audio paths that move between machines	auto	test:region files inside the session dir round-trip as relative paths;test:stale absolute region path re-roots to the session's audio dir;test:backslash-relative path from a Windows save resolves on load
 Saving and loading sessions > Save commands	Save is atomic: temp file, fsync, rename	auto	test:writeAtomic creates a new target and leaves no tmp behind;test:writeAtomic replaces existing content in place;test:writeAtomic survives a stale tmp from a prior crash;test:SessionSerializer save is atomic - tmp file gone after success
@@ -432,7 +432,7 @@ Messages > Session > Supporters	lists supporters by tier	manual			content comes 
 Messages > Import / Export	import and export alerts	n/a			index; entries are held below
 Messages > Import / Export > Import	stop playback first; unsupported, undecodable or unreadable files are reported	partial	test:importMidi rejects files it cannot use		an unusable MIDI file is rejected; the audio and playback-running alerts are not tested
 Messages > Import / Export > Switch track to [mode]?	importing a file of another kind asks before switching the track	gap
-Messages > Import / Export > MIDI bindings export / import failed	unwritable export or unreadable import is reported	gap
+Messages > Import / Export > MIDI bindings export / import failed	unwritable export or unreadable import is reported	partial	test:MIDI bindings import separates a broken preset from an empty one;test:MIDI bindings import keeps the entries it understands	an unreadable import is detected; the two alerts themselves are not
 Messages > Plugins	plugin alerts	n/a			index; entries are held below
 Messages > Plugins > Plugin kind mismatch	an instrument on an effect slot, or the reverse, is refused	gap
 Messages > Plugins > Plugin load failed	a plugin that fails to instantiate reports why	auto	test:ClapBundle rejects a real shared object that is not a CLAP bundle;test:ClapBundle fails gracefully on a missing bundle;test:Lv2Bundle rejects a non-bundle path cleanly

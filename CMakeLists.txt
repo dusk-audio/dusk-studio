@@ -750,6 +750,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/lv2_large_store_timing_bound.cpp
     src/engine/scenario/cases/lv2_params_numbering_stable.cpp
     src/engine/scenario/cases/markers.cpp
+    src/engine/scenario/cases/midi_bindings.cpp
     src/engine/scenario/cases/midi_out_dense_block.cpp
     src/engine/scenario/cases/midi_panic_all_paths.cpp
     src/engine/scenario/cases/mint_oop_fixture.cpp

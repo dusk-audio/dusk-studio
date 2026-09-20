@@ -68,9 +68,10 @@ public:
     void process (const dusk::MidiBuffer& events,
                   std::int64_t blockStartSample) noexcept;
 
-    // Smoothed BPM derived from the recent clock interval. 0 until the
-    // averaging window fills. Message-thread safe (relaxed atomic
-    // load); UI can poll on a timer.
+    // Smoothed BPM derived from the recent clock intervals: the average
+    // over as many as the window holds so far, so 0 only until a second
+    // clock marks out the first interval. Message-thread safe (relaxed
+    // atomic load); UI can poll on a timer.
     float getBpm() const noexcept { return bpm.load (std::memory_order_relaxed); }
 
     // True between Start/Continue (FA/FB) and Stop (FC). The engine
