@@ -1296,7 +1296,7 @@ Press **M** to drop a marker at the current playhead. A marker pill appears in t
 - Right-click for **Rename** and **Delete**.
 - **Rewind** and **Forward** transport buttons jump to the previous and next marker.
 
-Once a song has markers, the mini timeline strip (shown below the transport when the **TIMELINE** is collapsed) draws a tick and a name flag for **every** marker, with the **current section** — the most recent marker at or before the playhead — brightened. It tracks the arrangement as you play. Click a marker (tick or name) to jump to it; **double-click** a marker to rename it.
+Once a song has markers, the mini timeline strip (shown below the transport when the **TIMELINE** is collapsed) draws a tick for **every** marker and name flags where space permits, with the **current section** — the most recent marker at or before the playhead — brightened. It tracks the arrangement as you play. Click a marker (tick or name) to jump to it; **double-click** a marker to rename it.
 
 ## Loop and punch brackets
 

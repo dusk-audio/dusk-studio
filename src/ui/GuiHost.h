@@ -11,6 +11,14 @@
 // which is the only place that knows how any of this is realised.
 namespace duskstudio::scenario
 {
+struct MiniMarkerPaint
+{
+    std::string name;
+    std::uint32_t tickColour = 0, labelColour = 0;
+    float tickHeight = 0.0f, tickWidth = 0.0f;
+    int labelX = 0, labelY = 0, labelWidth = 0;
+};
+
 // One channel strip's insert.
 class StripHandle
 {
@@ -95,6 +103,10 @@ public:
     virtual std::vector<std::string> confirmationText() const = 0;
     virtual std::vector<std::string> multiImportRows() const = 0;
     virtual bool clickMultiImportTarget (int row) = 0;
+    virtual bool captureMiniMarkers (bool enabled) = 0;
+    virtual std::vector<MiniMarkerPaint> miniMarkerPaint() const = 0;
+    virtual bool clickMiniSample (std::int64_t sample) = 0;
+    virtual bool clickMiniMarker (int index) = 0;
     virtual bool clickTimeFormat() = 0;
     virtual std::string clockText() const = 0;
 

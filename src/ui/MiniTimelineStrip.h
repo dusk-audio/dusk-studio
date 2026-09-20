@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../foundation/MessageThread.h"
+#include "GuiHost.h"
 
 #include <functional>
 #include <utility>
@@ -15,9 +16,8 @@ class AudioEngine;
 
 // Thin "song map" shown when the tape strip is collapsed: song start, marker
 // ticks, song end, and the playhead, drawn full-song-fit (no horizontal scroll).
-// Click to seek; click a marker tick to jump to it. The active marker's name is
-// drawn as a small flag next to its tick (the textual section readout lives here
-// now, not in the transport bar); other names appear as hover tooltips.
+// Click to seek; click a marker tick or name to jump to it. Names appear where
+// space permits, with the active section brightened.
 class MiniTimelineStrip final : public juce::Component,
                                 public juce::SettableTooltipClient,
                                 private dusk::Timer,
@@ -26,6 +26,11 @@ class MiniTimelineStrip final : public juce::Component,
 public:
     MiniTimelineStrip (Session& sessionRef, AudioEngine& engineRef);
     ~MiniTimelineStrip() override;
+
+    void captureMarkerPaintForScenario (bool enabled) { capturePaint = enabled; markerPaint.clear(); repaint(); }
+    const auto& markerPaintForScenario() const { return markerPaint; }
+    auto samplePointForScenario (std::int64_t sample) const
+    { return getLocalBounds().getTopLeft().translated (xForSample (sample, songEndSamples()), getHeight() / 2); }
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -47,6 +52,8 @@ private:
     // Marker hit: tick proximity OR a name-flag rect recorded by the last paint.
     int         markerAtX (int x) const noexcept;
 
+    bool capturePaint = false;
+    std::vector<scenario::MiniMarkerPaint> markerPaint;
     Session&     session;
     AudioEngine& engine;
     std::int64_t  lastPlayhead = -1;

@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 97
+# ceiling gap 96
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -251,7 +251,7 @@ The tape strip > Regions > Right-click menu	loop region, split, join, label, mut
 The tape strip > Regions > Take cycling	take submenu and Alt+T cycling	partial	scenario:take.cycle_steps_through_the_stack		the Alt+T step through the stack is tested; the Takes submenu is not
 The tape strip > Markers	M drops a marker with a naming prompt; drag, rename, delete	partial	scenario:marker.add_move_remove_undo		the add, move, rename and delete behind them are tested with undo; the M key, the naming prompt and the drag gesture are not
 The tape strip > Markers	Rewind and Forward jump between markers	auto	scenario:marker.rewind_forward_jump
-The tape strip > Markers	the mini timeline shows every marker and brightens the current section	gap
+The tape strip > Markers	the mini timeline shows every marker and brightens the current section	auto	scenario:gui.mini_timeline_markers
 The tape strip > Loop and punch brackets	brackets draw solid when on and hollow when off	manual			visual; checked by screenshot review
 The tape strip > Loop and punch brackets	[ ] and Shift+[ ] set brackets; Clear loop and Clear punch	auto	test:Transport: a loop bracket placed by hand turns loop on once in is before out;test:Transport: a punch bracket placed by hand arms punch once in is before out
 The tape strip > Zoom	- = 0 and Cmd-wheel zoom; recording turns the page	auto	test:The page turns as the playhead nears the right edge;test:Fit on an empty tape strip keeps the unzoomed minute

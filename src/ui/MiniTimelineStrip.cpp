@@ -86,6 +86,7 @@ int MiniTimelineStrip::markerIndexAtX (int x, std::int64_t end) const noexcept
 
 void MiniTimelineStrip::paint (juce::Graphics& g)
 {
+    if (capturePaint) markerPaint.clear();
     auto b = getLocalBounds().toFloat();
     g.setColour (kBg);
     g.fillRoundedRectangle (b, 3.0f);
@@ -124,9 +125,12 @@ void MiniTimelineStrip::paint (juce::Graphics& g)
         const bool  active = (i == activeIdx);
         const auto  col = mk.colour.isTransparent() ? kMarkerDim : mk.colour;
         const float tickH = b.getHeight() * (active ? 0.80f : 0.52f);
-        g.setColour (active ? col.brighter (0.30f) : col.withAlpha (0.85f));
-        g.drawLine ((float) mx, midY - tickH * 0.5f, (float) mx, midY + tickH * 0.5f,
-                    active ? 2.0f : 1.4f);
+        const auto tickColour = active ? col.brighter (0.30f) : col.withAlpha (0.85f);
+        const float tickWidth = active ? 2.0f : 1.4f;
+        g.setColour (tickColour);
+        g.drawLine ((float) mx, midY - tickH * 0.5f, (float) mx, midY + tickH * 0.5f, tickWidth);
+        if (capturePaint)
+            markerPaint.push_back ({ mk.name.toStdString(), tickColour.getARGB(), 0, tickH, tickWidth });
     }
 
     // Marker names: a small flag right of each tick, clipped to the gap before
@@ -153,9 +157,18 @@ void MiniTimelineStrip::paint (juce::Graphics& g)
         const juce::Rectangle<int> ri (textX, (int) b.getY() + 2, tw, (int) b.getHeight() - 4);
         g.setColour (kBg.withAlpha (active ? 0.9f : 0.72f));
         g.fillRoundedRectangle (ri.toFloat(), 2.0f);
-        g.setColour (active ? col.brighter (0.35f) : col.withAlpha (0.9f));
+        const auto labelColour = active ? col.brighter (0.35f) : col.withAlpha (0.9f);
+        g.setColour (labelColour);
         g.drawText (mk.name, ri.reduced (3, 0), juce::Justification::centredLeft, true);
         markerFlags.push_back ({ i, ri });
+        if (capturePaint)
+        {
+            auto& row = markerPaint[(size_t) i];
+            row.labelColour = labelColour.getARGB();
+            row.labelX = ri.getX();
+            row.labelY = ri.getCentreY();
+            row.labelWidth = ri.getWidth();
+        }
     }
 
     // Playhead: full-height line + small triangle head.

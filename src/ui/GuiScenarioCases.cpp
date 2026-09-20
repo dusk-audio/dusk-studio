@@ -922,6 +922,99 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the mini timeline");
+    for (int track = 0; track < Session::kNumTracks; ++track)
+        if (! session.track (track).regions.empty() || ! session.track (track).midiRegions.current().empty())
+            return ScenarioResult::skip ("requires an empty arrangement");
+    const auto markers = session.getMarkers();
+    const auto playhead = transport.getPlayhead();
+    const bool shown = host.setTimelineShown (false);
+    ctx.cleanup ([&host, &session, &transport, markers, playhead, shown]
+    {
+        host.captureMiniMarkers (false);
+        session.getMarkers() = markers;
+        transport.locate (playhead);
+        host.setTimelineShown (shown);
+    });
+    const double rate = engine.getCurrentSampleRate();
+    session.getMarkers().clear();
+    const std::array<const char*, 3> names { "Verse", "Chorus", "Outro" };
+    for (int index = 0; index < 3; ++index)
+    {
+        Marker marker;
+        marker.name = names[(size_t) index];
+        marker.timelineSamples = (std::int64_t) ((10 + index * 15) * rate);
+        marker.colour = decltype (marker.colour) (0xff906030);
+        session.getMarkers().push_back (std::move (marker));
+    }
+    transport.locate (0);
+    if (! host.captureMiniMarkers (true)) return ScenarioResult::fail ("mini timeline is unavailable");
+    auto baseline = std::make_shared<std::vector<MiniMarkerPaint>>();
+    const auto check = [&ctx, &host, baseline, names] (int active)
+    {
+        const auto rows = host.miniMarkerPaint();
+        if (! ctx.expect (rows.size() == 3 && baseline->size() == 3, "mini timeline did not paint every marker")) return;
+        const auto brightness = [] (std::uint32_t colour)
+        { return ((colour >> 16) & 255) + ((colour >> 8) & 255) + (colour & 255); };
+        for (int index = 0; index < 3; ++index)
+        {
+            const auto& row = rows[(size_t) index];
+            const auto& dim = (*baseline)[(size_t) index];
+            ctx.expect (row.name == names[(size_t) index] && row.labelWidth > 0, "marker label was not painted");
+            if (index == active)
+            {
+                ctx.expect (brightness (row.tickColour) > brightness (dim.tickColour)
+                            && brightness (row.labelColour) > brightness (dim.labelColour), "current section was not brightened");
+                ctx.expect (row.tickHeight > dim.tickHeight && row.tickWidth > dim.tickWidth,
+                            "current marker tick was not emphasized");
+            }
+            else
+                ctx.expect (row.tickColour == dim.tickColour && row.labelColour == dim.labelColour
+                            && std::abs (row.tickHeight - dim.tickHeight) < 0.001f
+                            && std::abs (row.tickWidth - dim.tickWidth) < 0.001f, "inactive marker was highlighted");
+        }
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 350, [&host, &ctx, rate]
+    { ctx.expect (host.clickMiniSample ((std::int64_t) (5 * rate)), "mini timeline seek failed"); } });
+    steps->push_back ({ 200, [&host, &ctx, &transport, rate, baseline, check]
+    {
+        ctx.expect (transport.getPlayhead() > 0 && transport.getPlayhead() < (std::int64_t) (10 * rate),
+                    "mini timeline did not seek before the first marker");
+        *baseline = host.miniMarkerPaint();
+        check (-1);
+    } });
+    for (int index = 0; index < 3; ++index)
+    {
+        steps->push_back ({ 150, [&host, &ctx, rate, index]
+        { ctx.expect (host.clickMiniSample ((std::int64_t) ((20 + index * 15) * rate)), "section seek failed"); } });
+        steps->push_back ({ 200, [check, index] { check (index); } });
+    }
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickMiniMarker (0), "visible marker label did not receive a click"); } });
+    steps->push_back ({ 200, [&ctx, &session, &transport, check]
+    {
+        ctx.expect (transport.getPlayhead() == session.getMarkers()[0].timelineSamples, "marker label did not seek exactly to the marker");
+        check (0);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar miniTimelineMarkers { Scenario {
+    "gui.mini_timeline_markers", { "gui", "tape" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMiniTimelineMarkers (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runMultiImportTargets (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();

@@ -11,6 +11,7 @@
 #include "MultiImportTargetPicker.h"
 #include "DuskAlerts.h"
 #include "TapeStrip.h"
+#include "MiniTimelineStrip.h"
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
 #include "PlatformWindowing.h"
@@ -329,6 +330,35 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return dispatchFileDrop (*tape, &TapeStrip::filesDropped, files, point.x, point.y);
     }
     std::vector<std::string> confirmationText() const override { return confirmationTextForScenario(); }
+    bool captureMiniMarkers (bool enabled) override
+    {
+        if (owner.miniTimeline == nullptr) return false;
+        owner.miniTimeline->captureMarkerPaintForScenario (enabled);
+        return true;
+    }
+    std::vector<scenario::MiniMarkerPaint> miniMarkerPaint() const override
+    {
+        return owner.miniTimeline != nullptr ? owner.miniTimeline->markerPaintForScenario()
+                                            : std::vector<scenario::MiniMarkerPaint> {};
+    }
+    bool clickMiniSample (std::int64_t sample) override
+    {
+        auto* mini = owner.miniTimeline.get();
+        if (mini == nullptr || ! mini->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (mini, mini->samplePointForScenario (sample)).toFloat();
+        return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+    }
+    bool clickMiniMarker (int index) override
+    {
+        auto* mini = owner.miniTimeline.get();
+        if (mini == nullptr || ! mini->isShowing()) return false;
+        const auto& rows = mini->markerPaintForScenario();
+        if (index < 0 || index >= (int) rows.size() || rows[(size_t) index].labelWidth <= 0) return false;
+        const auto& row = rows[(size_t) index];
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (mini,
+            mini->getLocalBounds().getTopLeft().translated (row.labelX + row.labelWidth / 2, row.labelY)).toFloat();
+        return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+    }
     bool clickFileMenu() override
     {
         if (! owner.menuBar.isShowing()) return false;
