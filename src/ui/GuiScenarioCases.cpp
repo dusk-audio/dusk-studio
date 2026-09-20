@@ -932,6 +932,94 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restoreFile = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restoreFile))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &engine, originalDir, restoreFile]
+    {
+        engine.stop();
+        if (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restoreFile);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto outgoing = ctx.tempDir() / "outgoing" / "session.json";
+    const auto incoming = ctx.tempDir() / "incoming" / "session.json";
+    std::filesystem::create_directories (outgoing.parent_path());
+    std::filesystem::create_directories (incoming.parent_path());
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    session.track (0).strip.faderDb.store (0.0f);
+    if (! SessionSerializer::save (session, outgoing))
+        return ScenarioResult::fail ("could not save the outgoing session");
+    session.track (0).strip.faderDb.store (-18.0f);
+    if (! SessionSerializer::save (session, incoming))
+        return ScenarioResult::fail ("could not save the incoming session");
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const std::string action : { "Cancel", "Don't Save", "Save" })
+    {
+        steps->push_back ({ 200, [&host, &ctx, &session, &engine, outgoing]
+        {
+            ctx.expect (host.openSession (outgoing), "could not open the outgoing session");
+            session.setTrackArmed (0, true);
+            engine.record();
+            ctx.expect (engine.getTransport().isRecording(), "the take did not start");
+        } });
+        steps->push_back ({ 200, [&engine]
+        {
+            const std::uint8_t note[] { 0x90, 64, 100 };
+            engine.postVirtualKeyboardMidi (note, 3);
+        } });
+        steps->push_back ({ 150, [&engine]
+        {
+            const std::uint8_t note[] { 0x80, 64, 0 };
+            engine.postVirtualKeyboardMidi (note, 3);
+        } });
+        steps->push_back ({ 200, [&host, incoming] { host.requestSessionSwitch (incoming); } });
+        steps->push_back ({ 200, [&host, &ctx, &engine, &session, action, outgoing]
+        {
+            ctx.expect (engine.getTransport().isStopped(), "the session switch did not stop recording");
+            ctx.expect (currentSessionDirectory (session) == outgoing.parent_path(),
+                        "the session changed before the prompt was answered");
+            const auto& regions = session.track (0).midiRegions.current();
+            ctx.expect (regions.size() == 1 && ! regions.front().notes.empty(),
+                        "the session switch did not commit the MIDI take before prompting");
+            ctx.expect (host.clickModalButton (action), "the prompt did not offer " + action);
+        } });
+        steps->push_back ({ 500, [&host, &ctx, &session, action, outgoing, incoming]
+        {
+            ctx.expect (host.modalStackEmpty(), action + " left the prompt open");
+            ctx.expect (currentSessionDirectory (session)
+                            == (action == "Cancel" ? outgoing.parent_path() : incoming.parent_path()),
+                        action + " opened the wrong session");
+            Session saved;
+            ctx.expect (SessionSerializer::load (saved, outgoing), "could not read the outgoing session");
+            const auto& regions = saved.track (0).midiRegions.current();
+            ctx.expect (action == "Save" ? regions.size() == 1 && ! regions.front().notes.empty()
+                                         : regions.empty(),
+                        action + " persisted the wrong take state");
+            if (action == "Cancel")
+                ctx.expect (session.track (0).midiRegions.current().size() == 1,
+                            "Cancel discarded the committed take");
+            else
+                ctx.expect (nearly (session.track (0).strip.faderDb.load(), -18.0f),
+                            "the incoming session contents did not load");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar sessionSwitch { Scenario {
+    "gui.session_switch_commits_take", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSessionSwitch (host, ctx); }
+} };
+
 // The heartbeat writes session.json.autosave only when the session changed
 // since the last save or autosave, never touches session.json and leaves no
 // temp file behind. Opening a session whose autosave says something else

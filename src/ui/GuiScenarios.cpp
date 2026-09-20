@@ -292,6 +292,21 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return EmbeddedModal::activeModalStack().empty();
     }
 
+    bool clickModalButton (const std::string& label) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        for (auto* child : stack.back()->getBody()->getChildren())
+            if (auto* button = dynamic_cast<decltype (owner.recordingStageBtn)*> (child);
+                button != nullptr && button->isShowing() && button->isEnabled()
+                && button->getButtonText().toStdString() == label)
+            {
+                button->triggerClick();
+                return true;
+            }
+        return false;
+    }
+
     void closeTopModal() override
     {
         auto& stack = EmbeddedModal::activeModalStack();
@@ -299,6 +314,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
 
     void autosaveTick() override { owner.writeAutosave(); }
+
+    void requestSessionSwitch (const std::filesystem::path& sessionJson) override
+    {
+        owner.openSessionPath (hostFile (sessionJson));
+    }
 
     bool openSession (const std::filesystem::path& sessionJson) override
     {
