@@ -1356,8 +1356,8 @@ The top is a row of icon buttons:
 
 - **Undo / Redo** (also **Cmd+Z** and **Cmd+Shift+Z**).
 - **Split** at the edit cursor (also **Cmd/Ctrl+E**).
-- **Normalize** (peak-aligns the region to 0 dB by adjusting its gain).
-- **Properties** (file path, sample rate, channel count, length).
+- **Normalize** (adjusts gain toward a peak just below 0 dBFS, within the gain limits).
+- **Properties** (label, mute, lock, colour and delete actions, with file name, sample rate, channel count and length shown below).
 - **Zoom out / Zoom in / Zoom fit** (also **−**, **+**, **0**).
 
 The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. Draw is the automation pencil: with an automation lane selected (see below) it draws a freehand breakpoint curve; with no lane selected it does nothing (it never moves the region).

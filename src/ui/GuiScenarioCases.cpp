@@ -923,6 +923,122 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runAudioEditorToolbar (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.closeAudioEditor();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto source = ctx.tempDir() / "Toolbar.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = 48000;
+    spec.numChannels = 1;
+    auto writer = dusk::audio::FileWriter::create (source, spec);
+    std::vector<float> signal (48000, 0.5f);
+    const float* channels[] = { signal.data() };
+    if (! writer || ! writer->write (channels, 1, 48000) || ! writer->flush())
+        return ScenarioResult::fail ("could not write editor fixture");
+    writer.reset();
+    const auto read = [] (const std::filesystem::path& path)
+    {
+        std::ifstream input (path, std::ios::binary);
+        return std::string (std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>());
+    };
+    const auto originalBytes = read (source);
+    auto& track = session.track (0);
+    track.frozen.store (false);
+    track.regions.clear();
+    AudioRegion region;
+    region.file = decltype (region.file) (source.string());
+    region.lengthInSamples = 48000;
+    track.regions.push_back (region);
+    session.audioEditorSnap = false;
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+    auto initialView = std::make_shared<std::vector<double>>();
+    auto split = std::make_shared<std::int64_t> (0);
+    const auto gain = [&ctx, &session] (float expected)
+    {
+        const auto& regions = session.track (0).regions;
+        if (ctx.expect (regions.size() == 1, "expected one region"))
+            ctx.expect (std::abs (regions[0].gainDb - expected) < 0.001f, "toolbar did not apply expected gain");
+    };
+    const auto click = [&host, &ctx] (const std::string& name)
+    { ctx.expect (host.clickAudioEditorButton (name), "audio editor button unavailable: " + name); };
+    const float normalized = 20.0f * std::log10 (0.99f / 0.5f);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&host, initialView, click]
+    { *initialView = host.audioEditorView(); click ("Normalize"); } });
+    steps->push_back ({ 150, [gain, normalized, click] { gain (normalized); click ("Undo"); } });
+    steps->push_back ({ 150, [gain, click] { gain (0.0f); click ("Redo"); } });
+    steps->push_back ({ 150, [gain, normalized, &host, &ctx]
+    {
+        gain (normalized);
+        ctx.expect (host.clickAudioEditorSample (24000), "waveform click failed");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, split, click]
+    {
+        const auto view = host.audioEditorView();
+        if (ctx.expect (view.size() == 3, "editor view unavailable")) *split = (std::int64_t) view[2];
+        ctx.expect (*split > 20000 && *split < 28000, "waveform did not place an interior cursor");
+        click ("Split");
+    } });
+    steps->push_back ({ 150, [&session, &ctx, split, click]
+    {
+        const auto& regions = session.track (0).regions;
+        if (ctx.expect (regions.size() == 2, "split button did not split region"))
+            ctx.expect (regions[0].lengthInSamples == *split && regions[1].timelineStart == *split
+                        && regions[1].sourceOffset == *split && regions[1].lengthInSamples == 48000 - *split,
+                        "split did not preserve contiguous source slices");
+        click ("Undo");
+    } });
+    steps->push_back ({ 150, [gain, normalized, click] { gain (normalized); click ("Properties"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Mute region"), "Properties did not expose mute"); } });
+    steps->push_back ({ 150, [&session, &ctx, click]
+    { ctx.expect (! session.track (0).regions.empty() && session.track (0).regions[0].muted, "Properties mute failed"); click ("Undo"); } });
+    steps->push_back ({ 150, [click] { click ("Zoom in"); } });
+    steps->push_back ({ 150, [&host, &ctx, initialView, click]
+    {
+        const auto view = host.audioEditorView();
+        ctx.expect (view.size() == 3 && initialView->size() == 3 && view[0] > (*initialView)[0], "zoom in did not enlarge waveform");
+        click ("Zoom out");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, initialView, click]
+    {
+        const auto view = host.audioEditorView();
+        ctx.expect (view.size() == 3 && initialView->size() == 3 && std::abs (view[0] - (*initialView)[0]) < 0.00001,
+                    "zoom out did not reverse zoom in");
+        click ("Zoom in");
+    } });
+    steps->push_back ({ 150, [click] { click ("Zoom fit"); } });
+    steps->push_back ({ 150, [&host, &ctx, &session, initialView, read, source, originalBytes]
+    {
+        const auto view = host.audioEditorView();
+        ctx.expect (view.size() == 3 && initialView->size() == 3 && std::abs (view[0] - (*initialView)[0]) < 0.00001
+                    && std::abs (view[1] - (*initialView)[1]) < 0.5, "zoom fit did not restore fitted view");
+        ctx.expect (! session.track (0).regions.empty() && ! session.track (0).regions[0].muted, "Undo did not restore mute");
+        ctx.expect (read (source) == originalBytes, "editor modified the source file");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorToolbar { Scenario {
+    "gui.audio_editor_toolbar", { "gui", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorToolbar (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

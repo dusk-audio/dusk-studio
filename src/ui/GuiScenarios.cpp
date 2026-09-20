@@ -2,6 +2,7 @@
 
 #include "AuxLaneComponent.h"
 #include "AuxView.h"
+#include "AudioRegionEditor.h"
 #include "BusComponent.h"
 #include "ChannelStripComponent.h"
 #include "ConsoleView.h"
@@ -264,6 +265,33 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 {
     explicit ScenarioGuiHost (MainComponent& ownerIn) : owner (ownerIn) {}
 
+    bool openAudioEditor (int track, int region) override
+    {
+        if (owner.audioEditor != nullptr || owner.pianoRoll != nullptr) return false;
+        owner.openAudioEditor (track, region);
+        return owner.audioEditor != nullptr;
+    }
+    void closeAudioEditor() override { owner.closeAudioEditor(); }
+    std::vector<double> audioEditorView() const override
+    { return owner.audioEditor != nullptr ? owner.audioEditor->viewForScenario() : std::vector<double> {}; }
+    bool clickAudioEditorButton (const std::string& name) override
+    {
+        if (owner.audioEditor == nullptr) return false;
+        for (auto* child : owner.audioEditor->getChildren())
+            if (child->isShowing() && child->isEnabled() && child->getName().toStdString() == name)
+            {
+                const auto point = owner.getTopLevelComponent()->getLocalPoint (child, child->getLocalBounds().getCentre()).toFloat();
+                return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+            }
+        return false;
+    }
+    bool clickAudioEditorSample (std::int64_t sample) override
+    {
+        auto* editor = owner.audioEditor.get();
+        if (editor == nullptr) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor, editor->samplePointForScenario (sample)).toFloat();
+        return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+    }
     bool openPiano (int track, int region) override
     {
         if (owner.pianoRoll != nullptr) return false;

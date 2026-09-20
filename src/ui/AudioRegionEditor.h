@@ -27,6 +27,14 @@ public:
                           int trackIndex, int regionIndex);
     ~AudioRegionEditor() override;
 
+    std::vector<double> viewForScenario() const
+    { return { pixelsPerSample, (double) scrollSamples, (double) editCursorSample }; }
+    auto samplePointForScenario (std::int64_t sample) const
+    {
+        const auto wave = getLocalBounds().withTrimmedTop (kIconRowHeight + kRulerHeight)
+                                         .withTrimmedBottom (kStatusBarH + kScrollBarH);
+        return wave.getTopLeft().withX (xForTimelineSample (sample, wave)).withY (wave.getY() + wave.getHeight() * 3 / 4);
+    }
     std::function<void()> onCloseRequested;
 
     // Cmd+]/Cmd+[ in-place swap. Host re-opens; editor state (zoom,
