@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 97
+# ceiling gap 96
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -427,7 +427,7 @@ Messages > Session > Missing audio files	lists the files a loaded session cannot
 Messages > Session > Clean out	no audio dir, a directory it cannot read, nothing to clean, or confirm deleting unreferenced files	partial	test:Clean out finds only the audio nothing points at;test:Clean out reports nothing for a session with no audio directory;test:Clean out reports a directory it cannot read		what it would delete, the empty case and an unreadable directory are tested; the four alerts and the delete itself are UI
 Messages > Session > Optimize automation	refused while playing or in Read/Touch; reports the thinning	partial	test:thinAutomationLane: collinear interior points are dropped		the thinning is tested; the refusals are not
 Messages > Session > Plug-in unavailable	names each offline slot, plugin, format and reason	auto	test:native restore policy keeps healthy slots saveable and reports load reasons;test:aux native-state rejection diagnostics identify lane and slot
-Messages > Session > About Dusk Studio	shows the version and build date	gap
+Messages > Session > About Dusk Studio	shows the version and build date	auto	scenario:gui.about_details		opens About through its menu action, checks version and build timestamp, and dismisses it with OK
 Messages > Session > Supporters	lists supporters by tier	manual			content comes from the release build's Patreon refresh
 Messages > Import / Export	import and export alerts	n/a			index; entries are held below
 Messages > Import / Export > Import	stop playback first; unsupported, undecodable or unreadable files are reported	partial	test:importMidi rejects files it cannot use		an unusable MIDI file is rejected; the audio and playback-running alerts are not tested

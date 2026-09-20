@@ -19,6 +19,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <string>
 #include <system_error>
 #include <type_traits>
@@ -1413,6 +1414,33 @@ const ScenarioRegistrar armInputRefusal { Scenario {
     "gui.arm_input_refusal", { "gui", "recording" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runArmInputRefusal (host, ctx); }
+} };
+std::optional<ScenarioResult> runAboutDetails (GuiHost& host, ScenarioContext& ctx)
+{
+    ctx.cleanup ([&host] { if (! host.modalStackEmpty()) host.closeTopModal(); });
+    host.openAbout();
+    ctx.waitUntil ([&host] { return ! host.modalStackEmpty(); }, 3000, [&host, &ctx]
+    {
+        const auto text = host.modalText();
+        ctx.expect (text.find ("About Dusk Studio\nDusk Studio " JUCE_APPLICATION_VERSION_STRING) == 0,
+                    "About does not show the application's version");
+        ctx.expect (text.find ("Portastudio-style DAW.") != std::string::npos,
+                    "About is missing the application description");
+        ctx.expect (std::regex_search (text, std::regex (
+                        "Built [A-Z][a-z]{2} [ 0-9][0-9] [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2}")),
+                    "About does not show its build date and time");
+        if (! ctx.expect (host.clickModalButton ("OK"), "About has no usable OK button"))
+        { ctx.complete (ctx.verdict()); return; }
+        ctx.waitUntil ([&host] { return host.modalStackEmpty(); }, 3000,
+                       [&ctx] { ctx.complete (ctx.verdict()); }, "OK did not dismiss About");
+    }, "About did not open");
+    return std::nullopt;
+}
+
+const ScenarioRegistrar aboutDetails { Scenario {
+    "gui.about_details", { "gui", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAboutDetails (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario

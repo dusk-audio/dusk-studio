@@ -421,6 +421,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
 
     void autosaveTick() override { owner.writeAutosave(); }
+    void openAbout() override { owner.menuItemSelected (2002, 2); }
 
     bool openSession (const std::filesystem::path& sessionJson) override
     {

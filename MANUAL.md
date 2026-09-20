@@ -2509,7 +2509,7 @@ Two variants:
 
 ### About Dusk Studio
 
-- **When**: Help → About.
+- **When**: Settings → About Dusk Studio.
 - **Text**: "Dusk Studio [version]. Portastudio-style DAW. Built [date] [time]."
 - **Buttons**: OK (or click outside / Esc).
 

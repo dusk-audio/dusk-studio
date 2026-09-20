@@ -100,6 +100,7 @@ public:
     virtual bool modalStackEmpty() const = 0;
     virtual std::string modalText() const = 0;
     virtual bool clickModalButton (const std::string& label) = 0;
+    virtual void openAbout() = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.
     virtual void closeTopModal() = 0;
 
