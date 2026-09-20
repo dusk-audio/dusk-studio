@@ -2484,8 +2484,9 @@ The format for each entry:
 
 ### Clean out
 
-Three variants:
+Four variants:
 
+- **Cannot read the directory**: "Could not read this session's audio directory, so there is no telling what is unreferenced. Check the folder's permissions and that its drive is still connected, then try again." — Buttons: OK.
 - **No audio directory**: "This session has no audio directory yet, so there's nothing to clean." — Buttons: OK.
 - **No unreferenced files**: "No unreferenced files found. The audio directory is already clean." — Buttons: OK.
 - **Confirm delete**: "Found [N] unreferenced .wav file(s) totalling [size] MB. These were created by past record passes that no longer have any region or take pointing at them. Deleting cannot be undone, and the session's undo history will be cleared (undone edits may still reference these files)." — Buttons: **Delete** (destructive, red) / **Cancel**.

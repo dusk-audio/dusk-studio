@@ -84,6 +84,7 @@ add_executable(dusk-studio-tests
     base64_decode.cpp
     legacy_state_base64.cpp
     session_round_trip.cpp
+    session_unreferenced_audio.cpp
     session_builtin_insert_roundtrip.cpp
     session_tape_migration.cpp
     session_freeze_roundtrip.cpp
@@ -200,6 +201,7 @@ add_executable(dusk-studio-tests
     session_arm_input_gate.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/UnreferencedAudio.cpp
     session_templates.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionTemplates.cpp)
 

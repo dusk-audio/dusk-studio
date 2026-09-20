@@ -785,6 +785,7 @@ target_sources(DuskStudio PRIVATE
     src/session/MidiBindings.cpp
     src/session/Session.cpp
     src/session/SessionSerializer.cpp
+    src/session/UnreferencedAudio.cpp
     src/session/SessionTemplates.cpp
     src/util/CrashHandler.cpp
     src/util/HostInfo.cpp

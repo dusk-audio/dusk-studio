@@ -50,6 +50,7 @@
 #include "../session/MarkerEditActions.h"
 #include "../session/RecentSessions.h"
 #include "../session/SessionSerializer.h"
+#include "../session/UnreferencedAudio.h"
 #include "../engine/FileImporter.h"
 #include "../engine/PlaybackEngine.h"
 #include "../engine/PluginStateDiagnostics.h"
@@ -5545,11 +5546,17 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
 
 void MainComponent::cleanOutUnreferencedFiles()
 {
-    // Build the set of WAVs the session is currently using - both the
-    // live region's `file` and every previousTakes entry. Anything in
-    // the audio dir not in this set is fair game for deletion.
-    auto audioDir = session.getAudioDirectory();
-    if (! audioDir.isDirectory())
+    const auto unreferenced = findUnreferencedAudio (session);
+    if (unreferenced.scanFailed)
+    {
+        showDuskAlert (*this, "Clean out",
+                          "Could not read this session's audio directory, so "
+                          "there is no telling what is unreferenced. Check the "
+                          "folder's permissions and that its drive is still "
+                          "connected, then try again.");
+        return;
+    }
+    if (! session.getAudioDirectory().isDirectory())
     {
         showDuskAlert (*this, "Clean out",
                           "This session has no audio directory yet, "
@@ -5557,35 +5564,7 @@ void MainComponent::cleanOutUnreferencedFiles()
         return;
     }
 
-    juce::StringArray referenced;   // full paths
-    for (int t = 0; t < Session::kNumTracks; ++t)
-    {
-        for (const auto& r : session.track (t).regions)
-        {
-            referenced.addIfNotAlreadyThere (r.file.getFullPathName());
-            for (const auto& take : r.previousTakes)
-                referenced.addIfNotAlreadyThere (take.file.getFullPathName());
-        }
-    }
-    // A bounce loaded into the Mastering stage may live in audio/ too.
-    referenced.addIfNotAlreadyThere (session.mastering().sourceFile.getFullPathName());
-
-    // Walk the audio directory for .wav files. Anything outside the
-    // referenced set is a candidate. Subdirectories are intentionally
-    // skipped so external WAVs the user dropped in by hand don't get
-    // touched.
-    juce::Array<juce::File> candidates;
-    std::int64_t totalBytes = 0;
-    for (const auto& f : audioDir.findChildFiles (juce::File::findFiles, false, "*.wav"))
-    {
-        if (! referenced.contains (f.getFullPathName()))
-        {
-            candidates.add (f);
-            totalBytes += f.getSize();
-        }
-    }
-
-    if (candidates.isEmpty())
+    if (unreferenced.files.empty())
     {
         showDuskAlert (*this, "Clean out",
                           "No unreferenced files found. The audio "
@@ -5593,7 +5572,10 @@ void MainComponent::cleanOutUnreferencedFiles()
         return;
     }
 
-    const auto sizeMB = (double) totalBytes / (1024.0 * 1024.0);
+    juce::Array<juce::File> candidates;
+    for (const auto& path : unreferenced.files)
+        candidates.add (juce::File (juce::String (path.u8string())));
+    const auto sizeMB = (double) unreferenced.totalBytes / (1024.0 * 1024.0);
     const auto msg = "Found " + juce::String (candidates.size())
                    + " unreferenced .wav file(s) totalling "
                    + juce::String (sizeMB, 1) + " MB.\n\n"
