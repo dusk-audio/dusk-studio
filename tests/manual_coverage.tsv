@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 103
+# ceiling gap 102
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -144,7 +144,7 @@ The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	the refusal names th
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	IN monitors the live input through the strip	auto	scenario:engine.pipeline_selftest
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	PRINT commits EQ, comp and insert to the recorded file	partial	scenario:strip.print_commits_the_strip		the EQ and the compressor are tested in the take; the insert is not
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	FREEZE renders the track, bypasses its DSP, locks it, and is saved	auto	test:SessionSerializer round-trips track freeze state;test:A frozen track still refuses to arm with inputs available;scenario:region.frozen_track_refuses_edits;scenario:strip.freeze_renders_and_bypasses
-The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	a frozen track still takes a hardware insert	gap
+The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	a frozen track still takes a hardware insert	auto	scenario:strip.frozen_hardware_insert		baked WAV reaches both sends; stereo return and bypass verified through the audio callback
 The channel strip > Insert slot	one plugin or hardware insert with a 20 ms equal-power crossfade	auto	test:Crossfade: equal-power overlap holds constant power across window;test:Crossfade: at-boundary samples produce unity for both shapes
 The channel strip > Insert slot	right-click Add / Replace / Remove / Edit / hardware	gap
 The channel strip > Insert slot	bypass LED; bypassed insert keeps processing for a click-free return	partial	test:a bypassed built-in slot passes dry audio and reports no latency		built-in bypass tested; the click-free return and plug-in bypass are not

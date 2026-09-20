@@ -203,6 +203,85 @@ bool placeClick (ScenarioContext& ctx, std::int64_t start, std::int64_t at, std:
     return true;
 }
 
+ScenarioResult frozenHardwareInsert (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
+    auto& strip = engine.getChannelStrip (kTrack);
+    const auto frozenPath = ctx.tempDir() / "frozen.wav";
+    std::vector<float> bakedL (9600, 0.0f), bakedR (9600, 0.0f);
+    bakedL[4800] = 0.5f;
+    bakedR[4800] = 0.25f;
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = kRate;
+    spec.numChannels = 2;
+    spec.bitsPerSample = 32;
+    auto writer = dusk::audio::FileWriter::create (frozenPath, spec);
+    const float* baked[] = { bakedL.data(), bakedR.data() };
+    if (writer == nullptr || ! writer->write (baked, 2, 9600) || ! writer->flush())
+        return ScenarioResult::fail ("could not write the baked source");
+    writer.reset();
+    engine.commitFreeze (kTrack, SessionFile (frozenPath.u8string().c_str()), 9600);
+    ctx.cleanup ([&engine, &strip]
+    {
+        engine.stop();
+        strip.setStemCapture (nullptr, nullptr);
+        engine.unfreezeTrack (kTrack);
+    });
+    ctx.expect (track.frozen.load(), "the source was not frozen");
+    HardwareInsertRouting routing;
+    routing.outputChL = 2;
+    routing.outputChR = 3;
+    routing.inputChL = 0;
+    routing.inputChR = 1;
+    track.hardwareInsert.routing.publish (std::make_unique<HardwareInsertRouting> (routing));
+    track.hardwareInsert.enabled.store (true);
+    strip.insertMode.store (ChannelStrip::kInsertHardware);
+    engine.prepareForSelfTest (kRate, kFrames);
+    engine.getTransport().setLoopRange (0, 9600);
+    engine.getTransport().setLoopEnabled (true);
+    engine.getPlaybackEngine().preparePlayback();
+    engine.getTransport().setPlayhead (0);
+    engine.play();
+
+    std::array<float, kFrames> inL {}, inR {}, outL {}, outR {}, sendL {}, sendR {}, wetL {}, wetR {};
+    inL.fill (0.125f);
+    inR.fill (-0.0625f);
+    const float* inputs[] = { inL.data(), inR.data() };
+    float* outputs[] = { outL.data(), outR.data(), sendL.data(), sendR.data() };
+    strip.setStemCapture (wetL.data(), wetR.data());
+    float sendPeakL = 0.0f, sendPeakR = 0.0f;
+    for (int block = 0; block < 40; ++block)
+    {
+        wetL.fill (0.0f);
+        wetR.fill (0.0f);
+        engine.audioDeviceIOCallback (inputs, 2, outputs, 4, kFrames, {});
+        for (int i = 0; i < kFrames; ++i)
+        {
+            sendPeakL = std::max (sendPeakL, std::abs (sendL[(size_t) i]));
+            sendPeakR = std::max (sendPeakR, std::abs (sendR[(size_t) i]));
+        }
+    }
+    ctx.expect (std::abs (sendPeakL - 0.5f) < 0.001f && std::abs (sendPeakR - 0.25f) < 0.001f,
+                "the frozen audio did not reach both hardware sends");
+    ctx.expect (wetL.back() > 0.05f && wetR.back() < -0.025f,
+                "the frozen track did not play the hardware return");
+    ctx.expect (std::abs (wetL.back() + 2.0f * wetR.back()) < 0.001f,
+                "the hardware return lost its stereo balance");
+    track.strip.insertBypassed.store (true);
+    for (int block = 0; block < 12; ++block)
+    {
+        wetL.fill (0.0f);
+        wetR.fill (0.0f);
+        engine.audioDeviceIOCallback (inputs, 2, outputs, 4, kFrames, {});
+    }
+    ctx.expect (std::abs (wetL.back()) < 0.001f && std::abs (wetR.back()) < 0.001f,
+                "bypassing the hardware insert retained its return");
+    strip.setStemCapture (nullptr, nullptr);
+    return ctx.verdict();
+}
+
 struct Click
 {
     std::int64_t at = -1;
@@ -365,6 +444,9 @@ std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), Sc
     return body (ctx);
 }
 
+const ScenarioRegistrar frozenHardwareRegistrar { Scenario {
+    "strip.frozen_hardware_insert", { "strip", "freeze", "hardware" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return frozenHardwareInsert (ctx); } } };
 const ScenarioRegistrar printRegistrar { Scenario {
     "strip.print_commits_the_strip", { "strip", "record", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (printCommitsTheStrip, ctx); } } };
