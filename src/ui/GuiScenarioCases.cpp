@@ -980,7 +980,7 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
             engine.postVirtualKeyboardMidi (note, 3);
         } });
         steps->push_back ({ 200, [&host, incoming] { host.requestSessionSwitch (incoming); } });
-        steps->push_back ({ 200, [&host, &ctx, &engine, &session, action, outgoing]
+        steps->push_back ({ 200, [&host, &ctx, &engine, &session, outgoing, incoming]
         {
             ctx.expect (engine.getTransport().isStopped(), "the session switch did not stop recording");
             ctx.expect (currentSessionDirectory (session) == outgoing.parent_path(),
@@ -988,6 +988,12 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
             const auto& regions = session.track (0).midiRegions.current();
             ctx.expect (regions.size() == 1 && ! regions.front().notes.empty(),
                         "the session switch did not commit the MIDI take before prompting");
+            host.requestSessionSwitch (incoming);
+        } });
+        steps->push_back ({ 100, [&host, &ctx, action]
+        {
+            ctx.expect (host.statusMessage() == "Session not switched: close the open prompt first",
+                        "a second session switch did not report the open prompt");
             ctx.expect (host.clickModalButton (action), "the prompt did not offer " + action);
         } });
         steps->push_back ({ 500, [&host, &ctx, &session, action, outgoing, incoming]
@@ -1010,7 +1016,42 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
                             "the incoming session contents did not load");
         } });
     }
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    steps->push_back ({ 200, [&host, &ctx, &session, outgoing]
+    {
+        MidiRegion region;
+        region.lengthInSamples = static_cast<std::int64_t> (ctx.engine().getCurrentSampleRate() * 600.0);
+        region.lengthInTicks = 576000;
+        session.track (0).midiRegions.publish (
+            std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+        host.startMixdown();
+        ctx.expect (host.mixdownRunning(), "the mixdown did not start");
+        host.requestSessionSwitch (outgoing);
+    } });
+    steps->push_back ({ 100, [&host, &ctx, &session, incoming]
+    {
+        ctx.expect (host.statusMessage() == "Session not switched: finish or cancel the bounce first",
+                    "a session switch did not report the running bounce");
+        ctx.expect (currentSessionDirectory (session) == incoming.parent_path(),
+                    "the session switched during the bounce");
+        ctx.expect (host.mixdownRunning(), "the refused session switch stopped the bounce");
+        ctx.expect (host.clickModalButton ("Cancel"), "the mixdown did not offer Cancel");
+    } });
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.mixdownRunning(); }, 5000, [&host, &ctx]
+        {
+            ctx.later (200, [&host, &ctx]
+            {
+                if (! host.modalStackEmpty())
+                    ctx.expect (host.clickModalButton ("Close"), "the cancelled mixdown did not offer Close");
+                ctx.later (200, [&host, &ctx]
+                {
+                    ctx.expect (host.modalStackEmpty(), "the cancelled mixdown left its modal open");
+                    ctx.complete (ctx.verdict());
+                });
+            });
+        }, "the mixdown did not cancel");
+    });
     return std::nullopt;
 }
 

@@ -95,6 +95,9 @@ public:
 
     // One tick of the autosave heartbeat, as its timer runs it.
     virtual void autosaveTick() = 0;
+    virtual void startMixdown() = 0;
+    virtual bool mixdownRunning() const = 0;
+    virtual std::string statusMessage() const = 0;
     virtual void requestSessionSwitch (const std::filesystem::path& sessionJson) = 0;
     virtual bool clickModalButton (const std::string& label) = 0;
     // Opens a session the way File > Open does: a newer autosave beside it

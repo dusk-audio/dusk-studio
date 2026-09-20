@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 100
+# ceiling gap 99
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -26,7 +26,7 @@ About this manual > What it deliberately does not have	the fixed limits (24 trac
 Quick Guide > Install and first launch	startup dialog offers New with Blank, Band, Beats, Singer-Songwriter	partial	test:every session template has a distinct label;test:applying a template names every track		template contents tested; the dialog's New path is walked by hand
 Quick Guide > Install and first launch	a second launch hands its session to the running window	auto	bb:bb-handoff;test:single-instance handoff preserves quoted Unicode and empty payloads
 Quick Guide > Install and first launch	a switch commits the take in progress and prompts Save / Don't Save / Cancel	auto	scenario:gui.session_switch_commits_take		actual MIDI take committed before the prompt; all three buttons and saved take state checked
-Quick Guide > Install and first launch	a switch is refused while a bounce runs or a prompt is open	gap
+Quick Guide > Install and first launch	a switch is refused while a bounce runs or a prompt is open	auto	scenario:gui.session_switch_commits_take		second request during save prompt and actual mixdown rejected with exact status messages
 Quick Guide > Install and first launch	startup update check flags a newer release	partial	test:newer comparison is component-wise with semver prerelease rules;test:highestTag picks the max release from GitHub tags JSON		version logic tested; the banner and the network request are not
 Quick Guide > Pick an audio device	Settings > Audio lists backends and applies immediately	n/a			walkthrough; held under Getting started > Configuring audio > Audio
 Quick Guide > Arm a track and check levels	ARM shows live pre-fader input without monitoring	auto	test:Track meter source follows tracking controls without changing mix metering

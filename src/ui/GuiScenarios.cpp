@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "BounceDialog.h"
 
 #include "AuxLaneComponent.h"
 #include "AuxView.h"
@@ -314,6 +315,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
 
     void autosaveTick() override { owner.writeAutosave(); }
+
+    void startMixdown() override { owner.menuItemSelected (1010, 0); }
+    bool mixdownRunning() const override
+    {
+        const auto* panel = dynamic_cast<BounceDialog*> (owner.mixdownModal.getBody());
+        return panel != nullptr && panel->isRenderingForScenario();
+    }
+    std::string statusMessage() const override { return owner.statusLabel.getText().toStdString(); }
 
     void requestSessionSwitch (const std::filesystem::path& sessionJson) override
     {
