@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 69
-# ceiling partial 50
+# ceiling gap 68
+# ceiling partial 49
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -142,7 +142,7 @@ The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	losing the inputs di
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	ARM refuses a track whose input is missing or None	auto	test:A track whose input the device does not offer cannot arm;test:A track set to no input cannot arm;test:A MIDI track arms with no audio inputs
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	the refusal names the missing input and opens the input settings	auto	scenario:gui.arm_input_refusal		clicks ARM with an unavailable input and None, checks the alert and unlit ARM, clicks OK and verifies input settings open
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	IN monitors the live input through the strip	auto	scenario:engine.pipeline_selftest
-The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	PRINT commits EQ, comp and insert to the recorded file	partial	scenario:strip.print_commits_the_strip		the EQ and the compressor are tested in the take; the insert is not
+The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	PRINT commits EQ, comp and insert to the recorded file	auto	scenario:strip.print_commits_the_strip		recorded WAV measurements cover channel HPF, compressor and Utility insert gain
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	FREEZE renders the track, bypasses its DSP, locks it, and is saved	auto	test:SessionSerializer round-trips track freeze state;test:A frozen track still refuses to arm with inputs available;scenario:region.frozen_track_refuses_edits;scenario:strip.freeze_renders_and_bypasses
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	a frozen track still takes a hardware insert	gap
 The channel strip > Insert slot	one plugin or hardware insert with a 20 ms equal-power crossfade	auto	test:Crossfade: equal-power overlap holds constant power across window;test:Crossfade: at-boundary samples produce unity for both shapes
@@ -219,7 +219,7 @@ Recording > Setting the input > MIDI hot-plug	Linux adds a new port by itself an
 Recording > Setting the input > MIDI hot-plug	the port list only rebuilds while stopped	gap
 Recording > Arming a track	Record refuses until a track is armed and explains why	auto	scenario:gui.record_requires_armed_track		R leaves the stopped playhead and all regions unchanged, shows the unarmed-track alert and dismisses with OK
 Recording > Monitor mode	IN monitors through EQ, comp and insert	auto	scenario:engine.pipeline_selftest
-Recording > Print mode	PRINT records the processed signal; off records dry	gap
+Recording > Print mode	PRINT records the processed signal; off records dry	auto	scenario:strip.print_commits_the_strip		actual recorded WAVs remain dry with PRINT off and carry channel processing and two Utility insert gain settings with PRINT on
 Recording > Count-in	one bar of click before the take; playhead rolls back a bar	auto	scenario:transport.count_in_rolls_back_a_bar;test:LoopTimeline keeps count-in before loop start linear until loop end
 Recording > Punch recording	punch arms once in is before out; P toggles	auto	test:Transport: a punch bracket placed by hand arms punch once in is before out;test:Transport: punch range + enable round-trip
 Recording > Punch recording	pre-roll plays before the punch, post-roll rolls past it	auto	scenario:transport.punch_pre_and_post_roll

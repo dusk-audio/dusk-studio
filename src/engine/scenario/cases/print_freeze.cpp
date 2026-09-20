@@ -5,6 +5,7 @@
 #include "../../audiofile/FileReader.h"
 #include "../../audiofile/FileWriter.h"
 #include "../../../session/Session.h"
+#include "../../../dsp/ChannelStrip.h"
 
 #include <algorithm>
 #include <array>
@@ -15,6 +16,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -134,6 +136,12 @@ ScenarioResult printCommitsTheStrip (ScenarioContext& ctx)
     restoreStrip (ctx);
     auto& track = ctx.session().track (kTrack);
     auto& strip = track.strip;
+    track.printEffects.store (false);
+    auto& channel = ctx.engine().getChannelStrip (kTrack);
+    if (! ctx.expect (! channel.isBuiltinLoaded() && ! channel.isNativeClapLoaded()
+                     && ! channel.isNativeLv2Loaded() && ! channel.isNativeVst3Loaded()
+                     && ! channel.isNativeAuLoaded() && ! channel.isNativeMultisampleLoaded()
+                     && ! channel.getPluginSlot().isLoaded(), "the fixture already has an insert")) return ctx.verdict();
     // A 300 Hz HPF against a 60 Hz tone: a cut the take cannot miss.
     strip.eqEnabled.store (true);
     strip.hpfEnabled.store (true);
@@ -169,6 +177,36 @@ ScenarioResult printCommitsTheStrip (ScenarioContext& ctx)
         const double squeezed = db (fileRms (pathOf (compressed->file), from, to), 0.5 / std::sqrt (2.0));
         ctx.note ("1 kHz take with the compressor printed: " + std::to_string (squeezed) + " dB");
         ctx.expect (squeezed < -3.0, "with PRINT on the take does not carry the compressor");
+    }
+    ctx.keep (channel.insertMode);
+    std::string error;
+    if (! ctx.expect (channel.loadBuiltin ("dusk.builtin.utility", error), "could not load the Utility insert: " + error))
+        return ctx.verdict();
+    ctx.cleanup ([&channel] { channel.unloadBuiltin(); });
+    channel.insertMode.store (ChannelStrip::kInsertPlugin);
+    auto& slot = channel.getBuiltinSlot();
+    int gainIndex = -1;
+    for (int index = 0; index < slot.paramCount(); ++index)
+        if (const auto* info = slot.paramInfo (index);
+            info != nullptr && info->id != nullptr && std::string_view (info->id) == "gain_db") gainIndex = index;
+    if (! ctx.expect (gainIndex >= 0, "Utility has no gain parameter")) return ctx.verdict();
+    strip.compEnabled.store (false);
+    slot.setBypassed (false);
+    for (const float gain : { -12.0f, -6.0f })
+    {
+        slot.setParamValue (gainIndex, gain);
+        for (const bool print : { false, true })
+        {
+            track.printEffects.store (print);
+            const auto* take = recordTone (ctx, 1000.0, kAmp, 1.0);
+            if (! ctx.expect (take != nullptr, "recording with a Utility insert made no take")) continue;
+            const double measured = db (fileRms (pathOf (take->file), from, to), dryRms);
+            const double expected = print ? static_cast<double> (gain) : 0.0;
+            ctx.note ("Utility " + std::to_string (gain) + " dB, PRINT " + (print ? "on: " : "off: ")
+                      + std::to_string (measured) + " dB in the recorded file");
+            ctx.expect (std::abs (measured - expected) < 0.5,
+                        print ? "PRINT did not commit the insert gain" : "PRINT off recorded the insert instead of dry input");
+        }
     }
     return ctx.verdict();
 }
