@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 88
+# ceiling gap 87
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -47,7 +47,7 @@ Names and Functions of Parts > The transport bar	transport callouts (stop, rewin
 Names and Functions of Parts > The channel strip — MIXING stage	mixing-stage callouts	n/a			figure; each control is held under The channel strip
 Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	moving one member moves every member by the same dB	auto	test:setTrackFaderGrouped shifts group peers by the same dB delta
 Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	the lowest track is the group master; chips G1..G8	gap
-Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	group membership is saved with the session	gap
+Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	group membership is saved with the session	auto	test:SessionSerializer round-trips markers, bindings and fader groups		groups span all three banks; group 8 and leaving a group survive save/load
 Names and Functions of Parts > The channel strip — RECORDING stage	recording-stage callouts	n/a			figure; each control is held under The channel strip > Input block and ARM, IN, PRINT/FREEZE
 Names and Functions of Parts > The bus strip	bus strip callouts	n/a			figure; each control is held under The bus strips
 Names and Functions of Parts > The master strip	master strip callouts	n/a			figure; each control is held under The master strip

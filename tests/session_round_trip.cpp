@@ -539,6 +539,10 @@ TEST_CASE ("SessionSerializer round-trips markers, bindings and fader groups",
 
     a.track (0).strip.faderGroupId.store (4);
     a.track (7).strip.faderGroupId.store (4);
+    a.track (8).strip.faderGroupId.store (4);
+    a.track (16).strip.faderGroupId.store (4);
+    a.track (15).strip.faderGroupId.store (8);
+    a.track (23).strip.faderGroupId.store (8);
 
     REQUIRE (SessionSerializer::save (a, target));
     auto b = std::make_unique<Session>();
@@ -566,7 +570,18 @@ TEST_CASE ("SessionSerializer round-trips markers, bindings and fader groups",
 
     CHECK (b->track (0).strip.faderGroupId.load() == 4);
     CHECK (b->track (7).strip.faderGroupId.load() == 4);
+    CHECK (b->track (8).strip.faderGroupId.load() == 4);
+    CHECK (b->track (16).strip.faderGroupId.load() == 4);
+    CHECK (b->track (15).strip.faderGroupId.load() == 8);
+    CHECK (b->track (23).strip.faderGroupId.load() == 8);
     CHECK (b->track (1).strip.faderGroupId.load() == 0);
+
+    b->track (8).strip.faderGroupId.store (0);
+    REQUIRE (SessionSerializer::save (*b, target));
+    REQUIRE (SessionSerializer::load (a, target));
+    CHECK (a.track (8).strip.faderGroupId.load() == 0);
+    CHECK (a.track (16).strip.faderGroupId.load() == 4);
+    CHECK (a.track (23).strip.faderGroupId.load() == 8);
 
     dir.deleteRecursively();
 }
