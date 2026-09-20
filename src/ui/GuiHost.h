@@ -108,6 +108,8 @@ public:
     virtual bool clickModalButton (const std::string& label) = 0;
     virtual void openAbout() = 0;
     virtual void startMixdown() = 0;
+    virtual bool fullScreen() const = 0;
+    virtual bool pressPeerKey (const std::string& description, char text = 0) = 0;
     virtual int activeAuxLane() const = 0;
     virtual bool clickAuxSelector (int index) = 0;
     virtual bool auxLaneLayoutMatches (int index) const = 0;

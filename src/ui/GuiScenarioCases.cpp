@@ -1935,5 +1935,45 @@ const ScenarioRegistrar accessibleControls { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAccessibleControls (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runWindowKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    const bool fullscreen = host.fullScreen();
+    const bool expanded = host.timelineViewMatches (true);
+    ctx.cleanup ([&host, fullscreen, expanded]
+    {
+        host.closeTopModal();
+        if (host.fullScreen() != fullscreen) host.pressKey ("F11");
+        if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool restore : { false, true })
+    {
+        steps->push_back ({ 100, [&host, &ctx]
+        { ctx.expect (host.pressKey ("F11"), "F11 was not handled"); } });
+        steps->push_back ({ 300, [&host, &ctx, fullscreen, restore]
+        { ctx.expect (host.fullScreen() == (restore ? fullscreen : ! fullscreen), "F11 did not toggle the native window state"); } });
+        steps->push_back ({ 100, [&host, &ctx]
+        { ctx.expect (host.pressKey ("command + \\", '\\'), "the timeline window shortcut was not handled"); } });
+        steps->push_back ({ 100, [&host, &ctx, expanded, restore]
+        { ctx.expect (host.timelineViewMatches (restore ? expanded : ! expanded), "the timeline shortcut did not toggle visibility"); } });
+    }
+    steps->push_back ({ 100, [&host] { host.openAbout(); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (! host.modalStackEmpty(), "About did not open for the Escape check");
+        ctx.expect (host.pressPeerKey ("escape"), "the focused modal did not handle Escape");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.modalStackEmpty(), "Escape left the modal open"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar windowKeys { Scenario {
+    "gui.window_keys", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runWindowKeys (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

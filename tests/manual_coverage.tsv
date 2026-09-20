@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 83
+# ceiling gap 82
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -387,7 +387,7 @@ Keyboard reference > Timeline	T, = + - 0, Cmd-wheel, Shift-wheel, middle-drag	ga
 Keyboard reference > Region editor	Cmd+E, G, Cmd+] [, Esc	gap
 Keyboard reference > Piano roll	arrows, Q, S, V, G, L, C, Cmd+A/C/X/V/D/Z, Home, End, Cmd+] [, Esc	gap
 Keyboard reference > Notepad	the notepad's own keys, including word motion on Ctrl or Option	auto	test:Notepad editor word jumps stop at word and line boundaries;test:Notepad editor accepts AltGr text without turning command chords into text;test:Notepad Markdown inline commands toggle matching wrappers
-Keyboard reference > Window	F11 fullscreen, Cmd+\ timeline, Esc closes a modal	gap
+Keyboard reference > Window	F11 fullscreen, Cmd+\ timeline, Esc closes a modal	auto	scenario:gui.window_keys		actual fullscreen state, timeline visibility and focused modal Escape through the window peer
 Keyboard reference > Notes on shortcut design	a focused text field keeps its keys	auto	test:the shortcut rule withholds keys from a view that is taking text
 
 Tips and recipes > A clean vocal chain	recipe	n/a			advice

@@ -473,6 +473,17 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     void openAbout() override { owner.menuItemSelected (2002, 2); }
     void startMixdown() override { owner.menuItemSelected (1010, 0); }
 
+    bool fullScreen() const override
+    { return owner.getPeer() != nullptr && owner.getPeer()->isFullScreen(); }
+
+    bool pressPeerKey (const std::string& description, char text) override
+    {
+        auto* peer = owner.getPeer();
+        if (peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        return dispatchKey (*peer, &Peer::handleKeyPress, description, text);
+    }
+
     using Component = std::remove_pointer_t<decltype (std::declval<MainComponent&>().getChildComponent (0))>;
     Component* findTitledControl (Component& root, const std::string& title)
     {
