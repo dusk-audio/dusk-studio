@@ -18,7 +18,7 @@
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
 # ceiling gap 104
-# ceiling partial 55
+# ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -444,9 +444,9 @@ Messages > Tempo > Confirm tempo change	changing BPM with tempo-locked MIDI asks
 Messages > Startup	startup messages	n/a			index; entries are held below
 Messages > Startup > Empty recents	No recent sessions yet	gap
 
-Appendix A — Parameter ranges and defaults > Channel strip	every channel parameter within its range and at its default	partial	test:Appendix A: channel defaults and load ranges		Session defaults, numeric load endpoints/clamps, choices and toggles tested; insert mode default and choices still need engine coverage.
+Appendix A — Parameter ranges and defaults > Channel strip	every channel parameter within its range and at its default	auto	test:Appendix A: channel defaults and load ranges;test:Appendix A: channel insert defaults to Plugin and routes every mode		Session defaults and load bounds; fresh insert default and dry/plugin/hardware audio routing after mode changes.
 Appendix A — Parameter ranges and defaults > Bus strip	every bus parameter within its range and at its default	auto	test:Appendix A: bus defaults and load ranges		Session defaults, numeric load endpoints/clamps and toggles; ranges describe controls, not quantized DSP timing/ratio.
-Appendix A — Parameter ranges and defaults > Aux return lane	aux return ranges and defaults	partial	test:Appendix A: aux return defaults and load ranges		Return fader and mute defaults/endpoints tested; insert mode default and choices still need engine coverage.
+Appendix A — Parameter ranges and defaults > Aux return lane	aux return ranges and defaults	auto	test:Appendix A: aux return defaults and load ranges;test:Appendix A: aux insert defaults to Empty and routes every mode		Return fader/mute defaults and load bounds; fresh insert default and dry/plugin/hardware audio routing after mode changes.
 Appendix A — Parameter ranges and defaults > Master bus	every master parameter within its range and at its default	auto	test:Appendix A: master defaults and load ranges		Session defaults, numeric load endpoints/clamps, listed frequency choices and toggles; ranges describe controls.
 Appendix A — Parameter ranges and defaults > Mastering chain	every mastering parameter within its range and at its default	auto	test:Appendix A: mastering defaults and load ranges;test:Appendix A: active multiband compressor defaults and control ranges		EQ/limiter session defaults and load bounds; active multiband processor defaults, declared control ranges and endpoint writes.
 Appendix B — File formats	session JSON, 24-bit WAV takes and bounces, embedded MIDI, XML cache, JSON bindings	partial	test:writeAtomic creates a new target and leaves no tmp behind;test:FileImporter: a matching 32-bit source is not truncated to 24-bit;scenario:bounce.master_mix_file		atomic JSON, import format and the 24-bit bounce are tested; the take format is not

@@ -74,6 +74,8 @@ add_executable(dusk-studio-tests
     plugin_state_diagnostics.cpp
     channel_strip_midi_gate.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/ChannelStrip.cpp
+    insert_mode_defaults.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/AuxLaneStrip.cpp
     channel_strip_context_rename.cpp
     snap_helpers.cpp
     fade_shapes.cpp
