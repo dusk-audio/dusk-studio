@@ -4,6 +4,11 @@
 #include "../../../session/MidiBindings.h"
 #include "../../../session/Session.h"
 
+#if DUSKSTUDIO_HAS_ALSA
+#include <alsa/asoundlib.h>
+#endif
+
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -13,6 +18,66 @@ namespace duskstudio::scenario
 {
 namespace
 {
+#if DUSKSTUDIO_HAS_ALSA
+void checkHotplugWhileRolling (ScenarioContext& ctx, std::shared_ptr<snd_seq_t> portClient,
+                               bool recording, std::function<void()> onDone)
+{
+    auto& engine = ctx.engine();
+    if (recording) engine.record();
+    else engine.play();
+    const std::string portName = recording ? "recording" : "playing";
+    const int port = snd_seq_create_simple_port (portClient.get(), portName.c_str(),
+        SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ, SND_SEQ_PORT_TYPE_APPLICATION);
+    if (! ctx.expect (port >= 0, "could not create a virtual MIDI port"))
+    {
+        ctx.complete (ctx.verdict());
+        return;
+    }
+    const std::string suffix = ":" + portName;
+    const std::string clientId = "alsa-seq:dusk-hotplug-" + std::to_string (snd_seq_client_id (portClient.get()));
+    const auto visible = [&engine, identifier = clientId + suffix]
+    {
+        const auto& devices = engine.getMidiInputDevices();
+        return std::any_of (devices.begin(), devices.end(), [&identifier] (const auto& device)
+        { return device.identifier == identifier; });
+    };
+    ctx.later (1200, [&ctx, &engine, recording, visible, portClient, onDone = std::move (onDone)]
+    {
+        ctx.expect (recording ? engine.getTransport().isRecording() : engine.getTransport().isPlaying(),
+                    "the transport stopped before the hot-plug check");
+        ctx.expect (! visible(), "MIDI ports rebuilt while the transport was rolling");
+        engine.stop();
+        ctx.waitUntil (visible, 4000, std::move (onDone), "the new MIDI port did not appear after Stop");
+    });
+}
+
+std::optional<ScenarioResult> hotplugWaitsForStop (ScenarioContext& ctx)
+{
+    snd_seq_t* raw = nullptr;
+    if (snd_seq_open (&raw, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) < 0)
+        return ScenarioResult::skip ("ALSA sequencer is unavailable");
+    auto portClient = std::shared_ptr<snd_seq_t> (raw, snd_seq_close);
+    const auto name = "dusk-hotplug-" + std::to_string (snd_seq_client_id (raw));
+    if (snd_seq_set_client_name (raw, name.c_str()) < 0)
+        return ScenarioResult::fail ("could not name the virtual MIDI client");
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    session.setTrackArmed (0, true);
+    ctx.cleanup ([&engine, &session, portClient]
+    {
+        engine.stop();
+        session.setTrackArmed (0, false);
+    });
+    checkHotplugWhileRolling (ctx, portClient, false, [&ctx, portClient]
+    {
+        checkHotplugWhileRolling (ctx, portClient, true, [&ctx] { ctx.complete (ctx.verdict()); });
+    });
+    return std::nullopt;
+}
+#endif
+
 constexpr int kInput = 0;
 
 void publish (Session& session, std::vector<MidiBinding> binds)
@@ -298,6 +363,12 @@ const ScenarioRegistrar banked { Scenario {
     {},
     [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runBankRelative (ctx); }
 } };
+#if DUSKSTUDIO_HAS_ALSA
+const ScenarioRegistrar hotplug { Scenario {
+    "midi.hotplug_waits_for_stop", { "midi", "hardware" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return hotplugWaitsForStop (ctx); }, 15000
+} };
+#endif
 const ScenarioRegistrar learn { Scenario {
     "midi.learn_captures_the_next_control",
     { "midi", "bindings" },

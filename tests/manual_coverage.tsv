@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 102
+# ceiling gap 101
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -216,7 +216,7 @@ The mastering stage > Exporting the master	WAV 24-bit, WAV 16-bit 44.1 kHz dithe
 Recording	five-step workflow	n/a			walkthrough; each step is held in the sections below
 Recording > Setting the input	follow-track default; stereo picks two inputs; MIDI port and channel	auto	test:A stereo track's right input follows wherever the left one resolves;test:Seam resolves saved identifiers back to bank indices
 Recording > Setting the input > MIDI hot-plug	Linux adds a new port by itself and reattaches saved ports	auto	test:ALSA seq backend reports a port appearing and disappearing;test:ALSA seq backend migrates a legacy address identifier
-Recording > Setting the input > MIDI hot-plug	the port list only rebuilds while stopped	gap
+Recording > Setting the input > MIDI hot-plug	the port list only rebuilds while stopped	auto	scenario:midi.hotplug_waits_for_stop		Linux ALSA virtual ports arrive during playback and recording; enumeration waits for Stop
 Recording > Arming a track	Record does nothing until a track is armed	gap
 Recording > Monitor mode	IN monitors through EQ, comp and insert	auto	scenario:engine.pipeline_selftest
 Recording > Print mode	PRINT records the processed signal; off records dry	gap
