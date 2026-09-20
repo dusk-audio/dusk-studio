@@ -2630,6 +2630,34 @@ const ScenarioRegistrar pianoVelocity { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoVelocity (host, ctx); }
 } };
 
+const ScenarioRegistrar markerKeysPlayback { Scenario {
+    "gui.marker_keys_preserve_playback", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+        auto& engine = ctx.engine();
+        auto& transport = engine.getTransport();
+        if (! transport.isStopped()) return ScenarioResult::skip ("requires a stopped fixture");
+        const auto position = transport.getPlayhead();
+        ctx.keep (ctx.session().lastRecordPointSamples);
+        ctx.cleanup ([&engine, &transport, position]
+        {
+            engine.stop();
+            transport.setPlayhead (position);
+        });
+        const auto& scenarios = allScenarios();
+        const auto marker = std::find_if (scenarios.begin(), scenarios.end(), [] (const auto& scenario)
+        { return scenario.name == "gui.marker_arrow_keys"; });
+        if (marker == scenarios.end()) return ScenarioResult::fail ("marker scenario is not registered");
+        engine.play();
+        const auto result = marker->runGui (host, ctx);
+        ctx.expect (result && result->status == ScenarioStatus::Skip,
+                    "marker-key scenario did not decline a running transport");
+        ctx.expect (transport.isPlaying(), "marker-key scenario stopped existing playback");
+        return ctx.verdict();
+    }
+} };
+
 const ScenarioRegistrar markerKeys { Scenario {
     "gui.marker_arrow_keys", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
     {}, {}, 10000,
@@ -2637,7 +2665,8 @@ const ScenarioRegistrar markerKeys { Scenario {
     {
         auto& session = ctx.session();
         auto& transport = ctx.engine().getTransport();
-        ctx.engine().stop();
+        if (! transport.isStopped())
+            return ScenarioResult::skip ("requires a stopped transport");
         ctx.keep (session.lastRecordPointSamples);
         ctx.cleanup ([&session, &transport, markers = session.getMarkers(), at = transport.getPlayhead()]
         {
