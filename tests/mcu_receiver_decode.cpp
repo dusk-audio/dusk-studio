@@ -618,5 +618,11 @@ TEST_CASE ("McuReceiver: jog wheel scrubs the playhead", "[mcu][receiver]")
     {
         r.process (makeCc (mcu::cc::JogWheel, 0), 48000);
         CHECK (s.pendingTransportPlayhead.load (std::memory_order_relaxed) == -1);
+
+        r.process (makeCc (mcu::cc::JogWheel, 1), 48000);
+        const auto queued = s.pendingTransportPlayhead.load (std::memory_order_relaxed);
+        REQUIRE (queued == 48000 + kPerDetent);
+        r.process (makeCc (mcu::cc::JogWheel, 0), 48000);
+        CHECK (s.pendingTransportPlayhead.load (std::memory_order_relaxed) == queued);
     }
 }

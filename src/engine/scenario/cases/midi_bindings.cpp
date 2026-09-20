@@ -61,7 +61,8 @@ dusk::MidiBuffer mmc (int command)
 // setup never leaks into the next one.
 void restoreBindings (ScenarioContext& ctx)
 {
-    ctx.cleanup ([&ctx] { publish (ctx.session(), {}); });
+    auto found = ctx.session().midiBindings.current();
+    ctx.cleanup ([&ctx, found] { publish (ctx.session(), found); });
 }
 
 ScenarioResult runTargets (ScenarioContext& ctx)
