@@ -125,6 +125,7 @@ public:
     virtual bool setAccessibleValue (const std::string& title, const std::string& value) = 0;
     virtual bool loadMasteringFile (const std::filesystem::path& path) = 0;
     virtual bool clickMasteringButton (const std::string& label) = 0;
+    virtual bool clickMasteringWaveform (float fraction) = 0;
     virtual void openPianoRoll (int track, int region) = 0;
     virtual bool doubleClickMidiRegion (int track, int region) = 0;
     virtual int pianoRollRegion() const = 0;

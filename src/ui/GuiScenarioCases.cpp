@@ -1586,6 +1586,17 @@ std::optional<ScenarioResult> runMasteringTransport (GuiHost& host, ScenarioCont
     ctx.expect (transport.isStopped(), "entering Mastering did not stop multitrack playback");
     if (! ctx.expect (host.loadMasteringFile (path), "Load mix did not accept the fixture")) return ctx.verdict();
     auto steps = std::make_shared<std::vector<Step>>();
+    for (const float fraction : { 0.25f, 0.75f })
+    {
+        steps->push_back ({ 300, [&host, &ctx, fraction]
+        { ctx.expect (host.clickMasteringWaveform (fraction), "the Mastering waveform is not available for seeking"); } });
+        steps->push_back ({ 100, [&ctx, &player, fraction]
+        {
+            const auto position = static_cast<double> (player.getPlayhead()) / static_cast<double> (player.getLengthSamples());
+            ctx.expect (std::abs (position - fraction) < 0.01, "the waveform click did not seek to its horizontal position");
+            ctx.expect (! player.isPlaying(), "clicking the stopped waveform started playback");
+        } });
+    }
     steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickMasteringButton ("Play"), "Play is unavailable"); } });
     steps->push_back ({ 150, [&host, &ctx, &player, &transport]
     {

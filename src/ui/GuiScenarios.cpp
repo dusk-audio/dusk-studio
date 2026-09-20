@@ -675,6 +675,19 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
     }
 
+    bool clickMasteringWaveform (float fraction) override
+    {
+        if (owner.masteringView == nullptr) return false;
+        for (auto* child : owner.masteringView->getChildren())
+            if (auto* waveform = dynamic_cast<WaveformDisplay*> (child); waveform != nullptr && waveform->isShowing())
+            {
+                const auto local = waveform->getLocalBounds().getRelativePoint (fraction, 0.5f);
+                const auto point = owner.getTopLevelComponent()->getLocalPoint (waveform, local).toFloat();
+                return clickAt (point.x, point.y, 1);
+            }
+        return false;
+    }
+
     bool openSession (const std::filesystem::path& sessionJson) override
     {
         return owner.loadSessionFromJson (hostFile (sessionJson));

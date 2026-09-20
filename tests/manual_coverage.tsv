@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 72
+# ceiling gap 71
 # ceiling partial 50
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -202,7 +202,7 @@ The mastering stage	separate path; entering or leaving stops the transport	auto	
 The mastering stage > Loading a mix	Load mix and Load latest mixdown	gap
 The mastering stage > Loading a mix	a source at another rate plays at the right speed	auto	test:MasteringPlayer resamples a source whose rate differs from the device
 The mastering stage > Transport	play, stop, rewind; Space drives the mastering player	auto	scenario:gui.mastering_transport		loads a WAV, clicks Play/Stop/Rewind and dispatches Space; the mastering playhead moves while the multitrack transport stays stopped
-The mastering stage > Waveform	click to seek	gap
+The mastering stage > Waveform	click to seek	auto	scenario:gui.mastering_transport		peer clicks at quarter and three-quarter waveform positions seek the loaded mix without starting playback
 The mastering stage > Mastering chain	three sections each with an enable	auto	test:the mastering EQ header engages the section;test:the mastering limiter header engages the section
 The mastering stage > Mastering chain > Digital 5-band EQ	five bands at the documented types; FFT analyser	auto	test:MasteringDigitalEq magnitudeDb matches expected RBJ response;test:MasteringDigitalEq processInPlace applies the shared response;test:MasteringDigitalEq oversampling de-crams an HF bell;test:the mastering EQ curve follows a band moved in the view
 The mastering stage > Mastering chain > Multiband compressor	comp over silence adds no noise	auto	test:MasteringChain: comp over silent input adds no noise floor
