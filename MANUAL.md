@@ -1087,7 +1087,7 @@ Right of the chain are three loudness readouts:
 - **Integrated LUFS** (entire program, gated per BS.1770).
 - **True Peak (dBTP)** (4× oversampled).
 
-A streaming-platform preset picker (Spotify, Apple Music, YouTube, Netflix, etc.) colour-codes the integrated LUFS and true-peak readings according to that platform's target. Pressing **Reset integrated** clears the integrated reading so you can re-measure from a known point.
+The target picker offers Off, Spotify, Apple Music, YouTube, Tidal, and Broadcast (EBU R128). It colour-codes integrated LUFS and true peak against the selected target; Off leaves both neutral. Pressing **Reset I** clears the integrated reading so you can re-measure from a known point.
 
 The integrated reading measures up to an hour of material loud enough to count. Silence and anything below −70 LUFS is discarded by the standard's gate and does not use up that hour, so leaving the meter running between takes costs you nothing. Past the hour it holds where it is rather than continuing to absorb material, so for anything longer, reset it and measure the section you actually care about.
 

@@ -537,6 +537,26 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return EmbeddedModal::activeModalStack().empty();
     }
 
+    bool clickMasteringTarget() override
+    {
+        auto* view = owner.masteringView.get();
+        if (view == nullptr || ! view->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (view, view->targetPointForScenario()).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+    std::string masteringTargetText() const override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->targetTextForScenario() : std::string();
+    }
+    std::uint32_t masteringLoudnessColour (bool peak) const override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->loudnessColourForScenario (peak) : 0;
+    }
+    void restoreMasteringTarget (int index) override
+    {
+        if (owner.masteringView != nullptr) owner.masteringView->restoreTargetForScenario (index);
+    }
+
     void refreshMasteringSource() override
     {
         if (owner.masteringView != nullptr) owner.masteringView->refreshSourceForScenario();

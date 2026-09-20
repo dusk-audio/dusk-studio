@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -117,6 +118,10 @@ public:
     virtual bool focusFileName() = 0;
     virtual bool clickMasteringButton (const std::string& label) = 0;
     virtual void refreshMasteringSource() = 0;
+    virtual bool clickMasteringTarget() = 0;
+    virtual std::string masteringTargetText() const = 0;
+    virtual std::uint32_t masteringLoudnessColour (bool peak) const = 0;
+    virtual void restoreMasteringTarget (int index) = 0;
     virtual bool midiBindingsOpen() const = 0;
 
     virtual bool meterClip (int index) = 0;

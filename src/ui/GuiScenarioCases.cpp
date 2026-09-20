@@ -939,6 +939,77 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runMasteringTargets (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& meters = ctx.session().mastering();
+    if (! engine.getTransport().isStopped() || engine.getMasteringPlayer().isPlaying())
+        return ScenarioResult::skip ("requires stopped transport and mastering player");
+    const auto originalStage = engine.getStage();
+    const auto originalTarget = meters.targetPresetIndex.load();
+    const auto originalIntegrated = meters.meterIntegratedLufs.load();
+    const auto originalPeak = meters.meterTruePeakDb.load();
+    host.switchToStage (GuiHost::Stage::Mastering);
+    engine.suspendProcessing();
+    ctx.cleanup ([&host, &engine, &meters, originalStage, originalTarget, originalIntegrated, originalPeak]
+    {
+        host.pressPeerKey ("Escape");
+        host.restoreMasteringTarget (originalTarget);
+        meters.targetPresetIndex.store (originalTarget);
+        meters.meterIntegratedLufs.store (originalIntegrated);
+        meters.meterTruePeakDb.store (originalPeak);
+        engine.resumeProcessing();
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    const std::array<const char*, 6> names { "Off", "Spotify", "Apple Music", "YouTube", "Tidal", "Broadcast (EBU R128)" };
+    const std::array<float, 6> targets { 0.0f, -14.0f, -16.0f, -14.0f, -14.0f, -23.0f };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (int index = 0; index < (int) names.size(); ++index)
+    {
+        steps->push_back ({ 100, [&host, &ctx]
+        { ctx.expect (host.clickMasteringTarget(), "mastering target picker did not open"); } });
+        steps->push_back ({ 300, [&host, &ctx, index]
+        {
+            ctx.expect (host.clickModalAt (0.5f, (4.0f + 26.0f * (static_cast<float> (index) + 0.5f)) / 164.0f),
+                        "mastering target row did not receive a click");
+        } });
+        steps->push_back ({ 300, [&host, &ctx, &meters, names, index]
+        {
+            ctx.expect (meters.targetPresetIndex.load() == index, "target picker expected " + std::to_string (index) + " but selected " + std::to_string (meters.targetPresetIndex.load()));
+            ctx.expect (host.masteringTargetText().find (names[(std::size_t) index]) == 0,
+                        "target picker label differs from selected platform: " + host.masteringTargetText());
+        } });
+        for (int band = 0; band < 4; ++band)
+        {
+            steps->push_back ({ 0, [&meters, targets, index, band]
+            {
+                const std::array<float, 4> offsets { 0.5f, 2.0f, 2.1f, -100.0f };
+                meters.meterIntegratedLufs.store (band == 3 ? -100.0f : targets[(std::size_t) index] + offsets[(std::size_t) band]);
+                meters.meterTruePeakDb.store (band == 3 ? -100.0f : band == 0 ? -1.0f : -0.9f);
+            } });
+            steps->push_back ({ 100, [&host, &ctx, index, band]
+            {
+                const bool neutral = index == 0 || band == 3;
+                const std::array<std::uint32_t, 3> colours { 0xff1a3a1a, 0xff3a3a1a, 0xff3a1a1a };
+                ctx.expect (host.masteringLoudnessColour (false) == (neutral ? 0xff1a2228 : colours[(std::size_t) band]),
+                            "integrated loudness colour differs from target band");
+                ctx.expect (host.masteringLoudnessColour (true) == (neutral ? 0xff121214 : band == 0 ? 0xff1a3a1a : 0xff3a1a1a),
+                            "true-peak colour differs from platform ceiling");
+            } });
+        }
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringTargets { Scenario {
+    "gui.mastering_targets", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringTargets (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runMasteringLoad (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

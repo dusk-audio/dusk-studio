@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
+#include <cstdint>
 #include <vector>
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
@@ -54,6 +55,14 @@ public:
 
     bool loadFile (const juce::File& file);
     void refreshSourceForScenario();
+    auto targetPointForScenario() const { return masteringTargetCombo.getBounds().getCentre(); }
+    std::string targetTextForScenario() const { return masteringTargetCombo.getText().toStdString(); }
+    void restoreTargetForScenario (int index) { masteringTargetCombo.setSelectedId (index + 1); }
+    std::uint32_t loudnessColourForScenario (bool peak) const
+    {
+        const auto& label = peak ? truePeak : lufsI;
+        return label.findColour (decltype (lufsI)::backgroundColourId).getARGB();
+    }
 
     // Screenshot harness only. The stage's EQ and limiter panels are framework children,
     // which the JUCE snapshot path cannot reach, so each reads its own steady frame back
