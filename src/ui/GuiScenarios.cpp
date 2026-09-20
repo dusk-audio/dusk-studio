@@ -387,6 +387,24 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     double faderValue (int index) const override
     { return owner.consoleView->getStripComponent (index)->faderValueForScenario(); }
 
+    bool virtualKeyboardOpen() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.virtualKeyboardWindow != nullptr && owner.virtualKeyboardWindow->isOpen();
+       #else
+        return false;
+       #endif
+    }
+    bool inputVirtualKeyboard (const std::string& key) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return virtualKeyboardOpen() && owner.virtualKeyboardWindow->inputForScenario (key);
+       #else
+        return false;
+       #endif
+    }
+    void closeVirtualKeyboard() override { owner.closeVirtualKeyboard(); }
+
     bool openAudioSettings() override { owner.openAudioSettings(); return audioSettingsOpen(); }
     void closeAudioSettings() override { owner.closeAudioSettings(); }
     bool audioSettingsOpen() const override

@@ -939,6 +939,99 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    return ScenarioResult::skip ("requires the native virtual keyboard");
+   #else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    const int centre = appconfig::getVkbCentreNote();
+    if (! transport.isStopped() || host.virtualKeyboardOpen())
+        return ScenarioResult::skip ("requires stopped transport and a closed virtual keyboard");
+    if (centre < 0 || centre > 115) return ScenarioResult::skip ("requires the typing notes below MIDI 128");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto originalPosition = transport.getPlayhead();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &transport, originalDir, originalStage, originalPosition, restore]
+    {
+        host.closeVirtualKeyboard();
+        host.closeRegionEditors();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        transport.setPlayhead (originalPosition);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    const auto rate = engine.getCurrentSampleRate();
+    MidiRegion region;
+    region.lengthInTicks = 240;
+    region.lengthInSamples = session.ticksToSamples (240, rate);
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    host.switchToStage (GuiHost::Stage::Recording);
+    transport.setPlayhead (session.ticksToSamples (480, rate));
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.virtualKeyboardOpen(), "virtual keyboard did not open above the piano roll");
+        ctx.expect (host.inputVirtualKeyboard ("z") && host.inputVirtualKeyboard ("x"),
+                    "chord keys did not reach the native keyboard");
+    } });
+    steps->push_back ({ 600, [&host, &ctx, &session, &transport, centre, rate]
+    {
+        const auto& regions = session.track (0).midiRegions.current();
+        ctx.expect (regions.size() == 1 && regions.front().notes.size() == 2, "first chord did not insert two notes");
+        if (regions.size() == 1 && regions.front().notes.size() == 2)
+        {
+            const auto& notes = regions.front().notes;
+            for (int i = 0; i < 2; ++i)
+            {
+                ctx.expect (notes[(std::size_t) i].noteNumber == centre + 2 * i, "chord has the wrong pitch");
+                ctx.expect (notes[(std::size_t) i].startTick == 480 && notes[(std::size_t) i].lengthInTicks == 120,
+                            "chord did not share the playhead and snap length");
+            }
+            ctx.expect (regions.front().lengthInTicks == 600, "step record did not extend the region");
+        }
+        ctx.expect (transport.getPlayhead() == session.ticksToSamples (480, rate),
+                    "releasing the chord advanced before the next note");
+        ctx.expect (host.inputVirtualKeyboard ("q"), "next chord key did not reach the native keyboard");
+    } });
+    steps->push_back ({ 600, [&ctx, &session, &transport, centre, rate]
+    {
+        const auto& regions = session.track (0).midiRegions.current();
+        ctx.expect (regions.size() == 1 && regions.front().notes.size() == 3, "next chord did not insert a note");
+        if (regions.size() == 1 && regions.front().notes.size() == 3)
+        {
+            const auto& note = regions.front().notes.back();
+            ctx.expect (note.noteNumber == centre + 12 && note.startTick == 600 && note.lengthInTicks == 120,
+                        "next chord did not advance by one snap step");
+            ctx.expect (regions.front().lengthInTicks == 720, "next chord did not extend the region again");
+        }
+        ctx.expect (transport.getPlayhead() == session.ticksToSamples (600, rate) && transport.isStopped(),
+                    "step record changed the transport state or advanced the wrong distance");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar pianoStepRecord { Scenario {
+    "gui.piano_step_record", { "gui", "piano", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoStepRecord (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runMasteringTargets (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

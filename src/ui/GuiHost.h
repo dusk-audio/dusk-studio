@@ -123,6 +123,9 @@ public:
     virtual std::uint32_t masteringLoudnessColour (bool peak) const = 0;
     virtual void restoreMasteringTarget (int index) = 0;
     virtual bool midiBindingsOpen() const = 0;
+    virtual bool virtualKeyboardOpen() const = 0;
+    virtual bool inputVirtualKeyboard (const std::string& key) = 0;
+    virtual void closeVirtualKeyboard() = 0;
 
     virtual bool meterClip (int index) = 0;
     virtual bool openMidiIo (int index) = 0;

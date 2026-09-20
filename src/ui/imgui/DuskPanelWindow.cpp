@@ -149,10 +149,11 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             if (input == "home") key.key = DGL::kKeyHome;
             else if (input == "end") key.key = DGL::kKeyEnd;
             else if (input == "enter") key.key = DGL::kKeyEnter;
+            else if (input.size() == 1) key.key = static_cast<unsigned char> (input.front());
             else return false;
             key.press = true;
             onKeyboard (key);
-            keyRelease = key.key;
+            keyReleases.push_back (key.key);
             return true;
         }
 
@@ -161,10 +162,10 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         {
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()),
                         static_cast<float> (getWindow().getScaleFactor()));
-            if (keyRelease != 0)
+            for (const auto code : std::exchange (keyReleases, {}))
             {
                 KeyboardEvent key;
-                key.key = std::exchange (keyRelease, 0u);
+                key.key = code;
                 onKeyboard (key);
             }
             if (releasePending)
@@ -186,7 +187,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     private:
         Impl& owner;
         bool releasePending = false;
-        unsigned int keyRelease = 0;
+        std::vector<unsigned int> keyReleases;
     };
 
     Impl (std::string className, std::string logTag, std::string displayName)

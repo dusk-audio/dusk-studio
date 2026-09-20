@@ -41,7 +41,7 @@ public:
 
     // VKB-driven step record. Each Note On lands a MidiNote at the
     // current playhead (or the start of the in-progress chord); the
-    // playhead advances by one snap step when the chord clears.
+    // next chord advances the playhead by one snap step before insertion.
     void stepRecordNoteOn  (int noteNumber, int velocity);
     void stepRecordNoteOff (int noteNumber);
     void resetStepRecordState() noexcept;
