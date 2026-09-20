@@ -80,6 +80,8 @@ public:
     virtual bool stripStageControlsMatch (int index, bool mixing) const = 0;
     virtual bool pressKey (const std::string& description, char text = 0) = 0;
     virtual std::function<void()> preserveKeyboardFocus() = 0;
+    virtual bool timelineViewMatches (bool expanded) const = 0;
+    virtual bool stripCompact (int index) const = 0;
 
     virtual bool clickTimeFormat() = 0;
     virtual std::string clockText() const = 0;

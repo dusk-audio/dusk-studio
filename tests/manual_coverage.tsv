@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 96
+# ceiling gap 95
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -239,7 +239,7 @@ Recording > Take history	deleting a region removes its stack; undo restores it	a
 Recording > Recording errors	a write failure at record start raises an alert listing the tracks	gap
 Recording > Recording errors	a mid-take error or MIDI overflow reports at Stop; written audio is kept	auto	test:RecordManager surfaces MIDI FIFO overflow at stopRecording;test:RecordManager clean MIDI take leaves overflow list empty
 
-The tape strip	collapsed by default; strips compact when it opens	gap
+The tape strip	collapsed by default; strips compact when it opens	auto	scenario:gui.timeline_drawer		checks launch state, T and command-backslash toggles, actual timeline visibility and compact state on all 24 strips
 The tape strip > Layout	track column with number, colour, ARM, SOLO, MUTE	manual			layout; checked by screenshot review
 The tape strip > The ruler	click seeks; Shift-drag sets the loop	gap
 The tape strip > Regions	audio regions draw waveforms; MIDI regions draw a glyph	auto	test:Waveform peaks preserve channels, polarity, gain and the final partial bin;test:Waveform range queries match conservative sample extrema at every pyramid level

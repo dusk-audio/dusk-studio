@@ -1442,5 +1442,38 @@ const ScenarioRegistrar aboutDetails { Scenario {
     {}, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAboutDetails (host, ctx); }
 } };
+std::optional<ScenarioResult> runTimelineDrawer (GuiHost& host, ScenarioContext& ctx)
+{
+    const bool expanded = host.timelineViewMatches (true);
+    ctx.cleanup ([&host, expanded]
+    {
+        if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+    });
+    ctx.expect (host.timelineViewMatches (false), "the timeline is not collapsed at launch");
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool show : { true, false, true, false })
+    {
+        steps->push_back ({ 0, [&host, &ctx, show]
+        {
+            ctx.expect (show ? host.pressKey ("T", 't') : host.pressKey ("command + \\", '\\'),
+                        "the timeline shortcut was not handled");
+        } });
+        steps->push_back ({ 100, [&host, &ctx, show]
+        {
+            ctx.expect (host.timelineViewMatches (show), "the timeline visibility did not follow its toggle");
+            for (int track = 0; track < Session::kNumTracks; ++track)
+                ctx.expect (host.stripCompact (track) == show,
+                            "timeline expansion left the wrong layout on strip " + std::to_string (track + 1));
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar timelineDrawer { Scenario {
+    "gui.timeline_drawer", { "gui", "timeline" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTimelineDrawer (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

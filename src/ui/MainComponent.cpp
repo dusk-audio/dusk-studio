@@ -828,7 +828,7 @@ MainComponent::MainComponent()
         else
             enqueueImports (std::move (files), timelineStart, trackHint);
     };
-    addAndMakeVisible (tapeStrip.get());
+    addChildComponent (tapeStrip.get());
 
     // Song-map ribbon shown only when the tape strip is collapsed (resized()
     // owns its bounds + visibility from tapeStripExpanded / fullscreen state).

@@ -273,6 +273,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return owner.transportBar != nullptr && owner.transportBar->clickTimeFormatForScenario();
     }
 
+    bool timelineViewMatches (bool expanded) const override
+    {
+        return owner.tapeStrip != nullptr && owner.tapeStripExpanded == expanded
+            && owner.tapeStrip->isShowing() == expanded;
+    }
+
+    bool stripCompact (int index) const override
+    {
+        auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index) : nullptr;
+        return strip != nullptr && strip->isCompactMode();
+    }
+
     std::string clockText() const override
     {
         return owner.transportBar != nullptr ? owner.transportBar->clockTextForScenario() : std::string {};
