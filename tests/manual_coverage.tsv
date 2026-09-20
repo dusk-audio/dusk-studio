@@ -18,7 +18,7 @@
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
 # ceiling gap 105
-# ceiling partial 58
+# ceiling partial 57
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -80,7 +80,7 @@ Getting started > Configuring audio > Audio	Rescan devices re-enumerates backend
 Getting started > Configuring audio > Audio	first launch picks an input alongside the output	auto	test:The capture device matching the output is preferred;test:No capture devices means the input stays unset;test:With no matching name the first capture device is taken
 Getting started > Configuring audio > Control surface	MCU input and output enable faders and LED mirroring	auto	test:McuController: initial resync emits faders + LED state for 8 banked strips;test:SessionSerializer round-trips MCU input/output identifiers + assign mode
 Getting started > Configuring audio > MIDI bindings	button opens the MIDI Bindings panel	gap
-Getting started > Configuring audio > MIDI sync	the seven sync settings are saved with the session	partial	test:SessionSerializer round-trips the MTC sync settings		MTC settings round-trip; clock source and output are not asserted
+Getting started > Configuring audio > MIDI sync	the seven sync settings are saved with the session	auto	test:SessionSerializer round-trips the MTC sync settings;test:SessionSerializer round-trips the clock sync settings
 Getting started > Configuring audio > General	UI scale previews live and saves per machine	gap
 Getting started > Configuring audio > General	Expand tape strip and Follow playhead defaults	gap
 Getting started > Configuring audio > General	Playhead on Stop choices	auto	test:Stop on a rolling transport follows the Playhead on Stop setting;test:Stop pressed while stopped returns to zero whatever the setting;test:The persisted Playhead on Stop values keep their meaning;test:A saved stop behaviour keeps its meaning

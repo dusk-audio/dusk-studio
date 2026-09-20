@@ -2544,16 +2544,15 @@ bool SessionSerializer::load (Session& s, const File& source)
         else
             s.tempoMap.setPoints ({});   // no map in the file -> clear any stale map from a prior load
         if (json::has (tport, "ui_stage"))          s.uiStage.store          (jlimit (0, 3, json::getInt (tport, "ui_stage", 0)));
-        if (json::has (tport, "sync_source_input"))
-            s.syncSourceInputIdentifier = json::getString (tport, "sync_source_input");
-        if (json::has (tport, "sync_follow_tempo"))
-            s.externalSyncFollowsTempo.store (json::getBool (tport, "sync_follow_tempo", true));
-        if (json::has (tport, "sync_chase_transport"))
-            s.externalSyncChasesTransport.store (json::getBool (tport, "sync_chase_transport", false));
-        if (json::has (tport, "sync_output"))
-            s.syncOutputIdentifier = json::getString (tport, "sync_output");
-        if (json::has (tport, "sync_emit_clock"))
-            s.syncOutputEmitClock.store (json::getBool (tport, "sync_emit_clock", false));
+        // Unconditional, like the time-code settings below: a file written
+        // before these keys existed has to leave the loading session on the
+        // defaults, not on whatever the session open before it was chasing.
+        s.syncSourceInputIdentifier = json::getString (tport, "sync_source_input");
+        s.externalSyncFollowsTempo.store (json::getBool (tport, "sync_follow_tempo", true));
+        s.externalSyncChasesTransport.store (
+            json::getBool (tport, "sync_chase_transport", false));
+        s.syncOutputIdentifier = json::getString (tport, "sync_output");
+        s.syncOutputEmitClock.store (json::getBool (tport, "sync_emit_clock", false));
         s.externalTimeCodeChasesTransport.store (
             json::getBool (tport, "sync_chase_timecode", false), std::memory_order_relaxed);
         s.syncOutputEmitTimeCode.store (
