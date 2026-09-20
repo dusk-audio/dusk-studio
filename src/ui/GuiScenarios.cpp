@@ -8,6 +8,7 @@
 #include "EmbeddedModal.h"
 #include "DuskContextMenu.h"
 #include "DpImportDialog.h"
+#include "MultiImportTargetPicker.h"
 #include "DuskAlerts.h"
 #include "TapeStrip.h"
 #include "GuiHost.h"
@@ -364,6 +365,24 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                 return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
             }
         return false;
+    }
+    std::vector<std::string> multiImportRows() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* picker = dynamic_cast<const MultiImportTargetPicker*> (stack.back()->getBody());
+        return picker != nullptr ? picker->rowsForScenario() : std::vector<std::string> {};
+    }
+    bool clickMultiImportTarget (int row) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return false;
+        const auto* picker = dynamic_cast<const MultiImportTargetPicker*> (stack.back()->getBody());
+        int x = 0, y = 0;
+        if (picker == nullptr || ! picker->targetPointForScenario (row, x, y)) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (picker,
+            picker->getLocalBounds().getTopLeft().translated (x, y)).toFloat();
+        return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
     }
     std::vector<std::string> dpImportSummary() const override
     {

@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <vector>
+#include <string>
 #include "ImportTargetPicker.h"
 #include "../session/Session.h"
 
@@ -39,6 +40,8 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    std::vector<std::string> rowsForScenario() const;
+    bool targetPointForScenario (int index, int& x, int& y) const;
 
 private:
     struct Row;

@@ -922,6 +922,108 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runMultiImportTargets (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
+    for (const int index : { 22, 23 })
+    {
+        const auto& track = session.track (index);
+        if (! track.regions.empty() || track.frozen.load() || track.mode.load() != (int) Track::Mode::Mono)
+            return ScenarioResult::skip ("requires empty mono destination tracks");
+    }
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
+    const bool shown = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &session, originalDir, restore, shown]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.setTimelineShown (shown);
+    });
+    const auto importDir = ctx.tempDir() / "session";
+    std::filesystem::create_directories (importDir / "audio");
+    applySessionDirectory (session, importDir);
+    std::vector<std::filesystem::path> files;
+    for (int index = 0; index < 2; ++index)
+    {
+        files.push_back (ctx.tempDir() / (index == 0 ? "First stem.wav" : "Second stem.wav"));
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 1;
+        auto writer = dusk::audio::FileWriter::create (files.back(), spec);
+        std::vector<float> silence ((size_t) (2400 * (index + 1)));
+        const float* data[] = { silence.data() };
+        if (! writer || ! writer->write (data, 1, (std::int64_t) silence.size()) || ! writer->flush())
+            return ScenarioResult::fail ("could not write multi-import fixtures");
+    }
+    const auto rows = [&ctx, &host] (int first, int second)
+    {
+        ctx.expect (host.multiImportRows() == std::vector<std::string> {
+            "First stem.wav\t" + std::to_string (first), "Second stem.wav\t" + std::to_string (second) },
+            "multi-import file labels or selected tracks are wrong");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 250, [&host, &ctx, files]
+    { ctx.expect (host.dropFilesOnTrack (0, files), "multi-file drop was rejected"); } });
+    steps->push_back ({ 250, [&host, &ctx, rows]
+    {
+        rows (-1, -1);
+        ctx.expect (! host.clickModalButton ("Import"), "unassigned files can be imported");
+        ctx.expect (host.clickModalButton ("Auto-assign"), "Auto-assign is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, rows]
+    {
+        rows (0, 1);
+        ctx.expect (host.clickModalButton ("Clear"), "Auto-assign did not become Clear");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, rows]
+    {
+        rows (-1, -1);
+        ctx.expect (! host.clickModalButton ("Import"), "Clear left Import enabled");
+    } });
+    for (int row = 0; row < 2; ++row)
+    {
+        steps->push_back ({ 200, [&host, &ctx, row]
+        { ctx.expect (host.clickMultiImportTarget (row), "file target dropdown is unavailable"); } });
+        steps->push_back ({ 150, [&host, &ctx]
+        { ctx.expect (host.pressPeerKey ("end", 0), "dropdown End key was not handled"); } });
+        steps->push_back ({ 150, [&host, &ctx]
+        { ctx.expect (host.pressPeerKey ("return", '\r'), "dropdown Return key was not handled"); } });
+    }
+    steps->push_back ({ 200, [&host, &ctx, rows]
+    {
+        rows (23, 22);
+        ctx.expect (host.clickModalButton ("Import"), "assigned files cannot be imported");
+    } });
+    steps->push_back ({ 700, [&ctx, &host, &session, &engine]
+    {
+        ctx.expect (host.modalStackEmpty(), "multi-import left a modal open");
+        for (int index = 0; index < 2; ++index)
+        {
+            const auto& regions = session.track (23 - index).regions;
+            if (! ctx.expect (regions.size() == 1, "chosen destination did not receive one region")) continue;
+            const auto expected = (std::int64_t) std::llround (2400.0 * (index + 1) * engine.getCurrentSampleRate() / 48000.0);
+            ctx.expect (regions[0].file.existsAsFile() && regions[0].numChannels == 1
+                        && regions[0].lengthInSamples == expected, "wrong source reached the assigned track");
+        }
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar multiImportTargets { Scenario {
+    "gui.multi_import_targets", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMultiImportTargets (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runImportModeConfirmation (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();

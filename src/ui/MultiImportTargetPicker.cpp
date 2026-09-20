@@ -392,4 +392,22 @@ MultiImportTargetPicker::collectAssignments() const
     }
     return out;
 }
+std::vector<std::string> MultiImportTargetPicker::rowsForScenario() const
+{
+    std::vector<std::string> result;
+    for (const auto& row : rows)
+        result.push_back (row->nameLabel.getText().toStdString() + "\t" + std::to_string (row->chosenTrack()));
+    return result;
+}
+
+bool MultiImportTargetPicker::targetPointForScenario (int index, int& x, int& y) const
+{
+    if (index < 0 || index >= (int) rows.size()) return false;
+    const auto& picker = rows[(size_t) index]->trackPicker;
+    if (! picker.isShowing() || ! picker.isEnabled()) return false;
+    const auto point = getLocalPoint (&picker, picker.getLocalBounds().getCentre());
+    x = point.x;
+    y = point.y;
+    return true;
+}
 } // namespace duskstudio

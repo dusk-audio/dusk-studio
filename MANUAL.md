@@ -1319,7 +1319,7 @@ Recording keeps your zoom. When the playhead reaches the right-hand edge the vie
 
 ## Drag-and-drop import
 
-Drop audio or MIDI files onto the tape strip. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use the **Sequential** preset to spread files across adjacent tracks, or **Same track** to stack them as takes on a single track.
+Drop audio or MIDI files onto the tape strip. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use **Auto-assign** to assign files to tracks in order; **Clear** removes those assignments. You can choose each destination manually. Each file needs a distinct track.
 
 ## Import DP Song (experimental)
 
