@@ -70,6 +70,14 @@ public:
     }
     bool armLitForScenario() const { return armButton.getToggleState(); }
     bool inputSettingsOpenForScenario() const { return ioConfigModal.isOpen(); }
+    void loadBuiltinForScenario (const std::string& id) { loadBuiltinForChannel (id); }
+    void clickMonitorForScenario() { monitorButton.triggerClick(); }
+    bool instrumentControlsMatchForScenario (int input, bool monitor) const
+    {
+        return modeSelector.getSelectedId() == (int) Track::Mode::Midi + 1
+            && midiInputSelector.getSelectedId() == input + 2
+            && monitorButton.getToggleState() == monitor;
+    }
     // Scenario-harness only: the mode label and whether the fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }

@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 95
+# ceiling gap 93
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -116,7 +116,7 @@ The interface > The transport bar	tuner reads the selected input's pitch	auto	te
 The interface > The transport bar	Snap toggle and grid resolution	auto	test:stepForResolution: musical resolutions at 120 BPM / 48 kHz;test:stepForResolution: triplets are 2/3 of the base;test:stepForResolution: dotted resolutions are 3/2 of the base;test:snapAbsolute: rounds to nearest grid point
 The interface > The transport bar	Chase scrolls the timeline to keep the playhead in view	auto	test:The view holds still while the playhead is inside it;test:The page turns as the playhead nears the right edge;test:A playhead left of the view brings the view back to it
 The interface > The virtual keyboard	appears as an input named Virtual Keyboard and feeds a track	auto	test:MidiInputClient appends a stable Virtual-Keyboard slot;test:MidiInputClient VKB feed round-trips through the dusk boundary
-The interface > The virtual keyboard	loading an instrument with no input bound selects the keyboard and turns on IN	gap
+The interface > The virtual keyboard	loading an instrument with no input bound selects the keyboard and turns on IN	auto	scenario:gui.sunset_track_defaults		loads through the channel-strip UI and checks MIDI input and IN in both the model and controls; preserves an existing binding
 The interface > The virtual keyboard	letters play notes while open; Space, L, [ ] still drive the transport	gap
 The interface > The notepad	typed formatting, bold and italic, lists continue on Enter	auto	test:Notepad document formatting mutates Markdown and remains selectable;test:Notepad Markdown inline commands toggle matching wrappers;test:Notepad Markdown block commands preserve source selections;test:Notepad document exposes list, task, and link presentation metadata
 The interface > The notepad	undo and redo cover text and formatting	auto	test:Notepad editor undo coalesces a typing run into one step;test:Notepad editor undo breaks runs on caret moves and structural edits;test:Notepad editor undo replacing a selection is its own step
@@ -311,7 +311,7 @@ Plugins > Built-in insert units > Tape Echo 2	parameters, motor repeat time, tem
 Plugins > Built-in insert units > Tape Echo 2	state saved as the plug-in's own values	auto	test:Tape Echo 2 saves version-2 state keyed by the plug-in's symbols;test:Tape Echo 2 opens a version-1 tape echo blob at its defaults
 Plugins > Built-in insert units > Tape	Thru is unity; 56-sample latency except on Thru; colours on its normal path	auto	test:tape unit on the Thru path is unity gain;test:tape unit reports latency only on a path that takes it;test:tape unit colours the signal on its normal path;test:tape unit state round-trips
 Plugins > Built-in insert units > Sunset	instrument only; notes, bend, mod wheel, sustain; stops with the transport	auto	test:synth unit is registered as an instrument;test:synth unit sounds while a note is held;test:synth unit answers pitch bend, mod wheel and sustain;test:synth unit stops on the transport's all-notes-off;test:synth unit state round-trips
-Plugins > Built-in insert units > Sunset	loading it converts an audio track to MIDI	gap
+Plugins > Built-in insert units > Sunset	loading it converts an audio track to MIDI	auto	scenario:gui.sunset_track_defaults		loads Sunset through the channel-strip action and checks instrument identity and MIDI mode in the model and selector
 Plugins > Built-in insert units > Editing a unit	DuskVerb 2 and Tape Echo 2 open their own editors; the others get knob panels	auto	test:the built-in editor draws every unit inside the size it asks for;test:the built-in editor keeps every parameter reachable;test:a plug-in editor host pushes every value in when it opens;test:a plug-in editor host follows the geometry it is given
 Plugins > Built-in insert units > Editing a unit	transport keys keep working after a knob move in a unit editor	auto	test:a gesture marks the parameter touched and hands focus back at its end
 Plugins > Built-in insert units > Editing a unit	MIDI Learn last-touched parameter on a unit	gap

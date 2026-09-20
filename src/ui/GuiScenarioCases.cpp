@@ -1475,5 +1475,76 @@ const ScenarioRegistrar timelineDrawer { Scenario {
     {}, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runTimelineDrawer (host, ctx); }
 } };
+std::optional<ScenarioResult> runSunsetTrackDefaults (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (0);
+    auto& dsp = engine.getChannelStrip (0);
+    if (! ctx.expect (! dsp.isBuiltinLoaded(), "the fixture strip already contains a built-in unit"))
+        return ctx.verdict();
+    const int keyboard = engine.getVirtualKeyboardInputIndex();
+    if (! ctx.expect (keyboard >= 0, "the virtual keyboard input is missing")) return ctx.verdict();
+    ctx.cleanup ([&host, mode = track.mode.load()]
+    {
+        if (auto* strip = host.strip (0)) strip->restoreTrackMode (mode);
+    });
+    ctx.keep (track.mode);
+    ctx.keep (track.midiInputIndex);
+    ctx.keep (track.inputMonitor);
+    ctx.cleanup ([&engine, &dsp, &track, identifier = track.midiInputIdentifier,
+                  id = track.builtinUnitId, state = track.builtinStateBase64]
+    {
+        engine.suspendProcessing();
+        dsp.unloadBuiltin();
+        engine.resumeProcessing();
+        track.midiInputIdentifier = identifier;
+        track.builtinUnitId = id;
+        track.builtinStateBase64 = state;
+    });
+    const auto stage = engine.getStage();
+    ctx.cleanup ([&host, stage]
+    {
+        switch (stage)
+        {
+            case AudioEngine::Stage::Recording: host.switchToStage (GuiHost::Stage::Recording); break;
+            case AudioEngine::Stage::Mixing: host.switchToStage (GuiHost::Stage::Mixing); break;
+            case AudioEngine::Stage::Aux: host.switchToStage (GuiHost::Stage::Aux); break;
+            case AudioEngine::Stage::Mastering: host.switchToStage (GuiHost::Stage::Mastering); break;
+        }
+    });
+    host.switchToStage (GuiHost::Stage::Recording);
+    auto* strip = host.strip (0);
+    if (! ctx.expect (strip != nullptr, "the fixture strip is missing")) return ctx.verdict();
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool bound : { false, true })
+    {
+        steps->push_back ({ 0, [&track, strip, keyboard, bound]
+        {
+            if (! bound) track.mode.store ((int) Track::Mode::Mono);
+            track.midiInputIndex.store (bound ? keyboard : -1);
+            if (bound) strip->clickMonitor();
+            else track.inputMonitor.store (false);
+        } });
+        steps->push_back ({ 100, [strip] { strip->loadBuiltin ("dusk.builtin.synth"); } });
+        steps->push_back ({ 100, [&ctx, &track, &dsp, strip, keyboard, bound]
+        {
+            ctx.expect (dsp.getBuiltinSlot().isLoadedInstrument()
+                        && track.builtinUnitId == "dusk.builtin.synth", "Sunset did not load as an instrument");
+            ctx.expect (track.mode.load() == (int) Track::Mode::Midi, "loading Sunset did not convert the audio track to MIDI");
+            ctx.expect (track.midiInputIndex.load() == keyboard && track.inputMonitor.load() == ! bound,
+                        "instrument input defaults did not respect the existing binding");
+            ctx.expect (strip->instrumentControlsMatch (keyboard, ! bound),
+                        "the displayed mode, input or IN button disagrees with the instrument defaults");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar sunsetTrackDefaults { Scenario {
+    "gui.sunset_track_defaults", { "gui", "plugin" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSunsetTrackDefaults (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

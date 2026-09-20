@@ -50,6 +50,10 @@ public:
     virtual bool clickArm() = 0;
     virtual bool armLit() const = 0;
     virtual bool inputSettingsOpen() const = 0;
+    virtual void loadBuiltin (const std::string& id) = 0;
+    virtual void clickMonitor() = 0;
+    virtual void restoreTrackMode (int mode) = 0;
+    virtual bool instrumentControlsMatch (int input, bool monitor) const = 0;
 };
 
 // One aux lane's plug-in slots.

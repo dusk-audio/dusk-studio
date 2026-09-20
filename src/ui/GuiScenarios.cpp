@@ -189,6 +189,31 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         return component != nullptr && component->inputSettingsOpenForScenario();
     }
 
+    void loadBuiltin (const std::string& id) override
+    {
+        if (auto* component = strip()) component->loadBuiltinForScenario (id);
+    }
+
+    void clickMonitor() override
+    {
+        if (auto* component = strip()) component->clickMonitorForScenario();
+    }
+
+    void restoreTrackMode (int mode) override
+    {
+        if (auto* component = strip())
+        {
+            component->openIoConfigPopupForCapture (mode);
+            component->closeIoConfigPopupForCapture();
+        }
+    }
+
+    bool instrumentControlsMatch (int input, bool monitor) const override
+    {
+        auto* component = strip();
+        return component != nullptr && component->instrumentControlsMatchForScenario (input, monitor);
+    }
+
     ChannelStripComponent* strip() const
     {
         return owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index)
