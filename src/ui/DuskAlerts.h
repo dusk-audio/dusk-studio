@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 #include <vector>
+#include <string>
 
 namespace duskstudio
 {
@@ -68,4 +69,5 @@ void showDuskTextInput (juce::Component& parent,
                          juce::String prompt,
                          juce::String initial,
                          std::function<void (const juce::String&)> onAccept);
+std::vector<std::string> confirmationTextForScenario();
 } // namespace duskstudio

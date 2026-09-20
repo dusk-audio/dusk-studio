@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 99
+# ceiling gap 98
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -431,7 +431,7 @@ Messages > Session > About Dusk Studio	shows the version and build date	gap
 Messages > Session > Supporters	lists supporters by tier	manual			content comes from the release build's Patreon refresh
 Messages > Import / Export	import and export alerts	n/a			index; entries are held below
 Messages > Import / Export > Import	stop playback first; unsupported, undecodable or unreadable files are reported	partial	test:importMidi rejects files it cannot use		an unusable MIDI file is rejected; the audio and playback-running alerts are not tested
-Messages > Import / Export > Switch track to [mode]?	importing a file of another kind asks before switching the track	gap
+Messages > Import / Export > Switch track to [mode]?	importing a file of another kind asks before switching the track	auto	scenario:gui.import_mode_confirmation
 Messages > Import / Export > MIDI bindings export / import failed	unwritable export or unreadable import is reported	partial	test:MIDI bindings import separates a broken preset from an empty one;test:MIDI bindings import keeps the entries it understands	an unreadable import is detected; the two alerts themselves are not
 Messages > Plugins	plugin alerts	n/a			index; entries are held below
 Messages > Plugins > Plugin kind mismatch	an instrument on an effect slot, or the reverse, is refused	gap

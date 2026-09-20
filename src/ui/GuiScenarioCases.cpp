@@ -922,6 +922,113 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runImportModeConfirmation (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (0);
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    if (! host.modalStackEmpty() || ! track.regions.empty() || ! track.midiRegions.current().empty() || track.frozen.load())
+        return ScenarioResult::skip ("requires an empty unfrozen track and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
+    const bool shown = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &session, originalDir, restore, shown]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.setTimelineShown (shown);
+    });
+    const auto importDir = ctx.tempDir() / "session";
+    std::filesystem::create_directories (importDir / "audio");
+    applySessionDirectory (session, importDir);
+    track.mode.store ((int) Track::Mode::Mono);
+    for (int channels = 1; channels <= 2; ++channels)
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = channels;
+        auto writer = dusk::audio::FileWriter::create (ctx.tempDir() / (channels == 1 ? "Mono.wav" : "Stereo.wav"), spec);
+        std::array<float, 4800> silence {};
+        const float* data[] = { silence.data(), silence.data() };
+        if (! writer || ! writer->write (data, channels, 4800) || ! writer->flush())
+            return ScenarioResult::fail ("could not write audio import fixture");
+    }
+    const unsigned char midi[] = {
+        'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 1, 0xe0,
+        'M', 'T', 'r', 'k', 0, 0, 0, 13,
+        0, 0x90, 60, 100, 0x83, 0x60, 0x80, 60, 0, 0, 0xff, 0x2f, 0
+    };
+    std::ofstream output (ctx.tempDir() / "Notes.mid", std::ios::binary);
+    output.write (reinterpret_cast<const char*> (midi), sizeof (midi));
+    output.close();
+    if (! output) return ScenarioResult::fail ("could not write MIDI import fixture");
+    struct Leg { const char* file; const char* from; const char* to; Track::Mode mode; bool midi; };
+    const std::array<Leg, 3> legs {{
+        { "Stereo.wav", "Mono", "Stereo", Track::Mode::Stereo, false },
+        { "Notes.mid", "Stereo", "MIDI", Track::Mode::Midi, true },
+        { "Mono.wav", "MIDI", "Mono", Track::Mode::Mono, false }
+    }};
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const auto leg : legs)
+    {
+        auto before = std::make_shared<std::array<int, 3>>();
+        steps->push_back ({ 250, [&host, &ctx, &track, leg, before]
+        {
+            *before = { track.mode.load(), (int) track.regions.size(), (int) track.midiRegions.current().size() };
+            ctx.expect (host.dropFilesOnTrack (0, { ctx.tempDir() / leg.file }), "file drop was rejected");
+        } });
+        const auto unchanged = [&ctx, &track, before]
+        {
+            ctx.expect (track.mode.load() == (*before)[0] && (int) track.regions.size() == (*before)[1]
+                        && (int) track.midiRegions.current().size() == (*before)[2], "unconfirmed import changed the track");
+        };
+        for (const bool accept : { false, true })
+        {
+            steps->push_back ({ 250, [&host, &ctx]
+            { ctx.expect (host.clickModalButton ("Import"), "target picker Import button is unavailable"); } });
+            steps->push_back ({ 250, [&host, &ctx, leg, unchanged, accept]
+            {
+                const auto text = host.confirmationText();
+                const std::string title = std::string ("Switch track to ") + leg.to + "?";
+                const std::string message = std::string ("Track 1 is currently in ") + leg.from
+                    + " mode. Importing this " + (leg.midi ? "MIDI" : "audio")
+                    + " file will switch the track to " + leg.to + " mode. Proceed?";
+                ctx.expect (text == std::vector<std::string> { title, message }, "mode-switch confirmation text is wrong");
+                unchanged();
+                ctx.expect (host.clickModalButton (accept ? "Switch" : "Cancel"), "mode-switch action is unavailable");
+            } });
+            if (! accept) steps->push_back ({ 250, unchanged });
+        }
+        steps->push_back ({ 500, [&ctx, &host, &track, leg, before]
+        {
+            ctx.expect (host.modalStackEmpty(), "confirmed import left a modal open");
+            ctx.expect (track.mode.load() == (int) leg.mode, "Switch did not change track mode");
+            ctx.expect ((int) track.regions.size() == (*before)[1] + (leg.midi ? 0 : 1)
+                        && (int) track.midiRegions.current().size() == (*before)[2] + (leg.midi ? 1 : 0),
+                        "Switch did not import exactly one region");
+            if (leg.midi && ! track.midiRegions.current().empty())
+                ctx.expect (track.midiRegions.current().back().notes.size() == 1, "imported MIDI note is missing");
+            if (! leg.midi && ! track.regions.empty())
+                ctx.expect (track.regions.back().file.existsAsFile()
+                            && track.regions.back().numChannels == (leg.mode == Track::Mode::Stereo ? 2 : 1),
+                            "imported audio file or channel layout is wrong");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar importModeConfirmation { Scenario {
+    "gui.import_mode_confirmation", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runImportModeConfirmation (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();

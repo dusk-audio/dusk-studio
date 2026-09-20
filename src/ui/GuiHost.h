@@ -91,6 +91,8 @@ public:
     virtual bool focusFileName() = 0;
     virtual bool clickModalButton (const std::string& label) = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
+    virtual bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) = 0;
+    virtual std::vector<std::string> confirmationText() const = 0;
     virtual bool clickTimeFormat() = 0;
     virtual std::string clockText() const = 0;
 

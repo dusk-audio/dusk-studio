@@ -8,6 +8,7 @@
 #include "EmbeddedModal.h"
 #include "DuskContextMenu.h"
 #include "DpImportDialog.h"
+#include "DuskAlerts.h"
 #include "TapeStrip.h"
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
@@ -64,6 +65,18 @@ void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modi
     (peer.*handler) (Source::mouse, Point (x, y) * peer.getComponent().getDesktopScaleFactor(), Modifiers (flags),
                     1.0f, 0.0f, time, {}, 0);
     Modifiers::currentModifiers = saved;
+}
+
+template <typename Component, typename Files>
+bool dispatchFileDrop (Component& component, void (Component::*handler) (const Files&, int, int),
+                       const std::vector<std::filesystem::path>& files, int x, int y)
+{
+    Files names;
+    for (const auto& path : files) names.add (HostString::fromUTF8 (path.u8string().c_str()));
+    if (! component.isInterestedInFileDrag (names)) return false;
+    component.fileDragEnter (names, x, y);
+    (component.*handler) (names, x, y);
+    return true;
 }
 
 } // namespace
@@ -306,6 +319,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             body->getLocalBounds().getTopLeft().translated (x, y)).toFloat();
         return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
     }
+    bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()) return false;
+        const auto point = tape->dropPointForScenario (track);
+        if (! tape->getLocalBounds().contains (point)) return false;
+        return dispatchFileDrop (*tape, &TapeStrip::filesDropped, files, point.x, point.y);
+    }
+    std::vector<std::string> confirmationText() const override { return confirmationTextForScenario(); }
     bool clickFileMenu() override
     {
         if (! owner.menuBar.isShowing()) return false;

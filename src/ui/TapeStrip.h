@@ -138,6 +138,7 @@ public:
     // zoom/scroll to the loaded content (a session saved while zoomed-in must not
     // open with its regions scrolled off-screen), and repaints unconditionally.
     void refreshAfterSessionLoad();
+    auto dropPointForScenario (int track) const { return rowBounds (track).getCentre(); }
     auto rulerPointForScenario (float fraction) const { return rulerBounds().getRelativePoint (fraction, 0.25f); }
     std::int64_t rulerSampleForScenario (float fraction) const { return sampleAtX (rulerPointForScenario (fraction).x); }
 

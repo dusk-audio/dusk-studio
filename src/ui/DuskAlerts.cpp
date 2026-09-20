@@ -145,6 +145,8 @@ public:
         setWantsKeyboardFocus (true);
         setSize (480, 220);
     }
+    std::vector<std::string> textForScenario() const
+    { return { titleStr.toStdString(), messageStr.toStdString() }; }
     std::function<void()> onPrimary;
     std::function<void()> onSecondary;
 
@@ -410,5 +412,11 @@ void showDuskTextInput (juce::Component& parent,
     };
     textModal().show (parent, std::move (panel),
                          /*onDismiss*/ [] { textModal().close(); });
+}
+std::vector<std::string> confirmationTextForScenario()
+{
+    if (! confirmModal().isOpen()) return {};
+    const auto* panel = dynamic_cast<const ConfirmPanel*> (confirmModal().getBody());
+    return panel != nullptr ? panel->textForScenario() : std::vector<std::string> {};
 }
 } // namespace duskstudio
