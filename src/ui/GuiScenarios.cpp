@@ -474,6 +474,21 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                 }
         return false;
     }
+    bool focusFileName() override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        for (auto* container : stack.back()->getBody()->getChildren())
+            for (auto* child : container->getChildren())
+                if (auto* editor = dynamic_cast<decltype (owner.statusLabel.getCurrentTextEditor())> (child);
+                    editor != nullptr && editor->isShowing() && ! editor->isReadOnly())
+                {
+                    const auto point = owner.getTopLevelComponent()->getLocalPoint (
+                        editor, editor->getLocalBounds().getCentre()).toFloat();
+                    return clickAt (point.x, point.y, 1);
+                }
+        return false;
+    }
     bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 
     bool openMidiIo (int index) override

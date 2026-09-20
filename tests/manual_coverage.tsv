@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 88
+# ceiling gap 87
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -300,7 +300,7 @@ Plugins > Scanning	a probe that never finishes is ended after 30 s and quarantin
 Plugins > Scanning	scan plugins on startup reports to the log	gap
 Plugins > Loading a plugin	filter, manufacturer groups, format tags, click to load	auto	scenario:gui.plugin_picker_filter_and_load;script:tests/gui_plugin_picker.sh
 Plugins > Loading a plugin	pickers filter effects from instruments; built-ins pinned at the top	auto	test:built-in picker rows are filtered by slot kind;test:synth unit reaches an instrument picker and not an effect one;test:DAF units with their own editor remain in the built-in picker
-Plugins > Loading a plugin	Browse file loads a plugin by path	gap
+Plugins > Loading a plugin	Browse file loads a plugin by path	auto	scenario:gui.plugin_browse_file
 Plugins > Built-in insert units	built-ins load like plugins, need no scan, and save with the session	auto	test:built-in slot loads a unit without touching disk;test:built-in registry resolves units by id;test:SessionSerializer round-trips a built-in insert on a track and an aux slot
 Plugins > Built-in insert units	built-in state travels with Clone Track	auto	scenario:session.clone_track_keeps_native_state;test:built-in unit state round-trips through the slot
 Plugins > Built-in insert units > Utility	gain, polarity, width, mono; unity at defaults	auto	test:utility unit applies gain, polarity, width and mono sum;test:utility unit at its defaults is unity gain;test:utility unit passes silence through as silence

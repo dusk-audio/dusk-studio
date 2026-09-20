@@ -939,6 +939,69 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runPluginBrowseFile (GuiHost& host, ScenarioContext& ctx)
+{
+    const auto fixture = ctx.fixture ("relayout.vst3");
+    if (! fixture) return ScenarioResult::skip ("requires the VST3 fixture");
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    auto& session = ctx.session();
+    auto& slot = engine.getChannelStrip (0).getPluginSlot();
+    if (slot.isLoaded()) return ScenarioResult::skip ("requires an empty standard plugin slot");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        if (auto* strip = host.strip (0)) strip->closeEditor();
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickInsert (0), "insert button did not receive a click"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Plugin (VST3 / CLAP / LV2 / AU)"), "insert chooser did not open"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Browse file..."), "picker did not offer Browse file"); } });
+    steps->push_back ({ 150, [&host, &ctx, fixture]
+    {
+        ctx.expect (host.focusFileName(), "file browser filename entry was not available");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : fixture->string()) host.pressPeerKey (std::string (1, ch), ch);
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the fixture path"); } });
+    steps->push_back ({ 1200, [&host, &ctx, &slot]
+    {
+        ctx.expect (slot.isLoaded(), "Browse file did not load a plugin");
+        ctx.expect (slot.isLoadedStandardVst3(), "Browse file did not use the VST3 loader");
+        ctx.expect (slot.getLoadedName().toStdString() == "Dusk Runtime Relayout Fixture",
+                    "Browse file loaded a different plugin");
+        ctx.expect (! slot.isLoadedPluginInstrument(), "effect Browse loaded an instrument");
+        ctx.expect (! host.focusFileName(), "file browser remained open after accepting the path");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pluginBrowseFile { Scenario {
+    "gui.plugin_browse_file", { "gui", "plugins" }, Needs::Engine | Needs::Gui,
+    { "relayout.vst3" }, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPluginBrowseFile (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPluginPicker (GuiHost& host, ScenarioContext& ctx)
 {
     const auto fixture = ctx.fixture ("multi_bus.clap");
