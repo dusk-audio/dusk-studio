@@ -939,6 +939,99 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runMasteringLoad (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& player = engine.getMasteringPlayer();
+    if (! engine.getTransport().isStopped() || player.isPlaying())
+        return ScenarioResult::skip ("requires stopped transport and mastering player");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto originalFile = player.getLoadedFile();
+    const auto originalPosition = player.getPlayhead();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &player, originalDir, originalStage, originalFile, originalPosition, restore]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        if (originalFile.existsAsFile()) player.loadFile (originalFile);
+        else player.unloadFile();
+        player.setPlayhead (originalPosition);
+        host.refreshMasteringSource();
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    const auto write = [] (const std::filesystem::path& path, int frames)
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 2;
+        auto writer = dusk::audio::FileWriter::create (path, spec);
+        std::vector<float> silence (static_cast<std::size_t> (frames));
+        const float* channels[] = { silence.data(), silence.data() };
+        return writer && writer->write (channels, 2, frames) && writer->flush();
+    };
+    const auto chosen = ctx.tempDir() / "Chosen mix.wav";
+    const auto bounce = ctx.tempDir() / "bounce.wav";
+    const auto mixdown = ctx.tempDir() / "mixdown.wav";
+    if (! write (chosen, 4800) || ! write (bounce, 9600))
+        return ScenarioResult::fail ("could not write the mastering load fixtures");
+    applySessionDirectory (session, ctx.tempDir());
+    host.switchToStage (GuiHost::Stage::Mastering);
+    const auto check = [&ctx, &session, &player] (const std::filesystem::path& path, int frames)
+    {
+        ctx.expect (player.isLoaded(), "mastering player is not loaded");
+        ctx.expect (player.getLoadedFile().getFullPathName().toStdString() == path.string(),
+                    "mastering player loaded the wrong file");
+        ctx.expect (session.mastering().sourceFile.getFullPathName().toStdString() == path.string(),
+                    "session did not retain the loaded source path");
+        ctx.expect (player.getLengthSamples() == frames, "mastering source length differs from fixture");
+        ctx.expect (std::abs (player.getSourceSampleRate() - 48000.0) < 0.01,
+                    "mastering source rate differs from fixture");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickMasteringButton ("Load mix..."), "Load mix button is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx, chosen]
+    {
+        ctx.expect (host.focusFileName(), "mastering file browser did not open");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : chosen.string())
+            host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the mix path"); } });
+    steps->push_back ({ 600, [&host, &ctx, check, chosen]
+    {
+        check (chosen, 4800);
+        ctx.expect (host.clickMasteringButton ("Load latest mixdown"), "Load latest mixdown button is unavailable");
+    } });
+    steps->push_back ({ 600, [&host, &ctx, check, write, bounce, mixdown]
+    {
+        check (bounce, 9600);
+        ctx.expect (write (mixdown, 14400), "could not write the preferred mixdown");
+        ctx.expect (host.clickMasteringButton ("Load latest mixdown"), "second latest-mixdown click failed");
+    } });
+    steps->push_back ({ 600, [check, mixdown] { check (mixdown, 14400); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringLoad { Scenario {
+    "gui.mastering_load", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringLoad (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runAuxSources (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

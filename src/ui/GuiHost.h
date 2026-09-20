@@ -115,6 +115,8 @@ public:
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
     virtual bool clickPickerRow (const std::string& text) = 0;
     virtual bool focusFileName() = 0;
+    virtual bool clickMasteringButton (const std::string& label) = 0;
+    virtual void refreshMasteringSource() = 0;
     virtual bool midiBindingsOpen() const = 0;
 
     virtual bool meterClip (int index) = 0;

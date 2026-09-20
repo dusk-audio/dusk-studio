@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 84
+# ceiling gap 83
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -199,7 +199,7 @@ Aux lanes > Aux lane layout > Plugin chain (centre column)	an editor attach fail
 Aux lanes > Aux lane layout > Sources panel (right column)	lists every channel sending to the lane with its level	auto	scenario:gui.aux_sources
 
 The mastering stage	separate path; entering or leaving stops the transport	gap
-The mastering stage > Loading a mix	Load mix and Load latest mixdown	gap
+The mastering stage > Loading a mix	Load mix and Load latest mixdown	auto	scenario:gui.mastering_load
 The mastering stage > Loading a mix	a source at another rate plays at the right speed	auto	test:MasteringPlayer resamples a source whose rate differs from the device
 The mastering stage > Transport	play, stop, rewind; Space drives the mastering player	gap
 The mastering stage > Waveform	click to seek	gap

@@ -53,6 +53,7 @@ public:
     void parentHierarchyChanged() override;
 
     bool loadFile (const juce::File& file);
+    void refreshSourceForScenario();
 
     // Screenshot harness only. The stage's EQ and limiter panels are framework children,
     // which the JUCE snapshot path cannot reach, so each reads its own steady frame back

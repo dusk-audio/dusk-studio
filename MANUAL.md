@@ -1028,7 +1028,7 @@ The **MASTERING** stage is a separate signal path. It does not play your tracks;
 
 ## Loading a mix
 
-- **Load mix…**: opens a file chooser. Pick any WAV, AIFF, FLAC, or OGG file.
+- **Load mix...**: opens a file chooser for WAV, AIFF, or FLAC files.
 - **Load latest mixdown**: loads `mixdown.wav` from the session folder (what **Mixdown** writes), or `bounce.wav`, the bounce dialog's default name, if there is no mixdown.
 
 The source file path is displayed below the buttons.

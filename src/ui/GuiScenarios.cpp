@@ -16,6 +16,7 @@
 #include "EmbeddedModal.h"
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
+#include "MasteringView.h"
 #include "PlatformWindowing.h"
 #include "NativeEditorEmbedScale.h"
 #include "TransportBar.h"
@@ -534,6 +535,25 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool modalStackEmpty() const override
     {
         return EmbeddedModal::activeModalStack().empty();
+    }
+
+    void refreshMasteringSource() override
+    {
+        if (owner.masteringView != nullptr) owner.masteringView->refreshSourceForScenario();
+    }
+
+    bool clickMasteringButton (const std::string& label) override
+    {
+        if (owner.masteringView == nullptr) return false;
+        for (auto* child : owner.masteringView->getChildren())
+            if (auto* button = dynamic_cast<decltype (owner.recordingStageBtn)*> (child);
+                button != nullptr && button->isShowing() && button->isEnabled()
+                && button->getButtonText().toStdString() == label)
+            {
+                button->triggerClick();
+                return true;
+            }
+        return false;
     }
 
     bool clickModalButton (const std::string& label) override
