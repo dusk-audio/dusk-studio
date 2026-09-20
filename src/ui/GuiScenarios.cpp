@@ -585,6 +585,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return true;
     }
 
+    bool clickAudioRegion (int track, int region) override
+    {
+        if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;
+        const auto bounds = owner.tapeStrip->audioRegionScreenRect (track, region);
+        if (bounds.isEmpty()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+
     bool doubleClickAudioRegion (int track, int region) override
     {
         if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;

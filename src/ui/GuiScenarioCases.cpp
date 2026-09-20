@@ -2296,5 +2296,74 @@ const ScenarioRegistrar recordingSetupAlert { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runRecordingSetupAlert (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runTapeNudgeKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    const bool expanded = host.timelineViewMatches (true);
+    ctx.keep (session.tempoBpm);
+    ctx.keep (session.beatsPerBar);
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup (host.preserveKeyboardFocus());
+    ctx.cleanup ([&host, &ctx, &track, expanded, regions = track.regions, mode = session.editMode]
+    {
+        track.regions = regions;
+        ctx.session().editMode = mode;
+        ctx.engine().getUndoManager().clearUndoHistory();
+        if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+    });
+    session.tempoBpm.store (120.0f);
+    session.beatsPerBar.store (3);
+    session.editMode = EditMode::Grab;
+    track.mode.store ((int) Track::Mode::Mono);
+    track.frozen.store (false);
+    const auto beat = static_cast<std::int64_t> (std::llround (ctx.engine().getCurrentSampleRate() / 2.0));
+    const auto path = ctx.tempDir() / "nudge.wav";
+    auto writer = dusk::audio::FileWriter::create (path, { ctx.engine().getCurrentSampleRate(), 1, 24 });
+    if (! ctx.expect (writer != nullptr, "could not create the nudge fixture")) return ctx.verdict();
+    std::vector<float> silence (static_cast<std::size_t> (beat * 2), 0.0f);
+    const float* channels[] { silence.data() };
+    if (! ctx.expect (writer->write (channels, 1, beat * 2), "could not write the nudge fixture")) return ctx.verdict();
+    writer.reset();
+    AudioRegion first;
+    first.file = decltype (first.file) (path.u8string().c_str());
+    first.timelineStart = beat * 4;
+    first.sourceOffset = beat / 2;
+    first.lengthInSamples = beat;
+    auto second = first;
+    second.timelineStart = beat * 12;
+    track.regions = { first, second };
+    ctx.engine().getUndoManager().clearUndoHistory();
+    if (! expanded) host.pressKey ("T", 't');
+    auto steps = std::make_shared<std::vector<Step>>();
+    struct Nudge { const char* key; int beatsFromStart; };
+    for (const auto nudge : { Nudge { "command + cursor right", 1 }, Nudge { "command + cursor left", 0 },
+                              Nudge { "command + shift + cursor right", 3 }, Nudge { "command + shift + cursor left", 0 } })
+    {
+        steps->push_back ({ 500, [&host, &ctx]
+        { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region with a timeline click"); } });
+        steps->push_back ({ 100, [&host, &ctx, nudge]
+        { ctx.expect (host.pressKey (nudge.key), "the region nudge shortcut was not handled"); } });
+        steps->push_back ({ 100, [&ctx, &track, first, second, beat, nudge]
+        {
+            if (ctx.expect (track.regions.size() == 2, "nudge changed the region count"))
+                ctx.expect (track.regions[0].timelineStart == first.timelineStart + beat * nudge.beatsFromStart
+                            && track.regions[0].sourceOffset == first.sourceOffset
+                            && track.regions[0].lengthInSamples == first.lengthInSamples
+                            && track.regions[1].timelineStart == second.timelineStart,
+                            "nudge did not move only the selected region by the requested beat or bar");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar tapeNudgeKeys { Scenario {
+    "gui.tape_nudge_keys", { "gui", "keyboard", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTapeNudgeKeys (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

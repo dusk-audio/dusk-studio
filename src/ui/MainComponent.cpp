@@ -1476,7 +1476,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         // nudge matches the user's musical grid. Cmd was already used
         // for clipboard / save / open so it composes cleanly with
         // arrow keys (no existing binding).
-        if ((key == juce::KeyPress::leftKey || key == juce::KeyPress::rightKey)
+        if ((code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey)
             && cmd)
         {
             const double sr   = engine.getCurrentSampleRate();
@@ -1489,7 +1489,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
                 const double stepSamples = shift ? beatSamples * (double) beatsPerBar
                                                   : beatSamples;
                 const std::int64_t delta = (std::int64_t) std::round (stepSamples);
-                const std::int64_t signedDelta = key == juce::KeyPress::leftKey ? -delta : delta;
+                const std::int64_t signedDelta = code == juce::KeyPress::leftKey ? -delta : delta;
                 if (tapeStrip->nudgeSelectedRegion (signedDelta)) return true;
             }
         }

@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 77
+# ceiling gap 76
 # ceiling partial 50
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -246,7 +246,7 @@ The tape strip > Regions	audio regions draw waveforms; MIDI regions draw a glyph
 The tape strip > Regions > Selecting and moving	click, Cmd-click toggles, drag moves with snap, edges trim, fade discs, middle-drag pans	partial	test:snapDelta: rounds positive deltas with half-step bias;test:snapDelta: sign-aware rounding for negative deltas		snap arithmetic tested; the gestures are not
 The tape strip > Regions > Splitting	Cmd/Ctrl+E splits the selected region at the playhead	partial	scenario:region.split_keeps_audio_continuous	the split, its undo and redo are tested; the shortcut reaching it is not
 The tape strip > Regions > Duplicating	Cmd+D places a copy right after the original	partial	scenario:region.paste_inserts_and_undo_removes	inserting the copy and its undo are tested; where Cmd+D places it is not
-The tape strip > Regions > Nudging	Cmd+arrows nudge a beat; Shift nudges a bar	gap
+The tape strip > Regions > Nudging	Cmd+arrows nudge a beat; Shift nudges a bar	auto	scenario:gui.tape_nudge_keys		actual timeline selection and both directions; 3/4 bar length, source span and unselected region preserved
 The tape strip > Regions > Right-click menu	loop region, split, join, label, mute, lock, takes, reverse, colour, delete	partial	scenario:region.split_keeps_audio_continuous;scenario:region.join_rejoins_a_split;scenario:region.delete_restores_takes_on_undo;scenario:region.edit_undo_restores_every_field	split, join, delete and mute are tested; label, lock, takes, reverse, colour and loop region are not
 The tape strip > Regions > Take cycling	take submenu and Alt+T cycling	partial	scenario:take.cycle_steps_through_the_stack		the Alt+T step through the stack is tested; the Takes submenu is not
 The tape strip > Markers	M drops a marker with a naming prompt; drag, rename, delete	partial	scenario:marker.add_move_remove_undo		the add, move, rename and delete behind them are tested with undo; the M key, the naming prompt and the drag gesture are not
