@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 86
+# ceiling gap 85
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -283,7 +283,7 @@ The piano roll > Step record	notes entered at the cursor; the cursor advances a 
 The piano roll > Navigation	Cmd+] and Cmd+[ move between MIDI regions	gap
 
 Mixing > A suggested order of operations	mixing advice	n/a			advice
-Mixing > Aux sends in detail	post-fader follows the fader; pre-fader ignores it	gap
+Mixing > Aux sends in detail	post-fader follows the fader; pre-fader ignores it	auto	scenario:strip.sends_pre_post_and_bypass		measured aux audio at unity, -6, -12, -24 dB and fully down
 Mixing > Bus routing	bus assignment replaces the direct master send	auto	scenario:engine.pipeline_selftest
 Mixing > Solo and PFL	solo-in-place, additive, no PFL	auto	scenario:engine.pipeline_selftest
 Mixing > Automation	OFF, READ, WRITE, TOUCH for fader, pan, mute and solo	auto	test:evaluateLane: continuous interpolation + hold-first/last;test:evaluateLane: discrete holds previous (step), thresholds at 0.5;scenario:automation.read_plays_the_lanes;scenario:automation.write_splices_its_span;scenario:automation.touch_glides_back;scenario:automation.loop_wrap_closes_the_pass;scenario:automation.locate_ends_the_pass;scenario:gui.automation_write_and_touch

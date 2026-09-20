@@ -274,6 +274,21 @@ ScenarioResult sendsPrePostAndBypass (ScenarioContext& ctx)
     ctx.expect (db (postFaderDown, post) < -60.0, "a post-fader send survived the fader going down");
     ctx.expect (std::abs (db (preFaderDown, post)) < 0.5, "a pre-fader send followed the fader");
 
+    for (const float fader : { -24.0f, -12.0f, -6.0f })
+    {
+        strip.faderDb.store (fader);
+        strip.auxSendPreFader[0].store (false);
+        const double postLevel = playTone (ctx, 440.0, 0.25f, 0.0f).aux;
+        ctx.expect (std::abs (db (postLevel, post) - fader) < 0.5,
+                    "the post-fader send did not follow the fader's dB change");
+        strip.auxSendPreFader[0].store (true);
+        const double preLevel = playTone (ctx, 440.0, 0.25f, 0.0f).aux;
+        ctx.expect (std::abs (db (preLevel, post)) < 0.5,
+                    "the pre-fader send changed at an intermediate fader level");
+    }
+    strip.faderDb.store (0.0f);
+    strip.auxSendPreFader[0].store (false);
+
     strip.auxSendsBypassed.store (true);
     const double bypassed = playTone (ctx, 440.0, 0.25f, 0.0f).aux;
     strip.auxSendsBypassed.store (false);
