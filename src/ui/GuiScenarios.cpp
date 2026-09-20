@@ -566,6 +566,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
 
     bool audioEditorOpen() const override { return owner.audioEditor != nullptr; }
+    int audioEditorRegion() const override { return owner.audioEditorRegionIdx; }
+    bool clickAudioEditorWaveform() override
+    {
+        auto* editor = owner.audioEditor.get();
+        if (editor == nullptr || ! editor->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (
+            editor, editor->getLocalBounds().getRelativePoint (0.5f, 0.75f)).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
     void closeAudioEditor() override { owner.closeAudioEditor(); }
 
     bool pressAudioEditorKey (const std::string& description) override

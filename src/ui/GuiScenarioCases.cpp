@@ -1975,5 +1975,97 @@ const ScenarioRegistrar windowKeys { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runWindowKeys (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runAudioEditorKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    const bool expanded = host.timelineViewMatches (true);
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&host, &ctx, &session, &track, expanded, regions = track.regions, mode = session.editMode]
+    {
+        host.closeAudioEditor();
+        track.regions = regions;
+        session.editMode = mode;
+        ctx.engine().getUndoManager().clearUndoHistory();
+        if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+    });
+    const auto path = ctx.tempDir() / "editor-keys.wav";
+    auto writer = dusk::audio::FileWriter::create (path, { 48000.0, 1, 24 });
+    if (! ctx.expect (writer != nullptr, "could not create the editor keyboard fixture")) return ctx.verdict();
+    std::vector<float> silence (240000, 0.0f);
+    const float* channels[] { silence.data() };
+    if (! ctx.expect (writer->write (channels, 1, 240000), "could not write the editor keyboard fixture")) return ctx.verdict();
+    writer.reset();
+    AudioRegion first;
+    first.file = decltype (first.file) (path.u8string().c_str());
+    first.sourceOffset = 12000;
+    first.lengthInSamples = 192000;
+    auto second = first;
+    second.timelineStart = 384000;
+    second.sourceOffset = 24000;
+    second.lengthInSamples = 96000;
+    track.regions = { first, second };
+    track.mode.store ((int) Track::Mode::Mono);
+    track.frozen.store (false);
+    ctx.engine().getUndoManager().clearUndoHistory();
+    if (! expanded) host.pressKey ("T", 't');
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.doubleClickAudioRegion (0, 0), "could not open the first region"); } });
+    steps->push_back ({ 300, [&host, &ctx, &session]
+    {
+        session.editMode = EditMode::Range;
+        ctx.expect (host.pressPeerKey ("G", 'g'), "the editor did not handle G");
+        ctx.expect (session.editMode == EditMode::Grab, "G did not select Grab mode");
+        ctx.expect (host.clickAudioEditorWaveform(), "could not place the edit cursor with the mouse");
+        ctx.expect (host.pressAudioEditorKey ("command + E"), "the editor did not handle Split");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, &track, first]
+    {
+        if (ctx.expect (track.regions.size() == 3, "Split did not create a third region"))
+        {
+            std::vector<AudioRegion> slices;
+            for (const auto& region : track.regions)
+                if (region.timelineStart < 384000) slices.push_back (region);
+            std::sort (slices.begin(), slices.end(), [] (const auto& a, const auto& b)
+            { return a.timelineStart < b.timelineStart; });
+            if (ctx.expect (slices.size() == 2, "Split affected the wrong region"))
+                ctx.expect (slices[0].lengthInSamples > 0 && slices[1].lengthInSamples > 0
+                            && slices[0].lengthInSamples + slices[1].lengthInSamples == first.lengthInSamples
+                            && slices[0].sourceOffset == first.sourceOffset
+                            && slices[1].sourceOffset == first.sourceOffset + slices[0].lengthInSamples
+                            && slices[1].timelineStart == slices[0].lengthInSamples,
+                            "Split did not preserve contiguous source and timeline spans");
+        }
+        ctx.expect (host.pressAudioEditorKey ("command + Z"), "the editor did not handle Undo");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, &track]
+    {
+        ctx.expect (track.regions.size() == 2, "Undo did not restore the two original regions");
+        ctx.expect (host.pressAudioEditorKey ("command + ]"), "the editor did not handle next region");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.audioEditorRegion() == 1, "next region did not open the second region");
+        ctx.expect (host.pressAudioEditorKey ("command + ["), "the editor did not handle previous region");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.audioEditorRegion() == 0, "previous region did not return to the first region");
+        ctx.expect (host.pressPeerKey ("escape"), "the editor did not handle Escape");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (! host.audioEditorOpen(), "Escape did not close the editor"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorKeys { Scenario {
+    "gui.audio_editor_keys", { "gui", "keyboard", "editor" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorKeys (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario
