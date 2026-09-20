@@ -507,6 +507,27 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
 
     void autosaveTick() override { owner.writeAutosave(); }
+    bool doubleClickTempo() override
+    {
+        auto* bar = owner.transportBar.get();
+        if (bar == nullptr || ! bar->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (bar, bar->bpmPointForScenario()).toFloat();
+        return clickAt (point.x, point.y, 2);
+    }
+
+    bool focusModalTextInput() override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        for (auto* child : stack.back()->getBody()->getChildren())
+            if (auto* handler = child->getAccessibilityHandler(); handler != nullptr && child->isShowing()
+                && handler->getRole() == decltype (handler->getRole())::editableText)
+            {
+                const auto point = owner.getTopLevelComponent()->getLocalPoint (child, child->getLocalBounds().getCentre()).toFloat();
+                return clickAt (point.x, point.y, 1);
+            }
+        return false;
+    }
     void openAbout() override { owner.menuItemSelected (2002, 2); }
     bool shortcutsOpen() const override { return owner.shortcutsModal.isOpen(); }
     void startMixdown() override { owner.menuItemSelected (1010, 0); }

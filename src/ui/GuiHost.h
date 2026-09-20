@@ -95,6 +95,8 @@ public:
 
     virtual bool clickTimeFormat() = 0;
     virtual bool clickRecord() = 0;
+    virtual bool doubleClickTempo() = 0;
+    virtual bool focusModalTextInput() = 0;
     virtual std::string clockText() const = 0;
 
     // Null when the index is out of range, or the stage that realises the

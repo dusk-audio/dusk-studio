@@ -2725,5 +2725,71 @@ const ScenarioRegistrar pianoCc { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoCc (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runTempoEntry (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! ctx.expect (transport.isStopped(), "tempo entry requires a stopped fixture")) return ctx.verdict();
+    ctx.cleanup ([&host, &engine, &session, &transport, points = session.tempoMap.points(),
+                  bpm = session.tempoBpm.load(), position = transport.getPlayhead()]
+    {
+        host.closeTopModal();
+        session.tempoBpm.store (bpm);
+        engine.setTempoPoints (points);
+        transport.setPlayhead (position);
+        engine.getUndoManager().clearUndoHistory();
+    });
+    session.tempoBpm.store (120.0f);
+    engine.setTempoPoints ({});
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool mapped : { false, true })
+    {
+        steps->push_back ({ 500, [&host, &ctx, &engine, &transport, mapped]
+        {
+            if (mapped) engine.setTempoPoints ({ { 0, 100.0f }, { 48000, 120.0f }, { 96000, 140.0f } });
+            transport.setPlayhead (mapped ? 72000 : 0);
+            ctx.expect (host.doubleClickTempo(), "the BPM readout was unavailable for double-click");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, mapped]
+        {
+            if (! ctx.expect (host.focusModalTextInput(), "double-clicking BPM did not open a text input")) return;
+            ctx.expect (host.pressPeerKey ("command + A"), "the tempo input did not accept Select All");
+            const std::string text = mapped ? "127.6" : "133.5";
+            for (const char character : text)
+                ctx.expect (host.pressPeerKey (std::string (1, character), character), "the tempo input rejected a character");
+            ctx.expect (host.pressPeerKey ("return"), "the tempo input did not accept Return");
+        } });
+        steps->push_back ({ 300, [&host, &ctx, &session, &transport, mapped]
+        {
+            ctx.expect (host.modalStackEmpty(), "accepting tempo left the prompt open");
+            if (! mapped)
+                ctx.expect (session.tempoMap.empty() && std::abs (session.tempoBpm.load() - 133.5f) < 0.001f,
+                            "constant-tempo entry did not retain its fractional BPM");
+            else
+            {
+                const auto points = session.tempoMap.points();
+                if (! ctx.expect (points.size() == 3, "editing mapped tempo changed the point count")) return;
+                ctx.expect (points[0].timelineSamples == 0 && points[1].timelineSamples == 48000
+                            && points[2].timelineSamples == 96000, "editing BPM moved a tempo point");
+                ctx.expect (std::abs (points[0].bpm - 100.0f) < 0.001f
+                            && std::abs (points[1].bpm - 127.6f) < 0.001f
+                            && std::abs (points[2].bpm - 140.0f) < 0.001f
+                            && std::abs (session.tempoBpm.load() - 100.0f) < 0.001f,
+                            "BPM entry did not edit only the point governing the playhead");
+                ctx.expect (transport.getPlayhead() == 72000, "editing BPM moved the stopped playhead");
+            }
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar tempoEntry { Scenario {
+    "gui.tempo_entry", { "gui", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTempoEntry (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario
