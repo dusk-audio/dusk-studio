@@ -1127,7 +1127,7 @@ On macOS and Windows, use **Rescan devices** in Audio Settings after plugging a 
 
 ## Arming a track
 
-Click **ARM**. The button lights red. Until at least one track is armed, pressing Record on the transport does nothing.
+Click **ARM**. The button lights red. Until at least one track is armed, Record does not start a take and shows **Cannot record**, explaining that no track is armed.
 
 ## Monitor mode
 

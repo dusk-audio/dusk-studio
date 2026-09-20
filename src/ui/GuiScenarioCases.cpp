@@ -1612,5 +1612,51 @@ const ScenarioRegistrar masteringTransport { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringTransport (host, ctx); }
 } };
+std::optional<ScenarioResult> runUnarmedRecord (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& transport = ctx.engine().getTransport();
+    ctx.cleanup ([&host, &transport, state = transport.getState(), position = transport.getPlayhead()]
+    {
+        if (! host.modalStackEmpty()) host.closeTopModal();
+        transport.setPlayhead (position);
+        transport.setState (state);
+    });
+    std::array<std::size_t, Session::kNumTracks> audioCounts {}, midiCounts {};
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        auto& track = session.track (index);
+        ctx.cleanup ([&session, index, armed = track.recordArmed.load()] { session.setTrackArmed (index, armed); });
+        session.setTrackArmed (index, false);
+        audioCounts[static_cast<std::size_t> (index)] = track.regions.size();
+        midiCounts[static_cast<std::size_t> (index)] = track.midiRegions.current().size();
+    }
+    transport.setState (Transport::State::Stopped);
+    transport.setPlayhead (48000);
+    ctx.expect (host.pressKey ("R", 'r'), "Record shortcut was not handled");
+    ctx.waitUntil ([&host] { return ! host.modalStackEmpty(); }, 3000,
+        [&host, &ctx, &session, &transport, audioCounts, midiCounts]
+        {
+            ctx.expect (transport.isStopped() && transport.getPlayhead() == 48000,
+                        "unarmed Record changed transport state or position");
+            ctx.expect (host.modalText().find ("Cannot record\nNo track is armed.") == 0,
+                        "unarmed Record did not explain the refusal");
+            for (int index = 0; index < Session::kNumTracks; ++index)
+                ctx.expect (session.track (index).regions.size() == audioCounts[static_cast<std::size_t> (index)]
+                            && session.track (index).midiRegions.current().size() == midiCounts[static_cast<std::size_t> (index)],
+                            "unarmed Record changed a track's regions");
+            if (! ctx.expect (host.clickModalButton ("OK"), "the refusal has no usable OK button"))
+            { ctx.complete (ctx.verdict()); return; }
+            ctx.waitUntil ([&host] { return host.modalStackEmpty(); }, 3000,
+                           [&ctx] { ctx.complete (ctx.verdict()); }, "the refusal did not close");
+        }, "unarmed Record did not show its refusal");
+    return std::nullopt;
+}
+
+const ScenarioRegistrar unarmedRecord { Scenario {
+    "gui.record_requires_armed_track", { "gui", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runUnarmedRecord (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

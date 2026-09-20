@@ -4,12 +4,15 @@
 #include "../../audiofile/FileReader.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/Session.h"
+#include "../../../session/SessionSerializer.h"
+#include "../../../foundation/Json.h"
 
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -352,6 +355,67 @@ ScenarioResult eightInputsRecordSeparately (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+ScenarioResult midiRecordingLivesInJson (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (0);
+    const int input = engine.getVirtualKeyboardInputIndex();
+    if (! ctx.expect (input >= 0, "the virtual MIDI input is missing")) return ctx.verdict();
+    ctx.keep (session.countInEnabled);
+    session.countInEnabled.store (false);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.midiInputIndex.store (input);
+    track.midiChannel.store (0);
+    track.inputMonitor.store (true);
+    session.setTrackArmed (0, true);
+    engine.record();
+    if (! ctx.expect (engine.getTransport().isRecording(), "MIDI recording did not start")) return ctx.verdict();
+    ctx.pump (4);
+    dusk::MidiBuffer start;
+    const std::uint8_t noteOn[] { 0x92, 60, 101 };
+    const std::uint8_t controller[] { 0xb2, 74, 87 };
+    start.addEvent (noteOn, 3, 0);
+    start.addEvent (controller, 3, 64);
+    ctx.pumpWithMidi (input, std::move (start));
+    ctx.pump (16);
+    dusk::MidiBuffer finish;
+    const std::uint8_t noteOff[] { 0x82, 60, 0 };
+    finish.addEvent (noteOff, 3, 0);
+    ctx.pumpWithMidi (input, std::move (finish));
+    ctx.pump (4);
+    engine.stop();
+    const auto& regions = track.midiRegions.current();
+    if (! ctx.expect (regions.size() == 1 && regions[0].notes.size() == 1 && regions[0].ccs.size() == 1,
+                      "MIDI recording did not commit the note and controller")) return ctx.verdict();
+    const auto recorded = regions[0];
+    ctx.expect (recorded.notes[0].channel == 3 && recorded.notes[0].noteNumber == 60
+                && recorded.notes[0].velocity == 101 && recorded.notes[0].lengthInTicks > 0,
+                "the recorded note changed channel, pitch, velocity or duration");
+    ctx.expect (recorded.ccs[0].channel == 3 && recorded.ccs[0].controller == 74 && recorded.ccs[0].value == 87,
+                "the recorded controller changed its identity or value");
+    const auto path = ctx.sessionDir() / "session.json";
+    if (! ctx.expect (SessionSerializer::save (session, path), "could not save the MIDI take")) return ctx.verdict();
+    std::ifstream stream (path);
+    const auto json = dusk::json::Json::parse (stream, nullptr, false);
+    if (! ctx.expect (! json.is_discarded(), "the saved session is not valid JSON")) return ctx.verdict();
+    const auto& embedded = json.at ("tracks").at (0).at ("midi_regions").at (0);
+    ctx.expect (embedded.at ("notes").at (0).at ("note") == 60
+                && embedded.at ("ccs").at (0).at ("ctrl") == 74,
+                "the MIDI events were not embedded in session.json");
+    Session loaded;
+    if (! ctx.expect (SessionSerializer::load (loaded, path), "could not reload the MIDI session")) return ctx.verdict();
+    const auto& restored = loaded.track (0).midiRegions.current();
+    ctx.expect (restored.size() == 1 && restored[0].notes == recorded.notes && restored[0].ccs == recorded.ccs
+                && restored[0].timelineStart == recorded.timelineStart
+                && restored[0].lengthInTicks == recorded.lengthInTicks,
+                "saving and reloading changed the recorded MIDI data");
+    for (const auto& entry : std::filesystem::recursive_directory_iterator (ctx.sessionDir()))
+        ctx.expect (entry.path().extension() != ".mid" && entry.path().extension() != ".wav",
+                    "MIDI recording created an external media file");
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
@@ -363,6 +427,9 @@ const ScenarioRegistrar fullCoverRegistrar { Scenario {
 const ScenarioRegistrar eightInputsRegistrar { Scenario {
     "record.eight_inputs_separate_takes", { "record" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (eightInputsRecordSeparately, ctx); } } };
+const ScenarioRegistrar midiJsonRegistrar { Scenario {
+    "record.midi_embedded_in_json", { "record", "midi", "session" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (midiRecordingLivesInJson, ctx); } } };
 const ScenarioRegistrar capRegistrar { Scenario {
     "take.stack_keeps_newest_eight", { "take", "record" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (stackKeepsNewestEight, ctx); } } };

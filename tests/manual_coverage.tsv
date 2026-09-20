@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 92
+# ceiling gap 90
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -217,7 +217,7 @@ Recording	five-step workflow	n/a			walkthrough; each step is held in the section
 Recording > Setting the input	follow-track default; stereo picks two inputs; MIDI port and channel	auto	test:A stereo track's right input follows wherever the left one resolves;test:Seam resolves saved identifiers back to bank indices
 Recording > Setting the input > MIDI hot-plug	Linux adds a new port by itself and reattaches saved ports	auto	test:ALSA seq backend reports a port appearing and disappearing;test:ALSA seq backend migrates a legacy address identifier
 Recording > Setting the input > MIDI hot-plug	the port list only rebuilds while stopped	gap
-Recording > Arming a track	Record does nothing until a track is armed	gap
+Recording > Arming a track	Record refuses until a track is armed and explains why	auto	scenario:gui.record_requires_armed_track		R leaves the stopped playhead and all regions unchanged, shows the unarmed-track alert and dismisses with OK
 Recording > Monitor mode	IN monitors through EQ, comp and insert	auto	scenario:engine.pipeline_selftest
 Recording > Print mode	PRINT records the processed signal; off records dry	gap
 Recording > Count-in	one bar of click before the take; playhead rolls back a bar	auto	scenario:transport.count_in_rolls_back_a_bar;test:LoopTimeline keeps count-in before loop start linear until loop end
@@ -231,7 +231,7 @@ Recording > Loop recording	with punch, each pass records only the overlap	auto	t
 Recording > Loop recording	silent audio passes kept; empty MIDI passes dropped	auto	test:Loop audio retains a silent pass and trims latency per pass;test:Loop MIDI ignores a truly empty pass and keeps a final partial pass
 Recording > Loop recording	a loop under 128 samples does not record	auto	scenario:transport.short_loop_refused
 Recording > Where files are saved	session.json plus audio/ of 24-bit WAVs named by track and time	partial	test:RecordManager writes mono input back accurately;test:RecordManager writes stereo L+R interleaving in order		sample accuracy tested; the 24-bit format and the filename pattern are not
-Recording > Where files are saved	MIDI is embedded in session.json	gap
+Recording > Where files are saved	MIDI is embedded in session.json	auto	scenario:record.midi_embedded_in_json		records a note and controller, verifies their inline JSON, reloads the events and timing, and checks that no external media file was created
 Recording > Take history	a take fully covering a region pushes it onto an 8-deep stack	auto	scenario:take.full_cover_pushes_onto_stack;scenario:take.stack_keeps_newest_eight;test:Loop audio history is newest-first capped and then retains compatible old takes;test:SessionSerializer round-trips active and historical take provenance
 Recording > Take history	Alt+T and Alt+Shift+T cycle takes; the badge does too	partial	scenario:take.cycle_steps_through_the_stack		the step both shortcuts and the badge take through the stack is tested; the key binding and the badge click are not
 Recording > Take history	a take over one end of an older region trims it and keeps none of it; a punch inside keeps the covered part	auto	scenario:take.edge_overdub_trims_neighbour;scenario:take.punch_inside_keeps_covered_slice
