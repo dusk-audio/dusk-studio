@@ -1240,7 +1240,7 @@ The left column shows each track's number, colour, and small ARM/SOLO/MUTE butto
 
 The top band shows bars and beats (when the clock display is in Bars mode) or minutes and seconds (when in Time mode). Below the bar/beat band is a pill row showing markers and loop/punch brackets.
 
-Click the ruler to seek the playhead. Drag with Shift held to set the loop range.
+Click the ruler to seek the playhead. Drag across the ruler, then choose **Set loop here** or **Set punch in / out here** from the menu. **Cancel** leaves the ranges unchanged.
 
 ## Regions
 

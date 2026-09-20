@@ -83,6 +83,10 @@ public:
     virtual int pianoCcController() const = 0;
     virtual bool pianoNotePointer (std::int64_t tick, int pitch, bool down, int modifiers = 0) = 0;
     virtual std::vector<int> pianoSelection() const = 0;
+    virtual bool setTimelineShown (bool shown) = 0;
+    virtual bool tapeRulerPointer (float fraction, bool down, bool shift = false) = 0;
+    virtual std::int64_t tapeRulerSample (float fraction) const = 0;
+    virtual bool clickContextMenuItem (const std::string& text) = 0;
     virtual bool clickTimeFormat() = 0;
     virtual std::string clockText() const = 0;
 

@@ -919,6 +919,97 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runTapeRuler (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
+    if (! host.modalStackEmpty() || ! session.getMarkers().empty() || session.tempoMap.points().size() > 1)
+        return ScenarioResult::skip ("requires an unobstructed ruler");
+    const std::array<std::int64_t, 6> saved { transport.getPlayhead(), transport.getLoopStart(), transport.getLoopEnd(),
+        transport.getPunchIn(), transport.getPunchOut(), session.lastClickedTimelineSample.load() };
+    const bool loop = transport.isLoopEnabled(), punch = transport.isPunchEnabled(), snap = session.snapToGrid;
+    const bool shown = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &session, &transport, saved, loop, punch, snap, shown]
+    {
+        host.tapeRulerPointer (0.18f, false);
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        transport.setLoopRange (saved[1], saved[2]);
+        transport.setLoopEnabled (loop);
+        transport.setPunchRange (saved[3], saved[4]);
+        transport.setPunchEnabled (punch);
+        transport.locate (saved[0]);
+        session.lastClickedTimelineSample.store (saved[5]);
+        session.snapToGrid = snap;
+        host.setTimelineShown (shown);
+    });
+    transport.placeLoopRange (0, 0);
+    transport.placePunchRange (0, 0);
+    session.snapToGrid = false;
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.tapeRulerPointer (0.18f, true), "ruler click failed");
+        host.tapeRulerPointer (0.18f, false);
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &transport, &session]
+    {
+        const auto expected = host.tapeRulerSample (0.18f);
+        ctx.expect (expected > 0 && transport.getPlayhead() == expected, "ruler click did not seek");
+        ctx.expect (session.lastClickedTimelineSample.load() == expected, "ruler click did not remember the stop-return point");
+    } });
+    const auto drag = [&host, &ctx, steps] (float from, float to, bool shift)
+    {
+        steps->push_back ({ 150, [&host, &ctx, from, shift]
+        { ctx.expect (host.tapeRulerPointer (from, true, shift), "ruler drag did not start"); } });
+        steps->push_back ({ 150, [&host, to, shift] { host.tapeRulerPointer (to, true, shift); } });
+        steps->push_back ({ 150, [&host, to, shift] { host.tapeRulerPointer (to, false, shift); } });
+    };
+    drag (0.3f, 0.5f, false);
+    steps->push_back ({ 150, [&host, &ctx, &transport]
+    {
+        ctx.expect (! transport.isLoopEnabled() && transport.getLoopStart() == 0 && transport.getLoopEnd() == 0,
+                    "drag committed a loop before the menu choice");
+        ctx.expect (host.clickContextMenuItem ("Set loop here"), "range menu lacks Set loop here");
+    } });
+    const auto checkLoop = [&host, &ctx, &transport]
+    {
+        ctx.expect (transport.isLoopEnabled() && transport.getLoopStart() == host.tapeRulerSample (0.3f)
+                    && transport.getLoopEnd() == host.tapeRulerSample (0.5f), "loop does not match the dragged range");
+    };
+    steps->push_back ({ 150, checkLoop });
+    drag (0.8f, 0.65f, true);
+    steps->push_back ({ 150, [&host, &ctx, checkLoop]
+    {
+        checkLoop();
+        ctx.expect (host.clickContextMenuItem ("Cancel"), "range menu lacks Cancel");
+    } });
+    steps->push_back ({ 150, checkLoop });
+    drag (0.55f, 0.7f, false);
+    steps->push_back ({ 150, [&host, &ctx, &transport]
+    {
+        ctx.expect (! transport.isPunchEnabled(), "drag committed punch before the menu choice");
+        ctx.expect (host.clickContextMenuItem ("Set punch in / out here"), "range menu lacks punch placement");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &transport, checkLoop]
+    {
+        checkLoop();
+        ctx.expect (transport.isPunchEnabled() && transport.getPunchIn() == host.tapeRulerSample (0.55f)
+                    && transport.getPunchOut() == host.tapeRulerSample (0.7f), "punch does not match the dragged range");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar tapeRuler { Scenario {
+    "gui.tape_ruler", { "gui", "tape" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTapeRuler (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPianoSelection (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

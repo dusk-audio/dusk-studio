@@ -6,6 +6,8 @@
 #include "ChannelStripComponent.h"
 #include "ConsoleView.h"
 #include "EmbeddedModal.h"
+#include "DuskContextMenu.h"
+#include "TapeStrip.h"
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
 #include "PlatformWindowing.h"
@@ -259,18 +261,49 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         using Peer = std::remove_pointer_t<decltype (peer)>;
         return dispatchKey (*peer, &Peer::handleKeyPress, description, text);
     }
-    bool pianoPointer (int x, int y, bool down, int modifiers = 0)
+    bool pointerAt (float x, float y, bool down, int modifiers = 0)
     {
-        auto* editor = owner.pianoRoll.get();
         auto* peer = owner.getPeer();
-        if (editor == nullptr || peer == nullptr) return false;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor,
-            editor->getLocalBounds().getTopLeft().translated (x, y)).toFloat();
+        if (peer == nullptr) return false;
         using Peer = std::remove_pointer_t<decltype (peer)>;
         const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
             std::chrono::system_clock::now().time_since_epoch()).count();
-        dispatchMouseButton (*peer, &Peer::handleMouseEvent, point.x, point.y, down, time, modifiers);
+        dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, down, time, modifiers);
         return true;
+    }
+    bool pianoPointer (int x, int y, bool down, int modifiers = 0)
+    {
+        auto* editor = owner.pianoRoll.get();
+        if (editor == nullptr) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor,
+            editor->getLocalBounds().getTopLeft().translated (x, y)).toFloat();
+        return pointerAt (point.x, point.y, down, modifiers);
+    }
+    bool setTimelineShown (bool shown) override
+    {
+        const bool original = owner.tapeStripExpanded;
+        owner.setTimelineVisible (shown);
+        return original;
+    }
+    bool tapeRulerPointer (float fraction, bool down, bool shift) override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (tape, tape->rulerPointForScenario (fraction)).toFloat();
+        return pointerAt (point.x, point.y, down, shift ? 1 : 0);
+    }
+    std::int64_t tapeRulerSample (float fraction) const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->rulerSampleForScenario (fraction) : -1;
+    }
+    bool clickContextMenuItem (const std::string& text) override
+    {
+        int x = 0, y = 0;
+        if (! contextMenuItemPointForScenario (text, x, y)) return false;
+        auto* body = EmbeddedModal::activeModalStack().back()->getBody();
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (body,
+            body->getLocalBounds().getTopLeft().translated (x, y)).toFloat();
+        return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
     }
     bool clickPianoCcToggle() override
     {

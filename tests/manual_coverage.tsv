@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 101
+# ceiling gap 100
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -241,7 +241,7 @@ Recording > Recording errors	a mid-take error or MIDI overflow reports at Stop; 
 
 The tape strip	collapsed by default; strips compact when it opens	gap
 The tape strip > Layout	track column with number, colour, ARM, SOLO, MUTE	manual			layout; checked by screenshot review
-The tape strip > The ruler	click seeks; Shift-drag sets the loop	gap
+The tape strip > The ruler	click seeks; drag opens the loop/punch range menu	auto	scenario:gui.tape_ruler
 The tape strip > Regions	audio regions draw waveforms; MIDI regions draw a glyph	auto	test:Waveform peaks preserve channels, polarity, gain and the final partial bin;test:Waveform range queries match conservative sample extrema at every pyramid level
 The tape strip > Regions > Selecting and moving	click, Cmd-click toggles, drag moves with snap, edges trim, fade discs, middle-drag pans	partial	test:snapDelta: rounds positive deltas with half-step bias;test:snapDelta: sign-aware rounding for negative deltas		snap arithmetic tested; the gestures are not
 The tape strip > Regions > Splitting	Cmd/Ctrl+E splits the selected region at the playhead	partial	scenario:region.split_keeps_audio_continuous	the split, its undo and redo are tested; the shortcut reaching it is not
