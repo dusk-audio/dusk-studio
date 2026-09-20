@@ -1231,5 +1231,82 @@ const ScenarioRegistrar oopEditorFailure { Scenario {
        #endif
     }
 } };
+std::optional<ScenarioResult> runTrackShortcuts (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& transport = ctx.engine().getTransport();
+    const auto stage = ctx.engine().getStage();
+    ctx.cleanup ([&host, &transport, stage, state = transport.getState(),
+                  position = transport.getPlayhead()]
+    {
+        switch (stage)
+        {
+            case AudioEngine::Stage::Recording: host.switchToStage (GuiHost::Stage::Recording); break;
+            case AudioEngine::Stage::Mixing: host.switchToStage (GuiHost::Stage::Mixing); break;
+            case AudioEngine::Stage::Aux: host.switchToStage (GuiHost::Stage::Aux); break;
+            case AudioEngine::Stage::Mastering: host.switchToStage (GuiHost::Stage::Mastering); break;
+        }
+        transport.setPlayhead (position);
+        transport.setState (state);
+    });
+    transport.setState (Transport::State::Stopped);
+    ctx.keep (session.activeBank);
+    ctx.keep (session.mcu.bank);
+    ctx.cleanup (host.preserveKeyboardFocus());
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        auto& track = session.track (index);
+        ctx.keep (track.mode);
+        ctx.keep (track.strip.mute);
+        ctx.cleanup ([&session, index, armed = track.recordArmed.load(), solo = track.strip.solo.load()]
+        {
+            session.setTrackArmed (index, armed);
+            session.setTrackSoloed (index, solo);
+        });
+        track.mode.store ((int) Track::Mode::Midi);
+        session.setTrackArmed (index, false);
+        session.setTrackSoloed (index, false);
+        track.strip.mute.store (false);
+    }
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const auto targetStage : { GuiHost::Stage::Recording, GuiHost::Stage::Mixing })
+    {
+        steps->push_back ({ 0, [&host, targetStage] { host.switchToStage (targetStage); } });
+        steps->push_back ({ 50, [&host, &ctx, &session]
+        {
+            for (int i = 0; i < Session::kNumTracks; ++i)
+                ctx.expect (host.pressKey ("cursor left"), "left arrow did not focus a strip");
+            for (int target = 0; target < Session::kNumTracks; ++target)
+            {
+                for (const auto key : { "A", "S", "X" })
+                    for (const bool enabled : { true, false })
+                    {
+                        ctx.expect (host.pressKey (key), std::string (key) + " was not handled");
+                        for (int index = 0; index < Session::kNumTracks; ++index)
+                        {
+                            const auto& track = session.track (index);
+                            const bool selected = enabled && index == target;
+                            ctx.expect (track.recordArmed.load() == (selected && key[0] == 'A')
+                                        && track.strip.solo.load() == (selected && key[0] == 'S')
+                                        && track.strip.mute.load() == (selected && key[0] == 'X'),
+                                        std::string (key) + " changed the wrong state on track "
+                                        + std::to_string (index + 1));
+                        }
+                        ctx.expect (session.anyTrackArmed() == (enabled && key[0] == 'A'),
+                                    "arm shortcut left the armed-track counter stale");
+                    }
+                ctx.expect (host.pressKey ("cursor right"), "right arrow did not move strip focus");
+            }
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar trackShortcuts { Scenario {
+    "gui.keyboard_track_shortcuts", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTrackShortcuts (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

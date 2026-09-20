@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 101
+# ceiling gap 100
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -381,7 +381,7 @@ Bouncing and exporting > Where bounces go	bounces land in the session folder; Lo
 Keyboard reference > File	Cmd+N, O, S, Shift+S, I, B, Q	gap
 Keyboard reference > Edit	undo, redo, copy, cut, paste, duplicate, delete, split, nudge, take cycling	gap
 Keyboard reference > Transport	Space, R, Home, ., L, P, C, M, [ ], Shift+[ ], K, Shift+arrows, B, Shift+C, F, Shift+M, U	gap
-Keyboard reference > Tracks	A, S, X act on the focused strip	gap
+Keyboard reference > Tracks	A, S, X act on the focused strip	auto	scenario:gui.keyboard_track_shortcuts		keyboard focus traverses all 24 strips in Recording and Mixing; A/S/X toggle only the focused track and preserve the armed-track counter
 Keyboard reference > Stages & banks	Cmd+1..4 stages; 1..8 pages	partial	test:Bank mapping: plain digits select exactly pages one through eight		page digits tested; stage keys are not
 Keyboard reference > Timeline	T, = + - 0, Cmd-wheel, Shift-wheel, middle-drag	gap
 Keyboard reference > Region editor	Cmd+E, G, Cmd+] [, Esc	gap

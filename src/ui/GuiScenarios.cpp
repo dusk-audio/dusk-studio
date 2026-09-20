@@ -11,6 +11,7 @@
 #include "MasteringView.h"
 #include "PlatformWindowing.h"
 #include "TransportBar.h"
+#include "TapeStrip.h"
 #include "../engine/scenario/SuiteRunner.h"
 
 #include <algorithm>
@@ -40,6 +41,14 @@ using HostString = std::decay_t<decltype (std::declval<const Session&>()
 HostFile hostFile (const std::filesystem::path& path)
 {
     return HostFile (HostString::fromUTF8 (path.u8string().c_str()));
+}
+
+template <typename Owner, typename Key>
+bool dispatchKey (Owner& owner, bool (Owner::*handler) (const Key&),
+                  const std::string& description, char text)
+{
+    const auto key = Key::createFromDescription (HostString (description.c_str()));
+    return (owner.*handler) (Key (key.getKeyCode(), key.getModifiers(), text));
 }
 } // namespace
 
@@ -222,6 +231,24 @@ struct MainComponent::ScenarioAuxLaneHandle final : scenario::AuxLaneHandle
 struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 {
     explicit ScenarioGuiHost (MainComponent& ownerIn) : owner (ownerIn) {}
+
+    bool pressKey (const std::string& description, char text) override
+    {
+        return dispatchKey (owner, &MainComponent::keyPressed, description, text);
+    }
+
+    std::function<void()> preserveKeyboardFocus() override
+    {
+        const int focus = owner.consoleView->getFocusedStrip();
+        const int page = owner.consoleView->getBank();
+        const int selection = owner.tapeStrip->getSelectedTrack();
+        return [this, focus, page, selection]
+        {
+            owner.consoleView->restoreFocusForScenario (focus);
+            owner.consoleView->setBank (page);
+            owner.tapeStrip->setSelectedTrack (selection);
+        };
+    }
 
     bool clickTimeFormat() override
     {
