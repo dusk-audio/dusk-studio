@@ -939,6 +939,109 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
 
+std::optional<ScenarioResult> runInsertContextMenu (GuiHost& host, ScenarioContext& ctx)
+{
+    const auto fixture = ctx.fixture ("relayout.vst3");
+    if (! fixture) return ScenarioResult::skip ("requires the VST3 fixture");
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& strip = engine.getChannelStrip (0);
+    auto& slot = strip.getPluginSlot();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    if (slot.isLoaded()) return ScenarioResult::skip ("requires an empty standard plugin slot");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        if (auto* component = host.strip (0)) component->closeEditor();
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    auto* component = readyStrip (host);
+    if (component == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto menu = [&host, &ctx, steps] (const std::string& label)
+    {
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickInsert (0, true), "insert did not receive a right-click"); } });
+        steps->push_back ({ 200, [&host, &ctx, label]
+        { ctx.expect (host.clickContextMenuItem (label), "insert menu item is unavailable: " + label); } });
+    };
+    const auto button = [&host, &ctx, steps] (const std::string& label)
+    {
+        steps->push_back ({ 200, [&host, &ctx, label]
+        { ctx.expect (host.clickModalButton (label), "insert dialog button is unavailable: " + label); } });
+    };
+    menu ("Add insert...");
+    button ("Plugin (VST3 / CLAP / LV2 / AU)");
+    button ("Browse file...");
+    steps->push_back ({ 200, [&host, &ctx, fixture]
+    {
+        ctx.expect (host.focusFileName(), "insert file browser did not open");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : fixture->string())
+            host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+    } });
+    button ("Open");
+    steps->push_back ({ 1200, [&ctx, &slot, component]
+    {
+        ctx.expect (slot.isLoadedStandardVst3(), "Add insert did not load the VST3 fixture");
+        component->closeEditor();
+    } });
+    menu ("Open editor");
+    steps->push_back ({ 500, [&ctx, component]
+    {
+        ctx.expect (component->hasOpenEditor(), "Open editor did not open the loaded plugin");
+        component->closeEditor();
+    } });
+    menu ("Replace insert...");
+    button ("Cancel");
+    steps->push_back ({ 200, [&ctx, &slot]
+    { ctx.expect (slot.isLoadedStandardVst3(), "cancelling Replace removed the plugin"); } });
+    menu ("Remove plugin");
+    steps->push_back ({ 300, [&ctx, &slot, component]
+    {
+        ctx.expect (! slot.isLoaded(), "Remove plugin left the plugin loaded");
+        ctx.expect (! component->hasOpenEditor(), "Remove plugin left its editor open");
+    } });
+    menu ("Add insert...");
+    button ("Hardware Insert");
+    steps->push_back ({ 300, [&ctx, &strip]
+    { ctx.expect (strip.insertMode.load() == ChannelStrip::kInsertHardware, "Hardware Insert did not change the insert mode"); } });
+    button ("Done");
+    menu ("Edit hardware insert...");
+    button ("Done");
+    menu ("Replace insert...");
+    button ("Cancel");
+    steps->push_back ({ 200, [&ctx, &strip]
+    { ctx.expect (strip.insertMode.load() == ChannelStrip::kInsertHardware, "cancelling Replace removed the hardware insert"); } });
+    menu ("Remove hardware insert");
+    steps->push_back ({ 300, [&ctx, &session, &strip]
+    {
+        ctx.expect (strip.insertMode.load() == ChannelStrip::kInsertEmpty, "Remove hardware insert did not empty the slot");
+        ctx.expect (! session.track (0).hardwareInsert.enabled.load(), "removed hardware insert remains enabled");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar insertContextMenu { Scenario {
+    "gui.insert_context_menu", { "gui", "plugins" }, Needs::Engine | Needs::Gui,
+    { "relayout.vst3" }, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runInsertContextMenu (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPianoOptions (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

@@ -119,7 +119,7 @@ public:
     virtual bool scrollPiano (float delta, bool command, bool shift) = 0;
     virtual bool clickPianoFit() = 0;
     virtual bool focusPiano() = 0;
-    virtual bool clickInsert (int track) = 0;
+    virtual bool clickInsert (int track, bool right = false) = 0;
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
     virtual bool clickPickerRow (const std::string& text) = 0;
     virtual bool focusFileName() = 0;

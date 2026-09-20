@@ -736,7 +736,7 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 Each channel has one insert slot, which can hold either a plugin or a hardware insert (configured via the Settings or right-click menu). Switching between plugin and hardware uses a 20-millisecond equal-power crossfade, so the change is inaudible.
 
 - Click **+ Plugin** to open the plugin picker.
-- Right-click the slot for **Add / Replace / Remove / Edit / Configure as hardware insert**.
+- Right-click an empty slot for **Add insert...**. A loaded plugin offers **Open editor** (or **Close editor**), **Replace insert...**, and **Remove plugin**. A hardware insert offers **Edit hardware insert...**, **Replace insert...**, and **Remove hardware insert**. Choose **Hardware Insert** in the Add or Replace chooser to configure outboard gear.
 - When a plugin is loaded, the slot shows its name. Click to open the editor.
 - The LED on the slot's left edge bypasses the insert — green when engaged, dark when bypassed or empty, click to toggle (same grammar as the EQ and COMP LEDs). The insert keeps processing while bypassed, so re-engaging is click-free.
 

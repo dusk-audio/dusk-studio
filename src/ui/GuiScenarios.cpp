@@ -535,12 +535,12 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return clickAt (point.x, point.y, 1);
     }
     void closeRegionEditors() override { owner.closePianoRoll(); owner.closeAudioEditor(); }
-    bool clickInsert (int track) override
+    bool clickInsert (int track, bool right) override
     {
         auto* strip = owner.consoleView->getStripComponent (track);
         if (strip == nullptr || ! strip->isShowing()) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (strip, strip->insertPointForScenario()).toFloat();
-        return clickAt (point.x, point.y, 1);
+        return clickAt (point.x, point.y, 1, right);
     }
     std::vector<std::string> pickerRows (bool headers) const override
     {
