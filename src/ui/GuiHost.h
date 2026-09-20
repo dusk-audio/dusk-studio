@@ -56,6 +56,7 @@ public:
     virtual bool openInputSettings (int mode) = 0;
     virtual void loadBuiltin (const std::string& id) = 0;
     virtual void clickMonitor() = 0;
+    virtual void clickAutomationMode() = 0;
     virtual void restoreTrackMode (int mode) = 0;
     virtual bool instrumentControlsMatch (int input, bool monitor) const = 0;
 };
@@ -115,6 +116,7 @@ public:
     virtual bool modalStackEmpty() const = 0;
     virtual std::string modalText() const = 0;
     virtual bool clickModalButton (const std::string& label) = 0;
+    virtual bool clickModalAt (float xFraction, float yFraction) = 0;
     virtual void openAbout() = 0;
     virtual bool shortcutsOpen() const = 0;
     virtual void startMixdown() = 0;

@@ -230,6 +230,10 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
     {
         if (auto* component = strip()) component->clickMonitorForScenario();
     }
+    void clickAutomationMode() override
+    {
+        if (auto* component = strip()) component->clickAutoModeForScenario();
+    }
 
     void restoreTrackMode (int mode) override
     {
@@ -504,6 +508,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         auto& stack = EmbeddedModal::activeModalStack();
         if (! stack.empty()) stack.back()->close();
+    }
+
+    bool clickModalAt (float xFraction, float yFraction) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        auto* body = stack.back()->getBody();
+        const auto local = body->getLocalBounds().getRelativePoint (xFraction, yFraction);
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (body, local).toFloat();
+        return clickAt (point.x, point.y, 1);
     }
 
     void autosaveTick() override { owner.writeAutosave(); }

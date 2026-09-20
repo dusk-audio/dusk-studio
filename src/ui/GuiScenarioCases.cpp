@@ -2791,5 +2791,55 @@ const ScenarioRegistrar tempoEntry { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runTempoEntry (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runAutomationMenu (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& track = ctx.session().track (0);
+    ctx.keep (track.automationMode);
+    ctx.cleanup ([&host, stage = ctx.engine().getStage()]
+    {
+        host.closeTopModal();
+        switch (stage)
+        {
+            case AudioEngine::Stage::Recording: host.switchToStage (GuiHost::Stage::Recording); break;
+            case AudioEngine::Stage::Mixing: host.switchToStage (GuiHost::Stage::Mixing); break;
+            case AudioEngine::Stage::Aux: host.switchToStage (GuiHost::Stage::Aux); break;
+            case AudioEngine::Stage::Mastering: host.switchToStage (GuiHost::Stage::Mastering); break;
+        }
+    });
+    host.switchToStage (GuiHost::Stage::Mixing);
+    auto* strip = host.strip (0);
+    if (! ctx.expect (strip != nullptr, "the channel strip is unavailable")) return ctx.verdict();
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const int mode : { 1, 2, 3, 0 })
+    {
+        steps->push_back ({ 500, [strip] { strip->clickAutomationMode(); } });
+        steps->push_back ({ 200, [&host, &ctx, mode]
+        {
+            ctx.expect (! host.modalStackEmpty(), "clicking the automation label did not open its menu");
+            ctx.expect (host.clickModalAt (0.5f, (static_cast<float> (mode) + 0.5f) / 4.0f),
+                        "the automation menu row was unavailable");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, &track, mode]
+        {
+            static constexpr const char* labels[] { "OFF", "READ", "WRITE", "TOUCH" };
+            ctx.expect (host.modalStackEmpty(), "choosing an automation mode left its menu open");
+            ctx.expect (track.automationMode.load() == mode, "the menu selected the wrong automation mode");
+            std::string label;
+            bool faderEnabled = false;
+            ctx.expect (host.automationView (GuiHost::StripKind::Channel, 0, label, faderEnabled)
+                        && label == labels[mode] && faderEnabled == (mode != 1),
+                        "the mode label or fader input state disagrees with the menu selection");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar automationMenu { Scenario {
+    "gui.automation_menu", { "gui", "automation" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAutomationMenu (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

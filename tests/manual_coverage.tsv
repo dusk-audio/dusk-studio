@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 62
+# ceiling gap 61
 # ceiling partial 49
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -37,7 +37,7 @@ Quick Guide > Overdub	record a second track over playback of the first	auto	scen
 Quick Guide > Overdub	up to 8 inputs recorded at once	auto	scenario:record.eight_inputs_separate_takes		eight distinct input signals record simultaneously with reversed input assignments; WAV samples, aligned lengths and untouched unarmed tracks are checked
 Quick Guide > Overdub	Shift+[ and Shift+] set punch; punch turns itself on	auto	test:Transport: a punch bracket placed by hand arms punch once in is before out
 Quick Guide > Mix	MIXING swaps the input block for aux sends	auto	scenario:gui.stage_views_and_controls		clicks MIXING and RECORDING, checking tracking controls and aux sends on all 24 strips
-Quick Guide > Mix	the automation mode label picks OFF / READ / WRITE / TOUCH from a menu	gap
+Quick Guide > Mix	the automation mode label picks OFF / READ / WRITE / TOUCH from a menu	auto	scenario:gui.automation_menu		actual mode button and peer clicks on all four menu rows; model, displayed label, fader input and menu dismissal checked
 Quick Guide > Bounce	Cmd+B bounces a 24-bit WAV (or MP3 by extension) into the session folder	partial	test:LameMp3Writer emits a valid 48k/320k MP3 carrying the signal;scenario:bounce.master_mix_file;scenario:bounce.mp3_by_format		the WAV and MP3 renders are tested; Cmd+B, the dialog and the extension-to-format choice are not
 Quick Guide > Bounce	Load latest mixdown then Export master	gap
 
