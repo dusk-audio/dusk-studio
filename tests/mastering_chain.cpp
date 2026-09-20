@@ -35,7 +35,9 @@ TEST_CASE ("Appendix A: active multiband compressor defaults and control ranges"
         auto* value = parameters.getRawParameterValue (id);
         REQUIRE (parameter != nullptr);
         REQUIRE (value != nullptr);
-        CHECK_THAT (value->load(), Catch::Matchers::WithinRel (initial, 1e-6f));
+        // Snapping a 0.1 dB interval can leave a sub-micro dB residue with fused arithmetic.
+        CHECK_THAT (value->load(), WithinAbs (initial, 1e-6)
+                                  || Catch::Matchers::WithinRel (initial, 1e-6f));
         const auto& range = parameter->getNormalisableRange();
         CHECK_THAT (range.start, WithinAbs (low, 1e-5));
         CHECK_THAT (range.end, WithinAbs (high, 1e-5));
