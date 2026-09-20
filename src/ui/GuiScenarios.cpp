@@ -9,6 +9,7 @@
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
 #include "PlatformWindowing.h"
+#include "TransportBar.h"
 #include "../engine/scenario/SuiteRunner.h"
 
 #include <array>
@@ -219,6 +220,16 @@ struct MainComponent::ScenarioAuxLaneHandle final : scenario::AuxLaneHandle
 struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 {
     explicit ScenarioGuiHost (MainComponent& ownerIn) : owner (ownerIn) {}
+
+    bool clickTimeFormat() override
+    {
+        return owner.transportBar != nullptr && owner.transportBar->clickTimeFormatForScenario();
+    }
+
+    std::string clockText() const override
+    {
+        return owner.transportBar != nullptr ? owner.transportBar->clockTextForScenario() : std::string {};
+    }
 
     void switchToStage (Stage stage) override
     {

@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 104
+# ceiling gap 103
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -111,7 +111,7 @@ The interface > The transport bar	Punch right-click menu sets pre-roll and post-
 The interface > The transport bar	metronome clicks when enabled and rolling	auto	test:Metronome: enabled + rolling emits clicks;test:Metronome: disabled + not rolling stays silent
 The interface > The transport bar	TAP averages the last four intervals into a tempo	gap
 The interface > The transport bar	BPM double-click edits the tempo governing the playhead	gap
-The interface > The transport bar	clock flips between Bars.Beats.Ticks and mm:ss.mmm	gap
+The interface > The transport bar	clock flips between Bars.Beats.Ticks and mm:ss.mmm	auto	scenario:gui.clock_format_roundtrip
 The interface > The transport bar	tuner reads the selected input's pitch	auto	test:PitchDetector: recovers a harmonic tone within a few cents;test:PitchDetector: accurate across the 50-1500 Hz range;test:PitchDetector: silence reports 0 Hz
 The interface > The transport bar	Snap toggle and grid resolution	auto	test:stepForResolution: musical resolutions at 120 BPM / 48 kHz;test:stepForResolution: triplets are 2/3 of the base;test:stepForResolution: dotted resolutions are 3/2 of the base;test:snapAbsolute: rounds to nearest grid point
 The interface > The transport bar	Chase scrolls the timeline to keep the playhead in view	auto	test:The view holds still while the playhead is inside it;test:The page turns as the playhead nears the right edge;test:A playhead left of the view brings the view back to it

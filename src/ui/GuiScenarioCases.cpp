@@ -1013,6 +1013,61 @@ std::optional<ScenarioResult> runAutosave (GuiHost& host, ScenarioContext& ctx)
 
 // ------------------------------------------------------------- registration
 
+std::optional<ScenarioResult> runClockFormats (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& transport = ctx.engine().getTransport();
+    ctx.keep (session.timeDisplayMode);
+    ctx.keep (session.tempoBpm);
+    ctx.keep (session.beatsPerBar);
+    ctx.keep (session.midiLearnPending);
+    ctx.cleanup ([&session, points = session.tempoMap.points()]
+                 { session.tempoMap.setPoints (points); });
+    ctx.cleanup ([&transport, position = transport.getPlayhead(), state = transport.getState()]
+    {
+        transport.setPlayhead (position);
+        transport.setState (state);
+    });
+    transport.setState (Transport::State::Stopped);
+    session.tempoMap.clear();
+    session.tempoBpm.store (120.0f);
+    session.beatsPerBar.store (4);
+    session.midiLearnPending.store (-1);
+    session.timeDisplayMode.store ((int) TimeDisplayMode::Bars);
+    if (ctx.engine().getCurrentSampleRate() <= 0.0)
+        ctx.engine().prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+    transport.setPlayhead ((std::int64_t) std::llround (ctx.engine().getCurrentSampleRate() * 4.75));
+
+    ctx.waitUntil ([&host] { return host.clockText() == "3.2.240"; }, 3000,
+        [&host, &ctx, &session]
+        {
+            if (! ctx.expect (host.clickTimeFormat(), "the time-format button is not visible"))
+            { ctx.complete (ctx.verdict()); return; }
+            ctx.waitUntil ([&host] { return host.clockText() == "00:04.750"; }, 3000,
+                [&host, &ctx, &session]
+                {
+                    ctx.expect (session.timeDisplayMode.load() == (int) TimeDisplayMode::Time,
+                                "the clock changed without publishing Time mode");
+                    if (! ctx.expect (host.clickTimeFormat(), "the time-format button disappeared"))
+                    { ctx.complete (ctx.verdict()); return; }
+                    ctx.waitUntil ([&host] { return host.clockText() == "3.2.240"; }, 3000,
+                        [&ctx, &session]
+                        {
+                            ctx.expect (session.timeDisplayMode.load() == (int) TimeDisplayMode::Bars,
+                                        "the second click did not restore Bars mode");
+                            ctx.complete (ctx.verdict());
+                        }, "the clock did not return to Bars.Beats.Ticks");
+                }, "the clock did not display minutes, seconds and milliseconds");
+        }, "the clock did not display the initial Bars.Beats.Ticks position");
+    return std::nullopt;
+}
+
+const ScenarioRegistrar clockFormats { Scenario {
+    "gui.clock_format_roundtrip", { "gui", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runClockFormats (host, ctx); }
+} };
+
 const ScenarioRegistrar automation { Scenario {
     "gui.automation_write_and_touch",
     { "gui", "automation" },
