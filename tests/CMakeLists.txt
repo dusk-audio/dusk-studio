@@ -93,6 +93,7 @@ add_executable(dusk-studio-tests
     session_transport_bounds.cpp
     session_corrupted_recovery.cpp
     session_clamp_corrupt_values.cpp
+    session_appendix_parameters.cpp
     session_format_version.cpp
     session_write_atomic.cpp
     session_portable_paths.cpp
