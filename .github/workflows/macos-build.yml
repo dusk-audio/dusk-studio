@@ -84,7 +84,7 @@ jobs:
         # Restore on every run, save only from main (below): a snapshot per PR
         # push filled the repository's 10 GB cache quota within hours and
         # evicted the snapshots the next run needed.
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-macos-14-${{ github.sha }}
@@ -181,7 +181,7 @@ jobs:
 
       - name: Save ccache objects (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-macos-14-${{ github.sha }}
