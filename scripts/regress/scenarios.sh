@@ -28,10 +28,10 @@ MINIMAL_SESSION="${SCENARIOS_DIR}/sessions/minimal/session.json"
 # The leg rows this file registers, in order. linux.sh reuses the list for its
 # missing-binary skips so the two cannot drift apart.
 SCENARIO_BB_LEG_NAMES=(
+    bb-no-display
     bb-handoff
     bb-crash-relaunch
     bb-no-runtime-dir
-    bb-no-display
     bb-damaged-recent
     bb-clean-quit
     bb-quit-twice
@@ -663,6 +663,13 @@ regress_scenarios_run() {
         esac
     done
 
+    trap 'bb_end 0 >/dev/null 2>&1 || true; xvfb_session_stop || true' EXIT
+    if [[ "$(uname -s)" == Linux ]]; then
+        regress_leg "bb-no-display" leg_bb_no_display
+    else
+        regress_skip "bb-no-display" "Linux X11 startup diagnostic"
+    fi
+
     # Both probes below spin up their own short-lived display, so they have to
     # run before the shared session the bb-* legs share.
     scenarios_list >/dev/null
@@ -673,10 +680,10 @@ regress_scenarios_run() {
         regress_skip "scenarios-headless" "needs DUSKSTUDIO_RUN_SCENARIOS"
     fi
 
-    trap 'bb_end 0 >/dev/null 2>&1 || true; xvfb_session_stop || true' EXIT
     if ! xvfb_session_start; then
         local leg
         for leg in "${SCENARIO_BB_LEG_NAMES[@]}"; do
+            [[ "$leg" == bb-no-display ]] && continue
             regress_skip "$leg" "no Xvfb display"
         done
         if ((want_gui)); then
@@ -689,11 +696,6 @@ regress_scenarios_run() {
     regress_leg "bb-handoff" leg_bb_handoff
     regress_leg "bb-crash-relaunch" leg_bb_crash_relaunch
     regress_leg "bb-no-runtime-dir" leg_bb_no_runtime_dir
-    if [[ "$(uname -s)" == Linux ]]; then
-        regress_leg "bb-no-display" leg_bb_no_display
-    else
-        regress_skip "bb-no-display" "Linux X11 startup diagnostic"
-    fi
 
     if scenarios_has_startup_markers && scenarios_has_quit_timer; then
         regress_leg "bb-damaged-recent" leg_bb_damaged_recent
@@ -740,7 +742,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     # shellcheck source=scripts/regress/xvfb.sh
     source "${SCENARIOS_DIR}/xvfb.sh"
 
-    regress_require Xvfb timeout pgrep
+    regress_require timeout pgrep
 
     scenarios_app_bin=""
     scenarios_gui=()

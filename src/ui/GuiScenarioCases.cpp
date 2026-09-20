@@ -2630,6 +2630,37 @@ const ScenarioRegistrar pianoVelocity { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoVelocity (host, ctx); }
 } };
 
+const ScenarioRegistrar markerKeys { Scenario {
+    "gui.marker_arrow_keys", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+        auto& session = ctx.session();
+        auto& transport = ctx.engine().getTransport();
+        ctx.engine().stop();
+        ctx.keep (session.lastRecordPointSamples);
+        ctx.cleanup ([&session, &transport, markers = session.getMarkers(), at = transport.getPlayhead()]
+        {
+            session.getMarkers() = markers;
+            transport.setPlayhead (at);
+        });
+        session.getMarkers().clear();
+        for (auto at : { 48000, 96000, 144000 }) session.addMarker (at);
+        transport.setPlayhead (120000);
+        ctx.expect (host.pressKey ("shift + cursor left"), "Shift+Left was not handled");
+        ctx.expect (transport.getPlayhead() == 96000, "Shift+Left did not reach the previous marker");
+        ctx.expect (host.pressKey ("shift + cursor right"), "Shift+Right was not handled");
+        ctx.expect (transport.getPlayhead() == 144000, "Shift+Right did not reach the next marker");
+        session.getMarkers().clear();
+        session.lastRecordPointSamples.store (72000);
+        ctx.expect (host.pressKey ("shift + cursor left"), "empty-session Shift+Left was not handled");
+        ctx.expect (transport.getPlayhead() == 0, "Shift+Left did not fall back to session start");
+        ctx.expect (host.pressKey ("shift + cursor right"), "empty-session Shift+Right was not handled");
+        ctx.expect (transport.getPlayhead() == 72000, "Shift+Right did not fall back to the last record point");
+        return ctx.verdict();
+    }
+} };
+
 const ScenarioRegistrar firstLaunch { Scenario {
     "gui.first_launch", { "gui", "startup" }, Needs::Engine | Needs::Gui,
     {}, {}, 10000,

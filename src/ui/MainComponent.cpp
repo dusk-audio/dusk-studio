@@ -1343,9 +1343,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // (start of session / last record point). Cmd+arrows are region nudge,
     // plain arrows are strip focus - this claims the remaining pair.
     if (shift && ! cmd && ! mods.isAltDown()
-        && (key == juce::KeyPress::leftKey || key == juce::KeyPress::rightKey))
+        && (code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey))
     {
-        const bool back = key == juce::KeyPress::leftKey;
+        const bool back = code == juce::KeyPress::leftKey;
         if (engine.getTransport().isStopped() && session.getMarkers().empty())
         {
             if (back) engine.jumpToZero();
