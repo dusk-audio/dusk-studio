@@ -1,10 +1,15 @@
 #include "../Scenario.h"
 #include "../ScenarioContext.h"
 #include "../../AudioEngine.h"
+#include "../../audiofile/FileReader.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/Session.h"
 
+#include <array>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -283,6 +288,70 @@ ScenarioResult cycleStepsThroughTheStack (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+ScenarioResult eightInputsRecordSeparately (ScenarioContext& ctx)
+{
+    constexpr int channels = 8;
+    constexpr int frames = ScenarioContext::kBlockSize;
+    constexpr int blocks = 64;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    ctx.keep (session.deviceCaptureChannels);
+    ctx.keep (session.countInEnabled);
+    session.deviceCaptureChannels.store (channels);
+    session.countInEnabled.store (false);
+    for (int index = 0; index < channels; ++index)
+    {
+        auto& track = session.track (index);
+        track.mode.store ((int) Track::Mode::Mono);
+        track.inputSource.store (channels - 1 - index);
+        track.printEffects.store (false);
+        session.setTrackArmed (index, true);
+    }
+    std::array<std::array<float, frames>, channels> input {};
+    std::array<const float*, channels> pointers {};
+    std::array<float, frames> left {}, right {};
+    float* outputs[] { left.data(), right.data() };
+    for (std::size_t channel = 0; channel < input.size(); ++channel)
+    {
+        pointers[channel] = input[channel].data();
+        for (std::size_t frame = 0; frame < input[channel].size(); ++frame)
+            input[channel][frame] = static_cast<float> (channel + 1) * 0.05f
+                                  * (frame % 32 < 16 ? 1.0f : -1.0f);
+    }
+    engine.getTransport().setPlayhead (0);
+    engine.record();
+    if (! ctx.expect (engine.getTransport().isRecording(), "eight armed tracks did not start recording"))
+        return ctx.verdict();
+    for (int block = 0; block < blocks; ++block)
+        engine.audioDeviceIOCallback (pointers.data(), channels, outputs, 2, frames, {});
+    engine.stop();
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        const auto& regions = session.track (index).regions;
+        if (index >= channels)
+        {
+            ctx.expect (regions.empty(), "an unarmed track acquired a recording");
+            continue;
+        }
+        if (! ctx.expect (regions.size() == 1, "an armed track did not commit exactly one take")) continue;
+        const auto& region = regions.front();
+        ctx.expect (region.timelineStart == 0 && region.lengthInSamples == frames * blocks,
+                    "simultaneous takes have different starts or lengths");
+        auto reader = dusk::audio::FileReader::open (
+            std::filesystem::u8path (region.file.getFullPathName().toStdString()));
+        if (! ctx.expect (reader != nullptr, "a committed take has no readable WAV")) continue;
+        ctx.expect (reader->info().numChannels == 1 && reader->info().numFrames == frames * blocks,
+                    "the recorded WAV has the wrong channel count or duration");
+        std::array<float, frames> recorded {};
+        float* destination[] { recorded.data() };
+        ctx.expect (reader->read (destination, 1, frames * 8, frames) == frames, "the WAV was truncated");
+        for (std::size_t frame = 0; frame < recorded.size(); ++frame)
+            if (! ctx.expect (std::abs (recorded[frame] - input[static_cast<std::size_t> (channels - 1 - index)][frame]) < 1.0e-5f,
+                              "a take contains another input's signal")) break;
+    }
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
@@ -291,6 +360,9 @@ std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), Sc
 const ScenarioRegistrar fullCoverRegistrar { Scenario {
     "take.full_cover_pushes_onto_stack", { "take", "record", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (fullCoverPushesOntoStack, ctx); } } };
+const ScenarioRegistrar eightInputsRegistrar { Scenario {
+    "record.eight_inputs_separate_takes", { "record" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (eightInputsRecordSeparately, ctx); } } };
 const ScenarioRegistrar capRegistrar { Scenario {
     "take.stack_keeps_newest_eight", { "take", "record" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (stackKeepsNewestEight, ctx); } } };

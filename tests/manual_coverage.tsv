@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 98
+# ceiling gap 97
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -34,7 +34,7 @@ Quick Guide > Arm a track and check levels	clip indicator lights at 0 dBFS and h
 Quick Guide > Record	R records, Space stops, a region appears on the armed track	partial	test:RecordManager writes mono input back accurately;scenario:engine.pipeline_selftest		the capture path is tested; the keys and the region appearing on the timeline are walked by hand
 Quick Guide > Record	Cmd+Z undoes a recording	gap
 Quick Guide > Overdub	record a second track over playback of the first	gap
-Quick Guide > Overdub	up to 8 inputs recorded at once	gap
+Quick Guide > Overdub	up to 8 inputs recorded at once	auto	scenario:record.eight_inputs_separate_takes		eight distinct input signals record simultaneously with reversed input assignments; WAV samples, aligned lengths and untouched unarmed tracks are checked
 Quick Guide > Overdub	Shift+[ and Shift+] set punch; punch turns itself on	auto	test:Transport: a punch bracket placed by hand arms punch once in is before out
 Quick Guide > Mix	MIXING swaps the input block for aux sends	auto	scenario:gui.stage_views_and_controls		clicks MIXING and RECORDING, checking tracking controls and aux sends on all 24 strips
 Quick Guide > Mix	the automation mode label picks OFF / READ / WRITE / TOUCH from a menu	gap
