@@ -292,6 +292,22 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto point = owner.getTopLevelComponent()->getLocalPoint (editor, editor->samplePointForScenario (sample)).toFloat();
         return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
     }
+    std::vector<int> audioEditorPoint (const std::string& kind, std::int64_t sample) const override
+    {
+        if (owner.audioEditor == nullptr) return {};
+        const auto p = owner.audioEditor->gesturePointForScenario (kind, sample);
+        return { p.x, p.y };
+    }
+    std::vector<std::int64_t> audioEditorSelection() const override
+    { return owner.audioEditor != nullptr ? owner.audioEditor->selectionForScenario() : std::vector<std::int64_t> {}; }
+    bool audioEditorPointer (int x, int y, bool down, bool shift) override
+    {
+        auto* editor = owner.audioEditor.get();
+        if (editor == nullptr) return false;
+        const auto p = owner.getTopLevelComponent()->getLocalPoint (editor,
+            editor->getLocalBounds().getTopLeft().translated (x, y)).toFloat();
+        return pointerAt (p.x, p.y, down, shift ? 1 : 0);
+    }
     bool openPiano (int track, int region) override
     {
         if (owner.pianoRoll != nullptr) return false;

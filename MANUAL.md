@@ -297,7 +297,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 1   | Waveform          | Region content, with the source-file context dimmed before / after trim points. |
 | 2   | Fade handle       | Drag in from each edge to set fade-in or fade-out length.                       |
 | 3   | Trim handle       | Region in / out trims (non-destructive).                                        |
-| 4   | Gain slider       | ±24 dB region gain.                                                             |
+| 4   | Gain slider       | −24 to +12 dB region gain.                                                             |
 | 5   | Edit-mode toolbar | Grab / Range / Cut / Draw. **G** = Grab. (Tempo is edited by right-clicking the main timeline ruler, not from here.) |
 
 ## The piano roll
@@ -1345,7 +1345,7 @@ Double-click an audio region in the tape strip to open the audio region editor a
 
 - **Trim** the start or end (non-destructively — the underlying file is untouched).
 - **Fade in** and **fade out** curves and lengths.
-- **Gain** adjustment (±24 dB, non-destructive).
+- **Gain** adjustment (−24 to +12 dB, non-destructive).
 - **Position** of the region on the timeline.
 
 You **cannot** edit individual samples. There is no pencil tool, no zoom-to-sample, no spectral edit, no destructive trim. The portastudio philosophy is that you commit to good takes and work non-destructively from there.
@@ -1377,13 +1377,13 @@ Below the toolbar:
 - **Click on the waveform**: place the edit cursor. The cursor snaps to the grid if Snap is on.
 - **Drag the fade-in disc** (top-left): extend the fade-in length.
 - **Right-click the fade-in disc**: choose the curve shape — **Linear**, **Equal-power**, **S-curve**, **Exponential**, or **Logarithmic**.
-- **Drag the fade-out disc** (bottom-right): extend the fade-out length.
+- **Drag the fade-out disc** (top-right): extend the fade-out length.
 - **Drag the trim-start handle**: shorten from the start.
 - **Drag the trim-end handle**: shorten from the end.
-- **Drag the gain line** (the dashed horizontal line through the waveform): adjusts the region's gain ±24 dB. The cursor displays the new value.
+- **Drag the gain line** (the solid green line through the waveform): adjusts the region's gain from −24 to +12 dB. Its value chip and the status bar display the level.
 - **Shift+drag** on the waveform: select a time range (yellow highlight).
 - **Cmd/Ctrl+]** / **Cmd/Ctrl+[**: navigate to the next / previous region on the same track without closing the modal.
-- **Delete**: delete the selected region.
+- **Delete**: delete the selected range when one is active; otherwise delete the selected region or regions.
 
 \newpage
 

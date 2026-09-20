@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 94
+# ceiling gap 93
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -268,7 +268,7 @@ The audio region editor > Layout	undo, redo, split, normalise, properties, zoom	
 The audio region editor > Layout	tempo edited on the ruler: add, move, delete changes; MIDI and click follow	auto	test:TempoMap: piecewise integration across a tempo change;test:TempoMap: ticks<->samples round-trips through a tempo change;test:TempoMap: setPoints sorts and clamps bpm, preserving positions
 The audio region editor > Layout	snap and grid resolution saved with the session	partial	test:stepForResolution: musical resolutions at 120 BPM / 48 kHz		grid steps tested; saving the choice is not
 The audio region editor > Editing gestures	fade discs with five curve shapes	auto	test:FadeShape: every shape is 0 at t=0 and 1 at t=1;test:FadeShape: equal-power crossfade sums to constant power;test:FadeShape: exp/log are inverses around the diagonal;test:buildFadeCurve: shape is honoured (equal-power bows above linear)
-The audio region editor > Editing gestures	trim handles, gain line, range select, next/previous region, delete	gap
+The audio region editor > Editing gestures	trim handles, gain line, range select, next/previous region, delete	auto	scenario:gui.audio_editor_gestures
 
 The piano roll	double-click a MIDI region opens it	gap
 The piano roll > Layout	toolbar, ruler, keyboard, grid, velocity strip, CC lane	manual			layout; checked by screenshot review

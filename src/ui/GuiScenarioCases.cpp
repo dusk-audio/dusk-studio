@@ -923,6 +923,121 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runAudioEditorGestures (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.closeAudioEditor();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto source = ctx.tempDir() / "Gestures.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = 48000;
+    spec.numChannels = 1;
+    auto writer = dusk::audio::FileWriter::create (source, spec);
+    std::vector<float> signal (48000, 0.5f);
+    const float* channels[] = { signal.data() };
+    if (! writer || ! writer->write (channels, 1, 48000) || ! writer->flush())
+        return ScenarioResult::fail ("could not write editor fixture");
+    writer.reset();
+    const auto read = [] (const std::filesystem::path& path)
+    {
+        std::ifstream input (path, std::ios::binary);
+        return std::string (std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>());
+    };
+    const auto originalBytes = read (source);
+    auto& track = session.track (0);
+    track.frozen.store (false);
+    track.regions.clear();
+    AudioRegion region;
+    region.file = decltype (region.file) (source.string());
+    region.lengthInSamples = 48000;
+    track.regions.push_back (region);
+    region.timelineStart = 96000;
+    track.regions.push_back (region);
+    session.audioEditorSnap = false;
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+    const auto drag = [&host, &ctx] (const std::string& kind, std::int64_t from, std::int64_t to, int dy, bool shift)
+    {
+        const auto start = host.audioEditorPoint (kind, from);
+        auto end = host.audioEditorPoint ("wave", to);
+        if (! ctx.expect (start.size() == 2 && end.size() == 2, "gesture geometry unavailable")) return;
+        if (kind == "gain") end = { start[0], start[1] + dy };
+        ctx.expect (host.audioEditorPointer (start[0], start[1], true, shift), "gesture down failed");
+        host.audioEditorPointer (end[0], end[1], true, shift);
+        host.audioEditorPointer (end[0], end[1], false, shift);
+    };
+    const auto checkRegion = [&ctx, &session] (std::int64_t offset, std::int64_t length, float gain)
+    {
+        const auto& regions = session.track (0).regions;
+        if (! ctx.expect (regions.size() == 2, "gesture unexpectedly changed region count")) return;
+        ctx.expect (std::abs (regions[0].sourceOffset - offset) < 128
+                    && std::abs (regions[0].timelineStart - offset) < 128
+                    && std::abs (regions[0].lengthInSamples - length) < 256, "trim did not preserve the source slice");
+        ctx.expect (std::abs (regions[0].gainDb - gain) < 0.01f, "gain drag produced wrong level");
+    };
+    const auto navigate = [&host, &ctx] (bool next)
+    {
+       #if defined (__APPLE__)
+        const std::string modifier = "command + ";
+       #else
+        const std::string modifier = "ctrl + ";
+       #endif
+        ctx.expect (host.pressPeerKey (modifier + (next ? "]" : "["), next ? ']' : '['), "navigation key was not handled");
+    };
+    const auto selected = [&host, &ctx] (int expected)
+    {
+        const auto state = host.audioEditorSelection();
+        ctx.expect (state.size() == 4 && state[0] == expected, "navigation did not select expected region");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [drag] { drag ("start", 0, 12000, 0, false); } });
+    steps->push_back ({ 150, [checkRegion, drag] { checkRegion (12000, 36000, 0); drag ("end", 48000, 36000, 0, false); } });
+    steps->push_back ({ 150, [checkRegion, drag] { checkRegion (12000, 24000, 0); drag ("gain", 24000, 24000, -60, false); } });
+    steps->push_back ({ 150, [checkRegion, drag] { checkRegion (12000, 24000, 6); drag ("gain", 24000, 24000, -100, false); } });
+    steps->push_back ({ 150, [checkRegion, drag] { checkRegion (12000, 24000, 12); drag ("gain", 24000, 24000, 400, false); } });
+    steps->push_back ({ 150, [checkRegion, drag] { checkRegion (12000, 24000, -24); drag ("wave", 18000, 30000, 0, true); } });
+    steps->push_back ({ 150, [&host, &ctx, navigate]
+    {
+        const auto state = host.audioEditorSelection();
+        ctx.expect (state.size() == 4 && state[1] == 1 && std::abs (state[2] - 18000) < 128
+                    && std::abs (state[3] - 30000) < 128, "Shift drag did not select expected range");
+        navigate (true);
+    } });
+    steps->push_back ({ 350, [selected, navigate] { selected (1); navigate (false); } });
+    steps->push_back ({ 350, [selected, &host, &ctx]
+    { selected (0); ctx.expect (host.pressPeerKey ("delete", 0), "Delete key was not handled"); } });
+    steps->push_back ({ 300, [&session, &ctx, &host, read, source, originalBytes]
+    {
+        const auto& regions = session.track (0).regions;
+        ctx.expect (regions.size() == 1 && regions[0].timelineStart == 96000, "Delete did not remove focused region");
+        ctx.expect (read (source) == originalBytes, "gestures modified source audio");
+        ctx.expect (host.pressPeerKey ("delete", 0), "second Delete key was not handled");
+    } });
+    steps->push_back ({ 350, [&session, &ctx, &host]
+    {
+        ctx.expect (session.track (0).regions.empty(), "Delete did not remove final region");
+        ctx.expect (host.audioEditorSelection().empty(), "empty editor did not close");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorGestures { Scenario {
+    "gui.audio_editor_gestures", { "gui", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorGestures (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runAudioEditorToolbar (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
