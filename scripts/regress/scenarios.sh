@@ -31,6 +31,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-handoff
     bb-crash-relaunch
     bb-no-runtime-dir
+    bb-no-display
     bb-damaged-recent
     bb-clean-quit
     bb-quit-twice
@@ -328,6 +329,31 @@ scenarios_has_startup_markers() { scenarios_binary_has "Dusk Studio/startup"; }
 scenarios_has_case() { scenarios_list | grep -q -F -- "$1"; }
 
 # ------------------------------------------------------------- the legs
+
+leg_bb_no_display() {
+    bb_begin bb-no-display 60 || return 1
+    local rc=0
+    bb_no_display_body || rc=$?
+    bb_end "$rc"
+}
+
+bb_no_display_body() {
+    local tag display rc
+    for tag in unset unreachable; do
+        display=""
+        [[ "$tag" != unreachable ]] || display=":65535"
+        bb_spawn "$tag" "DISPLAY=$display" "DUSKSTUDIO_NATIVE_WAYLAND=" -- || return 1
+        rc=0
+        bb_wait_exit "$tag" 20 || rc=$?
+        [[ "$rc" -eq 1 ]] || { bb_fail "$tag returned $rc instead of rejecting startup with status 1"; return 1; }
+        bb_assert_marker "$tag" "Dusk Studio needs an X11 display and could not open one." || return 1
+        if [[ "$tag" == unset ]]; then
+            bb_assert_marker "$tag" "No display was found (DISPLAY is unset)." || return 1
+        else
+            bb_assert_marker "$tag" "DISPLAY is set (:65535) but connecting to it failed" || return 1
+        fi
+    done
+}
 
 leg_bb_handoff() {
     bb_begin bb-handoff 240 || return 1
@@ -663,6 +689,11 @@ regress_scenarios_run() {
     regress_leg "bb-handoff" leg_bb_handoff
     regress_leg "bb-crash-relaunch" leg_bb_crash_relaunch
     regress_leg "bb-no-runtime-dir" leg_bb_no_runtime_dir
+    if [[ "$(uname -s)" == Linux ]]; then
+        regress_leg "bb-no-display" leg_bb_no_display
+    else
+        regress_skip "bb-no-display" "Linux X11 startup diagnostic"
+    fi
 
     if scenarios_has_startup_markers && scenarios_has_quit_timer; then
         regress_leg "bb-damaged-recent" leg_bb_damaged_recent

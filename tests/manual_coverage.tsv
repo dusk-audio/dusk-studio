@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 67
+# ceiling gap 66
 # ceiling partial 49
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -57,7 +57,7 @@ Names and Functions of Parts > The tape strip	tape strip callouts; left-click mo
 Names and Functions of Parts > The audio region editor	region editor callouts	n/a			figure; each control is held under The audio region editor
 Names and Functions of Parts > The piano roll	piano roll callouts	n/a			figure; each control is held under The piano roll
 
-Getting started > System requirements	Linux refuses to start without an X11 display, with a message	gap
+Getting started > System requirements	Linux refuses to start without an X11 display, with a message	auto	bb:bb-no-display		private-HOME launches with DISPLAY unset and unreachable both exit 1 and print the corresponding X11 diagnostic
 Getting started > System requirements	notepad needs OpenGL 3; an unsupported driver is refused cleanly	auto	test:Notepad rejects graphics stacks known to end the host process;test:Notepad keeps supported hardware and software OpenGL renderers
 Getting started > System requirements	a notepad that crashed on its first frame is refused next launch	auto	test:A run that never comes back is reported to the next launch;test:A renderer upgrade clears only a marker from an older release;test:A run that completes a frame leaves nothing behind
 Getting started > System requirements	notepad_enabled=0 keeps the notepad off	auto	test:An absent notepad switch leaves the notepad available;test:The notepad switch round-trips
