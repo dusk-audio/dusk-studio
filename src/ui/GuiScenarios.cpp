@@ -14,6 +14,7 @@
 #include "MiniTimelineStrip.h"
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
+#include "MasteringView.h"
 #include "PlatformWindowing.h"
 #include "PianoRollComponent.h"
 #include "TransportBar.h"
@@ -359,6 +360,24 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             mini->getLocalBounds().getTopLeft().translated (row.labelX + row.labelWidth / 2, row.labelY)).toFloat();
         return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
     }
+    void refreshMasteringSource() override
+    {
+        if (owner.masteringView != nullptr) owner.masteringView->refreshSourceForScenario();
+    }
+    bool clickMasteringButton (const std::string& label) override
+    {
+        if (owner.masteringView == nullptr) return false;
+        for (auto* child : owner.masteringView->getChildren())
+            if (auto* button = dynamic_cast<decltype (owner.recordingStageBtn)*> (child);
+                button != nullptr && button->isShowing() && button->isEnabled()
+                && button->getButtonText().toStdString() == label)
+            {
+                const auto point = owner.getTopLevelComponent()->getLocalPoint (
+                    button, button->getLocalBounds().getCentre()).toFloat();
+                return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+            }
+        return false;
+    }
     bool clickFileMenu() override
     {
         if (! owner.menuBar.isShowing()) return false;
@@ -460,8 +479,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     void switchToStage (Stage stage) override
     {
-        owner.switchToStage (stage == Stage::Aux ? AudioEngine::Stage::Aux
-                                                 : AudioEngine::Stage::Mixing);
+        owner.switchToStage (stage == Stage::Recording ? AudioEngine::Stage::Recording
+                             : stage == Stage::Aux ? AudioEngine::Stage::Aux
+                             : stage == Stage::Mastering ? AudioEngine::Stage::Mastering : AudioEngine::Stage::Mixing);
     }
 
     scenario::StripHandle* strip (int index) override

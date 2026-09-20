@@ -3,6 +3,7 @@
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/audiofile/FileWriter.h"
+#include "../engine/audiofile/FileReader.h"
 #include "../engine/scenario/Scenario.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/cases/OopStubHarness.h"
@@ -921,6 +922,105 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
+
+std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& player = engine.getMasteringPlayer();
+    if (! engine.getTransport().isStopped() || player.isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto originalFile = player.getLoadedFile();
+    const auto originalPosition = player.getPlayhead();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, &player, originalDir, originalStage, originalFile, originalPosition, restore]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        engine.setRenderOversamplingOverride (0);
+        engine.reattachAudioCallback();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        if (originalFile.existsAsFile()) player.loadFile (originalFile);
+        else player.unloadFile();
+        player.setPlayhead (originalPosition);
+        host.refreshMasteringSource();
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    const auto source = ctx.tempDir() / "mixdown.wav";
+    const auto output = ctx.tempDir() / "Finished master.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = 48000;
+    spec.numChannels = 2;
+    auto writer = dusk::audio::FileWriter::create (source, spec);
+    std::vector<float> signal (4800);
+    for (size_t i = 0; i < signal.size(); ++i)
+        signal[i] = 0.1f * (float) std::sin (6.283185307179586 * 440.0 * (double) i / 48000.0);
+    const float* channels[] = { signal.data(), signal.data() };
+    if (! writer || ! writer->write (channels, 2, 4800) || ! writer->flush())
+        return ScenarioResult::fail ("could not write mixdown");
+    writer.reset();
+    applySessionDirectory (session, ctx.tempDir());
+    host.switchToStage (GuiHost::Stage::Mastering);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&host, &ctx]
+    { ctx.expect (host.clickMasteringButton ("Load latest mixdown"), "latest mixdown button unavailable"); } });
+    steps->push_back ({ 600, [&host, &ctx, &player, source]
+    {
+        ctx.expect (player.isLoaded() && player.getLoadedFile().getFullPathName().toStdString() == source.string(),
+                    "latest mixdown did not load the session mix");
+        ctx.expect (host.clickMasteringButton ("Export master..."), "export button unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("WAV 24-bit \xe2\x80\x94 session rate"), "archive preset unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx, output]
+    {
+        ctx.expect (host.focusFileName(), "export file browser unavailable");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : output.string())
+            host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Save"), "export destination was not accepted"); } });
+    runSteps (ctx, steps, [&host, &ctx, &engine, output]
+    {
+        ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000,
+            [&ctx, &engine, output]
+            {
+                auto reader = dusk::audio::FileReader::open (output);
+                if (ctx.expect (reader != nullptr, "master export did not create a readable WAV"))
+                {
+                    const auto& info = reader->info();
+                    ctx.expect (info.numChannels == 2 && info.bitsPerSample == 24, "export format is not stereo 24-bit WAV");
+                    ctx.expect (std::abs (info.sampleRate - engine.getCurrentSampleRate()) < 0.01,
+                                "archive export did not use session rate");
+                    ctx.expect (info.numFrames == (std::int64_t) std::llround (info.sampleRate * 5.1),
+                                "export length does not include source and tail");
+                    std::vector<float> left (4096), right (4096);
+                    float* channelsOut[] = { left.data(), right.data() };
+                    ctx.expect (reader->read (channelsOut, 2, 0, 4096) == 4096, "could not read exported audio");
+                    const auto peak = *std::max_element (left.begin(), left.end());
+                    ctx.expect (peak > 0.001f && peak <= 1.0f, "export did not carry the loaded mix signal");
+                }
+                ctx.complete (ctx.verdict());
+            }, "master export did not finish");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringExportWorkflow { Scenario {
+    "gui.mastering_export_workflow", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringExportWorkflow (host, ctx); }
+} };
 
 std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioContext& ctx)
 {

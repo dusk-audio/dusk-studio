@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 96
+# ceiling gap 95
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -39,7 +39,7 @@ Quick Guide > Overdub	Shift+[ and Shift+] set punch; punch turns itself on	auto	
 Quick Guide > Mix	MIXING swaps the input block for aux sends	gap
 Quick Guide > Mix	the automation mode label picks OFF / READ / WRITE / TOUCH from a menu	gap
 Quick Guide > Bounce	Cmd+B bounces a 24-bit WAV (or MP3 by extension) into the session folder	partial	test:LameMp3Writer emits a valid 48k/320k MP3 carrying the signal;scenario:bounce.master_mix_file;scenario:bounce.mp3_by_format		the WAV and MP3 renders are tested; Cmd+B, the dialog and the extension-to-format choice are not
-Quick Guide > Bounce	Load latest mixdown then Export master	gap
+Quick Guide > Bounce	Load latest mixdown then Export master	auto	scenario:gui.mastering_export_workflow
 
 Names and Functions of Parts > The main window	menu bar, stage selector, bank selector, transport, tape toggle, console	manual			figure callouts; checked against the running app by screenshot review
 Names and Functions of Parts > The main window	Cmd/Ctrl+1..4 switch stages; plain 1..8 pick pages	partial	test:Bank mapping: plain digits select exactly pages one through eight		page digits tested; the stage shortcuts are not

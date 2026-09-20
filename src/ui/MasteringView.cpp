@@ -892,6 +892,12 @@ bool MasteringView::loadFile (const juce::File& file)
     return true;
 }
 
+void MasteringView::refreshSourceForScenario()
+{
+    if (waveform != nullptr) waveform->setSource (engine.getMasteringPlayer().getLoadedFile());
+    updateLabels();
+}
+
 void MasteringView::doLoadPrompt()
 {
     auto startDir = session.mastering().sourceFile.getParentDirectory();

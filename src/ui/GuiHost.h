@@ -80,7 +80,7 @@ public:
     virtual ~GuiHost() = default;
 
     // The strip and aux components only exist while their stage is up.
-    enum class Stage { Mixing, Aux };
+    enum class Stage { Recording, Mixing, Aux, Mastering };
     virtual void switchToStage (Stage) = 0;
 
     virtual bool openPiano (int track, int region) = 0;
@@ -96,6 +96,8 @@ public:
     virtual std::int64_t tapeRulerSample (float fraction) const = 0;
     virtual bool clickContextMenuItem (const std::string& text) = 0;
     virtual bool clickFileMenu() = 0;
+    virtual bool clickMasteringButton (const std::string& label) = 0;
+    virtual void refreshMasteringSource() = 0;
     virtual bool focusFileName() = 0;
     virtual bool clickModalButton (const std::string& label) = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
