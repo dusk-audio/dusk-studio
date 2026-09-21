@@ -111,6 +111,7 @@ public:
     virtual bool clickMasteringButton (const std::string& label) = 0;
     virtual void refreshMasteringSource() = 0;
     virtual bool focusFileName() = 0;
+    virtual bool clickFileBrowserControl (bool path) = 0;
     virtual bool clickModalButton (const std::string& label) = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
     virtual bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) = 0;

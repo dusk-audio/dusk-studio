@@ -473,6 +473,20 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                 }
         return false;
     }
+    bool clickFileBrowserControl (bool path) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        for (auto* container : stack.back()->getBody()->getChildren())
+            for (auto* child : container->getChildren())
+                if (child->isShowing() && (path ? child->getName() == "path" : child->getTitle() == "Files"))
+                {
+                    const auto point = owner.getTopLevelComponent()->getLocalPoint (
+                        child, child->getLocalBounds().getCentre().withX (20)).toFloat();
+                    return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+                }
+        return false;
+    }
     bool clickModalButton (const std::string& label) override
     {
         const auto& stack = EmbeddedModal::activeModalStack();

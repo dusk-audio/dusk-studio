@@ -923,6 +923,149 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runFileKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalPlayhead = engine.getTransport().getPlayhead();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, originalPlayhead, restore]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        engine.setRenderOversamplingOverride (0);
+        engine.reattachAudioCallback();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        engine.getTransport().locate (originalPlayhead);
+    });
+    if (! host.openSession (restore)) return ScenarioResult::fail ("could not establish saved fixture");
+    const auto song = ctx.tempDir() / "NewSong";
+    const auto copied = ctx.tempDir() / "CopiedSong";
+    const auto sourceDir = ctx.tempDir() / "Input";
+    std::filesystem::create_directory (sourceDir);
+    const auto source = sourceDir / "Input.wav";
+    const auto bounce = ctx.tempDir() / "Keyboard bounce.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = 48000;
+    spec.numChannels = 1;
+    auto writer = dusk::audio::FileWriter::create (source, spec);
+    std::vector<float> signal (2400, 0.1f);
+    const float* channels[] = { signal.data() };
+    if (! writer || ! writer->write (channels, 1, 2400) || ! writer->flush())
+        return ScenarioResult::fail ("could not create import fixture");
+    writer.reset();
+    const auto key = [&host, &ctx] (char letter, bool shift = false)
+    {
+       #if defined (__APPLE__)
+        const std::string modifier = "command + ";
+       #else
+        const std::string modifier = "ctrl + ";
+       #endif
+        ctx.expect (host.pressPeerKey (modifier + (shift ? "shift + " : "") + letter, letter), "File shortcut was not handled");
+    };
+    const auto path = [&host, &ctx] (const std::filesystem::path& value, bool directory = false)
+    {
+        if (! ctx.expect (directory ? host.clickFileBrowserControl (true) : host.focusFileName(),
+                          "File shortcut did not open a browser")) return;
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : value.string()) host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+    };
+    const auto button = [&host, &ctx] (const std::string& name)
+    { ctx.expect (host.clickModalButton (name), "dialog button unavailable: " + name); };
+    const auto saved = [&ctx] (const std::filesystem::path& dir, float fader)
+    {
+        Session probe;
+        if (ctx.expect (SessionSerializer::load (probe, dir / "session.json"), "saved session did not load"))
+            ctx.expect (std::abs (probe.track (0).strip.faderDb.load() - fader) < 0.001f, "Save did not persist fader");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [key] { key ('n'); } });
+    steps->push_back ({ 200, [path, song] { path (song); } });
+    steps->push_back ({ 150, [button] { button ("Save"); } });
+    steps->push_back ({ 600, [&ctx, &session, song, key]
+    {
+        ctx.expect (currentSessionDirectory (session) == song && std::filesystem::exists (song / "session.json"), "New did not create a session");
+        ctx.expect (session.track (0).regions.empty(), "New did not clear regions");
+        key ('i');
+    } });
+    steps->push_back ({ 200, [path, sourceDir, &host] { path (sourceDir, true); host.pressPeerKey ("Return", 0); } });
+    steps->push_back ({ 500, [&host, &ctx]
+    {
+        ctx.expect (host.clickFileBrowserControl (false), "Import file list unavailable");
+        host.pressPeerKey ("Home", 0);
+    } });
+    steps->push_back ({ 150, [button] { button ("Open"); } });
+    steps->push_back ({ 250, [button] { button ("Import"); } });
+    steps->push_back ({ 400, [&session, &ctx, key]
+    {
+        ctx.expect (session.track (0).regions.size() == 1, "Import shortcut did not import audio");
+        session.track (0).strip.faderDb.store (-8.0f);
+        key ('s');
+    } });
+    steps->push_back ({ 250, [saved, song, key] { saved (song, -8.0f); key ('s', true); } });
+    steps->push_back ({ 200, [path, copied] { path (copied); } });
+    steps->push_back ({ 150, [button] { button ("Save"); } });
+    steps->push_back ({ 500, [&ctx, &session, copied, saved, key]
+    {
+        ctx.expect (currentSessionDirectory (session) == copied, "Save As did not change session directory");
+        saved (copied, -8.0f);
+        const auto& regions = session.track (0).regions;
+        if (ctx.expect (regions.size() == 1, "Save As lost imported region"))
+            ctx.expect (regions[0].file.existsAsFile()
+                        && regions[0].file.getParentDirectory().getFullPathName().toStdString() == (copied / "audio").string(),
+                        "Save As did not copy audio to new session");
+        session.track (0).strip.faderDb.store (-3.0f);
+        key ('s');
+    } });
+    steps->push_back ({ 250, [saved, copied, key] { saved (copied, -3.0f); key ('o'); } });
+    steps->push_back ({ 200, [path, song] { path (song / "session.json"); } });
+    steps->push_back ({ 150, [button] { button ("Open"); } });
+    steps->push_back ({ 600, [&ctx, &session, song, key]
+    {
+        ctx.expect (currentSessionDirectory (session) == song && std::abs (session.track (0).strip.faderDb.load() + 8.0f) < 0.001f,
+                    "Open did not restore the chosen session");
+        key ('b');
+    } });
+    steps->push_back ({ 200, [path, bounce] { path (bounce); } });
+    steps->push_back ({ 150, [button] { button ("Save"); } });
+    runSteps (ctx, steps, [&host, &ctx, &session, bounce, key, button]
+    {
+        ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000,
+            [&host, &ctx, &session, bounce, key, button]
+            {
+                auto reader = dusk::audio::FileReader::open (bounce);
+                ctx.expect (reader != nullptr && reader->info().numChannels == 2 && reader->info().bitsPerSample == 24
+                            && reader->info().numFrames > 2400, "Bounce shortcut did not render stereo 24-bit WAV");
+                auto quitSteps = std::make_shared<std::vector<Step>>();
+                quitSteps->push_back ({ 200, [&session, key]
+                { session.track (0).strip.faderDb.store (-2.0f); key ('q'); } });
+                quitSteps->push_back ({ 200, [&host, &ctx, button]
+                { ctx.expect (! host.modalStackEmpty(), "dirty Quit did not prompt"); button ("Cancel"); } });
+                quitSteps->push_back ({ 200, [&host, &ctx, &session]
+                {
+                    ctx.expect (host.modalStackEmpty() && std::abs (session.track (0).strip.faderDb.load() + 2.0f) < 0.001f,
+                                "Quit cancellation did not retain the session");
+                } });
+                runSteps (ctx, quitSteps, [&ctx] { ctx.complete (ctx.verdict()); });
+            }, "keyboard bounce did not complete");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar fileKeys { Scenario {
+    "gui.file_keys", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFileKeys (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
