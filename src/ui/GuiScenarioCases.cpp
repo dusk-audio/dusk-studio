@@ -1316,6 +1316,8 @@ const ScenarioRegistrar pianoViewport { Scenario {
 std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
     return ScenarioResult::skip ("requires the native virtual keyboard");
    #else
     auto& engine = ctx.engine();
@@ -1749,7 +1751,8 @@ std::optional<ScenarioResult> runPluginBrowseFile (GuiHost& host, ScenarioContex
        #else
         host.pressPeerKey ("ctrl + A", 'a');
        #endif
-        for (const char ch : fixture->string()) host.pressPeerKey (std::string (1, ch), ch);
+        for (const char ch : fixture->string())
+            host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
     } });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the fixture path"); } });
@@ -2670,6 +2673,9 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
 {
     auto& session = ctx.session();
     auto& engine = ctx.engine();
+    const auto sampleRate = engine.getCurrentSampleRate();
+    if (sampleRate <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
     const auto originalDir = currentSessionDirectory (session);
     const auto restoreFile = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restoreFile))
@@ -2750,10 +2756,10 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
                             "the incoming session contents did not load");
         } });
     }
-    steps->push_back ({ 200, [&host, &ctx, &session, outgoing]
+    steps->push_back ({ 200, [&host, &ctx, &session, outgoing, sampleRate]
     {
         MidiRegion region;
-        region.lengthInSamples = static_cast<std::int64_t> (ctx.engine().getCurrentSampleRate() * 600.0);
+        region.lengthInSamples = static_cast<std::int64_t> (sampleRate * 600.0);
         region.lengthInTicks = 576000;
         session.track (0).midiRegions.publish (
             std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));

@@ -261,11 +261,19 @@ ScenarioResult frozenHardwareInsert (ScenarioContext& ctx)
         return ScenarioResult::fail ("could not write the baked source");
     writer.reset();
     engine.commitFreeze (kTrack, SessionFile (frozenPath.u8string().c_str()), 9600);
-    ctx.cleanup ([&engine, &strip]
+    const auto routingWas = track.hardwareInsert.routing.current();
+    const bool hardwareWas = track.hardwareInsert.enabled.load();
+    const int insertModeWas = strip.insertMode.load();
+    const bool insertBypassedWas = track.strip.insertBypassed.load();
+    ctx.cleanup ([&engine, &strip, &track, routingWas, hardwareWas, insertModeWas, insertBypassedWas]
     {
         engine.stop();
         strip.setStemCapture (nullptr, nullptr);
         engine.unfreezeTrack (kTrack);
+        strip.insertMode.store (insertModeWas);
+        track.strip.insertBypassed.store (insertBypassedWas);
+        track.hardwareInsert.enabled.store (hardwareWas);
+        track.hardwareInsert.routing.publish (std::make_unique<HardwareInsertRouting> (routingWas));
     });
     ctx.expect (track.frozen.load(), "the source was not frozen");
     HardwareInsertRouting routing;
