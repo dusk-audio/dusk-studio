@@ -199,7 +199,7 @@ Both materializers run on the message thread. Comp/cardinality edits should init
 | §5 Delete | Timeline Delete dispatches `DeleteTakeFolderAction`, fixing #595 by deleting/restoring the complete folder. Lane/menu Delete dispatches `DeleteTakeAction`; deleting the last take removes the folder. No action deletes source files. |
 | §6 Editing | Folder-aware move/resize/split/copy/paste/duplicate actions operate on persisted folder state, never derived playback regions. Split duplicates complete take metadata into two newly identified folders and partitions comps only. Folder resize never trims stored takes/selections. A recording extending beyond a manually resized edge should expand that edge enough to expose the new recording; otherwise newly recorded material would be hidden. |
 | §7 Flatten | See section 7 below. Audio Flatten produces one plain region per selection and retains editable boundary fades. MIDI Flatten produces one region per selection; MIDI Flatten-and-Merge produces one sorted region. |
-| §8 Persistence | Format v7 with explicit folder/take/comp/selection records and `transport.midi_merge`. Migrate both flat audio and MIDI histories before normal restore. |
+| §8 Persistence | Format v8 with explicit folder/take/comp/selection records and `transport.midi_merge`. Migrate both flat audio and MIDI histories before normal restore. |
 | §9 Engine | Materialize on the message thread, then use prepared audio streams and a dedicated MIDI playback snapshot. No file open, allocation, locking, model traversal, or comp normalization in the callback. |
 | §10 MIDI | Add equivalent folder creation, timeline bar, piano-roll take mode, comp operations, deletion, flattening, and migration. Extend the retained MIDI model to preserve non-note/non-CC channel events that current commit drops. |
 | §10.6 MIDI Merge | Sample `Session::midiMergeEnabled` into an immutable recording plan at Record start. Pick the target at the record-start position: topmost plain MIDI region, or the take referenced by the active folder comp there. All cycle passes merge into that same target. Group captured events by existing `passOrdinal`, union notes/events into the target, extend its start/end as needed, stable-sort by time then pass order, and emit one incremental undo diff per pass. |
@@ -235,7 +235,7 @@ Change:
 
 ## 5. Serialization and migration
 
-Bump `kFormatVersion` from 6 to 7 (`src/session/SessionSerializer.cpp:65-71`).
+Bump `kFormatVersion` from 7 to 8 (`src/session/SessionSerializer.cpp:74-77`).
 
 Track JSON gains `audio_take_folders` and `midi_take_folders`. Persist all model fields above, including:
 
@@ -249,7 +249,7 @@ Track JSON gains `audio_take_folders` and `midi_take_folders`. Persist all model
 
 Continue to route every take file through portable-path helpers used by ordinary audio regions. Save As currently calls `SessionSerializer::consolidateInto()` (`src/ui/MainComponent.cpp:3083-3111`); its traversal currently covers live files and `previousTakes` only (`src/session/SessionSerializer.cpp:2785-2796`, `:2853-2869`). Replace history traversal with every audio take, including unused takes and shared loop-spool files, deduplicated by source path.
 
-### v6 → v7 migration
+### v7 → v8 migration
 
 For each audio region with `previous_takes`:
 
@@ -263,7 +263,7 @@ For MIDI, do the same. Previous MIDI takes inherit the current placement/style/t
 
 Loop-pass alternatives require no separate migration path: today they are serialized through the same `previous_takes` arrays with provenance.
 
-Playback parity is required only for data v6 still contains. Migration cannot recover takes already discarded by the cap or portions already destructively sliced by #594. The regression test must render the pre-migration current region and the migrated active comp and compare samples/events exactly.
+Playback parity is required only for data v7 still contains. Migration cannot recover takes already discarded by the cap or portions already destructively sliced by #594. The regression test must render the pre-migration current region and the migrated active comp and compare samples/events exactly.
 
 Loader validation should repair duplicate/zero IDs deterministically, keeping one old-to-new mapping per domain (`TakeFolderId`, `TakeId`, `TakeCompId`): the first occurrence in serialized order keeps its ID, later duplicates and every zero ID receive fresh IDs, and a reference to a duplicated ID resolves to the first occurrence. Rewrite `activeCompId` through the comp mapping and every `AudioCompSelection::takeId` / `MidiCompSelection::takeId` through the take mapping before checking references, reject only references that remain unknown afterwards (a zero reference is always unknown), coalesce selections, clamp numeric ranges, preserve silence gaps, and ensure at least one valid comp.
 
@@ -392,7 +392,7 @@ For audio-path phases, also run `scripts/run-selftest-xvfb.sh` where practical, 
 | 0B | Prerequisite clean-first: UI/render | `TapeStrip.cpp`, `AudioRegionEditor.cpp`, `PianoRollComponent.cpp`, `TransportBar.cpp`, `BounceEngine.cpp` | Full suite plus existing screenshot capture | None; separate human commit boundary | 100–250 |
 | 1 | **Audio core + MIDI core:** model and invariants | `Session.h`, `Session.cpp`, new `TakeFolders.h`, `tests/session_region_bounds.cpp`, `tests/session_apply_tempo_change.cpp` | `folder resize preserves hidden take content`; `MIDI folder tempo change preserves its time-base invariant` | None | 450–650 |
 | 2 | **Audio core + MIDI core:** pure operations | new `TakeFolderOperations.{h,cpp}`, root `CMakeLists.txt`, new `tests/take_folder_model.cpp`, `tests/CMakeLists.txt` | `record overlay preserves complete takes`; `folder merge preserves outside selections`; `take deletion repairs only selected intervals`; `split preserves complete takes`; `comp normalization preserves silence gaps` | Core semantics callable | 900–1,200 |
-| 3 | **Audio core + MIDI core + Merge:** v7 persistence/migration/Save As | `SessionSerializer.{h,cpp}`, `tests/session_schema_migration.cpp`, `tests/session_format_version.cpp`, `tests/session_save_as_consolidation.cpp` | `v6 audio history migrates with identical playback`; `v6 MIDI history migrates with identical events`; `MIDI Merge defaults off and round trips`; `consolidation copies every folder take once` | Old sessions load and new state saves portably | 700–1,000 |
+| 3 | **Audio core + MIDI core + Merge:** v8 persistence/migration/Save As | `SessionSerializer.{h,cpp}`, `tests/session_schema_migration.cpp`, `tests/session_format_version.cpp`, `tests/session_save_as_consolidation.cpp` | `v7 audio history migrates with identical playback`; `v7 MIDI history migrates with identical events`; `MIDI Merge defaults off and round trips`; `consolidation copies every folder take once` | Old sessions load and new state saves portably | 700–1,000 |
 | 4 | **Audio core + MIDI core:** derived playback hand-off | `PlaybackEngine.{h,cpp}`, `AudioEngine.cpp`, `TakeFolderOperations.cpp`, `tests/playback_loop_read.cpp` | `active comp preserves source offsets and silence gaps`; `comp boundary renders a 64-sample raised-cosine overlap`; `MIDI comp preserves note tail past boundary`; `MIDI folder costs one scheduler region` | Fixture-created folders play correctly | 450–700 |
 | 5 | **Audio core / #594:** audio record commits | `RecordManager.{h,cpp}`, `TakeFolderOperations.{h,cpp}`, `tests/record_loop_take_stacking.cpp` | `partial audio overdub preserves the complete covered take`; `recording merges plain material and two folders without take loss`; `loop audio retains more than nine passes`; `punch changes comp only inside punch` | Audio recording creates/extends folders; #594 fixed | 650–900 |
 | 6 | **MIDI core + Merge:** MIDI folder and merge commit | `RecordManager.{h,cpp}`, `TakeFolderOperations.cpp`, `tests/record_midi_overdub_diff.cpp`, `tests/session_apply_tempo_change.cpp` | `MIDI Merge off creates a folder`; `MIDI Merge cycle accumulates every pass in one target`; `folder target is the take selected at record start`; `comp-gap Merge creates a new take`; `other channel events survive`; `empty non-Merge cycle pass remains a take` | MIDI folder/Merge model behavior complete | 700–1,000 |
@@ -410,7 +410,7 @@ Approval should pause between every phase. Phases 1–7 and 10A are required for
 
 ## 9. Risks and guarding tests
 
-- **Migration changes what plays:** compare actual audio buffers and MIDI event streams before/after v6 migration, not just model fields.
+- **Migration changes what plays:** compare actual audio buffers and MIDI event streams before and after the v7 → v8 migration, not just model fields.
 - **Another silent cap replaces the old cap:** record more than nine audio/MIDI passes and assert every ordinal remains. Overflow must fail a pass visibly, never evict its oldest content.
 - **Boundary clicks or gain bumps:** sample-check all 64 fade samples, selection near take edges, take-to-silence, and selection shorter than 128 samples.
 - **Folder merges lose outside selections:** test plain+folder and two-folder recording with overlap on both sides of the new pass.
