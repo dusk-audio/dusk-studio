@@ -5298,7 +5298,7 @@ std::optional<ScenarioResult> runPianoRollNoteKeys (GuiHost& host, ScenarioConte
     MidiRegion region;
     region.lengthInTicks = 1920;
     region.lengthInSamples = static_cast<std::int64_t> (ctx.engine().getCurrentSampleRate() * 2.0);
-    region.notes = { { 1, 60, 101, 240, 120 }, { 3, 67, 85, 600, 240 } };
+    region.notes = { { 1, 60, 101, 480, 120 }, { 3, 67, 85, 960, 240 } };
     const auto original = region.notes;
     track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
     undo.clearUndoHistory();
@@ -5307,19 +5307,27 @@ std::optional<ScenarioResult> runPianoRollNoteKeys (GuiHost& host, ScenarioConte
     {
         ctx.expect (host.pressPianoRollKey ("command + A"), "the piano roll did not select all notes");
         ctx.expect (host.pressPianoRollKey ("5"), "the piano roll did not select the sixteenth-note grid");
-        for (const auto& action : std::array<std::pair<const char*, int>, 4> {
-                 std::pair<const char*, int> { "cursor up", 1 }, { "cursor down", -1 },
-                 { "cursor right", 120 }, { "cursor left", -120 } })
+        // Shift chords arrive as the arrow's key code with the shift modifier and
+        // no text, which is what pressPianoRollKey builds from the description.
+        struct ArrowAction { const char* key; int semitones; std::int64_t ticks; };
+        for (const auto& action : std::array<ArrowAction, 8> {
+                 ArrowAction { "cursor up", 1, 0 }, { "cursor down", -1, 0 },
+                 { "cursor right", 0, 120 }, { "cursor left", 0, -120 },
+                 { "shift + cursor up", 12, 0 }, { "shift + cursor down", -12, 0 },
+                 { "shift + cursor right", 0, kMidiTicksPerQuarter },
+                 { "shift + cursor left", 0, -kMidiTicksPerQuarter } })
         {
             ctx.expect (host.pressPianoRollKey ("command + A"), "the piano roll did not reselect notes after undo");
-            ctx.expect (host.pressPianoRollKey (action.first), std::string (action.first) + " was not handled");
+            ctx.expect (host.pressPianoRollKey (action.key), std::string (action.key) + " was not handled");
             auto expected = original;
             for (auto& note : expected)
-                if (std::abs (action.second) == 1) note.noteNumber += action.second;
-                else note.startTick += action.second;
+            {
+                note.noteNumber += action.semitones;
+                note.startTick  += action.ticks;
+            }
             const auto& edited = track.midiRegions.current();
             ctx.expect (edited.size() == 1 && edited[0].notes == expected,
-                        std::string (action.first) + " changed the wrong note fields or amount");
+                        std::string (action.key) + " changed the wrong note fields or amount");
             ctx.expect (host.pressPianoRollKey ("command + Z"), "the piano roll did not handle undo");
             const auto& restored = track.midiRegions.current();
             ctx.expect (restored.size() == 1 && restored[0].notes == original,
