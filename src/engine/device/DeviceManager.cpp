@@ -152,7 +152,7 @@ public:
         for (auto* cb : lease->callbacks) cb->audioDeviceError (message);
     }
 
-    bool contains (IODeviceCallback* callback) const
+    bool contains (const IODeviceCallback* callback) const
     {
         const auto& callbacks = activeCallbacks->callbacks;
         return std::find (callbacks.begin(), callbacks.end(), callback) != callbacks.end();
@@ -579,6 +579,9 @@ std::string DeviceManager::setSetup (const DeviceSetup& d, bool treatAsChosen)
 void DeviceManager::addCallback (IODeviceCallback* callback) { impl->addCallback (callback); }
 
 void DeviceManager::removeCallback (IODeviceCallback* callback) { impl->removeCallback (callback); }
+
+bool DeviceManager::containsCallback (const IODeviceCallback* callback) const
+{ return impl->fanout.contains (callback); }
 
 void DeviceManager::closeDevice()
 {

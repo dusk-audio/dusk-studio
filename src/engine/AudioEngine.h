@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <utility>
 #include "../dsp/AuxLaneStrip.h"
 #include "../dsp/BusStrip.h"
 #include "../dsp/ChannelStrip.h"
@@ -110,6 +111,9 @@ public:
     // the engine (the device manager fires audioDeviceAboutToStart). Message thread.
     void detachAudioCallback();
     void reattachAudioCallback();
+    bool isAudioCallbackRegistered() const { return deviceManager.containsCallback (this); }
+    void observeAudioRegistrationForScenario (std::function<void (bool)> observer)
+    { audioRegistrationObserver = std::move (observer); }
 
     // Track FREEZE (message thread). The render is ASYNC (BounceEngine::
     // startFreeze on a worker thread) so a long render never wedges the UI, so
@@ -735,6 +739,7 @@ private:
     // Render-time oversampling override (0 = use session factor). See
     // setRenderOversamplingOverride.
     std::atomic<int> renderOversamplingOverride { 0 };
+    std::function<void (bool)> audioRegistrationObserver;
 
     // True only while an offline render drives the callback. See
     // setOfflineRenderActive.

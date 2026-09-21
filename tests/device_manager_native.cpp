@@ -537,7 +537,9 @@ TEST_CASE ("DeviceManager fan-out: prime, remove-stop, summing, zero, error", "[
     SECTION ("add-while-running primes with aboutToStart before the first block")
     {
         MockCallback cb (&h.log, "cbA", 0.5f);
+        REQUIRE_FALSE (dm.containsCallback (&cb));
         dm.addCallback (&cb);
+        REQUIRE (dm.containsCallback (&cb));
         REQUIRE (cb.aboutToStart == 1);
         REQUIRE (cb.blocks == 0);
 
@@ -546,6 +548,7 @@ TEST_CASE ("DeviceManager fan-out: prime, remove-stop, summing, zero, error", "[
         REQUIRE_THAT (ch0[0], Catch::Matchers::WithinAbs (0.5f, 1e-9));
 
         dm.removeCallback (&cb);
+        REQUIRE_FALSE (dm.containsCallback (&cb));
     }
 
     SECTION ("remove-while-running delivers audioDeviceStopped")

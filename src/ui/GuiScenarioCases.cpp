@@ -1412,6 +1412,7 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
     ctx.cleanup ([&host, &engine, &session, &player, originalDir, originalStage, originalFile, originalPosition, restore]
     {
+        engine.observeAudioRegistrationForScenario ({});
         while (! host.modalStackEmpty()) host.closeTopModal();
         engine.setRenderOversamplingOverride (0);
         engine.reattachAudioCallback();
@@ -1440,13 +1441,16 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
     writer.reset();
     applySessionDirectory (session, ctx.tempDir());
     host.switchToStage (GuiHost::Stage::Mastering);
+    auto registration = std::make_shared<std::vector<bool>>();
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 400, [&host, &ctx]
     { ctx.expect (host.clickMasteringButton ("Load latest mixdown"), "latest mixdown button unavailable"); } });
-    steps->push_back ({ 600, [&host, &ctx, &player, source]
+    steps->push_back ({ 600, [&host, &ctx, &engine, &player, source, registration]
     {
         ctx.expect (player.isLoaded() && player.getLoadedFile().getFullPathName().toStdString() == source.string(),
                     "latest mixdown did not load the session mix");
+        ctx.expect (engine.isAudioCallbackRegistered(), "audio callback was not registered before export");
+        engine.observeAudioRegistrationForScenario ([registration] (bool attached) { registration->push_back (attached); });
         ctx.expect (host.clickMasteringButton ("Export master..."), "export button unavailable");
     } });
     steps->push_back ({ 200, [&host, &ctx]
@@ -1464,11 +1468,15 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
     } });
     steps->push_back ({ 150, [&host, &ctx]
     { ctx.expect (host.clickModalButton ("Save"), "export destination was not accepted"); } });
-    runSteps (ctx, steps, [&host, &ctx, &engine, output]
+    runSteps (ctx, steps, [&host, &ctx, &engine, output, registration]
     {
         ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000,
-            [&ctx, &engine, output]
+            [&ctx, &engine, output, registration]
             {
+                ctx.expect (*registration == std::vector<bool> { false, true },
+                            "export did not deregister and restore the live audio callback");
+                ctx.expect (engine.isAudioCallbackRegistered(), "audio callback was not registered after export");
+                engine.observeAudioRegistrationForScenario ({});
                 auto reader = dusk::audio::FileReader::open (output);
                 if (ctx.expect (reader != nullptr, "master export did not create a readable WAV"))
                 {

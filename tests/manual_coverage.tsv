@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 91
+# ceiling gap 90
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -369,7 +369,7 @@ Saving and loading sessions > What's in a session	a damaged or partial session s
 Saving and loading sessions > Backing up	copying the folder is a complete backup	n/a			advice; relative paths are held under Where sessions live
 
 Bouncing and exporting > Bouncing the mix	offline render to 24-bit WAV at the session rate, or MP3 by extension, with a 5 s tail	partial	scenario:bounce.master_mix_file;scenario:bounce.mp3_by_format		rate, 24-bit stereo, the 5 s tail and the MP3 container are tested; the choice by file extension happens in the dialog and is not
-Bouncing and exporting > Bouncing the mix	the device detaches for the render and reattaches after	gap
+Bouncing and exporting > Bouncing the mix	the device detaches for the render and reattaches after	auto	scenario:gui.mastering_export_workflow;test:DeviceManager fan-out: prime, remove-stop, summing, zero, error		actual callback membership traced through the shared offline bounce path
 Bouncing and exporting > Bouncing the mix	Mixdown renders mixdown.wav and opens it in MASTERING	gap
 Bouncing and exporting > Bouncing the mix	Bounce stems: one file per track, bus and aux, named by pattern	auto	test:collectStemTargets: tracks then buses then auxes, gated on routing;test:stemOutputFile builds <dir>/<base>_<NN>_<safe>.wav;test:namedStemOutputFile builds <dir>/<base>_<tag>_<safe>.wav
 Bouncing and exporting > Bouncing the mix	stems are sample-aligned and reconstruct the pre-master mix	auto	scenario:bounce.stems_rebuild_the_mix;scenario:bounce.renders_land_on_the_timeline
