@@ -420,13 +420,16 @@ private:
         PluginDescriptor descriptor,
         int numIn, int numOut, int latency, bool isInstrument);
 
-    // Stop the reaper, unpublish the live connection and shift it into the
-    // deferred-destruction ring. Nulling currentRemote is not enough on its
-    // own: the audio thread can already hold the raw pointer and stay inside
-    // processBlockSync for the whole OOP block timeout, reading the child's
-    // shared memory. The pointer moves therefore happen with processLock held,
-    // and the connection evicted from the far slot is destroyed only after the
-    // lock is dropped so a child teardown never locks the audio path out.
+    // Stop the reaper, unpublish the live connection, shift it into the
+    // deferred-destruction ring and end its child. Nulling currentRemote is
+    // not enough on its own: the audio thread can already hold the raw pointer
+    // and stay inside processBlockSync for the whole OOP block timeout,
+    // reading the child's shared memory. The pointer moves therefore happen
+    // with processLock held, and both the disconnect of the connection that
+    // just left the audio path and the destruction of the one evicted from the
+    // far slot happen after the lock is dropped, so a child teardown never
+    // locks the audio path out. The ring still owns the object - only the
+    // child process and its shared memory go early.
     void retireRemoteConnection();
    #endif
 

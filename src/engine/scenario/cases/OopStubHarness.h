@@ -10,6 +10,11 @@
 #include <string>
 #include <system_error>
 
+#if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined(_WIN32)
+ #include <cerrno>
+ #include <csignal>
+#endif
+
 // Shared rigging for the sandboxed-plugin scenarios: they all need the real
 // plugin-host child in one of its stub modes, a descriptor the stub will answer
 // for, and a MIDI buffer to hand the slot's process entry.
@@ -33,6 +38,16 @@ inline std::optional<std::filesystem::path> hostBinary()
     if (! std::filesystem::is_regular_file (child, error)) return std::nullopt;
     return child;
 }
+
+#if ! defined(_WIN32)
+// Whether a child this suite spawned has left the process table. Windows tracks
+// its child by handle and reports no pid, so the cases that watch a child exit
+// are POSIX-only and skip there.
+inline bool processGone (int pid)
+{
+    return ::kill ((pid_t) pid, 0) != 0 && errno == ESRCH;
+}
+#endif
 
 // The stub children answer without opening anything, so the location only has to
 // be a plausible one the slot will hand to the child verbatim.

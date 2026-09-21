@@ -468,6 +468,16 @@ void PluginSlot::retireRemoteConnection()
         previousRemotes[1] = std::move (previousRemotes[0]);
         previousRemotes[0] = std::move (ownedRemote);
     }
+    // The ring only defers the destructor; the child must not wait for that,
+    // or an unloaded slot keeps a host process alive until two more sandboxed
+    // loads push it out. The connection that has just left the audio path is
+    // shut down here: disconnect() asks the child to exit, then SIGTERM plus a
+    // bounded grace and SIGKILL, and unmaps the shared memory. It is
+    // idempotent, so the ring still owns the object for as long as it did and
+    // the eventual destructor is a no-op. Both calls are outside processLock -
+    // a child teardown must never hold the audio path off.
+    if (previousRemotes[0] != nullptr)
+        previousRemotes[0]->disconnect();
     retired.reset();
 }
 #endif
@@ -817,6 +827,7 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
     lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
 
     currentInstance.store (nullptr, std::memory_order_release);
+    cachedLatencySamples.store (0, std::memory_order_relaxed);
     if (previousInstances[1] != nullptr)
         previousInstances[1]->releaseResources();
     previousInstances[1] = std::move (previousInstances[0]);
@@ -824,6 +835,15 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
     ownedInstance.reset();
     loadedDescriptor.reset();
     lastKnownStateBase64.clear();
+
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // This path always loads in-process, so a slot that was sandboxed has to
+    // let its child go here the same way the descriptor loads do; otherwise
+    // the old child keeps running with currentRemote published and the slot
+    // keeps routing to the plugin the user replaced.
+    retireRemoteConnection();
+    remoteCrashed.store (false, std::memory_order_relaxed);
+   #endif
 
     auto fresh = manager->createPluginInstance (pluginFile,
                                                   preparedSampleRate,
@@ -928,6 +948,7 @@ bool PluginSlot::loadFromDescriptor (const PluginDescriptor& descriptor,
     lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
 
     currentInstance.store (nullptr, std::memory_order_release);
+    cachedLatencySamples.store (0, std::memory_order_relaxed);
     if (previousInstances[1] != nullptr)
         previousInstances[1]->releaseResources();
     previousInstances[1] = std::move (previousInstances[0]);

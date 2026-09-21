@@ -1765,7 +1765,7 @@ When a plugin crashes in OOP mode:
 - The plugin's last-known state (parameters, preset) is preserved in the session and will be re-applied when you reload the plugin.
 - You can load a different plugin to clear the slot.
 
-The OOP child process is named `dusk-studio-plugin-host` and lives next to the main Dusk Studio binary. Each loaded OOP plugin runs in its own child process.
+The OOP child process is named `dusk-studio-plugin-host` and lives next to the main Dusk Studio binary. Each loaded OOP plugin runs in its own child process, and that process exits as soon as the plugin is unloaded or replaced.
 
 ## Auto-bypass on overrun
 
