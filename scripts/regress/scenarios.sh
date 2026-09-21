@@ -512,8 +512,14 @@ bb_keyboard_quit_body() {
         "DUSKSTUDIO_RUN_SCENARIOS=" "DUSKSTUDIO_RUN_SELFTEST=" -- || return 1
     bb_wait_marker A "[Dusk Studio/Load] session.json" 60 || return 1
     local -a windows=()
-    mapfile -t windows < <(DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool search --onlyvisible --pid "${BB_PID[A]}")
-    [[ ${#windows[@]} -gt 0 ]] || { bb_fail "main window not found"; return 1; }
+    local deadline=$((SECONDS + $(bb_budget 30)))
+    while :; do
+        mapfile -t windows < <(DISPLAY="$XVFB_DISPLAY" timeout 5 \
+            xdotool search --onlyvisible --pid "${BB_PID[A]}")
+        ((${#windows[@]} == 0)) || break
+        ((SECONDS < deadline)) || { bb_fail "main window not found"; return 1; }
+        sleep 0.2
+    done
     DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool windowfocus --sync "${windows[0]}" || return 1
     DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool key --clearmodifiers ctrl+q || return 1
     bb_wait_exit A 30 || return 1

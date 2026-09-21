@@ -939,6 +939,9 @@ std::optional<ScenarioResult> runTimelineKeys (GuiHost& host, ScenarioContext& c
     auto& session = ctx.session();
     if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
         return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording
+        && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
     const auto originalDir = currentSessionDirectory (session);
     const auto playhead = engine.getTransport().getPlayhead();
     const auto restore = ctx.tempDir() / "restore.json";
