@@ -34,6 +34,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-no-runtime-dir
     bb-damaged-recent
     bb-clean-quit
+    bb-keyboard-quit
     bb-quit-twice
     bb-oop-child-kill
     bb-oop-quit-during-load
@@ -497,6 +498,34 @@ bb_damaged_recent_body() {
     return 0
 }
 
+leg_bb_keyboard_quit() {
+    bb_begin bb-keyboard-quit 120 || return 1
+    local rc=0
+    bb_keyboard_quit_body || rc=$?
+    bb_end "$rc"
+}
+
+bb_keyboard_quit_body() {
+    local session
+    session="$(bb_session keyboard-quit)" || return 1
+    bb_spawn A "DUSKSTUDIO_LOAD_SESSION=$session" "DUSKSTUDIO_QUIT_AFTER_MS=" \
+        "DUSKSTUDIO_RUN_SCENARIOS=" "DUSKSTUDIO_RUN_SELFTEST=" -- || return 1
+    bb_wait_marker A "[Dusk Studio/Load] session.json" 60 || return 1
+    local -a windows=()
+    local deadline=$((SECONDS + $(bb_budget 30)))
+    while :; do
+        mapfile -t windows < <(DISPLAY="$XVFB_DISPLAY" timeout 5 \
+            xdotool search --onlyvisible --pid "${BB_PID[A]}")
+        ((${#windows[@]} == 0)) || break
+        ((SECONDS < deadline)) || { bb_fail "main window not found"; return 1; }
+        sleep 0.2
+    done
+    DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool windowfocus --sync "${windows[0]}" || return 1
+    DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool key --clearmodifiers ctrl+q || return 1
+    bb_wait_exit A 30 || return 1
+    bb_assert_order A "${BB_SHUTDOWN_ORDER[@]}" || return 1
+}
+
 leg_bb_clean_quit() {
     bb_begin bb-clean-quit 240 || return 1
     local rc=0
@@ -701,6 +730,12 @@ regress_scenarios_run() {
         regress_leg "bb-damaged-recent" leg_bb_damaged_recent
     else
         regress_skip "bb-damaged-recent" "needs the [Dusk Studio/startup] markers"
+    fi
+
+    if command -v xdotool >/dev/null 2>&1; then
+        regress_leg "bb-keyboard-quit" leg_bb_keyboard_quit
+    else
+        regress_skip "bb-keyboard-quit" "needs xdotool"
     fi
 
     if scenarios_has_quit_timer; then

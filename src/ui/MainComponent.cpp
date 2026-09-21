@@ -2282,6 +2282,15 @@ void applyGlobalUiScale (juce::Component& source, float scale)
 } // namespace
 #endif
 
+void MainComponent::restoreUiScaleForScenario (float scale)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    applyGlobalUiScale (*this, scale);
+   #else
+    (void) scale;
+   #endif
+}
+
 void MainComponent::openAudioSettings()
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI

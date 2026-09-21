@@ -39,6 +39,7 @@ public:
                    int wavBitDepth = 24,
                    bool realtime = false);
     ~BounceDialog() override;
+    bool isRenderingForScenario() const { return bounceEngine != nullptr && bounceEngine->isRendering(); }
 
     void resized() override;
     void paint (juce::Graphics&) override;

@@ -129,6 +129,7 @@ public:
     // Follow the playhead: when on, the strip scrolls during playback so the
     // playhead stays in view (no-op at fit-to-window zoom, where it always is).
     void setChaseEnabled (bool enabled) noexcept { chaseEnabled = enabled; }
+    bool isChaseEnabled() const noexcept { return chaseEnabled; }
 
     // Explicit refresh for the session-load path. The strip otherwise relies on
     // indirect side effects (setConsoleVisibleRange / setBounds / the 30 Hz
@@ -138,6 +139,19 @@ public:
     // zoom/scroll to the loaded content (a session saved while zoomed-in must not
     // open with its regions scrolled off-screen), and repaints unconditionally.
     void refreshAfterSessionLoad();
+    std::vector<double> viewForScenario() const { return { (double) userZoomFactor, (double) scrollSamples, (double) rowScrollY, (double) rowHeight }; }
+    void restoreViewForScenario (const std::vector<double>& view)
+    {
+        if (view.size() != 5) return;
+        userZoomFactor = (float) view[0];
+        scrollSamples = (std::int64_t) view[1];
+        rowScrollY = (int) view[2];
+        rowHeight = (int) view[4];
+        repaint();
+    }
+    auto dropPointForScenario (int track) const { return rowBounds (track).getCentre(); }
+    auto rulerPointForScenario (float fraction) const { return rulerBounds().getRelativePoint (fraction, 0.25f); }
+    std::int64_t rulerSampleForScenario (float fraction) const { return sampleAtX (rulerPointForScenario (fraction).x); }
 
 private:
     void timerCallback() override;

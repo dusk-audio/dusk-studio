@@ -1403,8 +1403,16 @@ void AudioEngine::openConfiguredMidiOutputsSafely()
     deviceManager.addCallback (this);
 }
 
-void AudioEngine::detachAudioCallback()   { deviceManager.removeCallback (this); }
-void AudioEngine::reattachAudioCallback() { deviceManager.addCallback (this); }
+void AudioEngine::detachAudioCallback()
+{
+    deviceManager.removeCallback (this);
+    if (audioRegistrationObserver) audioRegistrationObserver (isAudioCallbackRegistered());
+}
+void AudioEngine::reattachAudioCallback()
+{
+    deviceManager.addCallback (this);
+    if (audioRegistrationObserver) audioRegistrationObserver (isAudioCallbackRegistered());
+}
 
 int AudioEngine::getBackendXRunCount() const noexcept
 {

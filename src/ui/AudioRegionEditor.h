@@ -27,6 +27,32 @@ public:
                           int trackIndex, int regionIndex);
     ~AudioRegionEditor() override;
 
+    std::vector<double> viewForScenario() const
+    { return { pixelsPerSample, (double) scrollSamples, (double) editCursorSample }; }
+    auto samplePointForScenario (std::int64_t sample) const
+    {
+        const auto wave = getLocalBounds().withTrimmedTop (kIconRowHeight + kRulerHeight)
+                                         .withTrimmedBottom (kStatusBarH + kScrollBarH);
+        return wave.getTopLeft().withX (xForTimelineSample (sample, wave)).withY (wave.getY() + wave.getHeight() * 3 / 4);
+    }
+    auto gesturePointForScenario (const std::string& kind, std::int64_t sample) const
+    {
+        const auto wave = getLocalBounds().withTrimmedTop (kIconRowHeight + kRulerHeight)
+                                         .withTrimmedBottom (kStatusBarH + kScrollBarH);
+        auto point = samplePointForScenario (sample);
+        if (kind == "start") point.setX (trimStartRect (wave).getCentreX());
+        if (kind == "end") point.setX (trimEndRect (wave).getCentreX());
+        if (kind == "gain") point.setY (gainLineY (wave));
+        return point;
+    }
+    auto automationPointForScenario (std::int64_t sample, float value) const
+    {
+        const auto wave = getLocalBounds().withTrimmedTop (kIconRowHeight + kRulerHeight)
+                                         .withTrimmedBottom (kStatusBarH + kScrollBarH);
+        return samplePointForScenario (sample).withY (automationYForValue (value, wave));
+    }
+    std::vector<std::int64_t> selectionForScenario() const
+    { return { regionIdx, rangeActive ? 1 : 0, rangeStartSample, rangeEndSample }; }
     std::function<void()> onCloseRequested;
 
     // Cmd+]/Cmd+[ in-place swap. Host re-opens; editor state (zoom,

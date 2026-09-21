@@ -297,7 +297,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 1   | Waveform          | Region content, with the source-file context dimmed before / after trim points. |
 | 2   | Fade handle       | Drag in from each edge to set fade-in or fade-out length.                       |
 | 3   | Trim handle       | Region in / out trims (non-destructive).                                        |
-| 4   | Gain slider       | ±24 dB region gain.                                                             |
+| 4   | Gain slider       | −24 to +12 dB region gain.                                                             |
 | 5   | Edit-mode toolbar | Grab / Range / Cut / Draw. **G** = Grab. (Tempo is edited by right-clicking the main timeline ruler, not from here.) |
 
 ## The piano roll
@@ -488,7 +488,7 @@ All seven are saved with the session, so a project that syncs to an external clo
 ### General
 
 - **UI scale**: a global zoom factor for the entire interface. The interface previews changes live while you adjust the slider; the final value is saved per-machine when you release it.
-- **Expand tape strip by default**: show the tape strip on every session open.
+- **Expand tape strip by default**: show the tape strip on every app launch. Per-machine; takes effect on next launch.
 - **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
 - **Playhead on Stop**: where the playhead lands when you press Stop. **Return to where play or record started** is the default: the playhead goes back to where playback or the take began, or to where you last moved it during playback, so Play hears the take you just made. A punch take begins at the punch-in point and a loop take at the loop start; count-in and pre-roll do not count. The other choices are **Stay where it is (pause)**, **Return to start (rewind to 0)** and **Return to last clicked point**. Pressing Stop while already stopped returns to bar 1 whatever this says. Per-machine; takes effect immediately.
 - **MIDI soft takeover (pickup)**: when on, a knob or fader bound with MIDI Learn stays dormant until the physical control crosses the parameter's current position, instead of snapping the parameter on first touch. Applies to continuous mixer targets (faders, pans, sends, EQ, comp, master); plugin-parameter bindings always track directly. Per-machine; takes effect immediately.
@@ -736,7 +736,7 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 Each channel has one insert slot, which can hold either a plugin or a hardware insert (configured via the Settings or right-click menu). Switching between plugin and hardware uses a 20-millisecond equal-power crossfade, so the change is inaudible.
 
 - Click **+ Plugin** to open the plugin picker.
-- Right-click the slot for **Add / Replace / Remove / Edit / Configure as hardware insert**.
+- Right-click an empty slot for **Add insert...**. A loaded plugin offers **Open editor** (or **Close editor**), **Replace insert...**, and **Remove plugin**. A hardware insert offers **Edit hardware insert...**, **Replace insert...**, and **Remove hardware insert**. Choose **Hardware Insert** in the Add or Replace chooser to configure outboard gear.
 - When a plugin is loaded, the slot shows its name. Click to open the editor.
 - The LED on the slot's left edge bypasses the insert — green when engaged, dark when bypassed or empty, click to toggle (same grammar as the EQ and COMP LEDs). The insert keeps processing while bypassed, so re-engaging is click-free.
 
@@ -1028,7 +1028,7 @@ The **MASTERING** stage is a separate signal path. It does not play your tracks;
 
 ## Loading a mix
 
-- **Load mix…**: opens a file chooser. Pick any WAV, AIFF, FLAC, or OGG file.
+- **Load mix...**: opens a file chooser for WAV, AIFF, or FLAC files.
 - **Load latest mixdown**: loads `mixdown.wav` from the session folder (what **Mixdown** writes), or `bounce.wav`, the bounce dialog's default name, if there is no mixdown.
 
 The source file path is displayed below the buttons.
@@ -1087,7 +1087,7 @@ Right of the chain are three loudness readouts:
 - **Integrated LUFS** (entire program, gated per BS.1770).
 - **True Peak (dBTP)** (4× oversampled).
 
-A streaming-platform preset picker (Spotify, Apple Music, YouTube, Netflix, etc.) colour-codes the integrated LUFS and true-peak readings according to that platform's target. Pressing **Reset integrated** clears the integrated reading so you can re-measure from a known point.
+The target picker offers Off, Spotify, Apple Music, YouTube, Tidal, and Broadcast (EBU R128). It colour-codes integrated LUFS and true peak against the selected target; Off leaves both neutral. Pressing **Reset I** clears the integrated reading so you can re-measure from a known point.
 
 The integrated reading measures up to an hour of material loud enough to count. Silence and anything below −70 LUFS is discarded by the standard's gate and does not use up that hour, so leaving the meter running between takes costs you nothing. Past the hour it holds where it is rather than continuing to absorb material, so for anything longer, reset it and measure the section you actually care about.
 
@@ -1240,7 +1240,7 @@ The left column shows each track's number, colour, and small ARM/SOLO/MUTE butto
 
 The top band shows bars and beats (when the clock display is in Bars mode) or minutes and seconds (when in Time mode). Below the bar/beat band is a pill row showing markers and loop/punch brackets.
 
-Click the ruler to seek the playhead. Drag with Shift held to set the loop range.
+Click the ruler to seek the playhead. Drag across the ruler, then choose **Set loop here** or **Set punch in / out here** from the menu. **Cancel** leaves the ranges unchanged.
 
 ## Regions
 
@@ -1253,7 +1253,6 @@ Each region is drawn as a rounded coloured rectangle. Audio regions show a wavef
 - Drag a region body to move it. With **SNAP** on, it snaps to the grid resolution.
 - Drag the left or right edge to trim.
 - Drag the pink fade discs in the top corners to set fade-in / fade-out lengths.
-- Middle-mouse-drag pans the timeline left or right.
 
 ### Splitting
 
@@ -1296,7 +1295,7 @@ Press **M** to drop a marker at the current playhead. A marker pill appears in t
 - Right-click for **Rename** and **Delete**.
 - **Rewind** and **Forward** transport buttons jump to the previous and next marker.
 
-Once a song has markers, the mini timeline strip (shown below the transport when the **TIMELINE** is collapsed) draws a tick and a name flag for **every** marker, with the **current section** — the most recent marker at or before the playhead — brightened. It tracks the arrangement as you play. Click a marker (tick or name) to jump to it; **double-click** a marker to rename it.
+Once a song has markers, the mini timeline strip (shown below the transport when the **TIMELINE** is collapsed) draws a tick for **every** marker and name flags where space permits, with the **current section** — the most recent marker at or before the playhead — brightened. It tracks the arrangement as you play. Click a marker (tick or name) to jump to it; **double-click** a marker to rename it.
 
 ## Loop and punch brackets
 
@@ -1319,11 +1318,11 @@ Recording keeps your zoom. When the playhead reaches the right-hand edge the vie
 
 ## Drag-and-drop import
 
-Drop audio or MIDI files onto the tape strip. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use the **Sequential** preset to spread files across adjacent tracks, or **Same track** to stack them as takes on a single track.
+Drop audio or MIDI files onto the tape strip. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use **Auto-assign** to assign files to tracks in order; **Clear** removes those assignments. You can choose each destination manually. Each file needs a distinct track.
 
 ## Import DP Song (experimental)
 
-**File → Import DP Song (experimental)…** reads a raw TASCAM DP-24 / DP-24SD / DP-32 song folder straight off the SD card — for when the device is gone and you can't run its own AudioDepot export. Point it at a `MUSIC/<SongName>/` folder and it reconstructs the session: each recorded audio fragment lands on its own track, with the correct sample rate, bit depth and stereo pairing.
+**File → Import DP Song (experimental)…** reads a raw TASCAM DP-24 / DP-24SD / DP-32 song folder straight off the SD card — for when the device is gone and you can't run its own AudioDepot export. Choose any WAV or `.sys` file inside a `MUSIC/<SongName>/` folder and it reconstructs the session: each recorded audio fragment lands on its own track, with the correct sample rate, bit depth and stereo pairing.
 
 A confirmation dialog first shows what was found — track count, format, stereo pairs, and any warnings — before anything is imported.
 
@@ -1345,7 +1344,7 @@ Double-click an audio region in the tape strip to open the audio region editor a
 
 - **Trim** the start or end (non-destructively — the underlying file is untouched).
 - **Fade in** and **fade out** curves and lengths.
-- **Gain** adjustment (±24 dB, non-destructive).
+- **Gain** adjustment (−24 to +12 dB, non-destructive).
 - **Position** of the region on the timeline.
 
 You **cannot** edit individual samples. There is no pencil tool, no zoom-to-sample, no spectral edit, no destructive trim. The portastudio philosophy is that you commit to good takes and work non-destructively from there.
@@ -1356,8 +1355,8 @@ The top is a row of icon buttons:
 
 - **Undo / Redo** (also **Cmd+Z** and **Cmd+Shift+Z**).
 - **Split** at the edit cursor (also **Cmd/Ctrl+E**).
-- **Normalize** (peak-aligns the region to 0 dB by adjusting its gain).
-- **Properties** (file path, sample rate, channel count, length).
+- **Normalize** (adjusts gain toward a peak just below 0 dBFS, within the gain limits).
+- **Properties** (label, mute, lock, colour and delete actions, with file name, sample rate, channel count and length shown below).
 - **Zoom out / Zoom in / Zoom fit** (also **−**, **+**, **0**).
 
 The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. Draw is the automation pencil: with an automation lane selected (see below) it draws a freehand breakpoint curve; with no lane selected it does nothing (it never moves the region).
@@ -1377,13 +1376,13 @@ Below the toolbar:
 - **Click on the waveform**: place the edit cursor. The cursor snaps to the grid if Snap is on.
 - **Drag the fade-in disc** (top-left): extend the fade-in length.
 - **Right-click the fade-in disc**: choose the curve shape — **Linear**, **Equal-power**, **S-curve**, **Exponential**, or **Logarithmic**.
-- **Drag the fade-out disc** (bottom-right): extend the fade-out length.
+- **Drag the fade-out disc** (top-right): extend the fade-out length.
 - **Drag the trim-start handle**: shorten from the start.
 - **Drag the trim-end handle**: shorten from the end.
-- **Drag the gain line** (the dashed horizontal line through the waveform): adjusts the region's gain ±24 dB. The cursor displays the new value.
+- **Drag the gain line** (the solid green line through the waveform): adjusts the region's gain from −24 to +12 dB. Its value chip and the status bar display the level.
 - **Shift+drag** on the waveform: select a time range (yellow highlight).
 - **Cmd/Ctrl+]** / **Cmd/Ctrl+[**: navigate to the next / previous region on the same track without closing the modal.
-- **Delete**: delete the selected region.
+- **Delete**: delete the selected range when one is active; otherwise delete the selected region or regions.
 
 \newpage
 
@@ -1421,9 +1420,9 @@ In **Draw** mode (**D**), click an empty grid cell to create a note at that pitc
 ## Selecting and moving
 
 - Click a note to select it.
-- **Shift+click** adds to the selection.
+- **Shift+click** toggles a note in or out of the selection.
 - **Cmd/Ctrl+click** toggles selection.
-- Drag a selected note's body to move it (snaps to grid; hold **Cmd** to bypass snap).
+- Drag a selected note's body to move it (snaps to the enabled grid).
 - Drag a selected note's right edge to resize.
 - Drag in empty grid space to rubber-band select.
 - **Backspace** or **Delete** deletes the selection.
@@ -1447,7 +1446,7 @@ The CC lane is also resizable.
 
 ## Quantize and scale
 
-- **Q**: opens a quantize popup. Pick the grid resolution and the strength (0 = none, 1 = full).
+- **Q**: opens a quantize popup with full-strength straight and triplet grids, plus 50% and 75% strength choices.
 - **S**: opens a scale picker. Pick a root and a scale (Major, Minor, modes). Non-scale notes display dimmed.
 - **L**: cycles the active CC controller in the CC lane (1, 7, 11, 64, 74).
 
@@ -1458,14 +1457,14 @@ The note-creation grid is set from the toolbar dropdown; there is no keyboard sh
 ## Zoom and scroll
 
 - **=** / **−**: zoom in / out.
-- **Cmd+0**: zoom to fit the region.
+- **Zoom fit** toolbar button: zoom to fit the region.
 - **Mouse wheel**: scroll vertically across the 128-key range.
 - **Cmd/Ctrl+wheel**: horizontal zoom.
 - **Shift+wheel**: horizontal scroll.
 
 ## Step record
 
-With the piano roll open, each note you press on the virtual keyboard is entered at the current edit cursor. When all keys are released, the cursor advances by one snap step. This is the fastest way to enter a chord progression without playing in real time.
+With the piano roll open, virtual-keyboard notes enter at the transport playhead. Notes held together share that position. After all keys are released, the first note of the next chord advances the playhead by one snap step before inserting. This is the fastest way to enter a chord progression without playing in real time.
 
 The keyboard is a transport-bar tool rather than part of the piano roll: it opens from the ⌨ button (or **K**) in any stage, and it takes over the letter and digit keys in its layout for as long as it is open. See *The virtual keyboard* for the details.
 
@@ -1533,9 +1532,9 @@ Dusk Studio's automation is console-first: you ride the controls and the program
 
 ### Editing breakpoints in the region editor
 
-Double-click an audio region to open its editor. The **Auto:** button at the top of the editor picks which parameter the lane edits - **Fader**, **Pan**, **Mute**, **Solo**, or **Aux Send 1-4** - or **Off** to hide the lane and edit the region normally. With a lane active, its points draw over the waveform:
+Double-click an audio region to open its editor. The **Auto:** button at the top of the editor picks which parameter the lane edits - **Fader (dB)**, **Pan**, **Mute**, **Solo**, or **Aux 1-4** - or **Off** to hide the lane and edit the region normally. With a lane active, its points draw over the waveform:
 
-- **Click empty space** - add a breakpoint at the click. It snaps to the grid; hold **Cmd/Ctrl** to place it off-grid.
+- **Click empty space** - add a breakpoint at the click. It snaps when the editor's Snap is on; hold **Cmd/Ctrl** to place it off-grid.
 - **Drag a point** - move it in time and value.
 - **Right-click a point** - delete it.
 - **Draw tool** - pick **Draw** in the edit-mode toolbar, then drag across the lane to paint a freehand curve. It lays a run of breakpoints along the stroke (overwriting any automation under it) and thins them to a clean set when you release. Hold **Cmd/Ctrl** to draw off-grid.
@@ -1544,7 +1543,7 @@ A few rules:
 
 - **Transport must be stopped.** The audio thread reads the lane live during playback, so editing is disabled while rolling.
 - **Mute and Solo are on/off lanes** - their points snap to 0 or 1.
-- **Drawing a point auto-arms the track to READ** so the lane plays back on the next Play (it won't arm WRITE - your drawn points stay put).
+- **Drawing a point changes OFF or WRITE to READ** so the lane plays back on the next Play; an existing READ or TOUCH mode is preserved.
 - Segments between points are **linear**; there is no curve/spline shaping.
 
 \newpage
@@ -1586,7 +1585,7 @@ A plugin that never finishes being probed — most often one waiting on a licenc
 In the **plugin picker** modal:
 
 - Use the filter field at the top to narrow by name.
-- The list is grouped by manufacturer. Click a manufacturer to expand or collapse.
+- The list is grouped under manufacturer headings. Click **Group: Maker** to switch to grouping by plugin type; click **Group: Type** to return to manufacturer grouping. The **Built-In** section stays at the top.
 - Each row shows the plugin name and its format (VST3 / LV2 / AudioUnit / CLAP / LV2-Native / VST3-Native / Built-In).
 - Click a row to load and dismiss.
 
@@ -1721,7 +1720,7 @@ On a knob panel, drag a knob up or down to change it (hold **Shift** for finer s
 
 The transport keys keep working while an editor is open. A click into a plug-in's editor gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again.
 
-**MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in DuskVerb 2's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot and choose **MIDI Learn last-touched parameter**. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
+**MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in DuskVerb 2's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot, choose **MIDI Learn last-touched parameter**, and choose **MIDI Learn (this track)...** in the next menu. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
 
 ## Opening the editor
 
@@ -2018,7 +2017,7 @@ Because the session is a folder, you can copy or back up a session by copying th
 
 - **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file.
 - **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder.
-- **File → Open…** (or **Cmd+O**): load a session by choosing its folder.
+- **File → Open…** (or **Cmd+O**): load a session by choosing its `session.json` file.
 - **File → New from template**: start a fresh session with tracks pre-named and colour-coded for a common workflow. The built-in templates are **Blank** (numbered tracks), **Band** (Drums / Bass / Guitars / Keys / Vocals), **Beats** (Kick / Snare / Hat / Perc / 808 / Pad / Lead / Vox), and **Singer-Songwriter** (Vocal / Acoustic gtr / Bass / Synth / Drums). Templates only set track names and colours — they don't add plugins or audio.
 
 ## Autosave
@@ -2178,8 +2177,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **−**                 | Zoom out                          |
 | **0**                 | Zoom fit                          |
 | **Cmd+wheel**         | Zoom around cursor |
-| **Shift+wheel**       | Horizontal scroll  |
-| **Middle-mouse drag** | Pan                |
+| **Wheel** / **Shift+wheel** | Scroll rows when they overflow; otherwise scroll horizontally when zoomed in |
 
 ## Region editor
 

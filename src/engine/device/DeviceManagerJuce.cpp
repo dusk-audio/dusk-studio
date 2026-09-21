@@ -387,6 +387,13 @@ void DeviceManager::removeCallback (IODeviceCallback* callback)
     impl->bridges.erase (it);
 }
 
+bool DeviceManager::containsCallback (const IODeviceCallback* callback) const
+{
+    for (const auto& bridge : impl->bridges)
+        if (bridge.first == callback) return true;
+    return false;
+}
+
 void DeviceManager::closeDevice()
 {
     // An explicit close is never a disconnection, whoever asked for it. Nothing

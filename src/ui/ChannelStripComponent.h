@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -82,8 +83,25 @@ public:
     }
     // Scenario-harness only: the mode label and whether the fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
+    auto faderPointForScenario (bool readout) const { return (readout ? faderValueLabel.getBounds() : faderSlider.getBounds()).getCentre(); }
+    bool faderEditingForScenario() const { return faderValueLabel.isBeingEdited(); }
+    double faderValueForScenario() const { return faderSlider.getValue(); }
+    auto* moduleButtonForScenario (int module)
+    {
+        return module == 0 ? (compactMode ? &eqCompactButton : eqHeaderBtn.get())
+             : module == 1 ? (compactMode ? &compCompactButton : compModeButton.get())
+             : compactMode ? &auxCompactButton : nullptr;
+    }
+    bool moduleEditorOpenForScenario (int module) const;
+    void closeModuleEditorsForScenario();
+    bool meterClipForScenario();
+    auto* midiSelectorForScenario (int kind)
+    { return kind == 0 ? &midiInputSelector : kind == 1 ? &midiChannelSelector : &midiOutputSelector; }
     void clickAutoModeForScenario() { autoModeButton.triggerClick(); }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
+    auto insertPointForScenario() const { return pluginSlotButton.getBounds().getCentre(); }
+    bool builtinPointerForScenario (const std::string& control, float position, bool pressed);
+    void closeBuiltinForScenario() { closeBuiltinEditorPopup(); }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -113,6 +131,7 @@ public:
     void setMixingMode (bool mixing);
     bool isMixingMode() const noexcept { return mixingMode; }
 
+    bool groupChipViewForScenario (std::string& text, int& master, bool& filled);
     bool stageControlsMatchForScenario (bool mixing) const
     {
         if (! isShowing() || mixingMode != mixing) return false;
@@ -135,6 +154,7 @@ private:
     // Lowest track index sharing this strip's fader group (the group
     // "master" per DP-24 - it gets the filled chip), or -1 if ungrouped.
     int groupMasterIndex() const noexcept;
+    std::string groupChipText() const;
 
     int trackIndex;
     Track& track;
@@ -148,6 +168,7 @@ private:
     float displayedInputRDb = -100.0f;
     float inputPeakHoldRDb  = -100.0f;
     int   inputPeakHoldRFrames = 0;
+    std::chrono::steady_clock::time_point meterClipUntil {};
 
     juce::Label nameLabel;
 
@@ -253,6 +274,7 @@ private:
     // Slider runs NoTextBox so the cap at min value doesn't overlap
     // the textbox area.
     juce::Label faderValueLabel;
+    bool faderTextEditEnding = false;
     juce::TextButton muteButton    { "M" };
     juce::TextButton soloButton    { "S" };
     juce::TextButton phaseButton   { juce::CharPointer_UTF8 ("\xc3\x98") };  // Ø

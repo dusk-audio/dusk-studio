@@ -81,6 +81,7 @@ public:
 
     void addCallback (IODeviceCallback* callback);
     void removeCallback (IODeviceCallback* callback);
+    bool containsCallback (const IODeviceCallback* callback) const;
     void closeDevice();
 
     // Hot-plug / device-change notification, fired on the message thread. Several
