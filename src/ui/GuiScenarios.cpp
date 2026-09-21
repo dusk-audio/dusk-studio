@@ -352,6 +352,21 @@ struct MainComponent::ScenarioAuxLaneHandle final : scenario::AuxLaneHandle
         if (auto* component = laneComponent()) component->unloadSlotForScenario (slot);
     }
 
+    bool loadBuiltin (int slot, const std::string& unitId) override
+    {
+        if (slot < 0 || slot >= AuxLaneParams::kMaxLanePlugins) return false;
+        auto* component = laneComponent();
+        return component != nullptr
+            && component->loadBuiltinForSlotForScenario (slot, unitId);
+    }
+
+    std::string builtinEditorUnit (int slot) const override
+    {
+        auto* component = laneComponent();
+        return component != nullptr ? component->builtinEditorUnitForScenario (slot)
+                                    : std::string();
+    }
+
     void rebuildSlots() override
     {
         if (auto* component = laneComponent()) component->rebuildSlotsForScenario();

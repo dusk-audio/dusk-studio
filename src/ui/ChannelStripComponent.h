@@ -537,6 +537,10 @@ private:
     // A unit that is one of Dusk's own DAF plug-ins brings its own editor; the
     // panel window above stays for the units drawn from a parameter table.
     std::unique_ptr<imgui::DafEditorHost> builtinPluginEditor;
+    // The teardown the insert runs before it frees the unit that editor draws.
+    // The strip holds the only owning reference, so a strip that has gone
+    // leaves the insert nothing to call.
+    std::shared_ptr<std::function<void()>> builtinPluginEditorRelease;
     // The child is an opaque native surface, so the dim behind it is a JUCE sibling
     // exactly as the session notepad arranges it, and it owns the click-outside.
     std::unique_ptr<DimOverlay> compEditorDim;
@@ -552,6 +556,11 @@ private:
     // Where the plug-in's editor belongs: its own size, centred, scaled down when
     // the window cannot hold it. Also follows the dim's click-through region.
     imgui::DafEditorHost::Geometry builtinPluginEditorGeometry();
+    // The editor goes now, not on a later pump tick. Registered with the insert,
+    // which runs it while the unit the editor holds is still alive.
+    void dropBuiltinPluginEditor();
+    // What a finished editor leaves behind, whichever way it finished.
+    void finishBuiltinPluginEditorClose();
    #endif
     void openAuxEditorPopup();
     void setAuxSectionVisible (bool visible);

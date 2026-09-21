@@ -85,6 +85,11 @@ public:
                                  const std::string& pluginId) = 0;
     virtual void unloadSlot (int slot) = 0;
 
+    // A built-in unit through the lane's own load path, and the unit id the
+    // slot's inline editor is currently built for (empty when none is up).
+    virtual bool loadBuiltin (int slot, const std::string& unitId) = 0;
+    virtual std::string builtinEditorUnit (int slot) const = 0;
+
     // The lane embeds a native editor from its slot row rather than from a
     // modal, so rebuilding the row is what tries the attach.
     virtual void rebuildSlots() = 0;

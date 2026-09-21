@@ -1238,6 +1238,28 @@ bool AuxLaneComponent::loadNativeClapForSlotForScenario (int slotIdx,
 }
 #endif
 
+bool AuxLaneComponent::loadBuiltinForSlotForScenario (int slotIdx, const std::string& unitId)
+{
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return false;
+    loadBuiltinForSlot (slotIdx, unitId);
+    return strip.isBuiltinLoaded (slotIdx)
+        && strip.getBuiltinSlot (slotIdx).getPluginId() == unitId;
+}
+
+std::string AuxLaneComponent::builtinEditorUnitForScenario (int slotIdx) const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return {};
+    const auto& ui = slots[(size_t) slotIdx];
+    const bool live = (ui.builtinEditorHost != nullptr && ui.builtinEditorHost->isOpen())
+                   || (ui.builtinWindow != nullptr && ui.builtinWindow->isOpen());
+    return live ? ui.builtinViewUnit : std::string();
+   #else
+    (void) slotIdx;
+    return {};
+   #endif
+}
+
 void AuxLaneComponent::detachEditorForSlot (int slotIdx)
 {
     auto& ui = slots[(size_t) slotIdx];
@@ -1605,6 +1627,9 @@ void AuxLaneComponent::openBuiltinEditorHostForSlot (int slotIdx, std::uintptr_t
     // A slot holds one or the other, never both: the unit that was here before may
     // have been drawn from its parameter table.
     ui.builtinWindow.reset();
+    // The registration below belongs to the editor this builds; whatever the
+    // previous one left is spent.
+    ui.builtinEditorRelease.reset();
     auto& host = ui.builtinEditorHost;
     host = std::make_unique<imgui::DafEditorHost> (
         "aux-plugin-editor", "The unit's editor",
@@ -1660,6 +1685,15 @@ void AuxLaneComponent::openBuiltinEditorHostForSlot (int slotIdx, std::uintptr_t
     ui.builtinViewParent = parentHandle;
     if (host->open (parentHandle, builtinEditorGeometry (slotIdx)))
     {
+        // The editor dereferences the unit's DSP on every pump, so the slot is
+        // told how to end it before it frees that DSP - on this slot's remove,
+        // on a replacement, and on whatever a later caller invents. The lane
+        // owns the only reference to that teardown, so nothing reaches the lane
+        // through it once the lane has gone.
+        ui.builtinEditorRelease = std::make_shared<std::function<void()>> (
+            [this, slotIdx] { dropBuiltinEditorForSlot (slotIdx); });
+        strip.getBuiltinSlot (slotIdx).setInstanceReleaseHook (ui.builtinEditorRelease);
+
         if (! ui.builtinViewFailure.empty())
         {
             ui.builtinViewFailure.clear();
@@ -1672,6 +1706,25 @@ void AuxLaneComponent::openBuiltinEditorHostForSlot (int slotIdx, std::uintptr_t
     std::fprintf (stderr, "[aux builtin] %s\n", ui.builtinViewFailure.c_str());
     host.reset();
     repaint();
+}
+
+void AuxLaneComponent::dropBuiltinEditorForSlot (int slotIdx)
+{
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
+    auto& ui = slots[(size_t) slotIdx];
+    ui.builtinEditorRelease.reset();
+    if (ui.builtinEditorHost == nullptr) return;
+
+    ui.builtinEditorHost->shutdown();
+    ui.builtinEditorHost.reset();
+    // The view is gone rather than closing, so the unit it was built for is no
+    // longer what the lane is showing; a replacement opens its own.
+    ui.builtinViewUnit.clear();
+    ui.builtinCloseRequested = false;
+    repaint();
+    // Whatever takes the slot next - including the same unit again - gets its
+    // view from the next sync rather than from the host that just went.
+    scheduleBuiltinViewSync();
 }
 #endif
 
@@ -1734,6 +1787,7 @@ void AuxLaneComponent::applyBuiltinViewSync()
             continue;
         }
 
+        ui.builtinEditorRelease.reset();
         ui.builtinEditorHost.reset();
         window = std::make_unique<imgui::DuskPanelWindow> (
             "dusk-studio-aux-builtin", "aux-builtin", "Built-in unit controls");

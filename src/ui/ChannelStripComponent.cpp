@@ -4244,13 +4244,7 @@ void ChannelStripComponent::openBuiltinPluginEditor (std::uintptr_t parentHandle
         // Raw `this`: the strip owns the host, and the host drops its callbacks
         // before its own teardown, so none of them outlives the strip.
         imgui::DafEditorHost::Callbacks callbacks;
-        callbacks.closed = [this]
-        {
-            builtinEditorDim.reset();
-            builtinEditorHider.restore();
-            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
-                target->grabKeyboardFocus();
-        };
+        callbacks.closed = [this] { finishBuiltinPluginEditorClose(); };
         // A click into the editor takes the keyboard with it, so the shell takes it
         // back at the end of every gesture and the transport keys keep working.
         callbacks.gestureEnded = []
@@ -4271,7 +4265,18 @@ void ChannelStripComponent::openBuiltinPluginEditor (std::uintptr_t parentHandle
     const auto geometry = builtinPluginEditorGeometry();
     if (geometry.width >= 2 && geometry.height >= 2
         && builtinPluginEditor->open (parentHandle, geometry))
+    {
+        // The editor dereferences the unit's DSP on every pump, so the insert is
+        // told how to end it before it frees that DSP - on a remove, on a
+        // replacement, and on whatever a later caller invents. The strip owns
+        // the only reference to that teardown, so nothing reaches the strip
+        // through it once the strip has gone.
+        builtinPluginEditorRelease = std::make_shared<std::function<void()>> (
+            [this] { dropBuiltinPluginEditor(); });
+        engine.getChannelStrip (trackIndex).getBuiltinSlot()
+              .setInstanceReleaseHook (builtinPluginEditorRelease);
         return;
+    }
 
     builtinEditorDim.reset();
     builtinEditorHider.restore();
@@ -4279,6 +4284,25 @@ void ChannelStripComponent::openBuiltinPluginEditor (std::uintptr_t parentHandle
     showDuskAlert (*topLevel, "Built-in unit",
                    why.empty() ? "The editor cannot open on this display backend."
                                : why.c_str());
+}
+
+void ChannelStripComponent::dropBuiltinPluginEditor()
+{
+    builtinPluginEditorRelease.reset();
+    if (builtinPluginEditor == nullptr) return;
+
+    const bool wasOpen = builtinPluginEditor->isOpen();
+    builtinPluginEditor->shutdown();
+    if (wasOpen)
+        finishBuiltinPluginEditorClose();
+}
+
+void ChannelStripComponent::finishBuiltinPluginEditorClose()
+{
+    builtinEditorDim.reset();
+    builtinEditorHider.restore();
+    if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+        target->grabKeyboardFocus();
 }
 #endif
 

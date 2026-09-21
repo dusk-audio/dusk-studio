@@ -4,6 +4,7 @@
 
 #include "../engine/AudioEngine.h"
 #include "../engine/audiofile/FileWriter.h"
+#include "../engine/builtin/BuiltinRegistry.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/audiofile/FileWriter.h"
 #include "../engine/audiofile/FileReader.h"
@@ -1505,6 +1506,149 @@ const ScenarioRegistrar builtinMidiLearn { Scenario {
     "gui.builtin_midi_learn", { "gui", "midi" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runBuiltinMidiLearn (host, ctx); }
+} };
+
+// ------------------------------------------- aux built-in editor lifetime
+
+// A unit that brings its own editor hands that editor the DSP instance, so the
+// editor has to be gone before the instance is. This drives the three ways an
+// aux slot loses the instance under an open editor - removed, replaced by the
+// same unit, replaced by a different one - and ends with the lane empty and
+// still drawing.
+std::optional<ScenarioResult> runAuxBuiltinEditorLifetime (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    static constexpr const char* kFirstUnit  = "dusk.builtin.delay";
+    static constexpr const char* kSecondUnit = "dusk.builtin.reverb";
+    static constexpr const char* kEmptySlot  = "Click to add an insert";
+
+    if (builtin::findUnit (kFirstUnit) == nullptr || builtin::findUnit (kSecondUnit) == nullptr)
+        return ScenarioResult::skip ("built without the units that bring their own editor");
+
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+
+    auto& strip = engine.getAuxLaneStrip (kAuxLane);
+    if (strip.isBuiltinLoaded (kAuxSlot) || strip.getPluginSlot (kAuxSlot).isLoaded()
+        || strip.nativeInsertRestoreFailed (kAuxSlot))
+        return ScenarioResult::skip ("requires an empty first aux insert");
+
+    keepStage (host, ctx);
+    ctx.keep (strip.insertMode[(std::size_t) kAuxSlot]);
+    auto& laneParams = ctx.session().auxLane (kAuxLane);
+    ctx.cleanup ([&host, &engine, &strip, &laneParams]
+    {
+        drainModals (host);
+        // Whatever the run left, taken off the slot itself rather than through
+        // the lane, so a case that ended early still leaves it empty.
+        engine.suspendProcessing();
+        strip.unloadBuiltin (kAuxSlot);
+        engine.resumeProcessing();
+        laneParams.builtinUnitId[(std::size_t) kAuxSlot].clear();
+        laneParams.builtinStateBase64[(std::size_t) kAuxSlot].clear();
+        if (auto* lane = host.auxLane (kAuxLane))
+        {
+            lane->refreshSlot (kAuxSlot);
+            lane->rebuildSlots();
+        }
+    });
+
+    host.switchToStage (GuiHost::Stage::Aux);
+    auto* lane = host.auxLane (kAuxLane);
+    if (lane == nullptr)
+        return ScenarioResult::skip ("the aux stage realised no lane to drive");
+
+    // Whether this display can carry the embedded editor at all. Decided by the
+    // first leg; the later legs only assert the editor is up when it is.
+    auto embeds = std::make_shared<bool> (false);
+    const auto editorFor = [lane] (const char* unitId)
+    { return lane->builtinEditorUnit (kAuxSlot) == unitId; };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+
+    steps->push_back ({ 200, [&ctx, lane]
+    {
+        ctx.expect (lane->loadBuiltin (kAuxSlot, kFirstUnit),
+                    "Tape Echo 2 did not load on the aux lane");
+    } });
+
+    // Replaced by the same unit: the successor can be handed the address the
+    // old instance was freed from, so the editor cannot be left bound to it.
+    steps->push_back ({ 1500, [&ctx, lane, embeds, editorFor]
+    {
+        *embeds = editorFor (kFirstUnit);
+        if (! *embeds)
+            ctx.note ("this display carried no embedded unit editor; the legs below "
+                      "still prove the editor goes before the unit does");
+        ctx.expect (lane->slotLabel (kAuxSlot) == "Tape Echo 2",
+                    "the loaded slot reads \"" + lane->slotLabel (kAuxSlot) + "\"");
+
+        // Read on the load's own stack: the old instance is freed inside this
+        // call, so the editor that dereferences it has to be gone by the time
+        // the call returns, not merely asked to close on a later pump.
+        ctx.expect (lane->loadBuiltin (kAuxSlot, kFirstUnit),
+                    "Tape Echo 2 did not replace itself on the aux lane");
+        ctx.expect (lane->builtinEditorUnit (kAuxSlot).empty(),
+                    "the editor was still up when its unit's DSP was replaced");
+    } });
+
+    // Replaced by a different unit, through the same seam a session restore and
+    // a clone replay reach the slot by.
+    steps->push_back ({ 1500, [&ctx, &strip, lane, embeds, editorFor]
+    {
+        ctx.expect (strip.isBuiltinLoaded (kAuxSlot),
+                    "the same-unit replacement left the slot empty");
+        ctx.expect (! *embeds || editorFor (kFirstUnit),
+                    "the replacement's editor never came back");
+
+        ctx.expect (lane->loadBuiltin (kAuxSlot, kSecondUnit),
+                    "DuskVerb 2 did not replace Tape Echo 2 on the aux lane");
+        ctx.expect (lane->builtinEditorUnit (kAuxSlot).empty(),
+                    "the editor was still up when a different unit took the slot");
+    } });
+
+    // Removed: the lane's own remove path, one message-loop tick later.
+    steps->push_back ({ 1500, [&ctx, lane, embeds, editorFor]
+    {
+        ctx.expect (! *embeds || editorFor (kSecondUnit),
+                    "the replacing unit's editor never came up");
+        ctx.expect (lane->slotLabel (kAuxSlot) == "DuskVerb 2",
+                    "the replaced slot reads \"" + lane->slotLabel (kAuxSlot) + "\"");
+        lane->unloadSlot (kAuxSlot);
+    } });
+
+    runSteps (ctx, steps, [&ctx, &strip, lane]
+    {
+        ctx.waitUntil ([&strip, lane]
+        {
+            return ! strip.isBuiltinLoaded (kAuxSlot)
+                && lane->builtinEditorUnit (kAuxSlot).empty();
+        }, 5000,
+        [&ctx, lane]
+        {
+            // The lane is still a live component after all of that: it lays its
+            // slot row out again and reports what the empty row now says.
+            lane->rebuildSlots();
+            lane->refreshSlot (kAuxSlot);
+            ctx.expect (lane->slotLabel (kAuxSlot) == kEmptySlot,
+                        "the lane's emptied slot reads \"" + lane->slotLabel (kAuxSlot) + "\"");
+            ctx.complete (ctx.verdict());
+        },
+        "the aux lane never let go of the unit or its editor");
+    });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar auxBuiltinEditorLifetime { Scenario {
+    "gui.aux_builtin_editor_lifetime", { "gui", "aux" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAuxBuiltinEditorLifetime (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runAudioAutomationGestures (GuiHost& host, ScenarioContext& ctx)
