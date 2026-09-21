@@ -26,11 +26,13 @@
 #include "PlatformWindowing.h"
 #include "NativeEditorEmbedScale.h"
 #include "TransportBar.h"
+#include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/SuiteRunner.h"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -57,6 +59,18 @@ using HostString = std::decay_t<decltype (std::declval<const Session&>()
 HostFile hostFile (const std::filesystem::path& path)
 {
     return HostFile (HostString::fromUTF8 (path.u8string().c_str()));
+}
+
+const char* stageName (AudioEngine::Stage stage)
+{
+    switch (stage)
+    {
+        case AudioEngine::Stage::Recording: return "Recording";
+        case AudioEngine::Stage::Mixing:    return "Mixing";
+        case AudioEngine::Stage::Aux:       return "Aux";
+        case AudioEngine::Stage::Mastering: return "Mastering";
+    }
+    return "unknown";
 }
 template <typename Owner, typename Key>
 bool dispatchKey (Owner& owner, bool (Owner::*handler) (const Key&),
@@ -383,6 +397,29 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                    "first launch contained an audio or MIDI region");
             check (! track.recordArmed.load(), "first launch armed a track");
             check (strip (index) != nullptr, "first launch omitted a channel strip");
+            launch.trackMode[(std::size_t) index] = track.mode.load();
+        }
+
+        launch.uiScale = uiScale();
+        launch.tapeExpanded = owner.tapeStripExpanded;
+        launch.sessionDir = scenario::currentSessionDirectory (owner.session);
+        launch.masterMute = owner.session.master().mute.load();
+        launch.masteringSource = owner.session.mastering().sourceFile.getFullPathName().toStdString();
+        if (owner.tapeStrip != nullptr)
+        {
+            launch.tapeChase = owner.tapeStrip->isChaseEnabled();
+            launch.tapeShowAll = owner.tapeStrip->showsAllTracksForScenario();
+            launch.tapeSelectedTrack = owner.tapeStrip->getSelectedTrack();
+        }
+        if (owner.consoleView != nullptr)
+        {
+            launch.consoleBank = owner.consoleView->getBank();
+            launch.consoleFocus = owner.consoleView->getFocusedStrip();
+        }
+        if (auto* peer = owner.getPeer())
+        {
+            const auto bounds = peer->getBounds();
+            launch.window = { bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight() };
         }
     }
 
@@ -513,10 +550,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         if (owner.tapeStrip == nullptr) return {};
         const auto v = owner.tapeStrip->viewForScenario();
-        return { v[0], v[1], v[2], owner.tapeStripExpanded ? 1.0 : 0.0, v[3] };
+        return { v[0], v[1], v[2], owner.tapeStripExpanded ? 1.0 : 0.0, v[3], v[4], v[5] };
     }
     void restoreTapeView (const std::vector<double>& view) override
-    { if (owner.tapeStrip != nullptr) owner.tapeStrip->restoreViewForScenario (view); }
+    {
+        if (owner.tapeStrip == nullptr || view.size() != 7) return;
+        // Through the header button so the strip and the lit toggle agree.
+        if (owner.hdrChaseBtn.getToggleState() != (view[6] > 0.5)) owner.hdrChaseBtn.triggerClick();
+        owner.tapeStrip->restoreViewForScenario (view);
+    }
     bool tapeWheel (float fraction, float delta, bool command, bool shift) override
     {
         auto* tape = owner.tapeStrip.get();
@@ -1453,11 +1495,203 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return owner.answerRecoveryPrompt ((int) choice);
     }
 
+    std::vector<std::string> launchStateDiff() const override
+    {
+        std::vector<std::string> lines;
+
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (! stack.empty())
+        {
+            auto line = std::to_string (stack.size())
+                      + (stack.size() == 1 ? " modal open" : " modals open");
+            const auto text = modalText();
+            const auto title = text.substr (0, text.find ('\n'));
+            if (! title.empty()) line += ": " + title;
+            lines.push_back (std::move (line));
+        }
+
+        if (! stageViewMatches (Stage::Recording))
+            lines.push_back (std::string ("stage is ") + stageName (owner.engine.getStage()));
+
+        if (owner.tapeStripExpanded != launch.tapeExpanded)
+            lines.push_back (owner.tapeStripExpanded ? "tape strip expanded" : "tape strip collapsed");
+
+        if (owner.tapeStrip != nullptr)
+        {
+            if (owner.tapeStrip->isChaseEnabled() != launch.tapeChase)
+                lines.push_back (owner.tapeStrip->isChaseEnabled() ? "tape chase on" : "tape chase off");
+            if (owner.tapeStrip->showsAllTracksForScenario() != launch.tapeShowAll)
+                lines.push_back (owner.tapeStrip->showsAllTracksForScenario() ? "tape shows every track"
+                                                                              : "tape hides empty tracks");
+            if (owner.tapeStrip->getSelectedTrack() != launch.tapeSelectedTrack)
+                lines.push_back ("tape selects track " + std::to_string (owner.tapeStrip->getSelectedTrack()));
+        }
+
+        const auto& transport = owner.engine.getTransport();
+        if (! transport.isStopped())
+            lines.push_back (transport.isRecording() ? "transport is recording" : "transport is playing");
+
+        for (int index = 0; index < Session::kNumTracks; ++index)
+        {
+            const auto& track = owner.session.track (index);
+            const auto who = "track " + std::to_string (index);
+            if (track.recordArmed.load()) lines.push_back (who + " armed");
+
+            const auto audio = track.regions.size();
+            const auto midi = track.midiRegions.current().size();
+            if (audio != 0 || midi != 0)
+                lines.push_back (who + " holds " + std::to_string (audio) + " audio and "
+                                 + std::to_string (midi) + " midi regions");
+
+            const int mode = track.mode.load();
+            if (mode != launch.trackMode[(std::size_t) index])
+                lines.push_back (who + " mode is " + std::to_string (mode)
+                                 + ", launched " + std::to_string (launch.trackMode[(std::size_t) index]));
+            if (track.midiInputIndex.load() >= 0)
+                lines.push_back (who + " selects MIDI input " + std::to_string (track.midiInputIndex.load()));
+
+            auto& channel = owner.engine.getChannelStrip (index);
+            if (channel.getPluginSlot().isLoaded()) lines.push_back (who + " has a hosted plug-in");
+            if (channel.isNativeClapLoaded() || channel.isNativeLv2Loaded() || channel.isNativeVst3Loaded())
+                lines.push_back (who + " has a native plug-in");
+        }
+
+        if (owner.consoleView != nullptr)
+        {
+            if (owner.consoleView->getBank() != launch.consoleBank)
+                lines.push_back ("console bank is " + std::to_string (owner.consoleView->getBank())
+                                 + ", launched " + std::to_string (launch.consoleBank));
+            if (owner.consoleView->getFocusedStrip() != launch.consoleFocus)
+                lines.push_back ("console focuses strip " + std::to_string (owner.consoleView->getFocusedStrip()));
+        }
+
+        if (pianoRollOpen())      lines.push_back ("piano roll open");
+        if (audioEditorOpen())    lines.push_back ("audio editor open");
+        if (audioSettingsOpen())  lines.push_back ("audio settings open");
+        if (virtualKeyboardOpen()) lines.push_back ("virtual keyboard open");
+        if (owner.session.master().mute.load() != launch.masterMute)
+            lines.push_back (owner.session.master().mute.load() ? "master muted" : "master unmuted");
+
+        const auto masteringSource = owner.session.mastering().sourceFile.getFullPathName().toStdString();
+        if (masteringSource != launch.masteringSource)
+            lines.push_back ("mastering source is "
+                             + (masteringSource.empty() ? std::string ("cleared") : masteringSource));
+
+        if (owner.engine.isProcessingSuspended()) lines.push_back ("engine processing suspended");
+
+        if (std::abs (uiScale() - launch.uiScale) > 0.0001)
+            lines.push_back ("ui scale is " + std::to_string (uiScale())
+                             + ", launched " + std::to_string (launch.uiScale));
+
+        if (auto* peer = owner.getPeer())
+        {
+            if (peer->isFullScreen()) lines.push_back ("window is full screen");
+            const auto bounds = peer->getBounds();
+            const std::array<int, 4> now { bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight() };
+            if (now != launch.window)
+                lines.push_back ("window is " + std::to_string (now[2]) + "x" + std::to_string (now[3])
+                                 + " at " + std::to_string (now[0]) + "," + std::to_string (now[1])
+                                 + ", launched " + std::to_string (launch.window[2]) + "x"
+                                 + std::to_string (launch.window[3]) + " at "
+                                 + std::to_string (launch.window[0]) + "," + std::to_string (launch.window[1]));
+        }
+
+        const auto sessionDir = scenario::currentSessionDirectory (owner.session);
+        if (sessionDir != launch.sessionDir)
+            lines.push_back ("session directory is " + sessionDir.string());
+
+        return lines;
+    }
+
+    void resetForScenario() override
+    {
+        auto& stack = EmbeddedModal::activeModalStack();
+        for (int guard = 0; guard < 32 && ! stack.empty(); ++guard)
+            stack.back()->close();
+
+        owner.closePianoRoll();
+        owner.closeAudioEditor();
+        owner.closeAudioSettings();
+        owner.closeVirtualKeyboard();
+        for (int track = 0; track < Session::kNumTracks; ++track)
+            if (auto* component = owner.consoleView != nullptr
+                                      ? owner.consoleView->getStripComponent (track) : nullptr)
+            {
+                component->closeModuleEditorsForScenario();
+                component->closeBuiltinForScenario();
+            }
+
+        owner.stopTransportForSessionSwitch();
+        for (int track = 0; track < Session::kNumTracks; ++track)
+            owner.session.setTrackArmed (track, false);
+
+        owner.restoreUiScaleForScenario ((float) launch.uiScale);
+        switchToStage (Stage::Recording);
+        owner.setTimelineVisible (launch.tapeExpanded);
+        if (owner.consoleView != nullptr)
+        {
+            owner.consoleView->setBank (launch.consoleBank);
+            owner.consoleView->restoreFocusForScenario (launch.consoleFocus);
+        }
+        // Through the header button so the strip and the lit toggle agree.
+        if (owner.hdrChaseBtn.getToggleState() != launch.tapeChase) owner.hdrChaseBtn.triggerClick();
+        if (owner.tapeStrip != nullptr)
+        {
+            owner.tapeStrip->setChaseEnabled (launch.tapeChase);
+            owner.tapeStrip->setShowAllTracksForScenario (launch.tapeShowAll);
+            owner.tapeStrip->setSelectedTrack (launch.tapeSelectedTrack);
+            owner.tapeStrip->clearSelectionsForScenario();
+        }
+
+        owner.engine.getUndoManager().clearUndoHistory();
+        owner.focusMainCanvas();
+        PianoRollComponent::clearClipboardForScenario();
+
+        if (scenario::currentSessionDirectory (owner.session) != launch.sessionDir)
+            scenario::applySessionDirectory (owner.session, launch.sessionDir);
+
+        // Leaving full screen can recreate the peer, so it is fetched again
+        // before the launch bounds go back.
+        if (auto* peer = owner.getPeer(); peer != nullptr && peer->isFullScreen())
+            owner.toggleFullScreen();
+        if (auto* peer = owner.getPeer())
+        {
+            auto bounds = peer->getBounds();
+            bounds.setBounds (launch.window[0], launch.window[1], launch.window[2], launch.window[3]);
+            if (peer->getBounds() != bounds) peer->setBounds (bounds, false);
+        }
+    }
+
+    // What the window held before the first scenario ran. Everything the suite
+    // runner puts back, and everything it measures drift against.
+    struct LaunchState
+    {
+        double uiScale = 1.0;
+        bool tapeExpanded = false;
+        bool tapeChase = false;
+        bool tapeShowAll = false;
+        bool masterMute = false;
+        int tapeSelectedTrack = -1;
+        int consoleBank = 0;
+        int consoleFocus = -1;
+        std::array<int, 4> window { 0, 0, 0, 0 };
+        std::array<int, Session::kNumTracks> trackMode {};
+        std::string masteringSource;
+        std::filesystem::path sessionDir;
+    };
+
     MainComponent& owner;
+    LaunchState launch;
     std::vector<std::string> startupErrors;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;
     std::array<std::unique_ptr<ScenarioAuxLaneHandle>, Session::kNumAuxLanes> lanes;
 };
+
+namespace scenario
+{
+std::vector<std::string> guiLaunchStateDiff (GuiHost& host) { return host.launchStateDiff(); }
+void guiResetForScenario (GuiHost& host) { host.resetForScenario(); }
+} // namespace scenario
 
 namespace
 {

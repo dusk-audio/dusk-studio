@@ -45,6 +45,8 @@ bool hasTag (const Scenario& scenario, const std::string& tag)
     return std::find (scenario.tags.begin(), scenario.tags.end(), tag) != scenario.tags.end();
 }
 
+constexpr const char* kLaunchSweep = "launch";
+
 std::string joinTags (const std::vector<std::string>& tags)
 {
     std::string joined;
@@ -102,8 +104,15 @@ void SuiteRunner::start()
     }
 
     if (guiHost == nullptr)
+    {
         world = std::make_unique<ScenarioWorld>();
-    runNext();
+        runNext();
+        return;
+    }
+
+    // The window is judged against launch state, so prove it is at launch state
+    // before anything has had a chance to move it.
+    sweepWindow (kLaunchSweep, [this] { runNext(); });
 }
 
 bool SuiteRunner::select()
@@ -261,6 +270,8 @@ void SuiteRunner::finishCurrent (ScenarioResult result)
     const auto elapsed = nowMs() - scenarioStartMs;
 
     report (scenario, result, elapsed);
+    passAwaitingSweep = result.status == ScenarioStatus::Pass;
+    auto name = scenario.name;
 
     // Off the completing scenario's stack: run() may have completed inline, and
     // recursing into the next scenario from inside it would grow the stack by
@@ -268,12 +279,61 @@ void SuiteRunner::finishCurrent (ScenarioResult result)
     ++generation;
     ++index;
     std::weak_ptr<char> guard = aliveToken;
-    dusk::callAsync ([this, guard]
+    dusk::callAsync ([this, guard, name = std::move (name)]
     {
         if (guard.expired()) return;
         context.reset();
         if (world != nullptr) world->reset();
-        runNext();
+        if (guiHost == nullptr)
+        {
+            runNext();
+            return;
+        }
+
+        // A cleanup that cleared the undo history left a change callback on the
+        // queue, and the views it wakes would otherwise land mid-sweep.
+        dusk::callAsync ([this, guard, name]
+        {
+            if (guard.expired()) return;
+            sweepWindow (name, [this] { runNext(); });
+        });
+    });
+}
+
+void SuiteRunner::sweepWindow (std::string attribution, std::function<void()> next)
+{
+    if (guiHost == nullptr)
+    {
+        next();
+        return;
+    }
+
+    const auto dirty = guiLaunchStateDiff (*guiHost);
+    for (const auto& line : dirty)
+        std::fprintf (stdout, "[DIRTY] %s: %s\n", attribution.c_str(), line.c_str());
+
+    // A scenario that already failed or skipped keeps its verdict - the dirt is
+    // a symptom of the same break, not a second one. A window that is dirty
+    // before anything ran has nothing to blame it on, and every later verdict
+    // would be measured against the wrong baseline, so that fails outright.
+    const bool launch = attribution == kLaunchSweep;
+    if (! dirty.empty() && (passAwaitingSweep || launch))
+    {
+        std::fprintf (stdout, "[FAIL] %s: left the window dirty: %s\n",
+                      attribution.c_str(), dirty.front().c_str());
+        if (! launch) --summary.pass;
+        ++summary.fail;
+    }
+    passAwaitingSweep = false;
+    std::fflush (stdout);
+
+    guiResetForScenario (*guiHost);
+
+    std::weak_ptr<char> guard = aliveToken;
+    dusk::callAsync ([guard, next = std::move (next)]
+    {
+        if (guard.expired()) return;
+        next();
     });
 }
 

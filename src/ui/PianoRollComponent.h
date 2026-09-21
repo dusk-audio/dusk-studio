@@ -102,6 +102,10 @@ public:
                    .withY (getHeight() - kStatusBarH - kScrollBarH - ccStripH).withHeight (ccStripH);
     }
     void toggleCcForScenario() { toggleCcButton.triggerClick(); }
+    // The note clipboard outlives every roll instance, so a scenario that
+    // copied notes hands them to the next one unless the suite runner empties
+    // it between cases.
+    static void clearClipboardForScenario() { sNoteClipboard.clear(); }
     static constexpr int kNumKeys           = 128;
     static constexpr int kFullGridHeight    = kNumKeys * kNoteHeight;
     // Strip heights are runtime-mutable (drag top edge / wheel zoom).

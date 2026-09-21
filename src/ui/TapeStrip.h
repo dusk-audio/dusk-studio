@@ -139,15 +139,35 @@ public:
     // zoom/scroll to the loaded content (a session saved while zoomed-in must not
     // open with its regions scrolled off-screen), and repaints unconditionally.
     void refreshAfterSessionLoad();
-    std::vector<double> viewForScenario() const { return { (double) userZoomFactor, (double) scrollSamples, (double) rowScrollY, (double) rowHeight }; }
+    std::vector<double> viewForScenario() const
+    {
+        return { (double) userZoomFactor, (double) scrollSamples, (double) rowScrollY, (double) rowHeight,
+                 showAllTracks ? 1.0 : 0.0, chaseEnabled ? 1.0 : 0.0 };
+    }
+    // Index 3 is the parent's tape-strip expansion and index 6 its Chase
+    // toggle; the host owns both, so both are restored there.
     void restoreViewForScenario (const std::vector<double>& view)
     {
-        if (view.size() != 5) return;
+        if (view.size() != 7) return;
         userZoomFactor = (float) view[0];
         scrollSamples = (std::int64_t) view[1];
         rowScrollY = (int) view[2];
         rowHeight = (int) view[4];
+        setShowAllTracksForScenario (view[5] > 0.5);
         repaint();
+    }
+    bool showsAllTracksForScenario() const noexcept { return showAllTracks; }
+    // Through the pill's own click so the member, the button's lit state and
+    // the row rebuild cannot drift apart. The click lands on a later tick.
+    void setShowAllTracksForScenario (bool showAll)
+    {
+        if (showAllTracks != showAll) showAllToggle.triggerClick();
+    }
+    void clearSelectionsForScenario()
+    {
+        clearAllSelections();
+        visibleTrackOrder.clear();
+        rebuildVisibleTrackOrder();
     }
     auto dropPointForScenario (int track) const { return rowBounds (track).getCentre(); }
     auto rulerPointForScenario (float fraction) const { return rulerBounds().getRelativePoint (fraction, 0.25f); }

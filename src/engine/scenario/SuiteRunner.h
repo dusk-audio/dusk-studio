@@ -22,6 +22,12 @@ class ScenarioWorld;
 // GUI framework, calls it with the suite's exit code.
 std::function<void (int exitCode)>& guiSuiteExit();
 
+// The between-scenario window contract. Both are one line over GuiHost, but
+// that interface lives in src/ui, which engine code does not include - so the
+// two calls the runner needs are declared here and defined beside the window.
+std::vector<std::string> guiLaunchStateDiff (GuiHost&);
+void guiResetForScenario (GuiHost&);
+
 // Drives a selection of scenarios to completion on the message thread, one at a
 // time, and reports an exit code through onFinished. Scenarios may finish inside
 // their run() or defer, so the chain advances from a callback rather than a loop.
@@ -63,6 +69,10 @@ private:
     void finishCurrent (ScenarioResult result);
     void skipCurrent (std::string reason);
     void report (const Scenario&, const ScenarioResult&, long long elapsedMs);
+    // GUI mode. Names whatever the window still carries, attributes it to
+    // `attribution`, puts the window back and hops a message turn before next().
+    // Headless runs it straight through to next().
+    void sweepWindow (std::string attribution, std::function<void()> next);
     void finishSuite();
 
     std::string selectorText;
@@ -78,6 +88,10 @@ private:
     unsigned generation = 0;
 
     Summary summary;
+
+    // The scenario whose window is about to be swept passed, so dirt it left
+    // behind turns that pass into a failure.
+    bool passAwaitingSweep = false;
 
     std::unique_ptr<ScenarioWorld> world;
     std::unique_ptr<ScenarioContext> context;

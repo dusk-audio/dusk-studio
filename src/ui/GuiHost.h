@@ -265,5 +265,17 @@ public:
     // Answers the recovery prompt; false when none is up.
     enum class Recovery { Recover, LoadSaved, Cancel };
     virtual bool answerRecovery (Recovery) = 0;
+
+    // Every way the window now differs from how it launched, one readable line
+    // each. Empty means clean. The suite runner reads this between scenarios,
+    // so a case that leaves the window changed is named by the run rather than
+    // breaking whichever case happens to follow it.
+    virtual std::vector<std::string> launchStateDiff() const = 0;
+
+    // Put the window back the way it launched: modals down, editors closed,
+    // transport stopped, stage / scale / timeline / console back to their
+    // launch values. What a scenario owns - its regions, its loaded plug-ins -
+    // is left alone; launchStateDiff() names those instead.
+    virtual void resetForScenario() = 0;
 };
 } // namespace duskstudio::scenario
