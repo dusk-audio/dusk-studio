@@ -2270,7 +2270,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // (right of the keyboard, above the velocity / cc strips) so middle-
     // clicking the toolbar / keyboard / strips still does nothing.
     const int gridTop    = kToolbarHeight + kHeaderHeight;
-    const int ccTop      = getHeight() - kStatusBarH - ccStripH;
+    const int ccTop      = getHeight() - kStatusBarH - kScrollBarH - ccStripH;
     const int velTopY    = ccTop - velocityStripH;
     if (e.mods.isMiddleButtonDown()
         && e.x >= kKeyboardWidth
@@ -2368,7 +2368,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // Bottom-strip layout: status bar at the very bottom, CC lane
     // above it, velocity lane above the CC lane. Compute the rects
     // inline so they match paint().
-    const int  ccBottom    = getHeight() - kStatusBarH;
+    const int  ccBottom    = getHeight() - kStatusBarH - kScrollBarH;
     const auto ccArea = juce::Rectangle<int> (
         kKeyboardWidth, ccBottom - ccStripH,
         getWidth() - kKeyboardWidth, ccStripH);
@@ -2589,8 +2589,8 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     n.startTick = jlimit<std::int64_t> (0,
         std::max ((std::int64_t) 0, r->lengthInTicks - 1),
         snapTick (rawStart, createSnap));
-    n.lengthInTicks = std::min ((std::int64_t) kMidiTicksPerQuarter,
-                                                  r->lengthInTicks - n.startTick);
+    const auto noteLength = createSnap > 0 ? createSnap : (std::int64_t) kMidiTicksPerQuarter;
+    n.lengthInTicks = std::min (noteLength, r->lengthInTicks - n.startTick);
     if (n.lengthInTicks <= 0) return;
     r->notes.push_back (n);
     const int newIdx = (int) r->notes.size() - 1;
@@ -2688,7 +2688,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
     {
         if (draggedCcIdx < 0 || draggedCcIdx >= (int) r->ccs.size()) return;
         const auto ccArea = juce::Rectangle<int> (
-            kKeyboardWidth, getHeight() - kStatusBarH - ccStripH,
+            kKeyboardWidth, getHeight() - kStatusBarH - kScrollBarH - ccStripH,
             getWidth() - kKeyboardWidth, ccStripH);
         const float frac = jlimit (0.0f, 1.0f,
             1.0f - ((float) (e.y - ccArea.getY())
@@ -2712,7 +2712,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         if (dragMode == DragMode::ResizeVelocityStrip)
         {
             const int maxAllowed = std::max (kVelocityStripHMin,
-                getHeight() - topBandH - ccStripH - kStatusBarH - kMinGridH);
+                getHeight() - topBandH - ccStripH - kStatusBarH - kScrollBarH - kMinGridH);
             velocityStripH = jlimit (kVelocityStripHMin,
                 std::min (kVelocityStripHMax, maxAllowed),
                 resizeStartStripH + delta);
@@ -2720,7 +2720,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         else
         {
             const int maxAllowed = std::max (kCcStripHMin,
-                getHeight() - topBandH - velocityStripH - kStatusBarH - kMinGridH);
+                getHeight() - topBandH - velocityStripH - kStatusBarH - kScrollBarH - kMinGridH);
             ccStripH = jlimit (kCcStripHMin,
                 std::min (kCcStripHMax, maxAllowed),
                 resizeStartStripH + delta);
@@ -2753,7 +2753,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
     else if (dragMode == DragMode::EditVelocity)
     {
         const auto velocityArea = juce::Rectangle<int> (
-            kKeyboardWidth, getHeight() - kStatusBarH - ccStripH - velocityStripH,
+            kKeyboardWidth, getHeight() - kStatusBarH - kScrollBarH - ccStripH - velocityStripH,
             getWidth() - kKeyboardWidth, velocityStripH);
         const float frac = jlimit (0.0f, 1.0f,
             1.0f - ((float) (e.y - velocityArea.getY())
@@ -2836,7 +2836,7 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
 
     // Resize-handle hover feedback for the velocity / cc lane top edges.
     // The handle is the kStripResizeGrabPx-tall strip above each lane.
-    const int ccTop  = getHeight() - kStatusBarH - ccStripH;
+    const int ccTop  = getHeight() - kStatusBarH - kScrollBarH - ccStripH;
     const int velTop = ccTop - velocityStripH;
     if (e.x >= kKeyboardWidth)
     {
@@ -3293,7 +3293,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     // most-used continuous controllers; uncommon ones can still be
     // captured via Record (the region's ccs vector holds them all) and
     // viewed by extending this rotation later.
-    if (k.getKeyCode() == 'L')
+    if (! cmdOrCtrl && (k.getKeyCode() == 'L' || k.getKeyCode() == 'l'))
     {
         activeCcController =
             activeCcController == 1   ?  7 :
@@ -3388,7 +3388,7 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
     // Wheel inside the velocity / cc strip = zoom that strip vertically.
     // Wheel-up grows, wheel-down shrinks. Same min/max envelope as the
     // drag-resize gesture so both gestures land in the same valid range.
-    const int ccTop  = getHeight() - kStatusBarH - ccStripH;
+    const int ccTop  = getHeight() - kStatusBarH - kScrollBarH - ccStripH;
     const int velTop = ccTop - velocityStripH;
     if (e.x >= kKeyboardWidth)
     {
@@ -3399,7 +3399,7 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
         if (e.y >= velTop && e.y < ccTop)
         {
             const int maxAllowed = std::max (kVelocityStripHMin,
-                getHeight() - topBandH - ccStripH - kStatusBarH - kMinGridH);
+                getHeight() - topBandH - ccStripH - kStatusBarH - kScrollBarH - kMinGridH);
             velocityStripH = jlimit (kVelocityStripHMin,
                 std::min (kVelocityStripHMax, maxAllowed),
                 velocityStripH + delta);
@@ -3409,7 +3409,7 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
         if (e.y >= ccTop && e.y < ccTop + ccStripH)
         {
             const int maxAllowed = std::max (kCcStripHMin,
-                getHeight() - topBandH - velocityStripH - kStatusBarH - kMinGridH);
+                getHeight() - topBandH - velocityStripH - kStatusBarH - kScrollBarH - kMinGridH);
             ccStripH = jlimit (kCcStripHMin,
                 std::min (kCcStripHMax, maxAllowed),
                 ccStripH + delta);

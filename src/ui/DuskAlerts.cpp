@@ -66,6 +66,8 @@ public:
     AlertPanel (juce::String title, juce::String message)
         : titleStr (std::move (title)), messageStr (std::move (message))
     {
+        setTitle (titleStr);
+        setDescription (messageStr);
         setOpaque (true);
         styleAction (okBtn);
         okBtn.onClick = [this] { if (onOK) onOK(); };

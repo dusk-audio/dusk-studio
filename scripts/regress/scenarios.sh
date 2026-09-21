@@ -28,6 +28,7 @@ MINIMAL_SESSION="${SCENARIOS_DIR}/sessions/minimal/session.json"
 # The leg rows this file registers, in order. linux.sh reuses the list for its
 # missing-binary skips so the two cannot drift apart.
 SCENARIO_BB_LEG_NAMES=(
+    bb-no-display
     bb-handoff
     bb-crash-relaunch
     bb-no-runtime-dir
@@ -328,6 +329,31 @@ scenarios_has_startup_markers() { scenarios_binary_has "Dusk Studio/startup"; }
 scenarios_has_case() { scenarios_list | grep -q -F -- "$1"; }
 
 # ------------------------------------------------------------- the legs
+
+leg_bb_no_display() {
+    bb_begin bb-no-display 60 || return 1
+    local rc=0
+    bb_no_display_body || rc=$?
+    bb_end "$rc"
+}
+
+bb_no_display_body() {
+    local tag display rc
+    for tag in unset unreachable; do
+        display=""
+        [[ "$tag" != unreachable ]] || display=":65535"
+        bb_spawn "$tag" "DISPLAY=$display" "DUSKSTUDIO_NATIVE_WAYLAND=" -- || return 1
+        rc=0
+        bb_wait_exit "$tag" 20 || rc=$?
+        [[ "$rc" -eq 1 ]] || { bb_fail "$tag returned $rc instead of rejecting startup with status 1"; return 1; }
+        bb_assert_marker "$tag" "Dusk Studio needs an X11 display and could not open one." || return 1
+        if [[ "$tag" == unset ]]; then
+            bb_assert_marker "$tag" "No display was found (DISPLAY is unset)." || return 1
+        else
+            bb_assert_marker "$tag" "DISPLAY is set (:65535) but connecting to it failed" || return 1
+        fi
+    done
+}
 
 leg_bb_handoff() {
     bb_begin bb-handoff 240 || return 1
@@ -637,6 +663,13 @@ regress_scenarios_run() {
         esac
     done
 
+    trap 'bb_end 0 >/dev/null 2>&1 || true; xvfb_session_stop || true' EXIT
+    if [[ "$(uname -s)" == Linux ]]; then
+        regress_leg "bb-no-display" leg_bb_no_display
+    else
+        regress_skip "bb-no-display" "Linux X11 startup diagnostic"
+    fi
+
     # Both probes below spin up their own short-lived display, so they have to
     # run before the shared session the bb-* legs share.
     scenarios_list >/dev/null
@@ -647,10 +680,10 @@ regress_scenarios_run() {
         regress_skip "scenarios-headless" "needs DUSKSTUDIO_RUN_SCENARIOS"
     fi
 
-    trap 'bb_end 0 >/dev/null 2>&1 || true; xvfb_session_stop || true' EXIT
     if ! xvfb_session_start; then
         local leg
         for leg in "${SCENARIO_BB_LEG_NAMES[@]}"; do
+            [[ "$leg" == bb-no-display ]] && continue
             regress_skip "$leg" "no Xvfb display"
         done
         if ((want_gui)); then
@@ -709,7 +742,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     # shellcheck source=scripts/regress/xvfb.sh
     source "${SCENARIOS_DIR}/xvfb.sh"
 
-    regress_require Xvfb timeout pgrep
+    regress_require timeout pgrep
 
     scenarios_app_bin=""
     scenarios_gui=()

@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
+#include <vector>
 
 // What a GUI scenario is allowed to touch. Everything a case would otherwise
 // reach through the component tree, expressed in std types so the cases stay
@@ -46,6 +49,17 @@ public:
     // Click MUTE / SOLO as the mouse would; the click lands on a later tick.
     virtual void clickMute() = 0;
     virtual void clickSolo() = 0;
+    virtual bool clickArm() = 0;
+    virtual bool armLit() const = 0;
+    virtual bool midiActivityVisible() const = 0;
+    virtual bool midiActivityLit() const = 0;
+    virtual bool inputSettingsOpen() const = 0;
+    virtual bool openInputSettings (int mode) = 0;
+    virtual void loadBuiltin (const std::string& id) = 0;
+    virtual void clickMonitor() = 0;
+    virtual void clickAutomationMode() = 0;
+    virtual void restoreTrackMode (int mode) = 0;
+    virtual bool instrumentControlsMatch (int input, bool monitor) const = 0;
 };
 
 // One aux lane's plug-in slots.
@@ -69,11 +83,25 @@ class GuiHost
 public:
     virtual ~GuiHost() = default;
 
-    // The strip and aux components only exist while their stage is up.
-    enum class Stage { Mixing, Aux };
+    virtual const std::vector<std::string>& firstLaunchErrors() const = 0;
+
+    enum class Stage { Recording, Mixing, Aux, Mastering };
     virtual void switchToStage (Stage) = 0;
+    virtual bool clickStage (Stage) = 0;
+    virtual bool stageViewMatches (Stage) const = 0;
+    virtual bool stripStageControlsMatch (int index, bool mixing) const = 0;
+    virtual bool pressKey (const std::string& description, char text = 0) = 0;
+    virtual std::function<void()> preserveKeyboardFocus() = 0;
+    virtual int consolePageCount() const = 0;
+    virtual bool consolePageMatches (int index) const = 0;
+    virtual bool timelineViewMatches (bool expanded) const = 0;
+    virtual bool stripCompact (int index) const = 0;
 
     virtual bool clickTimeFormat() = 0;
+    virtual bool clickRecord() = 0;
+    virtual bool doubleClickTempo() = 0;
+    virtual bool rightClickPunch() = 0;
+    virtual bool focusModalTextInput() = 0;
     virtual std::string clockText() const = 0;
 
     // Null when the index is out of range, or the stage that realises the
@@ -90,6 +118,45 @@ public:
 
     virtual bool canEmbedPluginEditors() const = 0;
     virtual bool modalStackEmpty() const = 0;
+    virtual std::string modalText() const = 0;
+    virtual bool clickModalButton (const std::string& label) = 0;
+    virtual bool clickModalAt (float xFraction, float yFraction) = 0;
+    virtual void openAbout() = 0;
+    virtual bool shortcutsOpen() const = 0;
+    virtual void startMixdown() = 0;
+    virtual bool fullScreen() const = 0;
+    virtual bool pressPeerKey (const std::string& description, char text = 0) = 0;
+    virtual int activeAuxLane() const = 0;
+    virtual bool clickAuxSelector (int index) = 0;
+    virtual bool auxLaneLayoutMatches (int index) const = 0;
+    virtual bool accessibleControl (const std::string& title, std::string& value, std::string& help) = 0;
+    virtual bool setAccessibleValue (const std::string& title, const std::string& value) = 0;
+    virtual bool loadMasteringFile (const std::filesystem::path& path) = 0;
+    virtual bool clickMasteringButton (const std::string& label) = 0;
+    virtual bool clickMasteringWaveform (float fraction) = 0;
+    virtual void openPianoRoll (int track, int region) = 0;
+    virtual bool doubleClickMidiRegion (int track, int region) = 0;
+    virtual int pianoRollRegion() const = 0;
+    virtual bool pianoRollOpen() const = 0;
+    virtual bool clickPianoGrid (std::int64_t tick, int pitch) = 0;
+    virtual bool dragPianoVelocity (std::int64_t tick, float fraction) = 0;
+    virtual bool resizePianoVelocity (int pixels) = 0;
+    virtual bool wheelPianoVelocity (float delta) = 0;
+    virtual int pianoVelocityHeight() const = 0;
+    virtual bool togglePianoCc() = 0;
+    virtual bool dragPianoCc (std::int64_t tick, float fraction) = 0;
+    virtual bool resizePianoCc (int pixels) = 0;
+    virtual int pianoCcHeight() const = 0;
+    virtual void closePianoRoll() = 0;
+    virtual bool pressPianoRollKey (const std::string& description) = 0;
+    virtual bool doubleClickAudioRegion (int track, int region) = 0;
+    virtual bool clickAudioRegion (int track, int region) = 0;
+    virtual bool audioEditorOpen() const = 0;
+    virtual int audioEditorRegion() const = 0;
+    virtual bool clickAudioEditorWaveform() = 0;
+    virtual void closeAudioEditor() = 0;
+    virtual bool pressAudioEditorKey (const std::string& description) = 0;
+    virtual bool clickOutsideAudioEditor() = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.
     virtual void closeTopModal() = 0;
 

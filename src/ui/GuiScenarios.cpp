@@ -1,6 +1,8 @@
 #include "MainComponent.h"
 
 #include "AuxLaneComponent.h"
+#include "AudioRegionEditor.h"
+#include "DimOverlay.h"
 #include "AuxView.h"
 #include "BusComponent.h"
 #include "ChannelStripComponent.h"
@@ -8,11 +10,16 @@
 #include "EmbeddedModal.h"
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
+#include "MasteringView.h"
+#include "PianoRollComponent.h"
 #include "PlatformWindowing.h"
 #include "TransportBar.h"
+#include "TapeStrip.h"
 #include "../engine/scenario/SuiteRunner.h"
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -38,6 +45,32 @@ using HostString = std::decay_t<decltype (std::declval<const Session&>()
 HostFile hostFile (const std::filesystem::path& path)
 {
     return HostFile (HostString::fromUTF8 (path.u8string().c_str()));
+}
+
+template <typename Owner, typename Key>
+bool dispatchKey (Owner& owner, bool (Owner::*handler) (const Key&),
+                  const std::string& description, char text)
+{
+    const auto key = Key::createFromDescription (HostString (description.c_str()));
+    return (owner.*handler) (Key (key.getKeyCode(), key.getModifiers(), text));
+}
+
+template <typename Peer, typename Source, typename Point, typename Modifiers, typename... Rest>
+void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modifiers, Rest...),
+                          float x, float y, bool down, std::int64_t time, bool right = false)
+{
+    const int flags = down ? (right ? Modifiers::rightButtonModifier : Modifiers::leftButtonModifier) : 0;
+    (peer.*handler) (Source::mouse, Point (x, y) * peer.getComponent().getDesktopScaleFactor(), Modifiers (flags),
+                    1.0f, 0.0f, time, {}, 0);
+}
+
+template <typename Peer, typename Source, typename Point, typename Time, typename Wheel>
+void dispatchWheel (Peer& peer, void (Peer::*handler) (Source, Point, Time, const Wheel&, int),
+                    float x, float y, std::int64_t time, float delta)
+{
+    Wheel wheel {};
+    wheel.deltaY = delta;
+    (peer.*handler) (Source::mouse, Point (x, y) * peer.getComponent().getDesktopScaleFactor(), time, wheel, 0);
 }
 } // namespace
 
@@ -160,6 +193,64 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         if (auto* component = strip()) component->clickSoloForScenario();
     }
 
+    bool clickArm() override
+    {
+        auto* component = strip();
+        return component != nullptr && component->clickArmForScenario();
+    }
+
+    bool armLit() const override
+    {
+        auto* component = strip();
+        return component != nullptr && component->armLitForScenario();
+    }
+
+    bool inputSettingsOpen() const override
+    {
+        auto* component = strip();
+        return component != nullptr && component->inputSettingsOpenForScenario();
+    }
+
+    bool openInputSettings (int mode) override
+    {
+        auto* component = strip();
+        return component != nullptr && component->openIoConfigPopupForCapture (mode) != nullptr;
+    }
+
+    void loadBuiltin (const std::string& id) override
+    {
+        if (auto* component = strip()) component->loadBuiltinForScenario (id);
+    }
+
+    bool midiActivityVisible() const override
+    { auto* component = strip(); return component != nullptr && component->midiActivityVisibleForScenario(); }
+    bool midiActivityLit() const override
+    { auto* component = strip(); return component != nullptr && component->midiActivityLitForScenario(); }
+
+    void clickMonitor() override
+    {
+        if (auto* component = strip()) component->clickMonitorForScenario();
+    }
+    void clickAutomationMode() override
+    {
+        if (auto* component = strip()) component->clickAutoModeForScenario();
+    }
+
+    void restoreTrackMode (int mode) override
+    {
+        if (auto* component = strip())
+        {
+            component->openIoConfigPopupForCapture (mode);
+            component->closeIoConfigPopupForCapture();
+        }
+    }
+
+    bool instrumentControlsMatch (int input, bool monitor) const override
+    {
+        auto* component = strip();
+        return component != nullptr && component->instrumentControlsMatchForScenario (input, monitor);
+    }
+
     ChannelStripComponent* strip() const
     {
         return owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index)
@@ -219,11 +310,79 @@ struct MainComponent::ScenarioAuxLaneHandle final : scenario::AuxLaneHandle
 
 struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 {
-    explicit ScenarioGuiHost (MainComponent& ownerIn) : owner (ownerIn) {}
+    explicit ScenarioGuiHost (MainComponent& ownerIn) : owner (ownerIn)
+    {
+        const auto check = [this] (bool passed, const char* error)
+        {
+            if (! passed) startupErrors.emplace_back (error);
+        };
+        check (owner.session.getSessionDirectory().getFileName().toStdString() == "Untitled",
+               "first launch did not create an Untitled session");
+        check (timelineViewMatches (false), "the first-launch tape strip was not collapsed");
+        check (stageViewMatches (Stage::Recording), "first launch did not show Recording");
+        check (owner.engine.getTransport().isStopped(), "first launch started the transport");
+        for (int index = 0; index < Session::kNumTracks; ++index)
+        {
+            const auto& track = owner.session.track (index);
+            check (track.regions.empty() && track.midiRegions.current().empty(),
+                   "first launch contained an audio or MIDI region");
+            check (! track.recordArmed.load(), "first launch armed a track");
+            check (strip (index) != nullptr, "first launch omitted a channel strip");
+        }
+    }
+
+    const std::vector<std::string>& firstLaunchErrors() const override { return startupErrors; }
+
+    bool pressKey (const std::string& description, char text) override
+    {
+        return dispatchKey (owner, &MainComponent::keyPressed, description, text);
+    }
+
+    std::function<void()> preserveKeyboardFocus() override
+    {
+        const int focus = owner.consoleView->getFocusedStrip();
+        const int page = owner.consoleView->getBank();
+        const int selection = owner.tapeStrip->getSelectedTrack();
+        return [this, focus, page, selection]
+        {
+            owner.consoleView->restoreFocusForScenario (focus);
+            owner.consoleView->setBank (page);
+            owner.tapeStrip->setSelectedTrack (selection);
+        };
+    }
 
     bool clickTimeFormat() override
     {
         return owner.transportBar != nullptr && owner.transportBar->clickTimeFormatForScenario();
+    }
+    bool clickRecord() override
+    { return owner.transportBar != nullptr && owner.transportBar->clickRecordForScenario(); }
+
+    int consolePageCount() const override { return owner.consoleView->numBanks(); }
+    bool consolePageMatches (int index) const override
+    {
+        auto* view = owner.consoleView.get();
+        if (view == nullptr || ! view->isShowing() || view->getBank() != index) return false;
+        const auto range = view->rangeForBank (index);
+        for (int track = 0; track < Session::kNumTracks; ++track)
+        {
+            auto* strip = view->getStripComponent (track);
+            if (strip == nullptr || strip->isShowing() != (track + 1 >= range.first && track + 1 <= range.second))
+                return false;
+        }
+        return true;
+    }
+
+    bool timelineViewMatches (bool expanded) const override
+    {
+        return owner.tapeStrip != nullptr && owner.tapeStripExpanded == expanded
+            && owner.tapeStrip->isShowing() == expanded;
+    }
+
+    bool stripCompact (int index) const override
+    {
+        auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index) : nullptr;
+        return strip != nullptr && strip->isCompactMode();
     }
 
     std::string clockText() const override
@@ -233,8 +392,59 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     void switchToStage (Stage stage) override
     {
-        owner.switchToStage (stage == Stage::Aux ? AudioEngine::Stage::Aux
-                                                 : AudioEngine::Stage::Mixing);
+        switch (stage)
+        {
+            case Stage::Recording: owner.switchToStage (AudioEngine::Stage::Recording); break;
+            case Stage::Mixing: owner.switchToStage (AudioEngine::Stage::Mixing); break;
+            case Stage::Aux: owner.switchToStage (AudioEngine::Stage::Aux); break;
+            case Stage::Mastering: owner.switchToStage (AudioEngine::Stage::Mastering); break;
+        }
+    }
+
+    bool clickStage (Stage stage) override
+    {
+        auto* button = &owner.recordingStageBtn;
+        switch (stage)
+        {
+            case Stage::Recording: break;
+            case Stage::Mixing: button = &owner.mixingStageBtn; break;
+            case Stage::Aux: button = &owner.auxStageBtn; break;
+            case Stage::Mastering: button = &owner.masteringStageBtn; break;
+        }
+        if (! button->isShowing()) return false;
+        button->triggerClick();
+        return true;
+    }
+
+    bool stageViewMatches (Stage stage) const override
+    {
+        const auto showing = [] (const auto& component)
+        { return component != nullptr && component->isShowing(); };
+        const bool console = stage == Stage::Recording || stage == Stage::Mixing;
+        return showing (owner.consoleView) == console
+            && showing (owner.transportBar) == console
+            && showing (owner.auxView) == (stage == Stage::Aux)
+            && showing (owner.masteringView) == (stage == Stage::Mastering)
+            && owner.recordingStageBtn.getToggleState() == (stage == Stage::Recording)
+            && owner.mixingStageBtn.getToggleState() == (stage == Stage::Mixing)
+            && owner.auxStageBtn.getToggleState() == (stage == Stage::Aux)
+            && owner.masteringStageBtn.getToggleState() == (stage == Stage::Mastering);
+    }
+
+    bool stripStageControlsMatch (int index, bool mixing) const override
+    {
+        auto* console = owner.consoleView.get();
+        if (console == nullptr || index < 0 || index >= Session::kNumTracks) return false;
+        const int page = console->getBank();
+        const int activeBank = owner.session.activeBank.load();
+        const int surfaceBank = owner.session.mcu.bank.load();
+        console->setBank (index / std::max (1, console->bankStride()));
+        const auto* component = console->getStripComponent (index);
+        const bool matches = component != nullptr && component->stageControlsMatchForScenario (mixing);
+        console->setBank (page);
+        owner.session.activeBank.store (activeBank);
+        owner.session.mcu.bank.store (surfaceBank);
+        return matches;
     }
 
     scenario::StripHandle* strip (int index) override
@@ -292,13 +502,355 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return EmbeddedModal::activeModalStack().empty();
     }
 
+    std::string modalText() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* body = stack.back()->getBody();
+        return body == nullptr ? std::string {}
+                               : body->getTitle().toStdString() + "\n" + body->getDescription().toStdString();
+    }
+
+    bool clickModalButton (const std::string& label) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        for (auto* child : stack.back()->getBody()->getChildren())
+            if (auto* button = dynamic_cast<decltype (owner.recordingStageBtn)*> (child);
+                button != nullptr && button->isShowing() && button->isEnabled()
+                && button->getButtonText().toStdString() == label)
+            {
+                button->triggerClick();
+                return true;
+            }
+        return false;
+    }
+
     void closeTopModal() override
     {
         auto& stack = EmbeddedModal::activeModalStack();
         if (! stack.empty()) stack.back()->close();
     }
 
+    bool clickModalAt (float xFraction, float yFraction) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        auto* body = stack.back()->getBody();
+        const auto local = body->getLocalBounds().getRelativePoint (xFraction, yFraction);
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (body, local).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+
     void autosaveTick() override { owner.writeAutosave(); }
+    bool doubleClickTempo() override
+    {
+        auto* bar = owner.transportBar.get();
+        if (bar == nullptr || ! bar->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (bar, bar->bpmPointForScenario()).toFloat();
+        return clickAt (point.x, point.y, 2);
+    }
+
+    bool rightClickPunch() override
+    {
+        auto* bar = owner.transportBar.get();
+        if (bar == nullptr || ! bar->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (bar, bar->punchPointForScenario()).toFloat();
+        return clickAt (point.x, point.y, 1, true);
+    }
+
+    bool focusModalTextInput() override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        for (auto* child : stack.back()->getBody()->getChildren())
+            if (auto* handler = child->getAccessibilityHandler(); handler != nullptr && child->isShowing()
+                && handler->getRole() == decltype (handler->getRole())::editableText)
+            {
+                const auto point = owner.getTopLevelComponent()->getLocalPoint (child, child->getLocalBounds().getCentre()).toFloat();
+                return clickAt (point.x, point.y, 1);
+            }
+        return false;
+    }
+    void openAbout() override { owner.menuItemSelected (2002, 2); }
+    bool shortcutsOpen() const override { return owner.shortcutsModal.isOpen(); }
+    void startMixdown() override { owner.menuItemSelected (1010, 0); }
+
+    bool fullScreen() const override
+    { return owner.getPeer() != nullptr && owner.getPeer()->isFullScreen(); }
+
+    bool pressPeerKey (const std::string& description, char text) override
+    {
+        auto* peer = owner.getPeer();
+        if (peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        return dispatchKey (*peer, &Peer::handleKeyPress, description, text);
+    }
+
+    using Component = std::remove_pointer_t<decltype (std::declval<MainComponent&>().getChildComponent (0))>;
+    Component* findTitledControl (Component& root, const std::string& title)
+    {
+        if (root.getTitle().toStdString() == title) return &root;
+        for (auto* child : root.getChildren())
+            if (auto* found = findTitledControl (*child, title)) return found;
+        return nullptr;
+    }
+
+    bool accessibleControl (const std::string& title, std::string& value, std::string& help) override
+    {
+        auto* control = findTitledControl (owner, title);
+        auto* handler = control != nullptr ? control->getAccessibilityHandler() : nullptr;
+        if (handler == nullptr || handler->getTitle().toStdString() != title) return false;
+        help = handler->getHelp().toStdString();
+        auto* interface = handler->getValueInterface();
+        value = interface != nullptr ? interface->getCurrentValueAsString().toStdString() : std::string {};
+        return true;
+    }
+
+    bool setAccessibleValue (const std::string& title, const std::string& value) override
+    {
+        auto* control = findTitledControl (owner, title);
+        auto* handler = control != nullptr ? control->getAccessibilityHandler() : nullptr;
+        auto* interface = handler != nullptr ? handler->getValueInterface() : nullptr;
+        if (interface == nullptr || interface->isReadOnly()) return false;
+        interface->setValueAsString (HostString (value.c_str()));
+        return true;
+    }
+
+    int activeAuxLane() const override
+    { return owner.auxView != nullptr ? owner.auxView->getActiveLane() : -1; }
+
+    bool clickAuxSelector (int index) override
+    {
+        auto* button = owner.auxView != nullptr ? owner.auxView->selectorForScenario (index) : nullptr;
+        if (button == nullptr || ! button->isShowing() || ! button->isEnabled()) return false;
+        button->triggerClick();
+        return true;
+    }
+
+    bool auxLaneLayoutMatches (int index) const override
+    {
+        auto* view = owner.auxView.get();
+        if (view == nullptr || ! view->isShowing() || view->getActiveLane() != index) return false;
+        for (int lane = 0; lane < Session::kNumAuxLanes; ++lane)
+        {
+            auto* body = view->getLaneComponent (lane);
+            auto* button = view->selectorForScenario (lane);
+            if (body == nullptr || button == nullptr || ! button->isShowing()
+                || body->isShowing() != (lane == index) || button->getToggleState() != (lane == index)) return false;
+            if (lane == index && (body->getWidth() < view->getWidth() - 24
+                                  || body->getHeight() <= 0 || body->getY() < button->getBottom())) return false;
+        }
+        return true;
+    }
+
+    bool clickAt (float x, float y, int count, bool right = false)
+    {
+        auto* peer = owner.getPeer();
+        if (peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        for (int click = 0; click < count; ++click)
+        {
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, true, time + click * 40, right);
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, false, time + click * 40 + 20, right);
+        }
+        return true;
+    }
+
+    bool clickAudioRegion (int track, int region) override
+    {
+        if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;
+        const auto bounds = owner.tapeStrip->audioRegionScreenRect (track, region);
+        if (bounds.isEmpty()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+
+    bool dragAt (float startX, float startY, float endX, float endY)
+    {
+        auto* peer = owner.getPeer();
+        if (peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        dispatchMouseButton (*peer, &Peer::handleMouseEvent, startX, startY, true, time);
+        dispatchMouseButton (*peer, &Peer::handleMouseEvent, endX, endY, true, time + 40);
+        dispatchMouseButton (*peer, &Peer::handleMouseEvent, endX, endY, false, time + 80);
+        return true;
+    }
+
+    int pianoVelocityHeight() const override
+    {
+        return owner.pianoRoll != nullptr ? owner.pianoRoll->velocityBoundsForScenario().getHeight() : 0;
+    }
+
+    bool dragPianoVelocity (std::int64_t tick, float fraction) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        if (piano == nullptr || ! piano->isShowing()) return false;
+        const auto bounds = piano->velocityBoundsForScenario();
+        const auto local = piano->notePointForScenario (tick, 60).withY (bounds.getCentreY());
+        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano, local).toFloat();
+        const auto end = owner.getTopLevelComponent()->getLocalPoint (piano,
+            local.withY (bounds.getBottom() - static_cast<int> (fraction * static_cast<float> (bounds.getHeight())))).toFloat();
+        return dragAt (start.x, start.y, end.x, end.y);
+    }
+
+    bool resizePianoVelocity (int pixels) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        if (piano == nullptr || ! piano->isShowing()) return false;
+        const auto bounds = piano->velocityBoundsForScenario();
+        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano,
+            bounds.getTopLeft().translated (20, -2)).toFloat();
+        return dragAt (start.x, start.y, start.x, start.y - static_cast<float> (pixels));
+    }
+
+    bool togglePianoCc() override
+    {
+        if (owner.pianoRoll == nullptr) return false;
+        owner.pianoRoll->toggleCcForScenario();
+        return true;
+    }
+
+    int pianoCcHeight() const override
+    {
+        return owner.pianoRoll != nullptr ? owner.pianoRoll->ccBoundsForScenario().getHeight() : 0;
+    }
+
+    bool dragPianoCc (std::int64_t tick, float fraction) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        if (piano == nullptr || ! piano->isShowing()) return false;
+        const auto bounds = piano->ccBoundsForScenario();
+        if (bounds.isEmpty()) return false;
+        const auto local = piano->notePointForScenario (tick, 60).withY (bounds.getCentreY());
+        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano, local).toFloat();
+        const auto end = owner.getTopLevelComponent()->getLocalPoint (piano,
+            local.withY (bounds.getBottom() - static_cast<int> (fraction * static_cast<float> (bounds.getHeight())))).toFloat();
+        return dragAt (start.x, start.y, end.x, end.y);
+    }
+
+    bool resizePianoCc (int pixels) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        if (piano == nullptr || ! piano->isShowing()) return false;
+        const auto bounds = piano->ccBoundsForScenario();
+        if (bounds.isEmpty()) return false;
+        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano,
+            bounds.getTopLeft().translated (20, -2)).toFloat();
+        return dragAt (start.x, start.y, start.x, start.y - static_cast<float> (pixels));
+    }
+
+    bool wheelPianoVelocity (float delta) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        auto* peer = owner.getPeer();
+        if (piano == nullptr || ! piano->isShowing() || peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (piano,
+            piano->velocityBoundsForScenario().getCentre()).toFloat();
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        dispatchWheel (*peer, &Peer::handleMouseWheel, point.x, point.y, time, delta);
+        return true;
+    }
+
+    bool doubleClickAudioRegion (int track, int region) override
+    {
+        if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;
+        const auto bounds = owner.tapeStrip->audioRegionScreenRect (track, region);
+        if (bounds.isEmpty()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
+        return clickAt (point.x, point.y, 2);
+    }
+
+    bool audioEditorOpen() const override { return owner.audioEditor != nullptr; }
+    int audioEditorRegion() const override { return owner.audioEditorRegionIdx; }
+    bool clickAudioEditorWaveform() override
+    {
+        auto* editor = owner.audioEditor.get();
+        if (editor == nullptr || ! editor->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (
+            editor, editor->getLocalBounds().getRelativePoint (0.5f, 0.75f)).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+    void closeAudioEditor() override { owner.closeAudioEditor(); }
+
+    bool pressAudioEditorKey (const std::string& description) override
+    {
+        return owner.audioEditor != nullptr && owner.audioEditor->isShowing()
+            && dispatchKey (*owner.audioEditor, &AudioRegionEditor::keyPressed, description, 0);
+    }
+
+    bool clickOutsideAudioEditor() override
+    {
+        if (owner.audioEditorDim == nullptr) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (
+            owner.audioEditorDim.get(), owner.audioEditorDim->getLocalBounds().getTopLeft()).toFloat();
+        return clickAt (point.x + 2.0f, point.y + 2.0f, 1);
+    }
+    void openPianoRoll (int track, int region) override { owner.openPianoRoll (track, region); }
+    void closePianoRoll() override { owner.closePianoRoll(); }
+    int pianoRollRegion() const override { return owner.pianoRollRegionIdx; }
+    bool pianoRollOpen() const override { return owner.pianoRoll != nullptr; }
+    bool clickPianoGrid (std::int64_t tick, int pitch) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        if (piano == nullptr || ! piano->isShowing()) return false;
+        const auto local = piano->notePointForScenario (tick, pitch);
+        if (! piano->getLocalBounds().contains (local)) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (piano, local).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+    bool doubleClickMidiRegion (int track, int region) override
+    {
+        if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;
+        const auto bounds = owner.tapeStrip->midiRegionScreenRect (track, region);
+        if (bounds.isEmpty()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
+        return clickAt (point.x, point.y, 2);
+    }
+
+    bool pressPianoRollKey (const std::string& description) override
+    {
+        return owner.pianoRoll != nullptr && owner.pianoRoll->isShowing()
+            && dispatchKey (*owner.pianoRoll, &PianoRollComponent::keyPressed, description, 0);
+    }
+
+    bool loadMasteringFile (const std::filesystem::path& path) override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->loadFile (hostFile (path));
+    }
+
+    bool clickMasteringButton (const std::string& label) override
+    {
+        if (owner.masteringView == nullptr) return false;
+        for (auto* child : owner.masteringView->getChildren())
+            if (auto* button = dynamic_cast<decltype (owner.recordingStageBtn)*> (child);
+                button != nullptr && button->isShowing() && button->isEnabled()
+                && button->getButtonText().toStdString() == label)
+            {
+                button->triggerClick();
+                return true;
+            }
+        return false;
+    }
+
+    bool clickMasteringWaveform (float fraction) override
+    {
+        if (owner.masteringView == nullptr) return false;
+        for (auto* child : owner.masteringView->getChildren())
+            if (auto* waveform = dynamic_cast<WaveformDisplay*> (child); waveform != nullptr && waveform->isShowing())
+            {
+                const auto local = waveform->getLocalBounds().getRelativePoint (fraction, 0.5f);
+                const auto point = owner.getTopLevelComponent()->getLocalPoint (waveform, local).toFloat();
+                return clickAt (point.x, point.y, 1);
+            }
+        return false;
+    }
 
     bool openSession (const std::filesystem::path& sessionJson) override
     {
@@ -311,6 +863,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
 
     MainComponent& owner;
+    std::vector<std::string> startupErrors;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;
     std::array<std::unique_ptr<ScenarioAuxLaneHandle>, Session::kNumAuxLanes> lanes;
 };

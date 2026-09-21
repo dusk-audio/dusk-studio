@@ -442,7 +442,7 @@ Verification protects against a bit-flipped download or a man-in-the-middle atta
 On first launch Dusk Studio opens a blank session named `Untitled`. The window is divided, top to bottom, into:
 
 - A thin menu bar (File, View, and Settings).
-- A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys **1–4**).
+- A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys **Cmd/Ctrl+1–4**).
 - A bank selector (only visible when the window is too narrow to show all 24 channel strips at once).
 - The transport bar.
 - The tape strip (the timeline view), collapsed by default.
@@ -538,7 +538,7 @@ The readout in the menu bar's right corner shows the device state (`Audio: 48 kH
 
 ## The four stages
 
-Only one stage is visible at a time, but the same engine drives all four. Switching stages is purely a UI change; audio keeps flowing.
+Only one stage is visible at a time. RECORDING, MIXING and AUX share the mix engine, so audio keeps flowing when switching among them. MASTERING has a separate playback path; entering or leaving it stops playback.
 
 - **RECORDING** shows each channel strip's input source, arm button, monitor toggle, and "print" toggle (for whether EQ and compression are committed to the recorded file or kept live).
 - **MIXING** replaces the input block with the channel's four aux send knobs. Inserts and EQ stay on screen.
@@ -572,7 +572,7 @@ From left to right:
 - **Metronome** (♩). Toggles the click. Right-click for click settings.
 - **C/I**. Toggles count-in (one bar of click before record starts).
 - **BPM**. The tempo at the playhead (it follows tempo-map changes). Double-click it to set the tempo directly (in a session with tempo changes, this edits the change governing the playhead); you can also set it from the timeline ruler. **TAP** sets the starting tempo.
-- **TAP**. Click on each beat; Dusk Studio averages the last four intervals over a two-second window and sets the tempo.
+- **TAP**. Click on each beat; Dusk Studio averages the last four intervals and sets the tempo. A gap longer than two seconds starts a new tap sequence.
 - **Time signature**. Click to choose from common signatures or enter a custom one.
 - **Clock display**. Shows the current playhead position. Right-click to flip between **Bars.Beats.Ticks** (e.g. `5.2.120`) and **mm:ss.mmm** (e.g. `01:23.456`).
 - **Tuner**. Opens a chromatic tuner that listens to the selected input.
@@ -1127,7 +1127,7 @@ On macOS and Windows, use **Rescan devices** in Audio Settings after plugging a 
 
 ## Arming a track
 
-Click **ARM**. The button lights red. Until at least one track is armed, pressing Record on the transport does nothing.
+Click **ARM**. The button lights red. Until at least one track is armed, Record does not start a take and shows **Cannot record**, explaining that no track is armed.
 
 ## Monitor mode
 
@@ -1416,7 +1416,7 @@ Double-click a MIDI region to open the piano roll as a centred modal.
 
 ## Creating notes
 
-Click an empty grid cell to create a 1/4-note at that pitch and tick (or whatever your current snap denomination is). The note's velocity defaults to 100.
+In **Draw** mode (**D**), click an empty grid cell to create a note at that pitch and tick. Its length follows the current note-entry grid; with snap off, it defaults to a quarter note. The note's velocity defaults to 100.
 
 ## Selecting and moving
 
@@ -1441,7 +1441,7 @@ The strip is resizable — drag its top edge up or down. Scroll-wheel inside the
 
 ## CC editing
 
-Open the **CC lane** below the velocity strip. Choose a controller from the dropdown (defaults to CC 1, Mod Wheel). Each CC event is a vertical bar; drag to adjust value, click empty grid to add a new event.
+Open the **CC lane** below the velocity strip. Press **L** to cycle the controller: CC 1 (Mod Wheel), 7 (Volume), 11 (Expression), 64 (Sustain), and 74 (Filter). The default is CC 1. Each CC event is a vertical bar; drag to adjust value, click empty grid to add a new event.
 
 The CC lane is also resizable.
 
@@ -2075,7 +2075,7 @@ Dusk Studio detaches from the realtime audio device and renders the project offl
 The File menu has three bounce commands:
 
 - **Bounce…** — render the full master mix to a WAV you choose.
-- **Mixdown** — one-shot render to `mixdown.wav` in the session folder, then automatically switch to the MASTERING stage with that file loaded.
+- **Mixdown** — one-shot render to `mixdown.wav` in the session folder. Click **Close** in the completion dialog to switch to the MASTERING stage with that file loaded.
 - **Bounce stems…** — render every stem in a single offline pass: one WAV per track with content (named `<base>_<NN>_<track>.wav`), plus one per bus group any of those tracks route into (`<base>_bus<N>_<name>.wav`) and one per aux lane they send to (`<base>_aux<N>_<name>.wav`). The file browser opens in a `stems/` subfolder of the session so a full set doesn't crowd the session root; pick any other location if you prefer. Warns before overwriting any existing stem files.
 
   A track stem is that track's post-fader output — its full processed signal, without master-strip processing — so the whole set is mutually sample-aligned and track + bus + aux stems together reconstruct the pre-master mix. A track routed to a bus appears both as its own stem and (processed) inside the bus stem; re-import one or the other, not both. Mute and solo print as heard, so a muted track writes a silent stem.
@@ -2509,7 +2509,7 @@ Two variants:
 
 ### About Dusk Studio
 
-- **When**: Help → About.
+- **When**: Settings → About Dusk Studio.
 - **Text**: "Dusk Studio [version]. Portastudio-style DAW. Built [date] [time]."
 - **Buttons**: OK (or click outside / Esc).
 
