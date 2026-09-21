@@ -62,6 +62,8 @@ std::optional<ScenarioResult> hotplugWaitsForStop (ScenarioContext& ctx)
         return ScenarioResult::fail ("could not name the virtual MIDI client");
     auto& engine = ctx.engine();
     auto& session = ctx.session();
+    ctx.keep (session.track (0).mode);
+    ctx.keep (session.track (0).midiInputIndex);
     session.track (0).mode.store ((int) Track::Mode::Midi);
     session.track (0).midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
     session.setTrackArmed (0, true);
