@@ -100,6 +100,7 @@ public:
     void clickAutoModeForScenario() { autoModeButton.triggerClick(); }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
     auto insertPointForScenario() const { return pluginSlotButton.getBounds().getCentre(); }
+    std::string insertLabelForScenario() const { return pluginSlotButton.getButtonText().toStdString(); }
     bool builtinPointerForScenario (const std::string& control, float position, bool pressed);
     void closeBuiltinForScenario() { closeBuiltinEditorPopup(); }
 

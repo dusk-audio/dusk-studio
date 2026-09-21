@@ -889,10 +889,16 @@ void AuxLaneComponent::refreshSlotControls (int i)
     if (slotRef.isLoaded())
     {
         const auto name = slotRef.getLoadedName();
-        if (name != ui.displayedName)
+        // The health labels go through displayedName rather than over the top
+        // of it, so Re-enable puts the plain name back instead of leaving the
+        // crashed text on a slot that is running again.
+        const auto label = slotRef.wasCrashed()       ? "! " + name + " (crashed)"
+                         : slotRef.wasAutoBypassed()  ? "! " + name + " (stalled)"
+                                                      : name;
+        if (label != ui.displayedName)
         {
-            ui.displayedName = name;
-            ui.openOrAddButton.setButtonText (name);
+            ui.displayedName = label;
+            ui.openOrAddButton.setButtonText (label);
             // First-time-loaded trigger (mirrors the offline branch
             // below). If we transitioned offline -> loaded, the prior
             // resized() ran the offline layout which skips
@@ -901,10 +907,6 @@ void AuxLaneComponent::refreshSlotControls (int i)
             // zero rectangle and uncliclable.
             resized();
         }
-        if (slotRef.wasCrashed())
-            ui.openOrAddButton.setButtonText ("! " + name + " (crashed)");
-        else if (slotRef.wasAutoBypassed())
-            ui.openOrAddButton.setButtonText ("! " + name + " (stalled)");
         ui.bypassButton.setVisible (true);
         ui.bypassButton.setToggleState (slotRef.isBypassed(), juce::dontSendNotification);
         ui.removeButton.setVisible (true);
@@ -1203,6 +1205,18 @@ void AuxLaneComponent::attachEditorForSlot (int slotIdx)
 void AuxLaneComponent::rebuildSlotsForScenario()
 {
     rebuildSlots();
+}
+
+void AuxLaneComponent::refreshSlotForScenario (int slotIdx)
+{
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
+    refreshSlotControls (slotIdx);
+}
+
+std::string AuxLaneComponent::slotLabelForScenario (int slotIdx) const
+{
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return {};
+    return slots[(size_t) slotIdx].openOrAddButton.getButtonText().toStdString();
 }
 
 bool AuxLaneComponent::attachEditorForSlotForScenario (int slotIdx)

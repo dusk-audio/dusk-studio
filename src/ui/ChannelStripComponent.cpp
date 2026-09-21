@@ -2182,6 +2182,15 @@ void ChannelStripComponent::showPluginSlotMenu()
                            lastParam >= 0);
         }
     }
+    else if (pluginSlot.wasCrashed())
+    {
+        // The reaper drops the dead connection, so a crashed slot does not
+        // read as loaded. Without its own branch the recovery the button's
+        // label points at would not be on the menu at all.
+        menu.addItem (2002, "Replace insert...");
+        menu.addItem (2003, "Remove plugin");
+        menu.addItem (2004, "Re-enable plugin (crashed)");
+    }
     else if (engine.getChannelStrip (trackIndex).nativeInsertRestoreFailed())
     {
         menu.addItem (2002, "Replace insert...");
@@ -2470,7 +2479,16 @@ void ChannelStripComponent::refreshPluginSlotButton()
     {
         const auto name = pluginSlot.getLoadedName();
         if (name.isNotEmpty())
-            label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + name;
+        {
+            // A crashed or stalled insert says so on the button itself, the
+            // same two labels the aux lanes paint.
+            if (pluginSlot.wasCrashed())
+                label = "! " + name + " (crashed)";
+            else if (pluginSlot.wasAutoBypassed())
+                label = "! " + name + " (stalled)";
+            else
+                label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + name;
+        }
         else if (pluginSlot.isOffline())
         {
             // Slot held a plugin in the saved session but couldn't be
