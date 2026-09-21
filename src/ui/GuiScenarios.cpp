@@ -200,6 +200,12 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         if (auto* component = strip()) component->refreshInsertButtonForCapture();
     }
 
+    std::string insertLabel() const override
+    {
+        auto* component = strip();
+        return component != nullptr ? component->insertLabelForScenario() : std::string();
+    }
+
     bool openEditor() override
     {
         auto* component = strip();
@@ -355,6 +361,17 @@ struct MainComponent::ScenarioAuxLaneHandle final : scenario::AuxLaneHandle
     {
         auto* component = laneComponent();
         return component != nullptr && component->attachEditorForSlotForScenario (slot);
+    }
+
+    void refreshSlot (int slot) override
+    {
+        if (auto* component = laneComponent()) component->refreshSlotForScenario (slot);
+    }
+
+    std::string slotLabel (int slot) const override
+    {
+        auto* component = laneComponent();
+        return component != nullptr ? component->slotLabelForScenario (slot) : std::string();
     }
 
     bool captureSources (bool enabled) override

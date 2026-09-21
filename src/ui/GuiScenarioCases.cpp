@@ -689,6 +689,193 @@ std::optional<ScenarioResult> runOopEditorFailureNoStrand (GuiHost& host, Scenar
     "the sandboxed load never completed");
     return std::nullopt;
 }
+
+// The two inline slot labels MANUAL.md quotes, on a channel insert and on an
+// aux lane slot. The sandbox stub answers the load RPC and no block command, so
+// a block through the slot expires its deadline (stalled) and killing the child
+// leaves it crashed - both through the code a real failure runs. The engine's
+// own callback never reaches an insert on a silent, unarmed track, so the block
+// is pushed straight at the slot, the way the headless kill case drives one.
+constexpr const char* kStubHealthy = "\xe2\x96\xbe sandbox stub";
+constexpr const char* kStubStalled = "! sandbox stub (stalled)";
+constexpr const char* kStubCrashed = "! sandbox stub (crashed)";
+constexpr int kHealthCrashTimeoutMs = 15000;
+
+// True once the slot's watchdog has given up on the mute child.
+bool stallSlot (PluginSlot& slot)
+{
+    oopstub::SlotMidiBuffer midi;
+    std::array<float, ScenarioContext::kBlockSize> left {};
+    std::array<float, ScenarioContext::kBlockSize> right {};
+    slot.processStereoBlock (left.data(), right.data(), ScenarioContext::kBlockSize, midi);
+    return slot.wasAutoBypassed();
+}
+
+void runAuxHealthLabelLeg (GuiHost& host, ScenarioContext& ctx)
+{
+    host.switchToStage (GuiHost::Stage::Aux);
+    auto* lane = host.auxLane (kAuxLane);
+    if (lane == nullptr)
+    {
+        ctx.complete (ScenarioResult::fail ("the Aux stage built no lane to drive"));
+        return;
+    }
+
+    auto& auxSlot = ctx.engine().getAuxLaneStrip (kAuxLane).getPluginSlot (kAuxSlot);
+    auto state = std::make_shared<SandboxState>();
+    auxSlot.loadFromDescriptorAsync (oopstub::stubDescriptor(), [state] (bool ok, auto error)
+    {
+        state->loadOk = ok;
+        state->loadError = error.toStdString();
+        state->loadDone = true;
+    });
+
+    ctx.waitUntil ([state] { return state->loadDone; }, 30000,
+    [&ctx, lane, &auxSlot, state]
+    {
+        if (! state->loadOk || ! auxSlot.isRemote())
+        {
+            ctx.complete (ScenarioResult::skip (
+                "the aux slot never went out of process: " + state->loadError));
+            return;
+        }
+
+        ctx.expect (stallSlot (auxSlot), "a block through the mute child did not stall the aux slot");
+        lane->refreshSlot (kAuxSlot);
+        ctx.expect (lane->slotLabel (kAuxSlot) == kStubStalled,
+                    "the stalled aux slot reads \"" + lane->slotLabel (kAuxSlot) + "\"");
+
+        auxSlot.clearAutoBypass();
+        lane->refreshSlot (kAuxSlot);
+        ctx.expect (lane->slotLabel (kAuxSlot) == "sandbox stub",
+                    "the re-enabled aux slot reads \"" + lane->slotLabel (kAuxSlot) + "\"");
+
+        auxSlot.unload();
+        lane->refreshSlot (kAuxSlot);
+        ctx.complete (ctx.verdict());
+    },
+    "the aux lane's sandboxed load never completed");
+}
+
+void runCrashedHealthLabelLeg (GuiHost& host, ScenarioContext& ctx, StripHandle* strip,
+                               PluginSlot& slot)
+{
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&ctx, strip]
+    {
+        strip->refreshInsertButton();
+        ctx.expect (strip->insertLabel() == kStubCrashed,
+                    "the crashed insert reads \"" + strip->insertLabel() + "\"");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickInsert (kStripIndex, true), "the insert did not receive a right-click"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Re-enable plugin (crashed)"),
+                  "the crashed insert's menu offered no Re-enable entry"); } });
+    steps->push_back ({ 300, [&ctx, strip, &slot]
+    {
+        ctx.expect (! slot.wasCrashed(), "Re-enable left the slot crashed");
+        strip->refreshInsertButton();
+        ctx.expect (strip->insertLabel() == kStubHealthy,
+                    "the re-enabled insert reads \"" + strip->insertLabel() + "\"");
+        slot.unload();
+        strip->refreshInsertButton();
+    } });
+    runSteps (ctx, steps, [&host, &ctx] { runAuxHealthLabelLeg (host, ctx); });
+}
+
+std::optional<ScenarioResult> runSlotHealthLabels (GuiHost& host, ScenarioContext& ctx)
+{
+    const auto childBinary = oopstub::hostBinary();
+    if (! childBinary)
+        return ScenarioResult::skip ("the sandbox host binary is not beside the app");
+
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped())
+        return ScenarioResult::skip ("requires stopped transport");
+
+    auto& manager = engine.getPluginManager();
+    auto& slot    = engine.getChannelStrip (kStripIndex).getPluginSlot();
+    auto& auxSlot = engine.getAuxLaneStrip (kAuxLane).getPluginSlot (kAuxSlot);
+    if (slot.isLoaded() || auxSlot.isLoaded())
+        return ScenarioResult::skip ("requires an empty channel insert and aux slot");
+
+    auto* strip = readyStrip (host, ctx);
+    if (strip == nullptr)
+        return ScenarioResult::skip ("the console has no strip to drive");
+
+    const bool oopWasEnabled = manager.isOopEnabled();
+    oopstub::useStub (manager, *childBinary, "--ipc-load-reply-stub");
+    ctx.cleanup ([&ctx, &host, &slot, &auxSlot, oopWasEnabled]
+    {
+        auxSlot.clearAutoBypass();
+        auxSlot.unload();
+        if (auto* lane = host.auxLane (kAuxLane)) lane->refreshSlot (kAuxSlot);
+        slot.clearAutoBypass();
+        restoreInProcessHosting (ctx, slot, oopWasEnabled);
+        drainModals (host);
+        if (auto* channel = host.strip (kStripIndex)) channel->refreshInsertButton();
+    });
+
+    auto state = std::make_shared<SandboxState>();
+    slot.loadFromDescriptorAsync (oopstub::stubDescriptor(), [state] (bool ok, auto error)
+    {
+        state->loadOk = ok;
+        state->loadError = error.toStdString();
+        state->loadDone = true;
+    });
+
+    ctx.waitUntil ([state] { return state->loadDone; }, 30000,
+    [&ctx, &host, strip, &slot, state]
+    {
+        if (! state->loadOk || ! slot.isRemote())
+        {
+            ctx.complete (ScenarioResult::skip (
+                "the slot never went out of process: " + state->loadError));
+            return;
+        }
+
+        state->childPid = slot.getRemoteChildPid();
+        ctx.note ("child pid: " + std::to_string (state->childPid));
+        if (state->childPid <= 0)
+        {
+            ctx.complete (ScenarioResult::fail ("a remote slot reported no child pid"));
+            return;
+        }
+
+        ctx.expect (stallSlot (slot), "a block through the mute child did not stall the slot");
+        strip->refreshInsertButton();
+        ctx.expect (strip->insertLabel() == kStubStalled,
+                    "the stalled insert reads \"" + strip->insertLabel() + "\"");
+
+        auto steps = std::make_shared<std::vector<Step>>();
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickInsert (kStripIndex, true), "the insert did not receive a right-click"); } });
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickContextMenuItem ("Re-enable plugin (auto-bypassed)"),
+                      "the stalled insert's menu offered no Re-enable entry"); } });
+        steps->push_back ({ 300, [&ctx, strip, &slot]
+        {
+            ctx.expect (! slot.wasAutoBypassed(), "Re-enable left the slot stalled");
+            strip->refreshInsertButton();
+            ctx.expect (strip->insertLabel() == kStubHealthy,
+                        "the re-enabled insert reads \"" + strip->insertLabel() + "\"");
+        } });
+        runSteps (ctx, steps, [&ctx, &host, strip, &slot, state]
+        {
+            if (::kill (state->childPid, SIGKILL) != 0)
+            {
+                ctx.complete (ScenarioResult::fail ("could not kill the child process"));
+                return;
+            }
+            ctx.waitUntil ([&slot] { return slot.wasCrashed(); }, kHealthCrashTimeoutMs,
+                           [&ctx, &host, strip, &slot] { runCrashedHealthLabelLeg (host, ctx, strip, slot); },
+                           "the slot never noticed its child had died");
+        });
+    },
+    "the sandboxed load never completed");
+    return std::nullopt;
+}
 #endif
 
 // -------------------------------------------------------------- automation
@@ -4578,6 +4765,27 @@ const ScenarioRegistrar oopEditorChild { Scenario {
         return ScenarioResult::skip ("Windows tracks the child by handle, not by pid");
        #else
         return runOopEditorClosesBeforeChild (host, ctx);
+       #endif
+    }
+} };
+
+const ScenarioRegistrar slotHealthLabels { Scenario {
+    "gui.slot_health_labels",
+    { "gui", "oop", "plugins" },
+    Needs::Engine | Needs::Gui | Needs::Oop,
+    {},
+    {},
+    120000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if ! DUSKSTUDIO_HAS_OOP_PLUGINS
+        (void) host; (void) ctx;
+        return ScenarioResult::skip ("built without sandboxed plugin hosting");
+       #elif defined (_WIN32)
+        (void) host; (void) ctx;
+        return ScenarioResult::skip ("the sandbox stub children are driven on POSIX only");
+       #else
+        return runSlotHealthLabels (host, ctx);
        #endif
     }
 } };

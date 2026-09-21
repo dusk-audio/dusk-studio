@@ -42,6 +42,10 @@ public:
     // Repaint the insert button so the strip shows what the engine now holds.
     virtual void refreshInsertButton() = 0;
 
+    // The insert button's text as the strip last painted it, health labels
+    // included.
+    virtual std::string insertLabel() const = 0;
+
     // True once an editor is actually up. A plug-in whose editor cannot be
     // attached leaves the modal stack carrying the alert that says so.
     virtual bool openEditor() = 0;
@@ -85,6 +89,9 @@ public:
     // modal, so rebuilding the row is what tries the attach.
     virtual void rebuildSlots() = 0;
     virtual bool attachEditor (int slot) = 0;
+    // Repaint one slot row, and the text its header button then carries.
+    virtual void refreshSlot (int slot) = 0;
+    virtual std::string slotLabel (int slot) const = 0;
     virtual bool captureSources (bool enabled) = 0;
     virtual std::vector<std::string> sourceRows() const = 0;
 };
