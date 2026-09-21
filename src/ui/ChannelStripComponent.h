@@ -62,8 +62,27 @@ public:
     // Click MUTE / SOLO as the mouse would; the click lands on a later tick.
     void clickMuteForScenario();
     void clickSoloForScenario();
+    bool clickArmForScenario()
+    {
+        if (! armButton.isShowing()) return false;
+        armButton.triggerClick();
+        return true;
+    }
+    bool armLitForScenario() const { return armButton.getToggleState(); }
+    bool midiActivityVisibleForScenario() const { return midiActivityLed.isShowing(); }
+    bool midiActivityLitForScenario() const { return midiActivityLed.lit; }
+    bool inputSettingsOpenForScenario() const { return ioConfigModal.isOpen(); }
+    void loadBuiltinForScenario (const std::string& id) { loadBuiltinForChannel (id); }
+    void clickMonitorForScenario() { monitorButton.triggerClick(); }
+    bool instrumentControlsMatchForScenario (int input, bool monitor) const
+    {
+        return modeSelector.getSelectedId() == (int) Track::Mode::Midi + 1
+            && midiInputSelector.getSelectedId() == input + 2
+            && monitorButton.getToggleState() == monitor;
+    }
     // Scenario-harness only: the mode label and whether the fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
+    void clickAutoModeForScenario() { autoModeButton.triggerClick(); }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
     auto insertPointForScenario() const { return pluginSlotButton.getBounds().getCentre(); }
     bool builtinPointerForScenario (const std::string& control, float position, bool pressed);
@@ -96,6 +115,18 @@ public:
     // Swaps the input/IN/ARM/PRINT row at the top for 4 AUX send knobs.
     void setMixingMode (bool mixing);
     bool isMixingMode() const noexcept { return mixingMode; }
+
+    bool stageControlsMatchForScenario (bool mixing) const
+    {
+        if (! isShowing() || mixingMode != mixing) return false;
+        if (ioConfigButton.isShowing() != ! mixing || modeSelector.isShowing() != ! mixing
+            || monitorButton.isShowing() != ! mixing || armButton.isShowing() != ! mixing
+            || printButton.isShowing() != ! mixing) return false;
+        if (compactMode) return auxCompactButton.isShowing();
+        for (const auto& knob : auxKnobs)
+            if (knob == nullptr || ! knob->isShowing()) return false;
+        return true;
+    }
 
     void setHorizontalDensity (consolelayout::HorizontalDensity density);
 

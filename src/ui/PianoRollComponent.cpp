@@ -2589,8 +2589,8 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     n.startTick = jlimit<std::int64_t> (0,
         std::max ((std::int64_t) 0, r->lengthInTicks - 1),
         snapTick (rawStart, createSnap));
-    n.lengthInTicks = std::min ((std::int64_t) kMidiTicksPerQuarter,
-                                                  r->lengthInTicks - n.startTick);
+    const auto noteLength = createSnap > 0 ? createSnap : (std::int64_t) kMidiTicksPerQuarter;
+    n.lengthInTicks = std::min (noteLength, r->lengthInTicks - n.startTick);
     if (n.lengthInTicks <= 0) return;
     r->notes.push_back (n);
     const int newIdx = (int) r->notes.size() - 1;
@@ -2712,7 +2712,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         if (dragMode == DragMode::ResizeVelocityStrip)
         {
             const int maxAllowed = std::max (kVelocityStripHMin,
-                getHeight() - topBandH - ccStripH - kStatusBarH - kMinGridH);
+                getHeight() - topBandH - ccStripH - kStatusBarH - kScrollBarH - kMinGridH);
             velocityStripH = jlimit (kVelocityStripHMin,
                 std::min (kVelocityStripHMax, maxAllowed),
                 resizeStartStripH + delta);
@@ -2720,7 +2720,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         else
         {
             const int maxAllowed = std::max (kCcStripHMin,
-                getHeight() - topBandH - velocityStripH - kStatusBarH - kMinGridH);
+                getHeight() - topBandH - velocityStripH - kStatusBarH - kScrollBarH - kMinGridH);
             ccStripH = jlimit (kCcStripHMin,
                 std::min (kCcStripHMax, maxAllowed),
                 resizeStartStripH + delta);
@@ -3293,7 +3293,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     // most-used continuous controllers; uncommon ones can still be
     // captured via Record (the region's ccs vector holds them all) and
     // viewed by extending this rotation later.
-    if (k.getKeyCode() == 'L')
+    if (! cmdOrCtrl && (k.getKeyCode() == 'L' || k.getKeyCode() == 'l'))
     {
         activeCcController =
             activeCcController == 1   ?  7 :
@@ -3399,7 +3399,7 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
         if (e.y >= velTop && e.y < ccTop)
         {
             const int maxAllowed = std::max (kVelocityStripHMin,
-                getHeight() - topBandH - ccStripH - kStatusBarH - kMinGridH);
+                getHeight() - topBandH - ccStripH - kStatusBarH - kScrollBarH - kMinGridH);
             velocityStripH = jlimit (kVelocityStripHMin,
                 std::min (kVelocityStripHMax, maxAllowed),
                 velocityStripH + delta);
@@ -3409,7 +3409,7 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
         if (e.y >= ccTop && e.y < ccTop + ccStripH)
         {
             const int maxAllowed = std::max (kCcStripHMin,
-                getHeight() - topBandH - velocityStripH - kStatusBarH - kMinGridH);
+                getHeight() - topBandH - velocityStripH - kStatusBarH - kScrollBarH - kMinGridH);
             ccStripH = jlimit (kCcStripHMin,
                 std::min (kCcStripHMax, maxAllowed),
                 ccStripH + delta);
