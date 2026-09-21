@@ -2564,8 +2564,8 @@ Two variants:
 
 ### Plugin slot labels (inline, not a dialog)
 
-- `⚠ <name> (crashed)` — the plugin has crashed. Right-click → **Re-enable plugin (crashed)** to retry.
-- `<name> (stalled)` — the plugin exceeded its CPU budget for several consecutive blocks and was auto-bypassed. Right-click → **Re-enable plugin (auto-bypassed)** to retry.
+- `! <name> (crashed)` — the plugin has crashed. Right-click → **Re-enable plugin (crashed)** to retry.
+- `! <name> (stalled)` — the plugin exceeded its CPU budget for several consecutive blocks and was auto-bypassed. Right-click → **Re-enable plugin (auto-bypassed)** to retry.
 
 ## Hardware insert
 

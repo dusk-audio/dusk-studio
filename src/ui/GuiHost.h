@@ -147,6 +147,9 @@ public:
     virtual bool clickMiniSample (std::int64_t sample) = 0;
     virtual bool clickMiniMarker (int index) = 0;
     virtual bool clickTimeFormat() = 0;
+    // The menu bar's DSP segment, and a double-click on it.
+    virtual std::string dspReadout() const = 0;
+    virtual bool doubleClickDspReadout() = 0;
     virtual bool clickRecord() = 0;
     virtual bool doubleClickTempo() = 0;
     virtual bool rightClickPunch() = 0;

@@ -25,6 +25,7 @@
 #include "MasteringView.h"
 #include "PlatformWindowing.h"
 #include "NativeEditorEmbedScale.h"
+#include "SystemStatusBar.h"
 #include "TransportBar.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/SuiteRunner.h"
@@ -733,6 +734,21 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool clickRecord() override
     { return owner.transportBar != nullptr && owner.transportBar->clickRecordForScenario(); }
+
+    std::string dspReadout() const override
+    {
+        return owner.systemStatusBar != nullptr ? owner.systemStatusBar->dspReadoutForScenario()
+                                                : std::string();
+    }
+
+    bool doubleClickDspReadout() override
+    {
+        auto* bar = owner.systemStatusBar.get();
+        if (bar == nullptr || ! bar->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()
+                               ->getLocalPoint (bar, bar->dspSegmentBounds().getCentre()).toFloat();
+        return clickAt (point.x, point.y, 2);
+    }
 
     int consolePageCount() const override { return owner.consoleView->numBanks(); }
     bool consolePageMatches (int index) const override

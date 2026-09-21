@@ -6808,5 +6808,265 @@ const ScenarioRegistrar pianoEditKeys { Scenario {
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoEditKeys (host, ctx); }
 } };
+
+std::optional<ScenarioResult> runDspReadout (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
+    if (host.dspReadout().empty()) return ScenarioResult::skip ("the window has no status bar");
+    // A live callback keeps scoring its own overruns, which would move the
+    // counter out from under the assertions. The gate stops the callback
+    // before it starts timing itself, so the counts hold still.
+    engine.suspendProcessing();
+    ctx.cleanup ([&engine] { engine.resetXRunCounts(); engine.resumeProcessing(); });
+    engine.resetXRunCounts();
+    for (int overrun = 0; overrun < 3; ++overrun) engine.noteEngineXRun();
+
+    // The readout is timer-driven, so the count appears on a later tick.
+    ctx.waitUntil ([&host] { return host.dspReadout().find (" (3/") != std::string::npos; }, 3000,
+        [&host, &ctx, &engine]
+        {
+            const auto text = host.dspReadout();
+            ctx.expect (std::regex_match (text, std::regex (R"(DSP: \d+% \(3/\d+\))")),
+                        "the DSP readout does not carry a load percentage beside the dropout pair: " + text);
+            ctx.expect (engine.getXRunCount() == 3, "the readout reported a count the engine does not hold");
+            if (! ctx.expect (host.doubleClickDspReadout(), "the DSP readout did not take a double-click"))
+            { ctx.complete (ctx.verdict()); return; }
+            ctx.expect (engine.getXRunCount() == 0, "the double-click did not zero the engine dropout count");
+            ctx.expect (engine.getBackendXRunCount() == 0, "the double-click did not zero the backend dropout count");
+            // mouseDoubleClick refreshes the readout itself rather than
+            // leaving a stale warning up until the next tick.
+            ctx.expect (host.dspReadout().find (" (0/0)") != std::string::npos,
+                        "the readout still showed the old counters after the reset: " + host.dspReadout());
+            ctx.complete (ctx.verdict());
+        }, "the DSP readout never showed the engine's dropout count");
+    return std::nullopt;
+}
+
+const ScenarioRegistrar dspReadout { Scenario {
+    "gui.dsp_readout_counters", { "gui", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runDspReadout (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runVirtualKeyboardKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    auto& track = session.track (0);
+    if (! transport.isStopped() || ! host.modalStackEmpty() || host.virtualKeyboardOpen())
+        return ScenarioResult::skip ("requires a stopped transport, no modal and no keyboard");
+    const int keyboardInput = engine.getVirtualKeyboardInputIndex();
+    if (keyboardInput < 0) return ScenarioResult::skip ("the engine offers no virtual keyboard input");
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.keep (track.midiInputIndex);
+    ctx.keep (track.midiChannel);
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        const bool armed = session.track (index).recordArmed.load();
+        ctx.cleanup ([&session, index, armed] { session.setTrackArmed (index, armed); });
+        session.setTrackArmed (index, index == 0);
+    }
+    ctx.keep (session.countInEnabled);
+    ctx.cleanup ([&host, &engine, &transport, &track,
+                  regions = track.midiRegions.current(),
+                  at = transport.getPlayhead(), loop = transport.isLoopEnabled(),
+                  loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd(),
+                  punch = transport.isPunchEnabled()]
+    {
+        engine.stop();
+        host.closeVirtualKeyboard();
+        drainModals (host);
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+        engine.getUndoManager().clearUndoHistory();
+        transport.setPlayhead (at);
+        transport.setLoopRange (loopStart, loopEnd);
+        transport.setLoopEnabled (loop);
+        transport.setPunchEnabled (punch);
+    });
+    engine.stop();
+    session.countInEnabled.store (false);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
+    track.midiInputIndex.store (keyboardInput);
+    track.midiChannel.store (1);
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+    engine.getUndoManager().clearUndoHistory();
+    transport.setPlayhead (0);
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    host.switchToStage (GuiHost::Stage::Recording);
+
+    const auto rate = engine.getCurrentSampleRate();
+    const auto second = (std::int64_t) std::llround (rate);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.pressKey ("K", 'k'), "K was not handled"); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        if (! ctx.expect (host.virtualKeyboardOpen(), "K did not open the virtual keyboard")) return;
+        ctx.expect (host.clickRecord(), "Record was unavailable with the keyboard open");
+    } });
+    // P and R belong to the layout while the keyboard is up, so each has to
+    // sound its note and leave the punch and record buttons alone.
+    steps->push_back ({ 200, [&host, &ctx, &transport]
+    {
+        ctx.expect (transport.isRecording(), "Record did not start with the keyboard open");
+        ctx.expect (host.inputVirtualKeyboard ("p"), "P did not reach the keyboard");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &transport]
+    {
+        ctx.expect (! transport.isPunchEnabled(), "P toggled punch instead of playing its note");
+        ctx.expect (host.inputVirtualKeyboard ("r"), "R did not reach the keyboard");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &transport]
+    {
+        ctx.expect (transport.isRecording(), "R stopped the recording instead of playing its note");
+        ctx.expect (host.inputVirtualKeyboard (" "), "Space did not reach the keyboard");
+    } });
+    steps->push_back ({ 400, [&ctx, &track, &transport]
+    {
+        ctx.expect (transport.isStopped(), "Space did not stop the transport from the keyboard");
+        const auto& regions = track.midiRegions.current();
+        if (! ctx.expect (regions.size() == 1, "the keyboard's letters did not record a MIDI region")) return;
+        auto notes = regions.front().notes;
+        if (! ctx.expect (notes.size() == 2, "P and R did not each play exactly one note")) return;
+        std::sort (notes.begin(), notes.end(),
+                   [] (const MidiNote& a, const MidiNote& b) { return a.noteNumber < b.noteNumber; });
+        // R and P sit 17 and 28 semitones above the keyboard's centre note.
+        ctx.expect (notes[1].noteNumber - notes[0].noteNumber == 11,
+                    "the two letters did not play the pitches their layout positions name");
+    } });
+    // The keys the layout does not hold keep driving the transport behind it.
+    steps->push_back ({ 150, [&host, &ctx, &transport, second]
+    {
+        transport.setPlayhead (second);
+        ctx.expect (host.inputVirtualKeyboard ("["), "the loop-in key did not reach the keyboard");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &transport, second]
+    {
+        transport.setPlayhead (second * 3);
+        ctx.expect (host.inputVirtualKeyboard ("]"), "the loop-out key did not reach the keyboard");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &transport, second]
+    {
+        ctx.expect (transport.getLoopStart() == second && transport.getLoopEnd() == second * 3
+                    && transport.isLoopEnabled(),
+                    "the bracket keys did not place and arm the loop range from the keyboard");
+        ctx.expect (host.inputVirtualKeyboard ("l"), "the loop toggle did not reach the keyboard");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &transport]
+    {
+        ctx.expect (! transport.isLoopEnabled(), "L did not turn the loop off from the keyboard");
+        ctx.expect (host.inputVirtualKeyboard ("k"), "K did not reach the keyboard");
+    } });
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.virtualKeyboardOpen(); }, 3000,
+                       [&ctx] { ctx.complete (ctx.verdict()); },
+                       "K did not close the virtual keyboard");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar virtualKeyboardKeys { Scenario {
+    "gui.virtual_keyboard_keys", { "gui", "midi", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 25000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runVirtualKeyboardKeys (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runPluginKindMismatch (GuiHost& host, ScenarioContext& ctx)
+{
+    const auto instrument = ctx.fixture ("panic_probe.vst3");
+    const auto effect = ctx.fixture ("relayout.vst3");
+    if (! instrument || ! effect) return ScenarioResult::skip ("requires both VST3 fixtures");
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    auto& slot = engine.getChannelStrip (0).getPluginSlot();
+    if (slot.isLoaded()) return ScenarioResult::skip ("requires an empty standard plugin slot");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.keep (track.mode);
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        if (auto* strip = host.strip (0)) strip->closeEditor();
+        drainModals (host);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (guiStage (originalStage));
+    });
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+
+    struct Leg
+    {
+        int trackMode;
+        std::filesystem::path file;
+        std::string wanted, got;
+    };
+    // An audio track's insert takes effects, a MIDI track's takes the
+    // instrument, so one strip covers the refusal in both directions.
+    const std::vector<Leg> legs {
+        { (int) Track::Mode::Mono, *instrument, "effect", "instrument" },
+        { (int) Track::Mode::Midi, *effect,     "instrument", "effect" },
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const auto& leg : legs)
+    {
+        steps->push_back ({ 150, [&host, &ctx, &track, leg]
+        {
+            track.mode.store (leg.trackMode);
+            if (auto* strip = host.strip (0)) strip->refreshInsertButton();
+            ctx.expect (host.clickInsert (0), "insert button did not receive a click");
+        } });
+        steps->push_back ({ 150, [&host, &ctx]
+        { ctx.expect (host.clickModalButton ("Plugin (VST3 / CLAP / LV2 / AU)"), "insert chooser did not open"); } });
+        steps->push_back ({ 150, [&host, &ctx]
+        { ctx.expect (host.clickModalButton ("Browse file..."), "picker did not offer Browse file"); } });
+        steps->push_back ({ 150, [&host, &ctx, leg]
+        {
+            ctx.expect (host.focusFileName(), "file browser filename entry was not available");
+           #if defined (__APPLE__)
+            host.pressPeerKey ("command + A", 'a');
+           #else
+            host.pressPeerKey ("ctrl + A", 'a');
+           #endif
+            for (const char ch : leg.file.string())
+                host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+        } });
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the fixture path"); } });
+        steps->push_back ({ 1500, [&host, &ctx, &slot, leg]
+        {
+            ctx.expect (host.modalText() ==
+                "Plugin kind mismatch\nThis slot expects an " + leg.wanted
+                + " plugin but the chosen file is an " + leg.got
+                + ". The slot was left empty. Use a MIDI track for instrument "
+                  "plugins and an audio track for effect plugins.",
+                "the refusal did not name both kinds and the emptied slot: " + host.modalText());
+            ctx.expect (! slot.isLoaded(), "the refused plugin stayed on the slot");
+            ctx.expect (host.clickModalButton ("OK"), "the refusal has no usable OK button");
+        } });
+    }
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return host.modalStackEmpty(); }, 3000,
+                       [&ctx] { ctx.complete (ctx.verdict()); }, "OK did not dismiss the refusal");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pluginKindMismatch { Scenario {
+    "gui.plugin_kind_mismatch", { "gui", "plugins", "messages" }, Needs::Engine | Needs::Gui,
+    { "panic_probe.vst3", "relayout.vst3" }, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPluginKindMismatch (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario

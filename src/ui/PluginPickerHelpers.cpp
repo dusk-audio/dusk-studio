@@ -52,6 +52,11 @@ public:
     DuskAlertPanel (juce::String title, juce::String message)
         : titleStr (std::move (title)), messageStr (std::move (message))
     {
+        // The panel paints its own title and body, so without these a screen
+        // reader - and anything else reading the component tree - finds an
+        // untitled box where the picker's alerts are.
+        setTitle (titleStr);
+        setDescription (messageStr);
         setOpaque (true);
         okBtn.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff262630));
         okBtn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff5a4880));

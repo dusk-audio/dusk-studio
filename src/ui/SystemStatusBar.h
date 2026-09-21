@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
+#include <string>
 #include "../engine/AudioEngine.h"
 #include "../foundation/MessageThread.h"
 
@@ -21,9 +22,6 @@ public:
     void paint (juce::Graphics&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
-private:
-    void timerCallback() override;
-
     // The DSP segment's bounds - shared by paint() and the double-click
     // hit test so the reset zone always matches what's drawn.
     juce::Rectangle<int> dspSegmentBounds() const noexcept
@@ -32,6 +30,12 @@ private:
         // "DSP: 100% (99/99) @4x".
         return getLocalBounds().reduced (8, 0).removeFromRight (175);
     }
+
+    // The DSP segment exactly as the last tick built it.
+    std::string dspReadoutForScenario() const { return dspInfo.toStdString(); }
+
+private:
+    void timerCallback() override;
 
     AudioEngine& engine;
     juce::String audioInfo  { "Audio: -" };

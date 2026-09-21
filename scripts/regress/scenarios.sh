@@ -36,6 +36,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-clean-quit
     bb-keyboard-quit
     bb-quit-twice
+    bb-startup-scan
     bb-oop-child-kill
     bb-oop-quit-during-load
 )
@@ -589,6 +590,41 @@ bb_quit_twice_body() {
     return 0
 }
 
+leg_bb_startup_scan() {
+    bb_begin bb-startup-scan 300 || return 1
+    local rc=0
+    bb_startup_scan_body || rc=$?
+    bb_end "$rc"
+}
+
+# Settings > General > Scan plugins on startup: off by default, and when on it
+# runs the same progress window and reports to the log instead of an alert.
+bb_startup_scan_body() {
+    local session dir
+    session="$(bb_session startup-scan)" || return 1
+
+    bb_spawn off "DUSKSTUDIO_LOAD_SESSION=$session" "DUSKSTUDIO_QUIT_AFTER_MS=8000" -- || return 1
+    bb_wait_marker off "[Dusk Studio] startup plugin scan: toggle=off - skipped" 120 || return 1
+    bb_wait_exit off 90 || return 1
+    bb_assert_absent off "[Dusk Studio] startup plugin scan: showing progress modal" || return 1
+
+    # Both roots: the config dir follows XDG_CONFIG_HOME, and a host that
+    # exports none of it falls back to $HOME/.config.
+    for dir in "$BB_SDIR/config/Dusk Studio" "$BB_SDIR/home/.config/Dusk Studio"; do
+        mkdir -p "$dir" || return 1
+        printf 'scan_plugins_on_startup=1\n' > "$dir/app-config.properties" || return 1
+    done
+
+    # No quit timer: the scan takes as long as this machine's collection needs,
+    # and bb_end ends the process once the report has been printed.
+    bb_spawn on "DUSKSTUDIO_LOAD_SESSION=$session" -- || return 1
+    bb_wait_marker on "[Dusk Studio] startup plugin scan: toggle=ON - deferring progress modal" 120 || return 1
+    bb_wait_marker on "[Dusk Studio] startup plugin scan: showing progress modal" 60 || return 1
+    bb_wait_marker on "[Dusk Studio] Scan-on-startup: finished, added " 180 || return 1
+    bb_alive on || { bb_fail "the app exited before the scan report could be read"; return 1; }
+    return 0
+}
+
 leg_bb_oop_child_kill() {
     bb_begin bb-oop-child-kill 300 || return 1
     local rc=0
@@ -744,6 +780,12 @@ regress_scenarios_run() {
     else
         regress_skip "bb-clean-quit" "needs DUSKSTUDIO_QUIT_AFTER_MS"
         regress_skip "bb-quit-twice" "needs DUSKSTUDIO_QUIT_AFTER_MS"
+    fi
+
+    if scenarios_has_quit_timer && scenarios_binary_has "startup plugin scan: toggle"; then
+        regress_leg "bb-startup-scan" leg_bb_startup_scan
+    else
+        regress_skip "bb-startup-scan" "needs the startup plugin-scan markers"
     fi
 
     if scenarios_has_quit_timer && scenarios_has_case "session.mint_oop_fixture"; then
