@@ -95,6 +95,14 @@ public:
         return earlyOutBlocks.load (std::memory_order_relaxed);
     }
 
+    // True between suspendProcessing() and resumeProcessing(). Acquire pairs
+    // with the release in resumeProcessing so a reader that sees "running"
+    // also sees the state the resume published.
+    bool isProcessingSuspended() const noexcept
+    {
+        return processingSuspended.load (std::memory_order_acquire);
+    }
+
     // Test-only. Immediately stop+start the pool to `n` workers. Safe only when
     // no audio callback is concurrently in runBlock() - the offline self-test
     // drives the callback synchronously, so the A/B harness can flip the count

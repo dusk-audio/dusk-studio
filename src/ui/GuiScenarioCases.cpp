@@ -100,8 +100,34 @@ void dismissAlert (GuiHost& host)
     if (! host.modalStackEmpty()) host.closeTopModal();
 }
 
-StripHandle* readyStrip (GuiHost& host)
+GuiHost::Stage guiStage (AudioEngine::Stage stage)
 {
+    switch (stage)
+    {
+        case AudioEngine::Stage::Mixing:    return GuiHost::Stage::Mixing;
+        case AudioEngine::Stage::Aux:       return GuiHost::Stage::Aux;
+        case AudioEngine::Stage::Mastering: return GuiHost::Stage::Mastering;
+        case AudioEngine::Stage::Recording: break;
+    }
+    return GuiHost::Stage::Recording;
+}
+
+// Puts the stage back to whatever the case found, however the case ends. A
+// stage left on Mixing is the window the NEXT case opens on, so every case
+// that switches stages registers this before it does.
+void keepStage (GuiHost& host, ScenarioContext& ctx)
+{
+    ctx.cleanup ([&host, stage = guiStage (ctx.engine().getStage())] { host.switchToStage (stage); });
+}
+
+void drainModals (GuiHost& host)
+{
+    for (int guard = 0; guard < 32 && ! host.modalStackEmpty(); ++guard) host.closeTopModal();
+}
+
+StripHandle* readyStrip (GuiHost& host, ScenarioContext& ctx)
+{
+    keepStage (host, ctx);
     host.switchToStage (GuiHost::Stage::Mixing);
     auto* strip = host.strip (kStripIndex);
     if (strip == nullptr) return nullptr;
@@ -142,7 +168,7 @@ std::optional<ScenarioResult> runEditorOpenCloseLoop (GuiHost& host, ScenarioCon
 {
     constexpr int kCycles = 5;
 
-    auto* strip = readyStrip (host);
+    auto* strip = readyStrip (host, ctx);
     if (strip == nullptr)
         return ScenarioResult::skip ("the console has no strip to drive");
 
@@ -261,6 +287,7 @@ std::optional<ScenarioResult> runAuxAttachFailure (GuiHost& host, ScenarioContex
     if (! fixture)
         return ScenarioResult::skip ("missing fixture: multi_bus.clap");
 
+    keepStage (host, ctx);
     host.switchToStage (GuiHost::Stage::Aux);
     auto* lane = host.auxLane (kAuxLane);
     if (lane == nullptr)
@@ -316,7 +343,7 @@ std::optional<ScenarioResult> runClapNoWindowMessage (GuiHost& host, ScenarioCon
     if (! fixture)
         return ScenarioResult::skip ("missing fixture: no_window.clap");
 
-    auto* strip = readyStrip (host);
+    auto* strip = readyStrip (host, ctx);
     if (strip == nullptr)
         return ScenarioResult::skip ("the console has no strip to drive");
 
@@ -372,7 +399,7 @@ std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, Scenario
     if (! fixture)
         return ScenarioResult::skip ("missing fixture: file_state.lv2");
 
-    auto* strip = readyStrip (host);
+    auto* strip = readyStrip (host, ctx);
     if (strip == nullptr)
         return ScenarioResult::skip ("the console has no strip to drive");
 
@@ -469,7 +496,7 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
     if (! fixture)
         return ScenarioResult::skip ("missing fixture: relayout.vst3");
 
-    auto* strip = readyStrip (host);
+    auto* strip = readyStrip (host, ctx);
     if (strip == nullptr)
         return ScenarioResult::skip ("the console has no strip to drive");
 
@@ -595,7 +622,7 @@ std::optional<ScenarioResult> runOopEditorFailureNoStrand (GuiHost& host, Scenar
     if (! childBinary)
         return ScenarioResult::skip ("the sandbox host binary is not beside the app");
 
-    auto* strip = readyStrip (host);
+    auto* strip = readyStrip (host, ctx);
     if (strip == nullptr)
         return ScenarioResult::skip ("the console has no strip to drive");
 
@@ -678,6 +705,7 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
     static constexpr float kDbTolerance = 0.05f;
     // The aux lanes record from their own strips, which the Aux stage builds
     // the first time it is shown and which keep running once it is hidden.
+    keepStage (host, ctx);
     host.switchToStage (GuiHost::Stage::Aux);
     host.switchToStage (GuiHost::Stage::Mixing);
     auto* strip = host.strip (kStripIndex);
@@ -895,6 +923,7 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
 
     // The aux lanes are built the first time their stage shows, and keep
     // running once it is hidden.
+    keepStage (host, ctx);
     host.switchToStage (GuiHost::Stage::Aux);
     host.switchToStage (GuiHost::Stage::Mixing);
 
@@ -952,6 +981,7 @@ std::optional<ScenarioResult> runTimelineKeys (GuiHost& host, ScenarioContext& c
     {
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
+        for (int i = 0; i < Session::kNumTracks; ++i) session.setTrackArmed (i, false);
         host.setTimelineShown (timeline);
         host.restoreTapeView (originalView);
         engine.getTransport().locate (playhead);
@@ -1054,7 +1084,7 @@ std::optional<ScenarioResult> runFileKeys (GuiHost& host, ScenarioContext& ctx)
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
     ctx.cleanup ([&host, &engine, &session, originalDir, originalPlayhead, restore]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         engine.setRenderOversamplingOverride (0);
         engine.reattachAudioCallback();
         host.openSession (restore);
@@ -1206,7 +1236,7 @@ std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContex
     const auto stage = engine.getStage();
     ctx.cleanup ([&host, &engine, &session, &strip, bindings, capture, mode, stage]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.closeBuiltin (0);
         engine.suspendProcessing();
         strip.unloadBuiltin();
@@ -1295,7 +1325,7 @@ std::optional<ScenarioResult> runAudioAutomationGestures (GuiHost& host, Scenari
     ctx.cleanup ([&host, &engine, &session, originalDir, originalPlayhead, restore]
     {
         engine.stop();
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.closeAudioEditor();
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
@@ -1439,7 +1469,7 @@ std::optional<ScenarioResult> runAudioEditorGestures (GuiHost& host, ScenarioCon
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
     ctx.cleanup ([&host, &session, originalDir, restore]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.closeAudioEditor();
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
@@ -1554,7 +1584,7 @@ std::optional<ScenarioResult> runAudioEditorToolbar (GuiHost& host, ScenarioCont
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
     ctx.cleanup ([&host, &session, originalDir, restore]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.closeAudioEditor();
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
@@ -1675,7 +1705,7 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
     ctx.cleanup ([&host, &engine, &session, &player, originalDir, originalStage, originalFile, originalPosition, restore]
     {
         engine.observeAudioRegistrationForScenario ({});
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         engine.setRenderOversamplingOverride (0);
         engine.reattachAudioCallback();
         host.openSession (restore);
@@ -1684,9 +1714,7 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
         else player.unloadFile();
         player.setPlayhead (originalPosition);
         host.refreshMasteringSource();
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     const auto source = ctx.tempDir() / "mixdown.wav";
     const auto output = ctx.tempDir() / "Finished master.wav";
@@ -1879,7 +1907,7 @@ std::optional<ScenarioResult> runMultiImportTargets (GuiHost& host, ScenarioCont
     const bool shown = host.setTimelineShown (true);
     ctx.cleanup ([&host, &session, originalDir, restore, shown]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
         host.setTimelineShown (shown);
@@ -1977,7 +2005,7 @@ std::optional<ScenarioResult> runImportModeConfirmation (GuiHost& host, Scenario
     const bool shown = host.setTimelineShown (true);
     ctx.cleanup ([&host, &session, originalDir, restore, shown]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
         host.setTimelineShown (shown);
@@ -2078,7 +2106,7 @@ std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioCo
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
     ctx.cleanup ([&host, &session, originalDir, restore]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
     });
@@ -2169,7 +2197,7 @@ std::optional<ScenarioResult> runTapeRuler (GuiHost& host, ScenarioContext& ctx)
     ctx.cleanup ([&host, &session, &transport, saved, loop, punch, snap, shown]
     {
         host.tapeRulerPointer (0.18f, false);
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         transport.setLoopRange (saved[1], saved[2]);
         transport.setLoopEnabled (loop);
         transport.setPunchRange (saved[3], saved[4]);
@@ -2419,18 +2447,16 @@ std::optional<ScenarioResult> runSplitModuleButtons (GuiHost& host, ScenarioCont
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore))
         return ScenarioResult::fail ("could not save the initial session");
-    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
     const bool originalCompact = host.setStripCompact (0, true);
     ctx.cleanup ([&host, &session, originalDir, originalStage, restore, originalCompact]
     {
         host.closeStripModuleEditors (0);
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.setStripCompact (0, originalCompact);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     auto& params = session.track (0).strip;
     params.eqEnabled.store (true);
@@ -2509,14 +2535,12 @@ std::optional<ScenarioResult> runInsertContextMenu (GuiHost& host, ScenarioConte
     ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
     {
         if (auto* component = host.strip (0)) component->closeEditor();
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
-    auto* component = readyStrip (host);
+    auto* component = readyStrip (host, ctx);
     if (component == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
     auto steps = std::make_shared<std::vector<Step>>();
     const auto menu = [&host, &ctx, steps] (const std::string& label)
@@ -2606,13 +2630,11 @@ std::optional<ScenarioResult> runPianoOptions (GuiHost& host, ScenarioContext& c
         return ScenarioResult::fail ("could not save the initial session");
     ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.closeRegionEditors();
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     MidiRegion region;
     region.lengthInTicks = 960;
@@ -2708,9 +2730,7 @@ std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& 
         host.closeRegionEditors();
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     MidiRegion region;
     region.lengthInTicks = 100000;
@@ -2805,9 +2825,7 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
         transport.setPlayhead (originalPosition);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     const auto rate = engine.getCurrentSampleRate();
     MidiRegion region;
@@ -2862,6 +2880,10 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
         ctx.expect (transport.getPlayhead() == session.ticksToSamples (600, rate) && transport.isStopped(),
                     "step record changed the transport state or advanced the wrong distance");
     } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll a second time"); } });
+    steps->push_back ({ 400, [&host, &ctx]
+    { ctx.expect (! host.virtualKeyboardOpen(), "K did not close the virtual keyboard"); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
    #endif
@@ -2887,15 +2909,13 @@ std::optional<ScenarioResult> runMasteringTargets (GuiHost& host, ScenarioContex
     engine.suspendProcessing();
     ctx.cleanup ([&host, &engine, &meters, originalStage, originalTarget, originalIntegrated, originalPeak]
     {
-        host.pressPeerKey ("Escape");
+        drainModals (host);
         host.restoreMasteringTarget (originalTarget);
         meters.targetPresetIndex.store (originalTarget);
         meters.meterIntegratedLufs.store (originalIntegrated);
         meters.meterTruePeakDb.store (originalPeak);
         engine.resumeProcessing();
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     const std::array<const char*, 6> names { "Off", "Spotify", "Apple Music", "YouTube", "Tidal", "Broadcast (EBU R128)" };
     const std::array<float, 6> targets { 0.0f, -14.0f, -16.0f, -14.0f, -14.0f, -23.0f };
@@ -2960,16 +2980,14 @@ std::optional<ScenarioResult> runMasteringLoad (GuiHost& host, ScenarioContext& 
         return ScenarioResult::fail ("could not save the initial session");
     ctx.cleanup ([&host, &session, &player, originalDir, originalStage, originalFile, originalPosition, restore]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
         if (originalFile.existsAsFile()) player.loadFile (originalFile);
         else player.unloadFile();
         player.setPlayhead (originalPosition);
         host.refreshMasteringSource();
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     const auto write = [] (const std::filesystem::path& path, int frames)
     {
@@ -3052,9 +3070,7 @@ std::optional<ScenarioResult> runAuxSources (GuiHost& host, ScenarioContext& ctx
         if (auto* lane = host.auxLane (0)) lane->captureSources (false);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     for (int i = 0; i < Session::kNumTracks; ++i)
     {
@@ -3127,14 +3143,12 @@ std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioCon
     ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
     {
         if (auto* component = host.strip (0)) component->closeEditor();
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
-    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 150, [&host, &ctx]
     { ctx.expect (host.clickInsert (0), "insert button did not receive a click"); } });
@@ -3195,14 +3209,12 @@ std::optional<ScenarioResult> runPluginBrowseFile (GuiHost& host, ScenarioContex
     ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
     {
         if (auto* strip = host.strip (0)) strip->closeEditor();
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
-    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 150, [&host, &ctx]
     { ctx.expect (host.clickInsert (0), "insert button did not receive a click"); } });
@@ -3258,15 +3270,13 @@ std::optional<ScenarioResult> runPluginPicker (GuiHost& host, ScenarioContext& c
         return ScenarioResult::fail ("could not save the initial session");
     ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         if (auto* strip = host.strip (0)) { strip->closeEditor(); strip->unloadNativePlugins(); }
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
-    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
     const auto filter = [&host, &ctx] (const std::string& value)
     {
         ctx.expect (host.clickModalAt (0.3f, 0.1f), "picker filter did not receive focus");
@@ -3423,6 +3433,8 @@ std::optional<ScenarioResult> runSettingsDefaults (GuiHost& host, ScenarioContex
             host.closeAudioSettings();
         } });
     }
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (! host.audioSettingsOpen(), "audio settings did not finish closing"); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
    #endif
@@ -3515,9 +3527,8 @@ std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContex
     {
         if (hadConfig) dusk::fs::writeStringToFile (config, configText);
         else { std::error_code error; fs::remove (config, error); }
-        if (! host.audioSettingsOpen()) host.openAudioSettings();
         host.closeAudioSettings();
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
     });
@@ -3564,9 +3575,14 @@ std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContex
     { ctx.expect (host.clickAudioSettingsControl ("autosave"), "autosave dropdown is not visible"); } });
     steps->push_back ({ 200, [&host] { host.inputAudioSettings ("end"); } });
     steps->push_back ({ 200, [&host] { host.inputAudioSettings ("enter"); } });
-    steps->push_back ({ 200, [&ctx]
-    { ctx.expect (appconfig::getAutosaveIntervalSeconds() == 300,
-                  "the last autosave option did not select 5 minutes"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (appconfig::getAutosaveIntervalSeconds() == 300,
+                    "the last autosave option did not select 5 minutes");
+        host.closeAudioSettings();
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (! host.audioSettingsOpen(), "audio settings did not finish closing"); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
    #endif
@@ -3715,14 +3731,12 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
         return ScenarioResult::fail ("could not save the initial session");
     ctx.cleanup ([&host, &session, &engine, seq, port, originalDir, restoreFile, originalStage]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         snd_seq_delete_simple_port (seq.get(), port);
         engine.refreshMidiInputs();
         host.openSession (restoreFile);
         applySessionDirectory (session, originalDir);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     ctx.keep (track.mode);
     ctx.keep (track.midiInputIndex);
@@ -3821,12 +3835,11 @@ std::optional<ScenarioResult> runFaderEntry (GuiHost& host, ScenarioContext& ctx
     ctx.cleanup ([&host, &session, bindings, originalStage]
     {
         host.pressPeerKey ("Escape");
-        if (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         session.midiBindings.mutate ([&] (auto& value) { value = bindings; });
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
+    ctx.cleanup (host.preserveKeyboardFocus());
     ctx.keep (session.midiLearnPending);
     ctx.keep (session.midiLearnCapture);
     session.midiLearnPending.store (-1);
@@ -3920,10 +3933,7 @@ std::optional<ScenarioResult> runGroupChips (GuiHost& host, ScenarioContext& ctx
     const auto originalStage = ctx.engine().getStage();
     ctx.cleanup ([&host, originalStage]
     {
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux
-                            : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
@@ -3987,10 +3997,7 @@ std::optional<ScenarioResult> runMeterClip (GuiHost& host, ScenarioContext& ctx)
         track.regions = originalRegions;
         engine.getPlaybackEngine().preparePlayback();
         engine.getTransport().setPlayhead (originalPosition);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux
-                            : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     ctx.keep (track.mode);
     ctx.keep (track.strip.faderDb);
@@ -4066,10 +4073,7 @@ std::optional<ScenarioResult> runStageAudioFlow (GuiHost& host, ScenarioContext&
         track.regions = originalRegions;
         engine.getPlaybackEngine().preparePlayback();
         engine.getTransport().setPlayhead (originalPosition);
-        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
-                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
-                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux
-                            : GuiHost::Stage::Mastering);
+        host.switchToStage (guiStage (originalStage));
     });
     ctx.keep (track.mode);
     ctx.keep (track.strip.faderDb);
@@ -4150,9 +4154,10 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
     ctx.cleanup ([&host, &session, &engine, originalDir, restoreFile]
     {
         engine.stop();
-        if (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         host.openSession (restoreFile);
         applySessionDirectory (session, originalDir);
+        session.setTrackArmed (0, false);
     });
     const auto outgoing = ctx.tempDir() / "outgoing" / "session.json";
     const auto incoming = ctx.tempDir() / "incoming" / "session.json";
@@ -4282,8 +4287,13 @@ std::optional<ScenarioResult> runAutosave (GuiHost& host, ScenarioContext& ctx)
     auto& fader = session.track (0).strip.faderDb;
     const float original = fader.load (std::memory_order_relaxed);
     const auto originalDir = currentSessionDirectory (session);
-    ctx.cleanup ([&session, &fader, original, originalDir]
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &fader, original, originalDir, restore]
     {
+        drainModals (host);
+        host.openSession (restore);
         fader.store (original, std::memory_order_relaxed);
         applySessionDirectory (session, originalDir);
     });
@@ -4699,7 +4709,7 @@ std::optional<ScenarioResult> runArmInputRefusal (GuiHost& host, ScenarioContext
     const auto stage = ctx.engine().getStage();
     ctx.cleanup ([&host, stage]
     {
-        while (! host.modalStackEmpty()) host.closeTopModal();
+        drainModals (host);
         switch (stage)
         {
             case AudioEngine::Stage::Recording: host.switchToStage (GuiHost::Stage::Recording); break;
@@ -4894,18 +4904,19 @@ std::optional<ScenarioResult> runMasteringTransport (GuiHost& host, ScenarioCont
         return ctx.verdict();
     writer.reset();
     const auto stage = ctx.engine().getStage();
-    ctx.cleanup ([&host, &player, &transport, stage, state = transport.getState(), position = transport.getPlayhead()]
+    ctx.cleanup ([&host, &ctx, &player, &transport, stage, source = ctx.session().mastering().sourceFile,
+                  state = transport.getState(), position = transport.getPlayhead()]
     {
-        host.closeTopModal();
+        drainModals (host);
         player.stop();
         player.unloadFile();
-        switch (stage)
-        {
-            case AudioEngine::Stage::Recording: host.switchToStage (GuiHost::Stage::Recording); break;
-            case AudioEngine::Stage::Mixing: host.switchToStage (GuiHost::Stage::Mixing); break;
-            case AudioEngine::Stage::Aux: host.switchToStage (GuiHost::Stage::Aux); break;
-            case AudioEngine::Stage::Mastering: host.switchToStage (GuiHost::Stage::Mastering); break;
-        }
+        // unloadFile is only the player's half: the view wrote the path into
+        // the session too, and this one points inside a temp directory that
+        // dies with the case. Left behind it is saved into every later
+        // session and reloads as a missing file.
+        ctx.session().mastering().sourceFile = source;
+        host.refreshMasteringSource();
+        host.switchToStage (guiStage (stage));
         transport.setPlayhead (position);
         transport.setState (state);
     });
@@ -5103,6 +5114,7 @@ std::optional<ScenarioResult> runAudioEditorLifecycle (GuiHost& host, ScenarioCo
         track.regions = regions;
         if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
     });
+    ctx.cleanup (host.preserveKeyboardFocus());
     const auto path = ctx.tempDir() / "editor.wav";
     auto writer = dusk::audio::FileWriter::create (path, { 48000.0, 1, 24 });
     if (! ctx.expect (writer != nullptr, "could not create the audio editor fixture")) return ctx.verdict();
@@ -5148,14 +5160,14 @@ std::optional<ScenarioResult> runMixdownHandoff (GuiHost& host, ScenarioContext&
     auto& track = ctx.session().track (0);
     if (! ctx.expect (! player.isLoaded(), "the fixture already has a mastering source")) return ctx.verdict();
     ctx.keep (track.mode);
+    keepStage (host, ctx);
     ctx.cleanup ([&host, &ctx, &track, &player, regions = track.regions,
                   source = ctx.session().mastering().sourceFile]
     {
-        host.closeTopModal();
+        drainModals (host);
         player.stop();
         player.unloadFile();
         ctx.session().mastering().sourceFile = source;
-        host.switchToStage (GuiHost::Stage::Recording);
         track.regions = regions;
     });
     const auto input = ctx.tempDir() / "bounce-source.wav";
@@ -5287,7 +5299,7 @@ std::optional<ScenarioResult> runAccessibleControls (GuiHost& host, ScenarioCont
     ctx.keep (strip.pan);
     ctx.keep (strip.hpfFreq);
     ctx.keep (strip.compFetRatio);
-    ctx.cleanup ([&host] { host.switchToStage (GuiHost::Stage::Recording); });
+    keepStage (host, ctx);
     host.switchToStage (GuiHost::Stage::Recording);
     std::string value, help;
     for (int track = 1; track <= Session::kNumTracks; ++track)
@@ -6225,11 +6237,12 @@ const ScenarioRegistrar automationMenu { Scenario {
 std::optional<ScenarioResult> runPunchMenu (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
     ctx.keep (session.preRollEnabled);
     ctx.keep (session.postRollEnabled);
     ctx.keep (session.preRollSeconds);
     ctx.keep (session.postRollSeconds);
-    ctx.cleanup ([&host] { host.closeTopModal(); host.closeTopModal(); });
+    ctx.cleanup ([&host] { drainModals (host); });
     session.preRollEnabled.store (false);
     session.postRollEnabled.store (false);
     session.preRollSeconds.store (0.0f);
