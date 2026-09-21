@@ -1,10 +1,18 @@
 #include "../Scenario.h"
 #include "../ScenarioContext.h"
 #include "../../AudioEngine.h"
+#include "../../audiofile/FileReader.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/Session.h"
+#include "../../../session/SessionSerializer.h"
+#include "../../../foundation/Json.h"
 
+#include <array>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -283,14 +291,230 @@ ScenarioResult cycleStepsThroughTheStack (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+ScenarioResult eightInputsRecordSeparately (ScenarioContext& ctx)
+{
+    constexpr int channels = 8;
+    constexpr int frames = ScenarioContext::kBlockSize;
+    constexpr int blocks = 64;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    ctx.keep (session.deviceCaptureChannels);
+    ctx.keep (session.countInEnabled);
+    session.deviceCaptureChannels.store (channels);
+    session.countInEnabled.store (false);
+    for (int index = 0; index < channels; ++index)
+    {
+        auto& track = session.track (index);
+        track.mode.store ((int) Track::Mode::Mono);
+        track.inputSource.store (channels - 1 - index);
+        track.printEffects.store (false);
+        session.setTrackArmed (index, true);
+    }
+    std::array<std::array<float, frames>, channels> input {};
+    std::array<const float*, channels> pointers {};
+    std::array<float, frames> left {}, right {};
+    float* outputs[] { left.data(), right.data() };
+    for (std::size_t channel = 0; channel < input.size(); ++channel)
+    {
+        pointers[channel] = input[channel].data();
+        for (std::size_t frame = 0; frame < input[channel].size(); ++frame)
+            input[channel][frame] = static_cast<float> (channel + 1) * 0.05f
+                                  * (frame % 32 < 16 ? 1.0f : -1.0f);
+    }
+    engine.getTransport().setPlayhead (0);
+    engine.record();
+    if (! ctx.expect (engine.getTransport().isRecording(), "eight armed tracks did not start recording"))
+        return ctx.verdict();
+    for (int block = 0; block < blocks; ++block)
+        engine.audioDeviceIOCallback (pointers.data(), channels, outputs, 2, frames, {});
+    engine.stop();
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        const auto& regions = session.track (index).regions;
+        if (index >= channels)
+        {
+            ctx.expect (regions.empty(), "an unarmed track acquired a recording");
+            continue;
+        }
+        if (! ctx.expect (regions.size() == 1, "an armed track did not commit exactly one take")) continue;
+        const auto& region = regions.front();
+        ctx.expect (region.timelineStart == 0 && region.lengthInSamples == frames * blocks,
+                    "simultaneous takes have different starts or lengths");
+        auto reader = dusk::audio::FileReader::open (
+            std::filesystem::u8path (region.file.getFullPathName().toStdString()));
+        if (! ctx.expect (reader != nullptr, "a committed take has no readable WAV")) continue;
+        ctx.expect (reader->info().numChannels == 1 && reader->info().numFrames == frames * blocks,
+                    "the recorded WAV has the wrong channel count or duration");
+        std::array<float, frames> recorded {};
+        float* destination[] { recorded.data() };
+        ctx.expect (reader->read (destination, 1, frames * 8, frames) == frames, "the WAV was truncated");
+        for (std::size_t frame = 0; frame < recorded.size(); ++frame)
+            if (! ctx.expect (std::abs (recorded[frame] - input[static_cast<std::size_t> (channels - 1 - index)][frame]) < 1.0e-5f,
+                              "a take contains another input's signal")) break;
+    }
+    return ctx.verdict();
+}
+
+ScenarioResult midiRecordingLivesInJson (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (0);
+    const int input = engine.getVirtualKeyboardInputIndex();
+    if (! ctx.expect (input >= 0, "the virtual MIDI input is missing")) return ctx.verdict();
+    ctx.keep (session.countInEnabled);
+    session.countInEnabled.store (false);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.midiInputIndex.store (input);
+    track.midiChannel.store (0);
+    track.inputMonitor.store (true);
+    session.setTrackArmed (0, true);
+    engine.record();
+    if (! ctx.expect (engine.getTransport().isRecording(), "MIDI recording did not start")) return ctx.verdict();
+    ctx.pump (4);
+    dusk::MidiBuffer start;
+    const std::uint8_t noteOn[] { 0x92, 60, 101 };
+    const std::uint8_t controller[] { 0xb2, 74, 87 };
+    start.addEvent (noteOn, 3, 0);
+    start.addEvent (controller, 3, 64);
+    ctx.pumpWithMidi (input, std::move (start));
+    ctx.pump (16);
+    dusk::MidiBuffer finish;
+    const std::uint8_t noteOff[] { 0x82, 60, 0 };
+    finish.addEvent (noteOff, 3, 0);
+    ctx.pumpWithMidi (input, std::move (finish));
+    ctx.pump (4);
+    engine.stop();
+    const auto& regions = track.midiRegions.current();
+    if (! ctx.expect (regions.size() == 1 && regions[0].notes.size() == 1 && regions[0].ccs.size() == 1,
+                      "MIDI recording did not commit the note and controller")) return ctx.verdict();
+    const auto recorded = regions[0];
+    ctx.expect (recorded.notes[0].channel == 3 && recorded.notes[0].noteNumber == 60
+                && recorded.notes[0].velocity == 101 && recorded.notes[0].lengthInTicks > 0,
+                "the recorded note changed channel, pitch, velocity or duration");
+    ctx.expect (recorded.ccs[0].channel == 3 && recorded.ccs[0].controller == 74 && recorded.ccs[0].value == 87,
+                "the recorded controller changed its identity or value");
+    const auto path = ctx.sessionDir() / "session.json";
+    if (! ctx.expect (SessionSerializer::save (session, path), "could not save the MIDI take")) return ctx.verdict();
+    std::ifstream stream (path);
+    const auto json = dusk::json::Json::parse (stream, nullptr, false);
+    if (! ctx.expect (! json.is_discarded(), "the saved session is not valid JSON")) return ctx.verdict();
+    const auto& embedded = json.at ("tracks").at (0).at ("midi_regions").at (0);
+    ctx.expect (embedded.at ("notes").at (0).at ("note") == 60
+                && embedded.at ("ccs").at (0).at ("ctrl") == 74,
+                "the MIDI events were not embedded in session.json");
+    Session loaded;
+    if (! ctx.expect (SessionSerializer::load (loaded, path), "could not reload the MIDI session")) return ctx.verdict();
+    const auto& restored = loaded.track (0).midiRegions.current();
+    ctx.expect (restored.size() == 1 && restored[0].notes == recorded.notes && restored[0].ccs == recorded.ccs
+                && restored[0].timelineStart == recorded.timelineStart
+                && restored[0].lengthInTicks == recorded.lengthInTicks,
+                "saving and reloading changed the recorded MIDI data");
+    for (const auto& entry : std::filesystem::recursive_directory_iterator (ctx.sessionDir()))
+        ctx.expect (entry.path().extension() != ".mid" && entry.path().extension() != ".wav",
+                    "MIDI recording created an external media file");
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
 }
 
+ScenarioResult secondTrackOverdub (ScenarioContext& ctx)
+{
+    constexpr int frames = ScenarioContext::kBlockSize;
+    constexpr int blocks = 64;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    session.countInEnabled.store (false);
+    session.master().eqEnabled.store (false);
+    session.master().compEnabled.store (false);
+    session.master().tapeEnabled.store (false);
+    for (int index = 0; index < 2; ++index)
+    {
+        auto& track = session.track (index);
+        track.mode.store ((int) Track::Mode::Mono);
+        track.inputSource.store (index);
+        track.printEffects.store (false);
+        track.inputMonitor.store (false);
+    }
+    std::array<float, frames> inputLeft {}, inputRight {}, outputLeft {}, outputRight {};
+    const float* inputs[] { inputLeft.data(), inputRight.data() };
+    float* outputs[] { outputLeft.data(), outputRight.data() };
+    for (std::size_t frame = 0; frame < inputLeft.size(); ++frame)
+        inputLeft[frame] = frame % 32 < 16 ? 0.1f : -0.1f;
+    session.setTrackArmed (0, true);
+    engine.record();
+    if (! ctx.expect (transport.isRecording(), "the first track did not start recording")) return ctx.verdict();
+    for (int block = 0; block < blocks; ++block)
+        engine.audioDeviceIOCallback (inputs, 2, outputs, 2, frames, {});
+    engine.stop();
+    if (! ctx.expect (session.track (0).regions.size() == 1, "the first take was not committed")) return ctx.verdict();
+    const auto first = session.track (0).regions.front();
+    session.setTrackArmed (0, false);
+    session.setTrackArmed (1, true);
+    inputLeft.fill (0.0f);
+    transport.setPlayhead (0);
+    transport.setLoopRange (0, frames * (blocks + 8));
+    transport.setLoopEnabled (true);
+    engine.record();
+    if (! ctx.expect (transport.isRecording(), "the overdub did not start recording")) return ctx.verdict();
+    double playbackEnergy = 0.0;
+    for (int block = 0; block < blocks; ++block)
+    {
+        for (std::size_t frame = 0; frame < inputRight.size(); ++frame)
+            inputRight[frame] = block < blocks / 2 ? 0.0f : frame % 16 < 8 ? 0.2f : -0.2f;
+        engine.audioDeviceIOCallback (inputs, 2, outputs, 2, frames, {});
+        if (block >= 16 && block < blocks / 2)
+            for (const float sample : outputLeft) playbackEnergy += static_cast<double> (sample) * sample;
+    }
+    engine.stop();
+    ctx.expect (playbackEnergy > 1.0, "track 1 was not audible during the silent-input half of the overdub");
+    ctx.expect (session.track (0).regions.size() == 1 && session.track (0).regions.front().file == first.file
+                && session.track (0).regions.front().lengthInSamples == first.lengthInSamples,
+                "overdubbing track 2 changed track 1's region");
+    if (! ctx.expect (session.track (1).regions.size() == 1, "the overdub did not commit one take to track 2"))
+        return ctx.verdict();
+    ctx.expect (session.track (1).regions.front().file != first.file, "the overdub reused the original take's file");
+    for (int index = 0; index < 2; ++index)
+    {
+        const auto& take = session.track (index).regions.front();
+        ctx.expect (take.timelineStart == 0 && take.lengthInSamples == frames * blocks,
+                    "the two tracks did not retain aligned take boundaries");
+        auto reader = dusk::audio::FileReader::open (take.file.getFullPathName().toStdString());
+        if (! ctx.expect (reader != nullptr, "a take has no readable WAV")) continue;
+        std::array<float, frames> recorded {};
+        float* destination[] { recorded.data() };
+        for (const int block : { 16, 48 })
+        {
+            ctx.expect (reader->read (destination, 1, block * frames, frames) == frames, "the take was truncated");
+            for (std::size_t frame = 0; frame < recorded.size(); ++frame)
+            {
+                const float expected = index == 0 ? (frame % 32 < 16 ? 0.1f : -0.1f)
+                                     : block < blocks / 2 ? 0.0f : (frame % 16 < 8 ? 0.2f : -0.2f);
+                if (! ctx.expect (std::abs (recorded[frame] - expected) < 1.0e-5f,
+                                  "a take changed source or captured the other track's playback")) break;
+            }
+        }
+    }
+    return ctx.verdict();
+}
+
+const ScenarioRegistrar overdubRegistrar { Scenario {
+    "record.second_track_overdub", { "record", "playback" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (secondTrackOverdub, ctx); } } };
+
 const ScenarioRegistrar fullCoverRegistrar { Scenario {
     "take.full_cover_pushes_onto_stack", { "take", "record", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (fullCoverPushesOntoStack, ctx); } } };
+const ScenarioRegistrar eightInputsRegistrar { Scenario {
+    "record.eight_inputs_separate_takes", { "record" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (eightInputsRecordSeparately, ctx); } } };
+const ScenarioRegistrar midiJsonRegistrar { Scenario {
+    "record.midi_embedded_in_json", { "record", "midi", "session" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (midiRecordingLivesInJson, ctx); } } };
 const ScenarioRegistrar capRegistrar { Scenario {
     "take.stack_keeps_newest_eight", { "take", "record" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (stackKeepsNewestEight, ctx); } } };

@@ -35,6 +35,7 @@ public:
     // strip becomes the A/S/X target via the same path a click uses.
     void moveFocus (int delta);
     int  getFocusedStrip() const noexcept { return focusedStrip; }
+    void restoreFocusForScenario (int track) { focusedStrip = track; repaint(); }
 
     // Min: VCA comp's "513 ms" / "0.2 ms" textboxes don't clip.
     static constexpr int kMinChannelWidth = consolelayout::kMinChannelWidth;

@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 77
-# ceiling partial 53
+# ceiling gap 34
+# ceiling partial 49
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -32,22 +32,22 @@ Quick Guide > Pick an audio device	Settings > Audio lists backends and applies i
 Quick Guide > Arm a track and check levels	ARM shows live pre-fader input without monitoring	auto	test:Track meter source follows tracking controls without changing mix metering
 Quick Guide > Arm a track and check levels	clip indicator lights at 0 dBFS and holds one second	gap
 Quick Guide > Record	R records, Space stops, a region appears on the armed track	partial	test:RecordManager writes mono input back accurately;scenario:engine.pipeline_selftest		the capture path is tested; the keys and the region appearing on the timeline are walked by hand
-Quick Guide > Record	Cmd+Z undoes a recording	gap
-Quick Guide > Overdub	record a second track over playback of the first	gap
-Quick Guide > Overdub	up to 8 inputs recorded at once	gap
+Quick Guide > Record	Cmd+Z undoes a recording	auto	scenario:gui.recording_undo_key;scenario:take.full_cover_pushes_onto_stack		R records virtual-keyboard MIDI, Space commits the take, Cmd+Z removes it; audio take restoration is covered by the take scenario
+Quick Guide > Overdub	record a second track over playback of the first	auto	scenario:record.second_track_overdub		two actual recording passes; first take plays with live inputs silent during overdub, both WAVs retain their own input and aligned boundaries
+Quick Guide > Overdub	up to 8 inputs recorded at once	auto	scenario:record.eight_inputs_separate_takes		eight distinct input signals record simultaneously with reversed input assignments; WAV samples, aligned lengths and untouched unarmed tracks are checked
 Quick Guide > Overdub	Shift+[ and Shift+] set punch; punch turns itself on	auto	test:Transport: a punch bracket placed by hand arms punch once in is before out
-Quick Guide > Mix	MIXING swaps the input block for aux sends	gap
-Quick Guide > Mix	the automation mode label picks OFF / READ / WRITE / TOUCH from a menu	gap
+Quick Guide > Mix	MIXING swaps the input block for aux sends	auto	scenario:gui.stage_views_and_controls		clicks MIXING and RECORDING, checking tracking controls and aux sends on all 24 strips
+Quick Guide > Mix	the automation mode label picks OFF / READ / WRITE / TOUCH from a menu	auto	scenario:gui.automation_menu		actual mode button and peer clicks on all four menu rows; model, displayed label, fader input and menu dismissal checked
 Quick Guide > Bounce	Cmd+B bounces a 24-bit WAV (or MP3 by extension) into the session folder	partial	test:LameMp3Writer emits a valid 48k/320k MP3 carrying the signal;scenario:bounce.master_mix_file;scenario:bounce.mp3_by_format		the WAV and MP3 renders are tested; Cmd+B, the dialog and the extension-to-format choice are not
 Quick Guide > Bounce	Load latest mixdown then Export master	gap
 
 Names and Functions of Parts > The main window	menu bar, stage selector, bank selector, transport, tape toggle, console	manual			figure callouts; checked against the running app by screenshot review
-Names and Functions of Parts > The main window	Cmd/Ctrl+1..4 switch stages; plain 1..8 pick pages	partial	test:Bank mapping: plain digits select exactly pages one through eight		page digits tested; the stage shortcuts are not
+Names and Functions of Parts > The main window	Cmd/Ctrl+1..4 switch stages; plain 1..8 pick pages	auto	test:Bank mapping: plain digits select exactly pages one through eight;scenario:gui.mastering_transport
 Names and Functions of Parts > The transport bar	transport callouts (stop, rewind, play, forward, record, loop, punch, keyboard, notepad, click, count-in, BPM, TAP, meter, clock, tuner, zoom)	n/a			figure; each control is held under The interface > The transport bar
 Names and Functions of Parts > The channel strip — MIXING stage	mixing-stage callouts	n/a			figure; each control is held under The channel strip
 Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	moving one member moves every member by the same dB	auto	test:setTrackFaderGrouped shifts group peers by the same dB delta
 Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	the lowest track is the group master; chips G1..G8	auto	scenario:gui.fader_group_chips		all eight labels, rendered filled/outlined chips and lowest-member promotion verified
-Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	group membership is saved with the session	gap
+Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	group membership is saved with the session	auto	test:SessionSerializer round-trips markers, bindings and fader groups		groups span all three banks; group 8 and leaving a group survive save/load
 Names and Functions of Parts > The channel strip — RECORDING stage	recording-stage callouts	n/a			figure; each control is held under The channel strip > Input block and ARM, IN, PRINT/FREEZE
 Names and Functions of Parts > The bus strip	bus strip callouts	n/a			figure; each control is held under The bus strips
 Names and Functions of Parts > The master strip	master strip callouts	n/a			figure; each control is held under The master strip
@@ -57,7 +57,7 @@ Names and Functions of Parts > The tape strip	tape strip callouts; left-click mo
 Names and Functions of Parts > The audio region editor	region editor callouts	n/a			figure; each control is held under The audio region editor
 Names and Functions of Parts > The piano roll	piano roll callouts	n/a			figure; each control is held under The piano roll
 
-Getting started > System requirements	Linux refuses to start without an X11 display, with a message	gap
+Getting started > System requirements	Linux refuses to start without an X11 display, with a message	auto	bb:bb-no-display		private-HOME launches with DISPLAY unset and unreachable both exit 1 and print the corresponding X11 diagnostic
 Getting started > System requirements	notepad needs OpenGL 3; an unsupported driver is refused cleanly	auto	test:Notepad rejects graphics stacks known to end the host process;test:Notepad keeps supported hardware and software OpenGL renderers
 Getting started > System requirements	a notepad that crashed on its first frame is refused next launch	auto	test:A run that never comes back is reported to the next launch;test:A renderer upgrade clears only a marker from an older release;test:A run that completes a frame leaves nothing behind
 Getting started > System requirements	notepad_enabled=0 keeps the notepad off	auto	test:An absent notepad switch leaves the notepad available;test:The notepad switch round-trips
@@ -68,14 +68,14 @@ Getting started > Installing Dusk Studio > macOS (DMG / .app)	DMG drag-install, 
 Getting started > Installing Dusk Studio > Windows (MSI installer)	MSI installs to Program Files with SmartScreen and UAC steps	manual			OS dialogs; walked on every release candidate (#623)
 Getting started > Installing Dusk Studio > Windows (MSI installer)	non-ASCII install, profile and bounce paths work	partial	test:LameMp3Writer writes and reopens a Unicode path;test:Utf8CommandLine keeps a non-ANSI plugin path intact		MP3 and plug-in host paths tested; install folder and profile paths are not
 Getting started > Installing Dusk Studio > Verifying your download	SHA256SUMS covers every asset and carries a detached signature	auto	ctest:release-mechanics-contract;script:scripts/verify-release-assets.sh
-Getting started > First launch	opens a blank Untitled session; tape strip collapsed	gap
-Getting started > First launch	stage buttons switch the console view	gap
+Getting started > First launch	opens a blank Untitled session; tape strip collapsed	auto	scenario:gui.first_launch		fresh private HOME starts with Untitled, no regions or armed tracks, all channel strips present, Recording visible and timeline collapsed
+Getting started > First launch	stage buttons switch the console view	auto	scenario:gui.stage_views_and_controls		clicks all four stage buttons and checks exclusive button selection and console, transport, aux and mastering visibility
 Getting started > Configuring audio	six-section settings panel	n/a			overview; each section is held below
 Getting started > Configuring audio > Audio	Windows prefers ASIO, then exclusive, shared, DirectSound	gap
 Getting started > Configuring audio > Audio	device choice applies immediately and is remembered per machine	auto	test:DeviceManager initialise: saved blob opens the named device and type;test:DeviceStateBlob JSON round-trips explicit channels
 Getting started > Configuring audio > Audio	a session switches the device to its own sample rate, and warns if it cannot	partial	test:SessionSerializer round-trips the session sample rate		the rate is saved; the switch and the warning are not tested
 Getting started > Configuring audio > Audio	extra output pairs become selectable as aux outputs	auto	test:output pair encode/decode round-trips;test:tapStereoPairInto accumulates onto the routed pair
-Getting started > Configuring audio > Audio	main output pair selects where the master goes	gap
+Getting started > Configuring audio > Audio	main output pair selects where the master goes	auto	scenario:master.output_pair		four output callback buffers prove default 1-2, selected 3-4, reversed 4-3 and return to default; unselected outputs stay silent
 Getting started > Configuring audio > Audio	Rescan devices re-enumerates backends and MIDI ports	auto	test:DeviceManager rescans every registered audio backend;scenario:gui.settings_rescan_devices
 Getting started > Configuring audio > Audio	first launch picks an input alongside the output	auto	test:The capture device matching the output is preferred;test:No capture devices means the input stays unset;test:With no matching name the first capture device is taken
 Getting started > Configuring audio > Control surface	MCU input and output enable faders and LED mirroring	auto	test:McuController: initial resync emits faders + LED state for 8 banked strips;test:SessionSerializer round-trips MCU input/output identifiers + assign mode
@@ -99,7 +99,7 @@ The interface > Window layout	modals centre over a dimmed backdrop; Esc or outsi
 The interface > Window layout	DSP readout shows load and dropout counters; double-click resets them	gap
 The interface > The four stages	switching among Recording, Mixing and Aux keeps audio flowing	auto	scenario:gui.stage_audio_flow		actual stage buttons preserve playback progress and audible strip level without engine overruns
 The interface > The four stages	Settings > Quickstart opens the shipped quickstart, or greys out when absent	partial	ctest:install-linux;ctest:package-contents-checker		the file is shipped and located; the menu opening it is walked by hand (#623)
-The interface > The four stages	Cmd/Ctrl+1..4 change stage, plain digits change page, ? opens shortcuts	partial	test:Bank mapping: plain digits select exactly pages one through eight		page digits tested; stage keys and ? are not
+The interface > The four stages	Cmd/Ctrl+1..4 change stage, plain digits change page, ? opens shortcuts	auto	test:Bank mapping: plain digits select exactly pages one through eight;scenario:gui.mastering_transport
 The interface > The four stages	entering or leaving MASTERING stops the transport; changing stage saves and closes the notepad	gap
 The interface > The transport bar	Stop silences held notes even on muted or soloed-out tracks	auto	scenario:midi.panic_all_paths;test:muted MIDI strips still process transport panic events;test:synth unit stops on the transport's all-notes-off
 The interface > The transport bar	Stop returns the playhead per Playhead on Stop; a second Stop goes to bar 1	auto	test:Stop on a rolling transport follows the Playhead on Stop setting;test:Stop pressed while stopped returns to zero whatever the setting;test:A locate during playback becomes the point Stop returns to
@@ -107,16 +107,16 @@ The interface > The transport bar	a chase-driven stop leaves the playhead where 
 The interface > The transport bar	Rewind and Forward tap to markers, hold to scrub at 10x	partial	test:McuReceiver: REWIND / FAST-FORWARD publish held-state on press and release;scenario:marker.rewind_forward_jump		surface press/hold state and marker jumps tested; the 180 ms hold threshold and 10x scrub are not
 The interface > The transport bar	Play snaps to loop start when outside the loop	auto	scenario:transport.play_snaps_to_loop_start
 The interface > The transport bar	Record needs an armed track	auto	test:An audio track cannot arm while the device offers no inputs;test:A track whose input the device does not offer cannot arm
-The interface > The transport bar	Punch right-click menu sets pre-roll and post-roll	gap
+The interface > The transport bar	Punch right-click menu sets pre-roll and post-roll	auto	scenario:gui.punch_menu		peer right-click opens Punch settings; enable rows toggle both ways, pre/post submenus select 2 s/5 s and Off, without toggling punch or leaving menus open
 The interface > The transport bar	metronome clicks when enabled and rolling	auto	test:Metronome: enabled + rolling emits clicks;test:Metronome: disabled + not rolling stays silent
-The interface > The transport bar	TAP averages the last four intervals into a tempo	gap
-The interface > The transport bar	BPM double-click edits the tempo governing the playhead	gap
+The interface > The transport bar	TAP averages the last four intervals into a tempo	auto	scenario:gui.tap_tempo_intervals		uneven B taps verify four-interval averaging, oldest-interval eviction and reset after a two-second gap
+The interface > The transport bar	BPM double-click edits the tempo governing the playhead	auto	scenario:gui.tempo_entry		peer double-click and text entry retain fractional constant tempo, then edit only the middle tempo-map point governing a stopped playhead
 The interface > The transport bar	clock flips between Bars.Beats.Ticks and mm:ss.mmm	auto	scenario:gui.clock_format_roundtrip
 The interface > The transport bar	tuner reads the selected input's pitch	auto	test:PitchDetector: recovers a harmonic tone within a few cents;test:PitchDetector: accurate across the 50-1500 Hz range;test:PitchDetector: silence reports 0 Hz
 The interface > The transport bar	Snap toggle and grid resolution	auto	test:stepForResolution: musical resolutions at 120 BPM / 48 kHz;test:stepForResolution: triplets are 2/3 of the base;test:stepForResolution: dotted resolutions are 3/2 of the base;test:snapAbsolute: rounds to nearest grid point
 The interface > The transport bar	Chase scrolls the timeline to keep the playhead in view	auto	test:The view holds still while the playhead is inside it;test:The page turns as the playhead nears the right edge;test:A playhead left of the view brings the view back to it
 The interface > The virtual keyboard	appears as an input named Virtual Keyboard and feeds a track	auto	test:MidiInputClient appends a stable Virtual-Keyboard slot;test:MidiInputClient VKB feed round-trips through the dusk boundary
-The interface > The virtual keyboard	loading an instrument with no input bound selects the keyboard and turns on IN	gap
+The interface > The virtual keyboard	loading an instrument with no input bound selects the keyboard and turns on IN	auto	scenario:gui.sunset_track_defaults		loads through the channel-strip UI and checks MIDI input and IN in both the model and controls; preserves an existing binding
 The interface > The virtual keyboard	letters play notes while open; Space, L, [ ] still drive the transport	gap
 The interface > The notepad	typed formatting, bold and italic, lists continue on Enter	auto	test:Notepad document formatting mutates Markdown and remains selectable;test:Notepad Markdown inline commands toggle matching wrappers;test:Notepad Markdown block commands preserve source selections;test:Notepad document exposes list, task, and link presentation metadata
 The interface > The notepad	undo and redo cover text and formatting	auto	test:Notepad editor undo coalesces a typing run into one step;test:Notepad editor undo breaks runs on caret moves and structural edits;test:Notepad editor undo replacing a selection is its own step
@@ -136,13 +136,13 @@ The channel strip	compact AUX bypass mutes all four sends and restores their lev
 The channel strip > Track name and colour	click renames; right-click for the 12-hue palette	partial	test:track context-menu rename opens after modal focus restoration		rename path tested; the palette and region colouring are not
 The channel strip > Input block (RECORDING stage)	Mono, Stereo and MIDI modes; In N (follow) default	auto	test:A stereo track's right input follows wherever the left one resolves;test:A stereo track needs both of its inputs on the device
 The channel strip > Input block (RECORDING stage)	MIDI port, channel filter and MIDI out	auto	scenario:gui.midi_io_selectors
-The channel strip > Input block (RECORDING stage)	activity LED blinks when MIDI arrives	gap
+The channel strip > Input block (RECORDING stage)	activity LED blinks when MIDI arrives	auto	scenario:gui.midi_activity_led		virtual keyboard traffic lights the actual LED only on the selected channel; it goes dark after traffic stops
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	ARM refuses with no input device and says so	auto	test:An audio track cannot arm while the device offers no inputs;test:An audio track arms once the device reports capture channels;test:Arming is allowed before a device has reported its capture width
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	losing the inputs disarms audio tracks and spares MIDI	auto	test:Losing the capture channels disarms the audio tracks and spares MIDI;test:A narrower device disarms only the tracks it cannot feed
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	ARM refuses a track whose input is missing or None	auto	test:A track whose input the device does not offer cannot arm;test:A track set to no input cannot arm;test:A MIDI track arms with no audio inputs
-The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	the refusal names the missing input and opens the input settings	gap
+The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	the refusal names the missing input and opens the input settings	auto	scenario:gui.arm_input_refusal		clicks ARM with an unavailable input and None, checks the alert and unlit ARM, clicks OK and verifies input settings open
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	IN monitors the live input through the strip	auto	scenario:engine.pipeline_selftest
-The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	PRINT commits EQ, comp and insert to the recorded file	partial	scenario:strip.print_commits_the_strip		the EQ and the compressor are tested in the take; the insert is not
+The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	PRINT commits EQ, comp and insert to the recorded file	auto	scenario:strip.print_commits_the_strip		recorded WAV measurements cover channel HPF, compressor and Utility insert gain
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	FREEZE renders the track, bypasses its DSP, locks it, and is saved	auto	test:SessionSerializer round-trips track freeze state;test:A frozen track still refuses to arm with inputs available;scenario:region.frozen_track_refuses_edits;scenario:strip.freeze_renders_and_bypasses
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	a frozen track still takes a hardware insert	auto	scenario:strip.frozen_hardware_insert		baked WAV reaches both sends; stereo return and bypass verified through the audio callback
 The channel strip > Insert slot	one plugin or hardware insert with a 20 ms equal-power crossfade	auto	test:Crossfade: equal-power overlap holds constant power across window;test:Crossfade: at-boundary samples produce unity for both shapes
@@ -190,7 +190,7 @@ The master strip > Master fader	-inf to +12 dB	auto	scenario:engine.pipeline_sel
 The master strip > Mono	sums L+R to mono on both outputs	auto	scenario:master.mono_sums
 The master strip > Output meters	peak and VU meters, GR meter	partial	test:meter ballistics attack instantly and release over time		ballistics tested; the master readings are not asserted
 
-Aux lanes	AUX stage shows one full-width lane chosen by four selectors	gap
+Aux lanes	AUX stage shows one full-width lane chosen by four selectors	auto	scenario:gui.aux_selectors		all four selector buttons, exclusive lane visibility, full width and selection retention across stage changes
 Aux lanes > Aux lane layout	three columns: return, insert, sources	manual			layout; checked by screenshot review
 Aux lanes > Aux lane layout > Return strip (left column)	rename, mute, return fader, meter, automation	partial	scenario:automation.read_plays_the_lanes;scenario:gui.automation_write_and_touch		the return level and mute automation are tested; rename, the mute button, the fader range and the meter are not
 Aux lanes > Aux lane layout > Return strip (left column)	Output sends the lane to a hardware pair tapped before fader and mute	auto	test:tapStereoPairInto accumulates onto the routed pair;test:output pair encode/decode round-trips
@@ -198,11 +198,11 @@ Aux lanes > Aux lane layout > Plugin chain (centre column)	one insert with a 20 
 Aux lanes > Aux lane layout > Plugin chain (centre column)	an editor attach failure logs without a dialog	auto	scenario:gui.aux_attach_failure_no_modal;test:aux lane editor attach never raises a modal
 Aux lanes > Aux lane layout > Sources panel (right column)	lists every channel sending to the lane with its level	auto	scenario:gui.aux_sources
 
-The mastering stage	separate path; entering or leaving stops the transport	gap
+The mastering stage	separate path; entering or leaving stops the transport	auto	scenario:gui.mastering_transport		stage keys stop the playing source on either side of Mastering; Mastering playback leaves multitrack stopped
 The mastering stage > Loading a mix	Load mix and Load latest mixdown	auto	scenario:gui.mastering_load
 The mastering stage > Loading a mix	a source at another rate plays at the right speed	auto	test:MasteringPlayer resamples a source whose rate differs from the device
-The mastering stage > Transport	play, stop, rewind; Space drives the mastering player	gap
-The mastering stage > Waveform	click to seek	gap
+The mastering stage > Transport	play, stop, rewind; Space drives the mastering player	auto	scenario:gui.mastering_transport		loads a WAV, clicks Play/Stop/Rewind and dispatches Space; the mastering playhead moves while the multitrack transport stays stopped
+The mastering stage > Waveform	click to seek	auto	scenario:gui.mastering_transport		peer clicks at quarter and three-quarter waveform positions seek the loaded mix without starting playback
 The mastering stage > Mastering chain	three sections each with an enable	auto	test:the mastering EQ header engages the section;test:the mastering limiter header engages the section
 The mastering stage > Mastering chain > Digital 5-band EQ	five bands at the documented types; FFT analyser	auto	test:MasteringDigitalEq magnitudeDb matches expected RBJ response;test:MasteringDigitalEq processInPlace applies the shared response;test:MasteringDigitalEq oversampling de-crams an HF bell;test:the mastering EQ curve follows a band moved in the view
 The mastering stage > Mastering chain > Multiband compressor	comp over silence adds no noise	auto	test:MasteringChain: comp over silent input adds no noise floor
@@ -217,9 +217,9 @@ Recording	five-step workflow	n/a			walkthrough; each step is held in the section
 Recording > Setting the input	follow-track default; stereo picks two inputs; MIDI port and channel	auto	test:A stereo track's right input follows wherever the left one resolves;test:Seam resolves saved identifiers back to bank indices
 Recording > Setting the input > MIDI hot-plug	Linux adds a new port by itself and reattaches saved ports	auto	test:ALSA seq backend reports a port appearing and disappearing;test:ALSA seq backend migrates a legacy address identifier
 Recording > Setting the input > MIDI hot-plug	the port list only rebuilds while stopped	auto	scenario:midi.hotplug_waits_for_stop		Linux ALSA virtual ports arrive during playback and recording; enumeration waits for Stop
-Recording > Arming a track	Record does nothing until a track is armed	gap
+Recording > Arming a track	Record refuses until a track is armed and explains why	auto	scenario:gui.record_requires_armed_track		R leaves the stopped playhead and all regions unchanged, shows the unarmed-track alert and dismisses with OK
 Recording > Monitor mode	IN monitors through EQ, comp and insert	auto	scenario:engine.pipeline_selftest
-Recording > Print mode	PRINT records the processed signal; off records dry	gap
+Recording > Print mode	PRINT records the processed signal; off records dry	auto	scenario:strip.print_commits_the_strip		actual recorded WAVs remain dry with PRINT off and carry channel processing and two Utility insert gain settings with PRINT on
 Recording > Count-in	one bar of click before the take; playhead rolls back a bar	auto	scenario:transport.count_in_rolls_back_a_bar;test:LoopTimeline keeps count-in before loop start linear until loop end
 Recording > Punch recording	punch arms once in is before out; P toggles	auto	test:Transport: a punch bracket placed by hand arms punch once in is before out;test:Transport: punch range + enable round-trip
 Recording > Punch recording	pre-roll plays before the punch, post-roll rolls past it	auto	scenario:transport.punch_pre_and_post_roll
@@ -231,22 +231,22 @@ Recording > Loop recording	with punch, each pass records only the overlap	auto	t
 Recording > Loop recording	silent audio passes kept; empty MIDI passes dropped	auto	test:Loop audio retains a silent pass and trims latency per pass;test:Loop MIDI ignores a truly empty pass and keeps a final partial pass
 Recording > Loop recording	a loop under 128 samples does not record	auto	scenario:transport.short_loop_refused
 Recording > Where files are saved	session.json plus audio/ of 24-bit WAVs named by track and time	partial	test:RecordManager writes mono input back accurately;test:RecordManager writes stereo L+R interleaving in order		sample accuracy tested; the 24-bit format and the filename pattern are not
-Recording > Where files are saved	MIDI is embedded in session.json	gap
+Recording > Where files are saved	MIDI is embedded in session.json	auto	scenario:record.midi_embedded_in_json		records a note and controller, verifies their inline JSON, reloads the events and timing, and checks that no external media file was created
 Recording > Take history	a take fully covering a region pushes it onto an 8-deep stack	auto	scenario:take.full_cover_pushes_onto_stack;scenario:take.stack_keeps_newest_eight;test:Loop audio history is newest-first capped and then retains compatible old takes;test:SessionSerializer round-trips active and historical take provenance
 Recording > Take history	Alt+T and Alt+Shift+T cycle takes; the badge does too	partial	scenario:take.cycle_steps_through_the_stack		the step both shortcuts and the badge take through the stack is tested; the key binding and the badge click are not
 Recording > Take history	a take over one end of an older region trims it and keeps none of it; a punch inside keeps the covered part	auto	scenario:take.edge_overdub_trims_neighbour;scenario:take.punch_inside_keeps_covered_slice
 Recording > Take history	deleting a region removes its stack; undo restores it	auto	scenario:region.delete_restores_takes_on_undo
-Recording > Recording errors	a write failure at record start raises an alert listing the tracks	gap
+Recording > Recording errors	a write failure at record start raises an alert listing the tracks	auto	scenario:gui.recording_setup_alert;scenario:gui.recording_setup_alert_key		both the Record button and R name failed writers after an audio-directory obstruction
 Recording > Recording errors	a mid-take error or MIDI overflow reports at Stop; written audio is kept	auto	test:RecordManager surfaces MIDI FIFO overflow at stopRecording;test:RecordManager clean MIDI take leaves overflow list empty
 
-The tape strip	collapsed by default; strips compact when it opens	gap
+The tape strip	collapsed by default; strips compact when it opens	auto	scenario:gui.timeline_drawer		checks launch state, T and command-backslash toggles, actual timeline visibility and compact state on all 24 strips
 The tape strip > Layout	track column with number, colour, ARM, SOLO, MUTE	manual			layout; checked by screenshot review
 The tape strip > The ruler	click seeks; Shift-drag sets the loop	gap
 The tape strip > Regions	audio regions draw waveforms; MIDI regions draw a glyph	auto	test:Waveform peaks preserve channels, polarity, gain and the final partial bin;test:Waveform range queries match conservative sample extrema at every pyramid level
 The tape strip > Regions > Selecting and moving	click, Cmd-click toggles, drag moves with snap, edges trim, fade discs, middle-drag pans	partial	test:snapDelta: rounds positive deltas with half-step bias;test:snapDelta: sign-aware rounding for negative deltas		snap arithmetic tested; the gestures are not
 The tape strip > Regions > Splitting	Cmd/Ctrl+E splits the selected region at the playhead	partial	scenario:region.split_keeps_audio_continuous	the split, its undo and redo are tested; the shortcut reaching it is not
 The tape strip > Regions > Duplicating	Cmd+D places a copy right after the original	partial	scenario:region.paste_inserts_and_undo_removes	inserting the copy and its undo are tested; where Cmd+D places it is not
-The tape strip > Regions > Nudging	Cmd+arrows nudge a beat; Shift nudges a bar	gap
+The tape strip > Regions > Nudging	Cmd+arrows nudge a beat; Shift nudges a bar	auto	scenario:gui.tape_nudge_keys		actual timeline selection and both directions; 3/4 bar length, source span and unselected region preserved
 The tape strip > Regions > Right-click menu	loop region, split, join, label, mute, lock, takes, reverse, colour, delete	partial	scenario:region.split_keeps_audio_continuous;scenario:region.join_rejoins_a_split;scenario:region.delete_restores_takes_on_undo;scenario:region.edit_undo_restores_every_field	split, join, delete and mute are tested; label, lock, takes, reverse, colour and loop region are not
 The tape strip > Regions > Take cycling	take submenu and Alt+T cycling	partial	scenario:take.cycle_steps_through_the_stack		the Alt+T step through the stack is tested; the Takes submenu is not
 The tape strip > Markers	M drops a marker with a naming prompt; drag, rename, delete	partial	scenario:marker.add_move_remove_undo		the add, move, rename and delete behind them are tested with undo; the M key, the naming prompt and the drag gesture are not
@@ -262,7 +262,7 @@ The tape strip > Import DP Song (experimental)	clip placement from song.sys or b
 The tape strip > Import DP Song (experimental)	mixer, tempo, time signature and markers decoded	auto	test:DpImporter: decodes mixer fader/pan from song.sys;test:DpImporter: decodes 3-band EQ from song.sys;test:DpImporter: decodes song tempo from song.sys;test:DpImporter: decodes time signature from song.sys;test:DpImporter: decodes song markers
 The tape strip > Import DP Song (experimental)	a confirmation dialog shows what was found first	gap
 
-The audio region editor	double-click opens; Esc or outside click closes	gap
+The audio region editor	double-click opens; Esc or outside click closes	auto	scenario:gui.audio_editor_lifecycle		injects real peer mouse clicks on an audio region and the dim overlay, dispatches Escape, and checks animated teardown
 The audio region editor > What's editable	trim, fades and gain are non-destructive; position	auto	scenario:region.edit_undo_restores_every_field;test:SessionSerializer clamps out-of-range audio-region fields on load
 The audio region editor > Layout	undo, redo, split, normalise, properties, zoom	gap
 The audio region editor > Layout	tempo edited on the ruler: add, move, delete changes; MIDI and click follow	auto	test:TempoMap: piecewise integration across a tempo change;test:TempoMap: ticks<->samples round-trips through a tempo change;test:TempoMap: setPoints sorts and clamps bpm, preserving positions
@@ -270,20 +270,20 @@ The audio region editor > Layout	snap and grid resolution saved with the session
 The audio region editor > Editing gestures	fade discs with five curve shapes	auto	test:FadeShape: every shape is 0 at t=0 and 1 at t=1;test:FadeShape: equal-power crossfade sums to constant power;test:FadeShape: exp/log are inverses around the diagonal;test:buildFadeCurve: shape is honoured (equal-power bows above linear)
 The audio region editor > Editing gestures	trim handles, gain line, range select, next/previous region, delete	gap
 
-The piano roll	double-click a MIDI region opens it	gap
+The piano roll	double-click a MIDI region opens it	auto	scenario:gui.piano_roll_navigation		actual peer double-click on a timeline MIDI region opens the piano roll
 The piano roll > Layout	toolbar, ruler, keyboard, grid, velocity strip, CC lane	manual			layout; checked by screenshot review
-The piano roll > Creating notes	click an empty cell creates a note at the snap length and velocity 100	gap
+The piano roll > Creating notes	Draw-mode click creates a note at the snap length and velocity 100	auto	scenario:gui.piano_note_creation		actual empty-grid clicks at two snap resolutions and with snap off, onset, pitch, duration and velocity
 The piano roll > Selecting and moving	click, Shift-click, Cmd-click, drag, resize, rubber band, delete	gap
-The piano roll > Transposing and nudging	arrows transpose a semitone and nudge a grid step	gap
-The piano roll > Velocity	velocity bars 1-127; resizable strip	gap
-The piano roll > CC editing	CC lane: pick a controller, draw and edit events	gap
+The piano roll > Transposing and nudging	arrows transpose a semitone and nudge a grid step	auto	scenario:gui.piano_roll_note_keys		selects two notes in the real editor, dispatches all four arrows, checks exact note fields and reverses each edit with command-Z
+The piano roll > Velocity	velocity bars 1-127; resizable strip	auto	scenario:gui.piano_velocity		peer drags clamp velocity at 1 and 127 without changing neighboring notes; top-edge drags and wheel gestures resize the strip both ways
+The piano roll > CC editing	CC lane: pick a controller, draw and edit events	auto	scenario:gui.piano_cc		CC lane button, peer drags at painted bar coordinates, value limits, lowercase L controller selection, preserved previous controller events and strip resizing
 The piano roll > Quantize and scale	Q quantizes with strength; S picks a scale; L cycles CC; C cycles colour	auto	scenario:gui.piano_options
 The piano roll > Zoom and scroll	zoom keys, fit button and wheel scrolling	auto	scenario:gui.piano_viewport
 The piano roll > Step record	notes enter at the playhead; the next chord advances a snap step	auto	scenario:gui.piano_step_record
-The piano roll > Navigation	Cmd+] and Cmd+[ move between MIDI regions	gap
+The piano roll > Navigation	Cmd+] and Cmd+[ move between MIDI regions	auto	scenario:gui.piano_roll_navigation		both navigation directions select the expected region and preserve notes
 
 Mixing > A suggested order of operations	mixing advice	n/a			advice
-Mixing > Aux sends in detail	post-fader follows the fader; pre-fader ignores it	gap
+Mixing > Aux sends in detail	post-fader follows the fader; pre-fader ignores it	auto	scenario:strip.sends_pre_post_and_bypass		measured aux audio at unity, -6, -12, -24 dB and fully down
 Mixing > Bus routing	bus assignment replaces the direct master send	auto	scenario:engine.pipeline_selftest
 Mixing > Solo and PFL	solo-in-place, additive, no PFL	auto	scenario:engine.pipeline_selftest
 Mixing > Automation	OFF, READ, WRITE, TOUCH for fader, pan, mute and solo	auto	test:evaluateLane: continuous interpolation + hold-first/last;test:evaluateLane: discrete holds previous (step), thresholds at 0.5;scenario:automation.read_plays_the_lanes;scenario:automation.write_splices_its_span;scenario:automation.touch_glides_back;scenario:automation.loop_wrap_closes_the_pass;scenario:automation.locate_ends_the_pass;scenario:gui.automation_write_and_touch
@@ -311,7 +311,7 @@ Plugins > Built-in insert units > Tape Echo 2	parameters, motor repeat time, tem
 Plugins > Built-in insert units > Tape Echo 2	state saved as the plug-in's own values	auto	test:Tape Echo 2 saves version-2 state keyed by the plug-in's symbols;test:Tape Echo 2 opens a version-1 tape echo blob at its defaults
 Plugins > Built-in insert units > Tape	Thru is unity; 56-sample latency except on Thru; colours on its normal path	auto	test:tape unit on the Thru path is unity gain;test:tape unit reports latency only on a path that takes it;test:tape unit colours the signal on its normal path;test:tape unit state round-trips
 Plugins > Built-in insert units > Sunset	instrument only; notes, bend, mod wheel, sustain; stops with the transport	auto	test:synth unit is registered as an instrument;test:synth unit sounds while a note is held;test:synth unit answers pitch bend, mod wheel and sustain;test:synth unit stops on the transport's all-notes-off;test:synth unit state round-trips
-Plugins > Built-in insert units > Sunset	loading it converts an audio track to MIDI	gap
+Plugins > Built-in insert units > Sunset	loading it converts an audio track to MIDI	auto	scenario:gui.sunset_track_defaults		loads Sunset through the channel-strip action and checks instrument identity and MIDI mode in the model and selector
 Plugins > Built-in insert units > Editing a unit	DuskVerb 2 and Tape Echo 2 open their own editors; the others get knob panels	auto	test:the built-in editor draws every unit inside the size it asks for;test:the built-in editor keeps every parameter reachable;test:a plug-in editor host pushes every value in when it opens;test:a plug-in editor host follows the geometry it is given
 Plugins > Built-in insert units > Editing a unit	transport keys keep working after a knob move in a unit editor	auto	test:a gesture marks the parameter touched and hands focus back at its end
 Plugins > Built-in insert units > Editing a unit	MIDI Learn last-touched parameter on a unit	gap
@@ -370,24 +370,24 @@ Saving and loading sessions > Backing up	copying the folder is a complete backup
 
 Bouncing and exporting > Bouncing the mix	offline render to 24-bit WAV at the session rate, or MP3 by extension, with a 5 s tail	partial	scenario:bounce.master_mix_file;scenario:bounce.mp3_by_format		rate, 24-bit stereo, the 5 s tail and the MP3 container are tested; the choice by file extension happens in the dialog and is not
 Bouncing and exporting > Bouncing the mix	the device detaches for the render and reattaches after	gap
-Bouncing and exporting > Bouncing the mix	Mixdown renders mixdown.wav and opens it in MASTERING	gap
+Bouncing and exporting > Bouncing the mix	Mixdown renders mixdown.wav and opens it in MASTERING	auto	scenario:gui.mixdown_handoff		File menu action, completion Close button, Mastering source and rendered stereo WAV
 Bouncing and exporting > Bouncing the mix	Bounce stems: one file per track, bus and aux, named by pattern	auto	test:collectStemTargets: tracks then buses then auxes, gated on routing;test:stemOutputFile builds <dir>/<base>_<NN>_<safe>.wav;test:namedStemOutputFile builds <dir>/<base>_<tag>_<safe>.wav
 Bouncing and exporting > Bouncing the mix	stems are sample-aligned and reconstruct the pre-master mix	auto	scenario:bounce.stems_rebuild_the_mix;scenario:bounce.renders_land_on_the_timeline
 Bouncing and exporting > Bouncing the mix	hardware inserts offer a realtime bounce	partial	test:anyHardwareInsertActive follows rendered tracks and aux lanes		the detection is tested; the realtime bounce is not
 Bouncing and exporting > Bouncing the mix	the metronome never prints	auto	scenario:bounce.metronome_never_prints
 Bouncing and exporting > Bouncing the master vs the mastering chain	bounce captures post-master; Export master captures post-limiter	auto	scenario:bounce.captures_post_master_fader;scenario:bounce.export_master_post_limiter
-Bouncing and exporting > Where bounces go	bounces land in the session folder; Load latest mixdown loads mixdown.wav, else bounce.wav	gap
+Bouncing and exporting > Where bounces go	bounces land in the session folder; Load latest mixdown loads mixdown.wav, else bounce.wav	auto	scenario:gui.mixdown_handoff		actual Mixdown writes the session folder; Load latest mixdown button selects bounce.wav alone and prefers mixdown.wav when both exist
 
 Keyboard reference > File	Cmd+N, O, S, Shift+S, I, B, Q	gap
 Keyboard reference > Edit	undo, redo, copy, cut, paste, duplicate, delete, split, nudge, take cycling	gap
 Keyboard reference > Transport	Space, R, Home, ., L, P, C, M, [ ], Shift+[ ], K, Shift+arrows, B, Shift+C, F, Shift+M, U	gap
-Keyboard reference > Tracks	A, S, X act on the focused strip	gap
-Keyboard reference > Stages & banks	Cmd+1..4 stages; 1..8 pages	partial	test:Bank mapping: plain digits select exactly pages one through eight		page digits tested; stage keys are not
+Keyboard reference > Tracks	A, S, X act on the focused strip	auto	scenario:gui.keyboard_track_shortcuts		keyboard focus traverses all 24 strips in Recording and Mixing; A/S/X toggle only the focused track and preserve the armed-track counter
+Keyboard reference > Stages & banks	Cmd+1..4 stages; 1..8 pages	auto	test:Bank mapping: plain digits select exactly pages one through eight;scenario:gui.mastering_transport
 Keyboard reference > Timeline	T, = + - 0, Cmd-wheel, Shift-wheel, middle-drag	gap
-Keyboard reference > Region editor	Cmd+E, G, Cmd+] [, Esc	gap
+Keyboard reference > Region editor	Cmd+E, G, Cmd+] [, Esc	auto	scenario:gui.audio_editor_keys		mouse-placed edit cursor, split source continuity, Grab, adjacent region navigation and Escape
 Keyboard reference > Piano roll	arrows, Q, S, V, G, L, C, Cmd+A/C/X/V/D/Z, Home, End, Cmd+] [, Esc	gap
 Keyboard reference > Notepad	the notepad's own keys, including word motion on Ctrl or Option	auto	test:Notepad editor word jumps stop at word and line boundaries;test:Notepad editor accepts AltGr text without turning command chords into text;test:Notepad Markdown inline commands toggle matching wrappers
-Keyboard reference > Window	F11 fullscreen, Cmd+\ timeline, Esc closes a modal	gap
+Keyboard reference > Window	F11 fullscreen, Cmd+\ timeline, Esc closes a modal	auto	scenario:gui.window_keys		actual fullscreen state, timeline visibility and focused modal Escape through the window peer
 Keyboard reference > Notes on shortcut design	a focused text field keeps its keys	auto	test:the shortcut rule withholds keys from a view that is taking text
 
 Tips and recipes > A clean vocal chain	recipe	n/a			advice
@@ -410,14 +410,14 @@ Troubleshooting > Audio device disconnected mid-session	reconnecting re-prepares
 Troubleshooting > Audio device in use, or won't open at startup	a busy device falls back and says which; saved setup untouched	auto	test:DeviceManager initialise: busy saved device falls back but keeps saved intent;test:startupDeviceMessage: fell back to a different device -> names both;test:startupDeviceMessage: same endpoint on a different backend alerts;test:backendFallbackNotice: a fallback names both backends
 Troubleshooting > Audio device in use, or won't open at startup	nothing opens: a clear warning; recording and plugin loading refused	partial	test:startupDeviceMessage: nothing opened -> silent-session warning		the warning is tested; refusing recording and plugin loads is not
 
-Accessibility > Current support	controls carry track-specific accessible names and formatted values	gap
+Accessibility > Current support	controls carry track-specific accessible names and formatted values	auto	scenario:gui.accessible_controls		actual control accessibility handlers, all track/aux names, transport names, formatted values and -INF text actions
 Accessibility > Current support	screen-reader behaviour on macOS and Windows	manual			needs a screen reader on a console session
 Accessibility > What's still rough	arrow keys move a focus ring across strips; A S X act on it	auto	test:Bank mapping: focused tracks cross three-strip page boundaries;test:Bank mapping: EightUp focus crosses hardware-bank boundaries
 Accessibility > What's still rough	known gaps	n/a			describes what is not yet supported
 Accessibility > Filing issues	where to report	n/a			link
 
 Messages > Recording	recording alerts	n/a			index; entries are held below
-Messages > Recording > Recording setup failed	lists the tracks that could not start	gap
+Messages > Recording > Recording setup failed	lists the tracks that could not start	auto	scenario:gui.recording_setup_alert		Record button against an obstructed temporary audio directory; alert names both failed writers and OK dismisses it
 Messages > Recording > Recording errors	reports per-track errors after the take	auto	test:RecordManager surfaces MIDI FIFO overflow at stopRecording
 Messages > Session	session alerts	n/a			index; entries are held below
 Messages > Session > Recover from autosave?	offered when the autosave is newer; three choices	auto	scenario:gui.autosave_writes_and_recovers
@@ -427,7 +427,7 @@ Messages > Session > Missing audio files	lists the files a loaded session cannot
 Messages > Session > Clean out	no audio dir, a directory it cannot read, nothing to clean, or confirm deleting unreferenced files	partial	test:Clean out finds only the audio nothing points at;test:Clean out reports nothing for a session with no audio directory;test:Clean out reports a directory it cannot read		what it would delete, the empty case and an unreadable directory are tested; the four alerts and the delete itself are UI
 Messages > Session > Optimize automation	refused while playing or in Read/Touch; reports the thinning	partial	test:thinAutomationLane: collinear interior points are dropped		the thinning is tested; the refusals are not
 Messages > Session > Plug-in unavailable	names each offline slot, plugin, format and reason	auto	test:native restore policy keeps healthy slots saveable and reports load reasons;test:aux native-state rejection diagnostics identify lane and slot
-Messages > Session > About Dusk Studio	shows the version and build date	gap
+Messages > Session > About Dusk Studio	shows the version and build date	auto	scenario:gui.about_details		opens About through its menu action, checks version and build timestamp, and dismisses it with OK
 Messages > Session > Supporters	lists supporters by tier	manual			content comes from the release build's Patreon refresh
 Messages > Import / Export	import and export alerts	n/a			index; entries are held below
 Messages > Import / Export > Import	stop playback first; unsupported, undecodable or unreadable files are reported	partial	test:importMidi rejects files it cannot use		an unusable MIDI file is rejected; the audio and playback-running alerts are not tested

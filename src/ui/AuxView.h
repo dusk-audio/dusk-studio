@@ -38,6 +38,8 @@ public:
 
     int  getActiveLane() const noexcept { return activeLaneIndex; }
     void setActiveLane (int index);
+    auto* selectorForScenario (int index) noexcept
+    { return index >= 0 && index < Session::kNumAuxLanes ? &selectorButtons[(size_t) index] : nullptr; }
 
     // Scenario-harness only: the realised lane component, so a scenario can
     // drive one lane's slots directly. nullptr if out of range.

@@ -81,7 +81,15 @@ public:
         timeFormatToggle.triggerClick();
         return true;
     }
+    bool clickRecordForScenario()
+    {
+        if (! recordButton.isShowing() || ! recordButton.isEnabled()) return false;
+        recordButton.triggerClick();
+        return true;
+    }
     std::string clockTextForScenario() const { return clockLabel.getText().toStdString(); }
+    auto bpmPointForScenario() const { return bpmValue.getBounds().getCentre(); }
+    auto punchPointForScenario() const { return punchButton.getBounds().getCentre(); }
 
     // Hard-coding tuner X from outside is fragile - the right-anchored
     // cluster (BPM / tap / time-sig / mode toggles) shifts the tuner
@@ -108,6 +116,7 @@ public:
     // knows the take is partial before relying on it. Safe no-op when
     // no errors are pending.
     void notifyRecordStopped();
+    void surfaceRecordSetupFailures();
 
     // Re-sync the cached time-signature button text from session.beatsPerBar /
     // beatUnit. Call after changing the time signature outside this bar (e.g. a
@@ -117,12 +126,6 @@ public:
 private:
     void timerCallback() override;
     void refreshButtonStates();
-
-    // After engine.record(), RecordManager populates getLastSetupFailures
-    // with armed tracks whose writer couldn't be set up (disk full,
-    // permission denied, missing audio dir). AlertWindow lists them so
-    // the user doesn't think a silently-dropped take was captured.
-    void surfaceRecordSetupFailures();
 
     // MCU REW/FFWD reuse the on-screen Rewind/Forward tap behaviour so the
     // control surface and the on-screen buttons never diverge.
@@ -201,10 +204,7 @@ private:
     // only-during-count-in / click-while-playing / polyphonic).
     void showMetronomeSettingsMenu();
 
-    // Each click stamps now() into the ring; within kTapTimeoutMs we
-    // average the last kTapWindow inter-tap intervals into the session
-    // BPM. After timeout the ring resets (user's starting a new pulse).
-    static constexpr int kTapWindow      = 4;
+    static constexpr int kTapWindow      = 5;
     static constexpr int kTapTimeoutMs   = 2000;
     std::array<std::int64_t, kTapWindow> tapStamps {};
     int  tapStampCount = 0;

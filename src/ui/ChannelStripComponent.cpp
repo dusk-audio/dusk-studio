@@ -692,6 +692,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     panKnob.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffc04040));  // red pan
     panKnob.setTitle ("Pan");
     panKnob.setHelpText ("Stereo pan; L100 to R100, C is centre.");
+    panKnob.setTooltip ("Stereo pan; L100 to R100, C is centre.");
     enableValueLabel (panKnob, "", 0);
     panKnob.textFromValueFunction = [] (double v) -> juce::String
     {
