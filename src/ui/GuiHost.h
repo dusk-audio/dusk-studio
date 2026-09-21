@@ -89,8 +89,9 @@ public:
     virtual bool clickAudioEditorSample (std::int64_t sample) = 0;
     virtual std::vector<double> audioEditorView() const = 0;
     virtual std::vector<int> audioEditorPoint (const std::string& kind, std::int64_t sample) const = 0;
-    virtual bool audioEditorPointer (int x, int y, bool down, bool shift = false) = 0;
+    virtual bool audioEditorPointer (int x, int y, bool down, int modifiers = 0) = 0;
     virtual std::vector<std::int64_t> audioEditorSelection() const = 0;
+    virtual std::vector<int> audioAutomationPoint (std::int64_t sample, float value) const = 0;
     virtual bool openPiano (int track, int region) = 0;
     virtual void closePiano() = 0;
     virtual bool clickPianoCcToggle() = 0;

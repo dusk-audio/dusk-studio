@@ -61,7 +61,7 @@ template <typename Peer, typename Source, typename Point, typename Modifiers, ty
 void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modifiers, Rest...),
                           float x, float y, bool down, std::int64_t time, int modifiers = 0)
 {
-    const int flags = (down ? Modifiers::leftButtonModifier : 0)
+    const int flags = (down ? ((modifiers & 4) != 0 ? Modifiers::rightButtonModifier : Modifiers::leftButtonModifier) : 0)
                     | ((modifiers & 1) != 0 ? Modifiers::shiftModifier : 0)
                     | ((modifiers & 2) != 0 ? Modifiers::commandModifier : 0);
     const auto saved = Modifiers::currentModifiers;
@@ -277,12 +277,19 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool clickAudioEditorButton (const std::string& name) override
     {
         if (owner.audioEditor == nullptr) return false;
-        for (auto* child : owner.audioEditor->getChildren())
+        std::vector<decltype (owner.audioEditor->getChildComponent (0))> pending;
+        pending.push_back (owner.audioEditor.get());
+        while (! pending.empty())
+        {
+            auto* child = pending.back();
+            pending.pop_back();
+            for (auto* nested : child->getChildren()) pending.push_back (nested);
             if (child->isShowing() && child->isEnabled() && child->getName().toStdString() == name)
             {
                 const auto point = owner.getTopLevelComponent()->getLocalPoint (child, child->getLocalBounds().getCentre()).toFloat();
                 return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
             }
+        }
         return false;
     }
     bool clickAudioEditorSample (std::int64_t sample) override
@@ -300,13 +307,19 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     std::vector<std::int64_t> audioEditorSelection() const override
     { return owner.audioEditor != nullptr ? owner.audioEditor->selectionForScenario() : std::vector<std::int64_t> {}; }
-    bool audioEditorPointer (int x, int y, bool down, bool shift) override
+    bool audioEditorPointer (int x, int y, bool down, int modifiers) override
     {
         auto* editor = owner.audioEditor.get();
         if (editor == nullptr) return false;
         const auto p = owner.getTopLevelComponent()->getLocalPoint (editor,
             editor->getLocalBounds().getTopLeft().translated (x, y)).toFloat();
-        return pointerAt (p.x, p.y, down, shift ? 1 : 0);
+        return pointerAt (p.x, p.y, down, modifiers);
+    }
+    std::vector<int> audioAutomationPoint (std::int64_t sample, float value) const override
+    {
+        if (owner.audioEditor == nullptr) return {};
+        const auto p = owner.audioEditor->automationPointForScenario (sample, value);
+        return { p.x, p.y };
     }
     bool openPiano (int track, int region) override
     {

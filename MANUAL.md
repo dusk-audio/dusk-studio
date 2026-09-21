@@ -1533,9 +1533,9 @@ Dusk Studio's automation is console-first: you ride the controls and the program
 
 ### Editing breakpoints in the region editor
 
-Double-click an audio region to open its editor. The **Auto:** button at the top of the editor picks which parameter the lane edits - **Fader**, **Pan**, **Mute**, **Solo**, or **Aux Send 1-4** - or **Off** to hide the lane and edit the region normally. With a lane active, its points draw over the waveform:
+Double-click an audio region to open its editor. The **Auto:** button at the top of the editor picks which parameter the lane edits - **Fader (dB)**, **Pan**, **Mute**, **Solo**, or **Aux 1-4** - or **Off** to hide the lane and edit the region normally. With a lane active, its points draw over the waveform:
 
-- **Click empty space** - add a breakpoint at the click. It snaps to the grid; hold **Cmd/Ctrl** to place it off-grid.
+- **Click empty space** - add a breakpoint at the click. It snaps when the editor's Snap is on; hold **Cmd/Ctrl** to place it off-grid.
 - **Drag a point** - move it in time and value.
 - **Right-click a point** - delete it.
 - **Draw tool** - pick **Draw** in the edit-mode toolbar, then drag across the lane to paint a freehand curve. It lays a run of breakpoints along the stroke (overwriting any automation under it) and thins them to a clean set when you release. Hold **Cmd/Ctrl** to draw off-grid.
@@ -1544,7 +1544,7 @@ A few rules:
 
 - **Transport must be stopped.** The audio thread reads the lane live during playback, so editing is disabled while rolling.
 - **Mute and Solo are on/off lanes** - their points snap to 0 or 1.
-- **Drawing a point auto-arms the track to READ** so the lane plays back on the next Play (it won't arm WRITE - your drawn points stay put).
+- **Drawing a point changes OFF or WRITE to READ** so the lane plays back on the next Play; an existing READ or TOUCH mode is preserved.
 - Segments between points are **linear**; there is no curve/spline shaping.
 
 \newpage

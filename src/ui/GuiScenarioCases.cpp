@@ -923,6 +923,152 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runAudioAutomationGestures (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalPlayhead = engine.getTransport().getPlayhead();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, originalPlayhead, restore]
+    {
+        engine.stop();
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.closeAudioEditor();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        engine.getTransport().locate (originalPlayhead);
+    });
+    const auto source = ctx.tempDir() / "Automation.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = 48000;
+    spec.numChannels = 1;
+    auto writer = dusk::audio::FileWriter::create (source, spec);
+    std::vector<float> signal (48000, 0.5f);
+    const float* channels[] = { signal.data() };
+    if (! writer || ! writer->write (channels, 1, 48000) || ! writer->flush())
+        return ScenarioResult::fail ("could not write editor fixture");
+    writer.reset();
+    const auto read = [] (const std::filesystem::path& path)
+    {
+        std::ifstream input (path, std::ios::binary);
+        return std::string (std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>());
+    };
+    const auto originalBytes = read (source);
+    auto& track = session.track (0);
+    track.frozen.store (false);
+    track.regions.clear();
+    AudioRegion region;
+    region.file = decltype (region.file) (source.string());
+    region.lengthInSamples = 48000;
+    track.regions.push_back (region);
+    session.audioEditorSnap = false;
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+    auto& lane = track.automationLanes[(size_t) AutomationParam::FaderDb];
+    lane.publishPoints ({});
+    track.automationMode.store ((int) AutomationMode::Off);
+    const auto pointer = [&host, &ctx] (std::int64_t sample, float value, bool down, int modifiers = 0)
+    {
+        const auto point = host.audioAutomationPoint (sample, value);
+        if (ctx.expect (point.size() == 2, "automation point geometry unavailable"))
+            ctx.expect (host.audioEditorPointer (point[0], point[1], down, modifiers), "automation pointer failed");
+    };
+    const auto onePoint = [&ctx, &lane] (std::int64_t time, float value)
+    {
+        const auto& points = lane.pointsConst();
+        if (ctx.expect (points.size() == 1, "expected one automation point"))
+            ctx.expect (std::abs (points[0].timeSamples - time) < 128 && std::abs (points[0].value - value) < 0.01f,
+                        "automation point time/value differs from gesture");
+    };
+    const auto stroke = [pointer]
+    {
+        pointer (6000, 0.2f, true);
+        pointer (12000, 0.5f, true);
+        pointer (18000, 0.8f, true);
+        pointer (24000, 0.3f, true);
+        pointer (24000, 0.3f, false);
+    };
+    auto drawn = std::make_shared<std::vector<AutomationPoint>>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&host, &ctx]
+    { ctx.expect (host.clickAudioEditorButton ("Auto: Off"), "automation picker unavailable"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Fader (dB)"), "fader lane unavailable"); } });
+    steps->push_back ({ 150, [pointer] { pointer (12000, 0.25f, true); pointer (12000, 0.25f, false); } });
+    steps->push_back ({ 150, [onePoint, &track, &ctx, pointer]
+    {
+        onePoint (12000, 0.25f);
+        ctx.expect (track.automationMode.load() == (int) AutomationMode::Read, "adding a point did not arm READ");
+        pointer (12000, 0.25f, true); pointer (24000, 0.75f, true); pointer (24000, 0.75f, false);
+    } });
+    steps->push_back ({ 150, [onePoint, pointer]
+    { onePoint (24000, 0.75f); pointer (24000, 0.75f, true, 4); pointer (24000, 0.75f, false, 4); } });
+    steps->push_back ({ 150, [&lane, &ctx, &host, &track]
+    {
+        ctx.expect (lane.pointsConst().empty(), "right-click did not delete point");
+        track.automationMode.store ((int) AutomationMode::Write);
+        ctx.expect (host.clickAudioEditorButton ("Draw"), "Draw toolbar button unavailable");
+    } });
+    steps->push_back ({ 150, [stroke] { stroke(); } });
+    steps->push_back ({ 150, [&lane, &ctx, &track, &host, drawn]
+    {
+        *drawn = lane.pointsConst();
+        if (ctx.expect (drawn->size() >= 3, "freehand stroke did not retain its shape"))
+        {
+            ctx.expect (std::abs (drawn->front().timeSamples - 6000) < 128
+                        && std::abs (drawn->front().value - 0.2f) < 0.01f
+                        && std::abs (drawn->back().timeSamples - 24000) < 128
+                        && std::abs (drawn->back().value - 0.3f) < 0.01f, "stroke endpoints differ from gesture");
+            ctx.expect (std::is_sorted (drawn->begin(), drawn->end(), [] (const auto& a, const auto& b)
+                        { return a.timeSamples < b.timeSamples; }), "stroke points are not sorted");
+            ctx.expect (std::any_of (drawn->begin(), drawn->end(), [] (const auto& point)
+                        { return point.value > 0.78f; }), "stroke lost its peak");
+        }
+        ctx.expect (track.automationMode.load() == (int) AutomationMode::Read, "drawing did not replace WRITE with READ");
+        ctx.expect (host.clickAudioEditorButton ("Undo"), "stroke Undo unavailable");
+    } });
+    steps->push_back ({ 150, [&lane, &ctx, &host]
+    {
+        ctx.expect (lane.pointsConst().empty(), "stroke was not one undo step");
+        ctx.expect (host.clickAudioEditorButton ("Redo"), "stroke Redo unavailable");
+    } });
+    steps->push_back ({ 150, [&lane, &ctx, &engine, drawn]
+    {
+        ctx.expect (lane.pointsConst() == *drawn, "Redo did not restore stroke");
+        engine.play();
+    } });
+    steps->push_back ({ 200, [&engine, &ctx, pointer]
+    {
+        ctx.expect (! engine.getTransport().isStopped(), "transport did not start for editing guard");
+        pointer (30000, 0.9f, true);
+        pointer (36000, 0.1f, true);
+        pointer (36000, 0.1f, false);
+    } });
+    steps->push_back ({ 150, [&lane, &track, &ctx, &engine, drawn]
+    {
+        ctx.expect (lane.pointsConst() == *drawn, "gesture begun during playback edited automation");
+        ctx.expect (track.regions.size() == 1 && track.regions[0].timelineStart == 0
+                    && track.regions[0].lengthInSamples == 48000, "blocked drawing changed region");
+        engine.stop();
+    } });
+    steps->push_back ({ 150, [&engine, &ctx, read, source, originalBytes]
+    {
+        ctx.expect (engine.getTransport().isStopped(), "transport did not stop");
+        ctx.expect (read (source) == originalBytes, "automation modified source audio");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioAutomationGestures { Scenario {
+    "gui.audio_automation_gestures", { "gui", "automation" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioAutomationGestures (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runAudioEditorGestures (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

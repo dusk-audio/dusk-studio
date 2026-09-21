@@ -45,6 +45,12 @@ public:
         if (kind == "gain") point.setY (gainLineY (wave));
         return point;
     }
+    auto automationPointForScenario (std::int64_t sample, float value) const
+    {
+        const auto wave = getLocalBounds().withTrimmedTop (kIconRowHeight + kRulerHeight)
+                                         .withTrimmedBottom (kStatusBarH + kScrollBarH);
+        return samplePointForScenario (sample).withY (automationYForValue (value, wave));
+    }
     std::vector<std::int64_t> selectionForScenario() const
     { return { regionIdx, rangeActive ? 1 : 0, rangeStartSample, rangeEndSample }; }
     std::function<void()> onCloseRequested;

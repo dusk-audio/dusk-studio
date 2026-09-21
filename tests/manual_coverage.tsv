@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 93
+# ceiling gap 92
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -288,7 +288,7 @@ Mixing > Bus routing	bus assignment replaces the direct master send	auto	scenari
 Mixing > Solo and PFL	solo-in-place, additive, no PFL	auto	scenario:engine.pipeline_selftest
 Mixing > Automation	OFF, READ, WRITE, TOUCH for fader, pan, mute and solo	auto	test:evaluateLane: continuous interpolation + hold-first/last;test:evaluateLane: discrete holds previous (step), thresholds at 0.5;scenario:automation.read_plays_the_lanes;scenario:automation.write_splices_its_span;scenario:automation.touch_glides_back;scenario:automation.loop_wrap_closes_the_pass;scenario:automation.locate_ends_the_pass;scenario:gui.automation_write_and_touch
 Mixing > Automation	mute and solo record only in WRITE	auto	scenario:gui.automation_write_and_touch
-Mixing > Automation > Editing breakpoints in the region editor	add, drag, delete and draw points; stopped transport only; drawing arms READ	gap
+Mixing > Automation > Editing breakpoints in the region editor	add, drag, delete and draw points; stopped transport only; drawing arms READ	auto	scenario:gui.audio_automation_gestures
 Mixing > Automation > Editing breakpoints in the region editor	a drawn stroke is thinned to a clean set	auto	test:thinAutomationLane: collinear interior points are dropped;test:thinAutomationLane: sine-shaped lane keeps the peak + endpoints;test:thinAutomationLane: discrete lanes are NOT thinned
 
 Plugins > Plugin formats	VST3, LV2, CLAP and AU hosted natively; the multi-sampler everywhere	auto	test:ClapInstance loads + processes a real CLAP plugin;test:Lv2Instance instantiates + processes an LV2 effect via InsertAdapter;test:NativeVst3Slot loads, processes, and unloads cleanly;test:Native Audio Unit slot lifecycle, process, parameters, state, and latency;test:DuskMultisampleProcessor loads an SFZ file path with spaces
