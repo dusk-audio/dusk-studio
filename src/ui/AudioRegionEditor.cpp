@@ -2651,12 +2651,15 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
     // Cmd/Ctrl + Left / Right pans the view horizontally; Home / End jump
     // to the start / end of the anchor range. Lets the user scroll without
     // a trackpad - keeps zoomed-in editing workable on a plain mouse.
-    if (cmdOrCtrl && (k == juce::KeyPress::leftKey || k == juce::KeyPress::rightKey))
+    // Compared by key code: KeyPress::operator== (int) only matches when no
+    // modifier is down, which is never true of a Cmd/Ctrl chord.
+    if (cmdOrCtrl && (k.getKeyCode() == juce::KeyPress::leftKey
+                      || k.getKeyCode() == juce::KeyPress::rightKey))
     {
         const std::int64_t widthSamples = (std::int64_t) std::round (
             (double) (getWidth() - 0) / std::max (1.0e-9f, pixelsPerSample));
         const std::int64_t step = std::max<std::int64_t> (1, widthSamples / 4);
-        const std::int64_t delta = (k == juce::KeyPress::leftKey ? -step : step);
+        const std::int64_t delta = (k.getKeyCode() == juce::KeyPress::leftKey ? -step : step);
         const std::int64_t maxStart = std::max<std::int64_t> (0,
                                         anchorTimelineLength - widthSamples);
         scrollSamples = jlimit<std::int64_t> (0, maxStart, scrollSamples + delta);

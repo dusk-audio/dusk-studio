@@ -125,6 +125,20 @@ void drainModals (GuiHost& host)
     for (int guard = 0; guard < 32 && ! host.modalStackEmpty(); ++guard) host.closeTopModal();
 }
 
+// A key press as the display server hands it over. X11 fills JUCE's key code
+// with the XLookupString glyph, so an unmodified letter arrives lowercase and a
+// Cmd/Ctrl chord arrives as the lowercase keysym with a control character for
+// its text. Naming the code in hex is the only way for a case to press what a
+// Linux keyboard actually sends rather than the tidier form a description
+// string would build.
+std::string keyCodeDescription (char glyph)
+{
+    constexpr char digits[] = "0123456789abcdef";
+    return std::string ("#") + digits[(glyph >> 4) & 0xf] + digits[glyph & 0xf];
+}
+
+char controlCharacter (char letter) { return (char) (letter - 'a' + 1); }
+
 StripHandle* readyStrip (GuiHost& host, ScenarioContext& ctx)
 {
     keepStage (host, ctx);
@@ -2667,20 +2681,20 @@ std::optional<ScenarioResult> runPianoOptions (GuiHost& host, ScenarioContext& c
     steps->push_back ({ 150, [&host, &ctx]
     { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
     steps->push_back ({ 150, [&host, &ctx]
-    { ctx.expect (host.focusPiano() && host.pressPeerKey ("Q", 'q'), "Q was not handled"); } });
+    { ctx.expect (host.focusPiano() && host.pressPeerKey (keyCodeDescription ('q'), 'q'), "Q was not handled"); } });
     steps->push_back ({ 150, [&host, &ctx]
     { ctx.expect (host.clickContextMenuItem ("1/16 @ 75%"), "75-percent quantize row was not clicked"); } });
     steps->push_back ({ 150, [&host, &ctx, checkTicks]
     {
         checkTicks (12, 229);
-        ctx.expect (host.focusPiano() && host.pressPeerKey ("Q", 'q'), "second Q was not handled");
+        ctx.expect (host.focusPiano() && host.pressPeerKey (keyCodeDescription ('q'), 'q'), "second Q was not handled");
     } });
     steps->push_back ({ 150, [&host, &ctx]
     { ctx.expect (host.clickContextMenuItem ("1/16 @ 100%"), "full-strength quantize row was not clicked"); } });
     steps->push_back ({ 150, [&host, &ctx, checkTicks]
     {
         checkTicks (0, 240);
-        ctx.expect (host.focusPiano() && host.pressPeerKey ("S", 's'), "S was not handled");
+        ctx.expect (host.focusPiano() && host.pressPeerKey (keyCodeDescription ('s'), 's'), "S was not handled");
     } });
     steps->push_back ({ 150, [&host, &ctx]
     { ctx.expect (host.clickContextMenuItem ("Major"), "Major scale submenu was not clicked"); } });
@@ -2694,14 +2708,14 @@ std::optional<ScenarioResult> runPianoOptions (GuiHost& host, ScenarioContext& c
     for (const int controller : { 7, 11, 64, 74, 1 })
     {
         steps->push_back ({ 0, [&host, &ctx]
-        { ctx.expect (host.focusPiano() && host.pressPeerKey ("L", 'l'), "L was not handled"); } });
+        { ctx.expect (host.focusPiano() && host.pressPeerKey (keyCodeDescription ('l'), 'l'), "L was not handled"); } });
         steps->push_back ({ 100, [&host, &ctx, controller]
         { ctx.expect (host.pianoOptions()[2] == controller, "L cycled to the wrong CC"); } });
     }
     for (const int colour : { 1, 2, 0 })
     {
         steps->push_back ({ 0, [&host, &ctx]
-        { ctx.expect (host.focusPiano() && host.pressPeerKey ("C", 'c'), "C was not handled"); } });
+        { ctx.expect (host.focusPiano() && host.pressPeerKey (keyCodeDescription ('c'), 'c'), "C was not handled"); } });
         steps->push_back ({ 100, [&host, &ctx, colour]
         { ctx.expect (host.pianoOptions()[3] == colour, "C cycled to the wrong note-colour mode"); } });
     }
@@ -5393,7 +5407,8 @@ std::optional<ScenarioResult> runWindowKeys (GuiHost& host, ScenarioContext& ctx
         steps->push_back ({ 300, [&host, &ctx, fullscreen, restore]
         { ctx.expect (host.fullScreen() == (restore ? fullscreen : ! fullscreen), "F11 did not toggle the native window state"); } });
         steps->push_back ({ 100, [&host, &ctx]
-        { ctx.expect (host.pressKey ("command + \\", '\\'), "the timeline window shortcut was not handled"); } });
+        { ctx.expect (host.pressKey ("command + " + keyCodeDescription ('\\'), (char) 0x1c),
+          "the timeline window shortcut was not handled"); } });
         steps->push_back ({ 100, [&host, &ctx, expanded, restore]
         { ctx.expect (host.timelineViewMatches (restore ? expanded : ! expanded), "the timeline shortcut did not toggle visibility"); } });
     }
@@ -5805,12 +5820,14 @@ std::optional<ScenarioResult> runPianoRollNavigation (GuiHost& host, ScenarioCon
     steps->push_back ({ 300, [&host, &ctx]
     {
         ctx.expect (host.pianoRollOpen() && host.pianoRollRegion() == 0, "double-click did not open the first MIDI region");
-        ctx.expect (host.pressPeerKey ("command + ]", ']'), "the piano roll did not handle next region");
+        ctx.expect (host.pressPeerKey ("command + " + keyCodeDescription (']'), (char) 0x1d),
+                    "the piano roll did not handle next region");
     } });
     steps->push_back ({ 300, [&host, &ctx]
     {
         ctx.expect (host.pianoRollRegion() == 1, "next region did not select the second MIDI region");
-        ctx.expect (host.pressPeerKey ("command + [", '['), "the piano roll did not handle previous region");
+        ctx.expect (host.pressPeerKey ("command + " + keyCodeDescription ('['), (char) 0x1b),
+                    "the piano roll did not handle previous region");
     } });
     steps->push_back ({ 300, [&host, &ctx, &track, first, second]
     {
@@ -6305,6 +6322,491 @@ const ScenarioRegistrar punchMenu { Scenario {
     "gui.punch_menu", { "gui", "transport" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPunchMenu (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runEditKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    auto& track = session.track (0);
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const bool expanded = host.timelineViewMatches (true);
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup (host.preserveKeyboardFocus());
+    // Zoom and scroll survive the runner's reset, so an earlier case can leave
+    // the fixture off-screen for the clicks below. Start from the unzoomed view
+    // at the session start and put back whatever was there.
+    const auto view = host.tapeView();
+    ctx.cleanup ([&host, view] { host.restoreTapeView (view); });
+    if (view.size() == 7)
+    {
+        auto start = view;
+        start[0] = 1.0;
+        start[1] = 0.0;
+        start[2] = 0.0;
+        host.restoreTapeView (start);
+    }
+    ctx.cleanup ([&host, &engine, &session, &track, expanded, regions = track.regions,
+                  mode = session.editMode, at = transport.getPlayhead(),
+                  clipboard = engine.getRegionClipboard()]
+    {
+        track.regions = regions;
+        session.editMode = mode;
+        engine.getRegionClipboard() = clipboard;
+        engine.getUndoManager().clearUndoHistory();
+        engine.getTransport().setPlayhead (at);
+        if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+    });
+    session.editMode = EditMode::Grab;
+    track.mode.store ((int) Track::Mode::Mono);
+    track.frozen.store (false);
+    const auto rate = engine.getCurrentSampleRate();
+    const auto second = (std::int64_t) std::llround (rate);
+    const auto write = [rate] (const std::filesystem::path& path, std::int64_t frames)
+    {
+        auto writer = dusk::audio::FileWriter::create (path, { rate, 1, 24 });
+        if (writer == nullptr) return false;
+        std::vector<float> silence ((std::size_t) frames, 0.0f);
+        const float* channels[] { silence.data() };
+        return writer->write (channels, 1, frames) && writer->flush();
+    };
+    const auto firstTake = ctx.tempDir() / "edit-take-1.wav";
+    const auto alternate = ctx.tempDir() / "edit-take-2.wav";
+    if (! ctx.expect (write (firstTake, second * 6) && write (alternate, second * 6),
+                      "could not write the edit fixtures"))
+        return ctx.verdict();
+    AudioRegion region;
+    using File = std::decay_t<decltype (region.file)>;
+    region.file = File (firstTake.u8string().c_str());
+    region.timelineStart = second * 2;
+    region.lengthInSamples = second * 4;
+    TakeRef take;
+    take.file = File (alternate.u8string().c_str());
+    take.sourceOffset = second;
+    take.lengthInSamples = second * 2;
+    region.previousTakes = { take };
+    track.regions = { region };
+    engine.getUndoManager().clearUndoHistory();
+    engine.getRegionClipboard() = {};
+    if (! expanded) host.pressKey ("T", 't');
+
+    // The keys as the display server sends them: X11 fills the key code with
+    // the XLookupString glyph, so a Cmd/Ctrl chord carries a control character
+    // as its text.
+    const auto command = [&host] (char letter)
+    { return host.pressKey ("command + " + keyCodeDescription (letter), controlCharacter (letter)); };
+    // The tape strip drops every selection when the undo manager broadcasts, so
+    // each operation that needs one gets its own click rather than chaining off
+    // the last one's. Everything an operation asserts is read in the same step,
+    // before that broadcast lands.
+    const auto click = [&host, &ctx]
+    { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region with a timeline click"); };
+    const auto counted = [&ctx, &track] (std::size_t expected, const std::string& what)
+    { return ctx.expect (track.regions.size() == expected, what); };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 500, click });
+    steps->push_back ({ 150, [&ctx, &engine, &track, &transport, command, counted, second]
+    {
+        ctx.expect (command ('c'), "Copy was not handled");
+        const auto& clip = engine.getRegionClipboard();
+        ctx.expect (clip.hasContent && clip.sourceTrack == 0
+                    && clip.region.timelineStart == second * 2
+                    && clip.region.lengthInSamples == second * 4,
+                    "Copy did not put the selected region on the clipboard");
+        transport.setPlayhead (second * 10);
+        ctx.expect (command ('v'), "Paste was not handled");
+        if (counted (2, "Paste did not add a region"))
+            ctx.expect (track.regions[1].timelineStart == second * 10
+                        && track.regions[1].lengthInSamples == second * 4,
+                        "Paste did not land the copy at the playhead");
+        ctx.expect (command ('z'), "Undo after Paste was not handled");
+        counted (1, "Undo did not remove the pasted region");
+    } });
+    steps->push_back ({ 500, click });
+    steps->push_back ({ 150, [&host, &ctx, &track, command, counted, second]
+    {
+        ctx.expect (command ('d'), "Duplicate was not handled");
+        if (counted (2, "Duplicate did not add a region"))
+            ctx.expect (track.regions[1].timelineStart == second * 6
+                        && track.regions[1].previousTakes.empty(),
+                        "Duplicate did not follow the original or kept its take history");
+        ctx.expect (command ('z'), "Undo after Duplicate was not handled");
+        counted (1, "Undo did not remove the duplicate");
+        ctx.expect (host.pressKey ("command + shift + Z", controlCharacter ('z')), "Redo was not handled");
+        counted (2, "Cmd+Shift+Z did not redo the duplicate");
+        ctx.expect (command ('z'), "Undo before the second Redo was not handled");
+        counted (1, "Undo did not remove the redone duplicate");
+        ctx.expect (command ('y'), "Cmd+Y was not handled");
+        counted (2, "Cmd+Y did not redo the duplicate");
+        ctx.expect (command ('z'), "Undo after Cmd+Y was not handled");
+        counted (1, "Undo did not leave a single region");
+    } });
+    steps->push_back ({ 500, click });
+    steps->push_back ({ 150, [&ctx, &track, &transport, command, counted, second]
+    {
+        transport.setPlayhead (second * 4);
+        ctx.expect (command ('e'), "Split was not handled");
+        if (counted (2, "Split did not divide the region in two"))
+            ctx.expect (track.regions[0].lengthInSamples == second * 2
+                        && track.regions[1].timelineStart == second * 4
+                        && track.regions[1].lengthInSamples == second * 2,
+                        "Split did not cut at the playhead");
+        ctx.expect (command ('z'), "Undo after Split was not handled");
+        if (counted (1, "Undo did not join the split back together"))
+            ctx.expect (track.regions[0].lengthInSamples == second * 4, "Undo left the region trimmed");
+    } });
+    for (const char* key : { "delete", "backspace" })
+    {
+        steps->push_back ({ 500, click });
+        steps->push_back ({ 150, [&host, &ctx, command, counted, key]
+        {
+            ctx.expect (host.pressKey (key), std::string (key) + " was not handled");
+            counted (0, std::string (key) + " did not remove the selected region");
+            ctx.expect (command ('z'), std::string ("Undo after ") + key + " was not handled");
+            counted (1, std::string ("Undo after ") + key + " did not restore the region");
+        } });
+    }
+    steps->push_back ({ 500, click });
+    steps->push_back ({ 150, [&ctx, &engine, command, counted, second]
+    {
+        ctx.expect (command ('x'), "Cut was not handled");
+        counted (0, "Cut did not remove the selected region");
+        const auto& clip = engine.getRegionClipboard();
+        ctx.expect (clip.hasContent && clip.region.timelineStart == second * 2,
+                    "Cut did not put the region on the clipboard");
+        ctx.expect (command ('z'), "Undo after Cut was not handled");
+        counted (1, "Undo did not bring the cut region back");
+    } });
+    steps->push_back ({ 500, click });
+    steps->push_back ({ 150, [&host, &ctx, &track, second]
+    {
+        ctx.expect (host.pressKey ("alt + " + keyCodeDescription ('t'), 't'), "Take cycling was not handled");
+        if (ctx.expect (track.regions.size() == 1, "take cycling changed the region count"))
+            ctx.expect (track.regions[0].lengthInSamples == second * 2
+                        && track.regions[0].sourceOffset == second,
+                        "Alt+T did not bring the alternate take forward");
+        ctx.expect (host.pressKey ("alt + shift + T", 'T'), "Backward take cycling was not handled");
+        if (ctx.expect (track.regions.size() == 1, "backward take cycling changed the region count"))
+            ctx.expect (track.regions[0].lengthInSamples == second * 4
+                        && track.regions[0].sourceOffset == 0,
+                        "Alt+Shift+T did not restore the original take");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar editKeys { Scenario {
+    "gui.edit_keys", { "gui", "keyboard", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runEditKeys (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runTransportKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    ctx.keep (session.metronomeEnabled);
+    ctx.keep (session.countInEnabled);
+    ctx.keep (session.timeDisplayMode);
+    ctx.keep (session.beatsPerBar);
+    ctx.keep (session.beatUnit);
+    ctx.cleanup ([&host] { drainModals (host); });
+    ctx.cleanup ([&host, &engine, &session, &transport, markers = session.getMarkers(),
+                  at = transport.getPlayhead(), loop = transport.isLoopEnabled(),
+                  loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd(),
+                  punch = transport.isPunchEnabled(),
+                  punchIn = transport.getPunchIn(), punchOut = transport.getPunchOut()]
+    {
+        engine.stop();
+        session.getMarkers() = markers;
+        transport.setPlayhead (at);
+        transport.setLoopRange (loopStart, loopEnd);
+        transport.setLoopEnabled (loop);
+        transport.setPunchRange (punchIn, punchOut);
+        transport.setPunchEnabled (punch);
+        if (host.tunerOpen()) host.pressKey (keyCodeDescription ('u'), 'u');
+    });
+    const auto rate = engine.getCurrentSampleRate();
+    const auto second = (std::int64_t) std::llround (rate);
+    session.getMarkers().clear();
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    session.metronomeEnabled.store (false);
+    session.countInEnabled.store (false);
+    session.timeDisplayMode.store ((int) TimeDisplayMode::Bars);
+    session.beatsPerBar.store (4);
+    session.beatUnit.store (4);
+
+    // The keys as X11 sends them - an unmodified letter arrives lowercase, and
+    // a shifted bracket arrives as the shifted glyph.
+    const auto plain = [&host] (char letter)
+    { return host.pressKey (keyCodeDescription (letter), letter); };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&ctx, &host, &engine, &transport, second]
+    {
+        transport.setPlayhead (second * 3);
+        ctx.expect (host.pressKey ("home"), "Home was not handled");
+        ctx.expect (transport.getPlayhead() == 0, "Home did not seek to the start");
+        engine.play();
+    } });
+    steps->push_back ({ 200, [&ctx, &host, &transport]
+    {
+        ctx.expect (transport.isPlaying(), "the transport did not start for the stop-and-rewind key");
+        ctx.expect (host.pressKey (".", '.'), "the stop-and-rewind key was not handled");
+        ctx.expect (transport.isStopped() && transport.getPlayhead() == 0,
+                    "'.' did not stop the transport and rewind to the start");
+    } });
+    steps->push_back ({ 100, [&ctx, &host, &transport, plain, second]
+    {
+        transport.setPlayhead (second);
+        ctx.expect (host.pressKey ("[", '['), "the loop-in key was not handled");
+        transport.setPlayhead (second * 3);
+        ctx.expect (host.pressKey ("]", ']'), "the loop-out key was not handled");
+        ctx.expect (transport.getLoopStart() == second && transport.getLoopEnd() == second * 3
+                    && transport.isLoopEnabled(),
+                    "the bracket keys did not place and arm the loop range");
+        ctx.expect (plain ('l'), "the loop toggle was not handled");
+        ctx.expect (! transport.isLoopEnabled(), "L did not turn the loop off");
+        ctx.expect (plain ('l') && transport.isLoopEnabled(), "L did not turn the loop back on");
+    } });
+    steps->push_back ({ 100, [&ctx, &host, &transport, plain, second]
+    {
+        transport.setPlayhead (second * 2);
+        ctx.expect (host.pressKey ("shift + " + keyCodeDescription ('{'), '{'), "the punch-in key was not handled");
+        transport.setPlayhead (second * 5);
+        ctx.expect (host.pressKey ("shift + " + keyCodeDescription ('}'), '}'), "the punch-out key was not handled");
+        ctx.expect (transport.getPunchIn() == second * 2 && transport.getPunchOut() == second * 5
+                    && transport.isPunchEnabled(),
+                    "the shifted bracket keys did not place and arm the punch range");
+        ctx.expect (plain ('p'), "the punch toggle was not handled");
+        ctx.expect (! transport.isPunchEnabled(), "P did not turn punch off");
+        ctx.expect (plain ('p') && transport.isPunchEnabled(), "P did not turn punch back on");
+    } });
+    steps->push_back ({ 100, [&ctx, &host, &session, plain]
+    {
+        ctx.expect (plain ('c') && session.metronomeEnabled.load(), "C did not turn the metronome on");
+        ctx.expect (plain ('c') && ! session.metronomeEnabled.load(), "C did not turn the metronome off");
+        ctx.expect (host.pressKey ("shift + C", 'C') && session.countInEnabled.load(),
+                    "Shift+C did not turn the count-in on");
+        ctx.expect (host.pressKey ("shift + C", 'C') && ! session.countInEnabled.load(),
+                    "Shift+C did not turn the count-in off");
+    } });
+    steps->push_back ({ 100, [&ctx, &session, plain]
+    {
+        ctx.expect (plain ('f') && session.timeDisplayMode.load() == (int) TimeDisplayMode::Time,
+                    "F did not switch the clock to minutes and seconds");
+        ctx.expect (plain ('f') && session.timeDisplayMode.load() == (int) TimeDisplayMode::Bars,
+                    "F did not switch the clock back to bars and beats");
+    } });
+    steps->push_back ({ 100, [&ctx, plain, &host]
+    {
+        ctx.expect (plain ('u'), "the tuner key was not handled");
+        ctx.expect (host.tunerOpen(), "U did not open the tuner");
+        ctx.expect (plain ('u'), "the tuner key was not handled a second time");
+        ctx.expect (! host.tunerOpen(), "U did not close the tuner");
+    } });
+    steps->push_back ({ 100, [&ctx, &host]
+    { ctx.expect (host.pressKey ("shift + M", 'M'), "the time-signature key was not handled"); } });
+    steps->push_back ({ 200, [&ctx, &host]
+    { ctx.expect (host.clickContextMenuItem ("3/4"), "the time-signature menu did not offer 3/4"); } });
+    steps->push_back ({ 200, [&ctx, &host, &session, plain, &transport, second]
+    {
+        ctx.expect (session.beatsPerBar.load() == 3 && session.beatUnit.load() == 4,
+                    "the time-signature menu did not apply the chosen signature");
+        ctx.expect (host.modalStackEmpty(), "the time-signature menu stayed open");
+        transport.setPlayhead (second * 4);
+        ctx.expect (plain ('m'), "the marker key was not handled");
+        const auto& markers = session.getMarkers();
+        if (ctx.expect (markers.size() == 1, "M did not drop exactly one marker"))
+            ctx.expect (markers[0].timelineSamples == second * 4, "M did not drop the marker at the playhead");
+    } });
+    steps->push_back ({ 200, [&ctx, &host]
+    {
+        ctx.expect (! host.modalStackEmpty(), "M did not offer to name the new marker");
+        ctx.expect (host.pressPeerKey ("escape"), "the marker name prompt did not take Escape");
+    } });
+    runSteps (ctx, steps, [&host, &ctx, &session]
+    {
+        ctx.waitUntil ([&host] { return host.modalStackEmpty(); }, 3000,
+            [&ctx, &session]
+            {
+                ctx.expect (session.getMarkers().size() == 1, "Escape on the name prompt removed the marker");
+                ctx.complete (ctx.verdict());
+            }, "Escape did not close the marker name prompt");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar transportKeys { Scenario {
+    "gui.transport_keys", { "gui", "keyboard", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTransportKeys (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runPianoEditKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&host, &engine, &session, &track, regions = track.midiRegions.current(),
+                  mode = session.editMode]
+    {
+        host.closePiano();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+        session.editMode = mode;
+        engine.getUndoManager().clearUndoHistory();
+    });
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
+    MidiRegion region;
+    region.lengthInTicks = kMidiTicksPerQuarter * 64;
+    region.lengthInSamples = session.ticksToSamples (region.lengthInTicks, engine.getCurrentSampleRate());
+    region.notes = { { 1, 60, 100, 240, 120 }, { 1, 60, 100, 360, 120 }, { 1, 67, 85, 600, 240 } };
+    const auto original = region.notes;
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    engine.getUndoManager().clearUndoHistory();
+    if (! host.openPiano (0, 0)) return ScenarioResult::fail ("piano roll did not open");
+
+    // The roll takes the keys itself, so these are pressed the way X11 hands
+    // them to the focused component: a chord's key code is the lowercase
+    // keysym and its text is a control character.
+    const auto command = [&host] (char letter)
+    { return host.focusPiano()
+          && host.pressPeerKey ("command + " + keyCodeDescription (letter), controlCharacter (letter)); };
+    const auto notes = [&track]() -> const std::vector<MidiNote>&
+    { return track.midiRegions.current()[0].notes; };
+    const auto selectAll = [&ctx, command]
+    { ctx.expect (command ('a'), "Select All was not handled"); };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx, &session]
+    {
+        ctx.expect (host.focusPiano() && host.pressPeerKey (keyCodeDescription ('g'), 'g')
+                    && session.editMode == EditMode::Grab, "G did not select Grab mode");
+        ctx.expect (host.pianoNotePointer (300, 60, true), "the first note was not clickable");
+        host.pianoNotePointer (300, 60, false);
+    } });
+    steps->push_back ({ 150, [&ctx, &host, command, selectAll]
+    {
+        ctx.expect (host.pianoSelection() == std::vector<int> { 0 },
+                    "clicking the first note did not select it alone");
+        selectAll();
+        ctx.expect (command ('c'), "Copy was not handled");
+        ctx.expect (command ('v'), "Paste was not handled");
+    } });
+    steps->push_back ({ 150, [&ctx, &host, notes, original, command]
+    {
+        if (ctx.expect (notes().size() == 6, "Paste did not add every copied note"))
+            ctx.expect (std::vector<MidiNote> (notes().begin() + 3, notes().end()) == original,
+                        "Paste did not land the copies at the edit cursor with their pitch and velocity");
+        ctx.expect (host.pianoSelection() == std::vector<int> { 3, 4, 5 },
+                    "Paste did not select what it pasted");
+        ctx.expect (command ('z'), "Undo after Paste was not handled");
+    } });
+    steps->push_back ({ 150, [&ctx, notes, original, selectAll, command]
+    {
+        ctx.expect (notes() == original, "Undo did not remove the pasted notes");
+        selectAll();
+        ctx.expect (command ('x'), "Cut was not handled");
+        ctx.expect (notes().empty(), "Cut did not remove the selected notes");
+        ctx.expect (command ('v'), "Paste after Cut was not handled");
+    } });
+    steps->push_back ({ 150, [&ctx, notes, original, command]
+    {
+        ctx.expect (notes() == original, "Paste did not restore the cut notes where they came from");
+        ctx.expect (command ('z'), "Undo after Paste was not handled");
+        ctx.expect (notes().empty(), "Undo did not take the pasted notes away");
+        ctx.expect (command ('z'), "Undo after Cut was not handled");
+        ctx.expect (notes() == original, "Undo did not bring the cut notes back");
+    } });
+    steps->push_back ({ 150, [&ctx, &host, notes, original, selectAll, command]
+    {
+        selectAll();
+        ctx.expect (command ('d'), "Duplicate was not handled");
+        if (ctx.expect (notes().size() == 6, "Duplicate did not clone every note"))
+        {
+            auto expected = original;
+            for (auto& note : expected) note.startTick += 600;
+            ctx.expect (std::vector<MidiNote> (notes().begin() + 3, notes().end()) == expected,
+                        "Duplicate did not place the clones after the selection's span");
+        }
+        ctx.expect (host.pianoSelection() == std::vector<int> { 3, 4, 5 },
+                    "Duplicate did not select the clones");
+        ctx.expect (command ('z'), "Undo after Duplicate was not handled");
+    } });
+    steps->push_back ({ 150, [&ctx, &host, notes, original, selectAll]
+    {
+        ctx.expect (notes() == original, "Undo did not remove the duplicated notes");
+        selectAll();
+        ctx.expect (host.focusPiano() && host.pressPeerKey (keyCodeDescription ('v'), 'v'),
+                    "the velocity key was not handled");
+    } });
+    steps->push_back ({ 200, [&ctx, &host]
+    { ctx.expect (host.clickContextMenuItem ("Set to 64 (mid)"), "the velocity popup did not offer a value"); } });
+    steps->push_back ({ 200, [&ctx, &host, notes, command]
+    {
+        ctx.expect (host.modalStackEmpty(), "the velocity popup stayed open");
+        ctx.expect (notes().size() == 3
+                    && std::all_of (notes().begin(), notes().end(),
+                                    [] (const MidiNote& note) { return note.velocity == 64; }),
+                    "the velocity popup did not set the selected notes");
+        ctx.expect (command ('z'), "Undo after the velocity popup was not handled");
+    } });
+    steps->push_back ({ 150, [&ctx, &host, notes, original, selectAll, command]
+    {
+        ctx.expect (notes() == original, "Undo did not restore the original velocities");
+        selectAll();
+        ctx.expect (host.focusPiano() && host.pressPeerKey ("shift + G", 'G'), "the glue key was not handled");
+        if (ctx.expect (notes().size() == 2, "Shift+G did not join the two contiguous notes"))
+            ctx.expect (notes()[0].noteNumber == 60 && notes()[0].startTick == 240
+                        && notes()[0].lengthInTicks == 240 && notes()[1] == original[2],
+                        "Shift+G joined the wrong notes or the wrong span");
+        ctx.expect (command ('z'), "Undo after the glue key was not handled");
+    } });
+    auto scroll = std::make_shared<double> (0.0);
+    steps->push_back ({ 150, [&ctx, &host, notes, original, scroll]
+    {
+        ctx.expect (notes() == original, "Undo did not take the glued notes apart");
+        ctx.expect (host.pianoViewport()[1] < 0.5, "the roll did not open at the region's start");
+        ctx.expect (host.focusPiano() && host.pressPeerKey ("command + cursor right"),
+                    "the pan-right key was not handled");
+        *scroll = host.pianoViewport()[1];
+        ctx.expect (*scroll > 0.5, "Cmd+Right did not pan the view");
+    } });
+    steps->push_back ({ 150, [&ctx, &host, scroll]
+    {
+        ctx.expect (host.focusPiano() && host.pressPeerKey ("home"), "Home was not handled");
+        ctx.expect (host.pianoViewport()[1] < 0.5, "Home did not jump the view to the region start");
+        ctx.expect (host.focusPiano() && host.pressPeerKey ("end"), "End was not handled");
+        ctx.expect (host.pianoViewport()[1] > *scroll, "End did not jump the view to the region end");
+        ctx.expect (host.focusPiano() && host.pressPeerKey ("command + cursor left"),
+                    "the pan-left key was not handled");
+    } });
+    steps->push_back ({ 150, [&ctx, &host, scroll]
+    {
+        ctx.expect (host.pianoViewport()[1] > 0.5, "Cmd+Left panned past the region start");
+        ctx.expect (host.focusPiano() && host.pressPeerKey ("home"), "Home was not handled a second time");
+        ctx.expect (host.pianoViewport()[1] < 0.5, "Home did not return the view to the region start");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoEditKeys { Scenario {
+    "gui.piano_edit_keys", { "gui", "midi", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoEditKeys (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario

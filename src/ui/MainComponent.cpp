@@ -1380,8 +1380,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // Mirrors the TransportBar's TIMELINE button so the user can flip the
     // arrangement view without mousing. Plain T is the mnemonic ("Timeline");
     // \\ is the Reaper / Pro Tools-style alias. (Alt+T is take cycling below.)
+    // X11 gives Ctrl+\ a control character for its text, so the key code is
+    // what carries the backslash there; other platforms fill in the text.
     if ((code == 'T' && noMods)
-        || (cmd && ! shift && key.getTextCharacter() == '\\'))
+        || (cmd && ! shift && (code == '\\' || key.getTextCharacter() == '\\')))
     {
         setTimelineVisible (! tapeStripExpanded);
         return true;

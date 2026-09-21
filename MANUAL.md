@@ -2199,7 +2199,8 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 | **Q**                             | Quantize popup                                               |
 | **S**                             | Scale picker popup                                           |
 | **V**                             | Velocity popup (set / humanise)                              |
-| **G**                             | Glue selected same-pitch contiguous notes                    |
+| **G** / **D**                     | Grab (move / select) or Draw (note entry) edit mode          |
+| **Shift+G**                       | Glue selected same-pitch contiguous notes                    |
 | **L**                             | Cycle active CC controller in CC lane (1 / 7 / 11 / 64 / 74) |
 | **C**                             | Cycle colour mode (Pitch / Velocity / Channel)               |
 | **Cmd+A**                         | Select all notes in region                                   |

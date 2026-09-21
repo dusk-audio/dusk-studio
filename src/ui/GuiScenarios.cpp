@@ -913,6 +913,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
        #endif
     }
+    bool tunerOpen() const override { return owner.tuner != nullptr; }
+
     bool inputVirtualKeyboard (const std::string& key) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -1569,6 +1571,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (audioEditorOpen())    lines.push_back ("audio editor open");
         if (audioSettingsOpen())  lines.push_back ("audio settings open");
         if (virtualKeyboardOpen()) lines.push_back ("virtual keyboard open");
+        if (tunerOpen())          lines.push_back ("tuner open");
         if (owner.session.master().mute.load() != launch.masterMute)
             lines.push_back (owner.session.master().mute.load() ? "master muted" : "master unmuted");
 
@@ -1613,6 +1616,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.closeAudioEditor();
         owner.closeAudioSettings();
         owner.closeVirtualKeyboard();
+        owner.closeTuner();
         for (int track = 0; track < Session::kNumTracks; ++track)
             if (auto* component = owner.consoleView != nullptr
                                       ? owner.consoleView->getStripComponent (track) : nullptr)

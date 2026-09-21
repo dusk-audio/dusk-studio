@@ -2991,6 +2991,14 @@ void PianoRollComponent::mouseUp (const juce::MouseEvent&)
 
 bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
 {
+    // X11 hands JUCE the XLookupString glyph, so an unmodified letter arrives
+    // lowercase and Ctrl+letter arrives as the lowercase keysym with a control
+    // character for its text. Normalise ASCII letters to uppercase - a no-op on
+    // macOS and Windows, where the key code already is - so every comparison
+    // below sees the same letter whichever platform delivered it.
+    int code = k.getKeyCode();
+    if (code >= 'a' && code <= 'z') code -= ('a' - 'A');
+
     // Edit-mode shortcuts. The modal grabs keyboard focus on open so
     // MainComponent::keyPressed doesn't see these - handle locally.
     if (! k.getModifiers().isAnyModifierKeyDown())
@@ -3022,13 +3030,15 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
                                       (double) std::numeric_limits<int>::max(),
                                       maxScroll);
     };
-    if (cmdOrCtrl && (k == juce::KeyPress::leftKey || k == juce::KeyPress::rightKey))
+    // Compared by key code: KeyPress::operator== (int) only matches when no
+    // modifier is down, which is never true of a Cmd/Ctrl chord.
+    if (cmdOrCtrl && (code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey))
     {
         const int gridW = std::max (1, getWidth() - kKeyboardWidth);
         const int step  = std::max (1, gridW / 4);
         const int maxScroll = scrollUpperBound (gridW);
         scrollX = jlimit (0, maxScroll,
-                                   scrollX + (k == juce::KeyPress::leftKey ? -step : step));
+                                   scrollX + (code == juce::KeyPress::leftKey ? -step : step));
         repaint();
         return true;
     }
@@ -3093,7 +3103,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     {
         const bool cmdOrCtrl = k.getModifiers().isCommandDown()
                                   || k.getModifiers().isCtrlDown();
-        if (cmdOrCtrl && (k.getKeyCode() == 'Z' || k.getKeyCode() == 'z'))
+        if (cmdOrCtrl && code == 'Z')
         {
             if (k.getModifiers().isShiftDown()) engine.getUndoManager().redo();
             else                                  engine.getUndoManager().undo();
@@ -3103,19 +3113,19 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             repaint();
             return true;
         }
-        if (cmdOrCtrl && k.getTextCharacter() == ']')
+        if (cmdOrCtrl && (code == ']' || k.getTextCharacter() == ']'))
         {
             navigateRegion (+1);
             return true;
         }
-        if (cmdOrCtrl && k.getTextCharacter() == '[')
+        if (cmdOrCtrl && (code == '[' || k.getTextCharacter() == '['))
         {
             navigateRegion (-1);
             return true;
         }
         // Loop enable toggles on Cmd/Ctrl+L - bare 'L' is taken by the CC-
         // controller cycle further down, so the loop toggle takes the modifier.
-        if (cmdOrCtrl && k.getKeyCode() == 'L')
+        if (cmdOrCtrl && code == 'L')
         {
             auto& transport = engine.getTransport();
             transport.setLoopEnabled (! transport.isLoopEnabled());
@@ -3124,7 +3134,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         }
         // Split at the edit cursor: Cmd/Ctrl+E, uniform with the tape strip +
         // audio editor.
-        if (cmdOrCtrl && (k.getKeyCode() == 'E' || k.getKeyCode() == 'e'))
+        if (cmdOrCtrl && code == 'E')
         {
             splitSelectedAtCursor();
             return true;
@@ -3135,7 +3145,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         // cursor maps through the region anchor.
         // On Linux/X11 getKeyCode() returns the SHIFTED glyph, so Shift+[ comes
         // through as '{' and Shift+] as '}' - fold them back to [ / ].
-        const int  rawKc = k.getKeyCode();
+        const int  rawKc = code;
         const int  kc = (rawKc == '{') ? '[' : (rawKc == '}') ? ']' : rawKc;
         const bool sh = k.getModifiers().isShiftDown();
         if (! cmdOrCtrl && ! k.getModifiers().isAltDown()
@@ -3159,7 +3169,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         // selection so a follow-up Delete or transpose acts on every
         // note at once. Clears the time range so it doesn't compete
         // with the new full-region selection.
-        if (cmdOrCtrl && (k.getKeyCode() == 'A' || k.getKeyCode() == 'a'))
+        if (cmdOrCtrl && code == 'A')
         {
             auto* r = region();
             if (r == nullptr) return true;
@@ -3175,7 +3185,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         // startTicks stored RELATIVE to the earliest selected note so
         // paste lands the cluster at editCursorTick regardless of the
         // source region's anchor (matches Logic / Reaper behaviour).
-        if (cmdOrCtrl && (k.getKeyCode() == 'C' || k.getKeyCode() == 'c'))
+        if (cmdOrCtrl && code == 'C')
         {
             auto* r = region();
             if (r == nullptr || selectedNotes.empty()) return true;
@@ -3193,7 +3203,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             }
             return true;
         }
-        if (cmdOrCtrl && (k.getKeyCode() == 'X' || k.getKeyCode() == 'x'))
+        if (cmdOrCtrl && code == 'X')
         {
             auto* r = region();
             if (r == nullptr || selectedNotes.empty()) return true;
@@ -3220,7 +3230,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             repaint();
             return true;
         }
-        if (cmdOrCtrl && (k.getKeyCode() == 'V' || k.getKeyCode() == 'v'))
+        if (cmdOrCtrl && code == 'V')
         {
             auto* r = region();
             if (r == nullptr || sNoteClipboard.empty()) return true;
@@ -3269,18 +3279,17 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     // Values are denominators of a quarter note (1 = whole at 4/4, 4 = 16th).
     // Picked the most common entry grids; the user can extend with triplet
     // / dotted variants in a polish pass.
-    if (k.getKeyCode() == '1') { snapTicks = kMidiTicksPerQuarter * 4; repaint(); return true; }   // whole
-    if (k.getKeyCode() == '2') { snapTicks = kMidiTicksPerQuarter * 2; repaint(); return true; }   // half
-    if (k.getKeyCode() == '3') { snapTicks = kMidiTicksPerQuarter;     repaint(); return true; }   // quarter
-    if (k.getKeyCode() == '4') { snapTicks = kMidiTicksPerQuarter / 2; repaint(); return true; }   // 8th
-    if (k.getKeyCode() == '5') { snapTicks = kMidiTicksPerQuarter / 4; repaint(); return true; }   // 16th (default)
-    if (k.getKeyCode() == '6') { snapTicks = kMidiTicksPerQuarter / 8; repaint(); return true; }   // 32nd
-    if (k.getKeyCode() == '0') { snapTicks = 0;                       repaint(); return true; }    // free
+    if (code == '1') { snapTicks = kMidiTicksPerQuarter * 4; repaint(); return true; }   // whole
+    if (code == '2') { snapTicks = kMidiTicksPerQuarter * 2; repaint(); return true; }   // half
+    if (code == '3') { snapTicks = kMidiTicksPerQuarter;     repaint(); return true; }   // quarter
+    if (code == '4') { snapTicks = kMidiTicksPerQuarter / 2; repaint(); return true; }   // 8th
+    if (code == '5') { snapTicks = kMidiTicksPerQuarter / 4; repaint(); return true; }   // 16th (default)
+    if (code == '6') { snapTicks = kMidiTicksPerQuarter / 8; repaint(); return true; }   // 32nd
+    if (code == '0') { snapTicks = 0;                       repaint(); return true; }    // free
     // 'C' cycles the colour mode: Pitch -> Velocity -> Channel -> Pitch.
     // 'C' was free in the existing key map (the 1..6/0 family + delete +
-    // Esc are the only bindings). Lowercase falls through if Caps Lock is
-    // off, so we match either case.
-    if (k.getKeyCode() == 'C')
+    // Esc are the only bindings).
+    if (code == 'C')
     {
         colorMode = colorMode == ColorMode::Pitch    ? ColorMode::Velocity
                   : colorMode == ColorMode::Velocity ? ColorMode::Channel
@@ -3293,7 +3302,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     // most-used continuous controllers; uncommon ones can still be
     // captured via Record (the region's ccs vector holds them all) and
     // viewed by extending this rotation later.
-    if (! cmdOrCtrl && (k.getKeyCode() == 'L' || k.getKeyCode() == 'l'))
+    if (! cmdOrCtrl && code == 'L')
     {
         activeCcController =
             activeCcController == 1   ?  7 :
@@ -3306,20 +3315,20 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     }
     // 'Q' opens the quantize popup. Action runs on selected notes (or
     // every note if nothing selected).
-    if (k.getKeyCode() == 'Q')
+    if (code == 'Q')
     {
         showQuantizePopup();
         return true;
     }
     // 'S' opens the scale-highlight picker (root × mode).
-    if (k.getKeyCode() == 'S')
+    if (code == 'S')
     {
         showScalePopup();
         return true;
     }
     // 'V' opens the velocity popup (humanise + set-to). Like the
     // quantize popup, an empty selection means "apply to whole region".
-    if (k.getKeyCode() == 'V')
+    if (code == 'V')
     {
         showVelocityPopup();
         return true;
@@ -3328,7 +3337,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     // one note. Useful for repairing stutter from sloppy playing
     // captured by the recorder. No-op when fewer than two notes are
     // selected.
-    if (k.getKeyCode() == 'G' && selectedNotes.size() >= 2)
+    if (code == 'G' && selectedNotes.size() >= 2)
     {
         glueSelectedNotes();
         repaint();
@@ -3338,7 +3347,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     // immediately after the selection's span, replacing the
     // selection with the new copies so the user can keep nudging /
     // transposing the duplicate without an extra click.
-    if (k.getKeyCode() == 'D'
+    if (code == 'D'
         && k.getModifiers().isCommandDown()
         && ! selectedNotes.empty())
     {

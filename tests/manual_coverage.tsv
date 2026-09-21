@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 20
+# ceiling gap 16
 # ceiling partial 49
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -30,7 +30,7 @@ Quick Guide > Install and first launch	a switch is refused while a bounce runs o
 Quick Guide > Install and first launch	startup update check flags a newer release	partial	test:newer comparison is component-wise with semver prerelease rules;test:highestTag picks the max release from GitHub tags JSON		version logic tested; the banner and the network request are not
 Quick Guide > Pick an audio device	Settings > Audio lists backends and applies immediately	n/a			walkthrough; held under Getting started > Configuring audio > Audio
 Quick Guide > Arm a track and check levels	ARM shows live pre-fader input without monitoring	auto	test:Track meter source follows tracking controls without changing mix metering
-Quick Guide > Arm a track and check levels	clip indicator lights at 0 dBFS and holds one second	gap
+Quick Guide > Arm a track and check levels	clip indicator lights at 0 dBFS and holds one second	auto	scenario:gui.meter_clip_hold		the strip's clip bar lights on a signal over 0 dBFS, still lit after 700 ms and clear after 1.3 s
 Quick Guide > Record	R records, Space stops, a region appears on the armed track	partial	test:RecordManager writes mono input back accurately;scenario:engine.pipeline_selftest		the capture path is tested; the keys and the region appearing on the timeline are walked by hand
 Quick Guide > Record	Cmd+Z undoes a recording	auto	scenario:gui.recording_undo_key;scenario:take.full_cover_pushes_onto_stack		R records virtual-keyboard MIDI, Space commits the take, Cmd+Z removes it; audio take restoration is covered by the take scenario
 Quick Guide > Overdub	record a second track over playback of the first	auto	scenario:record.second_track_overdub		two actual recording passes; first take plays with live inputs silent during overdub, both WAVs retain their own input and aligned boundaries
@@ -379,13 +379,13 @@ Bouncing and exporting > Bouncing the master vs the mastering chain	bounce captu
 Bouncing and exporting > Where bounces go	bounces land in the session folder; Load latest mixdown loads mixdown.wav, else bounce.wav	auto	scenario:gui.mixdown_handoff		actual Mixdown writes the session folder; Load latest mixdown button selects bounce.wav alone and prefers mixdown.wav when both exist
 
 Keyboard reference > File	Cmd+N, O, S, Shift+S, I, B, Q	auto	scenario:gui.file_keys;bb:bb-keyboard-quit
-Keyboard reference > Edit	undo, redo, copy, cut, paste, duplicate, delete, split, nudge, take cycling	gap
-Keyboard reference > Transport	Space, R, Home, ., L, P, C, M, [ ], Shift+[ ], K, Shift+arrows, B, Shift+C, F, Shift+M, U	gap
+Keyboard reference > Edit	undo, redo, copy, cut, paste, duplicate, delete, split, nudge, take cycling	auto	scenario:gui.edit_keys;scenario:gui.tape_nudge_keys;scenario:gui.recording_undo_key		every key driven against a mouse-made timeline selection; nudge by beat and bar is the tape scenario, Cmd+Z over a recording the undo one
+Keyboard reference > Transport	Space, R, Home, ., L, P, C, M, [ ], Shift+[ ], K, Shift+arrows, B, Shift+C, F, Shift+M, U	auto	scenario:gui.transport_keys;scenario:gui.recording_undo_key;scenario:gui.mastering_transport;scenario:gui.marker_arrow_keys;scenario:gui.tap_tempo_intervals;scenario:gui.piano_step_record		locate, loop and punch brackets, metronome, count-in, clock format, time signature, tuner and markers in the transport scenario; Space and R in the recording and mastering ones, Shift+arrows in the marker one, B in tap tempo and K in step record
 Keyboard reference > Tracks	A, S, X act on the focused strip	auto	scenario:gui.keyboard_track_shortcuts		keyboard focus traverses all 24 strips in Recording and Mixing; A/S/X toggle only the focused track and preserve the armed-track counter
 Keyboard reference > Stages & banks	Cmd+1..4 stages; 1..8 pages	auto	test:Bank mapping: plain digits select exactly pages one through eight;scenario:gui.mastering_transport
 Keyboard reference > Timeline	T, = + - 0, Cmd-wheel, wheel and Shift-wheel scrolling	auto	scenario:gui.timeline_keys
 Keyboard reference > Region editor	Cmd+E, G, Cmd+] [, Esc	auto	scenario:gui.audio_editor_keys		mouse-placed edit cursor, split source continuity, Grab, adjacent region navigation and Escape
-Keyboard reference > Piano roll	arrows, Q, S, V, G, L, C, Cmd+A/C/X/V/D/Z, Home, End, Cmd+] [, Esc	gap
+Keyboard reference > Piano roll	arrows, Q, S, V, G, D, Shift+G, L, C, Cmd+A/C/X/V/D/Z, Home, End, Cmd+arrows, Cmd+] [, Esc	auto	scenario:gui.piano_edit_keys;scenario:gui.piano_roll_note_keys;scenario:gui.piano_options;scenario:gui.piano_note_creation;scenario:gui.piano_roll_navigation		clipboard, duplicate, velocity, glue and view panning in the edit scenario; arrows and Cmd+A/Z in the note-key one, Q/S/L/C in options, D in note creation, region navigation and Escape in the navigation one
 Keyboard reference > Notepad	the notepad's own keys, including word motion on Ctrl or Option	auto	test:Notepad editor word jumps stop at word and line boundaries;test:Notepad editor accepts AltGr text without turning command chords into text;test:Notepad Markdown inline commands toggle matching wrappers
 Keyboard reference > Window	F11 fullscreen, Cmd+\ timeline, Esc closes a modal	auto	scenario:gui.window_keys		actual fullscreen state, timeline visibility and focused modal Escape through the window peer
 Keyboard reference > Notes on shortcut design	a focused text field keeps its keys	auto	test:the shortcut rule withholds keys from a view that is taking text
