@@ -3105,6 +3105,8 @@ const ScenarioRegistrar auxSources { Scenario {
 std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_MULTISAMPLE
+    (void) host;
+    (void) ctx;
     return ScenarioResult::skip ("built without multisample instruments");
    #else
     auto& engine = ctx.engine();
