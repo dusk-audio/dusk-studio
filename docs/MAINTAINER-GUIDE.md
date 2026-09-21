@@ -388,7 +388,7 @@ Each platform primitive has three implementations (`*_Linux.cpp`, `*_Mac.cpp`, `
 
 ### Saving is crash-safe
 
-[src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) writes JSON to a temp file, fsyncs, then atomically renames over `session.json`, so a crash mid-save never leaves a half-written session. There's a `kFormatVersion` and a `migrateSession()` path for forward-migrating older files; unknown keys are ignored so a newer field doesn't break an older reader. MIDI devices are saved by stable string identifier (not index) so a USB replug still resolves. Autosave and all save/load happen on the message thread only.
+[src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) writes JSON to a temp file, fsyncs, then atomically renames over `session.json`, so a crash mid-save never leaves a half-written session. There's a `kFormatVersion` (currently 7) and a `migrateSession()` path that walks an older file forward one version at a time; unknown keys are ignored, and a file newer than `kFormatVersion` is refused outright before anything is written into the live session. Bump the version whenever an older build could accept a newer file and then discard state it has no model for on the next save - v7 exists because v6 builds (up to the released v0.13.2) would have erased built-in insert identities and patches that way. MIDI devices are saved by stable string identifier (not index) so a USB replug still resolves. Autosave and all save/load happen on the message thread only.
 
 ### Edits are undoable actions
 

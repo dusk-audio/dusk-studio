@@ -79,16 +79,16 @@ TEST_CASE ("migrateSession advances a mock v1 root to the current schema",
 
     // version field must now match the current build's kFormatVersion.
     // We don't reach kFormatVersion symbolically from the test (it's
-    // in an anonymous namespace inside the .cpp), so we check the
-    // AUX-send bypass owns version 6; the original payload must survive every step.
+    // in an anonymous namespace inside the .cpp), so we check that built-in
+    // inserts own version 7; the original payload must survive every step.
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() == 6);
+    REQUIRE (root["version"].get<int>() == 7);
     REQUIRE (root.contains ("tempo"));
     REQUIRE (root["tempo"].get<double>() == 98.5);
 }
 
-TEST_CASE ("migrateSession stamps v5 AUX-send bypass data as v6",
+TEST_CASE ("migrateSession carries v5 AUX-send bypass data to the current schema",
            "[session][serializer][migration][aux]")
 {
     nlohmann::json root {
@@ -100,7 +100,7 @@ TEST_CASE ("migrateSession stamps v5 AUX-send bypass data as v6",
 
     auto migrated = root;
     REQUIRE (duskstudio::migrateSession (migrated, 5));
-    REQUIRE (migrated["version"].get<int>() == 6);
+    REQUIRE (migrated["version"].get<int>() == 7);
     REQUIRE (migrated["tracks"][0]["aux_sends_bypassed"].get<bool>());
 
     const auto dir = makeTempMigrationDir();
@@ -114,8 +114,86 @@ TEST_CASE ("migrateSession stamps v5 AUX-send bypass data as v6",
 
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    REQUIRE (saved["version"].get<int>() == 6);
+    REQUIRE (saved["version"].get<int>() == 7);
     REQUIRE (saved["tracks"][0]["aux_sends_bypassed"].get<bool>());
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("migrateSession stamps an ordinary v6 session as v7",
+           "[session][serializer][migration][builtin]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    // A v6 session predates built-in inserts, so the step is a pure version
+    // advance: the loader already reads an absent builtin_id as "no built-in".
+    nlohmann::json root {
+        { "version", 6 },
+        { "tempo", 108.0 },
+        { "tracks", nlohmann::json::array ({
+            { { "name", "Legacy strip" }, { "fader_db", -3.0 } }
+        }) }
+    };
+
+    auto migrated = root;
+    REQUIRE (duskstudio::migrateSession (migrated, 6));
+    CHECK (migrated["version"].get<int>() == 7);
+    CHECK (migrated["tracks"][0]["name"].get<std::string>() == "Legacy strip");
+    CHECK_FALSE (migrated["tracks"][0].contains ("builtin_id"));
+
+    const auto dir = makeTempMigrationDir();
+    const auto target = dir.getChildFile ("session.json");
+    writeRaw (target, root.dump());
+
+    auto session = std::make_unique<Session>();
+    REQUIRE (SessionSerializer::load (*session, target));
+    CHECK (session->track (0).name == "Legacy strip");
+    CHECK (session->track (0).builtinUnitId.empty());
+
+    REQUIRE (SessionSerializer::save (*session, target));
+    const auto saved = nlohmann::json::parse (
+        target.loadFileAsString().toStdString(), nullptr, false);
+    CHECK (saved["version"].get<int>() == 7);
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("Loading a v6 session clears built-ins the live session was holding",
+           "[session][serializer][migration][builtin]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    // load() mutates the live Session, so a field that only newer files carry
+    // has to reset when it is absent - otherwise the previous session's
+    // built-in survives into a file that predates the key and reappears on the
+    // next save.
+    const auto dir = makeTempMigrationDir();
+    const auto target = dir.getChildFile ("session.json");
+    writeRaw (target,
+              R"({"version":6,"tracks":[{"name":"No built-in"}],)"
+              R"("aux_lanes":[{"name":"AUX 1","plugin_slots":[{}]}]})");
+
+    auto livePtr = std::make_unique<Session>();
+    Session& live = *livePtr;
+    live.track (0).builtinUnitId      = "dusk.builtin.sunset";
+    live.track (0).builtinStateBase64 = "c3RhbGUtcGF0Y2g=";
+    live.auxLane (0).builtinUnitId[0]      = "dusk.builtin.utility";
+    live.auxLane (0).builtinStateBase64[0] = "c3RhbGUtYXV4";
+
+    REQUIRE (SessionSerializer::load (live, target));
+
+    CHECK (live.track (0).builtinUnitId.empty());
+    CHECK (live.track (0).builtinStateBase64.empty());
+    CHECK (live.auxLane (0).builtinUnitId[0].empty());
+    CHECK (live.auxLane (0).builtinStateBase64[0].empty());
+
+    REQUIRE (SessionSerializer::save (live, target));
+    const auto saved = nlohmann::json::parse (
+        target.loadFileAsString().toStdString(), nullptr, false);
+    CHECK (saved["version"].get<int>() == 7);
+    CHECK_FALSE (saved["tracks"][0].contains ("builtin_id"));
+
     dir.deleteRecursively();
 }
 
@@ -142,12 +220,12 @@ TEST_CASE ("SessionSerializer loads a v1-tagged session file end-to-end",
     auto root = nlohmann::json::parse (target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() == 6);
+    REQUIRE (root["version"].get<int>() == 7);
 
     dir.deleteRecursively();
 }
 
-TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a v6 save",
+TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a v7 save",
            "[session][serializer][migration][plugin-descriptor]")
 {
     using duskstudio::Session;
@@ -177,7 +255,7 @@ TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a v6 save
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (saved.is_object());
-    CHECK (saved["version"].get<int>() == 6);
+    CHECK (saved["version"].get<int>() == 7);
     CHECK (saved["tracks"][0]["plugin_desc_xml"].get<std::string>() == legacyXml);
     CHECK (saved["tracks"][0]["plugin_state"].get<std::string>()
            == "bGVnYWN5LXN0YXRl");
@@ -224,7 +302,7 @@ TEST_CASE ("SessionSerializer round-trips active and historical take provenance"
     REQUIRE (SessionSerializer::save (*source, target));
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    REQUIRE (saved["version"].get<int>() == 6);
+    REQUIRE (saved["version"].get<int>() == 7);
     const auto& savedAudio = saved["tracks"][0]["regions"][0];
     CHECK (savedAudio["take_provenance"]["captured_at_ms"].get<std::int64_t>() == 101);
     CHECK (savedAudio["take_provenance"]["loop_pass"].get<int>() == 2);
@@ -334,7 +412,7 @@ TEST_CASE ("SessionSerializer gives legacy v4 takes default provenance",
     REQUIRE (SessionSerializer::save (*clamped, target));
     const auto upgraded = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    CHECK (upgraded["version"].get<int>() == 6);
+    CHECK (upgraded["version"].get<int>() == 7);
 
     dir.deleteRecursively();
 }

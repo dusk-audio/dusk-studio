@@ -74,7 +74,7 @@ inline std::optional<PluginDescriptor> descriptorFromObject (
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 6;
+constexpr int kFormatVersion = 7;
 
 inline bool hasTakeProvenance (const TakeProvenance& provenance) noexcept
 {
@@ -327,6 +327,20 @@ bool migrateSession (nlohmann::json& root, int from)
                 // from silently dropping aux_sends_bypassed on re-save.
                 if (root.is_object())
                     root["version"] = 6;
+                ++v;
+                break;
+
+            case 6:
+                // v6 -> v7: track inserts and AUX slots may now hold a
+                // built-in unit (builtin_id + builtin_state). Absent means no
+                // built-in, so legacy payloads only need the version stamp
+                // advanced. The bump exists because v6 builds (up to the
+                // released v0.13.2) have no built-in model at all: they accept
+                // such a file, ignore both keys, and rebuild session.json from
+                // their own model on the next save, erasing every built-in
+                // identity and patch.
+                if (root.is_object())
+                    root["version"] = 7;
                 ++v;
                 break;
 
