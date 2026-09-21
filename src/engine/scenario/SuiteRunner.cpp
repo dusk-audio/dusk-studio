@@ -45,6 +45,8 @@ bool hasTag (const Scenario& scenario, const std::string& tag)
     return std::find (scenario.tags.begin(), scenario.tags.end(), tag) != scenario.tags.end();
 }
 
+constexpr const char* kLaunchSweep = "launch";
+
 std::string joinTags (const std::vector<std::string>& tags)
 {
     std::string joined;
@@ -110,7 +112,7 @@ void SuiteRunner::start()
 
     // The window is judged against launch state, so prove it is at launch state
     // before anything has had a chance to move it.
-    sweepWindow ("launch", [this] { runNext(); });
+    sweepWindow (kLaunchSweep, [this] { runNext(); });
 }
 
 bool SuiteRunner::select()
@@ -311,12 +313,15 @@ void SuiteRunner::sweepWindow (std::string attribution, std::function<void()> ne
         std::fprintf (stdout, "[DIRTY] %s: %s\n", attribution.c_str(), line.c_str());
 
     // A scenario that already failed or skipped keeps its verdict - the dirt is
-    // a symptom of the same break, not a second one.
-    if (! dirty.empty() && passAwaitingSweep)
+    // a symptom of the same break, not a second one. A window that is dirty
+    // before anything ran has nothing to blame it on, and every later verdict
+    // would be measured against the wrong baseline, so that fails outright.
+    const bool launch = attribution == kLaunchSweep;
+    if (! dirty.empty() && (passAwaitingSweep || launch))
     {
         std::fprintf (stdout, "[FAIL] %s: left the window dirty: %s\n",
                       attribution.c_str(), dirty.front().c_str());
-        --summary.pass;
+        if (! launch) --summary.pass;
         ++summary.fail;
     }
     passAwaitingSweep = false;

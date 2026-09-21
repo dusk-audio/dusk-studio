@@ -1585,6 +1585,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
         if (auto* peer = owner.getPeer())
         {
+            if (peer->isFullScreen()) lines.push_back ("window is full screen");
             const auto bounds = peer->getBounds();
             const std::array<int, 4> now { bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight() };
             if (now != launch.window)
@@ -1648,6 +1649,17 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
         if (scenario::currentSessionDirectory (owner.session) != launch.sessionDir)
             scenario::applySessionDirectory (owner.session, launch.sessionDir);
+
+        // Leaving full screen can recreate the peer, so it is fetched again
+        // before the launch bounds go back.
+        if (auto* peer = owner.getPeer(); peer != nullptr && peer->isFullScreen())
+            owner.toggleFullScreen();
+        if (auto* peer = owner.getPeer())
+        {
+            auto bounds = peer->getBounds();
+            bounds.setBounds (launch.window[0], launch.window[1], launch.window[2], launch.window[3]);
+            if (peer->getBounds() != bounds) peer->setBounds (bounds, false);
+        }
     }
 
     // What the window held before the first scenario ran. Everything the suite
