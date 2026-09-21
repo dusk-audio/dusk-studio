@@ -39,7 +39,6 @@
 #endif
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (_WIN32)
- #include <cerrno>
  #include <csignal>
 #endif
 
@@ -493,11 +492,6 @@ struct SandboxState
     bool childDiedEarly = false;
 };
 
-bool processGone (int pid)
-{
-    return ::kill (pid, 0) != 0 && errno == ESRCH;
-}
-
 std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, ScenarioContext& ctx)
 {
     static constexpr int kChildExitTimeoutMs = 15000;
@@ -613,7 +607,7 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
             // The child must be gone once the slot is, and the editor must have
             // let go before it: a surviving child would keep an editor window
             // alive over a slot that no longer exists.
-            ctx.waitUntil ([state] { return processGone (state->childPid); },
+            ctx.waitUntil ([state] { return oopstub::processGone (state->childPid); },
                            kChildExitTimeoutMs,
             [&ctx, &host, strip, &slot]
             {
