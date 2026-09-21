@@ -4941,7 +4941,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             const double elapsedMs = (double) (juce::Time::getHighResolutionTicks() - callbackStart)
                                          * secondsPerTick * 1000.0;
             if (elapsedMs > bufferMs)
-                xrunCount.fetch_add (1, std::memory_order_relaxed);
+                noteEngineXRun();
 
             // Drive the same DSP-load smoother the mix path uses, so the badge
             // keeps updating in Mastering (this branch returns before the
@@ -6619,7 +6619,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         const double elapsedMs = (double) (juce::Time::getHighResolutionTicks() - callbackStart)
                                      * secondsPerTick * 1000.0;
         if (elapsedMs > bufferMs)
-            xrunCount.fetch_add (1, std::memory_order_relaxed);
+            noteEngineXRun();
 
         if (bufferMs > 0.0)
         {

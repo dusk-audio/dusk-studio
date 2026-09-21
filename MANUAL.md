@@ -2199,7 +2199,8 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 | **Q**                             | Quantize popup                                               |
 | **S**                             | Scale picker popup                                           |
 | **V**                             | Velocity popup (set / humanise)                              |
-| **G**                             | Glue selected same-pitch contiguous notes                    |
+| **G** / **D**                     | Grab (move / select) or Draw (note entry) edit mode          |
+| **Shift+G**                       | Glue selected same-pitch contiguous notes                    |
 | **L**                             | Cycle active CC controller in CC lane (1 / 7 / 11 / 64 / 74) |
 | **C**                             | Cycle colour mode (Pitch / Velocity / Channel)               |
 | **Cmd+A**                         | Select all notes in region                                   |
@@ -2563,8 +2564,8 @@ Two variants:
 
 ### Plugin slot labels (inline, not a dialog)
 
-- `⚠ <name> (crashed)` — the plugin has crashed. Right-click → **Re-enable plugin (crashed)** to retry.
-- `<name> (stalled)` — the plugin exceeded its CPU budget for several consecutive blocks and was auto-bypassed. Right-click → **Re-enable plugin (auto-bypassed)** to retry.
+- `! <name> (crashed)` — the plugin has crashed. Right-click → **Re-enable plugin (crashed)** to retry.
+- `! <name> (stalled)` — the plugin exceeded its CPU budget for several consecutive blocks and was auto-bypassed. Right-click → **Re-enable plugin (auto-bypassed)** to retry.
 
 ## Hardware insert
 

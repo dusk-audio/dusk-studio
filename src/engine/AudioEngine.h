@@ -556,6 +556,11 @@ public:
     // audio time. Distinct from getBackendXRunCount.
     int    getXRunCount() const noexcept         { return xrunCount.load         (std::memory_order_relaxed); }
 
+    // One engine-side overrun. The callback scores its own when its wall clock
+    // ran past the block's audio time; the scenario suite uses it to put a
+    // known count behind the status bar's dropout readout.
+    void   noteEngineXRun() noexcept             { xrunCount.fetch_add (1, std::memory_order_relaxed); }
+
     // 0..1 fraction of buffer wall-clock consumed by the callback,
     // one-pole-LPF smoothed. xruns imminent above ~0.85.
     float  getCpuUsage() const noexcept          { return cpuUsage.load          (std::memory_order_relaxed); }

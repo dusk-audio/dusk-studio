@@ -25,6 +25,7 @@
 #include "MasteringView.h"
 #include "PlatformWindowing.h"
 #include "NativeEditorEmbedScale.h"
+#include "SystemStatusBar.h"
 #include "TransportBar.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/SuiteRunner.h"
@@ -734,6 +735,21 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool clickRecord() override
     { return owner.transportBar != nullptr && owner.transportBar->clickRecordForScenario(); }
 
+    std::string dspReadout() const override
+    {
+        return owner.systemStatusBar != nullptr ? owner.systemStatusBar->dspReadoutForScenario()
+                                                : std::string();
+    }
+
+    bool doubleClickDspReadout() override
+    {
+        auto* bar = owner.systemStatusBar.get();
+        if (bar == nullptr || ! bar->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()
+                               ->getLocalPoint (bar, bar->dspSegmentBounds().getCentre()).toFloat();
+        return clickAt (point.x, point.y, 2);
+    }
+
     int consolePageCount() const override { return owner.consoleView->numBanks(); }
     bool consolePageMatches (int index) const override
     {
@@ -913,6 +929,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
        #endif
     }
+    bool tunerOpen() const override { return owner.tuner != nullptr; }
+
     bool inputVirtualKeyboard (const std::string& key) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -1569,6 +1587,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (audioEditorOpen())    lines.push_back ("audio editor open");
         if (audioSettingsOpen())  lines.push_back ("audio settings open");
         if (virtualKeyboardOpen()) lines.push_back ("virtual keyboard open");
+        if (tunerOpen())          lines.push_back ("tuner open");
         if (owner.session.master().mute.load() != launch.masterMute)
             lines.push_back (owner.session.master().mute.load() ? "master muted" : "master unmuted");
 
@@ -1613,6 +1632,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.closeAudioEditor();
         owner.closeAudioSettings();
         owner.closeVirtualKeyboard();
+        owner.closeTuner();
         for (int track = 0; track < Session::kNumTracks; ++track)
             if (auto* component = owner.consoleView != nullptr
                                       ? owner.consoleView->getStripComponent (track) : nullptr)
