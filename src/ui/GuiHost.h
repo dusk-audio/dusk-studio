@@ -83,6 +83,9 @@ public:
     enum class Stage { Recording, Mixing, Aux, Mastering };
     virtual void switchToStage (Stage) = 0;
 
+    virtual bool clickInsert (int track, bool right) = 0;
+    virtual bool builtinPointer (int track, const std::string& control, float position, bool pressed) = 0;
+    virtual void closeBuiltin (int track) = 0;
     virtual bool openAudioEditor (int track, int region) = 0;
     virtual void closeAudioEditor() = 0;
     virtual bool clickAudioEditorButton (const std::string& name) = 0;

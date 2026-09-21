@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 92
+# ceiling gap 91
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -314,7 +314,7 @@ Plugins > Built-in insert units > Sunset	instrument only; notes, bend, mod wheel
 Plugins > Built-in insert units > Sunset	loading it converts an audio track to MIDI	gap
 Plugins > Built-in insert units > Editing a unit	DuskVerb 2 and Tape Echo 2 open their own editors; the others get knob panels	auto	test:the built-in editor draws every unit inside the size it asks for;test:the built-in editor keeps every parameter reachable;test:a plug-in editor host pushes every value in when it opens;test:a plug-in editor host follows the geometry it is given
 Plugins > Built-in insert units > Editing a unit	transport keys keep working after a knob move in a unit editor	auto	test:a gesture marks the parameter touched and hands focus back at its end
-Plugins > Built-in insert units > Editing a unit	MIDI Learn last-touched parameter on a unit	gap
+Plugins > Built-in insert units > Editing a unit	MIDI Learn last-touched parameter on a unit	auto	scenario:gui.builtin_midi_learn
 Plugins > Opening the editor	click the slot for a centred modal; Esc or outside click closes	auto	scenario:gui.editor_open_close_loop
 Plugins > Opening the editor	macOS sandbox edits through an in-process shell editor	manual			needs a macOS console session; walked on the Mac leg
 Plugins > Native plugin hosting (Linux, macOS, and Windows)	native slots load, process, save and restore state	auto	test:NativeClapSlot state round-trips into a fresh slot;test:NativeLv2Slot state round-trips into a fresh slot;test:Native VST3 instrument state round-trips into a fresh slot;test:SessionSerializer round-trips native-VST3 slots;test:SessionSerializer round-trips native-LV2 slots

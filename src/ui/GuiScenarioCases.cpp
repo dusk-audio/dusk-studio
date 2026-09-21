@@ -923,6 +923,103 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    return ScenarioResult::skip ("requires native UI");
+   #endif
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& strip = engine.getChannelStrip (0);
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty() || session.midiLearnPending.load() >= 0)
+        return ScenarioResult::skip ("requires stopped transport, no modal and no pending learn");
+    if (engine.getMidiInputDevices().empty()) return ScenarioResult::skip ("requires an enumerated MIDI input for injection");
+    if (strip.getPluginSlot().isLoaded() || strip.isBuiltinLoaded() || strip.isNativeClapLoaded()
+        || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded() || strip.isNativeAuLoaded()
+        || strip.isNativeMultisampleLoaded() || strip.builtinReloadFailed())
+        return ScenarioResult::skip ("requires an empty first insert");
+    const auto bindings = session.midiBindings.current();
+    const auto capture = session.midiLearnCapture.load();
+    const auto mode = strip.insertMode.load();
+    const auto stage = engine.getStage();
+    ctx.cleanup ([&host, &engine, &session, &strip, bindings, capture, mode, stage]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.closeBuiltin (0);
+        engine.suspendProcessing();
+        strip.unloadBuiltin();
+        strip.insertMode.store (mode);
+        engine.resumeProcessing();
+        session.midiBindings.publish (std::make_unique<std::vector<MidiBinding>> (bindings));
+        session.midiLearnPending.store (-1);
+        session.midiLearnCapture.store (capture);
+        if (auto* handle = host.strip (0)) handle->refreshInsertButton();
+        host.switchToStage (stage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : stage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : stage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    session.midiBindings.publish (std::make_unique<std::vector<MidiBinding>>());
+    host.switchToStage (GuiHost::Stage::Mixing);
+    std::string error;
+    engine.suspendProcessing();
+    const bool loaded = strip.loadBuiltin ("dusk.builtin.utility", error);
+    if (loaded) strip.insertMode.store (ChannelStrip::kInsertPlugin);
+    engine.resumeProcessing();
+    if (! loaded) return ScenarioResult::fail ("could not load Utility: " + error);
+    if (auto* handle = host.strip (0)) handle->refreshInsertButton();
+    ctx.expect (strip.insertLastTouchedParamIndex() == -1, "fresh unit already has a touched parameter");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 250, [&host, &ctx]
+    { ctx.expect (host.clickInsert (0, false), "insert button unavailable"); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    { ctx.expect (host.builtinPointer (0, "gain_db", 0.25f, true), "native Gain pointer down failed"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.builtinPointer (0, "gain_db", 0.25f, false), "native Gain pointer up failed"); } });
+    steps->push_back ({ 150, [&host, &ctx, &strip]
+    {
+        ctx.expect (std::abs (strip.getBuiltinSlot().getParamValue (0)) > 1.0f, "Gain control did not change parameter");
+        ctx.expect (strip.insertLastTouchedParamIndex() == 0, "Gain was not tracked as last touched");
+        host.closeBuiltin (0);
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickInsert (0, true), "insert context menu unavailable"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("MIDI Learn last-touched parameter"), "last-touched Learn action unavailable"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("MIDI Learn (this track)..."), "track Learn action unavailable"); } });
+    steps->push_back ({ 150, [&engine, &session, &ctx]
+    {
+        const auto pending = session.midiLearnPending.load();
+        ctx.expect (pending >= 0 && unpackLearnTargetKind (pending) == MidiBindingTarget::TrackPluginParam
+                    && unpackLearnTargetIndex (pending) == 0, "Learn did not target the first insert");
+        dusk::MidiBuffer midi;
+        const std::uint8_t cc[] = { 0xb2, 74, 96 };
+        midi.addEvent (cc, 3, 0);
+        engine.stageTestMidiInjection (0, std::move (midi));
+    } });
+    runSteps (ctx, steps, [&ctx, &session]
+    {
+        ctx.waitUntil ([&session] { return session.midiLearnPending.load() < 0; }, 3000,
+            [&ctx, &session]
+            {
+                const auto& bindingsNow = session.midiBindings.current();
+                ctx.expect (std::any_of (bindingsNow.begin(), bindingsNow.end(), [] (const MidiBinding& binding)
+                {
+                    return binding.channel == 3 && binding.dataNumber == 74 && binding.trigger == MidiBindingTrigger::CC
+                        && binding.target == MidiBindingTarget::TrackPluginParam && binding.targetIndex == 0 && binding.paramIndex == 0;
+                }), "captured CC did not bind the last-touched Gain parameter");
+                ctx.complete (ctx.verdict());
+            }, "MIDI Learn did not consume the injected CC");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar builtinMidiLearn { Scenario {
+    "gui.builtin_midi_learn", { "gui", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBuiltinMidiLearn (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runAudioAutomationGestures (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

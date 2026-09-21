@@ -101,6 +101,20 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         PanelWidget (DGL::Window& window, Impl& ownerRef)
             : DGL::ImGuiTopLevelWidget (window, 13.0f), owner (ownerRef) {}
 
+        void pointerForScenario (ImVec2 point, bool pressed)
+        {
+            MotionEvent motion;
+            motion.pos = { point.x, point.y };
+            motion.absolutePos = motion.pos;
+            onMotion (motion);
+            MouseEvent button;
+            button.button = DGL::kMouseButtonLeft;
+            button.pos = motion.pos;
+            button.absolutePos = motion.pos;
+            button.press = pressed;
+            onMouse (button);
+        }
+
     protected:
         void onImGuiDisplay() override
         {
@@ -299,6 +313,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     // below - is destroyed before the state those callbacks touch.
     Callbacks callbacks;
     std::unique_ptr<DuskPanelView> view;
+    PanelWidget* scenarioWidget = nullptr;
     dw::Fonts fonts;
     dw::KnobAtlas knobAtlas;
     dw::DragState drag;
@@ -316,6 +331,7 @@ DuskPanelWindow::DuskPanelWindow (std::string className, std::string logTag,
     callbacks.createWidget = [this] (DGL::Window& window) -> std::unique_ptr<DGL::TopLevelWidget>
     {
         auto widget = std::unique_ptr<Impl::PanelWidget> (new Impl::PanelWidget (window, *impl));
+        impl->scenarioWidget = widget.get();
         impl->buildFonts (static_cast<float> (window.getScaleFactor()));
         return std::unique_ptr<DGL::TopLevelWidget> (widget.release());
     };
@@ -323,6 +339,7 @@ DuskPanelWindow::DuskPanelWindow (std::string className, std::string logTag,
     callbacks.widgetReleased = [this]
     {
         // The fonts and the baked dome live in the atlas the widget owned.
+        impl->scenarioWidget = nullptr;
         impl->fonts = {};
         impl->knobAtlas = {};
         impl->drag = {};
@@ -402,4 +419,12 @@ bool DuskPanelWindow::isOpen() const noexcept
     return impl->host.isOpen();
 }
 
+bool DuskPanelWindow::pointerControlForScenario (const std::string& control, float position, bool pressed)
+{
+    ImVec2 point;
+    if (! isOpen() || impl->view == nullptr || impl->scenarioWidget == nullptr
+        || ! impl->view->controlPointForScenario (control, point, position)) return false;
+    impl->scenarioWidget->pointerForScenario (point, pressed);
+    return true;
+}
 } // namespace duskstudio::imgui

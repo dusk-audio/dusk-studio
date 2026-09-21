@@ -1721,7 +1721,7 @@ On a knob panel, drag a knob up or down to change it (hold **Shift** for finer s
 
 The transport keys keep working while an editor is open. A click into a plug-in's editor gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again.
 
-**MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in DuskVerb 2's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot and choose **MIDI Learn last-touched parameter**. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
+**MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in DuskVerb 2's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot, choose **MIDI Learn last-touched parameter**, and choose **MIDI Learn (this track)...** in the next menu. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
 
 ## Opening the editor
 

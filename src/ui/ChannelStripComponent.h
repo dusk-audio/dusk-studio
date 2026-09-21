@@ -65,6 +65,9 @@ public:
     // Scenario-harness only: the mode label and whether the fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
+    auto insertPointForScenario() const { return pluginSlotButton.getBounds().getCentre(); }
+    bool builtinPointerForScenario (const std::string& control, float position, bool pressed);
+    void closeBuiltinForScenario() { closeBuiltinEditorPopup(); }
 
     void paint (juce::Graphics&) override;
     void resized() override;

@@ -62,9 +62,24 @@ public:
                          std::function<void (int)> touched)
         : slot (s), title (std::move (t)), onTouched (std::move (touched))
     {
+        controlBounds.resize ((size_t) slot.paramCount());
         buildLayout();
     }
 
+    bool controlPointForScenario (const std::string& control, ImVec2& point, float position) const override
+    {
+        for (int i = 0; i < slot.paramCount(); ++i)
+        {
+            const auto* info = slot.paramInfo (i);
+            if (info == nullptr || control != info->id) continue;
+            const auto& bounds = controlBounds[(size_t) i];
+            if (bounds.second.x <= bounds.first.x) return false;
+            point = { bounds.first.x + std::clamp (position, 0.0f, 1.0f) * (bounds.second.x - bounds.first.x),
+                      (bounds.first.y + bounds.second.y) * 0.5f };
+            return true;
+        }
+        return false;
+    }
     ImVec2 preferredSize() const override { return { bodyWidth, bodyHeight }; }
 
     float dimAlpha() const override { return 0.28f; }
@@ -86,6 +101,7 @@ private:
     float bodyWidth = 0.0f;
     float bodyHeight = 0.0f;
 
+    std::vector<std::pair<ImVec2, ImVec2>> controlBounds;
     ComboModel combo;
 };
 
@@ -136,6 +152,8 @@ void BuiltinUnitViewImpl::drawRow (dw::Context& ctx, ImVec2 at, int paramIndex)
 
     const ImVec2 tl { at.x + ctx.s (kLabelW + kLabelGap), at.y + ctx.s (2.0f) };
     const ImVec2 br { tl.x + ctx.s (kControlW), at.y + ctx.s (kRowH - 2.0f) };
+
+    controlBounds[(size_t) paramIndex] = { tl, br };
 
     char id[64];
     std::snprintf (id, sizeof (id), "##bu_%s", info->id);

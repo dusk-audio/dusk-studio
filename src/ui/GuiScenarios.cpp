@@ -265,6 +265,22 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 {
     explicit ScenarioGuiHost (MainComponent& ownerIn) : owner (ownerIn) {}
 
+    bool clickInsert (int track, bool right) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        if (strip == nullptr || ! strip->isShowing()) return false;
+        const auto p = owner.getTopLevelComponent()->getLocalPoint (strip, strip->insertPointForScenario()).toFloat();
+        return pointerAt (p.x, p.y, true, right ? 4 : 0) && pointerAt (p.x, p.y, false, right ? 4 : 0);
+    }
+    bool builtinPointer (int track, const std::string& control, float position, bool pressed) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip != nullptr && strip->builtinPointerForScenario (control, position, pressed);
+    }
+    void closeBuiltin (int track) override
+    {
+        if (auto* strip = owner.consoleView->getStripComponent (track)) strip->closeBuiltinForScenario();
+    }
     bool openAudioEditor (int track, int region) override
     {
         if (owner.audioEditor != nullptr || owner.pianoRoll != nullptr) return false;

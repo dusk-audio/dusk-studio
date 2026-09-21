@@ -4262,6 +4262,16 @@ void ChannelStripComponent::captureBuiltinPluginEditor (const std::string& captu
    #endif
 }
 
+bool ChannelStripComponent::builtinPointerForScenario (const std::string& control, float position, bool pressed)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return builtinEditorWindow != nullptr && builtinEditorWindow->pointerControlForScenario (control, position, pressed);
+   #else
+    (void) control; (void) position; (void) pressed;
+    return false;
+   #endif
+}
+
 void ChannelStripComponent::openBuiltinEditorPopup()
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
