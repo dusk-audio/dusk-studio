@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <array>
 #include <functional>
 #include <string>
 #include <vector>
@@ -84,6 +85,8 @@ public:
     // modal, so rebuilding the row is what tries the attach.
     virtual void rebuildSlots() = 0;
     virtual bool attachEditor (int slot) = 0;
+    virtual bool captureSources (bool enabled) = 0;
+    virtual std::vector<std::string> sourceRows() const = 0;
 };
 
 class GuiHost
@@ -106,7 +109,6 @@ public:
     virtual bool timelineViewMatches (bool expanded) const = 0;
     virtual bool stripCompact (int index) const = 0;
 
-    virtual bool clickInsert (int track, bool right) = 0;
     virtual bool builtinPointer (int track, const std::string& control, float position, bool pressed) = 0;
     virtual void closeBuiltin (int track) = 0;
     virtual bool openAudioEditor (int track, int region) = 0;
@@ -163,23 +165,68 @@ public:
     virtual bool automationView (StripKind kind, int index,
                                  std::string& label, bool& faderEnabled) = 0;
 
+    virtual bool pressPeerKey (const std::string& description, char text = 0) = 0;
+    virtual bool clickModalAt (float xFraction, float yFraction) = 0;
+    virtual bool clickFader (int index, bool readout, bool right = false) = 0;
+    virtual bool faderEditing (int index) const = 0;
+    virtual double faderValue (int index) const = 0;
+
+    virtual bool openAudioSettings() = 0;
+    virtual bool audioSettingsOpen() const = 0;
+    virtual void closeAudioSettings() = 0;
+    virtual bool clickAudioSettingsControl (const std::string& control) = 0;
+    virtual bool inputAudioSettings (const std::string& input) = 0;
+    virtual bool pointerAudioSettings (const std::string& control, float position, bool pressed) = 0;
+    virtual double uiScale() const = 0;
+    virtual void restoreUiScale (float scale) = 0;
+    virtual int tapeExpansionState() const = 0;
+    virtual int timelineChaseState() const = 0;
+    virtual bool openRegionEditor (int track, int region, bool midi) = 0;
+    virtual int regionEditorChase() const = 0;
+    virtual void closeRegionEditors() = 0;
+    virtual std::array<double, 4> pianoViewport() const = 0;
+    virtual std::array<int, 4> pianoOptions() const = 0;
+    virtual bool scrollPiano (float delta, bool command, bool shift) = 0;
+    virtual bool clickPianoFit() = 0;
+    virtual bool focusPiano() = 0;
+    virtual bool setStripCompact (int track, bool compact) = 0;
+    virtual bool clickStripModule (int track, int module, bool label, bool right) = 0;
+    virtual bool stripModuleEditorOpen (int track, int module) const = 0;
+    virtual void closeStripModuleEditors (int track) = 0;
+    virtual bool clickInsert (int track, bool right = false) = 0;
+    virtual std::vector<std::string> pickerRows (bool headers) const = 0;
+    virtual bool clickPickerRow (const std::string& text) = 0;
+    virtual bool clickMasteringButton (const std::string& label) = 0;
+    virtual bool clickMasteringTarget() = 0;
+    virtual std::string masteringTargetText() const = 0;
+    virtual std::uint32_t masteringLoudnessColour (bool peak) const = 0;
+    virtual void restoreMasteringTarget (int index) = 0;
+    virtual bool midiBindingsOpen() const = 0;
+    virtual bool virtualKeyboardOpen() const = 0;
+    virtual bool inputVirtualKeyboard (const std::string& key) = 0;
+    virtual void closeVirtualKeyboard() = 0;
+
+    virtual bool meterClip (int index) = 0;
+    virtual bool openMidiIo (int index) = 0;
+    virtual bool clickMidiSelector (int index, int kind) = 0;
+    virtual std::string midiSelectorText (int index, int kind) const = 0;
+
+    virtual bool groupChipView (int index, std::string& text, int& master, bool& filled) = 0;
+
     virtual bool canEmbedPluginEditors() const = 0;
     virtual bool modalStackEmpty() const = 0;
     virtual std::string modalText() const = 0;
     virtual bool clickModalButton (const std::string& label) = 0;
-    virtual bool clickModalAt (float xFraction, float yFraction) = 0;
     virtual void openAbout() = 0;
     virtual bool shortcutsOpen() const = 0;
     virtual void startMixdown() = 0;
     virtual bool fullScreen() const = 0;
-    virtual bool pressPeerKey (const std::string& description, char text = 0) = 0;
     virtual int activeAuxLane() const = 0;
     virtual bool clickAuxSelector (int index) = 0;
     virtual bool auxLaneLayoutMatches (int index) const = 0;
     virtual bool accessibleControl (const std::string& title, std::string& value, std::string& help) = 0;
     virtual bool setAccessibleValue (const std::string& title, const std::string& value) = 0;
     virtual bool loadMasteringFile (const std::filesystem::path& path) = 0;
-    virtual bool clickMasteringButton (const std::string& label) = 0;
     virtual bool clickMasteringWaveform (float fraction) = 0;
     virtual void openPianoRoll (int track, int region) = 0;
     virtual bool doubleClickMidiRegion (int track, int region) = 0;
@@ -209,6 +256,9 @@ public:
 
     // One tick of the autosave heartbeat, as its timer runs it.
     virtual void autosaveTick() = 0;
+    virtual bool mixdownRunning() const = 0;
+    virtual std::string statusMessage() const = 0;
+    virtual void requestSessionSwitch (const std::filesystem::path& sessionJson) = 0;
     // Opens a session the way File > Open does: a newer autosave beside it
     // raises the recovery prompt instead of loading.
     virtual bool openSession (const std::filesystem::path& sessionJson) = 0;

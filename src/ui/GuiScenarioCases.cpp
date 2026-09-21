@@ -1,6 +1,9 @@
 #include "GuiHost.h"
+#include "AppConfig.h"
+#include "../foundation/Fs.h"
 
 #include "../engine/AudioEngine.h"
+#include "../engine/audiofile/FileWriter.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/audiofile/FileWriter.h"
 #include "../engine/audiofile/FileReader.h"
@@ -30,6 +33,10 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#if DUSKSTUDIO_HAS_ALSA
+ #include <alsa/asoundlib.h>
+#endif
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (_WIN32)
  #include <cerrno>
@@ -2398,6 +2405,1863 @@ float savedFaderOf (const std::filesystem::path& sessionJson)
     if (! SessionSerializer::load (probe, sessionJson)) return 1000.0f;
     return probe.track (0).strip.faderDb.load (std::memory_order_relaxed);
 }
+
+std::optional<ScenarioResult> runSplitModuleButtons (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    const bool originalCompact = host.setStripCompact (0, true);
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore, originalCompact]
+    {
+        host.closeStripModuleEditors (0);
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.setStripCompact (0, originalCompact);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    auto& params = session.track (0).strip;
+    params.eqEnabled.store (true);
+    params.compEnabled.store (true);
+    params.auxSendsBypassed.store (false);
+    for (int send = 0; send < 4; ++send) params.auxSendDb[(size_t) send].store (-3.0f * (send + 1));
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool compact : { true, false })
+    {
+        steps->push_back ({ 200, [&host, compact] { host.setStripCompact (0, compact); } });
+        for (int module = 0; module < (compact ? 3 : 2); ++module)
+        {
+            for (const bool bypassed : { true, false })
+            {
+                steps->push_back ({ 200, [&host, &ctx, module]
+                { ctx.expect (host.clickStripModule (0, module, false, false), "status light is unavailable"); } });
+                steps->push_back ({ 200, [&host, &ctx, &params, module, bypassed]
+                {
+                    const bool actual = module == 0 ? ! params.eqEnabled.load()
+                                      : module == 1 ? ! params.compEnabled.load() : params.auxSendsBypassed.load();
+                    ctx.expect (actual == bypassed, "status light did not toggle section bypass");
+                    for (int editor = 0; editor < 3; ++editor)
+                        ctx.expect (! host.stripModuleEditorOpen (0, editor), "status light opened an editor");
+                    for (int send = 0; send < 4; ++send)
+                        ctx.expect (std::abs (params.auxSendDb[(size_t) send].load() + 3.0f * (send + 1)) < 0.001f,
+                                    "bypass changed a send level");
+                } });
+            }
+            steps->push_back ({ 200, [&host, &ctx, module]
+            { ctx.expect (host.clickStripModule (0, module, true, false), "module label is unavailable"); } });
+            steps->push_back ({ 500, [&host, &ctx, module]
+            {
+                ctx.expect (host.stripModuleEditorOpen (0, module), "module label did not open its editor");
+                host.closeStripModuleEditors (0);
+            } });
+            for (const bool label : { false, true })
+            {
+                steps->push_back ({ 200, [&host, &ctx, module, label]
+                { ctx.expect (host.clickStripModule (0, module, label, true), "module right-click failed"); } });
+                steps->push_back ({ 200, [&host, &ctx, module]
+                { ctx.expect (host.clickContextMenuItem (module == 2 ? "Open AUX editor..." : "Open editor..."),
+                              "section menu did not offer its editor"); } });
+                steps->push_back ({ 500, [&host, &ctx, module]
+                {
+                    ctx.expect (host.stripModuleEditorOpen (0, module), "section menu did not open its editor");
+                    host.closeStripModuleEditors (0);
+                } });
+            }
+        }
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar splitModuleButtons { Scenario {
+    "gui.split_module_buttons", { "gui", "strip" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSplitModuleButtons (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runInsertContextMenu (GuiHost& host, ScenarioContext& ctx)
+{
+    const auto fixture = ctx.fixture ("relayout.vst3");
+    if (! fixture) return ScenarioResult::skip ("requires the VST3 fixture");
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& strip = engine.getChannelStrip (0);
+    auto& slot = strip.getPluginSlot();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    if (slot.isLoaded()) return ScenarioResult::skip ("requires an empty standard plugin slot");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        if (auto* component = host.strip (0)) component->closeEditor();
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    auto* component = readyStrip (host);
+    if (component == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto menu = [&host, &ctx, steps] (const std::string& label)
+    {
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickInsert (0, true), "insert did not receive a right-click"); } });
+        steps->push_back ({ 200, [&host, &ctx, label]
+        { ctx.expect (host.clickContextMenuItem (label), "insert menu item is unavailable: " + label); } });
+    };
+    const auto button = [&host, &ctx, steps] (const std::string& label)
+    {
+        steps->push_back ({ 200, [&host, &ctx, label]
+        { ctx.expect (host.clickModalButton (label), "insert dialog button is unavailable: " + label); } });
+    };
+    menu ("Add insert...");
+    button ("Plugin (VST3 / CLAP / LV2 / AU)");
+    button ("Browse file...");
+    steps->push_back ({ 200, [&host, &ctx, fixture]
+    {
+        ctx.expect (host.focusFileName(), "insert file browser did not open");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : fixture->string())
+            host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+    } });
+    button ("Open");
+    steps->push_back ({ 1200, [&ctx, &slot, component]
+    {
+        ctx.expect (slot.isLoadedStandardVst3(), "Add insert did not load the VST3 fixture");
+        component->closeEditor();
+    } });
+    menu ("Open editor");
+    steps->push_back ({ 500, [&ctx, component]
+    {
+        ctx.expect (component->hasOpenEditor(), "Open editor did not open the loaded plugin");
+        component->closeEditor();
+    } });
+    menu ("Replace insert...");
+    button ("Cancel");
+    steps->push_back ({ 200, [&ctx, &slot]
+    { ctx.expect (slot.isLoadedStandardVst3(), "cancelling Replace removed the plugin"); } });
+    menu ("Remove plugin");
+    steps->push_back ({ 300, [&ctx, &slot, component]
+    {
+        ctx.expect (! slot.isLoaded(), "Remove plugin left the plugin loaded");
+        ctx.expect (! component->hasOpenEditor(), "Remove plugin left its editor open");
+    } });
+    menu ("Add insert...");
+    button ("Hardware Insert");
+    steps->push_back ({ 300, [&ctx, &strip]
+    { ctx.expect (strip.insertMode.load() == ChannelStrip::kInsertHardware, "Hardware Insert did not change the insert mode"); } });
+    button ("Done");
+    menu ("Edit hardware insert...");
+    button ("Done");
+    menu ("Replace insert...");
+    button ("Cancel");
+    steps->push_back ({ 200, [&ctx, &strip]
+    { ctx.expect (strip.insertMode.load() == ChannelStrip::kInsertHardware, "cancelling Replace removed the hardware insert"); } });
+    menu ("Remove hardware insert");
+    steps->push_back ({ 300, [&ctx, &session, &strip]
+    {
+        ctx.expect (strip.insertMode.load() == ChannelStrip::kInsertEmpty, "Remove hardware insert did not empty the slot");
+        ctx.expect (! session.track (0).hardwareInsert.enabled.load(), "removed hardware insert remains enabled");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar insertContextMenu { Scenario {
+    "gui.insert_context_menu", { "gui", "plugins" }, Needs::Engine | Needs::Gui,
+    { "relayout.vst3" }, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runInsertContextMenu (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runPianoOptions (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.closeRegionEditors();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    MidiRegion region;
+    region.lengthInTicks = 960;
+    region.lengthInSamples = session.ticksToSamples (960, engine.getCurrentSampleRate());
+    for (const auto tick : { 48, 196 })
+    {
+        MidiNote note;
+        note.noteNumber = 60;
+        note.velocity = 80;
+        note.startTick = tick;
+        note.lengthInTicks = 120;
+        region.notes.push_back (note);
+    }
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    host.switchToStage (GuiHost::Stage::Recording);
+    const auto checkTicks = [&ctx, &session] (int first, int second)
+    {
+        const auto& regions = session.track (0).midiRegions.current();
+        ctx.expect (regions.size() == 1 && regions.front().notes.size() == 2, "quantize changed note count");
+        if (regions.size() == 1 && regions.front().notes.size() == 2)
+        {
+            const auto& notes = regions.front().notes;
+            ctx.expect (notes[0].startTick == first && notes[1].startTick == second, "quantize used the wrong grid or strength");
+            ctx.expect (notes[0].lengthInTicks == 120 && notes[1].lengthInTicks == 120, "quantize changed note lengths");
+        }
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.focusPiano() && host.pressPeerKey ("Q", 'q'), "Q was not handled"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("1/16 @ 75%"), "75-percent quantize row was not clicked"); } });
+    steps->push_back ({ 150, [&host, &ctx, checkTicks]
+    {
+        checkTicks (12, 229);
+        ctx.expect (host.focusPiano() && host.pressPeerKey ("Q", 'q'), "second Q was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("1/16 @ 100%"), "full-strength quantize row was not clicked"); } });
+    steps->push_back ({ 150, [&host, &ctx, checkTicks]
+    {
+        checkTicks (0, 240);
+        ctx.expect (host.focusPiano() && host.pressPeerKey ("S", 's'), "S was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Major"), "Major scale submenu was not clicked"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("D"), "D scale root was not clicked"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        const auto options = host.pianoOptions();
+        ctx.expect (options[0] == 1 && options[1] == 2, "scale picker did not select D Major");
+    } });
+    for (const int controller : { 7, 11, 64, 74, 1 })
+    {
+        steps->push_back ({ 0, [&host, &ctx]
+        { ctx.expect (host.focusPiano() && host.pressPeerKey ("L", 'l'), "L was not handled"); } });
+        steps->push_back ({ 100, [&host, &ctx, controller]
+        { ctx.expect (host.pianoOptions()[2] == controller, "L cycled to the wrong CC"); } });
+    }
+    for (const int colour : { 1, 2, 0 })
+    {
+        steps->push_back ({ 0, [&host, &ctx]
+        { ctx.expect (host.focusPiano() && host.pressPeerKey ("C", 'c'), "C was not handled"); } });
+        steps->push_back ({ 100, [&host, &ctx, colour]
+        { ctx.expect (host.pianoOptions()[3] == colour, "C cycled to the wrong note-colour mode"); } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoOptions { Scenario {
+    "gui.piano_options", { "gui", "piano" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoOptions (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        host.closeRegionEditors();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    MidiRegion region;
+    region.lengthInTicks = 100000;
+    region.lengthInSamples = session.ticksToSamples (region.lengthInTicks, engine.getCurrentSampleRate());
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    host.switchToStage (GuiHost::Stage::Recording);
+    auto before = std::make_shared<std::array<double, 4>>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        *before = host.pianoViewport();
+        ctx.expect (host.pressPeerKey ("=", '='), "zoom-in key was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        ctx.expect (host.pianoViewport()[0] > (*before)[0], "equals did not zoom in");
+        ctx.expect (host.pressPeerKey ("-", '-'), "zoom-out key was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        ctx.expect (std::abs (host.pianoViewport()[0] - (*before)[0]) < 1.0e-6, "minus did not restore the zoom");
+        *before = host.pianoViewport();
+        ctx.expect (host.scrollPiano (-1.0f, false, false), "vertical wheel was not delivered");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        const auto after = host.pianoViewport();
+        ctx.expect (after[2] > (*before)[2] && std::abs (after[0] - (*before)[0]) < 1.0e-6,
+                    "unmodified wheel did not scroll the pitch range");
+        *before = after;
+        ctx.expect (host.scrollPiano (-1.0f, false, true), "Shift wheel was not delivered");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        const auto after = host.pianoViewport();
+        ctx.expect (after[1] > (*before)[1] && std::abs (after[2] - (*before)[2]) < 0.1,
+                    "Shift wheel did not scroll horizontally");
+        *before = after;
+        ctx.expect (host.scrollPiano (1.0f, true, false), "command wheel was not delivered");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        const auto after = host.pianoViewport();
+        ctx.expect (after[0] > (*before)[0] && std::abs (after[2] - (*before)[2]) < 0.1,
+                    "command wheel did not zoom horizontally");
+        ctx.expect (host.clickPianoFit(), "Zoom fit button was not clicked");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        const auto after = host.pianoViewport();
+        ctx.expect (std::abs (after[1]) < 0.1, "Zoom fit did not return to the region start");
+        ctx.expect (std::abs (after[0] * 100000.0 - after[3]) < 1.0, "Zoom fit did not fit the whole region");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoViewport { Scenario {
+    "gui.piano_viewport", { "gui", "piano" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoViewport (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native virtual keyboard");
+   #else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    const int centre = appconfig::getVkbCentreNote();
+    if (! transport.isStopped() || host.virtualKeyboardOpen())
+        return ScenarioResult::skip ("requires stopped transport and a closed virtual keyboard");
+    if (centre < 0 || centre > 115) return ScenarioResult::skip ("requires the typing notes below MIDI 128");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto originalPosition = transport.getPlayhead();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &transport, originalDir, originalStage, originalPosition, restore]
+    {
+        host.closeVirtualKeyboard();
+        host.closeRegionEditors();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        transport.setPlayhead (originalPosition);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    const auto rate = engine.getCurrentSampleRate();
+    MidiRegion region;
+    region.lengthInTicks = 240;
+    region.lengthInSamples = session.ticksToSamples (240, rate);
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    host.switchToStage (GuiHost::Stage::Recording);
+    transport.setPlayhead (session.ticksToSamples (480, rate));
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.virtualKeyboardOpen(), "virtual keyboard did not open above the piano roll");
+        ctx.expect (host.inputVirtualKeyboard ("z") && host.inputVirtualKeyboard ("x"),
+                    "chord keys did not reach the native keyboard");
+    } });
+    steps->push_back ({ 600, [&host, &ctx, &session, &transport, centre, rate]
+    {
+        const auto& regions = session.track (0).midiRegions.current();
+        ctx.expect (regions.size() == 1 && regions.front().notes.size() == 2, "first chord did not insert two notes");
+        if (regions.size() == 1 && regions.front().notes.size() == 2)
+        {
+            const auto& notes = regions.front().notes;
+            for (int i = 0; i < 2; ++i)
+            {
+                ctx.expect (notes[(std::size_t) i].noteNumber == centre + 2 * i, "chord has the wrong pitch");
+                ctx.expect (notes[(std::size_t) i].startTick == 480 && notes[(std::size_t) i].lengthInTicks == 120,
+                            "chord did not share the playhead and snap length");
+            }
+            ctx.expect (regions.front().lengthInTicks == 600, "step record did not extend the region");
+        }
+        ctx.expect (transport.getPlayhead() == session.ticksToSamples (480, rate),
+                    "releasing the chord advanced before the next note");
+        ctx.expect (host.inputVirtualKeyboard ("q"), "next chord key did not reach the native keyboard");
+    } });
+    steps->push_back ({ 600, [&ctx, &session, &transport, centre, rate]
+    {
+        const auto& regions = session.track (0).midiRegions.current();
+        ctx.expect (regions.size() == 1 && regions.front().notes.size() == 3, "next chord did not insert a note");
+        if (regions.size() == 1 && regions.front().notes.size() == 3)
+        {
+            const auto& note = regions.front().notes.back();
+            ctx.expect (note.noteNumber == centre + 12 && note.startTick == 600 && note.lengthInTicks == 120,
+                        "next chord did not advance by one snap step");
+            ctx.expect (regions.front().lengthInTicks == 720, "next chord did not extend the region again");
+        }
+        ctx.expect (transport.getPlayhead() == session.ticksToSamples (600, rate) && transport.isStopped(),
+                    "step record changed the transport state or advanced the wrong distance");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar pianoStepRecord { Scenario {
+    "gui.piano_step_record", { "gui", "piano", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoStepRecord (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runMasteringTargets (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& meters = ctx.session().mastering();
+    if (! engine.getTransport().isStopped() || engine.getMasteringPlayer().isPlaying())
+        return ScenarioResult::skip ("requires stopped transport and mastering player");
+    const auto originalStage = engine.getStage();
+    const auto originalTarget = meters.targetPresetIndex.load();
+    const auto originalIntegrated = meters.meterIntegratedLufs.load();
+    const auto originalPeak = meters.meterTruePeakDb.load();
+    host.switchToStage (GuiHost::Stage::Mastering);
+    engine.suspendProcessing();
+    ctx.cleanup ([&host, &engine, &meters, originalStage, originalTarget, originalIntegrated, originalPeak]
+    {
+        host.pressPeerKey ("Escape");
+        host.restoreMasteringTarget (originalTarget);
+        meters.targetPresetIndex.store (originalTarget);
+        meters.meterIntegratedLufs.store (originalIntegrated);
+        meters.meterTruePeakDb.store (originalPeak);
+        engine.resumeProcessing();
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    const std::array<const char*, 6> names { "Off", "Spotify", "Apple Music", "YouTube", "Tidal", "Broadcast (EBU R128)" };
+    const std::array<float, 6> targets { 0.0f, -14.0f, -16.0f, -14.0f, -14.0f, -23.0f };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (int index = 0; index < (int) names.size(); ++index)
+    {
+        steps->push_back ({ 100, [&host, &ctx]
+        { ctx.expect (host.clickMasteringTarget(), "mastering target picker did not open"); } });
+        steps->push_back ({ 300, [&host, &ctx, index]
+        {
+            ctx.expect (host.clickModalAt (0.5f, (4.0f + 26.0f * (static_cast<float> (index) + 0.5f)) / 164.0f),
+                        "mastering target row did not receive a click");
+        } });
+        steps->push_back ({ 300, [&host, &ctx, &meters, names, index]
+        {
+            ctx.expect (meters.targetPresetIndex.load() == index, "target picker expected " + std::to_string (index) + " but selected " + std::to_string (meters.targetPresetIndex.load()));
+            ctx.expect (host.masteringTargetText().find (names[(std::size_t) index]) == 0,
+                        "target picker label differs from selected platform: " + host.masteringTargetText());
+        } });
+        for (int band = 0; band < 4; ++band)
+        {
+            steps->push_back ({ 0, [&meters, targets, index, band]
+            {
+                const std::array<float, 4> offsets { 0.5f, 2.0f, 2.1f, -100.0f };
+                meters.meterIntegratedLufs.store (band == 3 ? -100.0f : targets[(std::size_t) index] + offsets[(std::size_t) band]);
+                meters.meterTruePeakDb.store (band == 3 ? -100.0f : band == 0 ? -1.0f : -0.9f);
+            } });
+            steps->push_back ({ 100, [&host, &ctx, index, band]
+            {
+                const bool neutral = index == 0 || band == 3;
+                const std::array<std::uint32_t, 3> colours { 0xff1a3a1a, 0xff3a3a1a, 0xff3a1a1a };
+                ctx.expect (host.masteringLoudnessColour (false) == (neutral ? 0xff1a2228 : colours[(std::size_t) band]),
+                            "integrated loudness colour differs from target band");
+                ctx.expect (host.masteringLoudnessColour (true) == (neutral ? 0xff121214 : band == 0 ? 0xff1a3a1a : 0xff3a1a1a),
+                            "true-peak colour differs from platform ceiling");
+            } });
+        }
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringTargets { Scenario {
+    "gui.mastering_targets", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringTargets (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runMasteringLoad (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& player = engine.getMasteringPlayer();
+    if (! engine.getTransport().isStopped() || player.isPlaying())
+        return ScenarioResult::skip ("requires stopped transport and mastering player");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto originalFile = player.getLoadedFile();
+    const auto originalPosition = player.getPlayhead();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &player, originalDir, originalStage, originalFile, originalPosition, restore]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        if (originalFile.existsAsFile()) player.loadFile (originalFile);
+        else player.unloadFile();
+        player.setPlayhead (originalPosition);
+        host.refreshMasteringSource();
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    const auto write = [] (const std::filesystem::path& path, int frames)
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 2;
+        auto writer = dusk::audio::FileWriter::create (path, spec);
+        std::vector<float> silence (static_cast<std::size_t> (frames));
+        const float* channels[] = { silence.data(), silence.data() };
+        return writer && writer->write (channels, 2, frames) && writer->flush();
+    };
+    const auto chosen = ctx.tempDir() / "Chosen mix.wav";
+    const auto bounce = ctx.tempDir() / "bounce.wav";
+    const auto mixdown = ctx.tempDir() / "mixdown.wav";
+    if (! write (chosen, 4800) || ! write (bounce, 9600))
+        return ScenarioResult::fail ("could not write the mastering load fixtures");
+    applySessionDirectory (session, ctx.tempDir());
+    host.switchToStage (GuiHost::Stage::Mastering);
+    const auto check = [&ctx, &session, &player] (const std::filesystem::path& path, int frames)
+    {
+        ctx.expect (player.isLoaded(), "mastering player is not loaded");
+        ctx.expect (player.getLoadedFile().getFullPathName().toStdString() == path.string(),
+                    "mastering player loaded the wrong file");
+        ctx.expect (session.mastering().sourceFile.getFullPathName().toStdString() == path.string(),
+                    "session did not retain the loaded source path");
+        ctx.expect (player.getLengthSamples() == frames, "mastering source length differs from fixture");
+        ctx.expect (std::abs (player.getSourceSampleRate() - 48000.0) < 0.01,
+                    "mastering source rate differs from fixture");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickMasteringButton ("Load mix..."), "Load mix button is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx, chosen]
+    {
+        ctx.expect (host.focusFileName(), "mastering file browser did not open");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : chosen.string())
+            host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the mix path"); } });
+    steps->push_back ({ 600, [&host, &ctx, check, chosen]
+    {
+        check (chosen, 4800);
+        ctx.expect (host.clickMasteringButton ("Load latest mixdown"), "Load latest mixdown button is unavailable");
+    } });
+    steps->push_back ({ 600, [&host, &ctx, check, write, bounce, mixdown]
+    {
+        check (bounce, 9600);
+        ctx.expect (write (mixdown, 14400), "could not write the preferred mixdown");
+        ctx.expect (host.clickMasteringButton ("Load latest mixdown"), "second latest-mixdown click failed");
+    } });
+    steps->push_back ({ 600, [check, mixdown] { check (mixdown, 14400); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringLoad { Scenario {
+    "gui.mastering_load", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringLoad (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runAuxSources (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        if (auto* lane = host.auxLane (0)) lane->captureSources (false);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    for (int i = 0; i < Session::kNumTracks; ++i)
+    {
+        auto& track = session.track (i);
+        track.name = i == 0 ? "Lead voice" : std::to_string (i + 1);
+        track.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        track.strip.auxSendDb[0].store (i % 2 == 0 ? -6.0f : ChannelStripParams::kAuxSendOffDb);
+        track.strip.auxSendDb[1].store (-3.0f);
+    }
+    host.switchToStage (GuiHost::Stage::Aux);
+    auto* lane = host.auxLane (0);
+    if (lane == nullptr || ! lane->captureSources (true))
+        return ScenarioResult::fail ("first aux Sources panel is not showing");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 500, [lane, &ctx, &session]
+    {
+        const auto rows = lane->sourceRows();
+        ctx.expect (rows.size() == Session::kNumTracks, "Sources did not paint all 24 channel rows");
+        for (int i = 0; i < Session::kNumTracks && i < (int) rows.size(); ++i)
+        {
+            const auto number = std::to_string (i + 1);
+            const auto expected = number + "\t" + (i == 0 ? "Lead voice" : "Trk " + number)
+                                  + (i % 2 == 0 ? "\t-6.0 dB\tmeter" : "\t-inf\tmeter");
+            ctx.expect (rows[(std::size_t) i] == expected, "unexpected source row: " + rows[(std::size_t) i]);
+        }
+        session.track (0).strip.auxSendDb[0].store (ChannelStripParams::kAuxSendOffDb);
+        session.track (23).strip.auxSendDb[0].store (-3.5f);
+        session.track (23).name = "Last channel";
+    } });
+    steps->push_back ({ 500, [lane, &ctx]
+    {
+        const auto rows = lane->sourceRows();
+        ctx.expect (! rows.empty() && rows.front() == "1\tLead voice\t-inf\tmeter",
+                    "Sources did not refresh a disabled send");
+        ctx.expect (rows.size() == Session::kNumTracks && rows.back() == "24\tLast channel\t-3.5 dB\tmeter",
+                    "Sources did not refresh the last channel name and send level");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar auxSources { Scenario {
+    "gui.aux_sources", { "gui", "aux" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAuxSources (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_MULTISAMPLE
+    return ScenarioResult::skip ("built without multisample instruments");
+   #else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    auto& strip = engine.getChannelStrip (0);
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    if (track.mode.load() == (int) Track::Mode::Midi || track.midiInputIndex.load() >= 0)
+        return ScenarioResult::skip ("requires an audio track with no MIDI input");
+    if (strip.getPluginSlot().isLoaded()) return ScenarioResult::skip ("requires an empty standard plugin slot");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    const auto soundfont = ctx.tempDir() / "Conversion fixture.sfz";
+    if (! SessionSerializer::save (session, restore)
+        || ! dusk::fs::writeStringToFile (soundfont, "<region> key=60 sample=*sine\n"))
+        return ScenarioResult::fail ("could not prepare the soundfont fixture");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        if (auto* component = host.strip (0)) component->closeEditor();
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickInsert (0), "insert button did not receive a click"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Soundfont (.sfz / .sf2 / .bank.xml)"), "soundfont chooser did not open"); } });
+    steps->push_back ({ 150, [&host, &ctx, soundfont]
+    {
+        ctx.expect (host.focusFileName(), "soundfont filename entry was not available");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : soundfont.string())
+            host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the soundfont path"); } });
+    steps->push_back ({ 1200, [&ctx, &engine, &track, &strip, soundfont]
+    {
+        ctx.expect (strip.isNativeMultisampleLoaded(), "soundfont was not loaded");
+        ctx.expect (! strip.nativeMultisampleReloadFailed(), "soundfont reported a load failure");
+        ctx.expect (strip.getNativeMultisampleSlot().getLoadedSoundfontPath() == soundfont.string(),
+                    "loaded soundfont path differs from the chosen file");
+        ctx.expect (track.nativeMultisamplePath.toStdString() == soundfont.string(),
+                    "session did not retain the soundfont path");
+        ctx.expect (track.mode.load() == (int) Track::Mode::Midi, "audio track did not convert to MIDI");
+        ctx.expect (engine.getVirtualKeyboardInputIndex() >= 0
+                    && track.midiInputIndex.load() == engine.getVirtualKeyboardInputIndex(),
+                    "converted track did not select the virtual keyboard");
+        ctx.expect (track.inputMonitor.load(), "converted track did not enable input monitoring");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar soundfontConversion { Scenario {
+    "gui.soundfont_conversion", { "gui", "plugins", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSoundfontConversion (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runPluginBrowseFile (GuiHost& host, ScenarioContext& ctx)
+{
+    const auto fixture = ctx.fixture ("relayout.vst3");
+    if (! fixture) return ScenarioResult::skip ("requires the VST3 fixture");
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    auto& session = ctx.session();
+    auto& slot = engine.getChannelStrip (0).getPluginSlot();
+    if (slot.isLoaded()) return ScenarioResult::skip ("requires an empty standard plugin slot");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        if (auto* strip = host.strip (0)) strip->closeEditor();
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickInsert (0), "insert button did not receive a click"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Plugin (VST3 / CLAP / LV2 / AU)"), "insert chooser did not open"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Browse file..."), "picker did not offer Browse file"); } });
+    steps->push_back ({ 150, [&host, &ctx, fixture]
+    {
+        ctx.expect (host.focusFileName(), "file browser filename entry was not available");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : fixture->string())
+            host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the fixture path"); } });
+    steps->push_back ({ 1200, [&host, &ctx, &slot]
+    {
+        ctx.expect (slot.isLoaded(), "Browse file did not load a plugin");
+        ctx.expect (slot.isLoadedStandardVst3(), "Browse file did not use the VST3 loader");
+        ctx.expect (slot.getLoadedName().toStdString() == "Dusk Runtime Relayout Fixture",
+                    "Browse file loaded a different plugin");
+        ctx.expect (! slot.isLoadedPluginInstrument(), "effect Browse loaded an instrument");
+        ctx.expect (! host.focusFileName(), "file browser remained open after accepting the path");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pluginBrowseFile { Scenario {
+    "gui.plugin_browse_file", { "gui", "plugins" }, Needs::Engine | Needs::Gui,
+    { "relayout.vst3" }, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPluginBrowseFile (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runPluginPicker (GuiHost& host, ScenarioContext& ctx)
+{
+    const auto fixture = ctx.fixture ("multi_bus.clap");
+    const auto descriptions = ctx.engine().getPluginManager().getClapEffectDescriptions();
+    if (! fixture || std::none_of (descriptions.begin(), descriptions.end(), [] (const auto& row)
+        { return row.name == "Picker Alpha"; }))
+        return ScenarioResult::skip ("requires the seeded plugin-picker cache");
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        if (auto* strip = host.strip (0)) { strip->closeEditor(); strip->unloadNativePlugins(); }
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    if (readyStrip (host) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    const auto filter = [&host, &ctx] (const std::string& value)
+    {
+        ctx.expect (host.clickModalAt (0.3f, 0.1f), "picker filter did not receive focus");
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        host.pressPeerKey ("Backspace");
+        for (const char ch : value) host.pressPeerKey (std::string (1, ch), ch);
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickInsert (0), "insert button did not receive a click"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Plugin (VST3 / CLAP / LV2 / AU)"), "insert chooser did not open"); } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        const auto headers = host.pickerRows (true);
+        ctx.expect (! headers.empty() && headers.front() == "BUILT-IN", "built-in group was not first");
+        filter ("picker");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        ctx.expect (host.pickerRows (true) == std::vector<std::string> { "SCENARIO MAKER A", "SCENARIO MAKER B" },
+                    "manufacturer headings did not group the matching plugins");
+        ctx.expect (host.pickerRows (false) == std::vector<std::string> { "Picker Alpha  (CLAP)", "Picker Beta  (LV2-Native)" },
+                    "filtered plugin rows omitted names or format labels");
+        filter ("pIcKeR aLpHa");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        ctx.expect (host.pickerRows (false) == std::vector<std::string> { "Picker Alpha  (CLAP)" },
+                    "name filter was not case insensitive");
+        filter ("no-such-picker-plugin");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        ctx.expect (host.pickerRows (true).empty() && host.pickerRows (false).empty(),
+                    "unmatched filter retained rows or empty groups");
+        filter ("picker");
+        ctx.expect (host.clickModalButton ("Group: Maker"), "grouping button was missing");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        ctx.expect (host.pickerRows (true) == std::vector<std::string> { "DELAY", "EQ" },
+                    "type grouping did not use plugin categories");
+        filter ("");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, filter]
+    {
+        const auto headers = host.pickerRows (true);
+        ctx.expect (! headers.empty() && headers.front() == "BUILT-IN", "type grouping displaced built-in units");
+        filter ("Picker Alpha");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickPickerRow ("Picker Alpha  (CLAP)"), "plugin row did not receive a click"); } });
+    steps->push_back ({ 500, [&host, &ctx, &engine, &session, fixture]
+    {
+        ctx.expect (host.pickerRows (true).empty() && host.pickerRows (false).empty(),
+                    "picking a plugin did not dismiss the picker");
+        ctx.expect (engine.getChannelStrip (0).isNativeClapLoaded(), "picker did not load the native CLAP instance");
+        ctx.expect (session.track (0).nativeClapPath.toStdString() == fixture->string()
+                    && session.track (0).nativeClapPluginId.toStdString() == "studio.dusk.test.multi-bus",
+                    "the picked plugin identity was not saved to the track");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pluginPicker { Scenario {
+    "gui.plugin_picker_filter_and_load", { "gui", "plugins" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPluginPicker (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runSettingsDefaults (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings");
+   #else
+    auto& session = ctx.session();
+    const bool tape = appconfig::getTapeStripExpandedDefault();
+    const bool follow = appconfig::getFollowPlayheadDefault();
+    ctx.expect (host.tapeExpansionState() == (tape ? 3 : 0), "launch ignored the tape-strip default");
+    ctx.expect (host.timelineChaseState() == (follow ? 3 : 0), "launch ignored the timeline Chase default");
+    const auto config = dusk::fs::userConfigDir() / "Dusk Studio" / "app-config.properties";
+    const bool hadConfig = std::filesystem::exists (config);
+    const auto configText = dusk::fs::loadFileAsString (config);
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, config, hadConfig, configText, originalDir, restore]
+    {
+        host.closeRegionEditors();
+        host.closeAudioSettings();
+        if (hadConfig) dusk::fs::writeStringToFile (config, configText);
+        else { std::error_code error; std::filesystem::remove (config, error); }
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    MidiRegion midi;
+    midi.lengthInSamples = 48000;
+    midi.lengthInTicks = 960;
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { midi }));
+    const auto wave = ctx.tempDir() / "silence.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = 48000;
+    spec.numChannels = 1;
+    auto writer = dusk::audio::FileWriter::create (wave, spec);
+    std::vector<float> silence (48000, 0.0f);
+    const float* channels[] = { silence.data() };
+    if (! writer || ! writer->write (channels, 1, 48000) || ! writer->flush())
+        return ScenarioResult::fail ("could not create the audio editor fixture");
+    writer.reset();
+    AudioRegion audio;
+    using File = std::decay_t<decltype (audio.file)>;
+    audio.file = File (wave.u8string().c_str());
+    audio.lengthInSamples = 48000;
+    audio.numChannels = 1;
+    session.track (1).regions = { audio };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool isMidi : { true, false })
+    {
+        steps->push_back ({ 200, [&host, &ctx, isMidi]
+        { ctx.expect (host.openRegionEditor (isMidi ? 0 : 1, 0, isMidi), "region editor did not open"); } });
+        steps->push_back ({ 200, [&host, &ctx, follow]
+        {
+            ctx.expect (host.regionEditorChase() == (follow ? 1 : 0), "editor ignored the Chase default");
+            host.closeRegionEditors();
+        } });
+    }
+    for (const bool inverted : { true, false })
+    {
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
+        steps->push_back ({ 200, [&host] { host.inputAudioSettings ("scroll-down"); } });
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickAudioSettingsControl ("tape-default"), "tape default checkbox was not visible"); } });
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickAudioSettingsControl ("follow-default"), "follow default checkbox was not visible"); } });
+        steps->push_back ({ 200, [&host, &ctx, tape, follow, inverted]
+        {
+            ctx.expect (appconfig::getTapeStripExpandedDefault() == (inverted ? ! tape : tape),
+                        "tape default did not persist through the checkbox");
+            ctx.expect (appconfig::getFollowPlayheadDefault() == (inverted ? ! follow : follow),
+                        "follow default did not persist through the checkbox");
+            ctx.expect (host.tapeExpansionState() == (tape ? 3 : 0), "default changed the existing timeline layout");
+            ctx.expect (host.timelineChaseState() == (follow ? 3 : 0), "default changed existing timeline Chase");
+            host.closeAudioSettings();
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsDefaults { Scenario {
+    "gui.settings_defaults", { "gui", "settings" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsDefaults (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runSettingsUiScale (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings");
+   #else
+    const auto originalScale = static_cast<float> (host.uiScale());
+    const auto originalSaved = appconfig::getUiScaleOverride();
+    const auto config = dusk::fs::userConfigDir() / "Dusk Studio" / "app-config.properties";
+    const bool hadConfig = std::filesystem::exists (config);
+    const auto configText = dusk::fs::loadFileAsString (config);
+    ctx.cleanup ([&host, originalScale, config, hadConfig, configText]
+    {
+        host.closeAudioSettings();
+        host.restoreUiScale (originalScale);
+        if (hadConfig) dusk::fs::writeStringToFile (config, configText);
+        else { std::error_code error; std::filesystem::remove (config, error); }
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("scroll-down"); } });
+    for (const float position : { 0.4f, 0.5f, 0.6f, 0.7f })
+        steps->push_back ({ 200, [&host, &ctx, position]
+        { ctx.expect (host.pointerAudioSettings ("ui-scale", position, true),
+                      "the UI scale slider was not visible"); } });
+    steps->push_back ({ 300, [&host, &ctx, originalSaved]
+    {
+        ctx.expect (host.uiScale() > 1.3 && host.uiScale() < 1.6,
+                    "dragging did not preview the global UI scale");
+        ctx.expect (nearly (appconfig::getUiScaleOverride(), originalSaved),
+                    "the UI scale was persisted before release");
+        ctx.expect (host.pointerAudioSettings ("ui-scale", 0.7f, false),
+                    "the scale slider could not receive release");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        const auto saved = appconfig::getUiScaleOverride();
+        ctx.expect (saved > 1.5f && saved < 1.6f, "release did not persist the slider value");
+        ctx.expect (std::abs (host.uiScale() - saved) < 0.001,
+                    "the persisted scale differs from the displayed interface");
+        host.closeAudioSettings();
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (! host.audioSettingsOpen(), "settings did not close");
+        ctx.expect (std::abs (host.uiScale() - appconfig::getUiScaleOverride()) < 0.001,
+                    "closing Settings discarded the scale");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsUiScale { Scenario {
+    "gui.settings_ui_scale", { "gui", "settings" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsUiScale (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings");
+   #else
+    namespace fs = std::filesystem;
+    auto& session = ctx.session();
+    const auto config = dusk::fs::userConfigDir() / "Dusk Studio" / "app-config.properties";
+    const bool hadConfig = fs::exists (config);
+    const auto configText = dusk::fs::loadFileAsString (config);
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, config, hadConfig, configText, originalDir, restore]
+    {
+        if (hadConfig) dusk::fs::writeStringToFile (config, configText);
+        else { std::error_code error; fs::remove (config, error); }
+        if (! host.audioSettingsOpen()) host.openAudioSettings();
+        host.closeAudioSettings();
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto dir = ctx.tempDir() / "cadence";
+    fs::create_directories (dir);
+    const auto saved = dir / "session.json";
+    const auto autosave = dir / "session.json.autosave";
+    session.track (0).strip.faderDb.store (0.0f);
+    if (! SessionSerializer::save (session, saved) || ! host.openSession (saved))
+        return ScenarioResult::fail ("could not open the autosave fixture");
+    appconfig::setAutosaveIntervalSeconds (300);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
+    steps->push_back ({ 200, [&host] { host.closeAudioSettings(); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "settings did not reopen"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.inputAudioSettings ("scroll-down"), "settings did not accept scrolling"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickAudioSettingsControl ("autosave"), "autosave dropdown is not visible"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("home"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("enter"); } });
+    steps->push_back ({ 200, [&ctx, &session]
+    {
+        ctx.expect (appconfig::getAutosaveIntervalSeconds() == 15,
+                    "the first autosave option did not select 15 seconds");
+        session.track (0).strip.faderDb.store (-12.0f);
+    } });
+    steps->push_back ({ 16000, [&host, &ctx, autosave]
+    {
+        ctx.expect (! fs::exists (autosave), "the new cadence applied before Settings closed");
+        host.closeAudioSettings();
+    } });
+    steps->push_back ({ 16000, [&host, &ctx, autosave, saved]
+    {
+        ctx.expect (fs::exists (autosave), "the real autosave timer did not adopt 15 seconds");
+        ctx.expect (nearly (savedFaderOf (autosave), -12.0f), "autosave omitted the edit");
+        ctx.expect (nearly (savedFaderOf (saved), 0.0f), "autosave changed the canonical session");
+        ctx.expect (host.openAudioSettings(), "settings did not reopen for the maximum cadence");
+    } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("scroll-down"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickAudioSettingsControl ("autosave"), "autosave dropdown is not visible"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("end"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("enter"); } });
+    steps->push_back ({ 200, [&ctx]
+    { ctx.expect (appconfig::getAutosaveIntervalSeconds() == 300,
+                  "the last autosave option did not select 5 minutes"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsAutosave { Scenario {
+    "gui.settings_autosave_cadence", { "gui", "settings", "autosave" }, Needs::Engine | Needs::Gui,
+    {}, {}, 45000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsAutosave (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI || ! DUSKSTUDIO_HAS_ALSA
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings and ALSA sequencer");
+   #else
+    snd_seq_t* raw = nullptr;
+    if (snd_seq_open (&raw, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) < 0)
+        return ScenarioResult::skip ("ALSA sequencer is unavailable");
+    auto seq = std::shared_ptr<snd_seq_t> (raw, [] (snd_seq_t* value) { snd_seq_close (value); });
+    const auto name = "dusk-rescan-" + std::to_string (snd_seq_client_id (seq.get()));
+    snd_seq_set_client_name (seq.get(), name.c_str());
+    auto port = std::make_shared<int> (-1);
+    auto& engine = ctx.engine();
+    const auto originalPosition = engine.getTransport().getPlayhead();
+    ctx.cleanup ([&host, &engine, seq, port, originalPosition]
+    {
+        host.closeAudioSettings();
+        engine.stop();
+        engine.getTransport().setPlayhead (originalPosition);
+        if (*port >= 0) snd_seq_delete_simple_port (seq.get(), *port);
+        engine.refreshMidiInputs();
+    });
+    const auto listed = [&engine, name]
+    {
+        const auto& outputs = engine.getMidiOutputDevices();
+        return std::any_of (outputs.begin(), outputs.end(), [&name] (const auto& output)
+        { return output.name.find (name) != std::string::npos; });
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx, &engine]
+    {
+        ctx.expect (host.openAudioSettings(), "native audio settings did not open");
+        engine.play();
+    } });
+    steps->push_back ({ 200, [seq, port, &ctx]
+    {
+        *port = snd_seq_create_simple_port (seq.get(), "destination",
+            SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
+            SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+        ctx.expect (*port >= 0, "could not create the private MIDI destination");
+    } });
+    steps->push_back ({ 700, [&host, &ctx, &engine, listed]
+    {
+        ctx.expect (engine.getTransport().isPlaying(), "fixture was not playing");
+        ctx.expect (! listed(), "automatic hot-plug refreshed the port before Rescan");
+        ctx.expect (host.clickAudioSettingsControl ("rescan"), "Rescan devices button was not drawn");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &engine, listed]
+    {
+        ctx.expect (listed(), "Rescan devices did not enumerate the new MIDI destination");
+        host.closeAudioSettings();
+        engine.stop();
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (! host.audioSettingsOpen(), "audio settings did not finish closing"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsRescan { Scenario {
+    "gui.settings_rescan_devices", { "gui", "settings", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsRescan (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runSettingsMidiBindings (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("built without native settings UI");
+   #else
+    ctx.cleanup ([&host]
+    {
+        if (host.midiBindingsOpen()) host.closeTopModal();
+        host.closeAudioSettings();
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "native audio settings did not open"); } });
+    steps->push_back ({ 400, [&host, &ctx]
+    { ctx.expect (host.clickAudioSettingsControl ("midi-bindings"), "MIDI Bindings button was not drawn"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.midiBindingsOpen(), "MIDI Bindings button did not open its panel");
+        ctx.expect (! host.audioSettingsOpen(), "settings did not step aside for MIDI Bindings");
+        ctx.expect (host.clickModalButton ("Done"), "MIDI Bindings Done button was not visible");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (! host.midiBindingsOpen(), "Done did not close MIDI Bindings");
+        ctx.expect (host.audioSettingsOpen(), "Done did not return to audio settings");
+        host.closeAudioSettings();
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (! host.audioSettingsOpen(), "audio settings did not finish closing"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsMidiBindings { Scenario {
+    "gui.settings_midi_bindings", { "gui", "settings", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsMidiBindings (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_ALSA
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("virtual MIDI destination fixture requires ALSA sequencer");
+   #else
+    snd_seq_t* raw = nullptr;
+    if (snd_seq_open (&raw, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) < 0)
+        return ScenarioResult::skip ("ALSA sequencer is unavailable");
+    auto seq = std::shared_ptr<snd_seq_t> (raw, [] (snd_seq_t* value) { snd_seq_close (value); });
+    const auto name = "dusk-selector-" + std::to_string (snd_seq_client_id (seq.get()));
+    snd_seq_set_client_name (seq.get(), name.c_str());
+    const int port = snd_seq_create_simple_port (seq.get(), "destination",
+        SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
+        SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+    if (port < 0) return ScenarioResult::fail ("could not create the private MIDI destination");
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (0);
+    const auto originalStage = engine.getStage();
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restoreFile = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restoreFile))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &engine, seq, port, originalDir, restoreFile, originalStage]
+    {
+        while (! host.modalStackEmpty()) host.closeTopModal();
+        snd_seq_delete_simple_port (seq.get(), port);
+        engine.refreshMidiInputs();
+        host.openSession (restoreFile);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    ctx.keep (track.mode);
+    ctx.keep (track.midiInputIndex);
+    ctx.keep (track.midiOutputIndex);
+    ctx.keep (track.midiChannel);
+    ctx.keep (track.inputMonitor);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.midiInputIndex.store (-1);
+    track.midiOutputIndex.store (-1);
+    track.midiInputIdentifier.clear();
+    track.midiOutputIdentifier.clear();
+    track.inputMonitor.store (true);
+    engine.refreshMidiInputs();
+    const auto& outputs = engine.getMidiOutputDevices();
+    int destination = -1;
+    for (int i = 0; i < (int) outputs.size(); ++i)
+        if (outputs[(size_t) i].name.find (name) != std::string::npos) destination = i;
+    if (destination < 0) return ScenarioResult::fail ("private MIDI destination was not enumerated");
+    const auto destinationId = outputs[(size_t) destination].identifier;
+    const int keyboard = engine.getVirtualKeyboardInputIndex();
+    if (keyboard < 0) return ScenarioResult::fail ("virtual keyboard was not enumerated");
+    const auto keyboardId = engine.getMidiInputDevices()[(size_t) keyboard].identifier;
+    host.switchToStage (GuiHost::Stage::Recording);
+    const int maxRows = std::max ({ 17, (int) engine.getMidiInputDevices().size() + 1, (int) outputs.size() + 1 });
+    const auto select = [&host, maxRows] (int row)
+    {
+        for (int i = 0; i < maxRows; ++i) host.pressPeerKey ("cursor up");
+        for (int i = 0; i < row; ++i) host.pressPeerKey ("cursor down");
+        host.pressPeerKey ("Return");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx] { ctx.expect (host.openMidiIo (0), "MIDI I/O popup did not open"); } });
+    for (const auto choice : { std::pair<int, int> { 0, keyboard + 1 }, { 1, 3 }, { 2, destination + 1 } })
+    {
+        steps->push_back ({ 100, [&host, &ctx, choice]
+        { ctx.expect (host.clickMidiSelector (0, choice.first), "MIDI selector was not visible"); } });
+        steps->push_back ({ 100, [select, choice] { select (choice.second); } });
+    }
+    steps->push_back ({ 150, [&host, &track, &engine, &ctx, keyboard, keyboardId, destination, destinationId]
+    {
+        ctx.expect (track.midiInputIndex.load() == keyboard && track.midiInputIdentifier.toStdString() == keyboardId,
+                    "input picker did not select and identify the virtual keyboard");
+        ctx.expect (host.midiSelectorText (0, 0) == "Virtual Keyboard (Dusk Studio)", "input picker displayed the wrong port");
+        ctx.expect (track.midiChannel.load() == 3 && host.midiSelectorText (0, 1) == "Ch 3", "channel picker did not select channel 3");
+        ctx.expect (track.midiOutputIndex.load() == destination && track.midiOutputIdentifier.toStdString() == destinationId,
+                    "output picker did not select and identify the destination");
+        const std::uint8_t rejected[] = { 0xb1, 74, 100 };
+        const std::uint8_t accepted[] = { 0xb2, 74, 101 };
+        engine.postVirtualKeyboardMidi (rejected, 3);
+        engine.postVirtualKeyboardMidi (accepted, 3);
+    } });
+    steps->push_back ({ 300, [seq, &ctx]
+    {
+        bool accepted = false;
+        bool rejected = false;
+        snd_seq_event_t* event = nullptr;
+        while (snd_seq_event_input (seq.get(), &event) >= 0)
+            if (event != nullptr && event->type == SND_SEQ_EVENT_CONTROLLER && event->data.control.param == 74)
+            {
+                accepted |= event->data.control.channel == 2 && event->data.control.value == 101;
+                rejected |= event->data.control.channel == 1 && event->data.control.value == 100;
+            }
+        ctx.expect (accepted, "selected MIDI output did not receive the accepted channel");
+        ctx.expect (! rejected, "channel filter passed the rejected channel to MIDI out");
+    } });
+    for (int kind : { 0, 1, 2 })
+    {
+        steps->push_back ({ 100, [&host, kind] { host.clickMidiSelector (0, kind); } });
+        steps->push_back ({ 100, [select] { select (0); } });
+    }
+    steps->push_back ({ 100, [&host, &track, &ctx]
+    {
+        ctx.expect (track.midiInputIndex.load() == -1 && track.midiInputIdentifier.isEmpty()
+                    && host.midiSelectorText (0, 0) == "None", "input None did not clear the route");
+        ctx.expect (track.midiChannel.load() == 0 && host.midiSelectorText (0, 1) == "Omni", "Omni did not clear the channel filter");
+        ctx.expect (track.midiOutputIndex.load() == -1 && track.midiOutputIdentifier.isEmpty()
+                    && host.midiSelectorText (0, 2) == "None", "output None did not clear the route");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar midiSelectors { Scenario {
+    "gui.midi_io_selectors", { "gui", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMidiSelectors (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runFaderEntry (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const auto bindings = session.midiBindings.current();
+    const auto originalStage = engine.getStage();
+    ctx.cleanup ([&host, &session, bindings, originalStage]
+    {
+        host.pressPeerKey ("Escape");
+        if (! host.modalStackEmpty()) host.closeTopModal();
+        session.midiBindings.mutate ([&] (auto& value) { value = bindings; });
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux : GuiHost::Stage::Mastering);
+    });
+    ctx.keep (session.midiLearnPending);
+    ctx.keep (session.midiLearnCapture);
+    session.midiLearnPending.store (-1);
+    session.midiLearnCapture.store (0);
+    session.midiBindings.mutate ([] (auto& value) { value.clear(); });
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& track = session.track (t);
+        ctx.keep (track.strip.faderGroupId);
+        ctx.keep (track.strip.faderDb);
+        ctx.keep (track.automationMode);
+        track.strip.faderGroupId.store (t < 2 ? 1 : 0);
+        track.automationMode.store ((int) AutomationMode::Off);
+        track.strip.faderDb.store (-6.0f - (float) t * 3.0f);
+    }
+    host.switchToStage (GuiHost::Stage::Mixing);
+    const auto type = [&host] (const std::string& value)
+    {
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (char ch : value) host.pressPeerKey (std::string (1, ch), ch);
+        host.pressPeerKey ("Return", '\r');
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 250, [&host, &ctx] { ctx.expect (host.clickFader (0, true), "fader readout was not visible"); } });
+    steps->push_back ({ 100, [&host, &ctx, type]
+    {
+        ctx.expect (host.faderEditing (0), "clicking the fader readout did not open an editor");
+        if (host.faderEditing (0)) type ("-3.5");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &session]
+    {
+        ctx.expect (std::abs (session.track (0).strip.faderDb.load() + 3.5f) < 0.01f, "typed fader value was not applied");
+        ctx.expect (std::abs (session.track (1).strip.faderDb.load() + 6.5f) < 0.01f, "typed fader value lost the group offset");
+        ctx.expect (! session.track (0).strip.faderTouched.load(), "text entry left the fader touched");
+        session.track (0).automationMode.store ((int) AutomationMode::Read);
+    } });
+    steps->push_back ({ 100, [&host, &ctx] { host.clickFader (0, true); ctx.expect (! host.faderEditing (0), "READ allowed fader text editing"); } });
+    steps->push_back ({ 100, [&session]
+    {
+        session.track (0).automationMode.store ((int) AutomationMode::Off);
+        session.track (0).strip.faderGroupId.store (0);
+        session.track (1).strip.faderGroupId.store (0);
+    } });
+    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickFader (0, false, true), "could not right-click the fader"); } });
+    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickModalAt (0.5f, 48.0f / 102.0f), "MIDI Learn menu did not open"); } });
+    steps->push_back ({ 100, [&session, &engine, &ctx]
+    {
+        ctx.expect (session.midiLearnPending.load() == packLearnTarget (MidiBindingTarget::TrackFader, 0), "menu did not arm fader Learn");
+        const std::uint8_t cc[] = { 0xb2, 74, 64 };
+        engine.postVirtualKeyboardMidi (cc, 3);
+    } });
+    steps->push_back ({ 300, [&session, &engine, &ctx]
+    {
+        const auto& learned = session.midiBindings.current();
+        ctx.expect (learned.size() == 1 && learned[0].channel == 3 && learned[0].dataNumber == 74
+                    && learned[0].trigger == MidiBindingTrigger::CC && learned[0].target == MidiBindingTarget::TrackFader
+                    && learned[0].targetIndex == 0 && session.midiLearnPending.load() == -1, "CC did not learn the selected fader");
+        const std::uint8_t cc[] = { 0xb2, 74, 127 };
+        engine.postVirtualKeyboardMidi (cc, 3);
+    } });
+    steps->push_back ({ 300, [&host, &session, &engine, &ctx]
+    {
+        ctx.expect (std::abs (session.track (0).strip.faderDb.load() - 12.0f) < 0.01f
+                    && std::abs (host.faderValue (0) - 12.0) < 0.01, "learned CC did not raise the model and visible fader");
+        const std::uint8_t cc[] = { 0xb2, 74, 0 };
+        engine.postVirtualKeyboardMidi (cc, 3);
+    } });
+    steps->push_back ({ 300, [&host, &session, &ctx]
+    {
+        ctx.expect (std::abs (session.track (0).strip.faderDb.load() + 90.0f) < 0.01f
+                    && std::abs (host.faderValue (0) + 90.0) < 0.01, "learned CC did not lower the model and visible fader");
+        ctx.expect (std::abs (session.track (2).strip.faderDb.load() + 12.0f) < 0.01f, "fader Learn changed an unbound track");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar faderEntry { Scenario {
+    "gui.fader_entry_and_learn", { "gui", "fader", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFaderEntry (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runGroupChips (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    const auto originalStage = ctx.engine().getStage();
+    ctx.cleanup ([&host, originalStage]
+    {
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux
+                            : GuiHost::Stage::Mastering);
+    });
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        ctx.keep (session.track (t).strip.faderGroupId);
+        session.track (t).strip.faderGroupId.store (0);
+    }
+    host.switchToStage (GuiHost::Stage::Mixing);
+    const auto check = [&host, &ctx] (int track, const std::string& expectedText, int expectedMaster, bool expectedFilled)
+    {
+        std::string text;
+        int master = -1;
+        bool filled = false;
+        ctx.expect (host.groupChipView (track, text, master, filled), "the group chip did not render its fill");
+        ctx.expect (text == expectedText, "the group chip label was wrong");
+        ctx.expect (master == expectedMaster, "the lowest group member was not the master");
+        ctx.expect (filled == expectedFilled, "the group chip used the wrong filled/outlined style");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (int group = 1; group <= 8; ++group)
+    {
+        steps->push_back ({ 100, [&session, group]
+        { session.track (1).strip.faderGroupId.store (group); } });
+        steps->push_back ({ 100, [&session, check, group]
+        {
+            check (1, "G" + std::to_string (group), 1, true);
+            session.track (0).strip.faderGroupId.store (group);
+        } });
+        steps->push_back ({ 100, [&session, check, group]
+        {
+            check (0, "G" + std::to_string (group), 0, true);
+            check (1, "G" + std::to_string (group), 0, false);
+            session.track (0).strip.faderGroupId.store (0);
+        } });
+        steps->push_back ({ 100, [check, group]
+        {
+            check (0, "", -1, false);
+            check (1, "G" + std::to_string (group), 1, true);
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar groupChips { Scenario {
+    "gui.fader_group_chips", { "gui", "groups" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runGroupChips (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runMeterClip (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    const auto originalStage = engine.getStage();
+    const auto originalPosition = engine.getTransport().getPlayhead();
+    const auto originalRegions = track.regions;
+    ctx.cleanup ([&host, &engine, &track, originalStage, originalPosition, originalRegions]
+    {
+        engine.stop();
+        track.regions = originalRegions;
+        engine.getPlaybackEngine().preparePlayback();
+        engine.getTransport().setPlayhead (originalPosition);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux
+                            : GuiHost::Stage::Mastering);
+    });
+    ctx.keep (track.mode);
+    ctx.keep (track.strip.faderDb);
+    ctx.keep (track.strip.mute);
+    ctx.keep (track.recordArmed);
+    ctx.keep (track.inputMonitor);
+    ctx.keep (track.automationMode);
+    track.recordArmed.store (false);
+    track.inputMonitor.store (false);
+    track.automationMode.store ((int) AutomationMode::Off);
+    ctx.keep (session.master().mute);
+    session.master().mute.store (true);
+    engine.stop();
+    const auto rate = engine.getCurrentSampleRate();
+    const auto frames = static_cast<std::int64_t> (rate * 5.0);
+    std::vector<float> samples ((size_t) frames);
+    for (std::int64_t i = 0; i < frames; ++i)
+        samples[(size_t) i] = 0.8f * static_cast<float> (std::sin (6.283185307179586 * 440.0 * static_cast<double> (i) / rate));
+    const auto path = ctx.tempDir() / "stage-tone.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = rate;
+    spec.numChannels = 1;
+    spec.bitsPerSample = 32;
+    auto writer = dusk::audio::FileWriter::create (path, spec);
+    const float* channels[] = { samples.data() };
+    if (writer == nullptr || ! writer->write (channels, 1, frames) || ! writer->flush())
+        return ScenarioResult::fail ("could not write the playback tone");
+    writer.reset();
+    AudioRegion region;
+    using File = std::decay_t<decltype (region.file)>;
+    region.file = File (path.u8string().c_str());
+    region.lengthInSamples = frames;
+    region.numChannels = 1;
+    track.regions = { region };
+    track.mode.store ((int) Track::Mode::Mono);
+    track.strip.faderDb.store (12.0f);
+    track.strip.mute.store (false);
+    host.switchToStage (GuiHost::Stage::Recording);
+    engine.getTransport().setPlayhead (0);
+    engine.play();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &engine, &ctx]
+    {
+        ctx.expect (engine.getChannelStrip (0).getOutLDb() > 0.0f, "fixture did not cross 0 dBFS");
+        ctx.expect (host.meterClip (0), "overload did not light the red clip bar");
+        engine.stop();
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.meterClip (0), "clip bar cleared before one second"); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    { ctx.expect (! host.meterClip (0), "clip bar did not clear after one second"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar meterClip { Scenario {
+    "gui.meter_clip_hold", { "gui", "meter" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMeterClip (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runStageAudioFlow (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    const auto originalStage = engine.getStage();
+    const auto originalPosition = engine.getTransport().getPlayhead();
+    const auto originalRegions = track.regions;
+    ctx.cleanup ([&host, &engine, &track, originalStage, originalPosition, originalRegions]
+    {
+        engine.stop();
+        track.regions = originalRegions;
+        engine.getPlaybackEngine().preparePlayback();
+        engine.getTransport().setPlayhead (originalPosition);
+        host.switchToStage (originalStage == AudioEngine::Stage::Recording ? GuiHost::Stage::Recording
+                            : originalStage == AudioEngine::Stage::Mixing ? GuiHost::Stage::Mixing
+                            : originalStage == AudioEngine::Stage::Aux ? GuiHost::Stage::Aux
+                            : GuiHost::Stage::Mastering);
+    });
+    ctx.keep (track.mode);
+    ctx.keep (track.strip.faderDb);
+    ctx.keep (track.strip.mute);
+    engine.stop();
+    const auto rate = engine.getCurrentSampleRate();
+    const auto frames = static_cast<std::int64_t> (rate * 5.0);
+    std::vector<float> samples ((size_t) frames);
+    for (std::int64_t i = 0; i < frames; ++i)
+        samples[(size_t) i] = 0.125f * static_cast<float> (std::sin (6.283185307179586 * 440.0 * static_cast<double> (i) / rate));
+    const auto path = ctx.tempDir() / "stage-tone.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = rate;
+    spec.numChannels = 1;
+    spec.bitsPerSample = 32;
+    auto writer = dusk::audio::FileWriter::create (path, spec);
+    const float* channels[] = { samples.data() };
+    if (writer == nullptr || ! writer->write (channels, 1, frames) || ! writer->flush())
+        return ScenarioResult::fail ("could not write the playback tone");
+    writer.reset();
+    AudioRegion region;
+    using File = std::decay_t<decltype (region.file)>;
+    region.file = File (path.u8string().c_str());
+    region.lengthInSamples = frames;
+    region.numChannels = 1;
+    track.regions = { region };
+    track.mode.store ((int) Track::Mode::Mono);
+    track.strip.faderDb.store (0.0f);
+    track.strip.mute.store (false);
+    host.switchToStage (GuiHost::Stage::Recording);
+    engine.getTransport().setPlayhead (0);
+    engine.play();
+    auto previousPosition = std::make_shared<std::int64_t> (0);
+    auto overruns = std::make_shared<int> (0);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&engine, overruns] { *overruns = engine.getXRunCount(); } });
+    for (auto stage : { GuiHost::Stage::Mixing, GuiHost::Stage::Aux, GuiHost::Stage::Recording,
+                        GuiHost::Stage::Aux, GuiHost::Stage::Mixing, GuiHost::Stage::Recording })
+    {
+        steps->push_back ({ 100, [&host, &ctx, stage]
+        { ctx.expect (host.clickStage (stage), "the stage button was not visible"); } });
+        steps->push_back ({ 150, [&ctx, &engine, previousPosition, overruns, stage]
+        {
+            const auto expected = stage == GuiHost::Stage::Recording ? AudioEngine::Stage::Recording
+                                : stage == GuiHost::Stage::Mixing ? AudioEngine::Stage::Mixing
+                                : AudioEngine::Stage::Aux;
+            ctx.expect (engine.getStage() == expected, "the stage button did not switch stages");
+            ctx.expect (engine.getTransport().isPlaying(), "switching stages stopped playback");
+            const auto at = engine.getTransport().getPlayhead();
+            ctx.expect (at > *previousPosition, "playback did not advance across a stage switch");
+            *previousPosition = at;
+            ctx.expect (engine.getChannelStrip (0).getOutLDb() > -30.0f,
+                        "the playback tone fell silent across a stage switch");
+            ctx.expect (engine.getXRunCount() == *overruns, "a stage switch caused an engine overrun");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar stageAudioFlow { Scenario {
+    "gui.stage_audio_flow", { "gui", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStageAudioFlow (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const auto sampleRate = engine.getCurrentSampleRate();
+    if (sampleRate <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restoreFile = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restoreFile))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &engine, originalDir, restoreFile]
+    {
+        engine.stop();
+        if (! host.modalStackEmpty()) host.closeTopModal();
+        host.openSession (restoreFile);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto outgoing = ctx.tempDir() / "outgoing" / "session.json";
+    const auto incoming = ctx.tempDir() / "incoming" / "session.json";
+    std::filesystem::create_directories (outgoing.parent_path());
+    std::filesystem::create_directories (incoming.parent_path());
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    session.track (0).strip.faderDb.store (0.0f);
+    if (! SessionSerializer::save (session, outgoing))
+        return ScenarioResult::fail ("could not save the outgoing session");
+    session.track (0).strip.faderDb.store (-18.0f);
+    if (! SessionSerializer::save (session, incoming))
+        return ScenarioResult::fail ("could not save the incoming session");
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const std::string action : { "Cancel", "Don't Save", "Save" })
+    {
+        steps->push_back ({ 200, [&host, &ctx, &session, &engine, outgoing]
+        {
+            ctx.expect (host.openSession (outgoing), "could not open the outgoing session");
+            session.setTrackArmed (0, true);
+            engine.record();
+            ctx.expect (engine.getTransport().isRecording(), "the take did not start");
+        } });
+        steps->push_back ({ 200, [&engine]
+        {
+            const std::uint8_t note[] { 0x90, 64, 100 };
+            engine.postVirtualKeyboardMidi (note, 3);
+        } });
+        steps->push_back ({ 150, [&engine]
+        {
+            const std::uint8_t note[] { 0x80, 64, 0 };
+            engine.postVirtualKeyboardMidi (note, 3);
+        } });
+        steps->push_back ({ 200, [&host, incoming] { host.requestSessionSwitch (incoming); } });
+        steps->push_back ({ 200, [&host, &ctx, &engine, &session, outgoing, incoming]
+        {
+            ctx.expect (engine.getTransport().isStopped(), "the session switch did not stop recording");
+            ctx.expect (currentSessionDirectory (session) == outgoing.parent_path(),
+                        "the session changed before the prompt was answered");
+            const auto& regions = session.track (0).midiRegions.current();
+            ctx.expect (regions.size() == 1 && ! regions.front().notes.empty(),
+                        "the session switch did not commit the MIDI take before prompting");
+            host.requestSessionSwitch (incoming);
+        } });
+        steps->push_back ({ 100, [&host, &ctx, action]
+        {
+            ctx.expect (host.statusMessage() == "Session not switched: close the open prompt first",
+                        "a second session switch did not report the open prompt");
+            ctx.expect (host.clickModalButton (action), "the prompt did not offer " + action);
+        } });
+        steps->push_back ({ 500, [&host, &ctx, &session, action, outgoing, incoming]
+        {
+            ctx.expect (host.modalStackEmpty(), action + " left the prompt open");
+            ctx.expect (currentSessionDirectory (session)
+                            == (action == "Cancel" ? outgoing.parent_path() : incoming.parent_path()),
+                        action + " opened the wrong session");
+            Session saved;
+            ctx.expect (SessionSerializer::load (saved, outgoing), "could not read the outgoing session");
+            const auto& regions = saved.track (0).midiRegions.current();
+            ctx.expect (action == "Save" ? regions.size() == 1 && ! regions.front().notes.empty()
+                                         : regions.empty(),
+                        action + " persisted the wrong take state");
+            if (action == "Cancel")
+                ctx.expect (session.track (0).midiRegions.current().size() == 1,
+                            "Cancel discarded the committed take");
+            else
+                ctx.expect (nearly (session.track (0).strip.faderDb.load(), -18.0f),
+                            "the incoming session contents did not load");
+        } });
+    }
+    steps->push_back ({ 200, [&host, &ctx, &session, outgoing, sampleRate]
+    {
+        MidiRegion region;
+        region.lengthInSamples = static_cast<std::int64_t> (sampleRate * 600.0);
+        region.lengthInTicks = 576000;
+        session.track (0).midiRegions.publish (
+            std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+        host.startMixdown();
+        ctx.expect (host.mixdownRunning(), "the mixdown did not start");
+        host.requestSessionSwitch (outgoing);
+    } });
+    steps->push_back ({ 100, [&host, &ctx, &session, incoming]
+    {
+        ctx.expect (host.statusMessage() == "Session not switched: finish or cancel the bounce first",
+                    "a session switch did not report the running bounce");
+        ctx.expect (currentSessionDirectory (session) == incoming.parent_path(),
+                    "the session switched during the bounce");
+        ctx.expect (host.mixdownRunning(), "the refused session switch stopped the bounce");
+        ctx.expect (host.clickModalButton ("Cancel"), "the mixdown did not offer Cancel");
+    } });
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.mixdownRunning(); }, 5000, [&host, &ctx]
+        {
+            ctx.later (200, [&host, &ctx]
+            {
+                if (! host.modalStackEmpty())
+                    ctx.expect (host.clickModalButton ("Close"), "the cancelled mixdown did not offer Close");
+                ctx.later (200, [&host, &ctx]
+                {
+                    ctx.expect (host.modalStackEmpty(), "the cancelled mixdown left its modal open");
+                    ctx.complete (ctx.verdict());
+                });
+            });
+        }, "the mixdown did not cancel");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar sessionSwitch { Scenario {
+    "gui.session_switch_commits_take", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSessionSwitch (host, ctx); }
+} };
 
 // The heartbeat writes session.json.autosave only when the session changed
 // since the last save or autosave, never touches session.json and leaves no

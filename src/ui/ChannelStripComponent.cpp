@@ -41,6 +41,7 @@
 #include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
 #include <algorithm>
+#include <stdexcept>
 #include <cstdio>
 
 namespace duskstudio
@@ -841,6 +842,27 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         };
         faderValueLabel.setText (formatDb (faderSlider.getValue()),
                                    juce::dontSendNotification);
+        faderValueLabel.setEditable (true, false, false);
+        faderValueLabel.onEditorShow = [this]
+        {
+            faderTextEditEnding = false;
+            faderSlider.onDragStart();
+        };
+        faderValueLabel.onEditorHide = [this] { faderTextEditEnding = true; };
+        faderValueLabel.onTextChange = [this]
+        {
+            const auto text = faderValueLabel.getText().trim().toStdString();
+            try
+            {
+                std::size_t used = 0;
+                const auto value = std::stod (text, &used);
+                if (used == text.size() && std::isfinite (value))
+                    faderSlider.setValue (value, juce::sendNotificationSync);
+            }
+            catch (const std::invalid_argument&) {}
+            catch (const std::out_of_range&) {}
+            refreshFaderValueLabel();
+        };
         addAndMakeVisible (faderValueLabel);
 
         // Update the standalone label whenever the slider value changes
@@ -4082,6 +4104,24 @@ void ChannelStripComponent::openCompEditorForCapture (const std::string& capture
    #endif
 }
 
+bool ChannelStripComponent::moduleEditorOpenForScenario (int module) const
+{
+    if (module == 0) return eqEditorModal.isOpen();
+    if (module == 2) return auxEditorModal.isOpen();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return compEditorWindow != nullptr && compEditorWindow->isOpen();
+   #else
+    return false;
+   #endif
+}
+
+void ChannelStripComponent::closeModuleEditorsForScenario()
+{
+    eqEditorModal.close();
+    auxEditorModal.close();
+    closeCompEditorPopup();
+}
+
 void ChannelStripComponent::closeCompEditorForCapture()
 {
     closeCompEditorPopup();
@@ -4738,6 +4778,7 @@ int ChannelStripComponent::groupMasterIndex() const noexcept
 
 void ChannelStripComponent::refreshFaderValueLabel()
 {
+    if (faderValueLabel.isBeingEdited()) return;
     const double db = faderSlider.getValue();
     faderValueLabel.setText (db <= -89.95 ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                           : juce::String (db, 1),
@@ -4963,11 +5004,12 @@ void ChannelStripComponent::timerCallback()
     const float lDb = showInput ? track.meterInputDb.load (std::memory_order_relaxed)
                                 : (stereoMode ? outL : std::max (outL, outR));
     smoothMeter (lDb, displayedInputDb, inputPeakHoldDb, inputPeakHoldFrames);
+    const float rDb = showInput ? track.meterInputRDb.load (std::memory_order_relaxed) : outR;
+    if (lDb >= 0.0f || (stereoMode && rDb >= 0.0f))
+        meterClipUntil = std::chrono::steady_clock::now() + std::chrono::seconds (1);
 
     if (stereoMode)
     {
-        const float rDb = showInput ? track.meterInputRDb.load (std::memory_order_relaxed)
-                                    : outR;
         smoothMeter (rDb, displayedInputRDb, inputPeakHoldRDb, inputPeakHoldRFrames);
     }
     else
@@ -5135,6 +5177,12 @@ void ChannelStripComponent::timerCallback()
                               track.strip.auxSendDb[(size_t) i].load (std::memory_order_relaxed));
         }
     }
+    if (faderTextEditEnding && ! faderValueLabel.isBeingEdited())
+    {
+        faderTextEditEnding = false;
+        faderSlider.onDragEnd();
+        refreshFaderValueLabel();
+    }
 }
 
 void ChannelStripComponent::recordAutomation (AutomationParam param, bool recording, float value)
@@ -5193,6 +5241,8 @@ void ChannelStripComponent::applyAutoMode (int mode)
     // picks the lock up too.
     const bool interactive = mode != (int) AutomationMode::Read;
     faderSlider.setEnabled (interactive);
+    if (! interactive && faderValueLabel.isBeingEdited()) faderValueLabel.hideEditor (true);
+    faderValueLabel.setEnabled (interactive);
     panKnob    .setEnabled (interactive);
     muteButton .setEnabled (interactive);
     soloButton .setEnabled (interactive);
@@ -5962,6 +6012,37 @@ juce::Colour groupColour (int gid)
 }
 } // namespace
 
+std::string ChannelStripComponent::groupChipText() const
+{
+    const int group = track.strip.faderGroupId.load (std::memory_order_relaxed);
+    return group == 0 ? std::string {} : "G" + std::to_string (group);
+}
+
+bool ChannelStripComponent::groupChipViewForScenario (std::string& text, int& master, bool& filled)
+{
+    text = groupChipText();
+    master = groupMasterIndex();
+    filled = false;
+    if (text.empty()) return groupChipBounds.isEmpty();
+    if (! isShowing() || groupChipBounds.isEmpty()) return false;
+    const auto image = createComponentSnapshot (getLocalBounds());
+    const auto pixel = image.getPixelAt (groupChipBounds.getX() + 2, groupChipBounds.getCentreY());
+    const auto colour = groupColour (track.strip.faderGroupId.load (std::memory_order_relaxed));
+    filled = pixel == colour;
+    const auto expected = decltype (colour) (0xff1a1a1c).overlaidWith (colour.withAlpha (0.18f));
+    const auto withinBlendRounding = [] (int actual, int target) { return std::abs (actual - target) <= 2; };
+    return filled || (withinBlendRounding (pixel.getRed(), expected.getRed())
+                      && withinBlendRounding (pixel.getGreen(), expected.getGreen())
+                      && withinBlendRounding (pixel.getBlue(), expected.getBlue()));
+}
+
+bool ChannelStripComponent::meterClipForScenario()
+{
+    if (! isShowing() || inputMeterArea.isEmpty()) return false;
+    const auto image = createComponentSnapshot (getLocalBounds());
+    return image.getPixelAt (inputMeterArea.getCentreX(), inputMeterArea.getY() + 2).getARGB() == 0xffff2020;
+}
+
 void ChannelStripComponent::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (1.5f);
@@ -5997,7 +6078,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             }
             g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
             g.setColour (isMaster ? juce::Colours::black.withAlpha (0.85f) : col);
-            g.drawText ("G" + juce::String (gid), groupChipBounds,
+            g.drawText (groupChipText(), groupChipBounds,
                         juce::Justification::centred, false);
         }
     }
@@ -6180,6 +6261,11 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         else
         {
             drawBar (inputMeterArea.toFloat(), displayedInputDb, inputPeakHoldDb);
+        }
+        if (std::chrono::steady_clock::now() < meterClipUntil)
+        {
+            g.setColour (decltype (track.colour) (0xffff2020));
+            g.fillRect (inputMeterArea.withHeight (4).reduced (1, 0));
         }
     }
 

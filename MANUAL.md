@@ -488,7 +488,7 @@ All seven are saved with the session, so a project that syncs to an external clo
 ### General
 
 - **UI scale**: a global zoom factor for the entire interface. The interface previews changes live while you adjust the slider; the final value is saved per-machine when you release it.
-- **Expand tape strip by default**: show the tape strip on every session open.
+- **Expand tape strip by default**: show the tape strip on every app launch. Per-machine; takes effect on next launch.
 - **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
 - **Playhead on Stop**: where the playhead lands when you press Stop. **Return to where play or record started** is the default: the playhead goes back to where playback or the take began, or to where you last moved it during playback, so Play hears the take you just made. A punch take begins at the punch-in point and a loop take at the loop start; count-in and pre-roll do not count. The other choices are **Stay where it is (pause)**, **Return to start (rewind to 0)** and **Return to last clicked point**. Pressing Stop while already stopped returns to bar 1 whatever this says. Per-machine; takes effect immediately.
 - **MIDI soft takeover (pickup)**: when on, a knob or fader bound with MIDI Learn stays dormant until the physical control crosses the parameter's current position, instead of snapping the parameter on first touch. Applies to continuous mixer targets (faders, pans, sends, EQ, comp, master); plugin-parameter bindings always track directly. Per-machine; takes effect immediately.
@@ -736,7 +736,7 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 Each channel has one insert slot, which can hold either a plugin or a hardware insert (configured via the Settings or right-click menu). Switching between plugin and hardware uses a 20-millisecond equal-power crossfade, so the change is inaudible.
 
 - Click **+ Plugin** to open the plugin picker.
-- Right-click the slot for **Add / Replace / Remove / Edit / Configure as hardware insert**.
+- Right-click an empty slot for **Add insert...**. A loaded plugin offers **Open editor** (or **Close editor**), **Replace insert...**, and **Remove plugin**. A hardware insert offers **Edit hardware insert...**, **Replace insert...**, and **Remove hardware insert**. Choose **Hardware Insert** in the Add or Replace chooser to configure outboard gear.
 - When a plugin is loaded, the slot shows its name. Click to open the editor.
 - The LED on the slot's left edge bypasses the insert — green when engaged, dark when bypassed or empty, click to toggle (same grammar as the EQ and COMP LEDs). The insert keeps processing while bypassed, so re-engaging is click-free.
 
@@ -1028,7 +1028,7 @@ The **MASTERING** stage is a separate signal path. It does not play your tracks;
 
 ## Loading a mix
 
-- **Load mix…**: opens a file chooser. Pick any WAV, AIFF, FLAC, or OGG file.
+- **Load mix...**: opens a file chooser for WAV, AIFF, or FLAC files.
 - **Load latest mixdown**: loads `mixdown.wav` from the session folder (what **Mixdown** writes), or `bounce.wav`, the bounce dialog's default name, if there is no mixdown.
 
 The source file path is displayed below the buttons.
@@ -1087,7 +1087,7 @@ Right of the chain are three loudness readouts:
 - **Integrated LUFS** (entire program, gated per BS.1770).
 - **True Peak (dBTP)** (4× oversampled).
 
-A streaming-platform preset picker (Spotify, Apple Music, YouTube, Netflix, etc.) colour-codes the integrated LUFS and true-peak readings according to that platform's target. Pressing **Reset integrated** clears the integrated reading so you can re-measure from a known point.
+The target picker offers Off, Spotify, Apple Music, YouTube, Tidal, and Broadcast (EBU R128). It colour-codes integrated LUFS and true peak against the selected target; Off leaves both neutral. Pressing **Reset I** clears the integrated reading so you can re-measure from a known point.
 
 The integrated reading measures up to an hour of material loud enough to count. Silence and anything below −70 LUFS is discarded by the standard's gate and does not use up that hour, so leaving the meter running between takes costs you nothing. Past the hour it holds where it is rather than continuing to absorb material, so for anything longer, reset it and measure the section you actually care about.
 
@@ -1446,7 +1446,7 @@ The CC lane is also resizable.
 
 ## Quantize and scale
 
-- **Q**: opens a quantize popup. Pick the grid resolution and the strength (0 = none, 1 = full).
+- **Q**: opens a quantize popup with full-strength straight and triplet grids, plus 50% and 75% strength choices.
 - **S**: opens a scale picker. Pick a root and a scale (Major, Minor, modes). Non-scale notes display dimmed.
 - **L**: cycles the active CC controller in the CC lane (1, 7, 11, 64, 74).
 
@@ -1457,14 +1457,14 @@ The note-creation grid is set from the toolbar dropdown; there is no keyboard sh
 ## Zoom and scroll
 
 - **=** / **−**: zoom in / out.
-- **Cmd+0**: zoom to fit the region.
+- **Zoom fit** toolbar button: zoom to fit the region.
 - **Mouse wheel**: scroll vertically across the 128-key range.
 - **Cmd/Ctrl+wheel**: horizontal zoom.
 - **Shift+wheel**: horizontal scroll.
 
 ## Step record
 
-With the piano roll open, each note you press on the virtual keyboard is entered at the current edit cursor. When all keys are released, the cursor advances by one snap step. This is the fastest way to enter a chord progression without playing in real time.
+With the piano roll open, virtual-keyboard notes enter at the transport playhead. Notes held together share that position. After all keys are released, the first note of the next chord advances the playhead by one snap step before inserting. This is the fastest way to enter a chord progression without playing in real time.
 
 The keyboard is a transport-bar tool rather than part of the piano roll: it opens from the ⌨ button (or **K**) in any stage, and it takes over the letter and digit keys in its layout for as long as it is open. See *The virtual keyboard* for the details.
 
@@ -1585,7 +1585,7 @@ A plugin that never finishes being probed — most often one waiting on a licenc
 In the **plugin picker** modal:
 
 - Use the filter field at the top to narrow by name.
-- The list is grouped by manufacturer. Click a manufacturer to expand or collapse.
+- The list is grouped under manufacturer headings. Click **Group: Maker** to switch to grouping by plugin type; click **Group: Type** to return to manufacturer grouping. The **Built-In** section stays at the top.
 - Each row shows the plugin name and its format (VST3 / LV2 / AudioUnit / CLAP / LV2-Native / VST3-Native / Built-In).
 - Click a row to load and dismiss.
 

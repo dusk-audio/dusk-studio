@@ -141,6 +141,8 @@ public:
     void setGeometry (Geometry geometry);
     void close();
     bool isOpen() const noexcept;
+    bool clickControlForScenario (const std::string& control);
+    bool inputForScenario (const std::string& input);
     bool pointerControlForScenario (const std::string& control, float position, bool pressed);
 
 private:

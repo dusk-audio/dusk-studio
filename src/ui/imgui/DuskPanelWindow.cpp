@@ -101,6 +101,21 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         PanelWidget (DGL::Window& window, Impl& ownerRef)
             : DGL::ImGuiTopLevelWidget (window, 13.0f), owner (ownerRef) {}
 
+        void clickForScenario (ImVec2 point)
+        {
+            MotionEvent motion;
+            motion.pos = { point.x, point.y };
+            motion.absolutePos = motion.pos;
+            onMotion (motion);
+            MouseEvent click;
+            click.button = DGL::kMouseButtonLeft;
+            click.pos = motion.pos;
+            click.absolutePos = motion.pos;
+            click.press = true;
+            onMouse (click);
+            releasePending = true;
+        }
+
         void pointerForScenario (ImVec2 point, bool pressed)
         {
             MotionEvent motion;
@@ -115,11 +130,51 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             onMouse (button);
         }
 
+        bool inputForScenario (const std::string& input)
+        {
+            if (input == "scroll-down")
+            {
+                MotionEvent motion;
+                motion.pos = { getWidth() * 0.5, getHeight() * 0.5 };
+                motion.absolutePos = motion.pos;
+                onMotion (motion);
+                ScrollEvent scroll;
+                scroll.pos = motion.pos;
+                scroll.absolutePos = motion.pos;
+                scroll.delta = { 0.0, -20.0 };
+                onScroll (scroll);
+                return true;
+            }
+            KeyboardEvent key;
+            if (input == "home") key.key = DGL::kKeyHome;
+            else if (input == "end") key.key = DGL::kKeyEnd;
+            else if (input == "enter") key.key = DGL::kKeyEnter;
+            else if (input.size() == 1) key.key = static_cast<unsigned char> (input.front());
+            else return false;
+            key.press = true;
+            onKeyboard (key);
+            keyReleases.push_back (key.key);
+            return true;
+        }
+
     protected:
         void onImGuiDisplay() override
         {
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()),
                         static_cast<float> (getWindow().getScaleFactor()));
+            for (const auto code : std::exchange (keyReleases, {}))
+            {
+                KeyboardEvent key;
+                key.key = code;
+                onKeyboard (key);
+            }
+            if (releasePending)
+            {
+                releasePending = false;
+                MouseEvent release;
+                release.button = DGL::kMouseButtonLeft;
+                onMouse (release);
+            }
         }
 
         void onDisplay() override
@@ -131,6 +186,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
     private:
         Impl& owner;
+        bool releasePending = false;
+        std::vector<unsigned int> keyReleases;
     };
 
     Impl (std::string className, std::string logTag, std::string displayName)
@@ -338,8 +395,8 @@ DuskPanelWindow::DuskPanelWindow (std::string className, std::string logTag,
     callbacks.checkGraphics = [] (const char*, const char*) { return std::string(); };
     callbacks.widgetReleased = [this]
     {
-        // The fonts and the baked dome live in the atlas the widget owned.
         impl->scenarioWidget = nullptr;
+        // The fonts and the baked dome live in the atlas the widget owned.
         impl->fonts = {};
         impl->knobAtlas = {};
         impl->drag = {};
@@ -419,6 +476,20 @@ bool DuskPanelWindow::isOpen() const noexcept
     return impl->host.isOpen();
 }
 
+bool DuskPanelWindow::clickControlForScenario (const std::string& control)
+{
+    ImVec2 point;
+    if (! isOpen() || impl->view == nullptr || impl->scenarioWidget == nullptr
+        || ! impl->view->controlPointForScenario (control, point)) return false;
+    if (auto* window = impl->host.window()) window->focus();
+    impl->scenarioWidget->clickForScenario (point);
+    return true;
+}
+bool DuskPanelWindow::inputForScenario (const std::string& input)
+{
+    if (! isOpen() || impl->scenarioWidget == nullptr) return false;
+    return impl->scenarioWidget->inputForScenario (input);
+}
 bool DuskPanelWindow::pointerControlForScenario (const std::string& control, float position, bool pressed)
 {
     ImVec2 point;

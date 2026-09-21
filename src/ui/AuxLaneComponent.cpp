@@ -166,8 +166,12 @@ class AuxLaneComponent::SendSourcePanel final : public juce::Component
 public:
     SendSourcePanel (Session& s, int laneIdx) : session (s), laneIndex (laneIdx) {}
 
+    bool captureRows = false;
+    std::vector<std::string> paintedRows;
+
     void paint (juce::Graphics& g) override
     {
+        if (captureRows) paintedRows.clear();
         auto bounds = getLocalBounds().toFloat();
         g.setColour (juce::Colour (0xff141418));
         g.fillRoundedRectangle (bounds, 4.0f);
@@ -228,6 +232,9 @@ public:
 
             // Meter bar between name and dB.
             auto meterArea = row.reduced (2, 3);
+            if (captureRows && getLocalBounds().contains (dbArea))
+                paintedRows.push_back (number + "\t" + displayName + "\t" + dbText
+                                       + (meterArea.isEmpty() ? "\tno meter" : "\tmeter"));
             if (! meterArea.isEmpty())
             {
                 g.setColour (juce::Colour (0xff181820));
@@ -249,6 +256,20 @@ private:
     Session& session;
     int laneIndex;
 };
+
+bool AuxLaneComponent::captureSourcesForScenario (bool enabled)
+{
+    if (sendPanel == nullptr) return false;
+    sendPanel->captureRows = enabled;
+    sendPanel->paintedRows.clear();
+    sendPanel->repaint();
+    return sendPanel->isShowing();
+}
+
+std::vector<std::string> AuxLaneComponent::sourceRowsForScenario() const
+{
+    return sendPanel != nullptr ? sendPanel->paintedRows : std::vector<std::string>();
+}
 
 AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
                                        AudioEngine& e)

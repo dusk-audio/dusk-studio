@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 46
+# ceiling gap 20
 # ceiling partial 49
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -25,8 +25,8 @@ About this manual > What it deliberately does not have	the fixed limits (24 trac
 
 Quick Guide > Install and first launch	startup dialog offers New with Blank, Band, Beats, Singer-Songwriter	partial	test:every session template has a distinct label;test:applying a template names every track		template contents tested; the dialog's New path is walked by hand
 Quick Guide > Install and first launch	a second launch hands its session to the running window	auto	bb:bb-handoff;test:single-instance handoff preserves quoted Unicode and empty payloads
-Quick Guide > Install and first launch	a switch commits the take in progress and prompts Save / Don't Save / Cancel	gap
-Quick Guide > Install and first launch	a switch is refused while a bounce runs or a prompt is open	gap
+Quick Guide > Install and first launch	a switch commits the take in progress and prompts Save / Don't Save / Cancel	auto	scenario:gui.session_switch_commits_take		actual MIDI take committed before the prompt; all three buttons and saved take state checked
+Quick Guide > Install and first launch	a switch is refused while a bounce runs or a prompt is open	auto	scenario:gui.session_switch_commits_take		second request during save prompt and actual mixdown rejected with exact status messages
 Quick Guide > Install and first launch	startup update check flags a newer release	partial	test:newer comparison is component-wise with semver prerelease rules;test:highestTag picks the max release from GitHub tags JSON		version logic tested; the banner and the network request are not
 Quick Guide > Pick an audio device	Settings > Audio lists backends and applies immediately	n/a			walkthrough; held under Getting started > Configuring audio > Audio
 Quick Guide > Arm a track and check levels	ARM shows live pre-fader input without monitoring	auto	test:Track meter source follows tracking controls without changing mix metering
@@ -46,7 +46,7 @@ Names and Functions of Parts > The main window	Cmd/Ctrl+1..4 switch stages; plai
 Names and Functions of Parts > The transport bar	transport callouts (stop, rewind, play, forward, record, loop, punch, keyboard, notepad, click, count-in, BPM, TAP, meter, clock, tuner, zoom)	n/a			figure; each control is held under The interface > The transport bar
 Names and Functions of Parts > The channel strip — MIXING stage	mixing-stage callouts	n/a			figure; each control is held under The channel strip
 Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	moving one member moves every member by the same dB	auto	test:setTrackFaderGrouped shifts group peers by the same dB delta
-Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	the lowest track is the group master; chips G1..G8	gap
+Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	the lowest track is the group master; chips G1..G8	auto	scenario:gui.fader_group_chips		all eight labels, rendered filled/outlined chips and lowest-member promotion verified
 Names and Functions of Parts > The channel strip — MIXING stage > Fader groups	group membership is saved with the session	auto	test:SessionSerializer round-trips markers, bindings and fader groups		groups span all three banks; group 8 and leaving a group survive save/load
 Names and Functions of Parts > The channel strip — RECORDING stage	recording-stage callouts	n/a			figure; each control is held under The channel strip > Input block and ARM, IN, PRINT/FREEZE
 Names and Functions of Parts > The bus strip	bus strip callouts	n/a			figure; each control is held under The bus strips
@@ -76,16 +76,16 @@ Getting started > Configuring audio > Audio	device choice applies immediately an
 Getting started > Configuring audio > Audio	a session switches the device to its own sample rate, and warns if it cannot	partial	test:SessionSerializer round-trips the session sample rate		the rate is saved; the switch and the warning are not tested
 Getting started > Configuring audio > Audio	extra output pairs become selectable as aux outputs	auto	test:output pair encode/decode round-trips;test:tapStereoPairInto accumulates onto the routed pair
 Getting started > Configuring audio > Audio	main output pair selects where the master goes	auto	scenario:master.output_pair		four output callback buffers prove default 1-2, selected 3-4, reversed 4-3 and return to default; unselected outputs stay silent
-Getting started > Configuring audio > Audio	Rescan devices re-enumerates backends and MIDI ports	gap
+Getting started > Configuring audio > Audio	Rescan devices re-enumerates backends and MIDI ports	auto	test:DeviceManager rescans every registered audio backend;scenario:gui.settings_rescan_devices
 Getting started > Configuring audio > Audio	first launch picks an input alongside the output	auto	test:The capture device matching the output is preferred;test:No capture devices means the input stays unset;test:With no matching name the first capture device is taken
 Getting started > Configuring audio > Control surface	MCU input and output enable faders and LED mirroring	auto	test:McuController: initial resync emits faders + LED state for 8 banked strips;test:SessionSerializer round-trips MCU input/output identifiers + assign mode
-Getting started > Configuring audio > MIDI bindings	button opens the MIDI Bindings panel	gap
+Getting started > Configuring audio > MIDI bindings	button opens the MIDI Bindings panel	auto	scenario:gui.settings_midi_bindings
 Getting started > Configuring audio > MIDI sync	the seven sync settings are saved with the session	auto	test:SessionSerializer round-trips the MTC sync settings;test:SessionSerializer round-trips the clock sync settings
-Getting started > Configuring audio > General	UI scale previews live and saves per machine	gap
-Getting started > Configuring audio > General	Expand tape strip and Follow playhead defaults	gap
+Getting started > Configuring audio > General	UI scale previews live and saves per machine	auto	scenario:gui.settings_ui_scale
+Getting started > Configuring audio > General	Expand tape strip and Follow playhead defaults	auto	scenario:gui.settings_defaults;script:tests/gui_settings_defaults.sh
 Getting started > Configuring audio > General	Playhead on Stop choices	auto	test:Stop on a rolling transport follows the Playhead on Stop setting;test:Stop pressed while stopped returns to zero whatever the setting;test:The persisted Playhead on Stop values keep their meaning;test:A saved stop behaviour keeps its meaning
 Getting started > Configuring audio > General	MIDI soft takeover keeps a control dormant until it crosses the value	auto	test:FaderBindingMap: apply and pickup inverse agree (soft-takeover symmetry)
-Getting started > Configuring audio > General	autosave cadence 15 s to 5 min	gap
+Getting started > Configuring audio > General	autosave cadence 15 s to 5 min	auto	scenario:gui.settings_autosave_cadence
 Getting started > Configuring audio > General	scan plugins on startup	gap
 Getting started > Configuring audio > Advanced	effect oversampling 1x/2x/4x drives every EQ and comp but not the tape	partial	test:TapeMachineDSP ignores the oversampling choice;test:BusStrip: comp-off EQ response is independent of OS factor		tape and bus behaviour tested; the channel and master fan-out is not
 Getting started > Configuring audio > Advanced	oversampling latency is compensated: bus-routed and direct tracks stay aligned, bounces trim it	auto	scenario:mix.bus_routed_lands_with_direct;scenario:bounce.renders_land_on_the_timeline;scenario:bounce.export_master_in_place
@@ -97,7 +97,7 @@ The interface > Window layout	bank selector pages the console by what fits; Eigh
 The interface > Window layout	surface bank and screen page stay in step	auto	test:Bank mapping: screen page resolves to the bank holding its first track;test:Bank mapping: hardware bank resolves to the page showing its first track;test:Console bank state: surface Bank Left and Right map at stride three
 The interface > Window layout	modals centre over a dimmed backdrop; Esc or outside click dismisses	partial	test:EmbeddedModal::close: drain destroys the body exactly once		modal teardown tested; Esc and outside-click dismissal are not
 The interface > Window layout	DSP readout shows load and dropout counters; double-click resets them	gap
-The interface > The four stages	switching among Recording, Mixing and Aux keeps audio flowing	gap
+The interface > The four stages	switching among Recording, Mixing and Aux keeps audio flowing	auto	scenario:gui.stage_audio_flow		actual stage buttons preserve playback progress and audible strip level without engine overruns
 The interface > The four stages	Settings > Quickstart opens the shipped quickstart, or greys out when absent	partial	ctest:install-linux;ctest:package-contents-checker		the file is shipped and located; the menu opening it is walked by hand (#623)
 The interface > The four stages	Cmd/Ctrl+1..4 change stage, plain digits change page, ? opens shortcuts	auto	test:Bank mapping: plain digits select exactly pages one through eight;scenario:gui.mastering_transport
 The interface > The four stages	entering or leaving MASTERING stops the transport; changing stage saves and closes the notepad	gap
@@ -131,11 +131,11 @@ The interface > The notepad	closes and saves for an alert or stage switch; waits
 
 The channel strip	fixed signal order: phase, insert, HPF, EQ, LPF, comp, pan, fader, routing	partial	scenario:engine.pipeline_selftest		pass-through, routing and comp are asserted; the order of every stage is not
 The channel strip	mute, solo and IN gate everything the track sends	auto	scenario:engine.pipeline_selftest;test:MIDI strips with no instrument skip the chain
-The channel strip	split buttons: status light bypasses, label opens the editor, right-click for the menu	gap
+The channel strip	split buttons: status light bypasses, label opens the editor, right-click for the menu	auto	scenario:gui.split_module_buttons
 The channel strip	compact AUX bypass mutes all four sends and restores their levels	partial	scenario:strip.sends_pre_post_and_bypass		the bypass and the restored levels are tested; the compact button itself is UI
 The channel strip > Track name and colour	click renames; right-click for the 12-hue palette	partial	test:track context-menu rename opens after modal focus restoration		rename path tested; the palette and region colouring are not
 The channel strip > Input block (RECORDING stage)	Mono, Stereo and MIDI modes; In N (follow) default	auto	test:A stereo track's right input follows wherever the left one resolves;test:A stereo track needs both of its inputs on the device
-The channel strip > Input block (RECORDING stage)	MIDI port, channel filter and MIDI out	gap
+The channel strip > Input block (RECORDING stage)	MIDI port, channel filter and MIDI out	auto	scenario:gui.midi_io_selectors
 The channel strip > Input block (RECORDING stage)	activity LED blinks when MIDI arrives	auto	scenario:gui.midi_activity_led		virtual keyboard traffic lights the actual LED only on the selected channel; it goes dark after traffic stops
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	ARM refuses with no input device and says so	auto	test:An audio track cannot arm while the device offers no inputs;test:An audio track arms once the device reports capture channels;test:Arming is allowed before a device has reported its capture width
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	losing the inputs disarms audio tracks and spares MIDI	auto	test:Losing the capture channels disarms the audio tracks and spares MIDI;test:A narrower device disarms only the tracks it cannot feed
@@ -144,9 +144,9 @@ The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	the refusal names th
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	IN monitors the live input through the strip	auto	scenario:engine.pipeline_selftest
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	PRINT commits EQ, comp and insert to the recorded file	auto	scenario:strip.print_commits_the_strip		recorded WAV measurements cover channel HPF, compressor and Utility insert gain
 The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	FREEZE renders the track, bypasses its DSP, locks it, and is saved	auto	test:SessionSerializer round-trips track freeze state;test:A frozen track still refuses to arm with inputs available;scenario:region.frozen_track_refuses_edits;scenario:strip.freeze_renders_and_bypasses
-The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	a frozen track still takes a hardware insert	gap
+The channel strip > ARM, IN, PRINT/FREEZE (RECORDING stage)	a frozen track still takes a hardware insert	auto	scenario:strip.frozen_hardware_insert		baked WAV reaches both sends; stereo return and bypass verified through the audio callback
 The channel strip > Insert slot	one plugin or hardware insert with a 20 ms equal-power crossfade	auto	test:Crossfade: equal-power overlap holds constant power across window;test:Crossfade: at-boundary samples produce unity for both shapes
-The channel strip > Insert slot	right-click Add / Replace / Remove / Edit / hardware	gap
+The channel strip > Insert slot	right-click Add / Replace / Remove / Edit / hardware	auto	scenario:gui.insert_context_menu
 The channel strip > Insert slot	bypass LED; bypassed insert keeps processing for a click-free return	partial	test:a bypassed built-in slot passes dry audio and reports no latency		built-in bypass tested; the click-free return and plug-in bypass are not
 The channel strip > HPF (high-pass filter)	HPF 20-300 Hz; 20 Hz is effectively off	auto	scenario:strip.filter_ranges
 The channel strip > LPF (low-pass filter)	LPF 3-20 kHz; 20 kHz is effectively off	auto	scenario:strip.filter_ranges
@@ -165,13 +165,13 @@ The channel strip > Aux sends (MIXING stage)	four sends, -60 to +6 dB or OFF, po
 The channel strip > Pan	equal-power with a 3 dB centre dip	auto	test:BusStrip: center pan is unity on both channels (equal-power law);scenario:engine.pipeline_selftest
 The channel strip > Pan	a stereo track pans by balance; hard left silences R	auto	scenario:strip.stereo_pan_is_balance
 The channel strip > Fader	-inf to +12 dB; unity at 0 dB	auto	scenario:engine.pipeline_selftest;test:FaderBindingMap: CC/Note fader binds stay linear -90..+12 dB
-The channel strip > Fader	click the readout to type; right-click for MIDI Learn	gap
+The channel strip > Fader	click the readout to type; right-click for MIDI Learn	auto	scenario:gui.fader_entry_and_learn
 The channel strip > Fader	automation modes OFF / READ / WRITE / TOUCH	auto	test:evaluateLane: continuous interpolation + hold-first/last;scenario:automation.read_plays_the_lanes;scenario:automation.write_splices_its_span;scenario:automation.touch_glides_back;scenario:gui.automation_write_and_touch
 The channel strip > Mute, Solo, Phase	mute silences; solo is additive solo-in-place	auto	scenario:engine.pipeline_selftest
 The channel strip > Mute, Solo, Phase	phase inverts polarity before the insert	partial	scenario:strip.phase_inverts		the polarity flip is tested; that it comes before the insert is not
 The channel strip > Bus assigns	assigning a bus removes the direct master send	auto	scenario:engine.pipeline_selftest
 The channel strip > Meters	pre-fader input while armed or IN, otherwise post-fader	auto	test:Track meter source follows tracking controls without changing mix metering
-The channel strip > Meters	clip bar holds for one second	gap
+The channel strip > Meters	clip bar holds for one second	auto	scenario:gui.meter_clip_hold
 
 The bus strips	each bus has an automation mode for fader, pan and mute	auto	scenario:automation.read_plays_the_lanes;scenario:gui.automation_write_and_touch
 The bus strips > Signal flow	EQ, comp, pan, fader, then master; mute and solo gate the sum	auto	test:BusStrip: unity fader + center pan + flat EQ + comp off ~= passthrough;test:BusStrip: -6 dB fader halves the signal;scenario:engine.pipeline_selftest
@@ -196,10 +196,10 @@ Aux lanes > Aux lane layout > Return strip (left column)	rename, mute, return fa
 Aux lanes > Aux lane layout > Return strip (left column)	Output sends the lane to a hardware pair tapped before fader and mute	auto	test:tapStereoPairInto accumulates onto the routed pair;test:output pair encode/decode round-trips
 Aux lanes > Aux lane layout > Plugin chain (centre column)	one insert with a 20 ms crossfade; built-in controls fill the lane	auto	test:Crossfade: equal-power overlap holds constant power across window;test:the aux lane view gives every shown parameter one control inside the lane;test:the aux lane view's knobs stay full size down to the smallest window
 Aux lanes > Aux lane layout > Plugin chain (centre column)	an editor attach failure logs without a dialog	auto	scenario:gui.aux_attach_failure_no_modal;test:aux lane editor attach never raises a modal
-Aux lanes > Aux lane layout > Sources panel (right column)	lists every channel sending to the lane with its level	gap
+Aux lanes > Aux lane layout > Sources panel (right column)	lists every channel sending to the lane with its level	auto	scenario:gui.aux_sources
 
 The mastering stage	separate path; entering or leaving stops the transport	auto	scenario:gui.mastering_transport		stage keys stop the playing source on either side of Mastering; Mastering playback leaves multitrack stopped
-The mastering stage > Loading a mix	Load mix and Load latest mixdown	gap
+The mastering stage > Loading a mix	Load mix and Load latest mixdown	auto	scenario:gui.mastering_load
 The mastering stage > Loading a mix	a source at another rate plays at the right speed	auto	test:MasteringPlayer resamples a source whose rate differs from the device
 The mastering stage > Transport	play, stop, rewind; Space drives the mastering player	auto	scenario:gui.mastering_transport		loads a WAV, clicks Play/Stop/Rewind and dispatches Space; the mastering playhead moves while the multitrack transport stays stopped
 The mastering stage > Waveform	click to seek	auto	scenario:gui.mastering_transport		peer clicks at quarter and three-quarter waveform positions seek the loaded mix without starting playback
@@ -210,13 +210,13 @@ The mastering stage > Mastering chain > Multiband compressor	nine genre presets 
 The mastering stage > Mastering chain > Brickwall limiter	true-peak ceiling, threshold, program-dependent release, lookahead, modes, stereo link	auto	test:BrickwallLimiter: controls inter-sample (true) peaks;test:BrickwallLimiter: sample peaks above ceiling are clamped;test:BrickwallLimiter: release is program-dependent (deep GR recovers slower);test:BrickwallLimiter: lookahead is adjustable and holds the ceiling across its range;test:BrickwallLimiter: every mode holds the ceiling;test:BrickwallLimiter: stereo-link off limits channels independently;test:MasteringChain: hot input stays finite and at/below the ceiling
 The mastering stage > Loudness metering	momentary, short-term, integrated LUFS and true peak per BS.1770	auto	test:LoudnessMeter K-weighting matches the JUCE-designed filters;test:LoudnessMeter integrated equals momentary on a uniform program;test:LoudnessMeter relative gate excludes quiet material;test:LoudnessMeter true peak tracks a hot signal;test:LoudnessMeter gating is exact for windows sitting on the threshold
 The mastering stage > Loudness metering	Reset integrated; silence does not consume the hour	auto	test:LoudnessMeter requestReset zeroes readings and drops the history;test:LoudnessMeter silence does not consume integrated capacity
-The mastering stage > Loudness metering	platform presets colour-code the readings	gap
+The mastering stage > Loudness metering	platform presets colour-code the readings	auto	scenario:gui.mastering_targets
 The mastering stage > Exporting the master	WAV 24-bit, WAV 16-bit 44.1 kHz dithered, MP3 320; cancellable	partial	test:LameMp3Writer emits a valid 48k/320k MP3 carrying the signal;scenario:bounce.export_master_post_limiter;scenario:bounce.cancel_leaves_no_file		the 16-bit 44.1 kHz export and cancel (on the shared render loop) are tested; the 24-bit and MP3 presets and the dither's noise shape are not
 
 Recording	five-step workflow	n/a			walkthrough; each step is held in the sections below
 Recording > Setting the input	follow-track default; stereo picks two inputs; MIDI port and channel	auto	test:A stereo track's right input follows wherever the left one resolves;test:Seam resolves saved identifiers back to bank indices
 Recording > Setting the input > MIDI hot-plug	Linux adds a new port by itself and reattaches saved ports	auto	test:ALSA seq backend reports a port appearing and disappearing;test:ALSA seq backend migrates a legacy address identifier
-Recording > Setting the input > MIDI hot-plug	the port list only rebuilds while stopped	gap
+Recording > Setting the input > MIDI hot-plug	the port list only rebuilds while stopped	auto	scenario:midi.hotplug_waits_for_stop		Linux ALSA virtual ports arrive during playback and recording; enumeration waits for Stop
 Recording > Arming a track	Record refuses until a track is armed and explains why	auto	scenario:gui.record_requires_armed_track		R leaves the stopped playhead and all regions unchanged, shows the unarmed-track alert and dismisses with OK
 Recording > Monitor mode	IN monitors through EQ, comp and insert	auto	scenario:engine.pipeline_selftest
 Recording > Print mode	PRINT records the processed signal; off records dry	auto	scenario:strip.print_commits_the_strip		actual recorded WAVs remain dry with PRINT off and carry channel processing and two Utility insert gain settings with PRINT on
@@ -277,9 +277,9 @@ The piano roll > Selecting and moving	click, Shift-click, Cmd-click, drag, resiz
 The piano roll > Transposing and nudging	arrows transpose a semitone and nudge a grid step	auto	scenario:gui.piano_roll_note_keys		selects two notes in the real editor, dispatches all four arrows, checks exact note fields and reverses each edit with command-Z
 The piano roll > Velocity	velocity bars 1-127; resizable strip	auto	scenario:gui.piano_velocity		peer drags clamp velocity at 1 and 127 without changing neighboring notes; top-edge drags and wheel gestures resize the strip both ways
 The piano roll > CC editing	CC lane: pick a controller, draw and edit events	auto	scenario:gui.piano_cc_editing;scenario:gui.piano_cc
-The piano roll > Quantize and scale	Q quantizes with strength; S picks a scale; L cycles CC; C cycles colour	gap
-The piano roll > Zoom and scroll	zoom, fit and scroll keys	gap
-The piano roll > Step record	notes entered at the cursor; the cursor advances a step	gap
+The piano roll > Quantize and scale	Q quantizes with strength; S picks a scale; L cycles CC; C cycles colour	auto	scenario:gui.piano_options
+The piano roll > Zoom and scroll	zoom keys, fit button and wheel scrolling	auto	scenario:gui.piano_viewport
+The piano roll > Step record	notes enter at the playhead; the next chord advances a snap step	auto	scenario:gui.piano_step_record
 The piano roll > Navigation	Cmd+] and Cmd+[ move between MIDI regions	auto	scenario:gui.piano_roll_navigation		both navigation directions select the expected region and preserve notes
 
 Mixing > A suggested order of operations	mixing advice	n/a			advice
@@ -298,9 +298,9 @@ Plugins > Scanning	scanners find bundles on their search paths	auto	test:ClapSca
 Plugins > Scanning	caches and their fallbacks; stale locations pruned	auto	test:native plugin cache round-trips descriptors and prunes stale locations;test:PluginManager falls back from malformed native JSON without erasing cache;test:PluginManager imports a legacy native XML cache once and prunes stale rows
 Plugins > Scanning	a probe that never finishes is ended after 30 s and quarantined	auto	test:Plugin scan watchdog times out a silent child;test:Plugin scan watchdog cancels a silent child
 Plugins > Scanning	scan plugins on startup reports to the log	gap
-Plugins > Loading a plugin	filter, manufacturer groups, format tags, click to load	gap
+Plugins > Loading a plugin	filter, manufacturer groups, format tags, click to load	auto	scenario:gui.plugin_picker_filter_and_load;script:tests/gui_plugin_picker.sh
 Plugins > Loading a plugin	pickers filter effects from instruments; built-ins pinned at the top	auto	test:built-in picker rows are filtered by slot kind;test:synth unit reaches an instrument picker and not an effect one;test:DAF units with their own editor remain in the built-in picker
-Plugins > Loading a plugin	Browse file loads a plugin by path	gap
+Plugins > Loading a plugin	Browse file loads a plugin by path	auto	scenario:gui.plugin_browse_file
 Plugins > Built-in insert units	built-ins load like plugins, need no scan, and save with the session	auto	test:built-in slot loads a unit without touching disk;test:built-in registry resolves units by id;test:SessionSerializer round-trips a built-in insert on a track and an aux slot
 Plugins > Built-in insert units	built-in state travels with Clone Track	auto	scenario:session.clone_track_keeps_native_state;test:built-in unit state round-trips through the slot
 Plugins > Built-in insert units > Utility	gain, polarity, width, mono; unity at defaults	auto	test:utility unit applies gain, polarity, width and mono sum;test:utility unit at its defaults is unity gain;test:utility unit passes silence through as silence
@@ -330,7 +330,7 @@ Plugins > Plugin state in sessions	identity and state blob saved; a native plugi
 Plugins > Plugin state in sessions	a missing plugin goes offline and its state round-trips	auto	test:PluginSlot failed restore preserves the exact unnormalised reference and state;test:PluginSlot migrates valid legacy XML to a structured offline descriptor
 Plugins > Plugin state in sessions	rejected state leaves the slot offline and names the slot, format and reason	auto	test:native restore rejection unloads the slot and preserves the saved-state reason;test:aux native-state rejection diagnostics identify lane and slot
 Plugins > Multi-sample instruments	SFZ, SF2 and ARIA banks load; overrides for volume, tune, polyphony	auto	test:DuskMultisampleProcessor round-trips overrides through state;test:DuskMultisampleProcessor clamps out-of-range state;test:Sf2ToSfz: converts FluidR3 preset 0 to SFZ + WAVs;test:AriaBank preselects the program that owns the loaded SFZ
-Plugins > Multi-sample instruments	choosing a soundfont on an audio track converts it to MIDI	gap
+Plugins > Multi-sample instruments	choosing a soundfont on an audio track converts it to MIDI	auto	scenario:gui.soundfont_conversion
 Plugins > Multi-sample instruments	SF2 presets sorted program-first, drums last; a bad preset falls back to preset 0	auto	test:SF2 presets sort by program, then bank (variants grouped);test:SF2 sort keeps percussion (bank 128) after melodic;test:DuskMultisampleProcessor: an unplayable saved SF2 preset falls back to preset zero
 Plugins > Multi-sample instruments	a failed load keeps the last good file and preset	auto	test:DuskMultisampleProcessor preserves its persisted path after a failed load;test:DuskMultisampleProcessor: failed loadState leaves the old SF2's preset untouched;test:DuskMultisampleProcessor: failed SFZ browse preserves the retained SF2 preset
 Plugins > Multi-sample instruments > Instrument library	lists installed soundfonts; filter; rescan; added folders remembered	auto	test:SfzLibrary lists only soundfonts;test:SfzLibrary filtering is case-insensitive and clears back to everything;test:Soundfont library roots round-trip;test:SfzLibrary default roots are absolute and distinct
@@ -442,7 +442,7 @@ Messages > Hardware insert	ping results: no input, failed, detected	auto	test:Ha
 Messages > Tempo	tempo alerts	n/a			index; entries are held below
 Messages > Tempo > Confirm tempo change	changing BPM with tempo-locked MIDI asks first; audio and markers stay put	partial	test:applyTempoChange halving BPM doubles locked region positions, leaves float regions;test:applyTempoChange round-trip 120-96-120 returns near-original positions		the retime is tested; the confirmation is not
 Messages > Startup	startup messages	n/a			index; entries are held below
-Messages > Startup > Empty recents	No recent sessions yet	gap
+Messages > Startup > Empty recents	No recent sessions yet	auto	test:empty startup recents paints its message and offers New or Open
 
 Appendix A — Parameter ranges and defaults > Channel strip	every channel parameter within its range and at its default	auto	test:Appendix A: channel defaults and load ranges;test:Appendix A: channel insert defaults to Plugin and routes every mode		Session defaults and load bounds; fresh insert default and dry/plugin/hardware audio routing after mode changes.
 Appendix A — Parameter ranges and defaults > Bus strip	every bus parameter within its range and at its default	auto	test:Appendix A: bus defaults and load ranges		Session defaults, numeric load endpoints/clamps and toggles; ranges describe controls, not quantized DSP timing/ratio.

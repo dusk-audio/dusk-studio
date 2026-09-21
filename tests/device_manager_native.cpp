@@ -143,7 +143,7 @@ public:
           rates (std::move (rateList)), defBuf (defaultBuf) {}
 
     std::string getTypeName() const override { return typeName; }
-    void scanForDevices() override {}
+    void scanForDevices() override { ++scans; }
     std::vector<std::string> getDeviceNames (bool wantInputNames) const override
         { return wantInputNames ? inNames : outNames; }
     int getDefaultDeviceIndex (bool forInput) const override { return forInput ? defIn : defOut; }
@@ -160,6 +160,7 @@ public:
         return d;
     }
 
+    int scans = 0;
     std::string typeName;
     int defOut = 0, defIn = 0;
     std::set<std::string> busy;          // device names whose open() fails
@@ -264,6 +265,24 @@ void pumpUntil (std::function<bool()> ready, int timeoutMs = 1000)
 }
 #endif
 } // namespace
+
+TEST_CASE ("DeviceManager rescans every registered audio backend", "[audio][device]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h;
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+    REQUIRE (dm.initialise (2, 2, "", true).empty());
+    auto* const device = dm.getCurrentDevice();
+    const auto activeScans = h.pw->scans;
+    const auto inactiveScans = h.alsa->scans;
+
+    dm.scanAllDeviceTypes();
+
+    REQUIRE (h.pw->scans == activeScans + 1);
+    REQUIRE (h.alsa->scans == inactiveScans + 1);
+    REQUIRE (dm.getCurrentDevice() == device);
+}
 
 TEST_CASE ("DeviceManager initialise: empty blob opens first type with devices", "[audio][device]")
 {

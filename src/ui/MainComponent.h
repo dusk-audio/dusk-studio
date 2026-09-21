@@ -102,6 +102,7 @@ private:
     // reach the views and the engine without opening either up to the rest of
     // the app; defined there and nowhere else.
     struct ScenarioGuiHost;
+    void restoreUiScaleForScenario (float scale);
     struct ScenarioStripHandle;
     struct ScenarioAuxLaneHandle;
     // Presses a button on the open autosave recovery prompt: 0 Recover,

@@ -181,6 +181,27 @@ public:
         deviceManager.removeChangeListener (this);
     }
 
+    bool controlPointForScenario (const std::string& control, ImVec2& point, float position) const override
+    {
+        if (control == "midi-bindings") point = scenarioMidiBindings;
+        else if (control == "rescan") point = scenarioRescan;
+        else if (control == "autosave") point = scenarioAutosave;
+        else if (control == "tape-default") point = scenarioTape;
+        else if (control == "follow-default") point = scenarioFollow;
+        else if (control == "ui-scale")
+            point = { scenarioScaleFirst.x + (scenarioScaleLast.x - scenarioScaleFirst.x)
+                        * std::clamp (position, 0.0f, 1.0f),
+                      (scenarioScaleFirst.y + scenarioScaleLast.y) * 0.5f };
+        else return false;
+        return point.x > 0.0f;
+    }
+
+    ImVec2 scenarioMidiBindings {};
+    ImVec2 scenarioRescan {};
+    ImVec2 scenarioAutosave {};
+    ImVec2 scenarioTape {}, scenarioFollow {};
+    ImVec2 scenarioScaleFirst {}, scenarioScaleLast {};
+
     ImVec2 preferredSize() const override { return ImVec2 (kPanelW, panelHeight()); }
 
     // Escape belongs to an open dropdown first. Dear ImGui closes that popup while it
@@ -307,6 +328,9 @@ private:
                          "headphone / cue feed).");
             if (buttonAt ("##rescan", top, 140.0f, kRowH, "Rescan devices"))
                 deferred ([this] { applyRescan(); });
+            const auto first = ImGui::GetItemRectMin();
+            const auto last = ImGui::GetItemRectMax();
+            scenarioRescan = { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f };
             formTooltip ("Re-enumerate audio backends, devices and MIDI ports. Use after "
                          "plugging in or removing a USB / Thunderbolt audio interface. On "
                          "Linux, MIDI controllers are picked up on their own once the "
@@ -348,6 +372,9 @@ private:
                                     top + ctx.s (kRowH) - ctx.s (2.0f)),
                             "MIDI Bindings..."))
                 deferred ([this] { if (host.openMidiBindings) host.openMidiBindings(); });
+            const auto first = ImGui::GetItemRectMin();
+            const auto last = ImGui::GetItemRectMax();
+            scenarioMidiBindings = { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f };
             formTooltip ("Open the MIDI Bindings panel: list everything currently mapped, "
                          "remove individual bindings, or clear all. Use right-click on any "
                          "fader / knob / button to add new bindings.");
@@ -422,6 +449,10 @@ private:
             if (toggleAt (top, generalToggleX, "##tape-strip",
                           "Expand tape strip by default", tapeStripExpanded))
                 appconfig::setTapeStripExpandedDefault (tapeStripExpanded);
+            const auto first = ImGui::GetItemRectMin();
+            const auto last = ImGui::GetItemRectMax();
+            scenarioTape = ImGui::IsItemVisible()
+                ? ImVec2 { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f } : ImVec2 {};
             formTooltip ("When on, the TIMELINE tape strip starts expanded on every app "
                          "launch. Saved per-machine; takes effect on next launch.");
         }
@@ -430,6 +461,10 @@ private:
             if (toggleAt (top, generalToggleX, "##follow-playhead",
                           "Follow playhead by default", followPlayhead))
                 appconfig::setFollowPlayheadDefault (followPlayhead);
+            const auto first = ImGui::GetItemRectMin();
+            const auto last = ImGui::GetItemRectMax();
+            scenarioFollow = ImGui::IsItemVisible()
+                ? ImVec2 { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f } : ImVec2 {};
             formTooltip ("When on, the timeline and editors start with Chase engaged, "
                          "scrolling to keep the playhead in view during playback. Saved "
                          "per-machine; takes effect on next launch.");
@@ -477,6 +512,10 @@ private:
             labelled (top, "Autosave every");
             if (staticComboAt (top, "##autosave", kAutosaveItems, 5, autosave, 200.0f))
                 appconfig::setAutosaveIntervalSeconds (kAutosaveSeconds[autosave]);
+            const auto first = ImGui::GetItemRectMin();
+            const auto last = ImGui::GetItemRectMax();
+            scenarioAutosave = ImGui::IsItemVisible()
+                ? ImVec2 { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f } : ImVec2 {};
             formTooltip ("How often the session autosaves for crash recovery. Saved "
                          "per-machine; applies when this panel closes.");
         }
@@ -489,6 +528,8 @@ private:
                 ImVec2 (x + ctx.s (kSliderW) - ctx.s (kControlInset) * 2.0f,
                         top + ctx.s (kRowH) - ctx.s (2.0f)),
                 uiScale, appconfig::kUiScaleMin, appconfig::kUiScaleMax, "%.2fx");
+            scenarioScaleFirst = ImGui::IsItemVisible() ? ImGui::GetItemRectMin() : ImVec2 {};
+            scenarioScaleLast = ImGui::IsItemVisible() ? ImGui::GetItemRectMax() : ImVec2 {};
             formTooltip ("Multiplier applied on top of the OS-reported display DPI. 1.00x "
                          "= follow the OS. Range 0.50x to 2.00x.");
             applyUiScale (moved);
