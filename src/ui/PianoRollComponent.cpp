@@ -3258,17 +3258,18 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         }
     }
     // Arrow-key transpose. Up/Down = ±1 semitone; Shift+Up/Down = ±12.
-    // Acts on every selected note. Left/Right are reserved for future
-    // tick-nudge (Phase 2c quantize work).
+    // Acts on every selected note; Left/Right nudge in ticks below.
+    // Compared by key code so the Shift chords match - KeyPress::operator== (int)
+    // only matches when no modifier is down.
     if (! selectedNotes.empty())
     {
-        if (k == juce::KeyPress::upKey)
+        if (code == juce::KeyPress::upKey)
         {
             transposeSelected (k.getModifiers().isShiftDown() ? 12 : 1);
             repaint();
             return true;
         }
-        if (k == juce::KeyPress::downKey)
+        if (code == juce::KeyPress::downKey)
         {
             transposeSelected (k.getModifiers().isShiftDown() ? -12 : -1);
             repaint();
@@ -3360,7 +3361,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     // off so the keys still do something useful. Shift+arrow nudges
     // by a full beat for coarse positioning.
     if (! selectedNotes.empty()
-        && (k == juce::KeyPress::leftKey || k == juce::KeyPress::rightKey))
+        && (code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey))
     {
         const bool coarse = k.getModifiers().isShiftDown();
         const std::int64_t effSnap = effectiveSnapTicks();
@@ -3368,7 +3369,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             coarse           ? kMidiTicksPerQuarter :
             (effSnap > 0)    ? effSnap :
                                 30;
-        nudgeSelectedTicks (k == juce::KeyPress::leftKey ? -step : step);
+        nudgeSelectedTicks (code == juce::KeyPress::leftKey ? -step : step);
         repaint();
         return true;
     }

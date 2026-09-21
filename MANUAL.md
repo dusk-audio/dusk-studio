@@ -1430,7 +1430,9 @@ In **Draw** mode (**D**), click an empty grid cell to create a note at that pitc
 ## Transposing and nudging
 
 - **↑** / **↓**: transpose ±1 semitone.
+- **Shift+↑** / **Shift+↓**: transpose ±1 octave.
 - **←** / **→**: nudge ±1 grid step.
+- **Shift+←** / **Shift+→**: nudge ±1 beat.
 
 ## Velocity
 
@@ -2195,7 +2197,9 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 | Shortcut                          | Action                                                       |
 | --------------------------------- | ------------------------------------------------------------ |
 | **↑** / **↓**                     | Transpose selected notes ±1 semitone                         |
+| **Shift+↑** / **Shift+↓**         | Transpose selected notes ±1 octave                           |
 | **←** / **→**                     | Nudge selected notes ±1 grid step                            |
+| **Shift+←** / **Shift+→**         | Nudge selected notes ±1 beat                                 |
 | **Q**                             | Quantize popup                                               |
 | **S**                             | Scale picker popup                                           |
 | **V**                             | Velocity popup (set / humanise)                              |
