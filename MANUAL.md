@@ -1253,7 +1253,6 @@ Each region is drawn as a rounded coloured rectangle. Audio regions show a wavef
 - Drag a region body to move it. With **SNAP** on, it snaps to the grid resolution.
 - Drag the left or right edge to trim.
 - Drag the pink fade discs in the top corners to set fade-in / fade-out lengths.
-- Middle-mouse-drag pans the timeline left or right.
 
 ### Splitting
 
@@ -2178,8 +2177,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **−**                 | Zoom out                          |
 | **0**                 | Zoom fit                          |
 | **Cmd+wheel**         | Zoom around cursor |
-| **Shift+wheel**       | Horizontal scroll  |
-| **Middle-mouse drag** | Pan                |
+| **Wheel** / **Shift+wheel** | Scroll rows when they overflow; otherwise scroll horizontally when zoomed in |
 
 ## Region editor
 

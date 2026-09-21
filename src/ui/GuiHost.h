@@ -104,6 +104,9 @@ public:
     virtual bool pianoNotePointer (std::int64_t tick, int pitch, bool down, int modifiers = 0) = 0;
     virtual std::vector<int> pianoSelection() const = 0;
     virtual bool setTimelineShown (bool shown) = 0;
+    virtual std::vector<double> tapeView() const = 0;
+    virtual void restoreTapeView (const std::vector<double>& view) = 0;
+    virtual bool tapeWheel (float fraction, float delta, bool command, bool shift) = 0;
     virtual bool tapeRulerPointer (float fraction, bool down, bool shift = false) = 0;
     virtual std::int64_t tapeRulerSample (float fraction) const = 0;
     virtual bool clickContextMenuItem (const std::string& text) = 0;

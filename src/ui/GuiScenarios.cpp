@@ -71,6 +71,21 @@ void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modi
     Modifiers::currentModifiers = saved;
 }
 
+template <typename Peer, typename Source, typename Point, typename Modifiers, typename... Rest,
+          typename Time, typename Wheel>
+void dispatchMouseWheel (Peer& peer, void (Peer::*mouse) (Source, Point, Modifiers, Rest...),
+                         void (Peer::*wheel) (Source, Point, Time, const Wheel&, int),
+                         float x, float y, float delta, bool command, bool shift, std::int64_t time)
+{
+    const auto point = Point (x, y) * peer.getComponent().getDesktopScaleFactor();
+    const int flags = (command ? Modifiers::commandModifier : 0) | (shift ? Modifiers::shiftModifier : 0);
+    const auto saved = Modifiers::currentModifiers;
+    Modifiers::currentModifiers = Modifiers (flags);
+    (peer.*mouse) (Source::mouse, point, Modifiers (flags), 1.0f, 0.0f, time, {}, 0);
+    (peer.*wheel) (Source::mouse, point, static_cast<Time> (time), Wheel { 0.0f, delta, false, false, false }, 0);
+    Modifiers::currentModifiers = saved;
+}
+
 template <typename Component, typename Files>
 bool dispatchFileDrop (Component& component, void (Component::*handler) (const Files&, int, int),
                        const std::vector<std::filesystem::path>& files, int x, int y)
@@ -374,6 +389,27 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const bool original = owner.tapeStripExpanded;
         owner.setTimelineVisible (shown);
         return original;
+    }
+    std::vector<double> tapeView() const override
+    {
+        if (owner.tapeStrip == nullptr) return {};
+        const auto v = owner.tapeStrip->viewForScenario();
+        return { v[0], v[1], v[2], owner.tapeStripExpanded ? 1.0 : 0.0, v[3] };
+    }
+    void restoreTapeView (const std::vector<double>& view) override
+    { if (owner.tapeStrip != nullptr) owner.tapeStrip->restoreViewForScenario (view); }
+    bool tapeWheel (float fraction, float delta, bool command, bool shift) override
+    {
+        auto* tape = owner.tapeStrip.get();
+        auto* peer = owner.getPeer();
+        if (tape == nullptr || peer == nullptr || ! tape->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (tape, tape->rulerPointForScenario (fraction)).toFloat();
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        dispatchMouseWheel (*peer, &Peer::handleMouseEvent, &Peer::handleMouseWheel,
+                            point.x, point.y, delta, command, shift, time);
+        return true;
     }
     bool tapeRulerPointer (float fraction, bool down, bool shift) override
     {

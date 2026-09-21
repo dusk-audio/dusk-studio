@@ -923,6 +923,112 @@ std::optional<ScenarioResult> runModeShownOnEveryStrip (GuiHost& host, ScenarioC
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runTimelineKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto playhead = engine.getTransport().getPlayhead();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    const auto originalView = host.tapeView();
+    const bool timeline = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore, timeline, playhead, originalView]
+    {
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.setTimelineShown (timeline);
+        host.restoreTapeView (originalView);
+        engine.getTransport().locate (playhead);
+    });
+    for (int i = 0; i < Session::kNumTracks; ++i)
+    {
+        session.track (i).regions.clear();
+        session.track (i).midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+        session.setTrackArmed (i, false);
+    }
+    AudioRegion region;
+    region.lengthInSamples = (std::int64_t) engine.getCurrentSampleRate() * 30;
+    session.track (0).regions.push_back (region);
+    const auto key = [&host, &ctx] (const std::string& description, char text)
+    { ctx.expect (host.pressPeerKey (description, text), "timeline shortcut was not handled"); };
+    const auto fit = std::make_shared<double> (0.0);
+    const auto anchor = std::make_shared<std::int64_t> (0);
+    const auto beforeWheel = std::make_shared<std::vector<double>>();
+    const auto view = [&host] { return host.tapeView(); };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [key] { key ("0", '0'); } });
+    steps->push_back ({ 100, [view, fit, key] { *fit = view()[0]; key ("=", '='); } });
+    steps->push_back ({ 100, [&ctx, view, fit, key]
+    { ctx.expect (std::abs (view()[0] - *fit * 1.15) < 0.0001, "equals did not zoom in"); key ("=", '+'); } });
+    steps->push_back ({ 100, [&ctx, view, fit, key]
+    { ctx.expect (std::abs (view()[0] - *fit * 1.15 * 1.15) < 0.0001, "plus did not zoom in"); key ("-", '-'); } });
+    steps->push_back ({ 100, [&ctx, view, fit, &host, anchor]
+    {
+        ctx.expect (std::abs (view()[0] - *fit * 1.15) < 0.0001, "minus did not zoom out");
+        *anchor = host.tapeRulerSample (0.6f);
+        ctx.expect (host.tapeWheel (0.6f, 1.0f, true, false), "command wheel unavailable");
+    } });
+    steps->push_back ({ 100, [&ctx, view, fit, &host, anchor, beforeWheel]
+    {
+        ctx.expect (std::abs (view()[0] - *fit * 1.15 * 1.15) < 0.0001, "command wheel did not zoom");
+        ctx.expect (std::abs (host.tapeRulerSample (0.6f) - *anchor) <= 2, "wheel zoom moved the cursor's sample");
+        *beforeWheel = view();
+        ctx.expect (host.tapeWheel (0.6f, -1.0f, false, true), "shift wheel unavailable");
+    } });
+    steps->push_back ({ 100, [&ctx, &host, view, beforeWheel]
+    {
+        ctx.expect (view()[1] > (*beforeWheel)[1] && std::abs (view()[0] - (*beforeWheel)[0]) < 0.0001,
+                    "shift wheel did not scroll the zoomed timeline horizontally");
+        *beforeWheel = view();
+        ctx.expect (host.tapeWheel (0.6f, -1.0f, false, false), "plain wheel unavailable");
+    } });
+    steps->push_back ({ 100, [&ctx, view, beforeWheel, key]
+    {
+        ctx.expect (view()[1] > (*beforeWheel)[1], "plain wheel did not scroll horizontally");
+        key ("0", '0');
+    } });
+    steps->push_back ({ 100, [&ctx, view, fit, key]
+    {
+        ctx.expect (std::abs (view()[0] - *fit) < 0.0001 && std::abs (view()[1]) < 0.5, "fit did not reset zoom and scroll");
+        key ("T", 't');
+    } });
+    steps->push_back ({ 100, [&ctx, view, key]
+    { ctx.expect (view()[3] < 0.5, "T did not hide timeline"); key ("T", 't'); } });
+    steps->push_back ({ 100, [&ctx, view]
+    { ctx.expect (view()[3] > 0.5, "T did not restore timeline"); } });
+    steps->push_back ({ 100, [&session]
+    { for (int i = 0; i < Session::kNumTracks; ++i) session.setTrackArmed (i, true); } });
+    steps->push_back ({ 300, [&host, &ctx, view, beforeWheel]
+    {
+        for (int i = 0; i < 8; ++i) host.tapeWheel (0.6f, 1.0f, true, true);
+        *beforeWheel = view();
+        ctx.expect (host.tapeWheel (0.6f, -1.0f, false, false), "overflow wheel unavailable");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, view, beforeWheel]
+    {
+        ctx.expect (view()[2] > (*beforeWheel)[2] && std::abs (view()[1] - (*beforeWheel)[1]) < 0.5,
+                    "plain wheel did not scroll overflowing rows vertically");
+        *beforeWheel = view();
+        ctx.expect (host.tapeWheel (0.6f, 1.0f, false, true), "overflow shift wheel unavailable");
+    } });
+    steps->push_back ({ 100, [&ctx, view, beforeWheel]
+    {
+        ctx.expect (view()[2] < (*beforeWheel)[2] && std::abs (view()[1] - (*beforeWheel)[1]) < 0.5,
+                    "shift wheel did not scroll overflowing rows vertically");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar timelineKeys { Scenario {
+    "gui.timeline_keys", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTimelineKeys (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runFileKeys (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
