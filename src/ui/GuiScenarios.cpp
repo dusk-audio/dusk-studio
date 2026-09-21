@@ -853,9 +853,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
 
     bool faderEditing (int index) const override
-    { return owner.consoleView->getStripComponent (index)->faderEditingForScenario(); }
+    {
+        auto* strip = owner.consoleView->getStripComponent (index);
+        return strip != nullptr && strip->faderEditingForScenario();
+    }
     double faderValue (int index) const override
-    { return owner.consoleView->getStripComponent (index)->faderValueForScenario(); }
+    {
+        auto* strip = owner.consoleView->getStripComponent (index);
+        return strip != nullptr ? strip->faderValueForScenario() : 0.0;
+    }
 
     bool virtualKeyboardOpen() const override
     {
@@ -1056,19 +1062,33 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 
     bool openMidiIo (int index) override
-    { return owner.consoleView->getStripComponent (index)->openIoConfigPopupForCapture ((int) Track::Mode::Midi) != nullptr; }
+    {
+        auto* strip = owner.consoleView->getStripComponent (index);
+        return strip != nullptr
+            && strip->openIoConfigPopupForCapture ((int) Track::Mode::Midi) != nullptr;
+    }
     bool clickMidiSelector (int index, int kind) override
     {
-        auto* combo = owner.consoleView->getStripComponent (index)->midiSelectorForScenario (kind);
-        if (! combo->isShowing()) return false;
+        auto* strip = owner.consoleView->getStripComponent (index);
+        if (strip == nullptr) return false;
+        auto* combo = strip->midiSelectorForScenario (kind);
+        if (combo == nullptr || ! combo->isShowing()) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (combo, combo->getLocalBounds().getCentre()).toFloat();
         return clickAt (point.x, point.y, 1);
     }
     std::string midiSelectorText (int index, int kind) const override
-    { return owner.consoleView->getStripComponent (index)->midiSelectorForScenario (kind)->getText().toStdString(); }
+    {
+        auto* strip = owner.consoleView->getStripComponent (index);
+        if (strip == nullptr) return {};
+        auto* combo = strip->midiSelectorForScenario (kind);
+        return combo != nullptr ? combo->getText().toStdString() : std::string {};
+    }
 
     bool meterClip (int index) override
-    { return owner.consoleView->getStripComponent (index)->meterClipForScenario(); }
+    {
+        auto* strip = owner.consoleView->getStripComponent (index);
+        return strip != nullptr && strip->meterClipForScenario();
+    }
 
     bool groupChipView (int index, std::string& text, int& master, bool& filled) override
     {

@@ -264,7 +264,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 | #   | Name              | Description                                                                                 |
 | --- | ----------------- | ------------------------------------------------------------------------------------------- |
-| 1   | File picker       | Load any stereo WAV; **Load latest mixdown** loads `mixdown.wav` from the session folder, or `bounce.wav` if there is none. |
+| 1   | File picker       | Load a stereo WAV, AIFF, or FLAC; **Load latest mixdown** loads `mixdown.wav` from the session folder, or `bounce.wav` if there is none. |
 | 2   | Transport         | Play / stop / loop on the loaded file. Recording is disabled in this stage.                 |
 | 3   | Waveform          | Stereo overview with the playhead.                                                          |
 | 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±12 dB per band.                                          |
