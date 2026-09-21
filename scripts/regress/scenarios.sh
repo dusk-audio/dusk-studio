@@ -608,12 +608,11 @@ bb_startup_scan_body() {
     bb_wait_exit off 90 || return 1
     bb_assert_absent off "[Dusk Studio] startup plugin scan: showing progress modal" || return 1
 
-    # Both roots: the config dir follows XDG_CONFIG_HOME, and a host that
-    # exports none of it falls back to $HOME/.config.
-    for dir in "$BB_SDIR/config/Dusk Studio" "$BB_SDIR/home/.config/Dusk Studio"; do
-        mkdir -p "$dir" || return 1
-        printf 'scan_plugins_on_startup=1\n' > "$dir/app-config.properties" || return 1
-    done
+    # userConfigDir() resolves $HOME/.config and never reads XDG_CONFIG_HOME
+    # (see the top of this file), so this is the one root the app consults.
+    dir="$BB_SDIR/home/.config/Dusk Studio"
+    mkdir -p "$dir" || return 1
+    printf 'scan_plugins_on_startup=1\n' > "$dir/app-config.properties" || return 1
 
     # No quit timer: the scan takes as long as this machine's collection needs,
     # and bb_end ends the process once the report has been printed.

@@ -6897,6 +6897,7 @@ std::optional<ScenarioResult> runVirtualKeyboardKeys (GuiHost& host, ScenarioCon
     transport.setPlayhead (0);
     transport.setLoopEnabled (false);
     transport.setPunchEnabled (false);
+    keepStage (host, ctx);
     host.switchToStage (GuiHost::Stage::Recording);
 
     const auto rate = engine.getCurrentSampleRate();

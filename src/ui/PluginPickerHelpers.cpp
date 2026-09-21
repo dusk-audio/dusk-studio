@@ -50,7 +50,8 @@ class DuskAlertPanel final : public juce::Component
 {
 public:
     DuskAlertPanel (juce::String title, juce::String message)
-        : titleStr (std::move (title)), messageStr (std::move (message))
+        : titleStr (std::move (title)),
+          messageStr (message.isEmpty() ? juce::String ("Unknown error") : std::move (message))
     {
         // The panel paints its own title and body, so without these a screen
         // reader - and anything else reading the component tree - finds an
@@ -86,9 +87,7 @@ public:
         // Reserve the bottom strip for the OK button; everything above
         // is message body. drawFittedText wraps at the body width.
         auto body = r.withTrimmedBottom (kButtonStripH + 8);
-        g.drawFittedText (messageStr.isEmpty() ? juce::String ("Unknown error")
-                                                  : messageStr,
-                            body, juce::Justification::topLeft, 6);
+        g.drawFittedText (messageStr, body, juce::Justification::topLeft, 6);
     }
 
     void resized() override
