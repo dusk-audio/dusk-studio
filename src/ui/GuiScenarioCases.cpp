@@ -2882,9 +2882,14 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
     } });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll a second time"); } });
-    steps->push_back ({ 400, [&host, &ctx]
-    { ctx.expect (! host.virtualKeyboardOpen(), "K did not close the virtual keyboard"); } });
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    // The panel's close is deferred, so the verdict waits for it rather than
+    // sampling after a fixed delay.
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.virtualKeyboardOpen(); }, 3000,
+                       [&ctx] { ctx.complete (ctx.verdict()); },
+                       "K did not close the virtual keyboard");
+    });
     return std::nullopt;
    #endif
 }
@@ -3433,9 +3438,12 @@ std::optional<ScenarioResult> runSettingsDefaults (GuiHost& host, ScenarioContex
             host.closeAudioSettings();
         } });
     }
-    steps->push_back ({ 150, [&host, &ctx]
-    { ctx.expect (! host.audioSettingsOpen(), "audio settings did not finish closing"); } });
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.audioSettingsOpen(); }, 3000,
+                       [&ctx] { ctx.complete (ctx.verdict()); },
+                       "audio settings did not finish closing");
+    });
     return std::nullopt;
    #endif
 }
@@ -3581,9 +3589,12 @@ std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContex
                     "the last autosave option did not select 5 minutes");
         host.closeAudioSettings();
     } });
-    steps->push_back ({ 150, [&host, &ctx]
-    { ctx.expect (! host.audioSettingsOpen(), "audio settings did not finish closing"); } });
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.audioSettingsOpen(); }, 3000,
+                       [&ctx] { ctx.complete (ctx.verdict()); },
+                       "audio settings did not finish closing");
+    });
     return std::nullopt;
    #endif
 }
