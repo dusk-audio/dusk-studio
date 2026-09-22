@@ -744,6 +744,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/clap_choke_on_stop_loop_jump.cpp
     src/engine/scenario/cases/clap_state_roundtrip.cpp
     src/engine/scenario/cases/clone_track_keeps_native_state.cpp
+    src/engine/scenario/cases/device_loss.cpp
     src/engine/scenario/cases/engine_muted_midi_track_skips_chain.cpp
     src/engine/scenario/cases/import_smf_irregular.cpp
     src/engine/scenario/cases/lv2_file_state_inside_session.cpp

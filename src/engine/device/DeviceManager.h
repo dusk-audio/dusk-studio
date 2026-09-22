@@ -110,6 +110,12 @@ public:
     // its own juce backends and the native mock suite is Linux-only).
     void setDeviceTypesForTest (std::vector<std::unique_ptr<IODeviceType>> types);
 
+    // Test seam: drop the deliberate-change latch as a device coming up would.
+    // A headless run holds no hardware, so the latch an explicit closeDevice
+    // leaves set has nothing to clear it, and every consumer that consults it -
+    // the hot-unplug detector above all - is unreachable without this.
+    void clearDeviceChangePendingForTest() noexcept;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

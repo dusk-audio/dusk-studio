@@ -6,7 +6,7 @@ src/dsp/ChannelStrip.cpp	22
 src/dsp/ChannelStrip.h	29
 src/dsp/MasteringChain.h	4
 src/engine/AudioEngine.cpp	84
-src/engine/AudioEngine.h	15
+src/engine/AudioEngine.h	14
 src/engine/AudioPipelineSelfTest.cpp	22
 src/engine/BounceEngine.cpp	44
 src/engine/BounceEngine.h	18
@@ -109,7 +109,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	457
+src/ui/MainComponent.cpp	456
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	330
 src/ui/MasterStripComponent.h	57
@@ -132,7 +132,7 @@ src/ui/PluginPickerHelpers.cpp	135
 src/ui/PluginPickerHelpers.h	23
 src/ui/PluginPickerPanel.cpp	70
 src/ui/PluginPickerPanel.h	13
-src/ui/PluginScanModal.cpp	33
+src/ui/PluginScanModal.cpp	32
 src/ui/PluginScanModal.h	11
 src/ui/ScreenshotCapture.cpp	40
 src/ui/SectionPillButton.h	7

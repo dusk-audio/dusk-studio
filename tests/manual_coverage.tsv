@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 3
+# ceiling gap 2
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -407,7 +407,7 @@ Troubleshooting > Pops, clicks, or glitches	advice on buffers, periods and overs
 Troubleshooting > "Ping failed - check level / cables."	a silent or uncorrelated return reports Ping failed	auto	test:HardwareInsertSlot: ping with silent return reports -1
 Troubleshooting > Session won't open	a damaged session.json does not take the app down	auto	test:SessionSerializer::load survives truncated JSON;test:SessionSerializer::load survives empty / non-JSON garbage;bb:bb-damaged-recent
 Troubleshooting > Missing audio files	moved files are reported; relative paths survive a move	auto	test:unresolvable region path is reported as missing;test:same missing file referenced twice is reported once;test:stale absolute region path re-roots to the session's audio dir
-Troubleshooting > Audio device disconnected mid-session	losing the device stops the transport, commits the take and shows a banner	gap
+Troubleshooting > Audio device disconnected mid-session	losing the device stops the transport, commits the take and shows a banner	auto	scenario:device.loss_stops_and_commits		a take interrupted by the device stopping, then the banner verbatim
 Troubleshooting > Audio device disconnected mid-session	reconnecting re-prepares at the new rate and block size	gap
 Troubleshooting > Audio device in use, or won't open at startup	a busy device falls back and says which; saved setup untouched	auto	test:DeviceManager initialise: busy saved device falls back but keeps saved intent;test:startupDeviceMessage: fell back to a different device -> names both;test:startupDeviceMessage: same endpoint on a different backend alerts;test:backendFallbackNotice: a fallback names both backends
 Troubleshooting > Audio device in use, or won't open at startup	nothing opens: a clear warning; recording and plugin loading refused	partial	test:startupDeviceMessage: nothing opened -> silent-session warning		the warning is tested; refusing recording and plugin loads is not

@@ -596,7 +596,7 @@ public:
     //
     // Set at startup (MainComponent), nullable. Message-thread-only;
     // engine never invokes from the audio thread.
-    using DeviceLostAlertSink = std::function<void (juce::String)>;
+    using DeviceLostAlertSink = std::function<void (std::string)>;
     void setDeviceLostAlertSink (DeviceLostAlertSink sink) noexcept
     {
         onDeviceLostAlert_ = std::move (sink);

@@ -611,4 +611,9 @@ void DeviceManager::setDeviceTypesForTest (std::vector<std::unique_ptr<IODeviceT
     impl->types = std::move (types);
     impl->backendsRegistered = true;
 }
+
+void DeviceManager::clearDeviceChangePendingForTest() noexcept
+{
+    impl->deviceChangePending.store (false, std::memory_order_release);
+}
 } // namespace duskstudio::device
