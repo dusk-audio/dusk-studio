@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 1
+# ceiling gap 0
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -63,7 +63,7 @@ Getting started > System requirements	a notepad that crashed on its first frame 
 Getting started > System requirements	notepad_enabled=0 keeps the notepad off	auto	test:An absent notepad switch leaves the notepad available;test:The notepad switch round-trips
 Getting started > Installing Dusk Studio	beta builds are ad-hoc signed or unsigned	n/a			packaging statement; held by the release workflow
 Getting started > Installing Dusk Studio > Linux (tarball)	tarball runs in place; install.sh installs launcher, menu entry and association	auto	ctest:install-linux;ctest:package-contents-checker
-Getting started > Installing Dusk Studio > Linux (tarball)	install.sh --system and --uninstall	gap
+Getting started > Installing Dusk Studio > Linux (tarball)	install.sh --system and --uninstall	auto	ctest:install-linux		the uninstall round-trip and the non-root --system refusal always run; the real --system install runs under a user namespace with tmpfs over /opt, /usr/local/bin and /usr/share, and skips where the kernel refuses one
 Getting started > Installing Dusk Studio > macOS (DMG / .app)	DMG drag-install, Gatekeeper Open Anyway, microphone prompt	manual			OS dialogs on a console session; walked on every release candidate (#623)
 Getting started > Installing Dusk Studio > Windows (MSI installer)	MSI installs to Program Files with SmartScreen and UAC steps	manual			OS dialogs; walked on every release candidate (#623)
 Getting started > Installing Dusk Studio > Windows (MSI installer)	non-ASCII install, profile and bounce paths work	partial	test:LameMp3Writer writes and reopens a Unicode path;test:Utf8CommandLine keeps a non-ANSI plugin path intact		MP3 and plug-in host paths tested; install folder and profile paths are not
