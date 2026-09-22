@@ -14,9 +14,9 @@ namespace duskstudio::builtin
 // leaves the rest at the donor's init patch.
 //
 // The core has no per-event timing: noteOn / noteOff take no sample offset, so
-// the block's MIDI is applied at block granularity ahead of the render. At the
-// engine's block sizes that is well under a millisecond of quantisation and it
-// is what the core's own plugin shells do.
+// sample accuracy is this shell's job. process() splits the block at every
+// event offset and renders each segment in turn, which is what the core's
+// header asks its shells for.
 //
 // It runs a fixed internal 2x, set in its own prepare, so there is no factor
 // for the engine to drive and nothing here switches oversampling on.
@@ -43,7 +43,7 @@ private:
         kNumParams
     };
 
-    void applyMidi (const dusk::MidiBuffer& midi) noexcept;
+    void applyEvent (const dusk::MidiBufferMetadata& meta) noexcept;
 
     std::unique_ptr<msynth::MultiSynthDSP> core;
     int maxFrames = 0;
