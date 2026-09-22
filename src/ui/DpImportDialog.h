@@ -27,7 +27,7 @@ public:
     {
         const int shown = std::min ((int) scan.tracks.size(), maxTracks);
 
-        title.setText ("Import DP Song", juce::dontSendNotification);
+        title.setText ("Import DP-24/32 Session", juce::dontSendNotification);
         title.setFont (juce::Font (juce::FontOptions (20.0f, juce::Font::bold)));
         title.setColour (juce::Label::textColourId, juce::Colours::white);
         addAndMakeVisible (title);

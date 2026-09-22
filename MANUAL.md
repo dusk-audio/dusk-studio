@@ -1320,9 +1320,9 @@ Recording keeps your zoom. When the playhead reaches the right-hand edge the vie
 
 Drop audio or MIDI files onto the tape strip. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use **Auto-assign** to assign files to tracks in order; **Clear** removes those assignments. You can choose each destination manually. Each file needs a distinct track.
 
-## Import DP Song (experimental)
+## Import DP-24/32 Session (experimental)
 
-**File → Import DP Song (experimental)…** reads a raw TASCAM DP-24 / DP-24SD / DP-32 song folder straight off the SD card — for when the device is gone and you can't run its own AudioDepot export. Choose any WAV or `.sys` file inside a `MUSIC/<SongName>/` folder and it reconstructs the session: each recorded audio fragment lands on its own track, with the correct sample rate, bit depth and stereo pairing.
+**File → Import DP-24/32 Session (experimental)…** reads a raw TASCAM DP-24 / DP-24SD / DP-32 song folder straight off the SD card — for when the device is gone and you can't run its own AudioDepot export. Choose any WAV or `.sys` file inside a `MUSIC/<SongName>/` folder and it reconstructs the session: each recorded audio fragment lands on its own track, with the correct sample rate, bit depth and stereo pairing.
 
 A confirmation dialog first shows what was found — track count, format, stereo pairs, and any warnings — before anything is imported.
 
