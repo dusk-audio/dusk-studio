@@ -85,51 +85,48 @@ void SynthUnit::prepare (double sampleRate, int maxBlockFrames)
     core->reset();
 }
 
-void SynthUnit::applyMidi (const dusk::MidiBuffer& midi) noexcept
+void SynthUnit::applyEvent (const dusk::MidiBufferMetadata& meta) noexcept
 {
-    for (const auto meta : midi)
-    {
-        const auto* d = meta.data;
-        if (d == nullptr || meta.numBytes < 2) continue;
-        const int d1 = d[1] & 0x7F;
-        const int d2 = meta.numBytes > 2 ? (d[2] & 0x7F) : 0;
+    const auto* d = meta.data;
+    if (d == nullptr || meta.numBytes < 2) return;
+    const int d1 = d[1] & 0x7F;
+    const int d2 = meta.numBytes > 2 ? (d[2] & 0x7F) : 0;
 
-        switch (d[0] & 0xF0)
-        {
-            case 0x90:
-                if (d2 > 0)
-                {
-                    core->noteOn (d1, (float) d2 / 127.0f);
-                    break;
-                }
-                // Note-on at velocity 0 is a note-off.
-                [[fallthrough]];
-            case 0x80:
-                core->noteOff (d1);
+    switch (d[0] & 0xF0)
+    {
+        case 0x90:
+            if (d2 > 0)
+            {
+                core->noteOn (d1, (float) d2 / 127.0f);
                 break;
-            case 0xA0:
-                core->polyAftertouch (d1, (float) d2 / 127.0f);
-                break;
-            case 0xD0:
-                core->aftertouch ((float) d1 / 127.0f);
-                break;
-            case 0xE0:
-                // 14-bit wheel, 0-centred and normalised to -1..1.
-                core->pitchBend ((float) (((d2 << 7) | d1) - 8192) / 8192.0f);
-                break;
-            case 0xB0:
-                switch (d1)
-                {
-                    case 1:   core->modWheel ((float) d2 / 127.0f); break;
-                    case 64:  core->sustainPedal (d2 >= 64); break;
-                    case 120: core->allSoundOff(); break;
-                    case 123: core->allNotesOff(); break;
-                    default: break;
-                }
-                break;
-            default:
-                break;
-        }
+            }
+            // Note-on at velocity 0 is a note-off.
+            [[fallthrough]];
+        case 0x80:
+            core->noteOff (d1);
+            break;
+        case 0xA0:
+            core->polyAftertouch (d1, (float) d2 / 127.0f);
+            break;
+        case 0xD0:
+            core->aftertouch ((float) d1 / 127.0f);
+            break;
+        case 0xE0:
+            // 14-bit wheel, 0-centred and normalised to -1..1.
+            core->pitchBend ((float) (((d2 << 7) | d1) - 8192) / 8192.0f);
+            break;
+        case 0xB0:
+            switch (d1)
+            {
+                case 1:   core->modWheel ((float) d2 / 127.0f); break;
+                case 64:  core->sustainPedal (d2 >= 64); break;
+                case 120: core->allSoundOff(); break;
+                case 123: core->allNotesOff(); break;
+                default: break;
+            }
+            break;
+        default:
+            break;
     }
 }
 
@@ -144,9 +141,34 @@ void SynthUnit::process (float* left, float* right, int numFrames,
     for (int i = 0; i < kNumParams; ++i)
         core->setParameter (kCoreIndex[i], paramValue (i));
 
-    if (midi != nullptr)
-        applyMidi (*midi);
+    // The core's note / controller entry points carry no sample offset, so the
+    // shell is what makes the block sample-accurate: render up to each event's
+    // offset, apply the events sitting on that boundary, carry on. Applying the
+    // whole block's events ahead of one render puts a note-on at the top of the
+    // buffer and loses a note that opens and closes inside it outright.
+    //
+    // One pass over the packed buffer, no container and no allocation. The
+    // offset is clamped up to what has already been rendered: the engine fills
+    // this buffer from an already position-sorted source, and the clamp means an
+    // out-of-order or negative offset lands on the current cursor rather than
+    // rewinding time, while one past the end of the block lands after the tail.
+    int rendered = 0;
 
-    core->processBlock (left, right, numFrames);
+    if (midi != nullptr)
+    {
+        for (const auto meta : *midi)
+        {
+            const int at = std::clamp (meta.samplePosition, rendered, numFrames);
+            if (at > rendered)
+            {
+                core->processBlock (left + rendered, right + rendered, at - rendered);
+                rendered = at;
+            }
+            applyEvent (meta);
+        }
+    }
+
+    if (rendered < numFrames)
+        core->processBlock (left + rendered, right + rendered, numFrames - rendered);
 }
 } // namespace duskstudio::builtin
