@@ -93,6 +93,9 @@ public:
              : compactMode ? &auxCompactButton : nullptr;
     }
     bool moduleEditorOpenForScenario (int module) const;
+    // The strip name the open EQ editor is titled with, empty when it is not
+    // up. The comp editor is a framework panel with no JUCE text to read.
+    std::string moduleEditorTitleForScenario (int module) const;
     void closeModuleEditorsForScenario();
     bool meterClipForScenario();
     auto* midiSelectorForScenario (int kind)

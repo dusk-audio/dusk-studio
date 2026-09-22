@@ -504,4 +504,13 @@ namespace sslEqColors
     // share this so they read as a pair.
     inline constexpr std::uint32_t kFilterWhite = 0xffe0e0e4;
 }
+
+// Every editor popup opened for one strip carries that strip's name centred
+// on its top row, in this one accent so the title reads the same whichever
+// strip - channel, bus, master - opened the editor.
+namespace editorTitle
+{
+    inline constexpr std::uint32_t kAccent   = 0xffb07050;
+    inline constexpr float         kFontSize = 12.0f;
+}
 } // namespace duskstudio

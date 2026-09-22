@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
 #include <memory>
+#include <string>
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -19,9 +20,15 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    // The popup outlives a rename, so the strip pushes the current name in
+    // from the poll that already watches it.
+    void refreshTitle();
+    std::string titleForScenario() const;
+
 private:
     Track& track;
 
+    // The strip's name, so the modal says which track it belongs to.
     juce::Label titleLabel;
     juce::TextButton typeButton { "E" };
     // EQ section ON/OFF toggle - mirrors the strip's EQ-header LED so

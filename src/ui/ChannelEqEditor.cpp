@@ -50,10 +50,6 @@ inline juce::String formatFrequency (double hz)
 
 ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
 {
-    // Window title already shows the track + section; the inline label was
-    // duplicating that. Keep the field zero-sized and unused.
-    titleLabel.setVisible (false);
-
     typeButton.setClickingTogglesState (true);
     typeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff5a3a20));
     typeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff202020));
@@ -88,27 +84,33 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     };
     addAndMakeVisible (enableButton);
 
-    auto setupColumnLabel = [this] (juce::Label& label, const char* text)
+    auto setupLabel = [this] (juce::Label& label, const juce::String& text,
+                               juce::Colour colour, float fontHeight)
     {
         label.setText (text, juce::dontSendNotification);
         label.setJustificationType (juce::Justification::centred);
-        label.setColour (juce::Label::textColourId, juce::Colour (0xff969aa2));
-        label.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
+        label.setColour (juce::Label::textColourId, colour);
+        label.setFont (juce::Font (juce::FontOptions (fontHeight, juce::Font::bold)));
         addAndMakeVisible (label);
     };
-    setupColumnLabel (gainColumnLabel, "GAIN");
-    setupColumnLabel (freqColumnLabel, "FREQ");
-    setupColumnLabel (qColumnLabel,    "Q");
+
+    // Which strip this editor belongs to, centred between the EQ pill and the
+    // E/G toggle. Fitted text shortens a long name rather than widening the
+    // popup, and the strip pushes renames in through refreshTitle().
+    setupLabel (titleLabel, track.name, juce::Colour (editorTitle::kAccent),
+                 editorTitle::kFontSize);
+    titleLabel.setMinimumHorizontalScale (1.0f);
+
+    const auto columnGrey = juce::Colour (0xff969aa2);
+    setupLabel (gainColumnLabel, "GAIN", columnGrey, 12.0f);
+    setupLabel (freqColumnLabel, "FREQ", columnGrey, 12.0f);
+    setupLabel (qColumnLabel,    "Q",    columnGrey, 12.0f);
 
     // HPF + LPF - SSL 9000 J white-filter top section. Both knobs share
     // the white accent so they read as a filter pair (matches the
     // inline strip's filter row).
     const auto filterWhite = juce::Colour (sslEqColors::kFilterWhite);
-    hpfLabel.setText ("HPF", juce::dontSendNotification);
-    hpfLabel.setJustificationType (juce::Justification::centred);
-    hpfLabel.setColour (juce::Label::textColourId, filterWhite);
-    hpfLabel.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
-    addAndMakeVisible (hpfLabel);
+    setupLabel (hpfLabel, "HPF", filterWhite, 16.0f);
 
     auto setupFilterKnob = [this] (juce::Slider& k, juce::Colour fill,
                                       double minHz, double maxHz, double offHz,
@@ -151,11 +153,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     addAndMakeVisible (hpfKnob);
 
     // LPF - symmetric counterpart on the right side of the filter row.
-    lpfLabel.setText ("LPF", juce::dontSendNotification);
-    lpfLabel.setJustificationType (juce::Justification::centred);
-    lpfLabel.setColour (juce::Label::textColourId, filterWhite);
-    lpfLabel.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
-    addAndMakeVisible (lpfLabel);
+    setupLabel (lpfLabel, "LPF", filterWhite, 16.0f);
 
     setupFilterKnob (lpfKnob, filterWhite,
                       ChannelStripParams::kLpfMinHz, ChannelStripParams::kLpfMaxHz,
@@ -181,11 +179,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
         const auto& spec = bandSpecs()[i];
         auto& row = rows[i];
 
-        row.nameLabel.setText (spec.name, juce::dontSendNotification);
-        row.nameLabel.setJustificationType (juce::Justification::centred);
-        row.nameLabel.setColour (juce::Label::textColourId, spec.accent.brighter (0.2f));
-        row.nameLabel.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
-        addAndMakeVisible (row.nameLabel);
+        setupLabel (row.nameLabel, spec.name, spec.accent.brighter (0.2f), 16.0f);
 
         auto makeKnob = [] (juce::Slider& k, juce::Colour fill, double mn, double mx,
                              double defaultVal, double skewMid,
@@ -276,6 +270,17 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
 
 ChannelEqEditor::~ChannelEqEditor() = default;
 
+void ChannelEqEditor::refreshTitle()
+{
+    if (titleLabel.getText (false) != track.name)
+        titleLabel.setText (track.name, juce::dontSendNotification);
+}
+
+std::string ChannelEqEditor::titleForScenario() const
+{
+    return titleLabel.getText (false).toStdString();
+}
+
 void ChannelEqEditor::refreshTypeButton()
 {
     typeButton.setButtonText (typeButton.getToggleState() ? "G" : "E");
@@ -292,10 +297,12 @@ void ChannelEqEditor::resized()
 {
     auto area = getLocalBounds().reduced (12);
 
-    // Header: EQ enable pill on the LEFT, E/G type toggle on the RIGHT.
+    // Header: EQ enable pill on the LEFT, E/G type toggle on the RIGHT,
+    // the strip name centred between them.
     auto header = area.removeFromTop (24);
     enableButton.setBounds (header.removeFromLeft (60));
     typeButton  .setBounds (header.removeFromRight (40));
+    titleLabel  .setBounds (header);
     area.removeFromTop (8);
 
     // Match the inline strip's control order at a larger editing scale:

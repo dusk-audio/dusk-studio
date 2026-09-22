@@ -4133,6 +4133,14 @@ bool ChannelStripComponent::moduleEditorOpenForScenario (int module) const
    #endif
 }
 
+std::string ChannelStripComponent::moduleEditorTitleForScenario (int module) const
+{
+    if (module == 0)
+        if (auto* eq = dynamic_cast<ChannelEqEditor*> (eqEditorModal.getBody()))
+            return eq->titleForScenario();
+    return {};
+}
+
 void ChannelStripComponent::closeModuleEditorsForScenario()
 {
     eqEditorModal.close();
@@ -4598,6 +4606,20 @@ public:
             juce::Colour (0xff5a8ad0), juce::Colour (0xff9080c0),
             juce::Colour (0xffe0c050), juce::Colour (0xff60c060),
         };
+        auto styleCaption = [] (juce::Label& l, juce::Colour colour, float fontHeight)
+        {
+            l.setJustificationType (juce::Justification::centred);
+            l.setFont (juce::Font (juce::FontOptions (fontHeight, juce::Font::bold)));
+            l.setColour (juce::Label::textColourId, colour);
+        };
+
+        // Which strip these sends belong to. No header controls to share the
+        // row with, so the title takes one of its own above the knobs.
+        titleLabel.setText (track.name, juce::dontSendNotification);
+        styleCaption (titleLabel, juce::Colour (editorTitle::kAccent), editorTitle::kFontSize);
+        titleLabel.setMinimumHorizontalScale (1.0f);
+        addAndMakeVisible (titleLabel);
+
         auto formatAuxSend = [] (float dB, bool preFader) -> juce::String
         {
             juce::String s;
@@ -4628,7 +4650,7 @@ public:
                                           : juce::Colour (0xff404048));
             }
             k.setDoubleClickReturnValue (true, ChannelStripParams::kAuxSendOffDb);
-            k.setTooltip ("AUX " + juce::String (i + 1) + " send level. "
+            k.setTooltip ("AUX " + std::to_string (i + 1) + " send level. "
                             "Double-click for OFF.");
 
             const float initial = track.strip.auxSendDb[(size_t) i].load (std::memory_order_relaxed);
@@ -4659,9 +4681,7 @@ public:
 
             auto& il = indexLabels[(size_t) i];
             il.setText (sessionRef.auxLane (i).name, juce::dontSendNotification);
-            il.setJustificationType (juce::Justification::centred);
-            il.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
-            il.setColour (juce::Label::textColourId, colours[i].brighter (0.2f));
+            styleCaption (il, colours[i].brighter (0.2f), 11.0f);
             il.setMinimumHorizontalScale (0.5f);
             il.setTooltip ("Double-click to rename this AUX send.");
             il.setEditable (false, true, false);
@@ -4686,9 +4706,7 @@ public:
             addAndMakeVisible (il);
 
             auto& vl = valueLabels[(size_t) i];
-            vl.setJustificationType (juce::Justification::centred);
-            vl.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
-            vl.setColour (juce::Label::textColourId, juce::Colour (0xffd8d8d8));
+            styleCaption (vl, juce::Colour (0xffd8d8d8), 11.0f);
             {
                 const bool initialPre = track.strip.auxSendPreFader[(size_t) i]
                                              .load (std::memory_order_relaxed);
@@ -4698,7 +4716,7 @@ public:
             addAndMakeVisible (vl);
         }
 
-        setSize (260, 130);
+        setSize (260, 130 + kTitleRowH + kTitleRowGap);
     }
 
     ~AuxSendsCompactPanel() override { stopTimer(); }
@@ -4706,6 +4724,8 @@ public:
     void resized() override
     {
         auto area = getLocalBounds().reduced (10);
+        titleLabel.setBounds (area.removeFromTop (kTitleRowH));
+        area.removeFromTop (kTitleRowGap);
         const int colW = area.getWidth() / ChannelStripParams::kNumAuxSends;
         for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
         {
@@ -4722,6 +4742,9 @@ public:
 
     void timerCallback() override
     {
+        if (titleLabel.getText (false) != track.name)
+            titleLabel.setText (track.name, juce::dontSendNotification);
+
         for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
         {
             auto& lbl = indexLabels[(size_t) i];
@@ -4782,8 +4805,12 @@ public:
     }
 
 private:
+    static constexpr int kTitleRowH   = 16;
+    static constexpr int kTitleRowGap = 4;
+
     Track&   track;
     Session& sessionRef;
+    juce::Label titleLabel;
     std::array<juce::Slider, ChannelStripParams::kNumAuxSends> knobs;
     std::array<juce::Label,  ChannelStripParams::kNumAuxSends> indexLabels;
     std::array<juce::Label,  ChannelStripParams::kNumAuxSends> valueLabels;
@@ -4797,7 +4824,7 @@ void ChannelStripComponent::openAuxEditorPopup()
     if (eqEditorModal.isOpen())   eqEditorModal.close();
     closeCompEditorPopup();
 
-    // AuxSendsCompactPanel sizes itself in its ctor (setSize 260x130).
+    // AuxSendsCompactPanel sizes itself in its ctor.
     auto panel = std::make_unique<AuxSendsCompactPanel> (track, session);
 
     auto* topLevel = getTopLevelComponent();
@@ -4883,6 +4910,12 @@ void ChannelStripComponent::timerCallback()
     if (! nameLabel.isBeingEdited()
         && nameLabel.getText (false) != track.name)
         nameLabel.setText (track.name, juce::dontSendNotification);
+
+    // An open editor titles itself with the strip's name, so a rename that
+    // lands while it is up has to reach it. The aux popup and the native comp
+    // view read the name for themselves; the EQ popup is pushed from here.
+    if (auto* eq = dynamic_cast<ChannelEqEditor*> (eqEditorModal.getBody()))
+        eq->refreshTitle();
 
     if (lastTrackColour != track.colour)
     {
