@@ -162,8 +162,45 @@ std::optional<ScenarioResult> lossStopsAndCommits (ScenarioContext& ctx)
     return std::nullopt;
 }
 
+// A device that comes back - or a different one in its place - re-prepares the
+// engine at whatever it reports, and the callback runs again on the new shape.
+ScenarioResult reconnectReprepares (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    restoreOfflinePrepare (ctx);
+
+    StubDevice first { ScenarioContext::kSampleRate, ScenarioContext::kBlockSize };
+    engine.audioDeviceAboutToStart (&first);
+    engine.audioDeviceStopped();
+    ctx.expect (engine.getCurrentSampleRate() == 0.0 && engine.getCurrentBlockSize() == 0,
+                "losing the device left a prepared rate and block size behind");
+
+    StubDevice second { 96000.0, 512 };
+    engine.audioDeviceAboutToStart (&second);
+    ctx.expect (engine.getCurrentSampleRate() == 96000.0,
+                "the engine did not re-prepare at the reconnected device's sample rate");
+    ctx.expect (engine.getCurrentBlockSize() == 512,
+                "the engine did not re-prepare at the reconnected device's block size");
+
+    // The playhead only advances past the callback's undersized-buffer bail, so
+    // this is how a scenario sees that blocks are being rendered again.
+    constexpr int kBlocks = 4;
+    transport.setPlayhead (0);
+    engine.play();
+    ctx.pump (kBlocks);
+    engine.stop();
+    ctx.expect (transport.getPlayhead() == (std::int64_t) kBlocks * ScenarioContext::kBlockSize,
+                "the callback did not render after the device came back; playhead at "
+                    + std::to_string (transport.getPlayhead()));
+    return ctx.verdict();
+}
+
 const ScenarioRegistrar lossRegistrar { Scenario {
     "device.loss_stops_and_commits", { "device", "record", "transport" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return lossStopsAndCommits (ctx); } } };
+const ScenarioRegistrar reconnectRegistrar { Scenario {
+    "device.reconnect_reprepares", { "device", "transport" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return reconnectReprepares (ctx); } } };
 } // namespace
 } // namespace duskstudio::scenario
