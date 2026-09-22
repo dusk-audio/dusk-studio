@@ -97,11 +97,12 @@ void styleEditorLabel (juce::Label& l, const juce::String& text, juce::Colour ac
 // Centred accent-red caption - the comp editors' 11-pt knob captions, and at
 // editorTitle::kFontSize the strip name every editor popup carries on its top row.
 void styleEditorAccentLabel (juce::Label& l, const juce::String& text,
-                              float fontHeight = 11.0f)
+                              float fontHeight = 11.0f,
+                              std::uint32_t colour = 0xffb07050)
 {
     l.setText (text, juce::dontSendNotification);
     l.setJustificationType (juce::Justification::centred);
-    l.setColour (juce::Label::textColourId, juce::Colour (editorTitle::kAccent));
+    l.setColour (juce::Label::textColourId, juce::Colour (colour));
     l.setFont (juce::Font (juce::FontOptions (fontHeight, juce::Font::bold)));
 }
 
@@ -132,7 +133,7 @@ public:
         addAndMakeVisible (enableBtn);
 
         // Which bus this editor belongs to, centred left of the EQ pill.
-        styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize);
+        styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize, editorTitle::kColour);
         titleLbl.setMinimumHorizontalScale (1.0f);
         addAndMakeVisible (titleLbl);
 
@@ -178,8 +179,8 @@ public:
     {
         auto area = getLocalBounds().reduced (kEditorOuterPad);
         auto header = area.removeFromTop (kEditorHeaderH);
+        titleLbl.setBounds (header.withTrimmedLeft (60).withTrimmedRight (60));
         enableBtn.setBounds (header.removeFromRight (60));
-        titleLbl.setBounds (header);
         area.removeFromTop (kEditorHeaderGap);
 
         auto labelRow = area.removeFromTop (kEditorLabelRowH);
@@ -197,7 +198,7 @@ public:
     void refreshTitle()
     {
         if (titleLbl.getText (false) != bus.name)
-            styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize);
+            styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize, editorTitle::kColour);
     }
 
 private:
@@ -234,7 +235,7 @@ public:
         addAndMakeVisible (enableBtn);
 
         // Which bus this editor belongs to, centred left of the ON pill.
-        styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize);
+        styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize, editorTitle::kColour);
         titleLbl.setMinimumHorizontalScale (1.0f);
         addAndMakeVisible (titleLbl);
 
@@ -417,8 +418,8 @@ public:
         auto area = getLocalBounds().reduced (kEditorOuterPad);
 
         auto header = area.removeFromTop (kEditorHeaderH);
+        titleLbl.setBounds (header.withTrimmedLeft (60).withTrimmedRight (60));
         enableBtn.setBounds (header.removeFromRight (60));
-        titleLbl.setBounds (header);
         area.removeFromTop (kEditorHeaderGap);
 
         constexpr int kHandleW    = 14;
@@ -468,7 +469,7 @@ public:
     void refreshTitle()
     {
         if (titleLbl.getText (false) != bus.name)
-            styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize);
+            styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize, editorTitle::kColour);
     }
 
 private:

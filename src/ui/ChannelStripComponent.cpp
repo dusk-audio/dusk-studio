@@ -4616,7 +4616,7 @@ public:
         // Which strip these sends belong to. No header controls to share the
         // row with, so the title takes one of its own above the knobs.
         titleLabel.setText (track.name, juce::dontSendNotification);
-        styleCaption (titleLabel, juce::Colour (editorTitle::kAccent), editorTitle::kFontSize);
+        styleCaption (titleLabel, juce::Colour (editorTitle::kColour), editorTitle::kFontSize);
         titleLabel.setMinimumHorizontalScale (1.0f);
         addAndMakeVisible (titleLabel);
 

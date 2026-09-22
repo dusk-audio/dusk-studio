@@ -95,11 +95,12 @@ void styleEditorLabel (juce::Label& l, const juce::String& text, juce::Colour ac
 // Centred accent-red caption - the comp editors' 11-pt knob captions, and at
 // editorTitle::kFontSize the strip name every editor popup carries on its top row.
 void styleEditorAccentLabel (juce::Label& l, const juce::String& text,
-                              float fontHeight = 11.0f)
+                              float fontHeight = 11.0f,
+                              std::uint32_t colour = 0xffb07050)
 {
     l.setText (text, juce::dontSendNotification);
     l.setJustificationType (juce::Justification::centred);
-    l.setColour (juce::Label::textColourId, juce::Colour (editorTitle::kAccent));
+    l.setColour (juce::Label::textColourId, juce::Colour (colour));
     l.setFont (juce::Font (juce::FontOptions (fontHeight, juce::Font::bold)));
 }
 
@@ -142,7 +143,7 @@ public:
 
         // The master strip has one fixed name; the title says so, the same way
         // every other editor popup names the strip that opened it.
-        styleEditorAccentLabel (titleLbl, "MASTER", editorTitle::kFontSize);
+        styleEditorAccentLabel (titleLbl, "MASTER", editorTitle::kFontSize, editorTitle::kColour);
         titleLbl.setMinimumHorizontalScale (1.0f);
         addAndMakeVisible (titleLbl);
 
@@ -282,8 +283,8 @@ public:
     {
         auto area = getLocalBounds().reduced (kEditorOuterPad);
         auto header = area.removeFromTop (kEditorHeaderH);
+        titleLbl.setBounds (header.withTrimmedLeft (60).withTrimmedRight (60));
         enableBtn.setBounds (header.removeFromRight (60));
-        titleLbl.setBounds (header);
         area.removeFromTop (kEditorHeaderGap);
 
         // Row 1: LF BOOST | LF ATTEN | LF FREQ (3 equal cells)
@@ -371,7 +372,7 @@ public:
 
         // The master strip has one fixed name; the title says so, the same way
         // every other editor popup names the strip that opened it.
-        styleEditorAccentLabel (titleLbl, "MASTER", editorTitle::kFontSize);
+        styleEditorAccentLabel (titleLbl, "MASTER", editorTitle::kFontSize, editorTitle::kColour);
         titleLbl.setMinimumHorizontalScale (1.0f);
         addAndMakeVisible (titleLbl);
 
@@ -548,8 +549,8 @@ public:
         auto area = getLocalBounds().reduced (kEditorOuterPad);
 
         auto header = area.removeFromTop (kEditorHeaderH);
+        titleLbl.setBounds (header.withTrimmedLeft (60).withTrimmedRight (60));
         enableBtn.setBounds (header.removeFromRight (60));
-        titleLbl.setBounds (header);
         area.removeFromTop (kEditorHeaderGap);
 
         constexpr int kHandleW    = 14;

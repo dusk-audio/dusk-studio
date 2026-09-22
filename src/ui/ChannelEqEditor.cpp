@@ -97,7 +97,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     // Which strip this editor belongs to, centred between the EQ pill and the
     // E/G toggle. Fitted text shortens a long name rather than widening the
     // popup, and the strip pushes renames in through refreshTitle().
-    setupLabel (titleLabel, track.name, juce::Colour (editorTitle::kAccent),
+    setupLabel (titleLabel, track.name, juce::Colour (editorTitle::kColour),
                  editorTitle::kFontSize);
     titleLabel.setMinimumHorizontalScale (1.0f);
 
@@ -300,9 +300,11 @@ void ChannelEqEditor::resized()
     // Header: EQ enable pill on the LEFT, E/G type toggle on the RIGHT,
     // the strip name centred between them.
     auto header = area.removeFromTop (24);
+    // The title centres on the popup, not on the gap between the two pills,
+    // so it is inset by the wider pill on both sides.
+    titleLabel  .setBounds (header.withTrimmedLeft (60).withTrimmedRight (60));
     enableButton.setBounds (header.removeFromLeft (60));
     typeButton  .setBounds (header.removeFromRight (40));
-    titleLabel  .setBounds (header);
     area.removeFromTop (8);
 
     // Match the inline strip's control order at a larger editing scale:

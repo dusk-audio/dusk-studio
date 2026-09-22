@@ -35,9 +35,9 @@ constexpr float kPanelH = (kHeaderH + 8.0f + kModeRowH + 12.0f)
                         + (56.0f + 18.0f + 4.0f) + 6.0f + (56.0f + 18.0f + 4.0f)
                         + 16.0f + 24.0f;
 
-// The strip name on the header row - the same accent and size the JUCE editor
+// The strip name on the header row - the same white and size the JUCE editor
 // popups title themselves with (duskstudio::editorTitle).
-constexpr unsigned int kTitleAccent = 0xb07050ff;
+constexpr unsigned int kTitleColour = 0xe0e0e4ff;
 constexpr float kTitleSize = 12.0f;
 constexpr float kTitleGap  = 8.0f;
 
@@ -199,16 +199,18 @@ private:
         const ImVec2 tl (at.x + width - scale * 60.0f + scale, at.y + scale);
         const ImVec2 br (at.x + width - scale, at.y + scale * kHeaderH - scale);
 
-        // Which strip this editor belongs to, centred in the row left of ON.
+        // Which strip this editor belongs to, centred on the panel rather than
+        // on the room left of ON, so it is inset by the button on both sides.
         // Read live, so a rename while the editor is open lands on the next frame.
-        const float titleW = tl.x - at.x - scale * kTitleGap;
+        const float titleInset = scale * (60.0f + kTitleGap);
+        const float titleW = width - titleInset * 2.0f;
         if (titleW > scale * 24.0f)
         {
             char scratch[96];
             const float titleSize = scale * kTitleSize;
             dw::text (ctx, ctx.fonts->band, titleSize,
-                      ImVec2 (at.x, at.y + scale * (kHeaderH - kTitleSize) * 0.5f),
-                      titleW, rgba (kTitleAccent),
+                      ImVec2 (at.x + titleInset, at.y + scale * (kHeaderH - kTitleSize) * 0.5f),
+                      titleW, rgba (kTitleColour),
                       fitted (ctx.fonts->band, titleSize, titleW,
                               track.name.toRawUTF8(), scratch, sizeof (scratch)));
         }
