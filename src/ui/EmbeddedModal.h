@@ -77,13 +77,29 @@ class PluginEditorHider final
 public:
     ~PluginEditorHider() { restore(); }
 
+    // The default filter below: a covering surface is in every editor's way.
+    struct EveryEditor
+    {
+        template <typename Editor>
+        bool operator() (const Editor&) const noexcept { return true; }
+    };
+
     // skip: components belonging to the covering surface itself. A borrowed
     // plugin-editor body carries the tag and must stay visible.
+    //
+    // shouldHide answers, per tagged editor, whether this surface is really in
+    // its way. One that covers the whole window keeps the default; one that
+    // covers a rectangle (a dropdown) passes its own test, because hiding an
+    // editor it cannot bury is not free - a framework child leaves the screen
+    // by being closed and reopened, which reads as that panel vanishing for as
+    // long as the surface is up.
+    template <typename ShouldHide = EveryEditor>
     void hideUnder (juce::Component& root,
-                    std::initializer_list<juce::Component*> skip)
+                    std::initializer_list<juce::Component*> skip,
+                    ShouldHide shouldHide = {})
     {
         restore();   // defensive: idempotent
-        walk (root, skip);
+        walk (root, skip, shouldHide);
     }
 
     void restore()
@@ -109,7 +125,9 @@ public:
     }
 
 private:
-    void walk (juce::Component& c, const std::initializer_list<juce::Component*>& skip)
+    template <typename ShouldHide>
+    void walk (juce::Component& c, const std::initializer_list<juce::Component*>& skip,
+               const ShouldHide& shouldHide)
     {
         for (auto* child : c.getChildren())
         {
@@ -121,6 +139,8 @@ private:
                             .getWithDefault (kPluginEditorTag, false);
             if (isPluginEditor)
             {
+                if (! shouldHide (*child))
+                    continue;
                 // Only manage editors that were on-screen when the first
                 // covering surface arrived (count == 0 && visible) or that an
                 // outer surface is already managing (count > 0). A genuinely
@@ -139,7 +159,7 @@ private:
                 // hide token and unbalance the reference count.
                 continue;
             }
-            walk (*child, skip);
+            walk (*child, skip, shouldHide);
         }
     }
 
@@ -627,6 +647,24 @@ public:
     juce::Component* getBody() const noexcept
     {
         return body_ != nullptr ? body_.get() : borrowedBody_;
+    }
+
+    // Take down only the plugin editors this modal's surface actually covers.
+    // A popup shown with hidePluginEditors=false and positioned by its caller
+    // (DuskComboBox slams the body to its anchor after show) asks for the hide
+    // from here, once its rectangle is the one the user will see. Native editor
+    // windows paint above every JUCE component, so the ones under the popup
+    // still have to go; the rest of the window keeps its editors.
+    void hideEditorsUnderBody()
+    {
+        auto* const shown = getBody();
+        if (host == nullptr || shown == nullptr) return;
+        const auto cover = backdrop_ != nullptr ? backdrop_->getScreenBounds()
+                                                : shown->getScreenBounds();
+        editorHider_.hideUnder (*host, { dim_.get(), backdrop_.get(),
+                                         body_.get(), borrowedBody_ },
+                                [cover] (const auto& editor)
+                                { return editor.getScreenBounds().intersects (cover); });
     }
 
     // DuskContextMenu / DuskComboBox call this AFTER show() to anchor

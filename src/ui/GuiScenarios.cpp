@@ -1212,6 +1212,19 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto point = owner.getTopLevelComponent()->getLocalPoint (view, view->targetPointForScenario()).toFloat();
         return clickAt (point.x, point.y, 1);
     }
+    bool clickMasteringCompPreset() override
+    {
+        auto* view = owner.masteringView.get();
+        if (view == nullptr || ! view->isShowing() || ! view->compPresetShownForScenario())
+            return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (
+            view, view->compPresetPointForScenario()).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+    int masteringPanelsOpen() const override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->nativePanelsOpenForScenario() : 0;
+    }
     std::string masteringTargetText() const override
     {
         return owner.masteringView != nullptr ? owner.masteringView->targetTextForScenario() : std::string();

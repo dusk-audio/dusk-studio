@@ -215,6 +215,11 @@ public:
     virtual bool clickPickerRow (const std::string& text) = 0;
     virtual bool clickMasteringButton (const std::string& label) = 0;
     virtual bool clickMasteringTarget() = 0;
+    // The multiband comp's preset picker; false when this build lays out none.
+    virtual bool clickMasteringCompPreset() = 0;
+    // How many of the mastering stage's two native panels are open, or -1 when
+    // this build has none. Zero while the stage is not up.
+    virtual int masteringPanelsOpen() const = 0;
     virtual std::string masteringTargetText() const = 0;
     virtual std::uint32_t masteringLoudnessColour (bool peak) const = 0;
     virtual void restoreMasteringTarget (int index) = 0;

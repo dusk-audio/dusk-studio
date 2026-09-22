@@ -3648,6 +3648,68 @@ const ScenarioRegistrar masteringTargets { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringTargets (host, ctx); }
 } };
 
+std::optional<ScenarioResult> runMasteringComboKeepsPanels (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || engine.getMasteringPlayer().isPlaying())
+        return ScenarioResult::skip ("requires stopped transport and mastering player");
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("requires a window the native mastering panels can embed into");
+    const auto originalStage = engine.getStage();
+    host.switchToStage (GuiHost::Stage::Mastering);
+    ctx.cleanup ([&host, originalStage]
+    {
+        drainModals (host);
+        host.switchToStage (guiStage (originalStage));
+    });
+
+    // The stage opens both framework children from its own message-loop sync,
+    // so the case starts once they are up.
+    ctx.waitUntil ([&host]
+                   {
+                       const int open = host.masteringPanelsOpen();
+                       return open < 0 || open == 2;
+                   }, 15000,
+                   [&host, &ctx]
+    {
+        if (host.masteringPanelsOpen() < 0)
+        {
+            ctx.complete (ScenarioResult::skip ("this build has no native mastering panels"));
+            return;
+        }
+        auto steps = std::make_shared<std::vector<Step>>();
+        steps->push_back ({ 100, [&host, &ctx]
+        {
+            if (! host.clickMasteringCompPreset())
+                ctx.complete (ScenarioResult::skip ("this build lays out no multiband preset picker"));
+        } });
+        // A hidden panel goes down on the next tick after the popup opens, so
+        // the checks sit far enough behind each click to catch it.
+        steps->push_back ({ 400, [&host, &ctx]
+        {
+            ctx.expect (! host.modalStackEmpty(), "the preset picker did not open");
+            ctx.expect (host.masteringPanelsOpen() == 2,
+                        "the open preset popup took the mastering EQ / limiter panels down");
+            ctx.expect (host.pressPeerKey ("escape"), "the preset popup did not handle Escape");
+        } });
+        steps->push_back ({ 400, [&host, &ctx]
+        {
+            ctx.expect (host.modalStackEmpty(), "Escape left the preset popup open");
+            ctx.expect (host.masteringPanelsOpen() == 2,
+                        "the mastering EQ / limiter panels did not survive the preset popup");
+        } });
+        runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    },
+    "the mastering EQ and limiter panels never opened");
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringComboKeepsPanels { Scenario {
+    "gui.mastering_combo_keeps_panels", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 25000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringComboKeepsPanels (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runMasteringLoad (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

@@ -56,6 +56,16 @@ public:
     bool loadFile (const juce::File& file);
     void refreshSourceForScenario();
     auto targetPointForScenario() const { return masteringTargetCombo.getBounds().getCentre(); }
+    // The multiband preset picker sits inside the comp panel, so its centre is
+    // reported in this view's coordinates like every other scenario point.
+    auto compPresetPointForScenario() const
+    {
+        return getLocalPoint (&compPresetCombo, compPresetCombo.getLocalBounds().getCentre());
+    }
+    bool compPresetShownForScenario() const { return compPresetCombo.isShowing(); }
+    // How many of the two framework children are up, or -1 when this build has
+    // no native panels to open.
+    int nativePanelsOpenForScenario() const;
     std::string targetTextForScenario() const { return masteringTargetCombo.getText().toStdString(); }
     void restoreTargetForScenario (int index) { masteringTargetCombo.setSelectedId (index + 1); }
     std::uint32_t loudnessColourForScenario (bool peak) const
