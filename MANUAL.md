@@ -703,6 +703,8 @@ This is the order the audio actually flows. On screen, controls are arranged for
 
 EQ, COMP, and compact AUX controls are split buttons. The left 20% contains the status light; click it to bypass or engage the section without opening anything. The right 80% contains the label; click it once to open the editor. Right-click anywhere on the unified button for the section menu. Engaged sections have a solid coloured light and bright label; bypassed sections have a dark, hollow light and dim label. The compact AUX bypass mutes all four sends without changing their individual levels, so engaging it restores the previous send mix.
 
+Every editor a strip opens — EQ, COMP, or AUX — carries that strip's name centred at the top of the editor, so you can always tell which strip the modal belongs to: the track name on a channel strip, the bus name on a bus, **MASTER** on the master strip. Rename a strip while its editor is open and the title follows; a name too long for the row is shortened with an ellipsis rather than widening the editor.
+
 ## Track name and colour
 
 Click the name label at the top of the strip to rename the track. Right-click to choose a colour from the 12-hue palette or open a custom colour picker. The colour appears as the strip's accent and on every region that track owns in the tape strip.

@@ -3143,6 +3143,59 @@ const ScenarioRegistrar splitModuleButtons { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runSplitModuleButtons (host, ctx); }
 } };
 
+std::optional<ScenarioResult> runEditorTitleNamesStrip (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    const bool originalCompact = host.setStripCompact (0, true);
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore, originalCompact]
+    {
+        host.closeStripModuleEditors (0);
+        drainModals (host);
+        host.setStripCompact (0, originalCompact);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (guiStage (originalStage));
+    });
+    const std::string opened = "Sunburst Gtr";
+    const std::string renamed = "Ribbon Room";
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&session, opened] { session.track (0).name = opened.c_str(); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickStripModule (0, 0, true, false), "EQ module label is unavailable"); } });
+    steps->push_back ({ 500, [&host, &ctx, opened]
+    {
+        ctx.expect (host.stripModuleEditorOpen (0, 0), "EQ label did not open its editor");
+        ctx.expect (host.stripModuleEditorTitle (0, 0) == opened,
+                    "EQ editor is not titled with the strip name: " + host.stripModuleEditorTitle (0, 0));
+    } });
+    steps->push_back ({ 200, [&session, renamed] { session.track (0).name = renamed.c_str(); } });
+    steps->push_back ({ 500, [&host, &ctx, renamed]
+    {
+        ctx.expect (host.stripModuleEditorOpen (0, 0), "the rename closed the EQ editor");
+        ctx.expect (host.stripModuleEditorTitle (0, 0) == renamed,
+                    "EQ editor title did not follow the rename: " + host.stripModuleEditorTitle (0, 0));
+        host.closeStripModuleEditors (0);
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (! host.stripModuleEditorOpen (0, 0), "the EQ editor stayed open"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar editorTitleNamesStrip { Scenario {
+    "gui.editor_title_names_strip", { "gui", "strip" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runEditorTitleNamesStrip (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runInsertContextMenu (GuiHost& host, ScenarioContext& ctx)
 {
     const auto fixture = ctx.fixture ("relayout.vst3");
