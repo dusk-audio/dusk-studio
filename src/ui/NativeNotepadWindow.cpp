@@ -265,7 +265,7 @@ struct NativeNotepadWindow::Impl final
         editor.reset ({ 0, 0 });
         editor.requestFocus();
         markdownView = false;
-        markdownEntrySnapshot.reset();
+        sourceView.reset();
         markdownFocusRequested = false;
         hasSessionFile = sessionExists;
         documentDirty = unsavedChanges;
@@ -317,11 +317,12 @@ struct NativeNotepadWindow::Impl final
 private:
     bool handleMarkdownEscape (const DGL::Widget::KeyboardEvent& event)
     {
-        if (! markdownView || event.key != DGL::kKeyEscape)
-            return false;
-        if (event.press)
+        const auto action = notepad::sourceViewEscape (markdownView,
+                                                       event.key == DGL::kKeyEscape,
+                                                       event.press);
+        if (action == notepad::EscapeAction::closeNotepad)
             close();
-        return true;
+        return action != notepad::EscapeAction::pass;
     }
 
     bool handleChordEntryNavigation (const DGL::Widget::KeyboardEvent& event)
@@ -405,19 +406,14 @@ private:
         {
             editor.closeChordEntry();
             markdownBuffer = document.markdown();
-            markdownEntrySnapshot = currentSnapshot();
-            history.breakRun();
+            sourceView.enter (history, currentSnapshot());
             markdownView = true;
             markdownFocusRequested = true;
             return;
         }
 
         const auto documentEnd = document.documentText().size();
-        if (markdownEntrySnapshot.has_value()
-            && markdownEntrySnapshot->markdown != document.markdown())
-            history.record (notepad::EditKind::structural,
-                            std::move (*markdownEntrySnapshot), documentEnd);
-        markdownEntrySnapshot.reset();
+        sourceView.exit (history, document.markdown(), documentEnd);
         markdownView = false;
         editor.reset ({ documentEnd, documentEnd });
         editor.requestFocus();
@@ -835,7 +831,7 @@ private:
     ImFont* boldItalicFont = nullptr;
     ImFont* monoFont = nullptr;
     std::optional<std::string> savedMarkdown;
-    std::optional<notepad::Snapshot> markdownEntrySnapshot;
+    notepad::SourceViewSession sourceView;
     std::string markdownBuffer;
     std::string savedAtLabel;
     bool markdownView = false;

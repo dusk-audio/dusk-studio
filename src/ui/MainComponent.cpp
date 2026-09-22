@@ -947,7 +947,7 @@ MainComponent::MainComponent()
 
     // Hot-unplug (H5): surface the runtime device-lost message in-window
     // instead of only logging it. Distinct title from the startup alert below.
-    engine.setDeviceLostAlertSink ([this] (juce::String msg)
+    engine.setDeviceLostAlertSink ([this] (std::string msg)
     {
         showDuskAlert (*this, "Audio device disconnected", msg);
     });

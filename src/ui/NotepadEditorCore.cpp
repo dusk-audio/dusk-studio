@@ -702,5 +702,28 @@ bool UndoStack::redo (const Snapshot& current, Snapshot& restored)
     runBroken = true;
     return true;
 }
+
+void SourceViewSession::enter (UndoStack& history, Snapshot before)
+{
+    entrySnapshot = std::move (before);
+    history.breakRun();
+}
+
+bool SourceViewSession::exit (UndoStack& history, const std::string& markdownNow,
+                              std::size_t caretAfter)
+{
+    const bool changed = entrySnapshot.has_value() && entrySnapshot->markdown != markdownNow;
+    if (changed)
+        history.record (EditKind::structural, std::move (*entrySnapshot), caretAfter);
+    entrySnapshot.reset();
+    return changed;
+}
+
+EscapeAction sourceViewEscape (bool sourceViewUp, bool isEscape, bool press) noexcept
+{
+    if (! sourceViewUp || ! isEscape)
+        return EscapeAction::pass;
+    return press ? EscapeAction::closeNotepad : EscapeAction::consume;
+}
 } // namespace notepad
 } // namespace duskstudio

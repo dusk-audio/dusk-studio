@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 8
-# ceiling partial 51
+# ceiling gap 0
+# ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -53,7 +53,7 @@ Names and Functions of Parts > The bus strip	bus strip callouts	n/a			figure; ea
 Names and Functions of Parts > The master strip	master strip callouts	n/a			figure; each control is held under The master strip
 Names and Functions of Parts > The AUX view	aux view callouts	n/a			figure; each control is held under Aux lanes
 Names and Functions of Parts > The MASTERING view	mastering view callouts	n/a			figure; each control is held under The mastering stage
-Names and Functions of Parts > The tape strip	tape strip callouts; left-click moves the playhead; double-click opens the editor	gap
+Names and Functions of Parts > The tape strip	tape strip callouts; left-click moves the playhead; double-click opens the editor	auto	scenario:gui.tape_ruler;scenario:gui.audio_editor_lifecycle		the ruler click seek and the double-click editor open are the scenarios behind the ruler and editor rows; the callouts are a figure
 Names and Functions of Parts > The audio region editor	region editor callouts	n/a			figure; each control is held under The audio region editor
 Names and Functions of Parts > The piano roll	piano roll callouts	n/a			figure; each control is held under The piano roll
 
@@ -63,7 +63,7 @@ Getting started > System requirements	a notepad that crashed on its first frame 
 Getting started > System requirements	notepad_enabled=0 keeps the notepad off	auto	test:An absent notepad switch leaves the notepad available;test:The notepad switch round-trips
 Getting started > Installing Dusk Studio	beta builds are ad-hoc signed or unsigned	n/a			packaging statement; held by the release workflow
 Getting started > Installing Dusk Studio > Linux (tarball)	tarball runs in place; install.sh installs launcher, menu entry and association	auto	ctest:install-linux;ctest:package-contents-checker
-Getting started > Installing Dusk Studio > Linux (tarball)	install.sh --system and --uninstall	gap
+Getting started > Installing Dusk Studio > Linux (tarball)	install.sh --system and --uninstall	auto	ctest:install-linux		the uninstall round-trip and the non-root --system refusal always run; the real --system install runs under a user namespace with tmpfs over /opt, /usr/local/bin and /usr/share, and skips where the kernel refuses one
 Getting started > Installing Dusk Studio > macOS (DMG / .app)	DMG drag-install, Gatekeeper Open Anyway, microphone prompt	manual			OS dialogs on a console session; walked on every release candidate (#623)
 Getting started > Installing Dusk Studio > Windows (MSI installer)	MSI installs to Program Files with SmartScreen and UAC steps	manual			OS dialogs; walked on every release candidate (#623)
 Getting started > Installing Dusk Studio > Windows (MSI installer)	non-ASCII install, profile and bounce paths work	partial	test:LameMp3Writer writes and reopens a Unicode path;test:Utf8CommandLine keeps a non-ANSI plugin path intact		MP3 and plug-in host paths tested; install folder and profile paths are not
@@ -71,7 +71,7 @@ Getting started > Installing Dusk Studio > Verifying your download	SHA256SUMS co
 Getting started > First launch	opens a blank Untitled session; tape strip collapsed	auto	scenario:gui.first_launch		fresh private HOME starts with Untitled, no regions or armed tracks, all channel strips present, Recording visible and timeline collapsed
 Getting started > First launch	stage buttons switch the console view	auto	scenario:gui.stage_views_and_controls		clicks all four stage buttons and checks exclusive button selection and console, transport, aux and mastering visibility
 Getting started > Configuring audio	six-section settings panel	n/a			overview; each section is held below
-Getting started > Configuring audio > Audio	Windows prefers ASIO, then exclusive, shared, DirectSound	gap
+Getting started > Configuring audio > Audio	Windows prefers ASIO, then exclusive, shared, DirectSound	partial	test:DeviceManager initialise: empty blob opens first type with devices;test:DeviceManager rescans every registered audio backend		the first-type-with-devices default pick is tested with mock backends; the Windows ASIO, WASAPI exclusive, WASAPI shared, DirectSound registration order is a compile-time JUCE registration and needs a Windows box with those drivers
 Getting started > Configuring audio > Audio	device choice applies immediately and is remembered per machine	auto	test:DeviceManager initialise: saved blob opens the named device and type;test:DeviceStateBlob JSON round-trips explicit channels
 Getting started > Configuring audio > Audio	a session switches the device to its own sample rate, and warns if it cannot	partial	test:SessionSerializer round-trips the session sample rate		the rate is saved; the switch and the warning are not tested
 Getting started > Configuring audio > Audio	extra output pairs become selectable as aux outputs	auto	test:output pair encode/decode round-trips;test:tapStereoPairInto accumulates onto the routed pair
@@ -125,9 +125,9 @@ The interface > The notepad	chords over lyrics: insert, complete, repeat, anchor
 The interface > The notepad	transpose keeps the song's own spelling; key detection	auto	test:transposeChords rewrites every chord in the source;test:Transpose keeps the notation the document already uses;test:Key detection only claims a key the evidence supports;test:Chord spelling follows the song until the user overrides it
 The interface > The notepad	section markers are bracketed labels, not chords	auto	test:Section markers are bracketed lines that are not chords;test:Section markers project as their label;test:chord grammar rejects ordinary bracketed text
 The interface > The notepad	saved atomically to notepad.md; follows Save As	auto	test:Notepad sidecar round-trips through the session directory
-The interface > The notepad	Source view edits land as one undo step; Esc closes rather than reverting	gap
+The interface > The notepad	Source view edits land as one undo step; Esc closes rather than reverting	auto	test:Source view records one undo step for a whole visit;test:One undo after source view restores the text it was entered with;test:A source view visit that changed nothing records nothing;test:Source view ends the typing run it interrupted;test:Escape in source view closes the notepad instead of reverting		the visit and the Escape decision are held in the editor core
 The interface > The notepad	typing never triggers transport shortcuts	auto	test:the shortcut rule withholds keys from a view that is taking text
-The interface > The notepad	closes and saves for an alert or stage switch; waits for the quit prompt	gap
+The interface > The notepad	closes and saves for an alert or stage switch; waits for the quit prompt	partial	test:Notepad sidecar round-trips through the session directory		the atomic sidecar write is tested; that an alert, a stage switch or the quit prompt triggers it, and that quit waits for the Save / Don't Save answer, needs a scenario seam on the native OpenGL notepad window, which does not exist
 
 The channel strip	fixed signal order: phase, insert, HPF, EQ, LPF, comp, pan, fader, routing	partial	scenario:engine.pipeline_selftest		pass-through, routing and comp are asserted; the order of every stage is not
 The channel strip	mute, solo and IN gate everything the track sends	auto	scenario:engine.pipeline_selftest;test:MIDI strips with no instrument skip the chain
@@ -407,8 +407,8 @@ Troubleshooting > Pops, clicks, or glitches	advice on buffers, periods and overs
 Troubleshooting > "Ping failed - check level / cables."	a silent or uncorrelated return reports Ping failed	auto	test:HardwareInsertSlot: ping with silent return reports -1
 Troubleshooting > Session won't open	a damaged session.json does not take the app down	auto	test:SessionSerializer::load survives truncated JSON;test:SessionSerializer::load survives empty / non-JSON garbage;bb:bb-damaged-recent
 Troubleshooting > Missing audio files	moved files are reported; relative paths survive a move	auto	test:unresolvable region path is reported as missing;test:same missing file referenced twice is reported once;test:stale absolute region path re-roots to the session's audio dir
-Troubleshooting > Audio device disconnected mid-session	losing the device stops the transport, commits the take and shows a banner	gap
-Troubleshooting > Audio device disconnected mid-session	reconnecting re-prepares at the new rate and block size	gap
+Troubleshooting > Audio device disconnected mid-session	losing the device stops the transport, commits the take and shows a banner	auto	scenario:device.loss_stops_and_commits		a take interrupted by the device stopping, then the banner verbatim
+Troubleshooting > Audio device disconnected mid-session	reconnecting re-prepares at the new rate and block size	auto	scenario:device.reconnect_reprepares		the new rate and block size, and blocks rendering again after them
 Troubleshooting > Audio device in use, or won't open at startup	a busy device falls back and says which; saved setup untouched	auto	test:DeviceManager initialise: busy saved device falls back but keeps saved intent;test:startupDeviceMessage: fell back to a different device -> names both;test:startupDeviceMessage: same endpoint on a different backend alerts;test:backendFallbackNotice: a fallback names both backends
 Troubleshooting > Audio device in use, or won't open at startup	nothing opens: a clear warning; recording and plugin loading refused	partial	test:startupDeviceMessage: nothing opened -> silent-session warning		the warning is tested; refusing recording and plugin loads is not
 
@@ -438,7 +438,7 @@ Messages > Import / Export > MIDI bindings export / import failed	unwritable exp
 Messages > Plugins	plugin alerts	n/a			index; entries are held below
 Messages > Plugins > Plugin kind mismatch	an instrument on an effect slot, or the reverse, is refused	auto	scenario:gui.plugin_kind_mismatch		both directions through the picker: an instrument browsed onto an audio insert and an effect onto a MIDI one, each refused with the quoted text and an emptied slot
 Messages > Plugins > Plugin load failed	a plugin that fails to instantiate reports why	auto	test:ClapBundle rejects a real shared object that is not a CLAP bundle;test:ClapBundle fails gracefully on a missing bundle;test:Lv2Bundle rejects a non-bundle path cleanly
-Messages > Plugins > Plugin scan complete	counts new plugins; a cancelled scan says so	gap
+Messages > Plugins > Plugin scan complete	counts new plugins; a cancelled scan says so	auto	test:scanCompleteTitle: cancelling renames the notice;test:scanCompleteBody: one plugin is singular, everything else plural;test:scanCompleteBody: a cancelled scan still reports what it added		both call sites take their title from the same seam
 Messages > Plugins > Plugin slot labels (inline, not a dialog)	crashed and stalled labels on the slot	auto	scenario:gui.slot_health_labels		both labels read back verbatim off a channel insert and an aux lane slot, plus the right-click Re-enable entry for each state
 Messages > Hardware insert	ping results: no input, failed, detected	auto	test:HardwareInsertSlot: ping with invalid input routing reports -2;test:HardwareInsertSlot: ping with silent return reports -1;test:HardwareInsertSlot: ping measures loopback round-trip exactly
 Messages > Tempo	tempo alerts	n/a			index; entries are held below

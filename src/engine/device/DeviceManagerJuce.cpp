@@ -415,6 +415,11 @@ void DeviceManager::notifyChange() { impl->fireListeners(); }
 // The native mock suite is Linux-only; off Linux this seam is never referenced.
 void DeviceManager::setDeviceTypesForTest (std::vector<std::unique_ptr<IODeviceType>>) {}
 
+void DeviceManager::clearDeviceChangePendingForTest() noexcept
+{
+    impl->deviceChangePending.store (false, std::memory_order_release);
+}
+
 #if ! defined(__linux__)
 juce::AudioDeviceManager& DeviceManager::juceManager() { return impl->mgr; }
 #endif
