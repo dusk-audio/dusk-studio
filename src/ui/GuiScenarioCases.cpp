@@ -2764,7 +2764,7 @@ std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioCo
     steps->push_back ({ 150, [&host, &ctx]
     { ctx.expect (host.clickFileMenu(), "File menu is unavailable"); } });
     steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.clickContextMenuItem ("Import DP Song (experimental)..."), "DP import menu item is unavailable"); } });
+    { ctx.expect (host.clickContextMenuItem ("Import DP-24/32 Session (experimental)..."), "DP import menu item is unavailable"); } });
     steps->push_back ({ 250, [&host, &ctx]
     {
         ctx.expect (host.focusFileName(), "DP file browser did not open");
@@ -2782,7 +2782,7 @@ std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioCo
         const auto text = host.dpImportSummary();
         if (ctx.expect (text.size() == 3, "DP confirmation is not visible and ready to import"))
         {
-            ctx.expect (text[0] == "Import DP Song", "DP confirmation title is wrong");
+            ctx.expect (text[0] == "Import DP-24/32 Session", "DP confirmation title is wrong");
             for (const auto* part : { "3 tracks", "1 stereo pair", "48.0 kHz / 16-bit" })
                 ctx.expect (text[1].find (part) != std::string::npos, std::string ("DP summary omits ") + part);
             ctx.expect (text[2].find ("ZZ0003: right channel without left; imported as mono.") != std::string::npos,

@@ -4719,7 +4719,7 @@ void MainComponent::importDpSongPrompt()
 {
     if (! engine.getTransport().isStopped())
     {
-        showImportError ("Import DP Song", "Stop playback before importing.");
+        showImportError ("Import DP-24/32 Session", "Stop playback before importing.");
         return;
     }
 
@@ -4746,7 +4746,7 @@ void MainComponent::importDpSongPrompt()
         const auto scan = dp::scanSongFolder (folder);
         if (! scan.ok)
         {
-            showImportError ("Import DP Song",
+            showImportError ("Import DP-24/32 Session",
                              scan.warnings.empty()
                                  ? juce::String ("No DP song folder found at that location.")
                                  : juce::String (scan.warnings));
@@ -4779,7 +4779,7 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
 {
     if (! engine.getTransport().isStopped())
     {
-        showImportError ("Import DP Song", "Stop playback before importing.");
+        showImportError ("Import DP-24/32 Session", "Stop playback before importing.");
         return;
     }
     if (dpImportJob != nullptr) return;   // one import at a time
@@ -4938,7 +4938,7 @@ void MainComponent::finishDpImport()
     if (! skipped.isEmpty())
         msg << "\n\nSkipped " << skipped.size() << ":\n" << skipped.joinIntoString ("\n");
     dpImportJob.reset();
-    showDuskAlert (*this, "Import DP Song", msg);
+    showDuskAlert (*this, "Import DP-24/32 Session", msg);
 }
 
 void MainComponent::enqueueImports (juce::Array<juce::File> files,
@@ -5313,7 +5313,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         menu.addSeparator();
         addAccel (kMenuFileImport, "Import Audio or MIDI...", 'I',
                   juce::ModifierKeys::commandModifier);
-        menu.addItem (kMenuFileImportDp, "Import DP Song (experimental)...");
+        menu.addItem (kMenuFileImportDp, "Import DP-24/32 Session (experimental)...");
         menu.addSeparator();
         menu.addItem (kMenuFileMixdown, "Mixdown");
         addAccel (kMenuFileBounce, "Bounce...", 'B',
