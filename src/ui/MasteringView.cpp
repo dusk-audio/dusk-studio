@@ -519,6 +519,19 @@ void MasteringView::applyNativePanelSync()
    #endif
 }
 
+int MasteringView::nativePanelsOpenForScenario() const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    int open = 0;
+    for (const auto* window : { eqWindow.get(), limiterWindow.get() })
+        if (window != nullptr && window->isOpen())
+            ++open;
+    return open;
+   #else
+    return -1;
+   #endif
+}
+
 std::vector<MasteringView::NativePanelCapture>
 MasteringView::captureNativePanels (const juce::File& dir)
 {

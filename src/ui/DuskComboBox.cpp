@@ -1193,8 +1193,9 @@ void DuskComboBox::showPopup()
     // plugin editor (the SoundFont editor is one example) - hiding plugin
     // editors there would hide the combo's own editor and expose only its
     // opaque EmbeddedModal backdrop as a large black rectangle. Combos outside
-    // any tagged editor still need the hide: native editor child windows paint
-    // above JUCE components and would bury the popup.
+    // any tagged editor still need the hide, but only of what the popup covers:
+    // native editor child windows paint above JUCE components and would bury
+    // the popup. It happens below, once the popup sits where it will be seen.
     bool insideTaggedEditor = false;
     for (auto* c = static_cast<juce::Component*> (this); c != nullptr; c = c->getParentComponent())
         if ((bool) c->getProperties().getWithDefault (kPluginEditorTag, false))
@@ -1206,7 +1207,7 @@ void DuskComboBox::showPopup()
                              /*dismissOnClickOutside*/ true,
                              /*dismissOnEscape*/ true,
                              /*dimAlpha*/ 0.0f,
-                             /*hidePluginEditors*/ ! insideTaggedEditor,
+                             /*hidePluginEditors*/ false,
                              /*useOverlay*/ false,
                              /*forwardShortcuts*/ ! centred,
                              /*onDismissOutside*/ dismissOutside);
@@ -1222,5 +1223,13 @@ void DuskComboBox::showPopup()
                                                             juce::Point<int> (sx, sy));
         sharedComboModal().repositionBody (localTopLeft);
     }
+
+    // Now that the popup owns its final rectangle, take down the plugin editors
+    // it actually covers - and only those. A tagged editor elsewhere in the
+    // window (the mastering stage's EQ and limiter panels are framework
+    // children) would have to be closed and reopened to hide, which the user
+    // sees as the panel disappearing until the menu closes.
+    if (! insideTaggedEditor)
+        sharedComboModal().hideEditorsUnderBody();
 }
 } // namespace duskstudio
