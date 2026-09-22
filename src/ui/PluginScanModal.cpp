@@ -1,5 +1,6 @@
 #include "PluginScanModal.h"
 #include "../engine/PluginManager.h"
+#include "../engine/PluginScanMessage.h"
 #include <cstdio>
 
 namespace duskstudio
@@ -128,11 +129,8 @@ void PluginScanModal::timerCallback()
 
         const int added = addedCount.load (std::memory_order_relaxed);
         const bool cancelled = aborting.load (std::memory_order_relaxed);
-        titleLabel.setText (cancelled ? "Plugin scan cancelled" : "Plugin scan complete",
-                            juce::dontSendNotification);
-        statusLabel.setText (juce::String (added) + " new plugin"
-                                 + (added == 1 ? "" : "s") + " added.",
-                             juce::dontSendNotification);
+        titleLabel.setText (scanCompleteTitle (cancelled), juce::dontSendNotification);
+        statusLabel.setText (scanCompleteBody (added), juce::dontSendNotification);
         cancelButton.setVisible (false);
         progressValue = 1.0;
         progressBar.repaint();

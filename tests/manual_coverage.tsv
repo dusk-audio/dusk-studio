@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 5
+# ceiling gap 4
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -438,7 +438,7 @@ Messages > Import / Export > MIDI bindings export / import failed	unwritable exp
 Messages > Plugins	plugin alerts	n/a			index; entries are held below
 Messages > Plugins > Plugin kind mismatch	an instrument on an effect slot, or the reverse, is refused	auto	scenario:gui.plugin_kind_mismatch		both directions through the picker: an instrument browsed onto an audio insert and an effect onto a MIDI one, each refused with the quoted text and an emptied slot
 Messages > Plugins > Plugin load failed	a plugin that fails to instantiate reports why	auto	test:ClapBundle rejects a real shared object that is not a CLAP bundle;test:ClapBundle fails gracefully on a missing bundle;test:Lv2Bundle rejects a non-bundle path cleanly
-Messages > Plugins > Plugin scan complete	counts new plugins; a cancelled scan says so	gap
+Messages > Plugins > Plugin scan complete	counts new plugins; a cancelled scan says so	auto	test:scanCompleteTitle: cancelling renames the notice;test:scanCompleteBody: one plugin is singular, everything else plural;test:scanCompleteBody: a cancelled scan still reports what it added		both call sites take their title from the same seam
 Messages > Plugins > Plugin slot labels (inline, not a dialog)	crashed and stalled labels on the slot	auto	scenario:gui.slot_health_labels		both labels read back verbatim off a channel insert and an aux lane slot, plus the right-click Re-enable entry for each state
 Messages > Hardware insert	ping results: no input, failed, detected	auto	test:HardwareInsertSlot: ping with invalid input routing reports -2;test:HardwareInsertSlot: ping with silent return reports -1;test:HardwareInsertSlot: ping measures loopback round-trip exactly
 Messages > Tempo	tempo alerts	n/a			index; entries are held below

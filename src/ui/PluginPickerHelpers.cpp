@@ -4,6 +4,7 @@
 #include "PluginScanModal.h"
 #include "PluginPickerPanel.h"
 #include "../engine/PluginManager.h"
+#include "../engine/PluginScanMessage.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/builtin/BuiltinScanRows.h"
 #include <algorithm>
@@ -234,7 +235,7 @@ void runScanModal (PluginManager& manager, juce::Component* parent,
                         << manager.getCacheFile().getFullPathName();
 
             if (auto* h = safeHost.getComponent())
-                showDuskAlert (*h, cancelled ? "Plugin scan cancelled" : "Plugin scan complete",
+                showDuskAlert (*h, scanCompleteTitle (cancelled),
                                   std::move (message), std::move (onAlertDismiss));
             else if (onAlertDismiss)
                 onAlertDismiss();
