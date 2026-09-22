@@ -16,8 +16,9 @@
 // The traffic between a built-in unit's own plug-in editor and the unit, driven
 // through a stand-in editor so none of it needs a window: values pushed in as they
 // change, edits coming back out, the gesture that marks a parameter touched and
-// hands focus back, the two-tick close, an editor that fails in its own pump, and
-// the first-frame marker a run that never came back leaves behind.
+// hands focus back, the two-tick close, the synchronous teardown that has to
+// leave nothing holding the unit's DSP, an editor that fails in its own pump,
+// and the first-frame marker a run that never came back leaves behind.
 
 using duskstudio::imgui::DafEditorHost;
 using Catch::Matchers::WithinAbs;
@@ -31,8 +32,8 @@ constexpr std::uintptr_t kParent = 0x1234;
 class FakeEditor final : public duskstudio::builtin::DafEditor
 {
 public:
-    explicit FakeEditor (duskstudio::builtin::DafEditorCallbacks cb)
-        : callbacks (std::move (cb)) {}
+    FakeEditor (duskstudio::builtin::DafEditorCallbacks cb, const int* unitDsp)
+        : callbacks (std::move (cb)), dsp (unitDsp) {}
 
     ~FakeEditor() override { ++destroyed(); }
 
@@ -50,9 +51,13 @@ public:
         sizeH = h;
     }
 
+    // Reads the unit's DSP the way a plug-in's own UI polls the instance
+    // pointer it was handed: a pump after that instance is freed is the
+    // use-after-free this file exists to keep out.
     bool idle() noexcept override
     {
         ++idles;
+        observed = *dsp;
         return alive;
     }
 
@@ -74,6 +79,8 @@ public:
     struct Push { std::uint32_t index; float value; };
 
     duskstudio::builtin::DafEditorCallbacks callbacks;
+    const int* dsp = nullptr;
+    int observed = 0;
     std::vector<Push> pushed;
     int offsetX = 0, offsetY = 0, offsetCalls = 0, idles = 0;
     std::uint32_t sizeW = 0, sizeH = 0;
@@ -82,9 +89,12 @@ public:
 };
 
 // A stand-in unit: four controls, the last one an output the unit writes itself,
-// and an integer control it conforms the way a plug-in would.
+// an integer control it conforms the way a plug-in would, and the DSP instance
+// it hands its editor - owned here exactly as the real unit owns it, so a test
+// can free it and see what the editor does next.
 struct FakeUnit
 {
+    std::unique_ptr<int> dsp = std::make_unique<int> (42);
     std::vector<float> values { 0.25f, 1.0f, 0.5f, 0.0f };
     std::vector<int> touched;
     int editorsBuilt = 0;
@@ -105,7 +115,7 @@ struct FakeUnit
                 errorOut = refusal;
                 return nullptr;
             }
-            auto editor = std::make_unique<FakeEditor> (std::move (callbacks));
+            auto editor = std::make_unique<FakeEditor> (std::move (callbacks), dsp.get());
             editor->sizeW = w;
             editor->sizeH = h;
             editor->placeable = placeable;
@@ -280,6 +290,86 @@ TEST_CASE ("a plug-in editor closes over two ticks and reopens", "[builtin][daf]
     REQUIRE (rig.unit.live->idles == 1);
 }
 
+TEST_CASE ("a plug-in editor host hands its editor back before the unit's DSP goes",
+           "[builtin][daf][editor]")
+{
+    // close() only asks for a teardown two pump ticks away, so a caller that
+    // frees the unit after calling it leaves a stale editor pumping over freed
+    // memory. shutdown() is what the removal and replacement paths use instead.
+    SECTION ("the unit is removed")
+    {
+        Rig rig;
+        const int before = FakeEditor::destroyed();
+        REQUIRE (rig.host.open (kParent, rig.wanted));
+        rig.host.tick();
+
+        rig.host.shutdown();
+        REQUIRE (FakeEditor::destroyed() == before + 1);
+        REQUIRE_FALSE (rig.host.isOpen());
+
+        rig.unit.dsp.reset();
+        rig.host.tick();
+        // The caller asked for this, so it is not told about it as a close.
+        REQUIRE (rig.closes == 0);
+    }
+
+    SECTION ("the unit is replaced by the same unit")
+    {
+        Rig rig;
+        REQUIRE (rig.host.open (kParent, rig.wanted));
+        rig.host.tick();
+
+        rig.host.shutdown();
+        // The successor can land on the address the old instance was freed
+        // from, which is why the editor goes first rather than being reused.
+        rig.unit.dsp = std::make_unique<int> (7);
+        REQUIRE (rig.host.open (kParent, rig.wanted));
+        rig.host.tick();
+
+        REQUIRE (rig.unit.editorsBuilt == 2);
+        REQUIRE (rig.unit.live->dsp == rig.unit.dsp.get());
+        REQUIRE (rig.unit.live->observed == 7);
+    }
+
+    SECTION ("the editor was already on its way out")
+    {
+        Rig rig;
+        REQUIRE (rig.host.open (kParent, rig.wanted));
+        rig.host.tick();
+
+        rig.host.close();
+        rig.host.shutdown();
+        rig.unit.dsp.reset();
+
+        // The pending close is spent, so no later tick pumps or reports one.
+        rig.host.tick();
+        rig.host.tick();
+        REQUIRE (rig.closes == 0);
+        REQUIRE_FALSE (rig.host.isOpen());
+    }
+}
+
+TEST_CASE ("a synchronous teardown is idempotent and leaves the host reusable",
+           "[builtin][daf][editor]")
+{
+    Rig rig;
+    rig.host.shutdown();
+    REQUIRE_FALSE (rig.host.isOpen());
+
+    REQUIRE (rig.host.open (kParent, rig.wanted));
+    rig.host.tick();
+    const int before = FakeEditor::destroyed();
+    rig.host.shutdown();
+    rig.host.shutdown();
+    REQUIRE (FakeEditor::destroyed() == before + 1);
+
+    REQUIRE (rig.host.open (kParent, rig.wanted));
+    rig.host.tick();
+    REQUIRE (rig.host.isOpen());
+    REQUIRE (rig.unit.editorsBuilt == 2);
+    REQUIRE (rig.unit.live->idles == 1);
+}
+
 TEST_CASE ("a plug-in editor host names its editor's window only while it is open",
            "[builtin][daf][editor]")
 {
@@ -373,6 +463,16 @@ TEST_CASE ("a first-frame marker refuses the editor until it is deleted",
         // Armed while the first frame is in flight, and gone once one completes.
         REQUIRE (std::filesystem::exists (marker));
         rig.host.tick();
+        REQUIRE_FALSE (std::filesystem::exists (marker));
+    }
+
+    // A unit taken away before its editor ever drew is not a run that never came
+    // back, so it leaves nothing for the next launch to refuse an editor over.
+    {
+        Rig rig (marker);
+        REQUIRE (rig.host.open (kParent, rig.wanted));
+        REQUIRE (std::filesystem::exists (marker));
+        rig.host.shutdown();
         REQUIRE_FALSE (std::filesystem::exists (marker));
     }
 

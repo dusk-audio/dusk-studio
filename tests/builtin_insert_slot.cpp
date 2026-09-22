@@ -5,6 +5,8 @@
 #include "engine/builtin/NativeBuiltinSlot.h"
 
 #include <cmath>
+#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -107,6 +109,84 @@ TEST_CASE ("built-in slot loads a unit without touching disk")
         slot.unload();
         REQUIRE_FALSE (slot.isLoaded());
         REQUIRE (slot.getPluginId().empty());
+    }
+}
+
+TEST_CASE ("a built-in slot ends its editor before it frees the instance")
+{
+    // A unit that brings its own editor hands that editor the live instance, so
+    // every path that frees the instance has to end the editor first - the
+    // remove button, a replacement, a session restore, a clone replay. The slot
+    // runs the registered teardown itself rather than trusting each caller.
+    NativeBuiltinSlot slot;
+    std::string error;
+    REQUIRE (slot.loadUnit ("dusk.builtin.utility", kSampleRate, kBlock, error));
+    const auto* const loaded = slot.getInstance();
+    const auto loadedGeneration = slot.generation();
+    REQUIRE (loaded != nullptr);
+
+    int fired = 0;
+    const BuiltinInstance* seen = nullptr;
+    std::string idSeen;
+    auto teardown = std::make_shared<std::function<void()>> ([&]
+    {
+        ++fired;
+        seen = slot.getInstance();
+        idSeen = slot.getPluginId();
+    });
+    slot.setInstanceReleaseHook (teardown);
+
+    SECTION ("the unit is removed")
+    {
+        slot.unload();
+        REQUIRE (fired == 1);
+        // Still the live instance while the editor comes down over it.
+        REQUIRE (seen == loaded);
+        REQUIRE_FALSE (slot.isLoaded());
+
+        // One registration, one teardown: the next occupant has no editor of
+        // this one's to end, and brings its own registration when it opens.
+        REQUIRE (slot.loadUnit ("dusk.builtin.utility", kSampleRate, kBlock, error));
+        slot.unload();
+        REQUIRE (fired == 1);
+    }
+
+    SECTION ("the unit is replaced by the same unit")
+    {
+        REQUIRE (slot.loadUnit ("dusk.builtin.utility", kSampleRate, kBlock, error));
+        REQUIRE (fired == 1);
+        REQUIRE (seen == loaded);
+        REQUIRE (idSeen == "dusk.builtin.utility");
+        REQUIRE (slot.isLoaded());
+        // The successor can be handed the address the old instance was freed
+        // from, so identity is the generation, not the pointer.
+        REQUIRE (slot.generation() != loadedGeneration);
+    }
+
+    SECTION ("the unit is replaced by a different unit")
+    {
+        std::string other;
+        for (const auto& unit : registry())
+            if (std::string (unit.id) != "dusk.builtin.utility") { other = unit.id; break; }
+        if (other.empty())
+        {
+            SUCCEED ("this build registers only one unit");
+            return;
+        }
+
+        REQUIRE (slot.loadUnit (other, kSampleRate, kBlock, error));
+        REQUIRE (fired == 1);
+        REQUIRE (seen == loaded);
+        REQUIRE (idSeen == "dusk.builtin.utility");
+        REQUIRE (slot.getPluginId() == other);
+    }
+
+    SECTION ("an owner that has gone leaves nothing to call")
+    {
+        teardown.reset();
+        slot.unload();
+        REQUIRE (fired == 0);
+        REQUIRE_FALSE (slot.isLoaded());
     }
 }
 

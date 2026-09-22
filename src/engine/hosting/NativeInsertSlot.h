@@ -9,8 +9,10 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::hosting
@@ -80,8 +82,20 @@ public:
         return true;
     }
 
+    // Message thread: what a UI that built an editor over the live instance
+    // registers, so the editor is destroyed while the instance it dereferences
+    // is still there. It runs from unload(), and from the unload inside a
+    // replacing load(), which is every path that frees the instance - a call
+    // site cannot forget it. Held weakly and dropped once it has run: an owner
+    // that has gone takes its hook with it, and the next editor brings its own.
+    void setInstanceReleaseHook (std::weak_ptr<std::function<void()>> hook) noexcept
+    {
+        instanceRelease = std::move (hook);
+    }
+
     void unload()
     {
+        releaseAttachedEditor();
         processingOnline.store (false, std::memory_order_release);
         ready.store (false, std::memory_order_release);
         gen.fetch_add (1, std::memory_order_relaxed);
@@ -282,6 +296,17 @@ public:
     virtual ~NativeInsertSlot() = default;
 
 protected:
+    // Exchanged before the call, so a hook that unloads again cannot recurse
+    // and a spent registration cannot fire against the next occupant.
+    void releaseAttachedEditor()
+    {
+        if (instance == nullptr)
+            return;
+        auto hook = std::exchange (instanceRelease, {}).lock();
+        if (hook != nullptr && *hook)
+            (*hook)();
+    }
+
     // Format hook: map paramIndex + 0..1 fraction onto the instance's parameter
     // surface (message thread). Default: format has no parameters - drop.
     virtual void applyParamBinding (uint32_t /*paramIndex*/, float /*frac*/) {}
@@ -298,6 +323,7 @@ protected:
     std::atomic<std::uint64_t> gen      { 0 };
     std::string       loadedPath;
     std::string       loadedPluginId;
+    std::weak_ptr<std::function<void()>> instanceRelease;
 
 private:
     struct ParamBinding { uint32_t paramIndex; float frac; };

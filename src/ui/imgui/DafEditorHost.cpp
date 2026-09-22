@@ -38,15 +38,27 @@ struct DafEditorHost::Impl final : private dusk::Timer
 
     ~Impl() override
     {
-        stopTimer();
         // The callbacks reach into the caller, which is already tearing down by
         // the time this runs, and neither means anything to it now.
         callbacks = {};
+        shutdown();
+    }
+
+    void shutdown()
+    {
+        stopTimer();
+        closeRequested = false;
+        closeWasPumped = false;
         editor.reset();
-        // The marker means "armed a frame and never came back", so only a run that
-        // armed one may clear it, and only once that is no longer what it says.
-        if (armedMarker && firstFrameConfirmed)
+        // The marker means "armed a frame and never came back". Getting here is
+        // coming back, whether a frame was drawn or the editor went before one
+        // was, so a run that armed one clears it rather than leaving the next
+        // launch to refuse an editor nothing went wrong with.
+        if (armedMarker)
+        {
             probe.disarm();
+            armedMarker = false;
+        }
     }
 
     bool open (std::uintptr_t nativeParent, Geometry geometry)
@@ -317,6 +329,8 @@ const std::string& DafEditorHost::lastOpenFailure() const noexcept
 void DafEditorHost::setGeometry (Geometry geometry) { impl->setGeometry (geometry); }
 
 void DafEditorHost::close() { impl->close(); }
+
+void DafEditorHost::shutdown() { impl->shutdown(); }
 
 bool DafEditorHost::isOpen() const noexcept { return impl->isOpen(); }
 

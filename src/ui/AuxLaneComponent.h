@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -75,6 +76,13 @@ public:
     bool attachEditorForSlotForScenario (int slotIdx);
     bool captureSourcesForScenario (bool enabled);
     std::vector<std::string> sourceRowsForScenario() const;
+    // Load a built-in unit the way the picker's row does, and read back what the
+    // slot's inline editor is: the unit it was built for, or empty when no
+    // editor is up. A built-in that brings its own editor never shares a slot
+    // with the parameter-table window, so one string says which of the two the
+    // lane is showing and for what.
+    bool loadBuiltinForSlotForScenario (int slotIdx, const std::string& unitId);
+    std::string builtinEditorUnitForScenario (int slotIdx) const;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     bool loadNativeClapForSlotForScenario (int slotIdx,
                                            const std::filesystem::path& clapFile,
@@ -128,6 +136,9 @@ private:
     imgui::DafEditorHost::Geometry builtinEditorGeometry (int slotIdx) const;
     void openBuiltinEditorHostForSlot (int slotIdx, std::uintptr_t parentHandle,
                                        const std::string& unitId);
+    // The editor goes now, not on a later pump tick. Registered with the slot,
+    // which runs it while the unit the editor holds is still alive.
+    void dropBuiltinEditorForSlot (int slotIdx);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_UI
     bool builtinSyncPending = false;
@@ -241,6 +252,10 @@ private:
         // A unit that is one of Dusk's own DAF plug-ins shows the plug-in's own
         // editor here instead of the panel window above.
         std::unique_ptr<imgui::DafEditorHost> builtinEditorHost;
+        // The teardown the slot runs before it frees the unit the editor above
+        // draws. The lane holds the only owning reference, so a lane that has
+        // gone leaves the slot nothing to call.
+        std::shared_ptr<std::function<void()>> builtinEditorRelease;
         std::string builtinViewUnit;
         std::uintptr_t builtinViewParent = 0;
         bool builtinCloseRequested = false;

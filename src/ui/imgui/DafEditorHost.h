@@ -90,6 +90,13 @@ public:
     // Teardown is deferred over two pump ticks; close() only asks for it.
     void close();
 
+    // Destroys the editor before returning, rather than asking a later tick to.
+    // Whatever the editor still holds - the unit's DSP among it - is free to go
+    // once this call is over, which a close() cannot promise. Idempotent, and
+    // for the message thread only: the editor's own pump is running inside
+    // tick(), so nothing reached from there may call this.
+    void shutdown();
+
     // True from a successful open() until the closed callback has run.
     bool isOpen() const noexcept;
 
