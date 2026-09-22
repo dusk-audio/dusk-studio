@@ -158,6 +158,16 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
                 return false;
             }
 
+           #if defined (__APPLE__)
+            // The child is sized in backing pixels, and the framework converts
+            // that to points against the main screen's backing scale while it
+            // realises the view - before the view is attached to the parent, so
+            // on a mixed-scale setup the menu-bar display's scale is used for a
+            // window living on a different one. Re-applying the same size now
+            // that the view has a parent converts it against the right screen.
+            window->setSize (geometry.width, geometry.height);
+           #endif
+
             window->focus();
             appliedScaleFactor = window->getScaleFactor();
             embeddedParent = nativeParent;
