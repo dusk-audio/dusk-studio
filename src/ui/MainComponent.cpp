@@ -341,7 +341,7 @@ class DpImportProgressPanel final : public juce::Component, private dusk::Timer
 public:
     explicit DpImportProgressPanel (DpImportJob& j) : job (j), bar (value)
     {
-        title.setText ("Importing DP song...", juce::dontSendNotification);
+        title.setText ("Importing DP-24/32 session...", juce::dontSendNotification);
         title.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
         title.setColour (juce::Label::textColourId, juce::Colour (0xffe8e8e8));
         addAndMakeVisible (title);
