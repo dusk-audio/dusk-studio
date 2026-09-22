@@ -7,6 +7,7 @@
 #include "SteppedKnob.h"
 #include "TapePanel.h"
 #include <algorithm>
+#include <cmath>
 
 namespace duskstudio
 {
@@ -91,12 +92,16 @@ void styleEditorLabel (juce::Label& l, const juce::String& text, juce::Colour ac
     l.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
 }
 
-void styleEditorCompLabel (juce::Label& l, const juce::String& text)
+// Centred accent-red caption - the comp editors' 11-pt knob captions, and at
+// editorTitle::kFontSize the strip name every editor popup carries on its top row.
+void styleEditorAccentLabel (juce::Label& l, const juce::String& text,
+                              float fontHeight = 11.0f,
+                              std::uint32_t colour = 0xffb07050)
 {
     l.setText (text, juce::dontSendNotification);
     l.setJustificationType (juce::Justification::centred);
-    l.setColour (juce::Label::textColourId, juce::Colour (0xffb07050));
-    l.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
+    l.setColour (juce::Label::textColourId, juce::Colour (colour));
+    l.setFont (juce::Font (juce::FontOptions (fontHeight, juce::Font::bold)));
 }
 
 void styleEditorEnableBtn (juce::TextButton& b, juce::Colour onColour)
@@ -135,6 +140,12 @@ public:
             params.eqEnabled.store (enableBtn.getToggleState(), std::memory_order_relaxed);
         };
         addAndMakeVisible (enableBtn);
+
+        // The master strip has one fixed name; the title says so, the same way
+        // every other editor popup names the strip that opened it.
+        styleEditorAccentLabel (titleLbl, "MASTER", editorTitle::kFontSize, editorTitle::kColour);
+        titleLbl.setMinimumHorizontalScale (1.0f);
+        addAndMakeVisible (titleLbl);
 
         styleEditorKnob (lfBoost,   pultecGold,   0.0,  10.0,   3.0,  3.0, "", 1);
         styleEditorKnob (lfAtten,   pultecGold,   0.0,  10.0,   3.0,  3.0, "", 1);
@@ -272,6 +283,7 @@ public:
     {
         auto area = getLocalBounds().reduced (kEditorOuterPad);
         auto header = area.removeFromTop (kEditorHeaderH);
+        titleLbl.setBounds (header.withTrimmedLeft (60).withTrimmedRight (60));
         enableBtn.setBounds (header.removeFromRight (60));
         area.removeFromTop (kEditorHeaderGap);
 
@@ -327,6 +339,7 @@ public:
 private:
     MasterBusParams& params;
     juce::TextButton enableBtn;
+    juce::Label titleLbl;
     juce::Slider lfBoost, lfAtten, hfBoost, hfAtten, hfBandwidth;
     juce::Slider lfFreqKnob      { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider hfBoostFreqKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
@@ -356,6 +369,12 @@ public:
             params.compEnabled.store (enableBtn.getToggleState(), std::memory_order_relaxed);
         };
         addAndMakeVisible (enableBtn);
+
+        // The master strip has one fixed name; the title says so, the same way
+        // every other editor popup names the strip that opened it.
+        styleEditorAccentLabel (titleLbl, "MASTER", editorTitle::kFontSize, editorTitle::kColour);
+        titleLbl.setMinimumHorizontalScale (1.0f);
+        addAndMakeVisible (titleLbl);
 
         styleEditorKnob (rat, compGold,   1.0,   10.0,    4.0,   4.0, ":1",  1);
         styleEditorKnob (atk, compGold,   0.1,   50.0,    5.0,  10.0, " ms", 1);
@@ -391,10 +410,10 @@ public:
         addAndMakeVisible (rat); addAndMakeVisible (atk);
         addAndMakeVisible (rel); addAndMakeVisible (mak);
 
-        styleEditorCompLabel (ratLbl, "RATIO");
-        styleEditorCompLabel (atkLbl, "ATTACK");
-        styleEditorCompLabel (relLbl, "RELEASE");
-        styleEditorCompLabel (makLbl, "GAIN");
+        styleEditorAccentLabel (ratLbl, "RATIO");
+        styleEditorAccentLabel (atkLbl, "ATTACK");
+        styleEditorAccentLabel (relLbl, "RELEASE");
+        styleEditorAccentLabel (makLbl, "GAIN");
         addAndMakeVisible (ratLbl); addAndMakeVisible (atkLbl);
         addAndMakeVisible (relLbl); addAndMakeVisible (makLbl);
 
@@ -530,6 +549,7 @@ public:
         auto area = getLocalBounds().reduced (kEditorOuterPad);
 
         auto header = area.removeFromTop (kEditorHeaderH);
+        titleLbl.setBounds (header.withTrimmedLeft (60).withTrimmedRight (60));
         enableBtn.setBounds (header.removeFromRight (60));
         area.removeFromTop (kEditorHeaderGap);
 
@@ -608,6 +628,7 @@ private:
 
     MasterBusParams& params;
     juce::TextButton enableBtn;
+    juce::Label titleLbl;
     juce::Slider rat, atk, rel, mak;
     juce::Label  ratLbl, atkLbl, relLbl, makLbl;
     juce::Rectangle<int> inputMeterArea, grMeterArea, threshHandleArea;
@@ -1430,8 +1451,8 @@ void MasterStripComponent::paint (juce::Graphics& g)
             const float baselineY = y + (ascent - descent) * 0.5f - 2.0f;
             const float textW = juce::GlyphArrangement::getStringWidth (font, label);
             g.drawSingleLineText (label,
-                                    juce::roundToInt (labelRight - textW),
-                                    juce::roundToInt (baselineY),
+                                    (int) std::lround (labelRight - textW),
+                                    (int) std::lround (baselineY),
                                     juce::Justification::left);
         }
     }
@@ -1718,7 +1739,7 @@ void MasterStripComponent::resized()
         const auto& faderRange = faderSlider.getNormalisableRange();
         const float zeroFrac = (float) faderRange.convertTo0to1 (0.0);
         const int zeroY = meterArea.getBottom() - 1
-                        - juce::roundToInt (zeroFrac * (float) (meterArea.getHeight() - 2));
+                        - (int) std::lround (zeroFrac * (float) (meterArea.getHeight() - 2));
         constexpr int kGrCaptionReserve = 10;
         const int compTop = zeroY - kGrCaptionReserve;
         compMeter->setBounds (compMeterCol.withY (compTop)

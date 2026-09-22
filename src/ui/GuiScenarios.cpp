@@ -1099,6 +1099,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         auto* strip = owner.consoleView->getStripComponent (track);
         return strip != nullptr && strip->moduleEditorOpenForScenario (module);
     }
+    std::string stripModuleEditorTitle (int track, int module) const override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip == nullptr ? std::string {} : strip->moduleEditorTitleForScenario (module);
+    }
     void closeStripModuleEditors (int track) override
     {
         if (auto* strip = owner.consoleView->getStripComponent (track))

@@ -7,6 +7,7 @@
 #include "../session/MidiBindings.h"
 #include "../session/ParamEditAction.h"
 #include <algorithm>
+#include <cmath>
 
 namespace duskstudio
 {
@@ -93,13 +94,16 @@ void styleEditorLabel (juce::Label& l, const juce::String& text, juce::Colour ac
     l.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
 }
 
-// 11-pt comp-knob label - matches ChannelCompEditor's styleLabel exactly.
-void styleEditorCompLabel (juce::Label& l, const juce::String& text)
+// Centred accent-red caption - the comp editors' 11-pt knob captions, and at
+// editorTitle::kFontSize the strip name every editor popup carries on its top row.
+void styleEditorAccentLabel (juce::Label& l, const juce::String& text,
+                              float fontHeight = 11.0f,
+                              std::uint32_t colour = 0xffb07050)
 {
     l.setText (text, juce::dontSendNotification);
     l.setJustificationType (juce::Justification::centred);
-    l.setColour (juce::Label::textColourId, juce::Colour (0xffb07050));
-    l.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
+    l.setColour (juce::Label::textColourId, juce::Colour (colour));
+    l.setFont (juce::Font (juce::FontOptions (fontHeight, juce::Font::bold)));
 }
 
 void styleEditorEnableBtn (juce::TextButton& b, juce::Colour onColour)
@@ -127,6 +131,11 @@ public:
                                          std::memory_order_release);
         };
         addAndMakeVisible (enableBtn);
+
+        // Which bus this editor belongs to, centred left of the EQ pill.
+        styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize, editorTitle::kColour);
+        titleLbl.setMinimumHorizontalScale (1.0f);
+        addAndMakeVisible (titleLbl);
 
         styleEditorKnob (lf,  eqGreen, -9.0, 9.0, 0.0, 0.0, " dB", 1);
         // Tooltips set after the styleEditorKnob trio below so the
@@ -170,6 +179,7 @@ public:
     {
         auto area = getLocalBounds().reduced (kEditorOuterPad);
         auto header = area.removeFromTop (kEditorHeaderH);
+        titleLbl.setBounds (header.withTrimmedLeft (60).withTrimmedRight (60));
         enableBtn.setBounds (header.removeFromRight (60));
         area.removeFromTop (kEditorHeaderGap);
 
@@ -184,9 +194,17 @@ public:
         hf .setBounds (knobRow);
     }
 
+    // A bus rename lands while the popup is open, pushed in by the strip's poll.
+    void refreshTitle()
+    {
+        if (titleLbl.getText (false) != bus.name)
+            styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize, editorTitle::kColour);
+    }
+
 private:
     Bus& bus;
     juce::TextButton enableBtn;
+    juce::Label titleLbl;
     juce::Slider lf, mid, hf;
     juce::Label  lfLbl, midLbl, hfLbl;
 };
@@ -215,6 +233,11 @@ public:
                                            std::memory_order_release);
         };
         addAndMakeVisible (enableBtn);
+
+        // Which bus this editor belongs to, centred left of the ON pill.
+        styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize, editorTitle::kColour);
+        titleLbl.setMinimumHorizontalScale (1.0f);
+        addAndMakeVisible (titleLbl);
 
         styleEditorKnob (rat, compGold,   1.0,   10.0,    4.0,    4.0, ":1",  1);
         styleEditorKnob (atk, compGold,   0.1,   50.0,    5.0,   10.0, " ms", 1);
@@ -250,10 +273,10 @@ public:
         addAndMakeVisible (rat); addAndMakeVisible (atk);
         addAndMakeVisible (rel); addAndMakeVisible (mak);
 
-        styleEditorCompLabel (ratLbl, "RATIO");
-        styleEditorCompLabel (atkLbl, "ATTACK");
-        styleEditorCompLabel (relLbl, "RELEASE");
-        styleEditorCompLabel (makLbl, "GAIN");
+        styleEditorAccentLabel (ratLbl, "RATIO");
+        styleEditorAccentLabel (atkLbl, "ATTACK");
+        styleEditorAccentLabel (relLbl, "RELEASE");
+        styleEditorAccentLabel (makLbl, "GAIN");
         addAndMakeVisible (ratLbl); addAndMakeVisible (atkLbl);
         addAndMakeVisible (relLbl); addAndMakeVisible (makLbl);
 
@@ -395,6 +418,7 @@ public:
         auto area = getLocalBounds().reduced (kEditorOuterPad);
 
         auto header = area.removeFromTop (kEditorHeaderH);
+        titleLbl.setBounds (header.withTrimmedLeft (60).withTrimmedRight (60));
         enableBtn.setBounds (header.removeFromRight (60));
         area.removeFromTop (kEditorHeaderGap);
 
@@ -441,6 +465,13 @@ public:
         layoutCell (rowBottom,                        rel, relLbl);
     }
 
+    // A bus rename lands while the popup is open, pushed in by the strip's poll.
+    void refreshTitle()
+    {
+        if (titleLbl.getText (false) != bus.name)
+            styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize, editorTitle::kColour);
+    }
+
 private:
     void timerCallback() override
     {
@@ -475,6 +506,7 @@ private:
 
     Bus& bus;
     juce::TextButton enableBtn;
+    juce::Label titleLbl;
     juce::Slider rat, atk, rel, mak;
     juce::Label  ratLbl, atkLbl, relLbl, makLbl;
     juce::Rectangle<int> inputMeterArea, grMeterArea, threshHandleArea;
@@ -937,6 +969,12 @@ void BusComponent::timerCallback()
     if (! nameLabel.isBeingEdited() && nameLabel.getText (false) != bus.name)
         nameLabel.setText (bus.name, juce::dontSendNotification);
 
+    // An open editor is titled with the bus name, so the rename has to reach it.
+    if (auto* eq = dynamic_cast<BusEqEditorPanel*> (eqEditorModal.getBody()))
+        eq->refreshTitle();
+    if (auto* comp = dynamic_cast<BusCompEditorPanel*> (compEditorModal.getBody()))
+        comp->refreshTitle();
+
     if (lastBusColour != bus.colour)
     {
         lastBusColour = bus.colour;
@@ -1302,8 +1340,8 @@ void BusComponent::paint (juce::Graphics& g)
             const float baselineY = y + (ascent - descent) * 0.5f - 2.0f;
             const float textW = juce::GlyphArrangement::getStringWidth (font, label);
             g.drawSingleLineText (label,
-                                    juce::roundToInt (labelRight - textW),
-                                    juce::roundToInt (baselineY),
+                                    (int) std::lround (labelRight - textW),
+                                    (int) std::lround (baselineY),
                                     juce::Justification::left);
         }
     }
@@ -1594,7 +1632,7 @@ void BusComponent::resized()
         const auto& faderRange = faderSlider.getNormalisableRange();
         const float zeroFrac = (float) faderRange.convertTo0to1 (0.0);
         const int zeroY = meterArea.getBottom() - 1
-                        - juce::roundToInt (zeroFrac * (float) (meterArea.getHeight() - 2));
+                        - (int) std::lround (zeroFrac * (float) (meterArea.getHeight() - 2));
         constexpr int kGrCaptionReserve = 10;
         const int compTop = zeroY - kGrCaptionReserve;
         compMeter->setBounds (compMeterCol.withY (compTop)

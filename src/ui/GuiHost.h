@@ -207,6 +207,8 @@ public:
     virtual bool setStripCompact (int track, bool compact) = 0;
     virtual bool clickStripModule (int track, int module, bool label, bool right) = 0;
     virtual bool stripModuleEditorOpen (int track, int module) const = 0;
+    // The strip name the open EQ editor is titled with.
+    virtual std::string stripModuleEditorTitle (int track, int module) const = 0;
     virtual void closeStripModuleEditors (int track) = 0;
     virtual bool clickInsert (int track, bool right = false) = 0;
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
