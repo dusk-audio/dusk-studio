@@ -139,7 +139,11 @@ struct NativeNotepadWindow::Impl final
                 return true;
             if (owner.handleChordEntryNavigation (event))
                 return true;
-            return DGL::ImGuiTopLevelWidget::onKeyboard (event);
+            // A key reported as unused is handed to the host window, where the shell's
+            // bindings claim it. The notepad takes every keypress for as long as it is
+            // open, and forwards no shortcut of its own.
+            DGL::ImGuiTopLevelWidget::onKeyboard (event);
+            return true;
         }
 
     private:
