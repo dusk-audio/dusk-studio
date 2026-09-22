@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 
 namespace duskstudio::imgui
 {
@@ -33,6 +34,12 @@ constexpr float kPanelW = 380.0f;
 constexpr float kPanelH = (kHeaderH + 8.0f + kModeRowH + 12.0f)
                         + (56.0f + 18.0f + 4.0f) + 6.0f + (56.0f + 18.0f + 4.0f)
                         + 16.0f + 24.0f;
+
+// The strip name on the header row - the same accent and size the JUCE editor
+// popups title themselves with (duskstudio::editorTitle).
+constexpr unsigned int kTitleAccent = 0xb07050ff;
+constexpr float kTitleSize = 12.0f;
+constexpr float kTitleGap  = 8.0f;
 
 constexpr float kInMeterMinDb = -60.0f;
 constexpr float kInMeterMaxDb = 0.0f;
@@ -68,6 +75,35 @@ float fetRatioDisplayFor (int index)
 {
     static const float display[] = { 4.0f, 8.0f, 12.0f, 20.0f, 20.0f };
     return display[std::clamp (index, 0, comp::kFetRatioMaxIndex)];
+}
+
+// str, or as much of it as fits width with an ellipsis, so a long strip name
+// shortens instead of running under the ON button. The return either aliases
+// str or points into buffer.
+const char* fitted (ImFont* font, float size, float width, const char* str,
+                    char* buffer, std::size_t bufferSize)
+{
+    if (font == nullptr || str == nullptr || *str == 0)
+        return "";
+    const auto widthOf = [&] (const char* t) {
+        return font->CalcTextSizeA (size, FLT_MAX, 0.0f, t).x;
+    };
+    if (widthOf (str) <= width)
+        return str;
+
+    std::size_t len = std::min (bufferSize - 4, std::strlen (str));
+    while (len > 0)
+    {
+        // Never cut a UTF-8 sequence in half - the tail bytes would draw as
+        // replacement glyphs.
+        while (len > 0 && (str[len] & 0xc0) == 0x80)
+            --len;
+        std::snprintf (buffer, bufferSize, "%.*s...", (int) len, str);
+        if (widthOf (buffer) <= width)
+            return buffer;
+        --len;
+    }
+    return "";
 }
 
 class ChannelCompView final : public DuskPanelView
@@ -162,6 +198,20 @@ private:
         const float scale = ctx.scale;
         const ImVec2 tl (at.x + width - scale * 60.0f + scale, at.y + scale);
         const ImVec2 br (at.x + width - scale, at.y + scale * kHeaderH - scale);
+
+        // Which strip this editor belongs to, centred in the row left of ON.
+        // Read live, so a rename while the editor is open lands on the next frame.
+        const float titleW = tl.x - at.x - scale * kTitleGap;
+        if (titleW > scale * 24.0f)
+        {
+            char scratch[96];
+            const float titleSize = scale * kTitleSize;
+            dw::text (ctx, ctx.fonts->band, titleSize,
+                      ImVec2 (at.x, at.y + scale * (kHeaderH - kTitleSize) * 0.5f),
+                      titleW, rgba (kTitleAccent),
+                      fitted (ctx.fonts->band, titleSize, titleW,
+                              track.name.toRawUTF8(), scratch, sizeof (scratch)));
+        }
 
         dw::ButtonStyle style;
         style.offFill = rgba (0x202024ff);
