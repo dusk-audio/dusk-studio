@@ -17,7 +17,7 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 4
+# ceiling gap 3
 # ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
@@ -125,7 +125,7 @@ The interface > The notepad	chords over lyrics: insert, complete, repeat, anchor
 The interface > The notepad	transpose keeps the song's own spelling; key detection	auto	test:transposeChords rewrites every chord in the source;test:Transpose keeps the notation the document already uses;test:Key detection only claims a key the evidence supports;test:Chord spelling follows the song until the user overrides it
 The interface > The notepad	section markers are bracketed labels, not chords	auto	test:Section markers are bracketed lines that are not chords;test:Section markers project as their label;test:chord grammar rejects ordinary bracketed text
 The interface > The notepad	saved atomically to notepad.md; follows Save As	auto	test:Notepad sidecar round-trips through the session directory
-The interface > The notepad	Source view edits land as one undo step; Esc closes rather than reverting	gap
+The interface > The notepad	Source view edits land as one undo step; Esc closes rather than reverting	auto	test:Source view records one undo step for a whole visit;test:One undo after source view restores the text it was entered with;test:A source view visit that changed nothing records nothing;test:Source view ends the typing run it interrupted;test:Escape in source view closes the notepad instead of reverting		the visit and the Escape decision are held in the editor core
 The interface > The notepad	typing never triggers transport shortcuts	auto	test:the shortcut rule withholds keys from a view that is taking text
 The interface > The notepad	closes and saves for an alert or stage switch; waits for the quit prompt	partial	test:Notepad sidecar round-trips through the session directory		the atomic sidecar write is tested; that an alert, a stage switch or the quit prompt triggers it, and that quit waits for the Save / Don't Save answer, needs a scenario seam on the native OpenGL notepad window, which does not exist
 

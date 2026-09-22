@@ -194,6 +194,7 @@ add_executable(dusk-studio-tests
     session_notepad_sidecar.cpp
     notepad_document.cpp
     notepad_editor_core.cpp
+    notepad_source_view.cpp
     notepad_chords.cpp
     notepad_theme.cpp
     notepad_graphics_compatibility.cpp

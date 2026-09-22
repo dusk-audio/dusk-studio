@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -192,5 +193,34 @@ private:
     std::vector<Entry> redoEntries;
     bool runBroken = true;
 };
+
+// A visit to source view. However many edits the raw text takes, the notepad
+// gets one undo step back, so the state on entry is held for the whole visit
+// instead of a step being recorded per keystroke.
+class SourceViewSession final
+{
+public:
+    void enter (UndoStack& history, Snapshot before);
+    // Closes the visit, recording one structural step when the text changed.
+    // Returns true when a step was recorded.
+    bool exit (UndoStack& history, const std::string& markdownNow, std::size_t caretAfter);
+    void reset() noexcept { entrySnapshot.reset(); }
+    bool active() const noexcept { return entrySnapshot.has_value(); }
+
+private:
+    std::optional<Snapshot> entrySnapshot;
+};
+
+enum class EscapeAction
+{
+    pass,           // not ours - the chart view handles its own Escape
+    consume,        // claimed, nothing to do (key release)
+    closeNotepad
+};
+
+// Escape while source view is up. A multi-line text field reverts its buffer to
+// the contents it had when focus arrived, so the key is claimed here rather
+// than left to the widget, and closes the notepad with the edits intact.
+EscapeAction sourceViewEscape (bool sourceViewUp, bool isEscape, bool press) noexcept;
 } // namespace notepad
 } // namespace duskstudio
