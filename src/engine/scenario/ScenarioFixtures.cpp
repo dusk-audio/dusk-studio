@@ -36,6 +36,8 @@ constexpr FixtureCandidate kCandidates[] = {
     { "panic_probe.vst3", "VST3/dusk-studio-panic-probe-vst3-fixture.vst3" },
     { "no_window.clap",   "dusk-studio-no-window-clap-fixture.clap" },
     { "no_window.clap",   "tests/dusk-studio-no-window-clap-fixture.clap" },
+    { "param_touch.clap", "dusk-studio-param-touch-clap-fixture.clap" },
+    { "param_touch.clap", "tests/dusk-studio-param-touch-clap-fixture.clap" },
 };
 
 // Same convention as PATH: a Windows root starts with a drive letter, so it

@@ -5,7 +5,10 @@
 @prefix doap:  <http://usefulinc.com/ns/doap#> .
 @prefix lv2:   <http://lv2plug.in/ns/lv2core#> .
 @prefix state: <http://lv2plug.in/ns/ext/state#> .
+@prefix ui:    <http://lv2plug.in/ns/extensions/ui#> .
 @prefix urid:  <http://lv2plug.in/ns/ext/urid#> .
+
+@DUSKSTUDIO_FILE_STATE_UI_DEFINITION@
 
 # Declared out of URI order on purpose: the host must expose parameters sorted by
 # property URI, because parameter INDEX is what MIDI bindings persist and lilv
@@ -87,7 +90,7 @@
     doap:name "Dusk file-state fixture" ;
     lv2:requiredFeature urid:map ;
     lv2:extensionData state:interface ;
-    patch:writable <urn:duskstudio:test:file-state#zeta> ,
+@DUSKSTUDIO_FILE_STATE_UI_REFERENCE@    patch:writable <urn:duskstudio:test:file-state#zeta> ,
                    <urn:duskstudio:test:file-state#mu> ,
                    <urn:duskstudio:test:file-state#alpha> ,
                    <urn:duskstudio:test:file-state#tau> ,
