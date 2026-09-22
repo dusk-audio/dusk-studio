@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 9
-# ceiling partial 50
+# ceiling gap 8
+# ceiling partial 51
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -353,7 +353,7 @@ Sync to external gear > Mackie Control surfaces	fader taper puts printed 0 at 0 
 Sync to external gear > Mackie Control surfaces	jog wheel scrubs the playhead	auto	test:McuReceiver: jog wheel scrubs the playhead
 
 MIDI bindings > Learning a binding	right-click MIDI Learn binds the next control moved	partial	scenario:midi.learn_captures_the_next_control	the engine captures the next control moved; the right-click menu and the panel writing the binding are not
-MIDI bindings > Learning a binding	MIDI Learn last-touched plugin parameter, every native host	gap
+MIDI bindings > Learning a binding	MIDI Learn last-touched plugin parameter, every native host	partial	scenario:gui.clap_midi_learn;scenario:gui.lv2_midi_learn;scenario:gui.vst3_midi_learn	the CLAP, LV2 (a patch property) and VST3 legs each move a parameter from the plug-in side and check the published binding; AudioUnit is macOS-only, has no fixture and no host leg, so it stays on the release walk
 MIDI bindings > Trigger types	CC, note, 14-bit pitch bend, MMC	auto	test:FaderBindingMap: PitchBend fader binds ride the Mackie taper;test:FaderBindingMap: CC/Note fader binds stay linear -90..+12 dB;scenario:midi.bindings_reach_their_targets
 MIDI bindings > Button modes	press triggers on the rising edge; toggle on every message	auto	scenario:midi.button_modes
 MIDI bindings > Available targets	every listed target reachable; banked variants follow the surface bank	partial	test:comp makeup binding pair matches the per-mode CC ranges;test:comp threshold binding pair sweeps the mode's dB domain;test:Console bank state: surface Bank Left and Right map at stride three;test:MIDI bindings preset round-trips every available target;scenario:midi.bindings_reach_their_targets;scenario:midi.banked_binding_follows_the_surface_bank	comp, fader, pan, mute and transport targets and banking are driven; the rest are held only by the preset round-trip

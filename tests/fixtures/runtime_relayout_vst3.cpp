@@ -11,6 +11,7 @@ namespace
 {
 constexpr ParamID kExpandOutputs = 100;
 constexpr ParamID kLatencyMode = 101;
+constexpr ParamID kTouchReport = 102;
 bool handlerDetachedBeforeTerminate = false;
 
 class LifecycleProbeView final : public CPluginView
@@ -54,6 +55,8 @@ public:
                                  ParameterInfo::kCanAutomate, kExpandOutputs);
         parameters.addParameter (STR16 ("Latency Mode"), nullptr, 1, 0.0,
                                  ParameterInfo::kCanAutomate, kLatencyMode);
+        parameters.addParameter (STR16 ("Touch Report"), nullptr, 0, 0.0,
+                                 ParameterInfo::kCanAutomate, kTouchReport);
         handlerDetachedBeforeTerminate = false;
         rebuildBusses();
         return kResultOk;
@@ -76,6 +79,17 @@ public:
         if (result != kResultOk)
             return result;
 
+        if (id == kTouchReport)
+        {
+            // The one path in this fixture that reaches IComponentHandler, so a
+            // host can tell an edit the plug-in reported from one it made
+            // itself. A real plug-in sends this from its own editor when the
+            // user moves a knob; there is no editor here to move one in.
+            beginEdit (kTouchReport);
+            performEdit (kTouchReport, value);
+            endEdit (kTouchReport);
+            return result;
+        }
         if (id == kLatencyMode)
         {
             highLatency = value >= 0.5;

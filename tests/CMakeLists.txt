@@ -383,17 +383,20 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-multi-bus-clap-fixture>")
     add_dependencies(dusk-studio-tests dusk-studio-multi-bus-clap-fixture)
 
-    # These two land beside the multi-bus fixture at the build root rather than
-    # in this subdirectory, so DUSKSTUDIO_FIXTURE_DIR=<build-tests> resolves all
-    # three the same way. The generator expression keeps a multi-config
-    # generator from appending /<Config> to that path.
+    # These land beside the multi-bus fixture at the build root rather than in
+    # this subdirectory, so DUSKSTUDIO_FIXTURE_DIR=<build-tests> resolves them
+    # all the same way. The generator expression keeps a multi-config generator
+    # from appending /<Config> to that path.
     add_library(dusk-studio-panic-probe-clap-fixture MODULE
         fixtures/panic_probe_clap.cpp)
     add_library(dusk-studio-no-window-clap-fixture MODULE
         fixtures/no_window_clap.cpp)
+    add_library(dusk-studio-param-touch-clap-fixture MODULE
+        fixtures/param_touch_clap.cpp)
     foreach(clapFixture
             dusk-studio-panic-probe-clap-fixture
-            dusk-studio-no-window-clap-fixture)
+            dusk-studio-no-window-clap-fixture
+            dusk-studio-param-touch-clap-fixture)
         set_target_properties(${clapFixture} PROPERTIES
             PREFIX ""
             SUFFIX ".clap"
@@ -447,8 +450,23 @@ if(DUSKSTUDIO_NATIVE_LV2)
     file(MAKE_DIRECTORY "${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}")
     configure_file(fixtures/file_state_manifest.ttl
         "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
-    configure_file(fixtures/file_state_plugin.ttl
-        "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}/file_state_plugin.ttl" COPYONLY)
+    # The bundle only declares a UI where one can be built: the fixture UI is an
+    # X11 widget, which is what the LV2 editor embeds on this platform.
+    set(DUSKSTUDIO_FILE_STATE_UI_DEFINITION "")
+    set(DUSKSTUDIO_FILE_STATE_UI_REFERENCE "")
+    if(UNIX AND NOT APPLE)
+        set(DUSKSTUDIO_FILE_STATE_UI_DEFINITION
+"<urn:duskstudio:test:file-state#ui>
+    a ui:X11UI ;
+    ui:binary <file_state_ui.so> ;
+    lv2:requiredFeature ui:parent , urid:map ;
+    lv2:optionalFeature ui:noUserResize .
+")
+        set(DUSKSTUDIO_FILE_STATE_UI_REFERENCE
+            "    ui:ui <urn:duskstudio:test:file-state#ui> ;\n")
+    endif()
+    configure_file(fixtures/file_state_plugin.ttl.in
+        "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}/file_state_plugin.ttl" @ONLY)
     add_library(dusk-studio-file-state-lv2-fixture MODULE
         fixtures/file_state_lv2.cpp)
     set_target_properties(dusk-studio-file-state-lv2-fixture PROPERTIES
@@ -459,6 +477,18 @@ if(DUSKSTUDIO_NATIVE_LV2)
         LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}>")
     target_compile_features(dusk-studio-file-state-lv2-fixture PRIVATE cxx_std_17)
     target_link_libraries(dusk-studio-file-state-lv2-fixture PRIVATE PkgConfig::LV2)
+
+    if(UNIX AND NOT APPLE)
+        add_library(dusk-studio-file-state-lv2-ui-fixture MODULE
+            fixtures/file_state_ui.cpp)
+        set_target_properties(dusk-studio-file-state-lv2-ui-fixture PROPERTIES
+            PREFIX ""
+            OUTPUT_NAME "file_state_ui"
+            LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}>")
+        target_compile_features(dusk-studio-file-state-lv2-ui-fixture PRIVATE cxx_std_17)
+        target_link_libraries(dusk-studio-file-state-lv2-ui-fixture PRIVATE PkgConfig::LV2 X11)
+        add_dependencies(dusk-studio-tests dusk-studio-file-state-lv2-ui-fixture)
+    endif()
 
     set(DUSKSTUDIO_MANY_PATCH_PROPERTY_DEFINITIONS "")
     set(DUSKSTUDIO_MANY_PATCH_WRITABLE_PROPERTIES "")

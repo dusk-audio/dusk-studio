@@ -125,6 +125,17 @@ void drainModals (GuiHost& host)
     for (int guard = 0; guard < 32 && ! host.modalStackEmpty(); ++guard) host.closeTopModal();
 }
 
+// Reopening a session that a case saved into the directory it also made the
+// session directory: the 30 s autosave heartbeat writes session.json.autosave
+// beside it while the case runs, and an autosave newer than the file being
+// opened raises the recovery prompt. Take the saved file - it is the state the
+// case wrote and means to go back to. A no-op when no prompt came up.
+void reopenSavedSession (GuiHost& host, const std::filesystem::path& sessionJson)
+{
+    host.openSession (sessionJson);
+    host.answerRecovery (GuiHost::Recovery::LoadSaved);
+}
+
 // A key press as the display server hands it over. X11 fills JUCE's key code
 // with the XLookupString glyph, so an unmodified letter arrives lowercase and a
 // Cmd/Ctrl chord arrives as the lowercase keysym with a control character for
@@ -191,8 +202,8 @@ std::optional<ScenarioResult> runEditorOpenCloseLoop (GuiHost& host, ScenarioCon
         const char* label; const char* fixture; const char* pluginId; Format format;
         bool hasEditor;
     };
-    // multi_bus.clap ships no CLAP_EXT_GUI, the LV2 fixture no UI and the VST3
-    // one only a lifecycle-probe view with no platform to attach to, so they
+    // multi_bus.clap ships no CLAP_EXT_GUI, the LV2 control-state plugin no UI
+    // and the VST3 one only a lifecycle-probe view with no platform to attach to, so they
     // cover the refused-open half. no_window.clap reports a GUI, so it is the
     // fixture whose editor teardown actually runs, and on a display that can
     // embed editors it has to open.
@@ -1508,6 +1519,280 @@ const ScenarioRegistrar builtinMidiLearn { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runBuiltinMidiLearn (host, ctx); }
 } };
 
+// ------------------------------------------- MIDI Learn on a native host
+
+// The manual promises "MIDI Learn last-touched parameter" for every native
+// host, and the touch has to come from the plug-in side: a CLAP announces it on
+// its output event queue, a VST3 through IComponentHandler::performEdit, an LV2
+// through its UI's write function. Each fixture raises the real event, so what
+// runs here is the host's own resolve path - the slot's last-touched tracker,
+// the strip's precedence between hosts, and the transport bar's timer turning
+// the next control moved into a binding that names the parameter.
+struct NativeLearnSpec
+{
+    Format format;
+    const char* fixture;
+    const char* pluginId;
+    // Deliberately not the plug-in's first parameter: a host that reports index
+    // 0 for every touch would otherwise pass.
+    const char* paramName;
+};
+
+int nativeParamIndex (ChannelStrip& strip, Format format, const std::string& name)
+{
+    const auto find = [&name] (const auto& slot)
+    {
+        for (int i = 0; i < slot.paramCount(); ++i)
+            if (const auto* info = slot.paramInfo (i); info != nullptr && info->name == name)
+                return i;
+        return -1;
+    };
+    switch (format)
+    {
+        case Format::Clap:
+           #if DUSKSTUDIO_HAS_NATIVE_CLAP
+            return find (strip.getNativeClapSlot());
+           #else
+            break;
+           #endif
+        case Format::Lv2:
+           #if DUSKSTUDIO_HAS_NATIVE_LV2
+            return find (strip.getNativeLv2Slot());
+           #else
+            break;
+           #endif
+        case Format::Vst3:
+           #if DUSKSTUDIO_HAS_NATIVE_VST3
+            return find (strip.getNativeVst3Slot());
+           #else
+            break;
+           #endif
+    }
+    (void) strip;
+    return -1;
+}
+
+bool loadNativeSpec (StripHandle& handle, const NativeLearnSpec& spec,
+                     const std::filesystem::path& file, std::string& errorOut)
+{
+    switch (spec.format)
+    {
+        case Format::Clap: return handle.loadNativeClap (file, spec.pluginId, errorOut);
+        case Format::Lv2:  return handle.loadNativeLv2  (file, spec.pluginId, errorOut);
+        case Format::Vst3: return handle.loadNativeVst3 (file, spec.pluginId, errorOut);
+    }
+    return false;
+}
+
+std::optional<ScenarioResult> runNativeMidiLearn (GuiHost& host, ScenarioContext& ctx,
+                                                  const NativeLearnSpec& spec)
+{
+    constexpr std::uint8_t kLearnStatus = 0xb4;   // CC, channel 5
+    constexpr std::uint8_t kLearnCc     = 22;
+    constexpr std::uint8_t kOtherCc     = 23;
+
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& strip = engine.getChannelStrip (kStripIndex);
+
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || session.midiLearnPending.load() >= 0)
+        return ScenarioResult::skip ("requires stopped transport, no modal and no pending learn");
+    if (engine.getMidiInputDevices().empty())
+        return ScenarioResult::skip ("requires an enumerated MIDI input for injection");
+
+    const auto fixture = ctx.fixture (spec.fixture);
+    if (! fixture)
+        return ScenarioResult::skip (std::string ("missing fixture: ") + spec.fixture);
+
+    auto* handle = readyStrip (host, ctx);
+    if (handle == nullptr)
+        return ScenarioResult::skip ("the console has no strip to drive");
+
+    const auto bindings = session.midiBindings.current();
+    const auto capture  = session.midiLearnCapture.load();
+    const auto mode     = session.track (kStripIndex).mode.load();
+    ctx.cleanup ([&host, &session, handle, bindings, capture, mode]
+    {
+        drainModals (host);
+        handle->closeEditor();
+        handle->unloadNativePlugins();
+        handle->refreshInsertButton();
+        session.track (kStripIndex).mode.store (mode);
+        session.midiBindings.publish (std::make_unique<std::vector<MidiBinding>> (bindings));
+        session.midiLearnPending.store (-1);
+        session.midiLearnCapture.store (capture);
+    });
+
+    session.midiBindings.publish (std::make_unique<std::vector<MidiBinding>>());
+    // A MIDI track runs its insert every block whatever the input routing is,
+    // which is what the CLAP fixture needs to get its announcement out.
+    session.track (kStripIndex).mode.store ((int) Track::Mode::Midi);
+
+    std::string error;
+    if (! loadNativeSpec (*handle, spec, *fixture, error))
+        return ScenarioResult::fail ("the fixture did not load: " + error);
+    handle->refreshInsertButton();
+    ctx.expect (strip.insertLastTouchedParamIndex() == -1,
+                "a freshly loaded slot already reports a touched parameter");
+
+    auto expected = std::make_shared<int> (-1);
+    auto steps = std::make_shared<std::vector<Step>>();
+
+    steps->push_back ({ 250, [&ctx, &host, &strip, handle, spec, expected]
+    {
+        *expected = nativeParamIndex (strip, spec.format, spec.paramName);
+        if (! ctx.expect (*expected >= 0,
+                          std::string ("the fixture exposes no parameter named ") + spec.paramName))
+            return;
+
+        if (spec.format == Format::Lv2)
+        {
+            // The LV2 touch is the plug-in's own UI announcing a property the
+            // moment it comes up, so opening the editor is the gesture.
+            if (! handle->openEditor())
+            {
+                dismissAlert (host);
+                ctx.complete (ScenarioResult::skip (
+                    "the LV2 fixture UI could not be embedded on this display"));
+                return;
+            }
+            return;
+        }
+
+       #if DUSKSTUDIO_HAS_NATIVE_CLAP
+        if (spec.format == Format::Clap)
+        {
+            auto& slot = strip.getNativeClapSlot();
+            if (const auto* info = slot.paramInfo (*expected)) slot.setParamValue (info->id, 0.8);
+        }
+       #endif
+       #if DUSKSTUDIO_HAS_NATIVE_VST3
+        if (spec.format == Format::Vst3)
+        {
+            auto& slot = strip.getNativeVst3Slot();
+            if (const auto* info = slot.paramInfo (*expected)) slot.setParamValue (info->id, 0.8);
+        }
+       #endif
+    } });
+
+    steps->push_back ({ 400, [&ctx, &host, &strip, handle, spec, expected]
+    {
+        ctx.expect (strip.insertLastTouchedParamIndex() == *expected,
+                    std::string ("the host did not track ") + spec.paramName
+                        + " as the last touched parameter");
+        if (spec.format == Format::Lv2) handle->closeEditor();
+        drainModals (host);
+    } });
+
+    steps->push_back ({ 250, [&host, &ctx]
+    { ctx.expect (host.clickInsert (kStripIndex, true), "insert context menu unavailable"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("MIDI Learn last-touched parameter"),
+                  "last-touched Learn action unavailable"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("MIDI Learn (this track)..."),
+                  "track Learn action unavailable"); } });
+    steps->push_back ({ 150, [&engine, &session, &ctx]
+    {
+        const auto pending = session.midiLearnPending.load();
+        ctx.expect (pending >= 0 && unpackLearnTargetKind (pending) == MidiBindingTarget::TrackPluginParam
+                    && unpackLearnTargetIndex (pending) == kStripIndex,
+                    "Learn did not target this track's insert");
+        dusk::MidiBuffer midi;
+        const std::uint8_t cc[] = { kLearnStatus, kLearnCc, 96 };
+        midi.addEvent (cc, 3, 0);
+        engine.stageTestMidiInjection (0, std::move (midi));
+    } });
+
+    runSteps (ctx, steps, [&ctx, &engine, &session, expected]
+    {
+        ctx.waitUntil ([&session] { return session.midiLearnPending.load() < 0; }, 5000,
+            [&ctx, &engine, &session, expected]
+            {
+                const auto& bound = session.midiBindings.current();
+                const auto matches = [expected] (const MidiBinding& b)
+                {
+                    return b.channel == 5 && b.dataNumber == kLearnCc
+                        && b.trigger == MidiBindingTrigger::CC
+                        && b.target == MidiBindingTarget::TrackPluginParam
+                        && b.targetIndex == kStripIndex && b.paramIndex == *expected;
+                };
+                if (! ctx.expect (std::any_of (bound.begin(), bound.end(), matches),
+                                  "the captured CC did not bind the last-touched parameter"))
+                {
+                    ctx.complete (ctx.verdict());
+                    return;
+                }
+
+                // Learn is one-shot: the next controller moved drives whatever
+                // it is already bound to and writes nothing new.
+                dusk::MidiBuffer midi;
+                const std::uint8_t cc[] = { kLearnStatus, kOtherCc, 40 };
+                midi.addEvent (cc, 3, 0);
+                engine.stageTestMidiInjection (0, std::move (midi));
+                ctx.later (500, [&ctx, &session]
+                {
+                    const auto& after = session.midiBindings.current();
+                    ctx.expect (after.size() == 1
+                                && ! std::any_of (after.begin(), after.end(),
+                                                  [] (const MidiBinding& b)
+                                                  { return b.dataNumber == kOtherCc; }),
+                                "a second control re-armed Learn instead of being ignored");
+                    ctx.complete (ctx.verdict());
+                });
+            }, "MIDI Learn did not consume the injected CC");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar clapMidiLearn { Scenario {
+    "gui.clap_midi_learn", { "gui", "midi", "plugins" }, Needs::Engine | Needs::Gui,
+    { "param_touch.clap" }, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if ! DUSKSTUDIO_HAS_NATIVE_CLAP
+        (void) host; (void) ctx;
+        return ScenarioResult::skip ("built without native CLAP hosting");
+       #else
+        return runNativeMidiLearn (host, ctx, { Format::Clap, "param_touch.clap",
+                                                "studio.dusk.test.param-touch", "Beta" });
+       #endif
+    }
+} };
+
+const ScenarioRegistrar lv2MidiLearn { Scenario {
+    "gui.lv2_midi_learn", { "gui", "midi", "plugins", "lv2" }, Needs::Engine | Needs::Gui,
+    { "file_state.lv2" }, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if ! DUSKSTUDIO_HAS_NATIVE_LV2
+        (void) host; (void) ctx;
+        return ScenarioResult::skip ("built without native LV2 hosting");
+       #else
+        // A patch property, which is how a JUCE-built LV2 exposes every one of
+        // its parameters - the case the manual calls out by name.
+        return runNativeMidiLearn (host, ctx, { Format::Lv2, "file_state.lv2",
+                                                "urn:duskstudio:test:file-state", "mu" });
+       #endif
+    }
+} };
+
+const ScenarioRegistrar vst3MidiLearn { Scenario {
+    "gui.vst3_midi_learn", { "gui", "midi", "plugins", "vst3" }, Needs::Engine | Needs::Gui,
+    { "relayout.vst3" }, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if ! DUSKSTUDIO_HAS_NATIVE_VST3
+        (void) host; (void) ctx;
+        return ScenarioResult::skip ("built without native VST3 hosting");
+       #else
+        return runNativeMidiLearn (host, ctx, { Format::Vst3, "relayout.vst3", "",
+                                                "Touch Report" });
+       #endif
+    }
+} };
+
 // ------------------------------------------- aux built-in editor lifetime
 
 // A unit that brings its own editor hands that editor the DSP instance, so the
@@ -2047,7 +2332,7 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
         drainModals (host);
         engine.setRenderOversamplingOverride (0);
         engine.reattachAudioCallback();
-        host.openSession (restore);
+        reopenSavedSession (host, restore);
         applySessionDirectory (session, originalDir);
         if (originalFile.existsAsFile()) player.loadFile (originalFile);
         else player.unloadFile();
@@ -3325,7 +3610,7 @@ std::optional<ScenarioResult> runMasteringLoad (GuiHost& host, ScenarioContext& 
     ctx.cleanup ([&host, &session, &player, originalDir, originalStage, originalFile, originalPosition, restore]
     {
         drainModals (host);
-        host.openSession (restore);
+        reopenSavedSession (host, restore);
         applySessionDirectory (session, originalDir);
         if (originalFile.existsAsFile()) player.loadFile (originalFile);
         else player.unloadFile();
