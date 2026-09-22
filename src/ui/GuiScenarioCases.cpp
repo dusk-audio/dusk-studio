@@ -1587,9 +1587,11 @@ bool loadNativeSpec (StripHandle& handle, const NativeLearnSpec& spec,
 std::optional<ScenarioResult> runNativeMidiLearn (GuiHost& host, ScenarioContext& ctx,
                                                   const NativeLearnSpec& spec)
 {
-    constexpr std::uint8_t kLearnStatus = 0xb4;   // CC, channel 5
-    constexpr std::uint8_t kLearnCc     = 22;
-    constexpr std::uint8_t kOtherCc     = 23;
+    // Static so the lambdas below can name them without a capture; MSVC
+    // rejects an uncaptured block-scope constant even when it is not odr-used.
+    static constexpr std::uint8_t kLearnStatus = 0xb4;   // CC, channel 5
+    static constexpr std::uint8_t kLearnCc     = 22;
+    static constexpr std::uint8_t kOtherCc     = 23;
 
     auto& engine = ctx.engine();
     auto& session = ctx.session();
