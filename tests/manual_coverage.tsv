@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 8
-# ceiling partial 51
+# ceiling gap 5
+# ceiling partial 53
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -53,7 +53,7 @@ Names and Functions of Parts > The bus strip	bus strip callouts	n/a			figure; ea
 Names and Functions of Parts > The master strip	master strip callouts	n/a			figure; each control is held under The master strip
 Names and Functions of Parts > The AUX view	aux view callouts	n/a			figure; each control is held under Aux lanes
 Names and Functions of Parts > The MASTERING view	mastering view callouts	n/a			figure; each control is held under The mastering stage
-Names and Functions of Parts > The tape strip	tape strip callouts; left-click moves the playhead; double-click opens the editor	gap
+Names and Functions of Parts > The tape strip	tape strip callouts; left-click moves the playhead; double-click opens the editor	auto	scenario:gui.tape_ruler;scenario:gui.audio_editor_lifecycle		the ruler click seek and the double-click editor open are the scenarios behind the ruler and editor rows; the callouts are a figure
 Names and Functions of Parts > The audio region editor	region editor callouts	n/a			figure; each control is held under The audio region editor
 Names and Functions of Parts > The piano roll	piano roll callouts	n/a			figure; each control is held under The piano roll
 
@@ -71,7 +71,7 @@ Getting started > Installing Dusk Studio > Verifying your download	SHA256SUMS co
 Getting started > First launch	opens a blank Untitled session; tape strip collapsed	auto	scenario:gui.first_launch		fresh private HOME starts with Untitled, no regions or armed tracks, all channel strips present, Recording visible and timeline collapsed
 Getting started > First launch	stage buttons switch the console view	auto	scenario:gui.stage_views_and_controls		clicks all four stage buttons and checks exclusive button selection and console, transport, aux and mastering visibility
 Getting started > Configuring audio	six-section settings panel	n/a			overview; each section is held below
-Getting started > Configuring audio > Audio	Windows prefers ASIO, then exclusive, shared, DirectSound	gap
+Getting started > Configuring audio > Audio	Windows prefers ASIO, then exclusive, shared, DirectSound	partial	test:DeviceManager initialise: empty blob opens first type with devices;test:DeviceManager rescans every registered audio backend		the first-type-with-devices default pick is tested with mock backends; the Windows ASIO, WASAPI exclusive, WASAPI shared, DirectSound registration order is a compile-time JUCE registration and needs a Windows box with those drivers
 Getting started > Configuring audio > Audio	device choice applies immediately and is remembered per machine	auto	test:DeviceManager initialise: saved blob opens the named device and type;test:DeviceStateBlob JSON round-trips explicit channels
 Getting started > Configuring audio > Audio	a session switches the device to its own sample rate, and warns if it cannot	partial	test:SessionSerializer round-trips the session sample rate		the rate is saved; the switch and the warning are not tested
 Getting started > Configuring audio > Audio	extra output pairs become selectable as aux outputs	auto	test:output pair encode/decode round-trips;test:tapStereoPairInto accumulates onto the routed pair
@@ -127,7 +127,7 @@ The interface > The notepad	section markers are bracketed labels, not chords	aut
 The interface > The notepad	saved atomically to notepad.md; follows Save As	auto	test:Notepad sidecar round-trips through the session directory
 The interface > The notepad	Source view edits land as one undo step; Esc closes rather than reverting	gap
 The interface > The notepad	typing never triggers transport shortcuts	auto	test:the shortcut rule withholds keys from a view that is taking text
-The interface > The notepad	closes and saves for an alert or stage switch; waits for the quit prompt	gap
+The interface > The notepad	closes and saves for an alert or stage switch; waits for the quit prompt	partial	test:Notepad sidecar round-trips through the session directory		the atomic sidecar write is tested; that an alert, a stage switch or the quit prompt triggers it, and that quit waits for the Save / Don't Save answer, needs a scenario seam on the native OpenGL notepad window, which does not exist
 
 The channel strip	fixed signal order: phase, insert, HPF, EQ, LPF, comp, pan, fader, routing	partial	scenario:engine.pipeline_selftest		pass-through, routing and comp are asserted; the order of every stage is not
 The channel strip	mute, solo and IN gate everything the track sends	auto	scenario:engine.pipeline_selftest;test:MIDI strips with no instrument skip the chain
