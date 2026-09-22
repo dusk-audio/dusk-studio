@@ -158,6 +158,16 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         }
 
     protected:
+        // A key the widget reports as unused is handed to the host window, where the
+        // shell's own bindings claim it - so a note letter typed at the panel would
+        // also toggle mute behind it. The panel names the shortcuts it wants the shell
+        // to keep through forwardShortcuts; every other key stays here.
+        bool onKeyboard (const DGL::Widget::KeyboardEvent& event) override
+        {
+            DGL::ImGuiTopLevelWidget::onKeyboard (event);
+            return true;
+        }
+
         void onImGuiDisplay() override
         {
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()),
