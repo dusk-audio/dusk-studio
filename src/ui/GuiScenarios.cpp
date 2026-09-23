@@ -1387,13 +1387,42 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return true;
     }
 
-    bool clickAudioRegion (int track, int region) override
+    bool clickAudioRegion (int track, int region, bool right) override
     {
         if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;
         const auto bounds = owner.tapeStrip->audioRegionScreenRect (track, region);
         if (bounds.isEmpty()) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
+        return clickAt (point.x, point.y, 1, right);
+    }
+
+    bool clickTakeBadge (int track, int region) override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing() || tape->audioRegionScreenRect (track, region).isEmpty())
+            return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (tape, tape->takeBadgePointForScenario (track, region)).toFloat();
         return clickAt (point.x, point.y, 1);
+    }
+
+    bool clickTapeMarker (int index, bool right) override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()
+            || index < 0 || index >= (int) owner.session.getMarkers().size()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (tape, tape->markerPointForScenario (index)).toFloat();
+        return clickAt (point.x, point.y, 1, right);
+    }
+
+    bool dragTapeMarker (int index, float toFraction) override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()
+            || index < 0 || index >= (int) owner.session.getMarkers().size()) return false;
+        auto* window = owner.getTopLevelComponent();
+        const auto from = window->getLocalPoint (tape, tape->markerPointForScenario (index)).toFloat();
+        const auto to = window->getLocalPoint (tape, tape->rulerPointForScenario (toFraction)).toFloat();
+        return dragAt (from.x, from.y, to.x, from.y);
     }
 
     bool dragAt (float startX, float startY, float endX, float endY)

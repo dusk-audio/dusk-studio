@@ -6619,6 +6619,379 @@ const ScenarioRegistrar tapeNudgeKeys { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runTapeNudgeKeys (host, ctx); }
 } };
 
+// A rising mono ramp, so a reversed copy reads back in the opposite order.
+bool writeRampFixture (const std::filesystem::path& path, double sampleRate, std::int64_t frames)
+{
+    auto writer = dusk::audio::FileWriter::create (path, { sampleRate, 1, 24 });
+    if (writer == nullptr) return false;
+    std::vector<float> ramp (static_cast<std::size_t> (frames));
+    for (std::size_t i = 0; i < ramp.size(); ++i)
+        ramp[i] = -0.5f + static_cast<float> (i) / static_cast<float> (ramp.size());
+    const float* channels[] { ramp.data() };
+    return writer->write (channels, 1, frames) && writer->flush();
+}
+
+// The tape-strip region cases start alike: stopped transport, the timeline
+// shown and fitted, snap off, no markers, a session folder under the case's
+// temp dir, and track 0 holding one mono region over a ramp twice its length.
+// Cleanup reloads the session and puts the view back as they were.
+std::optional<ScenarioResult> seedTapeRegion (GuiHost& host, ScenarioContext& ctx, AudioRegion& region)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
+    const bool expanded = host.timelineViewMatches (true);
+    ctx.cleanup (host.preserveKeyboardFocus());
+    ctx.cleanup ([&host, &ctx, &session, &transport, originalDir, restore, expanded, view = host.tapeView(),
+                  loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd(),
+                  looping = transport.isLoopEnabled(), playhead = transport.getPlayhead()]
+    {
+        drainModals (host);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        transport.setLoopRange (loopStart, loopEnd);
+        transport.setLoopEnabled (looping);
+        transport.locate (playhead);
+        ctx.engine().getUndoManager().clearUndoHistory();
+        if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+        host.restoreTapeView (view);
+    });
+    // Its own folder: autosave writes there, and an autosave newer than
+    // restore.json would turn the cleanup's reload into a recovery prompt.
+    const auto folder = ctx.tempDir() / "session";
+    std::error_code error;
+    if (! std::filesystem::create_directories (folder, error) && error)
+        return ScenarioResult::fail ("could not create the session folder");
+    applySessionDirectory (session, folder);
+    session.snapToGrid = false;
+    session.getMarkers().clear();
+    auto& track = session.track (0);
+    track.mode.store ((int) Track::Mode::Mono);
+    track.frozen.store (false);
+    const double rate = engine.getCurrentSampleRate();
+    const auto beat = static_cast<std::int64_t> (std::llround (rate / 2.0));
+    region = {};
+    region.timelineStart = beat * 4;
+    region.sourceOffset = beat;
+    region.lengthInSamples = beat * 4;
+    const auto source = folder / "Ramp.wav";
+    if (! writeRampFixture (source, rate, region.lengthInSamples * 2))
+        return ScenarioResult::fail ("could not write the region fixture");
+    region.file = decltype (region.file) (source.u8string().c_str());
+    track.regions = { region };
+    engine.getUndoManager().clearUndoHistory();
+    if (! expanded) host.pressKey ("T", 't');
+    host.pressKey ("0", '0');
+    return std::nullopt;
+}
+
+int regionStartingAt (const Track& track, std::int64_t start)
+{
+    for (std::size_t i = 0; i < track.regions.size(); ++i)
+        if (track.regions[i].timelineStart == start) return static_cast<int> (i);
+    return -1;
+}
+
+// Cmd/Ctrl+D puts a copy of the selected region straight after it, and
+// Cmd/Ctrl+E splits the selected region at the playhead, both through the
+// window's own key handling.
+std::optional<ScenarioResult> runRegionEditKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion original;
+    if (auto early = seedTapeRegion (host, ctx, original)) return early;
+    auto& track = ctx.session().track (0);
+    auto& transport = ctx.engine().getTransport();
+    const auto end = original.timelineStart + original.lengthInSamples;
+    const auto cut = original.timelineStart + original.lengthInSamples / 4;
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region with a timeline click"); } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("command + D", 'd'), "Cmd+D was not handled"); } });
+    steps->push_back ({ 100, [&ctx, &track, original, end]
+    {
+        const int copy = regionStartingAt (track, end);
+        if (! ctx.expect (track.regions.size() == 2 && copy >= 0, "Cmd+D did not add a region right after the original"))
+            return;
+        const auto& placed = track.regions[(std::size_t) copy];
+        ctx.expect (placed.lengthInSamples == original.lengthInSamples && placed.sourceOffset == original.sourceOffset
+                    && placed.file == original.file, "Cmd+D did not place a copy of the original");
+    } });
+    // Past the double-click window, so the second click selects rather than
+    // opening the region editor.
+    steps->push_back ({ 700, [&host, &ctx, &track, &transport, original, cut]
+    {
+        ctx.expect (host.clickAudioRegion (0, regionStartingAt (track, original.timelineStart)),
+                    "could not reselect the original region");
+        transport.locate (cut);
+    } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("command + E", 'e'), "Cmd+E was not handled"); } });
+    steps->push_back ({ 100, [&ctx, &track, original, end, cut]
+    {
+        const int head = regionStartingAt (track, original.timelineStart);
+        const int tail = regionStartingAt (track, cut);
+        if (! ctx.expect (track.regions.size() == 3 && head >= 0 && tail >= 0 && regionStartingAt (track, end) >= 0,
+                          "Cmd+E did not split the selected region at the playhead"))
+            return;
+        ctx.expect (track.regions[(std::size_t) head].lengthInSamples == cut - original.timelineStart
+                    && track.regions[(std::size_t) tail].lengthInSamples == end - cut
+                    && track.regions[(std::size_t) tail].sourceOffset
+                           == original.sourceOffset + (cut - original.timelineStart),
+                    "Cmd+E split the region somewhere other than the playhead");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar regionEditKeys { Scenario {
+    "gui.region_split_duplicate_keys", { "gui", "keyboard", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRegionEditKeys (host, ctx); }
+} };
+
+// The region right-click menu: Loop region, the label prompt, Reverse region,
+// a Color swatch, and Lock / Unlock region, each on the region it opened over.
+std::optional<ScenarioResult> runRegionMenuItems (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion original;
+    if (auto early = seedTapeRegion (host, ctx, original)) return early;
+    auto& track = ctx.session().track (0);
+    auto& transport = ctx.engine().getTransport();
+    const auto end = original.timelineStart + original.lengthInSamples;
+    const auto takesDir = ctx.tempDir() / "session" / "takes";
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto pick = [&host, &ctx, steps] (std::vector<std::string> path)
+    {
+        steps->push_back ({ 300, [&host, &ctx]
+        { ctx.expect (host.clickAudioRegion (0, 0, true), "the region did not take a right-click"); } });
+        for (const auto& item : path)
+            steps->push_back ({ 200, [&host, &ctx, item]
+            { ctx.expect (host.clickContextMenuItem (item), "region menu item is unavailable: " + item); } });
+    };
+    const auto check = [&ctx, &track, steps] (std::function<bool (const AudioRegion&)> holds, std::string failure)
+    {
+        steps->push_back ({ 300, [&ctx, &track, holds, failure]
+        { ctx.expect (track.regions.size() == 1 && holds (track.regions.front()), failure); } });
+    };
+
+    pick ({ "Loop region" });
+    steps->push_back ({ 300, [&ctx, &transport, original, end]
+    {
+        ctx.expect (transport.isLoopEnabled() && transport.getLoopStart() == original.timelineStart
+                    && transport.getLoopEnd() == end && transport.getPlayhead() == original.timelineStart,
+                    "Loop region did not loop the region's span from its start");
+    } });
+
+    pick ({ "Add label..." });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        if (! ctx.expect (host.focusModalTextInput(), "Add label did not open a text input")) return;
+        for (const char character : std::string ("verse"))
+            ctx.expect (host.pressPeerKey (std::string (1, character), character), "the label input rejected a character");
+        ctx.expect (host.pressPeerKey ("return"), "the label input did not accept Return");
+    } });
+    check ([] (const AudioRegion& r) { return r.label == "verse"; }, "the label prompt did not name the region");
+
+    pick ({ "Reverse region" });
+    steps->push_back ({ 300, [&ctx, &track, original, takesDir]
+    {
+        if (! ctx.expect (track.regions.size() == 1, "Reverse region changed the region count")) return;
+        const auto& reversed = track.regions.front();
+        const std::filesystem::path file (reversed.file.getFullPathName().toStdString());
+        if (! ctx.expect (reversed.file != original.file && file.parent_path() == takesDir
+                          && reversed.sourceOffset == 0 && reversed.lengthInSamples == original.lengthInSamples,
+                          "Reverse region did not point the region at a rendered copy in takes/")) return;
+        auto reader = dusk::audio::FileReader::open (file);
+        if (! ctx.expect (reader != nullptr, "the reversed take is not readable")) return;
+        std::array<float, 1> first {};
+        float* destination[] { first.data() };
+        const auto rampFrames = static_cast<float> (original.lengthInSamples * 2);
+        const float lastOfSlice = -0.5f + static_cast<float> (original.sourceOffset + original.lengthInSamples - 1) / rampFrames;
+        ctx.expect (reader->read (destination, 1, 0, 1) == 1 && std::abs (first[0] - lastOfSlice) < 1.0e-4f,
+                    "the reversed take does not open on the region's last sample");
+    } });
+
+    pick ({ "Color", "Blue" });
+    check ([] (const AudioRegion& r) { return r.customColour.getARGB() == 0xff6090d0; },
+           "the Color submenu did not tint the region");
+
+    pick ({ "Lock region" });
+    check ([] (const AudioRegion& r) { return r.locked; }, "Lock region did not lock the region");
+    pick ({ "Unlock region" });
+    check ([] (const AudioRegion& r) { return ! r.locked; }, "Unlock region did not unlock the region");
+
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar regionMenuItems { Scenario {
+    "gui.region_menu_items", { "gui", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRegionMenuItems (host, ctx); }
+} };
+
+// Alt+T and Alt+Shift+T step the selected region round its take ring, the
+// take badge steps it forward as one undo step, and the Takes submenu brings a
+// chosen take live.
+std::optional<ScenarioResult> runRegionTakeControls (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion live;
+    if (auto early = seedTapeRegion (host, ctx, live)) return early;
+    auto& track = ctx.session().track (0);
+    const double rate = ctx.engine().getCurrentSampleRate();
+    std::vector<std::string> files { live.file.getFullPathName().toStdString() };
+    for (const char* name : { "TakeB.wav", "TakeC.wav" })
+    {
+        const auto path = ctx.tempDir() / name;
+        if (! writeRampFixture (path, rate, live.sourceOffset + live.lengthInSamples))
+            return ScenarioResult::fail ("could not write a take fixture");
+        TakeRef take;
+        take.file = decltype (take.file) (path.u8string().c_str());
+        take.sourceOffset = live.sourceOffset;
+        take.lengthInSamples = live.lengthInSamples;
+        track.regions.front().previousTakes.push_back (take);
+        files.push_back (take.file.getFullPathName().toStdString());
+    }
+    const auto liveFile = [&track]
+    {
+        return track.regions.size() == 1 ? track.regions.front().file.getFullPathName().toStdString() : std::string();
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto expectLive = [&ctx, liveFile, steps] (std::string file, std::string failure)
+    {
+        steps->push_back ({ 200, [&ctx, liveFile, file, failure] { ctx.expect (liveFile() == file, failure); } });
+    };
+    // Every edit clears the tape selection, so the region is clicked again
+    // before each key, far enough apart not to read as a double-click.
+    const auto press = [&host, &ctx, steps] (std::string key, char text)
+    {
+        steps->push_back ({ 700, [&host, &ctx]
+        { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region with a timeline click"); } });
+        steps->push_back ({ 100, [&host, &ctx, key, text]
+        { ctx.expect (host.pressPeerKey (key, text), key + " was not handled"); } });
+    };
+    press ("alt + T", 't');
+    expectLive (files[1], "Alt+T did not bring the next take live");
+    press ("alt + shift + T", 'T');
+    expectLive (files[0], "Alt+Shift+T did not step back to the previous take");
+    press ("alt + shift + T", 'T');
+    expectLive (files[2], "Alt+Shift+T did not wrap to the last take");
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickTakeBadge (0, 0), "the take badge did not take a click"); } });
+    expectLive (files[0], "the take badge did not step to the next take");
+    steps->push_back ({ 100, [&ctx] { ctx.engine().getUndoManager().undo(); } });
+    expectLive (files[2], "undo did not take back the badge's step");
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickAudioRegion (0, 0, true), "the region did not take a right-click"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Takes"), "the region menu has no Takes submenu"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Take 2"), "the Takes submenu has no Take 2"); } });
+    expectLive (files[0], "Take 2 in the Takes submenu did not bring that take live");
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar regionTakeControls { Scenario {
+    "gui.region_take_controls", { "gui", "keyboard", "region", "take" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRegionTakeControls (host, ctx); }
+} };
+
+// M drops a marker at the playhead and opens the naming prompt: typing names
+// it, Escape keeps the default. The pill drags along the ruler, and its
+// right-click menu renames and deletes it.
+std::optional<ScenarioResult> runMarkerGestures (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion unused;
+    if (auto early = seedTapeRegion (host, ctx, unused)) return early;
+    auto& markers = ctx.session().getMarkers();
+    auto& transport = ctx.engine().getTransport();
+    const auto named = host.tapeRulerSample (0.3f);
+    const auto dropped = host.tapeRulerSample (0.6f);
+    const auto unnamed = host.tapeRulerSample (0.2f);
+    if (named <= unnamed || dropped <= named) return ScenarioResult::fail ("tape ruler geometry unavailable");
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto type = [&host, &ctx] (const std::string& text)
+    {
+        for (const char character : text)
+            ctx.expect (host.pressPeerKey (std::string (1, character), character), "the marker prompt rejected a character");
+        ctx.expect (host.pressPeerKey ("return"), "the marker prompt did not accept Return");
+    };
+    steps->push_back ({ 300, [&host, &ctx, &transport, named]
+    {
+        transport.locate (named);
+        ctx.expect (host.pressPeerKey ("M", 'm'), "M was not handled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &markers, named, type]
+    {
+        ctx.expect (markers.size() == 1 && markers.front().timelineSamples == named, "M did not drop a marker at the playhead");
+        // Typed straight in: the default name is pre-selected, so it is replaced.
+        if (ctx.expect (! host.modalStackEmpty(), "M did not open the naming prompt")) type ("chorus");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &markers]
+    {
+        ctx.expect (host.modalStackEmpty() && markers.size() == 1 && markers.front().name == "chorus",
+                    "typing in the naming prompt did not name the marker");
+        ctx.expect (host.dragTapeMarker (0, 0.6f), "the marker pill did not take a drag");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &markers, dropped]
+    {
+        ctx.expect (markers.size() == 1 && markers.front().timelineSamples == dropped, "dragging the pill did not move the marker");
+        ctx.expect (host.clickTapeMarker (0, true), "the marker pill did not take a right-click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Rename \"chorus\"..."), "the marker menu has no Rename item"); } });
+    steps->push_back ({ 300, [&host, &ctx, type]
+    {
+        if (! ctx.expect (host.focusModalTextInput(), "Rename did not open a text input")) return;
+        ctx.expect (host.pressPeerKey ("command + A"), "the rename prompt did not accept Select All");
+        type ("bridge");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &markers, &transport, unnamed]
+    {
+        ctx.expect (markers.size() == 1 && markers.front().name == "bridge", "Rename did not rename the marker");
+        transport.locate (unnamed);
+        ctx.expect (host.pressPeerKey ("M", 'm'), "M was not handled");
+    } });
+    auto defaultName = std::make_shared<std::string>();
+    steps->push_back ({ 300, [&host, &ctx, &markers, unnamed, defaultName]
+    {
+        if (! ctx.expect (markers.size() == 2 && markers.front().timelineSamples == unnamed,
+                          "the second M did not drop a marker at the playhead")) return;
+        *defaultName = markers.front().name.toStdString();
+        ctx.expect (host.pressPeerKey ("escape"), "the naming prompt did not take Escape");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &markers, defaultName]
+    {
+        ctx.expect (host.modalStackEmpty() && markers.size() == 2 && ! defaultName->empty()
+                    && markers.front().name.toStdString() == *defaultName,
+                    "Escape did not keep the default marker name");
+        ctx.expect (host.clickTapeMarker (1, true), "the marker pill did not take a right-click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Delete \"bridge\""), "the marker menu has no Delete item"); } });
+    steps->push_back ({ 300, [&ctx, &markers, unnamed]
+    {
+        ctx.expect (markers.size() == 1 && markers.front().timelineSamples == unnamed,
+                    "Delete did not remove only the right-clicked marker");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar markerGestures { Scenario {
+    "gui.marker_key_prompt_and_pill", { "gui", "keyboard", "marker" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMarkerGestures (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPianoRollNavigation (GuiHost& host, ScenarioContext& ctx)
 {
     auto& track = ctx.session().track (0);

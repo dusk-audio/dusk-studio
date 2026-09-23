@@ -172,6 +172,23 @@ public:
     auto dropPointForScenario (int track) const { return rowBounds (track).getCentre(); }
     auto rulerPointForScenario (float fraction) const { return rulerBounds().getRelativePoint (fraction, 0.25f); }
     std::int64_t rulerSampleForScenario (float fraction) const { return sampleAtX (rulerPointForScenario (fraction).x); }
+    // On the take badge but clear of the fade-in handle, which wins the
+    // badge's top-left corner in hitTestRegion.
+    auto takeBadgePointForScenario (int track, int region) const
+    {
+        return audioRegionScreenRect (track, region).getTopLeft().translated (kFadeHitPx + 5, kFadeHandleH + 1);
+    }
+    // The flag's left edge, in the pill band, by the same placement
+    // hitTestMarker uses. The index must name an existing marker.
+    auto markerPointForScenario (int index) const
+    {
+        const auto& marker = session.getMarkers()[(size_t) index];
+        const int flagW = std::clamp (marker.name.length() * 8 + 12, 28, 160);
+        const int flagX = std::min (xForSample (marker.timelineSamples), getWidth() - flagW - 2);
+        const auto ruler = rulerBounds();
+        return ruler.getTopLeft().withX (flagX + 6)
+                                 .withY ((ruler.getY() + kRulerTickBandH + ruler.getBottom()) / 2);
+    }
 
 private:
     void timerCallback() override;
