@@ -146,6 +146,7 @@ void MasterTape::prepare (double sampleRate, int blockSize)
     // the session's path before any audio reaches the plug-in.
     if (impl->signalPathIndex >= 0)
         plugin.setParameterValue ((std::uint32_t) impl->signalPathIndex, 0.0f);
+    plugin.deactivate();
     plugin.activate (sampleRate, std::max (1, blockSize));
     impl->processingLatency = std::max (0, plugin.latencySamples());
 

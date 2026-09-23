@@ -1277,8 +1277,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // panel cannot be dismissed from the keyboard at all. Answering here works
     // wherever the key lands, and lands on the same close path as clicking
     // outside the panel.
-    // The built-in unit editor is another such child, hosted by the strip that
-    // owns the slot, so the same branch closes whichever one is showing.
+    // The built-in unit editors and the master tape's editor are more such
+    // children, so the same branch closes whichever one is showing.
     if (code == juce::KeyPress::escapeKey)
     {
         if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
@@ -1288,6 +1288,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
         if (consoleView != nullptr)
         {
+            if (auto* const master = consoleView->getMasterStripComponent();
+                master != nullptr && master->isTapeEditorOpen())
+            {
+                master->closeTapeEditor();
+                return true;
+            }
             for (int t = 0; t < Session::kNumTracks; ++t)
             {
                 auto* const strip = consoleView->getStripComponent (t);
