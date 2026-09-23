@@ -267,12 +267,13 @@ TapeStrip::~TapeStrip()
 
 void TapeStrip::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    // Undo / redo just mutated the regions - repaint to reflect the swap.
+    // An edit, undo or redo just mutated the regions - repaint to reflect it.
     // The action itself called preparePlayback if stopped, so audio is
-    // already aligned with what we'll draw. Every selection index might
-    // now point at a region that has been deleted or shifted, so clear
-    // both primary and additional.
-    clearAllSelections();
+    // already aligned with what we'll draw. Unless the change was an in-place
+    // edit made here, every selection index might now point at a region that
+    // has been deleted or shifted, so clear both primary and additional.
+    if (heldSelectionHistory.empty() || heldSelectionHistory != undoHistory())
+        clearAllSelections();
     // Region count may have changed (paste/cut/undo/redo) - recompute
     // the visible row set so tracks that just gained or lost content
     // appear / disappear without the user toggling SHOW ALL.
@@ -507,6 +508,7 @@ void TapeStrip::refreshAfterSessionLoad()
     selectedMidiTrack = -1;
     selectedMidiRegion = -1;
     additionalSelections.clear();   // else allSelectedRegions() keeps stale group picks
+    heldSelectionHistory.clear();
     drag = ActiveDrag{};
     midiDrag.clear();
 
@@ -666,6 +668,17 @@ void TapeStrip::clearAllSelections() noexcept
     selectedMidiTrack  = -1;
     selectedMidiRegion = -1;
     additionalSelections.clear();
+    heldSelectionHistory.clear();
+}
+
+std::vector<std::string> TapeStrip::undoHistory() const
+{
+    auto& um = engine.getUndoManager();
+    std::vector<std::string> history;
+    for (const auto& description : um.getUndoDescriptions()) history.push_back (description.toStdString());
+    history.emplace_back();
+    for (const auto& description : um.getRedoDescriptions()) history.push_back (description.toStdString());
+    return history;
 }
 
 void TapeStrip::toggleRegionSelected (int track, int idx)
@@ -1225,8 +1238,8 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
 
             auto& um = engine.getUndoManager();
             um.beginNewTransaction ("Cycle take");
-            um.perform (new RegionEditAction (session, engine,
-                                                hit.track, hit.regionIdx, before, after));
+            performInPlace (new RegionEditAction (session, engine,
+                                                    hit.track, hit.regionIdx, before, after));
             repaint();
         }
         return;
@@ -1839,7 +1852,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                 v[(size_t) midiDrag.regionIdx] = midiDrag.origState;
                 auto& um = engine.getUndoManager();
                 um.beginNewTransaction ("Move MIDI region");
-                um.perform (new MidiRegionEditAction (
+                performInPlace (new MidiRegionEditAction (
                     session, engine, midiDrag.track, midiDrag.regionIdx,
                     midiDrag.origState, afterState));
             }
@@ -2016,9 +2029,9 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                                                     "Trim region";
             auto& um = engine.getUndoManager();
             um.beginNewTransaction (label);
-            um.perform (new RegionEditAction (session, engine,
-                                                drag.track, drag.regionIdx,
-                                                beforeState, afterState));
+            performInPlace (new RegionEditAction (session, engine,
+                                                    drag.track, drag.regionIdx,
+                                                    beforeState, afterState));
             // Group drag: emit one RegionEditAction per additional
             // selection, all bundled into the transaction we just
             // started so undo reverts the whole group at once.
@@ -2034,9 +2047,9 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                 if (addBefore.timelineStart == addAfter.timelineStart
                     && addBefore.gainDb == addAfter.gainDb)
                     continue;
-                um.perform (new RegionEditAction (session, engine,
-                                                    a.track, a.regionIdx,
-                                                    addBefore, addAfter));
+                performInPlace (new RegionEditAction (session, engine,
+                                                        a.track, a.regionIdx,
+                                                        addBefore, addAfter));
             }
         }
     }
@@ -2542,7 +2555,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                     if (safeThis == nullptr) return;
                     auto& um = safeThis->engine.getUndoManager();
                     um.beginNewTransaction ("Reverse region");
-                    um.perform (new ReverseRegionAction (
+                    safeThis->performInPlace (new ReverseRegionAction (
                         safeThis->session, safeThis->engine, track, regionIdx));
                     safeThis->repaint();
                 });
@@ -2580,7 +2593,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                             um.beginNewTransaction (afterState.label.isEmpty()
                                                        ? "Clear region label"
                                                        : "Rename region");
-                            um.perform (new RegionEditAction (
+                            safeThis->performInPlace (new RegionEditAction (
                                 safeThis->session, safeThis->engine,
                                 hitCopy.track, hitCopy.regionIdx,
                                 beforeState, afterState));
@@ -2617,7 +2630,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                         AudioRegion afterState  = current;
                         AudioRegion beforeState = current;
                         afterState.muted = target;
-                        um.perform (new RegionEditAction (
+                        safeThis->performInPlace (new RegionEditAction (
                             safeThis->session, safeThis->engine,
                             id.track, id.regionIdx, beforeState, afterState));
                     }
@@ -2652,7 +2665,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                         AudioRegion afterState  = current;
                         AudioRegion beforeState = current;
                         afterState.locked = target;
-                        um.perform (new RegionEditAction (
+                        safeThis->performInPlace (new RegionEditAction (
                             safeThis->session, safeThis->engine,
                             id.track, id.regionIdx, beforeState, afterState));
                     }
@@ -2699,7 +2712,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                     auto& um = safeThis->engine.getUndoManager();
                     um.beginNewTransaction (
                         juce::String::formatted ("Swap to take %d", takeIdx + 2));
-                    um.perform (new RegionEditAction (
+                    safeThis->performInPlace (new RegionEditAction (
                         safeThis->session, safeThis->engine,
                         hitCopy.track, hitCopy.regionIdx,
                         before, after));
@@ -2787,9 +2800,9 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                 AudioRegion afterState  = current;
                 AudioRegion beforeState = current;
                 afterState.customColour = newColour;
-                um.perform (new RegionEditAction (safeThis->session, safeThis->engine,
-                                                    id.track, id.regionIdx,
-                                                    beforeState, afterState));
+                safeThis->performInPlace (new RegionEditAction (safeThis->session, safeThis->engine,
+                                                                  id.track, id.regionIdx,
+                                                                  beforeState, afterState));
             }
             safeThis->repaint();
         });
@@ -2852,7 +2865,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                             after.label = std::move (newLabel);
                             auto& um = safeThis->engine.getUndoManager();
                             um.beginNewTransaction ("Label MIDI region");
-                            um.perform (new MidiRegionEditAction (safeThis->session,
+                            safeThis->performInPlace (new MidiRegionEditAction (safeThis->session,
                                 safeThis->engine, trackIdx, regionIdx, before, after));
                             safeThis->repaint();
                         });
@@ -2926,7 +2939,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                     auto& um = safeThis->engine.getUndoManager();
                     um.beginNewTransaction (
                         juce::String::formatted ("Swap to take %d", takeIdx + 2));
-                    um.perform (new MidiRegionEditAction (
+                    safeThis->performInPlace (new MidiRegionEditAction (
                         safeThis->session, safeThis->engine,
                         trackIdx, regionIdx, before, after));
                     safeThis->repaint();
@@ -4010,7 +4023,7 @@ void TapeStrip::commitMidiRegionToggle (int trackIdx, int regionIdx,
     mutate (after);
     auto& um = engine.getUndoManager();
     um.beginNewTransaction (name);
-    um.perform (new MidiRegionEditAction (session, engine, trackIdx, regionIdx, before, after));
+    performInPlace (new MidiRegionEditAction (session, engine, trackIdx, regionIdx, before, after));
     repaint();
 }
 
@@ -4315,9 +4328,9 @@ bool TapeStrip::nudgeSelectedRegion (std::int64_t deltaSamples)
         AudioRegion afterState  = current;
         AudioRegion beforeState = current;
         afterState.timelineStart = current.timelineStart + deltaSamples;
-        um.perform (new RegionEditAction (session, engine,
-                                            id.track, id.regionIdx,
-                                            beforeState, afterState));
+        performInPlace (new RegionEditAction (session, engine,
+                                                id.track, id.regionIdx,
+                                                beforeState, afterState));
     }
     repaint();
     return true;
@@ -4340,9 +4353,9 @@ bool TapeStrip::cycleSelectedTake (bool forward)
         if (! cycleTake (after, forward)) continue;
 
         if (! didAny) um.beginNewTransaction ("Cycle take");
-        um.perform (new RegionEditAction (session, engine,
-                                            id.track, id.regionIdx,
-                                            before, after));
+        performInPlace (new RegionEditAction (session, engine,
+                                                id.track, id.regionIdx,
+                                                before, after));
         didAny = true;
     }
     if (! didAny
@@ -4367,9 +4380,9 @@ bool TapeStrip::cycleSelectedTake (bool forward)
                 }
 
                 um.beginNewTransaction ("Cycle take");
-                um.perform (new MidiRegionEditAction (session, engine,
-                                                        selectedMidiTrack, selectedMidiRegion,
-                                                        before, after));
+                performInPlace (new MidiRegionEditAction (session, engine,
+                                                            selectedMidiTrack, selectedMidiRegion,
+                                                            before, after));
                 didAny = true;
             }
         }

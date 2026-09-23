@@ -6722,10 +6722,17 @@ std::optional<ScenarioResult> runRegionEditKeys (GuiHost& host, ScenarioContext&
         ctx.expect (placed.lengthInSamples == original.lengthInSamples && placed.sourceOffset == original.sourceOffset
                     && placed.file == original.file, "Cmd+D did not place a copy of the original");
     } });
+    // Adding a region clears the selection, so Cmd+E has nothing to split yet.
+    steps->push_back ({ 100, [&host, &transport, cut]
+    {
+        transport.locate (cut);
+        host.pressPeerKey ("command + E", 'e');
+    } });
     // Past the double-click window, so the second click selects rather than
     // opening the region editor.
     steps->push_back ({ 700, [&host, &ctx, &track, &transport, original, cut]
     {
+        ctx.expect (track.regions.size() == 2, "Cmd+E split a region the duplicate left unselected");
         ctx.expect (host.clickAudioRegion (0, regionStartingAt (track, original.timelineStart)),
                     "could not reselect the original region");
         transport.locate (cut);
@@ -6836,9 +6843,9 @@ const ScenarioRegistrar regionMenuItems { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runRegionMenuItems (host, ctx); }
 } };
 
-// Alt+T and Alt+Shift+T step the selected region round its take ring, the
-// take badge steps it forward as one undo step, and the Takes submenu brings a
-// chosen take live.
+// Alt+T and Alt+Shift+T step the selected region round its take ring, key
+// after key, the take badge steps it forward as one undo step, and the Takes
+// submenu brings a chosen take live.
 std::optional<ScenarioResult> runRegionTakeControls (GuiHost& host, ScenarioContext& ctx)
 {
     AudioRegion live;
@@ -6867,15 +6874,14 @@ std::optional<ScenarioResult> runRegionTakeControls (GuiHost& host, ScenarioCont
     {
         steps->push_back ({ 200, [&ctx, liveFile, file, failure] { ctx.expect (liveFile() == file, failure); } });
     };
-    // Every edit clears the tape selection, so the region is clicked again
-    // before each key, far enough apart not to read as a double-click.
+    // One click: a take step keeps the region selected for the next key.
     const auto press = [&host, &ctx, steps] (std::string key, char text)
     {
-        steps->push_back ({ 700, [&host, &ctx]
-        { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region with a timeline click"); } });
         steps->push_back ({ 100, [&host, &ctx, key, text]
         { ctx.expect (host.pressPeerKey (key, text), key + " was not handled"); } });
     };
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region with a timeline click"); } });
     press ("alt + T", 't');
     expectLive (files[1], "Alt+T did not bring the next take live");
     press ("alt + shift + T", 'T');
@@ -6887,13 +6893,23 @@ std::optional<ScenarioResult> runRegionTakeControls (GuiHost& host, ScenarioCont
     expectLive (files[0], "the take badge did not step to the next take");
     steps->push_back ({ 100, [&ctx] { ctx.engine().getUndoManager().undo(); } });
     expectLive (files[2], "undo did not take back the badge's step");
+    // Undo may have moved regions, so it drops the selection: Alt+T has
+    // nothing to step until the region is clicked again.
+    steps->push_back ({ 100, [&host] { host.pressPeerKey ("alt + T", 't'); } });
+    expectLive (files[2], "Alt+T stepped a region the undo left unselected");
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region with a timeline click"); } });
+    steps->push_back ({ 100, [&ctx] { ctx.engine().getUndoManager().redo(); } });
+    expectLive (files[0], "redo did not bring the badge's step back");
+    steps->push_back ({ 100, [&host] { host.pressPeerKey ("alt + T", 't'); } });
+    expectLive (files[0], "Alt+T stepped a region the redo left unselected");
     steps->push_back ({ 700, [&host, &ctx]
     { ctx.expect (host.clickAudioRegion (0, 0, true), "the region did not take a right-click"); } });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickContextMenuItem ("Takes"), "the region menu has no Takes submenu"); } });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickContextMenuItem ("Take 2"), "the Takes submenu has no Take 2"); } });
-    expectLive (files[0], "Take 2 in the Takes submenu did not bring that take live");
+    expectLive (files[1], "Take 2 in the Takes submenu did not bring that take live");
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }

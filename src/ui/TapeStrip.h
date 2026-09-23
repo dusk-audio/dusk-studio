@@ -509,6 +509,19 @@ private:
     bool isRegionSelected (int track, int idx) const noexcept;
     std::vector<RegionId> allSelectedRegions() const;
     void clearAllSelections() noexcept;
+
+    // For an edit that leaves every region at its index. The undo history as
+    // it stands afterwards is kept: while the change listener still finds it
+    // unchanged, nothing else has touched the regions and the selection holds.
+    template <typename Action>
+    void performInPlace (Action* action)
+    {
+        engine.getUndoManager().perform (action);
+        heldSelectionHistory = undoHistory();
+    }
+    std::vector<std::string> undoHistory() const;
+    std::vector<std::string> heldSelectionHistory;
+
     // Add or remove if already present - Shift / Cmd-click extends
     // without collapsing back to a single anchor.
     void toggleRegionSelected (int track, int idx);

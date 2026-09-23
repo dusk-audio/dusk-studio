@@ -112,6 +112,11 @@ publishes.
 
 ### Fixed
 
+- **Take cycling and nudges keep going on the selected region** (#701). Every
+  edit on the tape strip used to drop the selection, so a second Alt+T,
+  Alt+Shift+T or Cmd+Left/Right did nothing until the region was clicked
+  again. An edit that leaves the regions in place now keeps the selection;
+  undo, redo, split, paste, join and delete still clear it.
 - **A normal macOS drag install keeps the quickstart available.** The DMG has
   an Applications shortcut, and `QUICKSTART.md` is also inside the app bundle,
   so **Settings > Quickstart** still works after copying only the app.

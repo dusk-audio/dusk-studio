@@ -1257,6 +1257,8 @@ Each region is drawn as a rounded coloured rectangle. Audio regions show a wavef
 - Drag the left or right edge to trim.
 - Drag the pink fade discs in the top corners to set fade-in / fade-out lengths.
 
+The selection stays on a region while you edit it, so you can press **Alt+T** or nudge it again without clicking it first. Undo, redo, and anything that adds or removes regions (split, paste, duplicate, join, delete) clear the selection.
+
 ### Splitting
 
 Position the playhead and press **Cmd/Ctrl+E** to split the selected region at the playhead. Or right-click and choose **Split**. (**T** shows / hides the timeline.)
