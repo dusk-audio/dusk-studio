@@ -112,6 +112,14 @@ publishes.
 
 ### Fixed
 
+- **Escape closes a dialog even after the window has taken the keyboard
+  back.** Closing a native panel could return focus to the main window after
+  a dialog opened, and Escape then did nothing until the dialog was clicked.
+- **Right-clicking a track's name opens its colour menu.** The name label
+  said so in its tooltip, but the click stopped at the label; only the empty
+  parts of the strip opened the menu.
+- **MIDI Bindings > Clear all asks before removing every binding.** It used
+  to clear them at once, with no way back.
 - **Take cycling and nudges keep going on the selected region** (#701). Every
   edit on the tape strip used to drop the selection, so a second Alt+T,
   Alt+Shift+T or Cmd+Left/Right did nothing until the region was clicked

@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
+#include <string>
+#include <vector>
 
 namespace duskstudio
 {
@@ -32,9 +34,23 @@ public:
     static constexpr int kPanelW = 620;
     static constexpr int kPanelH = 480;
 
+    std::vector<std::string> rowsForScenario() const
+    {
+        std::vector<std::string> texts;
+        for (const auto& row : rows)
+            texts.push_back (row->targetLabel.getText().toStdString() + " | "
+                             + row->sourceLabel.getText().toStdString());
+        return texts;
+    }
+    auto* removeButtonForScenario (int row)
+    {
+        return row >= 0 && row < (int) rows.size() ? &rows[(size_t) row]->removeButton : nullptr;
+    }
+
 private:
     void rebuildRows();
     void removeBindingAt (int displayIndex);
+    void confirmClearAll();
     void clearAll();
 
     Session& session;

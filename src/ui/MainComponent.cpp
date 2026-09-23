@@ -1269,6 +1269,13 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (code >= 'a' && code <= 'z') code -= ('a' - 'A');
     const bool cmd     = mods.isCommandDown();   // Ctrl on Linux/Windows, Cmd on macOS
     const bool shift   = mods.isShiftDown();
+    const bool escape  = code == juce::KeyPress::escapeKey;
+
+    // An open modal whose body has lost the keyboard to this canvas still
+    // closes on Escape. Several teardown paths hand focus back here late, after
+    // a newer modal took it.
+    if (escape && EmbeddedModal::escapeTopModal())
+        return true;
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
     // The audio settings panel is a native child window with its own Escape
@@ -1279,7 +1286,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // outside the panel.
     // The built-in unit editors and the master tape's editor are more such
     // children, so the same branch closes whichever one is showing.
-    if (code == juce::KeyPress::escapeKey)
+    if (escape)
     {
         if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
         {

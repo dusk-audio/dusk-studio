@@ -642,6 +642,18 @@ public:
     }
 
     bool isOpen() const noexcept { return body_ != nullptr || borrowedBody_ != nullptr; }
+    bool dimmedForScenario() const noexcept { return dim_ != nullptr && dim_->isVisible(); }
+
+    // Escape for the topmost open modal, by the rule its own key handler
+    // applies. For the focus-restore target, which takes the keyboard when a
+    // modal's body loses it. False when no modal is open.
+    static bool escapeTopModal()
+    {
+        auto& stack = activeModalStack();
+        if (stack.empty()) return false;
+        stack.back()->dismissOnEscape();
+        return true;
+    }
     unsigned long long showGeneration() const noexcept { return showGeneration_; }
 
     juce::Component* getBody() const noexcept
@@ -749,6 +761,14 @@ private:
         else    close();
     }
 
+    void dismissOnEscape()
+    {
+        if (! escapeDismisses) return;  // swallow on focus-locked modals
+        // Local copy keeps the closure alive across close().
+        if (auto cb = userOnDismiss) cb();
+        else                          close();
+    }
+
     void stopListeningForOutsideClicks()
     {
         if (! listeningForOutsideClicks) return;
@@ -760,10 +780,7 @@ private:
     {
         if (k == juce::KeyPress::escapeKey)
         {
-            if (! escapeDismisses) return true;  // swallow on focus-locked modals
-            // Local copy keeps the closure alive across close().
-            if (auto cb = userOnDismiss) cb();
-            else                          close();
+            dismissOnEscape();
             return true;
         }
         // Forward global transport / navigation shortcuts (Space, R, Home,

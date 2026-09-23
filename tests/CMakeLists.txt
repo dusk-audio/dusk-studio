@@ -769,6 +769,7 @@ if(DUSK_PLUGINS_PATH)
         dsp_stereo_oversampler.cpp
         console_saturation.cpp
         eq_core_regression.cpp
+        eq_nyquist_response.cpp
         tube_multiq_ab.cpp
         comp_core_ab.cpp
         smoke_brickwall_limiter.cpp

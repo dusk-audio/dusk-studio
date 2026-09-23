@@ -18,7 +18,7 @@
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
 # ceiling gap 0
-# ceiling partial 46
+# ceiling partial 39
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -95,7 +95,7 @@ Getting started > Configuring audio > Advanced	Run self-test reports pass or fai
 
 The interface > Window layout	bank selector pages the console by what fits; EightUp at 1902 px	auto	test:Console layout: EightUp seats one hardware bank at the 1080p threshold;test:Console layout: eight narrow pages cover every channel exactly;test:Console layout: responsive window floor keeps three strips clear of Bus 1
 The interface > Window layout	surface bank and screen page stay in step	auto	test:Bank mapping: screen page resolves to the bank holding its first track;test:Bank mapping: hardware bank resolves to the page showing its first track;test:Console bank state: surface Bank Left and Right map at stride three
-The interface > Window layout	modals centre over a dimmed backdrop; Esc or outside click dismisses	partial	test:EmbeddedModal::close: drain destroys the body exactly once		modal teardown tested; Esc and outside-click dismissal are not
+The interface > Window layout	modals centre over a dimmed backdrop; Esc or outside click dismisses	auto	test:EmbeddedModal::close: drain destroys the body exactly once;scenario:gui.modal_escape_and_backdrop
 The interface > Window layout	DSP readout shows load and dropout counters; double-click resets them	auto	scenario:gui.dsp_readout_counters		the readout carries the engine's dropout pair beside the load, and the double-click zeros both counters and repaints
 The interface > The four stages	switching among Recording, Mixing and Aux keeps audio flowing	auto	scenario:gui.stage_audio_flow		actual stage buttons preserve playback progress and audible strip level without engine overruns
 The interface > The four stages	Settings > Quickstart opens the shipped quickstart, or greys out when absent	partial	ctest:install-linux;ctest:package-contents-checker		the file is shipped and located; the menu opening it is walked by hand (#623)
@@ -134,7 +134,7 @@ The channel strip	mute, solo and IN gate everything the track sends	auto	scenari
 The channel strip	split buttons: status light bypasses, label opens the editor, right-click for the menu	auto	scenario:gui.split_module_buttons
 The channel strip	every strip editor is titled with the strip's name and follows a rename	auto	scenario:gui.editor_title_names_strip		the channel EQ popup's title is asserted on open and after a rename; the bus, master and native comp titles are read from the same source and checked by hand
 The channel strip	compact AUX bypass mutes all four sends and restores their levels	partial	scenario:strip.sends_pre_post_and_bypass		the bypass and the restored levels are tested; the compact button itself is UI
-The channel strip > Track name and colour	click renames; right-click for the 12-hue palette	partial	test:track context-menu rename opens after modal focus restoration		rename path tested; the palette and region colouring are not
+The channel strip > Track name and colour	double-click renames; right-click for the eight track colours, which regions take too	auto	test:track context-menu rename opens after modal focus restoration;scenario:gui.track_name_and_colour
 The channel strip > Input block (RECORDING stage)	Mono, Stereo and MIDI modes; In N (follow) default	auto	test:A stereo track's right input follows wherever the left one resolves;test:A stereo track needs both of its inputs on the device
 The channel strip > Input block (RECORDING stage)	MIDI port, channel filter and MIDI out	auto	scenario:gui.midi_io_selectors
 The channel strip > Input block (RECORDING stage)	activity LED blinks when MIDI arrives	auto	scenario:gui.midi_activity_led		virtual keyboard traffic lights the actual LED only on the selected channel; it goes dark after traffic stops
@@ -153,7 +153,7 @@ The channel strip > HPF (high-pass filter)	HPF 20-300 Hz; 20 Hz is effectively o
 The channel strip > LPF (low-pass filter)	LPF 3-20 kHz; 20 kHz is effectively off	auto	scenario:strip.filter_ranges
 The channel strip > 4-band parametric EQ	four bands at the documented ranges and defaults	auto	test:FourKEQDSP holds its tone across a fixed render
 The channel strip > 4-band parametric EQ	E and G characters	auto	test:E and G console characters differ at the shipped drive;test:Channel console saturation sits at the calibrated harmonic floor
-The channel strip > 4-band parametric EQ	no cramping near Nyquist	partial	test:FourKEQDSP holds its tone across a fixed render		fixed render tested; an explicit near-Nyquist response check is not
+The channel strip > 4-band parametric EQ	no cramping near Nyquist at 2x or 4x oversampling; early top-octave roll-off at 1x	auto	test:FourKEQDSP holds its tone across a fixed render;test:4K EQ at 2x oversampling holds its 4x curve up to 20 kHz;test:4K EQ at 1x rolls a high boost off early near Nyquist
 The channel strip > 4-band parametric EQ	console character always on; a silent channel stays silent	auto	test:Channel console saturation sits at the calibrated harmonic floor;test:FourKEQDSP passes silence through as silence;test:the flat image a bypassed strip pushes is safe
 The channel strip > Compressor	three modes remember their own settings	auto	scenario:strip.comp_modes_keep_their_settings
 The channel strip > Compressor	double-click defaults follow the active mode	auto	test:comp reset defaults match a fresh strip's per-mode values;test:comp threshold reset parks at no compression in every mode
@@ -194,7 +194,7 @@ The master strip > Output meters	peak and VU meters, GR meter	partial	test:meter
 
 Aux lanes	AUX stage shows one full-width lane chosen by four selectors	auto	scenario:gui.aux_selectors		all four selector buttons, exclusive lane visibility, full width and selection retention across stage changes
 Aux lanes > Aux lane layout	three columns: return, insert, sources	manual			layout; checked by screenshot review
-Aux lanes > Aux lane layout > Return strip (left column)	rename, mute, return fader, meter, automation	partial	scenario:automation.read_plays_the_lanes;scenario:gui.automation_write_and_touch		the return level and mute automation are tested; rename, the mute button, the fader range and the meter are not
+Aux lanes > Aux lane layout > Return strip (left column)	rename, mute, return fader, meter, automation	auto	scenario:automation.read_plays_the_lanes;scenario:gui.automation_write_and_touch;scenario:gui.aux_return_strip;scenario:engine.pipeline_selftest
 Aux lanes > Aux lane layout > Return strip (left column)	Output sends the lane to a hardware pair tapped before fader and mute	auto	test:tapStereoPairInto accumulates onto the routed pair;test:output pair encode/decode round-trips
 Aux lanes > Aux lane layout > Plugin chain (centre column)	one insert with a 20 ms crossfade; built-in controls fill the lane	auto	test:Crossfade: equal-power overlap holds constant power across window;test:the aux lane view gives every shown parameter one control inside the lane;test:the aux lane view's knobs stay full size down to the smallest window
 Aux lanes > Aux lane layout > Plugin chain (centre column)	an editor attach failure logs without a dialog	auto	scenario:gui.aux_attach_failure_no_modal;test:aux lane editor attach never raises a modal
@@ -357,12 +357,12 @@ Sync to external gear > Mackie Control surfaces	compressor assign mode maps enco
 Sync to external gear > Mackie Control surfaces	fader taper puts printed 0 at 0 dB	auto	test:McuFaderTaper: 0 dB sits at the printed unity position (~3/4 throw);test:McuFaderTaper: pitch-bend round-trips through dB exactly for every code
 Sync to external gear > Mackie Control surfaces	jog wheel scrubs the playhead	auto	test:McuReceiver: jog wheel scrubs the playhead
 
-MIDI bindings > Learning a binding	right-click MIDI Learn binds the next control moved	partial	scenario:midi.learn_captures_the_next_control	the engine captures the next control moved; the right-click menu and the panel writing the binding are not
+MIDI bindings > Learning a binding	right-click MIDI Learn binds the next control moved	auto	scenario:midi.learn_captures_the_next_control;scenario:gui.fader_entry_and_learn
 MIDI bindings > Learning a binding	MIDI Learn last-touched plugin parameter, every native host	partial	scenario:gui.clap_midi_learn;scenario:gui.lv2_midi_learn;scenario:gui.vst3_midi_learn	the CLAP, LV2 (a patch property) and VST3 legs each move a parameter from the plug-in side and check the published binding; AudioUnit is macOS-only, has no fixture and no host leg, so it stays on the release walk
 MIDI bindings > Trigger types	CC, note, 14-bit pitch bend, MMC	auto	test:FaderBindingMap: PitchBend fader binds ride the Mackie taper;test:FaderBindingMap: CC/Note fader binds stay linear -90..+12 dB;scenario:midi.bindings_reach_their_targets
 MIDI bindings > Button modes	press triggers on the rising edge; toggle on every message	auto	scenario:midi.button_modes
 MIDI bindings > Available targets	every listed target reachable; banked variants follow the surface bank	partial	test:comp makeup binding pair matches the per-mode CC ranges;test:comp threshold binding pair sweeps the mode's dB domain;test:Console bank state: surface Bank Left and Right map at stride three;test:MIDI bindings preset round-trips every available target;scenario:midi.bindings_reach_their_targets;scenario:midi.banked_binding_follows_the_surface_bank	comp, fader, pan, mute and transport targets and banking are driven; the rest are held only by the preset round-trip
-MIDI bindings > The MIDI Bindings panel	lists bindings; remove, export, import, clear all	partial	test:MIDI bindings preset round-trips every field;test:MIDI bindings preset round-trips every available target;test:MIDI bindings import separates a broken preset from an empty one	export and import of the preset file and clear-all are tested; the panel list and its remove button are not
+MIDI bindings > The MIDI Bindings panel	lists bindings; remove, export, import, clear all	auto	test:MIDI bindings preset round-trips every field;test:MIDI bindings preset round-trips every available target;test:MIDI bindings import separates a broken preset from an empty one;scenario:gui.midi_bindings_panel
 
 Saving and loading sessions > Where sessions live	a session is a folder with relative audio paths that move between machines	auto	test:region files inside the session dir round-trip as relative paths;test:stale absolute region path re-roots to the session's audio dir;test:backslash-relative path from a Windows save resolves on load
 Saving and loading sessions > Save commands	Save is atomic: temp file, fsync, rename	auto	test:writeAtomic creates a new target and leaves no tmp behind;test:writeAtomic replaces existing content in place;test:writeAtomic survives a stale tmp from a prior crash;test:SessionSerializer save is atomic - tmp file gone after success
@@ -439,7 +439,7 @@ Messages > Session > Supporters	lists supporters by tier	manual			content comes 
 Messages > Import / Export	import and export alerts	n/a			index; entries are held below
 Messages > Import / Export > Import	stop playback first; unsupported, undecodable or unreadable files are reported	partial	test:importMidi rejects files it cannot use		an unusable MIDI file is rejected; the audio and playback-running alerts are not tested
 Messages > Import / Export > Switch track to [mode]?	importing a file of another kind asks before switching the track	auto	scenario:gui.import_mode_confirmation
-Messages > Import / Export > MIDI bindings export / import failed	unwritable export or unreadable import is reported	partial	test:MIDI bindings import separates a broken preset from an empty one;test:MIDI bindings import keeps the entries it understands	an unreadable import is detected; the two alerts themselves are not
+Messages > Import / Export > MIDI bindings export / import failed	unwritable export or unreadable import is reported	auto	test:MIDI bindings import separates a broken preset from an empty one;test:MIDI bindings import keeps the entries it understands;scenario:gui.midi_bindings_panel
 Messages > Plugins	plugin alerts	n/a			index; entries are held below
 Messages > Plugins > Plugin kind mismatch	an instrument on an effect slot, or the reverse, is refused	auto	scenario:gui.plugin_kind_mismatch		both directions through the picker: an instrument browsed onto an audio insert and an effect onto a MIDI one, each refused with the quoted text and an emptied slot
 Messages > Plugins > Plugin load failed	a plugin that fails to instantiate reports why	auto	test:ClapBundle rejects a real shared object that is not a CLAP bundle;test:ClapBundle fails gracefully on a missing bundle;test:Lv2Bundle rejects a non-bundle path cleanly

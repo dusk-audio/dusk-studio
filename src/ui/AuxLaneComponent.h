@@ -73,6 +73,8 @@ public:
     // The mode label and whether the return fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
     bool faderEnabledForScenario() const { return returnFader.isEnabled(); }
+    auto controlPointForScenario (bool mute) const { return (mute ? muteButton.getBounds() : nameLabel.getBounds()).getCentre(); }
+    std::vector<double> returnRangeForScenario() const { return { returnFader.getMinimum(), returnFader.getMaximum() }; }
     bool attachEditorForSlotForScenario (int slotIdx);
     bool captureSourcesForScenario (bool enabled);
     std::vector<std::string> sourceRowsForScenario() const;

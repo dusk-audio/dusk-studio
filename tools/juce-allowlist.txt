@@ -115,7 +115,7 @@ src/ui/MasterStripComponent.cpp	328
 src/ui/MasterStripComponent.h	55
 src/ui/MasteringView.cpp	149
 src/ui/MasteringView.h	27
-src/ui/MidiBindingsPanel.cpp	49
+src/ui/MidiBindingsPanel.cpp	48
 src/ui/MidiBindingsPanel.h	15
 src/ui/MiniTimelineStrip.cpp	19
 src/ui/MiniTimelineStrip.h	10

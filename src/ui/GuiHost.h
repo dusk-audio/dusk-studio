@@ -179,6 +179,18 @@ public:
     enum class StripKind { Channel, Bus, Master, Aux };
     virtual bool automationView (StripKind kind, int index,
                                  std::string& label, bool& faderEnabled) = 0;
+    // A named control on a strip: "name" on a channel strip or an aux lane,
+    // "mute" on an aux lane.
+    virtual bool clickStripControl (StripKind kind, int index, const std::string& control,
+                                    int clicks, bool right) = 0;
+    virtual std::vector<double> auxReturnRange (int lane) const = 0;
+    virtual std::uint32_t tapeRegionColour (int track, int region) const = 0;
+    virtual std::vector<std::string> midiBindingRows() const = 0;
+    virtual bool clickMidiBindingRemove (int row) = 0;
+    // The top modal's body and the window it sits in, as x, y, width, height
+    // and width, height, then 1 when the window behind it is dimmed.
+    virtual std::vector<int> modalLayout() const = 0;
+    virtual bool clickModalBackdrop() = 0;
 
     virtual bool pressPeerKey (const std::string& description, char text = 0) = 0;
     virtual bool clickModalAt (float xFraction, float yFraction) = 0;

@@ -8,6 +8,12 @@
 
 namespace duskstudio
 {
+namespace
+{
+template <typename Target>
+auto safePointer (Target* target) { return juce::Component::SafePointer<Target> (target); }
+} // namespace
+
 MidiBindingsPanel::Row::Row()
 {
     targetLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e4));
@@ -72,7 +78,7 @@ MidiBindingsPanel::MidiBindingsPanel (Session& s,
 
     clearAllButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff3a2a2a));
     clearAllButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0a0a0));
-    clearAllButton.onClick = [this] { clearAll(); };
+    clearAllButton.onClick = [this] { confirmClearAll(); };
     addAndMakeVisible (clearAllButton);
 
     doneButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a5a3a));
@@ -124,6 +130,16 @@ void MidiBindingsPanel::removeBindingAt (int displayIndex)
     rebuildRows();
 }
 
+void MidiBindingsPanel::confirmClearAll()
+{
+    auto* window = getTopLevelComponent();
+    if (window == nullptr) return;
+    showDuskConfirm (*window, "Clear all MIDI bindings",
+                     "Remove every MIDI binding? This cannot be undone.",
+                     "Clear all", [safe = safePointer (this)] { if (safe != nullptr) safe->clearAll(); },
+                     "Cancel", {}, true);
+}
+
 void MidiBindingsPanel::clearAll()
 {
     session.midiBindings.mutate ([] (std::vector<MidiBinding>& binds)
@@ -166,7 +182,7 @@ void MidiBindingsPanel::exportPreset()
     // final path; we just seed the dialog with something sensible.
     const auto defaultDir = juce::File::getSpecialLocation (
         juce::File::userDocumentsDirectory);
-    juce::Component::SafePointer<MidiBindingsPanel> safe (this);
+    auto safe = safePointer (this);
     filebrowser::open (*this, {
         /*title*/                  "Save MIDI bindings preset",
         /*initialFileOrDirectory*/ defaultDir.getChildFile ("dusk-studio-bindings.json"),
@@ -196,7 +212,7 @@ void MidiBindingsPanel::importPreset()
 {
     const auto defaultDir = juce::File::getSpecialLocation (
         juce::File::userDocumentsDirectory);
-    juce::Component::SafePointer<MidiBindingsPanel> safe (this);
+    auto safe = safePointer (this);
     filebrowser::open (*this, {
         /*title*/                  "Load MIDI bindings preset",
         /*initialFileOrDirectory*/ defaultDir,

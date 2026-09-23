@@ -707,7 +707,7 @@ Every editor a strip opens — EQ, COMP, or AUX — carries that strip's name ce
 
 ## Track name and colour
 
-Click the name label at the top of the strip to rename the track. Right-click to choose a colour from the 12-hue palette or open a custom colour picker. The colour appears as the strip's accent and on every region that track owns in the tape strip.
+Double-click the name label at the top of the strip to rename the track. Right-click the name, or any empty part of the strip, to pick one of eight track colours. The colour appears as the strip's accent and on every region that track owns in the tape strip.
 
 ## Input block (RECORDING stage)
 
@@ -778,7 +778,7 @@ The four bands are:
 
 Each knob is a rotary slider. Drag up to increase, down to decrease. Use a vertical drag for gain, a horizontal drag for frequency. There are no numeric text boxes on the knobs; the values display below.
 
-EQ in Dusk Studio does **not cramp** near Nyquist; the British EQ does its own internal pre-warping and benefits further when the global oversampling is raised.
+At 2× or 4× **Effect oversampling** the EQ does not cramp near Nyquist: a boost placed high keeps its shape up to 20 kHz. At the default 1×, a boost set above about 10 kHz rolls off early towards the top of the band, by several dB at 20 kHz for a band at 13–16 kHz. Raise Effect oversampling in **Settings → Advanced** when that top octave matters.
 
 The band curves, the filter slopes and the console character are calibrated against measurements of the hardware at each marked position, so a setting reads as the console's own rather than as a textbook filter at the same frequency. The console character is always on, at a fixed light amount, whether the EQ section is engaged or not; a silent channel stays silent through it.
 
