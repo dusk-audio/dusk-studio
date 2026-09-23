@@ -194,6 +194,7 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
     setOpaque (true);
     startTimerHz (30);
     engine.getUndoManager().addChangeListener (this);
+    observedHistory = undoHistory();
     refreshModeCursor();
 
     auto wireZoom = [this] (juce::TextButton& b, const juce::String& tip,
@@ -272,7 +273,8 @@ void TapeStrip::changeListenerCallback (juce::ChangeBroadcaster*)
     // already aligned with what we'll draw. Unless the change was an in-place
     // edit made here, every selection index might now point at a region that
     // has been deleted or shifted, so clear both primary and additional.
-    if (heldSelectionHistory.empty() || heldSelectionHistory != undoHistory())
+    observedHistory = undoHistory();
+    if (heldSelectionHistory.empty() || heldSelectionHistory != observedHistory)
         clearAllSelections();
     // Region count may have changed (paste/cut/undo/redo) - recompute
     // the visible row set so tracks that just gained or lost content

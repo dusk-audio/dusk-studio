@@ -513,14 +513,22 @@ private:
     // For an edit that leaves every region at its index. The undo history as
     // it stands afterwards is kept: while the change listener still finds it
     // unchanged, nothing else has touched the regions and the selection holds.
+    // Change messages arrive later, so an edit the listener has not seen yet
+    // may already be in the history; the hold is taken only when the history
+    // before this edit is one the listener or the last hold accounted for.
     template <typename Action>
     void performInPlace (Action* action)
     {
+        const auto before = undoHistory();
+        const bool accounted = before == observedHistory
+                            || (! heldSelectionHistory.empty() && before == heldSelectionHistory);
         engine.getUndoManager().perform (action);
-        heldSelectionHistory = undoHistory();
+        if (accounted) heldSelectionHistory = undoHistory();
+        else           heldSelectionHistory.clear();
     }
     std::vector<std::string> undoHistory() const;
     std::vector<std::string> heldSelectionHistory;
+    std::vector<std::string> observedHistory;
 
     // Add or remove if already present - Shift / Cmd-click extends
     // without collapsing back to a single anchor.
