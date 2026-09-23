@@ -16,14 +16,14 @@ constexpr float kHalfPi = 1.57079632679489661923f;
 using dusk::audio::findSignedMinMax;
 
 // Always-on console drive for the channel EQ. The FourKEQDSP's
-// ConsoleSaturation is an ADAA polynomial waveshaper; this fixed amount sets
-// the large-format-console harmonic signature to the real hardware's bench
-// THD: E-series (Brown) ≈ 0.02 % THD (H2 ≈ -74 dB) at 0 VU (-18 dBFS), the
-// published SSL 4000E channel figure; G-series (Black) lands ~12 dB cleaner
-// (~0.005 %), matching the more refined G path. E vs G character is selected
-// automatically from the strip's Brown/Black mode. It aliases mildly at the
-// realtime 1× default but renders alias-free in the 4× offline bounce.
-constexpr float kConsoleSaturationDrive = 22.0f;  // 0..100, calibrated to 4000E THD
+// ConsoleSaturationCore is an ADAA polynomial waveshaper; at 0 VU (-18 dBFS)
+// this fixed amount puts the E-series (Brown) at about 0.044 % THD, nearly all
+// H2 (H2 ≈ -67 dB), and the G-series (Black) at about 0.025 %, H2 ≈ -72 dB with
+// an odd-order H3 ≈ -84 dB under it. tests/console_saturation.cpp holds those
+// figures. E vs G character is selected automatically from the strip's
+// Brown/Black mode. It aliases mildly at the realtime 1× default but renders
+// alias-free in the 4× offline bounce.
+constexpr float kConsoleSaturationDrive = 22.0f;  // 0..100
 
 void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor)
 {

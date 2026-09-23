@@ -162,11 +162,13 @@ Dusk Audio plugins (donor DSP cores)
   License  : GPL-3.0-or-later (matches Dusk Studio)
   Path     : plugins/ in the donor checkout, fetched at configure time
   Components used:
-    - multi-q      (BritishEQProcessor)
+    - shared-daf/dsp (FourKEQDSP, the 4K EQ 2 core)
+    - multi-q      (MultiQTube)
     - multi-comp   (UniversalCompressor)
-    - tape-echo    (TapeSaturation, legacy)
+    - tape-echo    (Tape Echo 2 DSP and editor)
     - TapeMachine  (full tape emulation)
     - DuskVerb     (DuskVerb 2 DSP and editor)
+    - sunset-circuits (Sunset synth core)
     - shared/AnalogEmulation (TubeEmulation, TransformerEmulation, etc.)
     - shared-daf/fonts/BarlowCondensed (Regular and SemiBold font data embedded
       in the DuskVerb 2 editor; SIL Open Font License 1.1, Copyright 2017 The

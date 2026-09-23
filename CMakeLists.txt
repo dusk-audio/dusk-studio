@@ -1397,16 +1397,15 @@ target_compile_options(dusk-pffft PRIVATE "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
 target_link_libraries(DuskStudio PRIVATE dusk-pffft)
 
 if(DEFINED DUSK_PLUGINS_PATH)
-    # Per-plugin DSP headers from the Dusk plugins repo's main branch. Each
+    # Per-plugin DSP headers from the Dusk plugins repo at DONOR_REV. Each
     # plugin owns its DSP; Dusk Studio vendors:
-    #   - multi-q    (BritishEQProcessor — per-channel 4-band British EQ)
+    #   - shared-daf/dsp (FourKEQDSP, the 4K EQ 2 core every channel and bus
+    #                 EQ runs)
+    #   - multi-q    (MultiQTube, the master program EQ core)
     #   - multi-comp (UniversalCompressor — per-channel Opto/FET/VCA comp,
-    #                 used here as a juce::AudioProcessor; only its DSP path is
+    #                 used here as a JUCE AudioProcessor; only its DSP path is
     #                 active — the plugin editor is compiled-in but never
     #                 instantiated by Dusk Studio's UI)
-    #   - tape-echo    (TapeEchoDSP::TapeSaturation — legacy master bus tape sat,
-    #                   being replaced by TapeMachine; still vendored while the
-    #                   migration completes)
     #   - TapeMachine  (full-featured tape emulation hosted on the master bus
     #                   via the framework-free core; the native tape panel is
     #                   Dusk Studio's own, and only the donor's reel component
@@ -1426,7 +1425,6 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
-        "${DUSK_PLUGINS_PATH}/plugins/tape-echo/Source/DSP"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
         "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp"

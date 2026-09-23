@@ -18,7 +18,7 @@
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
 # ceiling gap 0
-# ceiling partial 53
+# ceiling partial 52
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -151,8 +151,8 @@ The channel strip > Insert slot	right-click Add / Replace / Remove / Edit / hard
 The channel strip > Insert slot	bypass LED; bypassed insert keeps processing for a click-free return	partial	test:a bypassed built-in slot passes dry audio and reports no latency		built-in bypass tested; the click-free return and plug-in bypass are not
 The channel strip > HPF (high-pass filter)	HPF 20-300 Hz; 20 Hz is effectively off	auto	scenario:strip.filter_ranges
 The channel strip > LPF (low-pass filter)	LPF 3-20 kHz; 20 kHz is effectively off	auto	scenario:strip.filter_ranges
-The channel strip > 4-band parametric EQ	four bands at the documented ranges and defaults	auto	test:BritishEQProcessor vs FourKEQDSP A/B parity;test:FourKEQDSP holds its tone across a fixed render
-The channel strip > 4-band parametric EQ	E and G characters	partial	test:E-series transformer core adds LF-weighted saturation		E character tested; the G character is not
+The channel strip > 4-band parametric EQ	four bands at the documented ranges and defaults	auto	test:FourKEQDSP holds its tone across a fixed render
+The channel strip > 4-band parametric EQ	E and G characters	auto	test:E and G console characters differ at the shipped drive;test:Channel console saturation sits at the calibrated harmonic floor
 The channel strip > 4-band parametric EQ	no cramping near Nyquist	partial	test:FourKEQDSP holds its tone across a fixed render		fixed render tested; an explicit near-Nyquist response check is not
 The channel strip > 4-band parametric EQ	console character always on; a silent channel stays silent	auto	test:Channel console saturation sits at the calibrated harmonic floor;test:FourKEQDSP passes silence through as silence;test:the flat image a bypassed strip pushes is safe
 The channel strip > Compressor	three modes remember their own settings	auto	scenario:strip.comp_modes_keep_their_settings

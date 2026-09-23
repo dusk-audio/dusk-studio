@@ -302,18 +302,10 @@ target_sources(dusk-studio-tests PRIVATE
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sndfile)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sodium)
 
-# Console-saturation calibration test + the donor DSP headers it needs
-# (BritishEQProcessor.h + its header-only ConsoleSaturation/ADAA/SafeFloat deps).
-# Gated on the donor being available, so a no-donor build doesn't try to compile
-# a test whose includes can't be resolved.
 if(DUSK_PLUGINS_PATH)
-    target_sources(dusk-studio-tests PRIVATE console_saturation.cpp)
-    target_include_directories(dusk-studio-tests SYSTEM PRIVATE
-        ${DUSK_PLUGINS_PATH}/plugins/multi-q
-        ${DUSK_PLUGINS_PATH}/plugins/shared)
-
-    # Built-in units backed by donor cores. Gated with the donor for the same
-    # reason console_saturation.cpp is: without it the includes cannot resolve.
+    # Built-in units backed by donor cores. Gated on the donor being available,
+    # so a no-donor build doesn't try to compile tests whose includes can't be
+    # resolved.
     target_sources(dusk-studio-tests PRIVATE
         builtin_tape_unit.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/builtin/TapeUnit.cpp
@@ -776,7 +768,7 @@ if(DUSK_PLUGINS_PATH)
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringEqView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringLimiterView.cpp>
         dsp_stereo_oversampler.cpp
-        eq_british_ab.cpp
+        console_saturation.cpp
         eq_core_regression.cpp
         tube_multiq_ab.cpp
         comp_core_ab.cpp
@@ -798,8 +790,8 @@ if(DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp")
 
-    # projucer-shim satisfies BritishEQProcessor.h's `#include <JuceHeader.h>`
-    # (the donor EQ under A/B test in eq_british_ab.cpp); the shim pulls in a
+    # projucer-shim satisfies TubeEQProcessor.h's `#include <JuceHeader.h>`
+    # (the donor EQ under A/B test in tube_multiq_ab.cpp); the shim pulls in a
     # few JUCE modules the base test link is missing, added below.
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         "${CMAKE_SOURCE_DIR}/external/projucer-shim"
