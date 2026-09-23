@@ -6,6 +6,8 @@
 #include "../../../session/Session.h"
 
 #include <array>
+#include <cmath>
+#include <cstdint>
 #include <string>
 
 namespace duskstudio::scenario
@@ -217,6 +219,91 @@ ScenarioResult runClone (ScenarioContext& ctx)
     return ScenarioResult::pass();
 }
 #endif
+
+// A converted older session's band plays its format-7 dial while its frequency
+// and voicing are the ones it was converted under. Clone Track copies the dial
+// with both, so the copy sounds like its source, and the undo puts back the
+// destination's own.
+ScenarioResult runCloneEqDials (ScenarioContext& ctx)
+{
+    using EqFreq = ChannelStripParams::EqFreq;
+    constexpr int kSource = 3;
+    constexpr int kDest   = 4;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& src = session.track (kSource).strip;
+    auto& dst = session.track (kDest).strip;
+
+    std::array<std::uint64_t, ChannelStripParams::kNumEqFreqs> srcWords {};
+    for (size_t i = 0; i < srcWords.size(); ++i) srcWords[i] = src.eqFreqDial[i].raw();
+    ctx.cleanup ([&src, srcWords]
+    {
+        for (size_t i = 0; i < srcWords.size(); ++i) src.eqFreqDial[i].setRaw (srcWords[i]);
+    });
+    for (const auto f : { EqFreq::Hpf, EqFreq::Lpf, EqFreq::Lf, EqFreq::Lm })
+        ctx.keep (src.eqFreq (f));
+    ctx.keep (src.eqBlackMode);
+    ctx.keep (src.lpfEnabled);
+    auto& undo = engine.getUndoManager();
+    ctx.cleanup ([&undo] { undo.clearUndoHistory(); });
+
+    const auto dialOf = [] (const ChannelStripParams& strip, EqFreq f)
+    {
+        float hz = 0.0f;
+        return strip.legacyDial (f).dialFor (strip.eqFreq (f), strip.eqBlackMode.load(), hz);
+    };
+    const auto hold = [] (ChannelStripParams& strip, EqFreq f, float hz, float dial)
+    {
+        strip.eqFreq (f).store (hz);
+        strip.legacyDial (f).set (dial, hz, strip.eqBlackMode.load());
+    };
+    src.eqBlackMode.store (true);
+    src.lpfEnabled.store (true);
+    hold (src, EqFreq::Lf, 660.0f, 400.0f);
+    hold (src, EqFreq::Hpf, 316.0f, 300.0f);
+    hold (src, EqFreq::Lpf, 9000.0f, 12000.0f);
+    src.legacyDial (EqFreq::Lm).clear();
+
+    std::array<std::uint64_t, ChannelStripParams::kNumEqFreqs> dstBefore {};
+    for (size_t i = 0; i < dstBefore.size(); ++i) dstBefore[i] = dst.eqFreqDial[i].raw();
+    const bool dstBlack = dst.eqBlackMode.load();
+    const float dstLpf = dst.lpfFreq.load();
+
+    undo.clearUndoHistory();
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new CloneTrackAction (session, engine, kSource, kDest)),
+                      "the clone action refused to run"))
+        return ctx.verdict();
+    const auto copied = [&]
+    {
+        bool same = dst.eqBlackMode.load() && std::abs (dst.lpfFreq.load() - 9000.0f) < 1.0e-3f
+                    && dst.lpfEnabled.load();
+        for (size_t i = 0; i < srcWords.size(); ++i)
+            same = same && dst.eqFreqDial[i].raw() == src.eqFreqDial[i].raw();
+        return same && dialOf (dst, EqFreq::Lf) > 0.0f && dialOf (dst, EqFreq::Hpf) > 0.0f
+                    && dialOf (dst, EqFreq::Lpf) > 0.0f && dialOf (dst, EqFreq::Lm) <= 0.0f;
+    };
+    ctx.expect (copied(), "the clone did not carry the source's dials, voicing and LPF");
+
+    ctx.expect (undo.undo(), "undo refused");
+    bool restored = dst.eqBlackMode.load() == dstBlack && std::abs (dst.lpfFreq.load() - dstLpf) < 1.0e-3f;
+    for (size_t i = 0; i < dstBefore.size(); ++i)
+        restored = restored && dst.eqFreqDial[i].raw() == dstBefore[i];
+    ctx.expect (restored, "undo did not put back the destination's own dials, voicing and LPF");
+
+    ctx.expect (undo.redo(), "redo refused");
+    ctx.expect (copied(), "redo did not carry the source's dials again");
+    ctx.expect (undo.undo(), "the closing undo refused");
+    return ctx.verdict();
+}
+
+const ScenarioRegistrar eqDials { Scenario {
+    "session.clone_track_keeps_converted_eq_dials",
+    { "session", "clone", "eq" },
+    Needs::Engine,
+    {},
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runCloneEqDials (ctx); }
+} };
 
 const ScenarioRegistrar registrar { Scenario {
     "session.clone_track_keeps_native_state",

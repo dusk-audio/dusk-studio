@@ -57,6 +57,13 @@ public:
     void prepare (double sampleRate, int blockSize, int oversamplingFactor = 1);
     void bind (const ChannelStripParams& params) noexcept { paramsRef = &params; }
 
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    // Hands the strip's EQ, HPF and LPF settings to a 4K EQ core the way the
+    // audio thread does at the top of each block, so a test can drive a bare
+    // core exactly as a strip does.
+    static void pushEqParameters (duskaudio::FourKEQDSP& core, const ChannelStripParams& params) noexcept;
+#endif
+
     // Cross-track Plugin Delay Compensation. The engine's PDC aggregator
     // (AudioEngine::recomputePdc) sets each strip's compensation = the session's
     // deepest track latency minus this track's own, so every track lines up on
@@ -498,16 +505,21 @@ private:
     // struct (no padding) value-init to zero so memcmp is byte-reliable, and
     // so a bypassed EQ's flat defaults (all bands 0 dB, filters off) are the
     // literal zero image.
+    // A *Dial field above 0 is a format-7 dial the band or filter plays
+    // through the core's dial API instead of its Hz (LegacyEqDial).
     struct EqSnapshot
     {
-        float hpfEnabled = 0, hpfFreq = 0, lpfEnabled = 0, lpfFreq = 0;
-        float lfGain = 0, lfFreq = 0, lfBell = 0;
-        float lmGain = 0, lmFreq = 0, lmQ = 0;
-        float hmGain = 0, hmFreq = 0, hmQ = 0;
-        float hfGain = 0, hfFreq = 0, hfBell = 0;
+        float hpfEnabled = 0, hpfFreq = 0, hpfDial = 0, lpfEnabled = 0, lpfFreq = 0, lpfDial = 0;
+        float lfGain = 0, lfFreq = 0, lfDial = 0, lfBell = 0;
+        float lmGain = 0, lmFreq = 0, lmDial = 0, lmQ = 0;
+        float hmGain = 0, hmFreq = 0, hmDial = 0, hmQ = 0;
+        float hfGain = 0, hfFreq = 0, hfDial = 0, hfBell = 0;
         float eqType = 0, saturation = 0, inputGain = 0, outputGain = 0;
     };
+    static_assert (sizeof (EqSnapshot) == 26 * sizeof (float), "EqSnapshot must stay padding-free for memcmp");
     EqSnapshot lastEqParams {};
+    static EqSnapshot eqSnapshotFor (const ChannelStripParams& params) noexcept;
+    static void applyEqSnapshot (duskaudio::FourKEQDSP& core, const EqSnapshot& p) noexcept;
 
     duskaudio::UniversalCompressorDSP compressor;
 

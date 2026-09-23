@@ -6,6 +6,8 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <string>
@@ -175,6 +177,75 @@ struct HardwareInsertParams
     mutable std::atomic<int>  pingResult  { -1 };
 };
 
+// Up to format 7 a channel EQ band's or filter's frequency was a dial position
+// of the 4K EQ core. The migrator stores the Hz that position played and keeps
+// the position here, because only the core's dial API plays it exactly: on a
+// flat stretch of the core's measured table the Hz API reads the band's Q and
+// the LF/LM, HM/HF pair interaction at the table's edge where the dial API read
+// them at the position, and the filters' shapes differ slightly anywhere.
+//
+// A dial plays only while its band's frequency and the strip's voicing are the
+// ones it was converted under: a write that moves the frequency also clears it
+// (ChannelStripParams::setEqFreq), and a voicing switch suspends it, so a knob
+// never shows one frequency while the band plays another. A suspended dial is
+// kept, saved included, so switching back plays it again. Dial, frequency and
+// voicing share one lock-free word, so a reader never pairs one write's dial
+// with another's frequency.
+class LegacyEqDial
+{
+public:
+    // Store the frequency first: the release publishes it to a reader that
+    // acquires this word.
+    void set (float dial, float hz, bool black) noexcept
+    {
+        if (! (std::isfinite (dial) && dial > 0.0f)) { clear(); return; }
+        word.store (((std::uint64_t) bitsOf (dial) << 32) | ((std::uint64_t) black << 63) | bitsOf (hz),
+                    std::memory_order_release);
+    }
+    void clear() noexcept { word.store (0, std::memory_order_release); }
+
+    // Acquires the word before loading freq, so a reader that sees a writer's
+    // dial, or its clear, also sees the frequency the writer stored first.
+    // Returns the dial kept for the frequency left in hz, with the voicing it
+    // plays in, or 0 once the frequency has moved off it.
+    float kept (const std::atomic<float>& freq, float& hz, bool& black) const noexcept
+    {
+        const auto w = word.load (std::memory_order_acquire);
+        hz = freq.load (std::memory_order_relaxed);
+        if (w == 0 || (std::uint32_t) w != bitsOf (hz)) return 0.0f;
+        black = (w >> 63) != 0;
+        float dial;
+        const auto bits = (std::uint32_t) ((w >> 32) & 0x7fffffffu);
+        std::memcpy (&dial, &bits, sizeof dial);
+        return dial;
+    }
+
+    // The dial to drive the core with in voicing black, or 0 when the band or
+    // filter follows the Hz left in hz.
+    float dialFor (const std::atomic<float>& freq, bool black, float& hz) const noexcept
+    {
+        bool dialBlack = false;
+        const float dial = kept (freq, hz, dialBlack);
+        return dialBlack == black ? dial : 0.0f;
+    }
+
+    // The whole word, for a snapshot that restores the frequency and voicing
+    // with it (clone track and its undo).
+    std::uint64_t raw() const noexcept { return word.load (std::memory_order_acquire); }
+    void setRaw (std::uint64_t w) noexcept { word.store (w, std::memory_order_release); }
+
+private:
+    static std::uint32_t bitsOf (float v) noexcept
+    {
+        std::uint32_t bits;
+        std::memcpy (&bits, &v, sizeof bits);
+        return bits;
+    }
+
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free, "the audio thread reads this word");
+    std::atomic<std::uint64_t> word { 0 };
+};
+
 struct ChannelStripParams
 {
     std::atomic<float> faderDb { 0.0f };   // -inf via -100 sentinel, +12 dB max
@@ -216,6 +287,11 @@ struct ChannelStripParams
     std::array<std::atomic<bool>, kNumAuxSends> auxSendPreFader {};
 
     // 4K-style EQ: HPF + 4-band parametric + LPF + Brown/Black mode.
+    // Frequencies are the Hz each plays: a filter's -3 dB point, a bell's
+    // centre, a shelf's corner. Sessions before format 8 stored the core's
+    // dial position here; migrateSession converts them and keeps the dial
+    // (eqFreqDial), and a converted value may sit past its knob's range (the
+    // k*Held* bounds).
     std::atomic<bool>  hpfEnabled { false };
     std::atomic<float> hpfFreq    { 20.0f };
     std::atomic<bool>  lpfEnabled { false };
@@ -233,6 +309,41 @@ struct ChannelStripParams
     std::atomic<bool>  eqBlackMode { false };  // false = Brown (E-series), true = Black (G-series)
     // Auto-arms on first knob adjustment.
     std::atomic<bool>  eqEnabled   { false };
+
+    // The frequencies above by index, and the format-7 dial each may still
+    // play through (LegacyEqDial).
+    enum class EqFreq : int { Hpf = 0, Lpf, Lf, Lm, Hm, Hf };
+    static constexpr int kNumEqFreqs = 6;
+    std::array<LegacyEqDial, kNumEqFreqs> eqFreqDial {};
+
+    std::atomic<float>& eqFreq (EqFreq f) noexcept
+    {
+        switch (f)
+        {
+            case EqFreq::Hpf: return hpfFreq;
+            case EqFreq::Lpf: return lpfFreq;
+            case EqFreq::Lf:  return lfFreq;
+            case EqFreq::Lm:  return lmFreq;
+            case EqFreq::Hm:  return hmFreq;
+            case EqFreq::Hf:  break;
+        }
+        return hfFreq;
+    }
+    const std::atomic<float>& eqFreq (EqFreq f) const noexcept
+    {
+        return const_cast<ChannelStripParams*> (this)->eqFreq (f);
+    }
+    LegacyEqDial&       legacyDial (EqFreq f) noexcept       { return eqFreqDial[(size_t) f]; }
+    const LegacyEqDial& legacyDial (EqFreq f) const noexcept { return eqFreqDial[(size_t) f]; }
+
+    // Every write of a new band or filter frequency goes through here, and
+    // drops the format-7 dial the band or filter played until now. Lock-free,
+    // for the audio thread's MIDI and control-surface writers too.
+    void setEqFreq (EqFreq f, float hz) noexcept
+    {
+        eqFreq (f).store (hz, std::memory_order_relaxed);
+        legacyDial (f).clear();
+    }
 
     // Comp: each mode (Opto / FET / VCA) keeps its own atomics and the
     // UI swaps visible controls.
@@ -303,16 +414,30 @@ struct ChannelStripParams
     static constexpr float kFaderMaxDb       =  12.0f;
     static constexpr float kFaderInfThreshDb = -90.0f;  // below this = hard mute
 
+    // The filters' measured shape does not change along the dial, so the core
+    // plays these ranges in Hz with the calibrated slope, past the ends of its
+    // tables too (Brown's HPF table stops at 282 Hz, both LPF tables start
+    // near 3.2 kHz). Each range's off end is the knob's OFF position.
     static constexpr float kHpfMinHz   = 20.0f;
     static constexpr float kHpfMaxHz   = 300.0f;
     static constexpr float kHpfOffHz   = 20.0f;
     static constexpr float kLpfMinHz   = 3000.0f;
     static constexpr float kLpfMaxHz   = 20000.0f;
     static constexpr float kLpfOffHz   = 20000.0f;
-    static constexpr float kLfFreqMin  = 20.0f,   kLfFreqMax = 400.0f;
-    static constexpr float kLmFreqMin  = 100.0f,  kLmFreqMax = 4000.0f;
-    static constexpr float kHmFreqMin  = 600.0f,  kHmFreqMax = 13000.0f;
-    static constexpr float kHfFreqMin  = 1000.0f, kHfFreqMax = 20000.0f;
+    static constexpr float kLfFreqMin  = 30.0f,   kLfFreqMax = 450.0f;
+    static constexpr float kLmFreqMin  = 200.0f,  kLmFreqMax = 2500.0f;
+    static constexpr float kHmFreqMin  = 600.0f,  kHmFreqMax = 7000.0f;
+    static constexpr float kHfFreqMin  = 1500.0f, kHfFreqMax = 16000.0f;
+    // What a stored frequency may hold: the knob's range widened to take
+    // every Hz a format-7 dial played, in either voicing, so a converted
+    // session keeps its sound. A value past the knob sits on its end stop
+    // until the knob moves. The LPF's knob range already covers its v7 reach;
+    // its off end, like the HPF's, is where a filter that was on stops short.
+    static constexpr float kLfFreqHeldMin  = 30.0f,   kLfFreqHeldMax = 670.0f;
+    static constexpr float kLmFreqHeldMin  = 135.0f,  kLmFreqHeldMax = 2500.0f;
+    static constexpr float kHmFreqHeldMin  = 600.0f,  kHmFreqHeldMax = 8800.0f;
+    static constexpr float kHfFreqHeldMin  = 630.0f,  kHfFreqHeldMax = 16000.0f;
+    static constexpr float kHpfHeldMaxHz   = 320.0f;
     static constexpr float kBandGainMin = -15.0f, kBandGainMax = 15.0f;
     static constexpr float kBandQMin = 0.4f, kBandQMax = 4.0f;
 };

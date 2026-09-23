@@ -100,17 +100,17 @@ TEST_CASE ("Appendix A: channel defaults and load ranges", "[session][appendix]"
     checkParameters (session, {
         { "/tracks/0/fader_db", &p.faderDb, 0, -100, 12 },
         { "/tracks/0/pan", &p.pan, 0, -1, 1 },
-        { "/tracks/0/hpf/freq", &p.hpfFreq, 20, 20, 300 },
+        { "/tracks/0/hpf/freq", &p.hpfFreq, 20, 20, 320 },
         { "/tracks/0/lpf/freq", &p.lpfFreq, 20000, 3000, 20000 },
-        { "/tracks/0/eq/lf/freq", &p.lfFreq, 100, 20, 400 },
+        { "/tracks/0/eq/lf/freq", &p.lfFreq, 100, 30, 670 },
         { "/tracks/0/eq/lf/gain", &p.lfGainDb, 0, -15, 15 },
-        { "/tracks/0/eq/lm/freq", &p.lmFreq, 600, 100, 4000 },
+        { "/tracks/0/eq/lm/freq", &p.lmFreq, 600, 135, 2500 },
         { "/tracks/0/eq/lm/gain", &p.lmGainDb, 0, -15, 15 },
         { "/tracks/0/eq/lm/q", &p.lmQ, 0.7f, 0.4f, 4 },
-        { "/tracks/0/eq/hm/freq", &p.hmFreq, 2000, 600, 13000 },
+        { "/tracks/0/eq/hm/freq", &p.hmFreq, 2000, 600, 8800 },
         { "/tracks/0/eq/hm/gain", &p.hmGainDb, 0, -15, 15 },
         { "/tracks/0/eq/hm/q", &p.hmQ, 0.7f, 0.4f, 4 },
-        { "/tracks/0/eq/hf/freq", &p.hfFreq, 8000, 1000, 20000 },
+        { "/tracks/0/eq/hf/freq", &p.hfFreq, 8000, 630, 16000 },
         { "/tracks/0/eq/hf/gain", &p.hfGainDb, 0, -15, 15 },
         { "/tracks/0/comp/opto_gain", &p.compOptoGain, 50, 0, 100 },
         { "/tracks/0/comp/fet_threshold_db", &p.compFetThresholdDb, -10, -60, 0 },
@@ -132,6 +132,40 @@ TEST_CASE ("Appendix A: channel defaults and load ranges", "[session][appendix]"
         { "/tracks/0/comp/vca_overeasy", &p.compVcaOverEasy },
         { "/tracks/0/comp/vca_detector_classic", &p.compVcaDetectorClassic },
     });
+    // Appendix A's knob ranges load as written. Ten hertz past a knob's end
+    // loads as written where a converted older session can play there, and
+    // stops at the knob's end where none can.
+    struct KnobRange
+    {
+        const char* path;
+        std::atomic<float>* value;
+        float low, high, belowLoads, aboveLoads;
+    };
+    const KnobRange knobs[] {
+        { "/tracks/0/hpf/freq",   &p.hpfFreq,   20,   300,   20,   310 },
+        { "/tracks/0/lpf/freq",   &p.lpfFreq, 3000, 20000, 3000, 20000 },
+        { "/tracks/0/eq/lf/freq", &p.lfFreq,    30,   450,   30,   460 },
+        { "/tracks/0/eq/lm/freq", &p.lmFreq,   200,  2500,  190,  2500 },
+        { "/tracks/0/eq/hm/freq", &p.hmFreq,   600,  7000,  600,  7010 },
+        { "/tracks/0/eq/hf/freq", &p.hfFreq,  1500, 16000, 1490, 16000 },
+    };
+    for (const float past : { 0.0f, 10.0f })
+    {
+        for (const bool upper : { false, true })
+        {
+            auto document = Json::parse (SessionSerializer::serialize (session).toStdString());
+            for (const auto& k : knobs)
+                document[Json::json_pointer (k.path)] = upper ? k.high + past : k.low - past;
+            load (session, document);
+            for (const auto& k : knobs)
+            {
+                CAPTURE (k.path, past, upper);
+                const float loads = past == 0.0f ? (upper ? k.high : k.low)
+                                                 : (upper ? k.aboveLoads : k.belowLoads);
+                CHECK_THAT (k.value->load(), WithinAbs (loads, 1e-6));
+            }
+        }
+    }
     CHECK_THAT (comp::optoGainPctToMakeupDb (0), WithinAbs (-40, 1e-6));
     CHECK_THAT (comp::optoGainPctToMakeupDb (50), WithinAbs (0, 1e-6));
     CHECK_THAT (comp::optoGainPctToMakeupDb (100), WithinAbs (40, 1e-6));

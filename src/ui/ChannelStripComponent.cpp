@@ -92,7 +92,7 @@ struct BandSpec
     juce::Colour accent;          // 4K-palette band color
     float freqMin, freqMax, freqDefault;
     std::atomic<float>* (*gainPtr) (ChannelStripParams&);
-    std::atomic<float>* (*freqPtr) (ChannelStripParams&);
+    ChannelStripParams::EqFreq freq;
     // qPtr is non-null for bell-only mid bands (HM, LM). Shelf bands (HF, LF)
     // leave it null and get a 2-knob row instead of 3.
     std::atomic<float>* (*qPtr)    (ChannelStripParams&) = nullptr;
@@ -107,18 +107,18 @@ static const std::array<BandSpec, 4>& bandSpecs()
     static const std::array<BandSpec, 4> specs {{
         { "HF", juce::Colour (sslEqColors::kHfRed),    ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax, 8000.0f,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hfGainDb; },
-            [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hfFreq; } },
+            ChannelStripParams::EqFreq::Hf },
         { "HM", juce::Colour (sslEqColors::kHmGreen),  ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax, 2000.0f,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmGainDb; },
-            [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmFreq; },
+            ChannelStripParams::EqFreq::Hm,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmQ; } },
         { "LM", juce::Colour (sslEqColors::kLmBlue),   ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax, 600.0f,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmGainDb; },
-            [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmFreq; },
+            ChannelStripParams::EqFreq::Lm,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmQ; } },
         { "LF", juce::Colour (sslEqColors::kLfBlack),  ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax, 100.0f,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lfGainDb; },
-            [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lfFreq; } },
+            ChannelStripParams::EqFreq::Lf },
     }};
     return specs;
 }
@@ -167,6 +167,14 @@ inline std::string formatFrequency (double hz)
         return dusk::text::format ("%.1fk", khz);
     }
     return dusk::text::format ("%d", (int) std::round (hz));
+}
+
+// What a frequency knob reads: a converted older session can hold a band or
+// filter past the knob's range, where it keeps playing while the knob rests on
+// its end stop.
+inline double shownFrequency (double knob, float held, double lo, double hi)
+{
+    return (knob <= lo && held < lo) || (knob >= hi && held > hi) ? (double) held : knob;
 }
 
 // Format an EQ band gain in dB, dropping ".0" on integer values so "0" / "-2"
@@ -253,16 +261,20 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     hpfKnob.setHelpText ("Channel high-pass filter cutoff, in hertz; OFF when fully down.");
     styleCompactKnob (hpfKnob, filterWhite);
     enableValueLabel (hpfKnob, "", 0);
-    hpfKnob.textFromValueFunction = [] (double v) -> juce::String
+    // OFF follows the switch, not the knob: a converted older session can
+    // leave a filter on at its OFF end, where it still plays.
+    hpfKnob.textFromValueFunction = [&strip = track.strip] (double v)
     {
-        if (v <= ChannelStripParams::kHpfOffHz + 0.5) return "OFF";
-        return formatFrequency (v);
+        if (! strip.hpfEnabled.load (std::memory_order_relaxed)) return std::string ("OFF");
+        return formatFrequency (shownFrequency (v, strip.hpfFreq.load (std::memory_order_relaxed),
+                                                ChannelStripParams::kHpfMinHz, ChannelStripParams::kHpfMaxHz));
     };
     hpfKnob.valueFromTextFunction = [parseFrequencyText] (const auto& text)
     {
         return parseFrequencyText (text, ChannelStripParams::kHpfOffHz);
     };
     hpfKnob.setValue (track.strip.hpfFreq.load (std::memory_order_relaxed), juce::dontSendNotification);
+    hpfKnob.updateText();
     hpfKnob.onValueChange = [this] { onHpfKnobChanged(); };
     hpfKnob.addMouseListener (this, false);
     addAndMakeVisible (hpfKnob);
@@ -281,16 +293,18 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     lpfKnob.setHelpText ("Channel low-pass filter cutoff, in hertz; OFF when fully up.");
     styleCompactKnob (lpfKnob, filterWhite);
     enableValueLabel (lpfKnob, "", 0);
-    lpfKnob.textFromValueFunction = [] (double v) -> juce::String
+    lpfKnob.textFromValueFunction = [&strip = track.strip] (double v)
     {
-        if (v >= ChannelStripParams::kLpfOffHz - 0.5) return "OFF";
-        return formatFrequency (v);
+        if (! strip.lpfEnabled.load (std::memory_order_relaxed)) return std::string ("OFF");
+        return formatFrequency (shownFrequency (v, strip.lpfFreq.load (std::memory_order_relaxed),
+                                                ChannelStripParams::kLpfMinHz, ChannelStripParams::kLpfMaxHz));
     };
     lpfKnob.valueFromTextFunction = [parseFrequencyText] (const auto& text)
     {
         return parseFrequencyText (text, ChannelStripParams::kLpfOffHz);
     };
     lpfKnob.setValue (track.strip.lpfFreq.load (std::memory_order_relaxed), juce::dontSendNotification);
+    lpfKnob.updateText();
     lpfKnob.onValueChange = [this] { onLpfKnobChanged(); };
     addAndMakeVisible (lpfKnob);
 
@@ -604,13 +618,17 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // textFromValueFunction must be set BEFORE setValue, otherwise the
         // initial text is rendered with the default formatter ("2000") and
         // doesn't get our "2.0k" notation until the user moves the knob.
-        row.freq->textFromValueFunction = [] (double v) { return formatFrequency (v); };
+        row.freq->textFromValueFunction = [held = &track.strip.eqFreq (spec.freq), lo = spec.freqMin, hi = spec.freqMax] (double v)
+        {
+            return formatFrequency (shownFrequency (v, held->load (std::memory_order_relaxed), lo, hi));
+        };
         row.freq->valueFromTextFunction = [parseFrequencyText] (const auto& text)
         {
             return parseFrequencyText (text, 0.0);
         };
-        row.freq->setValue (spec.freqPtr (track.strip)->load (std::memory_order_relaxed),
+        row.freq->setValue (track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed),
                             juce::dontSendNotification);
+        row.freq->updateText();  // a held value clamps to the knob's end, where setValue sees no change
 
         // Q knob (mid-bands only - bell-only HM/LM). Same size and styling
         // as gain and freq, with a "Q 0.7"-style value label below so the
@@ -641,13 +659,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
         }
         {
-            auto* atomicPtr = spec.freqPtr (track.strip);
+            auto* strip = &track.strip;
             auto* knob = row.freq.get();
-            auto* eqEnabledPtr = &track.strip.eqEnabled;
-            knob->onValueChange = [knob, atomicPtr, eqEnabledPtr]
+            knob->onValueChange = [knob, strip, band = spec.freq]
             {
-                atomicPtr->store ((float) knob->getValue(), std::memory_order_relaxed);
-                eqEnabledPtr->store (true, std::memory_order_release);
+                strip->setEqFreq (band, (float) knob->getValue());
+                strip->eqEnabled.store (true, std::memory_order_release);
             };
         }
         row.freq->addMouseListener (this, false);   // right-click -> MIDI Learn (TrackEqFreq)
@@ -1472,6 +1489,13 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     printButton .setTitle ("Track " + tn + " print effects on record");
     hpfKnob     .setTitle ("Track " + tn + " high-pass filter frequency");
     lpfKnob     .setTitle ("Track " + tn + " low-pass filter frequency");
+    for (size_t i = 0; i < eqRows.size(); ++i)
+    {
+        const auto band = "Track " + tn + " " + bandSpecs()[i].rowName;
+        if (eqRows[i].gain != nullptr) eqRows[i].gain->setTitle (band + " gain");
+        if (eqRows[i].freq != nullptr) eqRows[i].freq->setTitle (band + " frequency");
+        if (eqRows[i].q != nullptr)    eqRows[i].q->setTitle (band + " Q");
+    }
     if (eqHeaderBtn != nullptr) eqHeaderBtn->setAccessibilityTitle ("Track " + tn + " EQ enable / type");
     pluginSlotButton.setTitle ("Track " + tn + " insert slot");
     for (size_t i = 0; i < auxKnobs.size(); ++i)
@@ -4914,9 +4938,13 @@ void ChannelStripComponent::timerCallback()
 
     // An open editor titles itself with the strip's name, so a rename that
     // lands while it is up has to reach it. The aux popup and the native comp
-    // view read the name for themselves; the EQ popup is pushed from here.
+    // view read the name for themselves; the EQ popup is pushed from here,
+    // and its filter knobs with it.
     if (auto* eq = dynamic_cast<ChannelEqEditor*> (eqEditorModal.getBody()))
+    {
         eq->refreshTitle();
+        eq->refreshFilters();
+    }
 
     if (lastTrackColour != track.colour)
     {
@@ -4988,11 +5016,11 @@ void ChannelStripComponent::timerCallback()
         }
     }
 
-    // Sync the inline COMP knobs with their underlying atoms so writes
-    // from the meter-strip threshold drag or the popout editor reflect
-    // here without the user having to reload. Skip a knob the user is
-    // actively dragging - otherwise their drag would snap back to the
-    // stored value mid-motion.
+    // Sync the inline COMP and filter knobs with their underlying atoms so
+    // writes from the meter-strip threshold drag, the popout editors, MIDI
+    // or a control surface reflect here without the user having to reload.
+    // Skip a knob the user is actively dragging - otherwise their drag would
+    // snap back to the stored value mid-motion.
     {
         auto syncKnob = [] (juce::Slider& k, float target)
         {
@@ -5012,6 +5040,12 @@ void ChannelStripComponent::timerCallback()
         syncKnob (vcaAttackKnob,   sp.compVcaAttack.load   (std::memory_order_relaxed));
         syncKnob (vcaReleaseKnob,  sp.compVcaRelease.load  (std::memory_order_relaxed));
         syncKnob (vcaOutputKnob,   sp.compVcaOutput.load   (std::memory_order_relaxed));
+        syncKnob (hpfKnob,         sp.hpfFreq.load         (std::memory_order_relaxed));
+        syncKnob (lpfKnob,         sp.lpfFreq.load         (std::memory_order_relaxed));
+        // MIDI, a control surface or the EQ editor can switch a filter
+        // without moving this knob, and its text reads the switch.
+        hpfKnob.updateText();
+        lpfKnob.updateText();
     }
 
     // Keep split-button state visuals in sync with atom changes made by
@@ -5479,9 +5513,6 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
                 return;
             }
         }
-        // HPF + EQ band gains. Same eventComponent-match shape as the
-        // other strip controls. Freq + Q knobs aren't bindable in v1 -
-        // gain is the most-automated EQ knob in practice.
         if (e.eventComponent == &hpfKnob)
         {
             midilearn::showLearnMenu (hpfKnob, session,
@@ -5491,25 +5522,27 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
         for (int i = 0; i < (int) eqRows.size(); ++i)
         {
             auto& row = eqRows[(size_t) i];
+            // Rows run HF to LF down the strip; bindings number bands from LF.
+            const int band = (int) eqRows.size() - 1 - i;
             if (row.gain != nullptr && e.eventComponent == row.gain.get())
             {
                 midilearn::showLearnMenu (*row.gain, session,
                                             MidiBindingTarget::TrackEqGain,
-                                            packTrackEqBand (trackIndex, i));
+                                            packTrackEqBand (trackIndex, band));
                 return;
             }
             if (row.freq != nullptr && e.eventComponent == row.freq.get())
             {
                 midilearn::showLearnMenu (*row.freq, session,
                                             MidiBindingTarget::TrackEqFreq,
-                                            packTrackEqBand (trackIndex, i));
+                                            packTrackEqBand (trackIndex, band));
                 return;
             }
             if (row.q != nullptr && e.eventComponent == row.q.get())
             {
                 midilearn::showLearnMenu (*row.q, session,
                                             MidiBindingTarget::TrackEqQ,
-                                            packTrackEqBand (trackIndex, i));
+                                            packTrackEqBand (trackIndex, band));
                 return;
             }
         }
@@ -5829,11 +5862,13 @@ void ChannelStripComponent::refreshInputSelectorVisibility()
 void ChannelStripComponent::onHpfKnobChanged()
 {
     const float freq = (float) hpfKnob.getValue();
-    track.strip.hpfFreq.store (freq, std::memory_order_relaxed);
+    track.strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, freq);
     // Bypass the HPF DSP entirely when the knob is at the floor - saves
     // 16 channels worth of biquad cost when nobody's using HPF.
     const bool hpfOn = freq > ChannelStripParams::kHpfOffHz + 0.5f;
     track.strip.hpfEnabled.store (hpfOn, std::memory_order_relaxed);
+    // The knob wrote its text before this switched the filter.
+    hpfKnob.updateText();
     // Auto-arm the EQ header LED whenever the HPF is engaged - band-
     // knob touches do the same via the EQ rows' onValueChange paths.
     if (hpfOn)
@@ -5843,12 +5878,13 @@ void ChannelStripComponent::onHpfKnobChanged()
 void ChannelStripComponent::onLpfKnobChanged()
 {
     const float freq = (float) lpfKnob.getValue();
-    track.strip.lpfFreq.store (freq, std::memory_order_relaxed);
+    track.strip.setEqFreq (ChannelStripParams::EqFreq::Lpf, freq);
     // At max -> bypass the LPF DSP. Same per-channel cost optimisation
     // as HPF - donor BritishEQProcessor skips its LPF biquad when the
     // enabled flag is false.
     const bool lpfOn = freq < ChannelStripParams::kLpfOffHz - 0.5f;
     track.strip.lpfEnabled.store (lpfOn, std::memory_order_relaxed);
+    lpfKnob.updateText();
     if (lpfOn)
         track.strip.eqEnabled.store (true, std::memory_order_release);
 }
@@ -6011,14 +6047,23 @@ void ChannelStripComponent::showAuxSectionMenu()
 void ChannelStripComponent::resetEqSection()
 {
     // Replays each EQ knob's own double-click return value through its live
-    // onValueChange path (no new defaults invented). The band knobs auto-arm
-    // eqEnabled on change, so restore the prior engaged state afterwards - a
-    // reset flattens the EQ but shouldn't toggle it on.
+    // onValueChange path (no new defaults invented). A knob that moves notifies
+    // as a drag does, screen readers included. One already there gets its
+    // onValueChange by hand, so the stored value resets too: a converted older
+    // session's band can sit on the default, or between the knob's steps,
+    // while it plays the format-7 dial it was converted with. The band knobs
+    // auto-arm eqEnabled on change, so restore the prior engaged state
+    // afterwards - a reset flattens the EQ but shouldn't toggle it on.
     const bool wasEnabled = track.strip.eqEnabled.load (std::memory_order_relaxed);
     auto reset = [] (juce::Slider& s)
     {
-        if (s.isDoubleClickReturnEnabled())
-            s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
+        if (! s.isDoubleClickReturnEnabled()) return;
+        auto live = std::move (s.onValueChange);
+        bool notified = false;
+        s.onValueChange = [&live, &notified] { notified = true; if (live) live(); };
+        s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
+        s.onValueChange = std::move (live);
+        if (! notified && s.onValueChange) s.onValueChange();
     };
     reset (hpfKnob);
     reset (lpfKnob);

@@ -145,7 +145,7 @@ ScenarioResult printCommitsTheStrip (ScenarioContext& ctx)
     // A 300 Hz HPF against a 60 Hz tone: a cut the take cannot miss.
     strip.eqEnabled.store (true);
     strip.hpfEnabled.store (true);
-    strip.hpfFreq.store (300.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, 300.0f);
     constexpr float kAmp = 0.25f;
     const double dryRms = kAmp / std::sqrt (2.0);
     const std::int64_t from = (std::int64_t) (0.25 * kRate), to = (std::int64_t) (0.75 * kRate);

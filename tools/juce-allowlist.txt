@@ -67,9 +67,9 @@ src/ui/BounceDialog.cpp	45
 src/ui/BounceDialog.h	12
 src/ui/BusComponent.cpp	293
 src/ui/BusComponent.h	45
-src/ui/ChannelEqEditor.cpp	79
+src/ui/ChannelEqEditor.cpp	77
 src/ui/ChannelEqEditor.h	13
-src/ui/ChannelStripComponent.cpp	666
+src/ui/ChannelStripComponent.cpp	664
 src/ui/ChannelStripComponent.h	106
 src/ui/ClapPluginEditorComponent.cpp	18
 src/ui/ClapPluginEditorComponent.h	8

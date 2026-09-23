@@ -271,6 +271,10 @@ public:
     virtual bool auxLaneLayoutMatches (int index) const = 0;
     virtual bool accessibleControl (const std::string& title, std::string& value, std::string& help) = 0;
     virtual bool setAccessibleValue (const std::string& title, const std::string& value) = 0;
+    // The text a titled slider's value box shows, as drawn: "<missing>" when no
+    // control carries the title, "<no value box>" when it has none.
+    virtual std::string valueBoxText (const std::string& title) = 0;
+    virtual bool clickTitledControl (const std::string& title, bool right) = 0;
     virtual bool loadMasteringFile (const std::filesystem::path& path) = 0;
     virtual bool clickMasteringWaveform (float fraction) = 0;
     virtual void openPianoRoll (int track, int region) = 0;

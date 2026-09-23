@@ -9,6 +9,8 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <iterator>
+
 using Catch::Matchers::WithinAbs;
 using namespace duskstudio;
 using duskstudio::test::toDusk;
@@ -191,6 +193,182 @@ TEST_CASE ("McuReceiver: V-pot push (PAN mode) resets pan to 0", "[mcu][receiver
     r.process (makeNoteOn (mcu::btn::VPotPushBase + 3, 0x7F), 0);
     REQUIRE_THAT (s.track (3).strip.pan.load (std::memory_order_relaxed),
                   WithinAbs (0.0f, 1e-4f));
+}
+
+// A converted older session can hold a band past its knob's range. Turned
+// further toward the end it is already past, the encoder leaves it where it is;
+// turned back, it steps in from the end stop, as the knob on screen does when
+// dragged. A turn or push that moves a band drops the format-7 dial it played;
+// one that leaves it keeps it.
+TEST_CASE ("McuReceiver: an EQ encoder leaves a band held past its range until turned back into it",
+           "[mcu][receiver]")
+{
+    using EqFreq = ChannelStripParams::EqFreq;
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (5, std::memory_order_relaxed);       // EQ
+    s.mcu.selectedChannel.store (1, std::memory_order_relaxed);
+    auto& strip = s.track (1).strip;
+    strip.eqBlackMode.store (true, std::memory_order_relaxed);
+    const auto hold = [&strip] (EqFreq f, float hz, float dial)
+    {
+        strip.eqFreq (f).store (hz, std::memory_order_relaxed);
+        strip.legacyDial (f).set (dial, hz, true);
+    };
+    const auto dialOf = [&strip] (EqFreq f)
+    {
+        float hz = 0.0f;
+        return strip.legacyDial (f).dialFor (strip.eqFreq (f), true, hz);
+    };
+    hold (EqFreq::Hpf, 316.0f, 300.0f);
+    hold (EqFreq::Lf, 660.0f, 400.0f);
+    hold (EqFreq::Lm, 139.0f, 100.0f);
+    hold (EqFreq::Hf, 637.0f, 1000.0f);
+
+    r.process (makeCc (mcu::cc::VPotRotateBase + 1, 0x01), 0);   // LF gain, not frequency
+    REQUIRE_THAT (strip.lfFreq.load (std::memory_order_relaxed), WithinAbs (660.0f, 1e-4f));
+
+    r.process (makeCc (mcu::cc::VPotRotateBase + 2, 0x01), 0);   // LF up, past the top already
+    REQUIRE_THAT (strip.lfFreq.load (std::memory_order_relaxed), WithinAbs (660.0f, 1e-4f));
+    REQUIRE_THAT (dialOf (EqFreq::Lf), WithinAbs (400.0f, 0.0f));
+    r.process (makeCc (mcu::cc::VPotRotateBase + 2, 0x40 | 0x01), 0); // LF down: in from the top
+    REQUIRE_THAT (strip.lfFreq.load (std::memory_order_relaxed),
+                  WithinAbs (ChannelStripParams::kLfFreqMax - 5.0f, 1e-4f));
+    REQUIRE (strip.legacyDial (EqFreq::Lf).raw() == 0);
+
+    r.process (makeCc (mcu::cc::VPotRotateBase + 7, 0x40 | 0x01), 0); // HF down, below the bottom already
+    REQUIRE_THAT (strip.hfFreq.load (std::memory_order_relaxed), WithinAbs (637.0f, 1e-4f));
+    REQUIRE_THAT (dialOf (EqFreq::Hf), WithinAbs (1000.0f, 0.0f));
+    r.process (makeCc (mcu::cc::VPotRotateBase + 7, 0x01), 0);   // HF up: in from the bottom
+    REQUIRE_THAT (strip.hfFreq.load (std::memory_order_relaxed),
+                  WithinAbs (ChannelStripParams::kHfFreqMin + 100.0f, 1e-4f));
+    REQUIRE (strip.legacyDial (EqFreq::Hf).raw() == 0);
+    r.process (makeCc (mcu::cc::VPotRotateBase + 7, 0x02), 0);   // then moves from there
+    REQUIRE_THAT (strip.hfFreq.load (std::memory_order_relaxed),
+                  WithinAbs (ChannelStripParams::kHfFreqMin + 300.0f, 1e-4f));
+
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x01), 0);   // HPF up, past the top already
+    REQUIRE_THAT (strip.hpfFreq.load (std::memory_order_relaxed), WithinAbs (316.0f, 1e-4f));
+    REQUIRE_THAT (dialOf (EqFreq::Hpf), WithinAbs (300.0f, 0.0f));
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x40 | 0x01), 0);
+    REQUIRE_THAT (strip.hpfFreq.load (std::memory_order_relaxed),
+                  WithinAbs (ChannelStripParams::kHpfMaxHz - 4.0f, 1e-4f));
+    REQUIRE (strip.legacyDial (EqFreq::Hpf).raw() == 0);
+
+    // Pushing an encoder resets its band, and the reset is a move too.
+    REQUIRE_THAT (dialOf (EqFreq::Lm), WithinAbs (100.0f, 0.0f));
+    r.process (makeNoteOn (mcu::btn::VPotPushBase + 4, 0x7F), 0);
+    REQUIRE_THAT (strip.lmFreq.load (std::memory_order_relaxed), WithinAbs (600.0f, 1e-4f));
+    REQUIRE (strip.legacyDial (EqFreq::Lm).raw() == 0);
+}
+
+// EQ mode's encoders, on the selected channel: 1 HPF, 2 LF gain, 3 LF
+// frequency, 4 LM gain, 5 LM frequency, 6 HM gain, 7 HF gain, 8 HF frequency.
+// Each detent moves the one parameter its encoder names and nothing else.
+TEST_CASE ("McuReceiver: V-pot rotate (EQ mode) turns the parameter each encoder names",
+           "[mcu][receiver]")
+{
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (5, std::memory_order_relaxed);       // EQ
+    s.mcu.selectedChannel.store (6, std::memory_order_relaxed);
+    auto& strip = s.track (6).strip;
+    const std::atomic<float>* params[] {
+        &strip.hpfFreq, &strip.lfGainDb, &strip.lfFreq, &strip.lmGainDb,
+        &strip.lmFreq, &strip.hmGainDb, &strip.hfGainDb, &strip.hfFreq,
+        &strip.hmFreq, &strip.lmQ, &strip.hmQ, &strip.lpfFreq,
+    };
+    constexpr float kSteps[] { 4.0f, 0.3f, 5.0f, 0.3f, 20.0f, 0.3f, 0.3f, 100.0f };
+    for (int encoder = 0; encoder < 8; ++encoder)
+    {
+        CAPTURE (encoder);
+        float before[std::size (params)];
+        for (size_t i = 0; i < std::size (params); ++i) before[i] = params[i]->load();
+        r.process (makeCc (mcu::cc::VPotRotateBase + encoder, 0x01), 0);
+        for (size_t i = 0; i < std::size (params); ++i)
+        {
+            CAPTURE (i);
+            const float moved = (int) i == encoder ? kSteps[encoder] : 0.0f;
+            CHECK_THAT (params[i]->load(), WithinAbs (before[i] + moved, 1e-4f));
+        }
+    }
+}
+
+// The HPF encoder switches the filter as its knob and a MIDI binding do: on
+// above OFF, off at it. A turn that stores nothing leaves the switch alone.
+TEST_CASE ("McuReceiver: the HPF encoder switches the HPF on above OFF and off at it",
+           "[mcu][receiver]")
+{
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (5, std::memory_order_relaxed);       // EQ
+    s.mcu.selectedChannel.store (2, std::memory_order_relaxed);
+    auto& strip = s.track (2).strip;
+    REQUIRE_FALSE (strip.hpfEnabled.load());
+    REQUIRE_THAT (strip.hpfFreq.load(), WithinAbs (ChannelStripParams::kHpfOffHz, 0.0f));
+
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x01), 0);          // up from OFF
+    CHECK_THAT (strip.hpfFreq.load(), WithinAbs (ChannelStripParams::kHpfOffHz + 4.0f, 1e-4f));
+    CHECK (strip.hpfEnabled.load());
+
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x05), 0);          // within the range
+    CHECK_THAT (strip.hpfFreq.load(), WithinAbs (ChannelStripParams::kHpfOffHz + 24.0f, 1e-4f));
+    CHECK (strip.hpfEnabled.load());
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x40 | 0x02), 0);
+    CHECK_THAT (strip.hpfFreq.load(), WithinAbs (ChannelStripParams::kHpfOffHz + 16.0f, 1e-4f));
+    CHECK (strip.hpfEnabled.load());
+
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x40 | 0x06), 0);   // down onto OFF
+    CHECK_THAT (strip.hpfFreq.load(), WithinAbs (ChannelStripParams::kHpfOffHz, 1e-4f));
+    CHECK_FALSE (strip.hpfEnabled.load());
+
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x0A), 0);
+    REQUIRE (strip.hpfEnabled.load());
+    r.process (makeNoteOn (mcu::btn::VPotPushBase + 0, 0x7F), 0);       // push: OFF
+    CHECK_THAT (strip.hpfFreq.load(), WithinAbs (ChannelStripParams::kHpfOffHz, 0.0f));
+    CHECK_FALSE (strip.hpfEnabled.load());
+
+    // Switched on from its label at OFF, turned further down: nothing moves.
+    strip.hpfEnabled.store (true);
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x40 | 0x01), 0);
+    CHECK (strip.hpfEnabled.load());
+}
+
+// A push puts each EQ encoder's parameter where a fresh strip has it, which is
+// where the strip's knob returns on a double-click: HPF OFF, 0 dB, LF 100 Hz,
+// LM 600 Hz, HF 8 kHz.
+TEST_CASE ("McuReceiver: V-pot push (EQ mode) resets each encoder to the strip's default",
+           "[mcu][receiver]")
+{
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (5, std::memory_order_relaxed);       // EQ
+    s.mcu.selectedChannel.store (4, std::memory_order_relaxed);
+    auto& strip = s.track (4).strip;
+    strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, 120.0f);
+    strip.hpfEnabled.store (true);
+    strip.lfGainDb.store (6.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Lf, 250.0f);
+    strip.lmGainDb.store (-3.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Lm, 1500.0f);
+    strip.hmGainDb.store (4.0f);
+    strip.hfGainDb.store (-5.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Hf, 12000.0f);
+
+    for (int encoder = 0; encoder < 8; ++encoder)
+        r.process (makeNoteOn (mcu::btn::VPotPushBase + encoder, 0x7F), 0);
+
+    const ChannelStripParams fresh;
+    CHECK_THAT (strip.hpfFreq.load(),  WithinAbs (fresh.hpfFreq.load(),  0.0f));
+    CHECK (strip.hpfEnabled.load() == fresh.hpfEnabled.load());
+    CHECK_THAT (strip.lfGainDb.load(), WithinAbs (fresh.lfGainDb.load(), 0.0f));
+    CHECK_THAT (strip.lfFreq.load(),   WithinAbs (fresh.lfFreq.load(),   0.0f));
+    CHECK_THAT (strip.lmGainDb.load(), WithinAbs (fresh.lmGainDb.load(), 0.0f));
+    CHECK_THAT (strip.lmFreq.load(),   WithinAbs (fresh.lmFreq.load(),   0.0f));
+    CHECK_THAT (strip.hmGainDb.load(), WithinAbs (fresh.hmGainDb.load(), 0.0f));
+    CHECK_THAT (strip.hfGainDb.load(), WithinAbs (fresh.hfGainDb.load(), 0.0f));
+    CHECK_THAT (strip.hfFreq.load(),   WithinAbs (fresh.hfFreq.load(),   0.0f));
+    CHECK_THAT (fresh.hfFreq.load(),   WithinAbs (8000.0f, 0.0f));
 }
 
 TEST_CASE ("McuReceiver: V-pot rotate (COMP mode) makeup moves the audible param",
