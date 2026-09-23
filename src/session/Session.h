@@ -1078,8 +1078,7 @@ struct Track
     std::array<AutomationLane, kNumAutomationParams> automationLanes {};
 };
 
-// 3 EQ bands (LF / mid-as-LM / HF) at fixed musical freqs. Bus comp =
-// UniversalCompressor in Bus mode.
+// Bus comp = UniversalCompressor in Bus mode.
 struct BusParams
 {
     std::atomic<float> faderDb { 0.0f };
@@ -1087,12 +1086,20 @@ struct BusParams
     std::atomic<bool>  mute    { false };
     std::atomic<bool>  solo    { false };
 
+    // Tone EQ (BusToneEq): LF shelf 300 Hz / MID bell 800 Hz Q 0.7 / HF shelf
+    // 2 kHz, +/-9 dB, plus a 12 dB/oct highpass. The EQ's status light
+    // bypasses the highpass with the bands.
     std::atomic<bool>  eqEnabled  { false };
-    // Mixbus mix-bus Tone EQ spec: LF shelf 300 Hz / MID bell 800 Hz Q0.7 /
-    // HF shelf 2 kHz, all +/-9 dB (freqs fixed in BusStrip::updateEqParameters).
     std::atomic<float> eqLfGainDb { 0.0f };  // -9..+9
     std::atomic<float> eqMidGainDb{ 0.0f };  // -9..+9
     std::atomic<float> eqHfGainDb { 0.0f };  // -9..+9
+
+    // The knob's floor reads OFF and clears hpfEnabled, as on the channel strip.
+    static constexpr float kHpfMinHz = 20.0f;
+    static constexpr float kHpfMaxHz = 3000.0f;
+    static constexpr float kHpfOffHz = 20.0f;
+    std::atomic<bool>  hpfEnabled { false };
+    std::atomic<float> hpfFreq    { kHpfOffHz };
 
     std::atomic<bool>  compEnabled   { false };
     std::atomic<float> compThreshDb  { 0.0f };

@@ -27,7 +27,7 @@ Dusk Studio includes:
 - 24 tracks of audio or MIDI recording, paged on screen to fit the window and addressed by a control surface in three banks of 8.
 - A fixed channel signal chain: phase, insert, HPF, LPF, 4-band EQ, compressor (Opto/FET/VCA), aux sends, pan, fader.
 - Four aux return lanes, each with one plugin or hardware insert slot.
-- Four mix buses, each with a 3-band EQ and console-style bus compressor.
+- Four mix buses, each with a 3-band tone EQ, a highpass and a console-style bus compressor.
 - A master bus with tape saturation, a tube program EQ, bus compressor, and mono-sum check.
 - A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, and BS.1770 loudness metering.
 - VST3, LV2, AU, and CLAP plugin hosting, with optional out-of-process sandboxing for crash isolation. CLAP and VST3 — effects and instruments — run through Dusk Studio's own native hosts on Linux, macOS, and Windows; LV2 does on Linux and macOS, and Audio Units do on macOS.
@@ -222,7 +222,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | #   | Name           | Description                                                              |
 | --- | -------------- | ------------------------------------------------------------------------ |
 | 1   | Name           | Right-click to rename.                                                   |
-| 2   | 3-band EQ      | LF shelf / MID peak / HF shelf, ±9 dB per band.                          |
+| 2   | Tone EQ        | HPF, then LF shelf / MID bell / HF shelf, ±9 dB per band.                |
 | 3   | Bus compressor | Console-style glue. Threshold, ratio, attack, release, auto-release, makeup. |
 | 4   | Pan            | Same equal-power law as channel strips.                                  |
 | 5   | Fader          | −∞ to +12 dB.                                                            |
@@ -497,7 +497,7 @@ All seven are saved with the session, so a project that syncs to an external clo
 
 ### Advanced
 
-- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus EQ and compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Each oversampled stage adds about half a millisecond of delay at 2× and 4×; delay compensation keeps tracks, buses and aux returns lined up, and bounces trim it out. The master tape is the exception: it anti-aliases locally at a fixed internal rate and ignores this setting.
+- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Each oversampled stage adds about half a millisecond of delay at 2× and 4×; delay compensation keeps tracks, buses and aux returns lined up, and bounces trim it out. The master tape is the exception: it anti-aliases locally at a fixed internal rate and ignores this setting.
 - **Multicore DSP**: spreads the per-block DSP of the 24 channel strips across several CPU cores instead of running them all on the single audio thread. **Auto** (default) uses *cores − 2* worker threads on machines with 4 or more cores — leaving one core for the interface and one for the operating system — and falls back to single-core on smaller machines. **Off** forces the single-core path; you can also pin an explicit worker count. This is a **per-machine** setting: it is stored on this computer and is **not** saved in the session, so a project made on a many-core workstation will not overload a smaller machine (a 4-core Raspberry Pi 5, say) when you open it there. The bus, aux, and master stages always run on the audio thread; only the channel strips fan out, and on a quad-core machine that heavy strip work runs roughly three times faster. Hosted plugins on those strips process on the worker threads too; in the unlikely event a specific plugin misbehaves with this enabled, switch it Off.
 - **Recording offset**: a manual correction, in samples, subtracted from where each newly recorded audio take is placed on the timeline. Use it when your monitoring path adds a round-trip delay that isn't already reported — analog converters, an external effects loop, or a plugin that under-reports its latency — so what you played lands back in time instead of slightly late. A positive value pulls takes earlier; the take is never moved before sample 0 — a take that would land entirely before it is discarded with a warning. It affects **audio** takes only — MIDI is captured with no converter delay and is left where it was played. **To calibrate**: route your interface's output back into an input (a physical loopback cable, or the same converter you monitor through), record the metronome click for a few bars, then open the take in the audio editor and read off, in samples, how far the recorded click sits after the beat it should land on. Enter that number here. The value is **per-machine** — it describes this desk's I/O latency, not the session — and applies to the next take, no restart needed.
 - **Run self-test**: runs Dusk Studio's headless audio engine against a synthetic test signal and reports pass/fail. The suite includes a determinism check that the multicore mix matches the single-core mix sample-for-sample (within floating-point rounding). As with the bindings panel, the settings panel steps out of the way while the self-test is open and comes back when you close it.
@@ -883,21 +883,27 @@ Between the channel strips and the master strip are four bus strips. They are sm
 ## Signal flow
 
 <!-- Source: src/dsp/BusStrip.cpp::processInPlace
-     EQ (:195, :214) → comp (:204, :223) → pan × fader (:236–:240).
+     HPF + tone EQ (:157, src/dsp/BusToneEq.cpp::process) → comp (:197, :209) →
+     pan × fader (:232–:236).
      Mute is applied at AudioEngine sum-into-master, not inside BusStrip. -->
 
 ```text
-bus input (sum of assigned channels) → 3-band EQ → bus compressor →
+bus input (sum of assigned channels) → HPF → tone EQ → bus compressor →
 pan → fader → master   (mute and solo gate the sum into master)
 ```
 
-## 3-band EQ
+## Tone EQ
 
-A simplified British EQ with three bands at fixed musical defaults. Gain range is ±9 dB per band (a Mixbus-style restrained range — buses don't need wide cuts and boosts). As on the channel EQ, the curves follow the console's own markings rather than textbook filters, so the ±9 dB marks move each band by about 7 dB at its centre.
+A clean digital tone control for the whole bus, separate from the channel strip's console EQ. It adds no saturation, and each band plays exactly what its knob says. The three bands sit at fixed frequencies with wide, gentle curves, and a highpass sits in front of them.
 
-- **LF**: low shelf at 300 Hz.
-- **MID**: peaking at 800 Hz.
-- **HF**: high shelf at 2 kHz.
+- **HPF**: 12 dB/octave highpass, 3 dB down at the frequency shown, from 20 Hz to 3 kHz. Fully down is **OFF**, the default.
+- **LF**: low shelf at 300 Hz, ±9 dB.
+- **MID**: bell at 800 Hz, Q 0.7, ±9 dB.
+- **HF**: high shelf at 2 kHz, ±9 dB.
+
+MID's gain is its level at 800 Hz. A shelf's gain is the level it reaches beyond its frequency, and at the frequency itself it is half way: +9 dB on LF is +4.5 dB at 300 Hz and the full +9 dB by 60 Hz, and +9 dB on HF is +4.5 dB at 2 kHz and the full +9 dB above 10 kHz. The shelves rise smoothly, with no bump past their level.
+
+The EQ's status light bypasses the HPF with the bands, and moving any band knob or turning the HPF up off OFF engages the EQ. Moves glide over 20 ms, so turning a knob never clicks, and an EQ with every band at 0 dB and the HPF off passes the signal untouched. The curves keep their shape up to 20 kHz at every sample rate; the bus EQ is never oversampled and adds no delay.
 
 ## Bus compressor
 
@@ -1986,7 +1992,7 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 - **Per-track DSP**: HPF frequency, EQ band gain (4 bands), EQ band frequency (4 bands), EQ band Q (the two bell bands, LM / HM), compressor threshold, compressor makeup.
 - **Per-track toggles**: EQ on/off, compressor on/off, hardware insert bypass, aux-send pre/post.
 - **Per-track plugin parameter**: any indexed parameter on the loaded plugin.
-- **Per-bus**: Fader, Pan, Mute, Solo, EQ band gain (LF / MID / HF — 3 bands).
+- **Per-bus**: Fader, Pan, Mute, Solo, EQ band gain (LF / MID / HF — 3 bands), HPF frequency.
 - **Per-aux**: Fader, Mute.
 - **Master**: Fader, EQ low boost, EQ high boost, compressor threshold, compressor makeup, compressor ratio.
 - **Per-track aux send**: send level for each of the four aux destinations.
@@ -2664,6 +2670,8 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Block  | Param        | Range         | Default |
 | ------ | ------------ | ------------- | ------- |
 | EQ     | Enable       | Off / On      | Off     |
+| EQ HPF | Enable       | Off / On      | Off     |
+| EQ HPF | Frequency    | 20 Hz–3 kHz   | 20 Hz   |
 | EQ LF  | Gain         | ±9 dB         | 0 dB    |
 | EQ MID | Gain         | ±9 dB         | 0 dB    |
 | EQ HF  | Gain         | ±9 dB         | 0 dB    |

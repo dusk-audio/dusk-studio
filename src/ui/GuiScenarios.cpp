@@ -1563,6 +1563,12 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             auto* lane = owner.auxView != nullptr ? owner.auxView->getLaneComponent (index) : nullptr;
             return lane != nullptr && click (lane, lane->controlPointForScenario (control));
         }
+        if (kind == StripKind::Bus && control == "eq")
+        {
+            auto* bus = owner.consoleView != nullptr ? owner.consoleView->getBusComponent (index) : nullptr;
+            auto* header = bus != nullptr ? bus->eqHeaderForScenario() : nullptr;
+            return header != nullptr && click (header, header->getLocalBounds().getRelativePoint (0.6f, 0.5f));
+        }
         return false;
     }
 

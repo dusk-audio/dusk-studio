@@ -772,6 +772,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/vst3_noteoff_fallback.cpp
     src/dsp/AuxLaneStrip.cpp
     src/dsp/BusStrip.cpp
+    src/dsp/BusToneEq.cpp
     src/dsp/BrickwallLimiter.cpp
     src/dsp/ChannelStrip.cpp
     src/dsp/HardwareInsertSlot.cpp
@@ -1398,8 +1399,8 @@ target_link_libraries(DuskStudio PRIVATE dusk-pffft)
 if(DEFINED DUSK_PLUGINS_PATH)
     # Per-plugin DSP headers from the Dusk plugins repo at DONOR_REV. Each
     # plugin owns its DSP; Dusk Studio vendors:
-    #   - shared-daf/dsp (FourKEQDSP, the 4K EQ 2 core every channel and bus
-    #                 EQ runs)
+    #   - shared-daf/dsp (FourKEQDSP, the 4K EQ 2 core every channel EQ
+    #                 runs)
     #   - multi-q    (MultiQTube, the master program EQ core)
     #   - multi-comp (UniversalCompressor — per-channel Opto/FET/VCA comp,
     #                 used here as a JUCE AudioProcessor; only its DSP path is

@@ -212,6 +212,7 @@ TEST_CASE ("Appendix A: bus defaults and load ranges", "[session][appendix]")
         { "/buses/0/eq_lf_db", &p.eqLfGainDb, 0, -9, 9 },
         { "/buses/0/eq_mid_db", &p.eqMidGainDb, 0, -9, 9 },
         { "/buses/0/eq_hf_db", &p.eqHfGainDb, 0, -9, 9 },
+        { "/buses/0/hpf_freq", &p.hpfFreq, 20, 20, 3000 },
         { "/buses/0/comp_thresh_db", &p.compThreshDb, 0, -60, 0 },
         { "/buses/0/comp_ratio", &p.compRatio, 4, 1, 10 },
         { "/buses/0/comp_attack_ms", &p.compAttackMs, 10, 0.1f, 50 },
@@ -220,6 +221,7 @@ TEST_CASE ("Appendix A: bus defaults and load ranges", "[session][appendix]")
     }, {
         { "/buses/0/mute", &p.mute }, { "/buses/0/solo", &p.solo },
         { "/buses/0/eq_enabled", &p.eqEnabled },
+        { "/buses/0/hpf_enabled", &p.hpfEnabled },
         { "/buses/0/comp_enabled", &p.compEnabled },
         { "/buses/0/comp_release_auto", &p.compReleaseAuto, true },
     });

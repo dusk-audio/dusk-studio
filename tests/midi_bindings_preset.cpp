@@ -60,6 +60,7 @@ const std::vector<MidiBindingTarget>& allTargets()
         MidiBindingTarget::BusPan,
         MidiBindingTarget::BusMute,
         MidiBindingTarget::BusSolo,
+        MidiBindingTarget::BusHpfFreq,
         MidiBindingTarget::AuxLaneFader,
         MidiBindingTarget::AuxLaneMute,
         MidiBindingTarget::AuxPluginParam,

@@ -91,6 +91,7 @@ enum class MidiBindingTarget : int
     BusPan            = 151,
     BusMute           = 152,
     BusSolo           = 153,
+    BusHpfFreq        = 154, // log-mapped; the bottom of the travel is OFF
 
     AuxLaneFader      = 160,
     AuxLaneMute       = 161,
@@ -161,6 +162,7 @@ constexpr bool isContinuousTarget (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::TrackPluginParamBank
         || t == MidiBindingTarget::BusFader
         || t == MidiBindingTarget::BusPan
+        || t == MidiBindingTarget::BusHpfFreq
         || t == MidiBindingTarget::AuxLaneFader
         || t == MidiBindingTarget::AuxPluginParam
         || t == MidiBindingTarget::MasterFader
@@ -208,7 +210,8 @@ constexpr bool needsBusIndex (MidiBindingTarget t) noexcept
     return t == MidiBindingTarget::BusFader
         || t == MidiBindingTarget::BusPan
         || t == MidiBindingTarget::BusMute
-        || t == MidiBindingTarget::BusSolo;
+        || t == MidiBindingTarget::BusSolo
+        || t == MidiBindingTarget::BusHpfFreq;
 }
 
 constexpr bool needsAuxLaneIndex (MidiBindingTarget t) noexcept

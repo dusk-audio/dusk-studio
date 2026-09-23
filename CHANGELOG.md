@@ -72,6 +72,11 @@ publishes.
 - **MIDI Learn reaches a built-in unit's controls.** A learned binding on a
   built-in insert now arrives at the unit, on a channel strip and on an aux lane
   alike; it was resolved and stored but never applied.
+- **Each bus has a highpass** (#705). A new HPF knob in the bus EQ section adds
+  a 12 dB/octave highpass from 20 Hz to 3 kHz. Fully down is OFF, which is where
+  it starts in a session from an earlier version, and the EQ's status light
+  bypasses it with the bands. It is a new MIDI binding target. Right-click MIDI
+  Learn works on it and, for the first time, on the bus EQ's three band knobs.
 
 ### Changed
 
@@ -279,6 +284,13 @@ publishes.
   that the native 7-Zip resolved elsewhere, and read the contract with a
   trailing carriage return per line, so its first real run reported every
   required file missing from a complete installer.
+- **The bus EQ plays what its knobs say** (#705). It ran on the channel strip's
+  console EQ, so its +/-9 dB marks moved a band about 7 dB, MID sat near 620 Hz
+  and the shelves turned over well below their marks. It is now its own clean
+  digital tone EQ with no saturation, at exactly its marks: LF shelf at 300 Hz,
+  MID bell at 800 Hz (Q 0.7) and HF shelf at 2 kHz, +/-9 dB each, holding its
+  shape up to 20 kHz at any sample rate. A bus EQ in a session from an earlier
+  version sounds different now, since the same settings play the new curves.
 
 ## [0.13.3] - 2026-09-05
 
