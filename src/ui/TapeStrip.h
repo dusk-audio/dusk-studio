@@ -172,6 +172,23 @@ public:
     auto dropPointForScenario (int track) const { return rowBounds (track).getCentre(); }
     auto rulerPointForScenario (float fraction) const { return rulerBounds().getRelativePoint (fraction, 0.25f); }
     std::int64_t rulerSampleForScenario (float fraction) const { return sampleAtX (rulerPointForScenario (fraction).x); }
+    // On the take badge but clear of the fade-in handle, which wins the
+    // badge's top-left corner in hitTestRegion.
+    auto takeBadgePointForScenario (int track, int region) const
+    {
+        return audioRegionScreenRect (track, region).getTopLeft().translated (kFadeHitPx + 5, kFadeHandleH + 1);
+    }
+    // The flag's left edge, in the pill band, by the same placement
+    // hitTestMarker uses. The index must name an existing marker.
+    auto markerPointForScenario (int index) const
+    {
+        const auto& marker = session.getMarkers()[(size_t) index];
+        const int flagW = std::clamp (marker.name.length() * 8 + 12, 28, 160);
+        const int flagX = std::min (xForSample (marker.timelineSamples), getWidth() - flagW - 2);
+        const auto ruler = rulerBounds();
+        return ruler.getTopLeft().withX (flagX + 6)
+                                 .withY ((ruler.getY() + kRulerTickBandH + ruler.getBottom()) / 2);
+    }
 
 private:
     void timerCallback() override;
@@ -492,6 +509,27 @@ private:
     bool isRegionSelected (int track, int idx) const noexcept;
     std::vector<RegionId> allSelectedRegions() const;
     void clearAllSelections() noexcept;
+
+    // For an edit that leaves every region at its index. The undo history as
+    // it stands afterwards is kept: while the change listener still finds it
+    // unchanged, nothing else has touched the regions and the selection holds.
+    // Change messages arrive later, so an edit the listener has not seen yet
+    // may already be in the history; the hold is taken only when the history
+    // before this edit is one the listener or the last hold accounted for.
+    template <typename Action>
+    void performInPlace (Action* action)
+    {
+        const auto before = undoHistory();
+        const bool accounted = before == observedHistory
+                            || (! heldSelectionHistory.empty() && before == heldSelectionHistory);
+        engine.getUndoManager().perform (action);
+        if (accounted) heldSelectionHistory = undoHistory();
+        else           heldSelectionHistory.clear();
+    }
+    std::vector<std::string> undoHistory() const;
+    std::vector<std::string> heldSelectionHistory;
+    std::vector<std::string> observedHistory;
+
     // Add or remove if already present - Shift / Cmd-click extends
     // without collapsing back to a single anchor.
     void toggleRegionSelected (int track, int idx);

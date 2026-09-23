@@ -273,7 +273,11 @@ public:
     virtual void closePianoRoll() = 0;
     virtual bool pressPianoRollKey (const std::string& description) = 0;
     virtual bool doubleClickAudioRegion (int track, int region) = 0;
-    virtual bool clickAudioRegion (int track, int region) = 0;
+    virtual bool clickAudioRegion (int track, int region, bool right = false) = 0;
+    virtual bool clickTakeBadge (int track, int region) = 0;
+    // A marker pill in the tape ruler: clicked, or dragged to a ruler fraction.
+    virtual bool clickTapeMarker (int index, bool right) = 0;
+    virtual bool dragTapeMarker (int index, float toFraction) = 0;
     virtual bool audioEditorOpen() const = 0;
     virtual int audioEditorRegion() const = 0;
     virtual bool clickAudioEditorWaveform() = 0;
