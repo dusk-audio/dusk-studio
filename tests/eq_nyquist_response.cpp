@@ -114,6 +114,8 @@ TEST_CASE ("Channel EQ at the default 1x holds the HF shelf's 4x curve up to 20 
             CHECK_THAT (boostDb (sampleRate, 1, Band::High, frequency),
                         WithinAbs (boostDb (sampleRate, 4, Band::High, frequency), 1.5));
         }
+        // A shelf that boosted nothing at either factor would pass the comparison above.
+        CHECK (boostDb (sampleRate, 1, Band::High, 20000.0f) > 8.0);
     }
 }
 
