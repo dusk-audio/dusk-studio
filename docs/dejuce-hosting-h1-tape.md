@@ -8,8 +8,8 @@ built-in, its editor hosted through DafEditorHost; TapePanel deleted). H1a–H1c
 landed on `dejuce/hosting`.
 Parent plan: [dejuce-hosting-plan.md](dejuce-hosting-plan.md). Donor core:
 `plugins/TapeMachine/core/TapeMachineDSP.{hpp,cpp}` at the build's
-DUSK_PLUGINS_PATH (worktree @ 69f0431; PORT_NOTES.md in that dir is
-authoritative on semantics).
+donor rev in DONOR_REV (PORT_NOTES.md in that dir is authoritative on
+semantics).
 
 ## Goal
 
@@ -145,14 +145,13 @@ ClapPluginEditorComponent), bridging:
   resolved by strong definitions in Dusk Studio returning the in-process
   core's followers; getPluginInstancePointer supplies the core.
 
-Version prerequisite: the pinned donor rev (69f0431) predates TM2's current
-param surface (head width, gain link, wow/flutter enable, advanced page,
-preset bar). UI and core MUST come from one donor rev. Requires donor
-consolidation first: merge the multicomp-core branch into donor main, bump
-DONOR_REV in all 8 workflows, extend session TapeParams + core setters to
-the new surface. The interim JUCE TapePanel (H1b) stays until the embed
-lands, then is deleted (fx-03 figure recaptured; preset bar returns via
-TM2's own preset system - the "presets dropped" note reverses).
+Version prerequisite (done): UI and core MUST come from one donor rev. The
+old pin (69f0431) predated TM2's current param surface (head width, gain
+link, wow/flutter enable, advanced page, preset bar), so H1d first moved
+DONOR_REV to cddb6d1d (donor main d7aca75f with multi-comp held at 9f46563)
+and extended session TapeParams to the full surface. The interim JUCE
+TapePanel (H1b) is deleted, fx-03 is recaptured, and presets come from TM2's
+own preset system.
 
 Feasibility spike (2026-07-26): GO — prototype embedded the real TM2 UI in
 a foreign X11 parent under Xvfb; recipe + param-delta table in the ledger.

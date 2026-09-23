@@ -3210,6 +3210,8 @@ std::optional<ScenarioResult> runMasterTapeEditor (GuiHost& host, ScenarioContex
     auto& session = ctx.session();
     if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
     if (host.masterTapeEditorOpen()) return ScenarioResult::skip ("requires a closed tape editor");
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("requires a window the native tape editor can embed into");
     const auto originalStage = engine.getStage();
     const bool originalTape = session.master().tapeEnabled.load();
     if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");

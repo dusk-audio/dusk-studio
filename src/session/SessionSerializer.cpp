@@ -158,8 +158,9 @@ inline std::unique_ptr<juce::XmlElement> parseProcessorStateBlob (const std::str
 
 // One-way migration of that blob into TapeParams. Choice parameters store
 // their index in the same "value" attribute floats use. The donor's dead
-// "saturation" / "noiseEnabled" params and the engine-owned "oversampling" /
-// "bypass" are deliberately not modelled and fall through.
+// "saturation" param and the engine-owned "oversampling" / "bypass" are
+// deliberately not modelled and fall through. "noiseEnabled" is carried for
+// Tape Machine 2's editor only: the core gates noise on the amount alone.
 inline void migrateTapeStateBlob (const std::string& base64, TapeParams& t)
 {
     const auto xml = parseProcessorStateBlob (base64);
