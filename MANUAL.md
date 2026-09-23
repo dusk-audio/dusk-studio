@@ -934,10 +934,11 @@ master input → program EQ → master bus compressor → tape saturation → ma
 
 ## Tape saturation
 
-Models a small reel-to-reel tape machine.
+The master tape is Dusk Audio's Tape Machine 2 plug-in, compiled into Dusk Studio and running the plug-in's own DSP, so a setting sounds the same here as in the plug-in.
 
-- **Bypass / engage**: click the left status light to toggle the tape stage in or out of the signal path.
-- **Open the editor**: click the **TAPE** label, or right-click anywhere on the split button and choose **Open editor…**, to open the tape-machine modal editor: machine, tape speed and formulation, signal path, EQ standard and calibration, plus input drive, bias, high/low-pass filters, wow, flutter, noise, and output level, plus **Auto cal** (calibrates bias for the selected tape type and speed — disables the Bias knob) and **Auto comp** (matches output level to input so drive changes don't change loudness — overrides Output). Touching any control engages the tape stage.
+- **Bypass / engage**: click the left status light to toggle the tape stage in or out of the signal path. The editor's **BYPASS** switch is the same switch.
+- **Open the editor**: click the **TAPE** label, or right-click anywhere on the split button and choose **Open editor…**. Tape Machine 2's own editor opens over a dimmed window, the same editor its VST3, CLAP and AU builds show, scaled down if the window is too small to hold it. Click outside it, click **TAPE** again or press **Escape** to dismiss it. It holds the machine (Swiss or American), tape speed and formulation, signal path, EQ standard and calibration, input drive, bias, high/low-pass filters, wow, flutter, noise and output level, **Auto cal** (calibrates bias for the selected tape type and speed; disables the Bias knob) and **Auto comp** (matches output level to input so drive changes don't change loudness; overrides Output). The American deck adds its head width and its crosstalk, wow-and-flutter and transformer switches, and the **ADVANCED** page holds the repro-head EQ. Touching any control engages the tape stage.
+- **Presets**: the editor's preset bar holds the plug-in's factory presets and any you save yourself. Every setting, a preset's included, is saved with the session.
 
 - **Oversampling**: the tape engine anti-aliases locally around each of its nonlinear stages and runs a fixed internal rate, so the engine-wide **Effect Oversampling** setting in the Audio Device panel no longer changes it. That setting still drives every other oversampled stage. The tape stage reports a constant 56 samples of latency, which delay compensation covers.
 
@@ -1679,9 +1680,9 @@ The unit reports no latency. Its settings are saved with the session as the plug
 
 ![The Tape Echo 2 unit's editor.](docs/images/bi-03-tape-echo.png)
 
-### Tape
+### Tape Machine 2
 
-Per-channel tape colour, running the same Tape Machine engine as the master bus. Two decks, four speeds, four tape formulations and both EQ standards.
+Dusk Audio's Tape Machine 2 plug-in, the same one the master tape runs, compiled into Dusk Studio with the plug-in's own DSP and editor. Per-channel tape colour: two decks, four speeds, four tape formulations and both EQ standards.
 
 | Control | Range | Default | What it does |
 |---|---|---|---|
@@ -1695,12 +1696,17 @@ Per-channel tape colour, running the same Tape Machine engine as the master bus.
 | Calibration | +3 / +6 / +7.5 / +9 dB | +3 dB | Reference fluxivity. |
 | Output | −12 dB to +12 dB | 0 dB | Level off the tape. |
 | Low Cut / High Cut | 20 Hz to 500 Hz / 3 kHz to 20 kHz | 20 Hz / 20 kHz | Filters on the output. |
-| Wow / Flutter / Noise | 0% to 100% | 0% | Transport instability and tape hiss. |
+| Wow / Flutter | 0% to 100% | 7% / 3% | Transport instability. |
+| Noise | 0% to 100% | 0% | Tape hiss. |
 | Auto Cal / Auto Comp | Off / On | On | Level compensation, so changing speed or calibration does not change loudness. |
+| Head Width | 1/4″ / 1/2″ / 1″ | 1/2″ | The American deck's head stack. Ignored on the Swiss deck. |
+| Crosstalk / Wow & Flutter / Transformer | Off / On | On | The American deck's front-panel switches. Ignored on the Swiss deck. |
+| Repro EQ | −12 dB to +12 dB | 0 dB | The **ADVANCED** page's repro-head LF, LMF, HMF and HF bands. |
+| Bypass | Off / On | Off | The plug-in's own bypass. |
 
-The Tape unit reports **56 samples** of latency on every path except Thru, where it reports none because Thru does not enter the filters that cost it. Delay compensation covers the difference either way.
+The editor's preset bar holds the plug-in's factory presets and any you save yourself. The unit reports **56 samples** of latency on every path except Thru, where it reports none because Thru does not enter the filters that cost it. Delay compensation covers the difference either way. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Tape unit load into Tape Machine 2 with their settings.
 
-![The Tape unit's editor.](docs/images/bi-04-tape.png)
+![The Tape Machine 2 unit's editor.](docs/images/bi-04-tape.png)
 
 ### Sunset
 
@@ -1716,11 +1722,11 @@ It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and c
 
 On a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, or click the slot again, to dismiss it.
 
-**DuskVerb 2 and Tape Echo 2 open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. The other three units have no editor of their own, so Dusk Studio draws them from their parameter table as a panel of knobs, switch banks, drop-down lists and toggles.
+**DuskVerb 2, Tape Echo 2 and Tape Machine 2 open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. Utility and Sunset have no editor of their own, so Dusk Studio draws them from their parameter table as a panel of knobs, switch banks, drop-down lists and toggles.
 
-On an aux lane there is nothing to open: the unit's controls are always on screen, filling the lane under the slot header. DuskVerb 2 and Tape Echo 2 sit there as their own editors, centred and scaled down to fit the lane while keeping their shape, the way a plug-in's editor does. The knob panels are grouped the way the unit's front panel would be: Tape shows Machine, Level, Tone and Transport; Utility shows Level and Image. Their knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
+On an aux lane there is nothing to open: the unit's controls are always on screen, filling the lane under the slot header. DuskVerb 2, Tape Echo 2 and Tape Machine 2 sit there as their own editors, centred and scaled down to fit the lane while keeping their shape, the way a plug-in's editor does. The knob panels are grouped the way the unit's front panel would be: Utility shows Level and Image. Their knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
 
-On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Choices with a handful of positions, such as Tape's **Speed**, are rows of buttons. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
+On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Choices, such as Sunset's **Mode**, are drop-down lists. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
 
 The transport keys keep working while an editor is open. A click into a plug-in's editor gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again.
 

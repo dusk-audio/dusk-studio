@@ -1109,6 +1109,30 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (auto* strip = owner.consoleView->getStripComponent (track))
             strip->closeModuleEditorsForScenario();
     }
+    bool clickMasterTape (bool label) override
+    {
+        auto* master = owner.consoleView->getMasterStripComponent();
+        auto* button = master != nullptr ? master->tapeButtonForScenario() : nullptr;
+        if (button == nullptr || ! button->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (button,
+            button->getLocalBounds().getRelativePoint (label ? 0.6f : 0.1f, 0.5f)).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+    bool masterTapeEditorOpen() const override
+    {
+        auto* master = owner.consoleView->getMasterStripComponent();
+        return master != nullptr && master->isTapeEditorOpen();
+    }
+    bool masterTapeEditorDrawn() const override
+    {
+        auto* master = owner.consoleView->getMasterStripComponent();
+        return master != nullptr && master->tapeEditorDrawnForScenario();
+    }
+    void closeMasterTape() override
+    {
+        if (auto* master = owner.consoleView->getMasterStripComponent())
+            master->closeTapeEditor();
+    }
     bool clickInsert (int track, bool right) override
     {
         auto* strip = owner.consoleView->getStripComponent (track);
@@ -1638,6 +1662,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (audioSettingsOpen())  lines.push_back ("audio settings open");
         if (virtualKeyboardOpen()) lines.push_back ("virtual keyboard open");
         if (tunerOpen())          lines.push_back ("tuner open");
+        if (masterTapeEditorOpen()) lines.push_back ("master tape editor open");
         if (owner.session.master().mute.load() != launch.masterMute)
             lines.push_back (owner.session.master().mute.load() ? "master muted" : "master unmuted");
 
@@ -1683,6 +1708,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.closeAudioSettings();
         owner.closeVirtualKeyboard();
         owner.closeTuner();
+        closeMasterTape();
         for (int track = 0; track < Session::kNumTracks; ++track)
             if (auto* component = owner.consoleView != nullptr
                                       ? owner.consoleView->getStripComponent (track) : nullptr)

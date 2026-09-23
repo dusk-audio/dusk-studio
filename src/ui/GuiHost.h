@@ -210,6 +210,12 @@ public:
     // The strip name the open EQ editor is titled with.
     virtual std::string stripModuleEditorTitle (int track, int module) const = 0;
     virtual void closeStripModuleEditors (int track) = 0;
+    // The master strip's TAPE split button: its label opens Tape Machine 2's own
+    // editor, its status light engages the stage.
+    virtual bool clickMasterTape (bool label) = 0;
+    virtual bool masterTapeEditorOpen() const = 0;
+    virtual bool masterTapeEditorDrawn() const = 0;
+    virtual void closeMasterTape() = 0;
     virtual bool clickInsert (int track, bool right = false) = 0;
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
     virtual bool clickPickerRow (const std::string& text) = 0;

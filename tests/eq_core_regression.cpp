@@ -11,12 +11,9 @@
 // Tone regression for duskaudio::FourKEQDSP, the console EQ every channel strip
 // and every bus runs.
 //
-// The A/B against the JUCE BritishEQProcessor next door is a sanity bound, not a
-// null: the two are different revisions of the same design and their difference
-// is measured in tenths of a dB, so it cannot tell a deliberate re-voicing from
-// an accident. This file is the drift guard. The expectations were measured from
-// this core at the revision that was listened to and accepted, so they do not
-// prove it is right; they prove it has not moved since.
+// This file is the drift guard. The expectations were measured from this core at
+// the revision that was listened to and accepted, so they do not prove it is
+// right; they prove it has not moved since.
 //
 // Aggregate measures rather than a checksum: a float checksum does not survive a
 // different compiler, libm or architecture, and this suite runs on GCC, Clang,

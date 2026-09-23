@@ -5,29 +5,30 @@
 namespace duskstudio
 {
 struct TapeParams;
+struct MasterBusParams;
 
-// Owner for the framework-free TapeMachine core. The core's header and
-// multi-comp's UniversalCompressor core both define the same duskaudio:: math
-// helpers (kPiD, kTwoPiF, dbToGain, ...), so the two headers cannot appear in
-// one translation unit. MasterBus needs both stages, so the tape core stays
-// confined to MasterTape.cpp behind this interface.
+namespace builtin { class DafPlugin; }
+
+// The master tape: Tape Machine 2, run in process as one of Dusk's own DAF
+// plug-ins. The session's TapeParams hold the plug-in's parameters and the audio
+// thread pushes whatever changed into it at the top of each block, so the
+// session stays the one owner of every value the editor shows.
 //
-// Every method below forwards straight to the core: prepare allocates,
-// everything else is lock-free and safe on the audio thread.
+// prepare allocates and must run with the audio thread fenced; pushParameters
+// and processInPlace are audio-thread and lock-free.
 class MasterTape
 {
 public:
     MasterTape();
     ~MasterTape();
 
-    // oversamplingFactor: 1, 2 or 4. Applied before the core's prepare so
-    // latencySamples() is correct immediately after this returns.
-    void prepare (double sampleRate, int blockSize, int oversamplingFactor);
+    // Latency is resolved here, so latencySamples() is correct once this returns.
+    void prepare (double sampleRate, int blockSize);
 
     // The processing paths' delay, resolved in prepare and constant for its
-    // life. The core reports zero while its signal path is a passthrough; the
+    // life. The plug-in reports zero while its signal path is a passthrough; the
     // master aligns to the processing figure at all times so a path change
-    // never moves the mix, and isPassthroughPath() says when the core is
+    // never moves the mix, and isPassthroughPath() says when the plug-in is
     // handing the input straight back.
     int  latencySamples() const noexcept;
     bool isPassthroughPath() const noexcept;
@@ -35,10 +36,16 @@ public:
     void pushParameters (const TapeParams& p) noexcept;
     void processInPlace (float* L, float* R, int numSamples) noexcept;
 
-    // Linear peak followers with a 300 ms release, for the tape panel's meters.
-    // Relaxed atomic loads - safe from the message thread, at most one block stale.
-    struct Vu { float outL, outR; };
-    Vu getVu() const noexcept;
+    // The plug-in, for building its editor. Message thread.
+    builtin::DafPlugin& plugin() noexcept;
+
+    // The session value behind each of the plug-in's parameter indices, which is
+    // what its editor reads and writes. The bypass parameter is the editor's
+    // power switch and stands for the master's tape engage, inverted; an output
+    // reads the plug-in's meter. Message thread.
+    float sessionValue (const MasterBusParams& params, int index) const noexcept;
+    void  setSessionValue (MasterBusParams& params, int index, float value) const noexcept;
+    bool  isEngageParam (int index) const noexcept;
 
 private:
     struct Impl;

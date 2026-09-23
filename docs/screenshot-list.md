@@ -75,7 +75,7 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 | `fx-01-eq.png`                  | L735   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
 | `fx-02-comp.png`                | L757   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
 | `vkb-01-virtual-keyboard.png`   | L567   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
-| `fx-03-tape.png`                | L914   | ✅   | Master tape-machine editor. JUCE panel, taken through the snapshot route. |
+| `fx-03-tape.png`                | L914   | ✅   | Master tape editor: Tape Machine 2's own editor, read back from its window once painted, same route as the built-in units' plug-in editors. |
 | `mm-01-automation-modes.png`    | L1438  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
 | `mm-02-mastering-chain.png`     | L995   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
 | `pl-01-plugin-picker.png`       | L1512  | ✅   | Plugin picker panel populated.                            |

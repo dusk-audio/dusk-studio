@@ -59,7 +59,7 @@ true-peak mastering limiter, session open-with and an update notice on launch.
 
 A fresh install is useful with nothing else on the machine. Five insert units
 are compiled into the application and pinned to the top of the plugin picker:
-Utility, DuskVerb 2, Tape Echo 2, Tape and the Sunset synthesiser. The
+Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2 and the Sunset synthesiser. The
 soundfont editor browses the `.sfz` and `.sf2` files already on disk without
 touching the network. Third-party plugins host in process by default, which
 gives the most responsive editors; `DUSKSTUDIO_USE_OOP_PLUGINS=1` opts into the
@@ -76,7 +76,7 @@ deeper accessibility.
 | Multitrack recording / playback with disk-full + MIDI-overflow detection | Working |
 | Atomic session save + 30 s autosave with content-hash dirty check | Working |
 | Session templates (Blank / Band / Beats / Singer-Songwriter) | Working |
-| Built-in insert units (Utility, DuskVerb 2, Tape Echo 2, Tape, Sunset) | Working |
+| Built-in insert units (Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2, Sunset) | Working |
 | Plugin hosting (per-channel CLAP / VST3 / LV2 / AU + per-aux return) | Working |
 | Native soundfonts (`.sfz` + `.sf2` via dusk-fizz, no external synth) | Working |
 | Offline instrument library (lists what is installed, never reaches the network) | Working |
@@ -108,7 +108,7 @@ deeper accessibility.
 | Signed `SHA256SUMS` per release | Working (a tag cannot publish without it) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-The C++ suite declares 1217 Catch2 test cases across 218 test source files.
+The C++ suite declares 1214 Catch2 test cases across 217 test source files.
 Linux amd64, Linux arm64 and macOS build and run it on every push; Windows runs
 it on every push and PR; ThreadSanitizer and ASan plus UBSan run it on every
 push and PR. All of those, plus the framework-coupling ratchet, are required
@@ -175,11 +175,12 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
 - **DSP** comes from the Dusk Audio plugin suite (4K EQ 2, Multi-Comp
   FET/Opto/VCA, Multi-Q, Tape Machine 2, shared AnalogEmulation), so the mixer
   and the standalone plugins share one DSP source of truth. The channel and bus
-  EQs run the 4K EQ 2 engine; the master tape runs Tape Machine 2.
+  EQs run the 4K EQ 2 engine; the master tape runs Tape Machine 2 with the
+  plugin's own editor.
 - **Built-in units** are compiled into the application, so they need no scan and
-  work on a fresh install: Utility, DuskVerb 2, Tape Echo 2, Tape and Sunset.
-  DuskVerb 2 and Tape Echo 2 show the plugin's own editor, embedded in the
-  window.
+  work on a fresh install: Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2 and
+  Sunset. DuskVerb 2, Tape Echo 2 and Tape Machine 2 show the plugin's own
+  editor, embedded in the window.
 - **Plugin host**: CLAP, VST3, LV2 and AU on every channel strip, with aux
   returns hosting reverb and delay. In process by default. The **opt-in**
   out-of-process sandbox (`DUSKSTUDIO_USE_OOP_PLUGINS=1`) runs each plugin in a
@@ -219,7 +220,7 @@ src/
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
     imgui/     # native surfaces: startup, audio settings, unit editors, keyboard
   util/        # native log storage + CrashHandler signal reports
-tests/         # 1217 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 1214 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds
 docs/          # maintainer guide, the 1.0 plan, migration plans
 DuskStudio.md  # authoritative product spec

@@ -3196,6 +3196,78 @@ const ScenarioRegistrar editorTitleNamesStrip { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runEditorTitleNamesStrip (host, ctx); }
 } };
 
+// The master tape is Tape Machine 2, and TAPE opens the plug-in's own editor over
+// a dimmed window. Opening it leaves the stage as it was; Escape or a second
+// click on TAPE dismisses it; the status light still engages the stage on its own.
+std::optional<ScenarioResult> runMasterTapeEditor (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    if (host.masterTapeEditorOpen()) return ScenarioResult::skip ("requires a closed tape editor");
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("requires a window the native tape editor can embed into");
+    const auto originalStage = engine.getStage();
+    const bool originalTape = session.master().tapeEnabled.load();
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    ctx.cleanup ([&host, &session, originalStage, originalTape]
+    {
+        host.closeMasterTape();
+        drainModals (host);
+        session.master().tapeEnabled.store (originalTape);
+        host.switchToStage (guiStage (originalStage));
+    });
+    session.master().tapeEnabled.store (false);
+    const auto stripStage = engine.getStage();
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickMasterTape (true), "the master TAPE label is unavailable"); } });
+    steps->push_back ({ 1500, [&host, &ctx, &session, &engine, stripStage]
+    {
+        ctx.expect (host.masterTapeEditorOpen(), "TAPE did not open the tape editor");
+        ctx.expect (engine.getStage() == stripStage, "opening the tape editor changed the stage");
+        ctx.expect (host.masterTapeEditorDrawn(), "the tape editor never drew a frame");
+        ctx.expect (! session.master().tapeEnabled.load(), "opening the editor engaged the tape");
+        ctx.expect (host.pressPeerKey ("escape"), "the window did not handle Escape");
+    } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        ctx.expect (! host.masterTapeEditorOpen(), "Escape left the tape editor open");
+        ctx.expect (host.clickMasterTape (true), "the master TAPE label is unavailable");
+    } });
+    steps->push_back ({ 1500, [&host, &ctx, &engine, stripStage]
+    {
+        ctx.expect (host.masterTapeEditorOpen(), "TAPE did not reopen the tape editor");
+        ctx.expect (engine.getStage() == stripStage, "reopening the tape editor changed the stage");
+        ctx.expect (host.clickMasterTape (true), "the master TAPE label is unavailable over its editor");
+    } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        ctx.expect (! host.masterTapeEditorOpen(), "a second click on TAPE left the editor open");
+        ctx.expect (host.clickMasterTape (false), "the master TAPE status light is unavailable");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &session]
+    {
+        ctx.expect (session.master().tapeEnabled.load(), "the status light did not engage the tape");
+        ctx.expect (! host.masterTapeEditorOpen(), "the status light opened the editor");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar masterTapeEditor { Scenario {
+    "gui.master_tape_editor", { "gui", "master" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasterTapeEditor (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runInsertContextMenu (GuiHost& host, ScenarioContext& ctx)
 {
     const auto fixture = ctx.fixture ("relayout.vst3");

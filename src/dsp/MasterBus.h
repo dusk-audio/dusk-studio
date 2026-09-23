@@ -9,7 +9,7 @@
 #include "../session/Session.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-  #include "MasterTape.h"                    // TapeMachine - master tape emulation (framework-free donor core)
+  #include "MasterTape.h"                    // Tape Machine 2 - master tape emulation (built-in DAF plug-in)
   #include <core/MultiQTube.hpp>             // multi-q - Pultec-style Tube EQ (framework-free donor core)
   #include <core/UniversalCompressorDSP.hpp> // multi-comp - Bus mode master comp (framework-free donor core)
 #endif
@@ -24,9 +24,9 @@ class MasterBus
 public:
     MasterBus();
 
-    // oversamplingFactor: 1 = native (default), 2 = 2× ox, 4 = 4× ox. Affects
-    // the bus compressor's internal oversampling toggle and the tape sat
-    // oversampler's stage count. Other values are clamped to 1.
+    // oversamplingFactor: 1 = native (default), 2 = 2× ox, 4 = 4× ox. Sets the
+    // oversampler around the tube EQ and bus compressor; the tape keeps its own.
+    // Other values are clamped to 1.
     void prepare (double sampleRate, int blockSize, int oversamplingFactor = 1);
     void bind (const MasterBusParams& params) noexcept;
 
@@ -37,8 +37,8 @@ public:
     int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    // Tape meters for the tape panel; see MasterTape::getVu.
-    MasterTape::Vu getTapeVu() const noexcept { return tape.getVu(); }
+    // The master tape, for its editor. Message thread.
+    MasterTape& getTape() noexcept { return tape; }
 #endif
 
 private:
@@ -72,8 +72,7 @@ private:
 
     int currentOxFactor      = 1;     // 1, 2 or 4 - set in prepare(); drives the
                                        // Dusk Studio-side oversampler around (TubeEQ
-                                       // + comp) and the tape core's own oversampling
-                                       // factor. The comp core's internal
+                                       // + comp). The comp core's internal
                                        // oversampling path is never engaged because
                                        // the Dusk Studio-side wrap handles it.
 

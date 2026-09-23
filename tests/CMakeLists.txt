@@ -302,21 +302,11 @@ target_sources(dusk-studio-tests PRIVATE
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sndfile)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sodium)
 
-# Console-saturation calibration test + the donor DSP headers it needs
-# (BritishEQProcessor.h + its header-only ConsoleSaturation/ADAA/SafeFloat deps).
-# Gated on the donor being available, so a no-donor build doesn't try to compile
-# a test whose includes can't be resolved.
 if(DUSK_PLUGINS_PATH)
-    target_sources(dusk-studio-tests PRIVATE console_saturation.cpp)
-    target_include_directories(dusk-studio-tests SYSTEM PRIVATE
-        ${DUSK_PLUGINS_PATH}/plugins/multi-q
-        ${DUSK_PLUGINS_PATH}/plugins/shared)
-
-    # Built-in units backed by donor cores. Gated with the donor for the same
-    # reason console_saturation.cpp is: without it the includes cannot resolve.
+    # Built-in units backed by donor cores. Gated on the donor being available,
+    # so a no-donor build doesn't try to compile tests whose includes can't be
+    # resolved.
     target_sources(dusk-studio-tests PRIVATE
-        builtin_tape_unit.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/builtin/TapeUnit.cpp
         builtin_synth_unit.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/builtin/SynthUnit.cpp
         ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp)
@@ -325,10 +315,12 @@ if(DUSK_PLUGINS_PATH)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DONOR_UNITS=1)
 
     # DAF built-ins are the app's own static libraries, defined beside the app.
-    if(TARGET dusk_daf_tape_echo_2 AND TARGET dusk_daf_duskverb_2)
+    if(TARGET dusk_daf_tape_echo_2 AND TARGET dusk_daf_duskverb_2
+       AND TARGET dusk_daf_tape_machine_2)
         target_sources(dusk-studio-tests PRIVATE
             builtin_tape_echo_2.cpp
-            builtin_duskverb_2.cpp)
+            builtin_duskverb_2.cpp
+            builtin_tape_unit.cpp)
         target_include_directories(dusk-studio-tests SYSTEM PRIVATE
             ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core)
         target_link_libraries(dusk-studio-tests PRIVATE
@@ -761,7 +753,6 @@ if(DUSK_PLUGINS_PATH)
         comp_static_curve.cpp
         comp_timing.cpp
         bus_stereo_link.cpp
-        tape_hysteresis.cpp
         tape_core_regression.cpp
         bus_strip.cpp
         mastering_chain.cpp
@@ -776,13 +767,14 @@ if(DUSK_PLUGINS_PATH)
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringEqView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringLimiterView.cpp>
         dsp_stereo_oversampler.cpp
-        eq_british_ab.cpp
+        console_saturation.cpp
         eq_core_regression.cpp
         tube_multiq_ab.cpp
         comp_core_ab.cpp
         smoke_brickwall_limiter.cpp
         dsp_loudness_meter.cpp
         master_tape_alignment.cpp
+        master_tape_session.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasterBus.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasterTape.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
@@ -795,11 +787,14 @@ if(DUSK_PLUGINS_PATH)
         "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp")
+        "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp")
 
-    # projucer-shim satisfies BritishEQProcessor.h's `#include <JuceHeader.h>`
-    # (the donor EQ under A/B test in eq_british_ab.cpp); the shim pulls in a
+    # The master tape is the Tape Machine 2 built-in, which also carries the
+    # tape core tape_core_regression.cpp measures.
+    target_link_libraries(dusk-studio-tests PRIVATE dusk_daf_tape_machine_2)
+
+    # projucer-shim satisfies TubeEQProcessor.h's `#include <JuceHeader.h>`
+    # (the donor EQ under A/B test in tube_multiq_ab.cpp); the shim pulls in a
     # few JUCE modules the base test link is missing, added below.
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         "${CMAKE_SOURCE_DIR}/external/projucer-shim"
@@ -812,9 +807,7 @@ if(DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSKSTUDIO_DONOR_DSP_DIR}"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI")
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine")
 
     # Modules referenced only transitively by the projucer-shim umbrella header.
     target_link_libraries(dusk-studio-tests PRIVATE

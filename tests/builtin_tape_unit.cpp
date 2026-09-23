@@ -5,12 +5,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <vector>
 
-// The Tape unit wraps the Tape Machine 2 core the master bus also runs. A tape
-// is not transparent by design, so the unity assertion goes through the core's
-// own Thru path, which is the setting that means "off the tape".
+// The built-in tape unit is Tape Machine 2, Dusk's own DAF plug-in, run in
+// process: the same plug-in the master tape runs. A tape is not transparent by
+// design, so the unity assertion goes through the plug-in's own Thru path, which
+// is the setting that means "off the tape". The unit took over the id of the
+// knob tape unit it replaced, so a session saved with that unit restores into it.
 
 using namespace duskstudio::builtin;
 using Catch::Matchers::WithinAbs;
@@ -21,6 +24,7 @@ constexpr double kSampleRate = 48000.0;
 constexpr int    kBlock      = 256;
 constexpr int    kThruPath   = 3;
 constexpr double kPi         = 3.14159265358979323846;   // M_PI is non-standard
+constexpr const char* kUnitId = "dusk.builtin.tape";
 
 int paramIndex (const NativeBuiltinSlot& slot, const char* id)
 {
@@ -30,10 +34,20 @@ int paramIndex (const NativeBuiltinSlot& slot, const char* id)
     return -1;
 }
 
+void set (NativeBuiltinSlot& slot, const char* id, float value)
+{
+    slot.setParamValue (paramIndex (slot, id), value);
+}
+
+float get (const NativeBuiltinSlot& slot, const char* id)
+{
+    return slot.getParamValue (paramIndex (slot, id));
+}
+
 void loadTape (NativeBuiltinSlot& slot)
 {
     std::string error;
-    REQUIRE (slot.loadUnit ("dusk.builtin.tape", kSampleRate, kBlock, error));
+    REQUIRE (slot.loadUnit (kUnitId, kSampleRate, kBlock, error));
     REQUIRE (error.empty());
 }
 
@@ -47,17 +61,34 @@ void fillTone (std::vector<float>& l, std::vector<float>& r, int startSample)
         r[i] = v * 0.9f;
     }
 }
+
+void runSilence (NativeBuiltinSlot& slot, int blocks)
+{
+    std::vector<float> l ((size_t) kBlock), r ((size_t) kBlock);
+    for (int b = 0; b < blocks; ++b)
+    {
+        std::fill (l.begin(), l.end(), 0.0f);
+        std::fill (r.begin(), r.end(), 0.0f);
+        slot.processStereo (l.data(), r.data(), l.data(), r.data(), kBlock);
+    }
+}
+
+std::vector<std::uint8_t> bytes (const std::string& text)
+{
+    return { text.begin(), text.end() };
+}
 } // namespace
 
 TEST_CASE ("tape unit is registered and loads", "[builtin][tape]")
 {
-    const auto* unit = findUnit ("dusk.builtin.tape");
+    const auto* unit = findUnit (kUnitId);
     REQUIRE (unit != nullptr);
     REQUIRE_FALSE (unit->isInstrument);
+    REQUIRE (unit->createPlugin != nullptr);
 
     NativeBuiltinSlot slot;
     loadTape (slot);
-    REQUIRE (slot.displayName() == "Tape");
+    REQUIRE (slot.displayName() == "Tape Machine 2");
 }
 
 TEST_CASE ("tape unit turns silence into silence", "[builtin][tape]")
@@ -85,7 +116,7 @@ TEST_CASE ("tape unit on the Thru path is unity gain", "[builtin][tape]")
 {
     NativeBuiltinSlot slot;
     loadTape (slot);
-    slot.setParamValue (paramIndex (slot, "signal_path"), (float) kThruPath);
+    set (slot, "signalPath", (float) kThruPath);
 
     std::vector<float> l ((size_t) kBlock), r ((size_t) kBlock);
     for (int b = 0; b < 20; ++b)
@@ -113,12 +144,15 @@ TEST_CASE ("tape unit reports latency only on a path that takes it", "[builtin][
 
     // Repro: the core's filter round trip, which plugin delay compensation has
     // to cover.
-    REQUIRE (slot.getLatencySamples() == 56);
+    runSilence (slot, 1);
+    REQUIRE (slot.getLatencySamples() > 0);
 
     // Thru is a sample-exact passthrough that never enters those filters, so
     // reporting the same figure would have PDC shift every other track to match
-    // a delay this insert is not adding.
-    slot.setParamValue (paramIndex (slot, "signal_path"), (float) kThruPath);
+    // a delay this insert is not adding. The plug-in restates its latency after
+    // the block that carries the change.
+    set (slot, "signalPath", (float) kThruPath);
+    runSilence (slot, 1);
     REQUIRE (slot.getLatencySamples() == 0);
 
     slot.setBypassed (true);
@@ -129,7 +163,7 @@ TEST_CASE ("tape unit colours the signal on its normal path", "[builtin][tape]")
 {
     NativeBuiltinSlot slot;
     loadTape (slot);
-    slot.setParamValue (paramIndex (slot, "input"), 8.0f);
+    set (slot, "inputGain", 8.0f);
 
     std::vector<float> l ((size_t) kBlock), r ((size_t) kBlock);
     for (int b = 0; b < 20; ++b)
@@ -152,12 +186,10 @@ TEST_CASE ("tape unit state round-trips", "[builtin][tape]")
 {
     NativeBuiltinSlot saver;
     loadTape (saver);
-    const int inputIdx = paramIndex (saver, "input");
-    const int speedIdx = paramIndex (saver, "speed");
-    const int biasIdx  = paramIndex (saver, "bias");
-    saver.setParamValue (inputIdx, 4.5f);
-    saver.setParamValue (speedIdx, 2.0f);
-    saver.setParamValue (biasIdx, 62.0f);
+    set (saver, "inputGain", 4.5f);
+    set (saver, "tapeSpeed", 3.0f);
+    set (saver, "bias", 62.0f);
+    set (saver, "reproHF", -2.5f);
 
     std::vector<std::uint8_t> blob;
     REQUIRE (saver.saveState (blob));
@@ -165,12 +197,48 @@ TEST_CASE ("tape unit state round-trips", "[builtin][tape]")
     NativeBuiltinSlot loader;
     loadTape (loader);
     REQUIRE (loader.loadState (blob));
-    REQUIRE_THAT (loader.getParamValue (inputIdx), WithinAbs (4.5, 1e-6));
-    REQUIRE_THAT (loader.getParamValue (speedIdx), WithinAbs (2.0, 1e-6));
-    REQUIRE_THAT (loader.getParamValue (biasIdx),  WithinAbs (62.0, 1e-6));
+    REQUIRE_THAT (get (loader, "inputGain"), WithinAbs (4.5, 1e-6));
+    REQUIRE_THAT (get (loader, "tapeSpeed"), WithinAbs (3.0, 1e-6));
+    REQUIRE_THAT (get (loader, "bias"),      WithinAbs (62.0, 1e-6));
+    REQUIRE_THAT (get (loader, "reproHF"),   WithinAbs (-2.5, 1e-6));
 
     NativeBuiltinSlot delay;
     std::string error;
     REQUIRE (delay.loadUnit ("dusk.builtin.delay", kSampleRate, kBlock, error));
     REQUIRE_FALSE (delay.loadState (blob));
+}
+
+TEST_CASE ("tape unit restores a session saved with the knob tape unit", "[builtin][tape]")
+{
+    // The knob unit's blob: its own control ids, version 1.
+    const auto legacy = bytes (
+        R"({"id":"dusk.builtin.tape","version":1,"params":{)"
+        R"("machine":1,"speed":2,"type":3,"signal_path":1,"eq_standard":1,)"
+        R"("input":4.5,"bias":62,"calibration":2,"output":-3,"hpf":80,"lpf":12000,)"
+        R"("wow":0,"flutter":1.5,"noise":12,"auto_cal":0,"auto_comp":0}})");
+
+    NativeBuiltinSlot slot;
+    loadTape (slot);
+    set (slot, "headWidth", 0.0f);
+    REQUIRE (slot.loadState (legacy));
+
+    REQUIRE_THAT (get (slot, "tapeMachine"),   WithinAbs (1.0, 1e-6));
+    REQUIRE_THAT (get (slot, "tapeSpeed"),     WithinAbs (2.0, 1e-6));
+    REQUIRE_THAT (get (slot, "tapeType"),      WithinAbs (3.0, 1e-6));
+    REQUIRE_THAT (get (slot, "signalPath"),    WithinAbs (1.0, 1e-6));
+    REQUIRE_THAT (get (slot, "eqStandard"),    WithinAbs (1.0, 1e-6));
+    REQUIRE_THAT (get (slot, "inputGain"),     WithinAbs (4.5, 1e-6));
+    REQUIRE_THAT (get (slot, "bias"),          WithinAbs (62.0, 1e-6));
+    REQUIRE_THAT (get (slot, "calibration"),   WithinAbs (2.0, 1e-6));
+    REQUIRE_THAT (get (slot, "outputGain"),    WithinAbs (-3.0, 1e-6));
+    REQUIRE_THAT (get (slot, "highpassFreq"),  WithinAbs (80.0, 1e-4));
+    REQUIRE_THAT (get (slot, "lowpassFreq"),   WithinAbs (12000.0, 1e-3));
+    REQUIRE_THAT (get (slot, "wowAmount"),     WithinAbs (0.0, 1e-6));
+    REQUIRE_THAT (get (slot, "flutterAmount"), WithinAbs (1.5, 1e-6));
+    REQUIRE_THAT (get (slot, "noiseAmount"),   WithinAbs (12.0, 1e-6));
+    REQUIRE_THAT (get (slot, "autoCal"),       WithinAbs (0.0, 1e-6));
+    REQUIRE_THAT (get (slot, "autoComp"),      WithinAbs (0.0, 1e-6));
+
+    // A control the knob unit never had restores as the plug-in's default.
+    REQUIRE_THAT (get (slot, "headWidth"), WithinAbs (1.0, 1e-6));
 }

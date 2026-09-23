@@ -64,9 +64,11 @@ float conform (const DafParamDesc& p, float value) noexcept
 }
 } // namespace
 
-DafUnitInstance::DafUnitInstance (std::string stateId, std::unique_ptr<DafPlugin> hosted)
+DafUnitInstance::DafUnitInstance (std::string stateId, std::unique_ptr<DafPlugin> hosted,
+                                  const std::vector<LegacyParam>* legacyParams)
     : id (std::move (stateId)),
       plugin (std::move (hosted)),
+      legacy (legacyParams),
       values (plugin->params().size())
 {
     const auto& params = plugin->params();
@@ -272,8 +274,9 @@ bool DafUnitInstance::loadState (const std::vector<std::uint8_t>& in)
         return false;
 
     // A version-1 blob under this id holds a knob unit's controls, not this
-    // plug-in's, so it restores as the plug-in's defaults rather than as a
-    // plausible-looking wrong patch.
+    // plug-in's. Only the controls the legacy map names carry over; the rest
+    // restore as the plug-in's defaults rather than as a plausible-looking
+    // wrong patch.
     const int version = dusk::json::getInt (root, "version", 0);
     if (version != 1 && version != kParameterOnlyStateVersion
         && version != kStateVersion)
@@ -306,15 +309,24 @@ bool DafUnitInstance::loadState (const std::vector<std::uint8_t>& in)
     {
         const auto& p = descs[i];
         if (p.isOutput) continue;
-        const float value = version == 1
-                          ? p.defaultValue
-                          : dusk::json::getFiniteFloat (savedParams, p.symbol.c_str(),
-                                                        p.defaultValue);
+        const char* key = version == 1 ? legacyKnobId (p.symbol) : p.symbol.c_str();
+        const float value = key != nullptr
+                          ? dusk::json::getFiniteFloat (savedParams, key, p.defaultValue)
+                          : p.defaultValue;
         plugin->setParameterValue ((std::uint32_t) i, conform (p, value));
     }
 
     refreshParamMirrors();
     return true;
+}
+
+const char* DafUnitInstance::legacyKnobId (const std::string& symbol) const noexcept
+{
+    if (legacy != nullptr)
+        for (const auto& l : *legacy)
+            if (symbol == l.symbol)
+                return l.knobId;
+    return nullptr;
 }
 
 int DafUnitInstance::getLatencySamples() const noexcept

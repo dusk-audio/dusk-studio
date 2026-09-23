@@ -3,8 +3,8 @@
 # De-JUCE — plugin-hosting tower (campaign plan)
 
 Status: **H1a-c merged (PR #114); H3 merged (PR #118); H4 merged (PR #119,
-`3c5c901`); H5 scout complete; H5a ready on `dejuce/hosting-h5a`; H1d blocked on donor
-consolidation; H2 blocked on the donor multiband port.** Marc's call on
+`3c5c901`); H5 scout complete; H5a ready on `dejuce/hosting-h5a`; H1d implemented on
+`fix/696-donor-main-pin`; H2 blocked on the donor multiband port.** Marc's call on
 2026-07-26 reversed the 2026-07-01 keep-JUCE-fallback decision: the JUCE
 plugin-hosting path gets deleted entirely; native hosting must cover CLAP and
 VST3 on Linux, macOS, and Windows, LV2 on Linux and macOS, plus AU on macOS.
@@ -74,8 +74,8 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
   blob, and the AudioEngine state/playhead sites are gone. Native
   `src/ui/TapePanel.{h,cpp}` replaces TapeMachineModalEditor; the donor
   TapeMachine sources left the app build. A/B null test in
-  `tests/tape_core_ab.cpp`. Remaining: H1d (TM2 DAF UI embed) once the donor
-  is consolidated - see
+  `tests/tape_core_ab.cpp`. H1d (TM2 DAF UI) replaced TapePanel with the
+  plug-in's own editor - see
   [dejuce-hosting-h1-tape.md](dejuce-hosting-h1-tape.md).
 - **H2 — Mastering multiband (donor first, then Dusk Studio).** Donor:
   port Multiband mode into a JUCE-free core (extend

@@ -82,7 +82,7 @@ Every open issue, one bucket each; completed release work is marked done.
 | 286 | Allow builds without signed SFZ catalog support | post-1.0 | Build-option convenience. Does not change what a shipped release does. |
 | 294 | Consolidate and pin the reusable DSP/UI source of truth | post-1.0 | Framework-removal campaign. |
 | 295 | [H2] Replace the mastering multiband processor | post-1.0 | Framework-removal campaign. |
-| 296 | [H1d] Replace TapePanel with the TapeMachine 2 DAF UI | post-1.0 | Framework-removal campaign. |
+| 296 | [H1d] Replace TapePanel with the TapeMachine 2 DAF UI | 0.14 | The master tape and the built-in tape unit run the Tape Machine 2 plug-in with its own editor; TapePanel is deleted. |
 | 297 | [H6] Delete plug-in hosting and unlink the audio-processors module | post-1.0 | Framework-removal campaign. |
 | 298 | [Devices/macOS] Replace the CoreAudio and CoreMIDI backends | post-1.0 | Framework-removal campaign. |
 | 299 | [Devices/Windows] Replace the WASAPI/ASIO and MIDI backends | post-1.0 | Framework-removal campaign. |

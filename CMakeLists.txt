@@ -832,7 +832,6 @@ target_sources(DuskStudio PRIVATE
     src/ui/PluginScanModal.cpp
     src/ui/SystemStatusBar.cpp
     src/ui/EditModeToolbar.cpp
-    src/ui/TapePanel.cpp
     src/ui/TapeStrip.cpp
     src/ui/MiniTimelineStrip.cpp
     src/ui/TransportBar.cpp
@@ -1397,20 +1396,15 @@ target_compile_options(dusk-pffft PRIVATE "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
 target_link_libraries(DuskStudio PRIVATE dusk-pffft)
 
 if(DEFINED DUSK_PLUGINS_PATH)
-    # Per-plugin DSP headers from the Dusk plugins repo's main branch. Each
+    # Per-plugin DSP headers from the Dusk plugins repo at DONOR_REV. Each
     # plugin owns its DSP; Dusk Studio vendors:
-    #   - multi-q    (BritishEQProcessor — per-channel 4-band British EQ)
+    #   - shared-daf/dsp (FourKEQDSP, the 4K EQ 2 core every channel and bus
+    #                 EQ runs)
+    #   - multi-q    (MultiQTube, the master program EQ core)
     #   - multi-comp (UniversalCompressor — per-channel Opto/FET/VCA comp,
-    #                 used here as a juce::AudioProcessor; only its DSP path is
+    #                 used here as a JUCE AudioProcessor; only its DSP path is
     #                 active — the plugin editor is compiled-in but never
     #                 instantiated by Dusk Studio's UI)
-    #   - tape-echo    (TapeEchoDSP::TapeSaturation — legacy master bus tape sat,
-    #                   being replaced by TapeMachine; still vendored while the
-    #                   migration completes)
-    #   - TapeMachine  (full-featured tape emulation hosted on the master bus
-    #                   via the framework-free core; the native tape panel is
-    #                   Dusk Studio's own, and only the donor's reel component
-    #                   is reused from its GUI)
     # SYSTEM include — vendored DSP headers carry benign warnings
     # (shadows, sign conversions) we don't own. Marking them SYSTEM
     # tells GCC/Clang to suppress those warnings on inclusion, which
@@ -1426,9 +1420,6 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
-        "${DUSK_PLUGINS_PATH}/plugins/tape-echo/Source/DSP"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
         "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp"
         "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core")
 
@@ -1439,11 +1430,10 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # (UniversalCompressorDSP / FourKEQDSP) are the de-JUCE'd donors BusStrip
     # uses directly.
     #
-    # MasterTape.cpp lives here rather than in the main source list: it is the
-    # only translation unit that includes the TapeMachine core, which exists
-    # only under DUSK_PLUGINS_PATH.
+    # MasterTape.cpp lives here rather than in the main source list: it runs
+    # the Tape Machine 2 built-in below, which exists only under
+    # DUSK_PLUGINS_PATH.
     target_sources(DuskStudio PRIVATE
-        src/engine/builtin/TapeUnit.cpp
         src/engine/builtin/SynthUnit.cpp
         "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp"
         src/dsp/MasterTape.cpp
@@ -1452,9 +1442,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp")
+        "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp")
 
     # DUSKSTUDIO_HAS_DUSK_DSP gates the donor's framework-era processors as
     # well as its cores; DUSKSTUDIO_HAS_DONOR_UNITS gates only the built-in
@@ -1480,6 +1468,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
     if(DUSKSTUDIO_DAF_SOURCE_DIR)
         set(_duskstudio_tape_echo_2_dir "${DUSK_PLUGINS_PATH}/plugins/tape-echo/daf-plugin")
         set(_duskstudio_duskverb_2_dir "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/daf-plugin")
+        set(_duskstudio_tape_machine_2_dir "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/daf-plugin")
         if(NOT EXISTS "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp")
             message(FATAL_ERROR
                 "Dusk plugins donor lacks the Tape Echo 2 plug-in; "
@@ -1488,6 +1477,11 @@ if(DEFINED DUSK_PLUGINS_PATH)
         if(NOT EXISTS "${_duskstudio_duskverb_2_dir}/DuskVerbPlugin.cpp")
             message(FATAL_ERROR
                 "Dusk plugins donor lacks the DuskVerb 2 plug-in; "
+                "use the revision pinned by the build workflows")
+        endif()
+        if(NOT EXISTS "${_duskstudio_tape_machine_2_dir}/TapeMachinePlugin.cpp")
+            message(FATAL_ERROR
+                "Dusk plugins donor lacks the Tape Machine 2 plug-in; "
                 "use the revision pinned by the build workflows")
         endif()
 
@@ -1588,6 +1582,31 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
             INCLUDE_DIRS ${_duskstudio_tape_echo_2_includes}
             UI_SOURCE "${_duskstudio_tape_echo_2_dir}/TapeEchoUI.cpp")
 
+        # The plug-in's version is its own CMake project's; the editor shows it.
+        file(STRINGS "${_duskstudio_tape_machine_2_dir}/CMakeLists.txt"
+             _duskstudio_tape_machine_2_project REGEX "^project\\(TapeMachine2DAF ")
+        if(NOT _duskstudio_tape_machine_2_project MATCHES
+               "VERSION ([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+            message(FATAL_ERROR "Cannot read the Tape Machine 2 version from the donor")
+        endif()
+        set(_duskstudio_tape_machine_2_definitions
+            TM2_VERSION_MAJOR=${CMAKE_MATCH_1}
+            TM2_VERSION_MINOR=${CMAKE_MATCH_2}
+            TM2_VERSION_PATCH=${CMAKE_MATCH_3})
+        set(_duskstudio_tape_machine_2_dsp_sources
+            "${_duskstudio_tape_machine_2_dir}/TapeMachinePlugin.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp")
+        set(_duskstudio_tape_machine_2_includes
+            "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core")
+        duskstudio_add_daf_builtin_library(
+            dusk_daf_tape_machine_2 OFF DuskTapeMachine2
+            "${_duskstudio_tape_machine_2_dir}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/TapeMachine2.cpp"
+            DSP_SOURCES ${_duskstudio_tape_machine_2_dsp_sources}
+            INCLUDE_DIRS ${_duskstudio_tape_machine_2_includes}
+            COMPILE_DEFINITIONS ${_duskstudio_tape_machine_2_definitions}
+            UI_SOURCE "${_duskstudio_tape_machine_2_dir}/TapeMachineUI.cpp")
+
         set(_duskstudio_duskverb_2_engine_sources "")
         foreach(_verbSource IN ITEMS
                 FDNReverb OctaveGEQDesign DattorroTank QuadTank SixAPTankEngine
@@ -1665,15 +1684,31 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
                 COMPILE_DEFINITIONS ${_duskstudio_duskverb_2_definitions}
                 UI_SOURCE "${_duskstudio_duskverb_2_dir}/DuskVerbUI.cpp")
             set_target_properties(dusk_daf_duskverb_2_ui PROPERTIES UNITY_BUILD OFF)
+            duskstudio_add_daf_builtin_library(
+                dusk_daf_tape_machine_2_ui ON DuskTapeMachine2
+                "${_duskstudio_tape_machine_2_dir}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/TapeMachine2.cpp"
+                DSP_SOURCES ${_duskstudio_tape_machine_2_dsp_sources}
+                INCLUDE_DIRS ${_duskstudio_tape_machine_2_includes}
+                COMPILE_DEFINITIONS ${_duskstudio_tape_machine_2_definitions}
+                UI_SOURCE "${_duskstudio_tape_machine_2_dir}/TapeMachineUI.cpp")
             target_link_libraries(DuskStudio PRIVATE
                 dusk_daf_tape_echo_2_ui
-                dusk_daf_duskverb_2_ui)
+                dusk_daf_duskverb_2_ui
+                dusk_daf_tape_machine_2_ui)
         else()
             target_link_libraries(DuskStudio PRIVATE
                 dusk_daf_tape_echo_2
-                dusk_daf_duskverb_2)
+                dusk_daf_duskverb_2
+                dusk_daf_tape_machine_2)
         endif()
         target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
+    else()
+        # The master tape is Tape Machine 2, one of these plug-ins, so a donor
+        # build without DAF has no master tape to build.
+        message(FATAL_ERROR
+            "The Dusk plugins donor needs DAF for its built-in plug-ins. Set "
+            "-DDAF_PATH=/path/to/DAF, or clone it to ../DAF.")
     endif()
 endif()
 

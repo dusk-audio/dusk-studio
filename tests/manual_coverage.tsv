@@ -18,7 +18,7 @@
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
 # ceiling gap 0
-# ceiling partial 53
+# ceiling partial 52
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -151,8 +151,8 @@ The channel strip > Insert slot	right-click Add / Replace / Remove / Edit / hard
 The channel strip > Insert slot	bypass LED; bypassed insert keeps processing for a click-free return	partial	test:a bypassed built-in slot passes dry audio and reports no latency		built-in bypass tested; the click-free return and plug-in bypass are not
 The channel strip > HPF (high-pass filter)	HPF 20-300 Hz; 20 Hz is effectively off	auto	scenario:strip.filter_ranges
 The channel strip > LPF (low-pass filter)	LPF 3-20 kHz; 20 kHz is effectively off	auto	scenario:strip.filter_ranges
-The channel strip > 4-band parametric EQ	four bands at the documented ranges and defaults	auto	test:BritishEQProcessor vs FourKEQDSP A/B parity;test:FourKEQDSP holds its tone across a fixed render
-The channel strip > 4-band parametric EQ	E and G characters	partial	test:E-series transformer core adds LF-weighted saturation		E character tested; the G character is not
+The channel strip > 4-band parametric EQ	four bands at the documented ranges and defaults	auto	test:FourKEQDSP holds its tone across a fixed render
+The channel strip > 4-band parametric EQ	E and G characters	auto	test:E and G console characters differ at the shipped drive;test:Channel console saturation sits at the calibrated harmonic floor
 The channel strip > 4-band parametric EQ	no cramping near Nyquist	partial	test:FourKEQDSP holds its tone across a fixed render		fixed render tested; an explicit near-Nyquist response check is not
 The channel strip > 4-band parametric EQ	console character always on; a silent channel stays silent	auto	test:Channel console saturation sits at the calibrated harmonic floor;test:FourKEQDSP passes silence through as silence;test:the flat image a bypassed strip pushes is safe
 The channel strip > Compressor	three modes remember their own settings	auto	scenario:strip.comp_modes_keep_their_settings
@@ -183,7 +183,8 @@ The bus strips > Meters	post-bus peak and 300 ms VU	partial	test:meter ballistic
 
 The master strip	receives unrouted channels, every bus and every aux return	auto	scenario:engine.pipeline_selftest
 The master strip > Signal flow	program EQ, comp, tape, fader, mono sum	partial	scenario:engine.pipeline_selftest;test:the master tape's output arrives where its reported latency says		fader, comp and tape are asserted; the program EQ in the chain is not
-The master strip > Tape saturation	bypass/engage; the editor's controls; auto cal and auto comp	partial	test:TapeMachineDSP holds its tone across a fixed render;test:Tape J-A traces a hysteresis loop (output depends on history);scenario:engine.pipeline_selftest		tape DSP tested; auto cal, auto comp and touching a control engaging the stage are not
+The master strip > Tape saturation	bypass/engage; TAPE opens Tape Machine 2's own editor; auto cal and auto comp	partial	scenario:gui.master_tape_editor;test:the master tape pushes the session into the plug-in;test:TapeMachineDSP holds its tone across a fixed render;scenario:engine.pipeline_selftest		editor opening, dismissal and the status light tested; auto cal, auto comp and touching a control engaging the stage are not
+The master strip > Tape saturation	presets; every setting saved with the session	auto	test:SessionSerializer round-trips every Tape Machine 2 control;test:every Tape Machine 2 control has a home in the session;test:SessionSerializer migrates the legacy tape_state blob
 The master strip > Tape saturation	fixed internal oversampling and a constant 56-sample latency	auto	test:TapeMachineDSP ignores the oversampling choice;test:TapeMachineDSP latency is stable per oversampling factor;test:the master tape's output arrives where its reported latency says
 The master strip > Program EQ	boost and cut bands, frequencies, output	auto	test:TubeEQProcessor vs MultiQTube A/B parity
 The master strip > Master bus compressor	same DSP as the bus comp; silent in adds no noise	auto	test:comp A/B: Bus matches JUCE;scenario:engine.pipeline_selftest
@@ -312,10 +313,11 @@ Plugins > Built-in insert units > DuskVerb 2	finite decaying tail; silence stays
 Plugins > Built-in insert units > DuskVerb 2	presets, INIT and the active A/B side saved; old Reverb sessions load as defaults	auto	test:Full state round-trips through a saved session blob;test:A session saved with the old Reverb unit loads as DuskVerb 2 defaults
 Plugins > Built-in insert units > Tape Echo 2	parameters, motor repeat time, tempo sync, bypass, noise floor	auto	test:Tape Echo 2's parameters sit at the plug-in's indices and symbols;test:Tape Echo 2 repeats at the motor time it states;test:Tape Echo 2 syncs its repeat to the transport the slot hands it;test:Tape Echo 2's bypass passes the input through untouched;test:Tape Echo 2 turns silence into its tape's noise floor
 Plugins > Built-in insert units > Tape Echo 2	state saved as the plug-in's own values	auto	test:Tape Echo 2 saves version-2 state keyed by the plug-in's symbols;test:Tape Echo 2 opens a version-1 tape echo blob at its defaults
-Plugins > Built-in insert units > Tape	Thru is unity; 56-sample latency except on Thru; colours on its normal path	auto	test:tape unit on the Thru path is unity gain;test:tape unit reports latency only on a path that takes it;test:tape unit colours the signal on its normal path;test:tape unit state round-trips
+Plugins > Built-in insert units > Tape Machine 2	Thru is unity; 56-sample latency except on Thru; colours on its normal path	auto	test:tape unit on the Thru path is unity gain;test:tape unit reports latency only on a path that takes it;test:tape unit colours the signal on its normal path;test:tape unit state round-trips
+Plugins > Built-in insert units > Tape Machine 2	sessions saved with the knob Tape unit keep their settings	auto	test:tape unit restores a session saved with the knob tape unit
 Plugins > Built-in insert units > Sunset	instrument only; notes, bend, mod wheel, sustain; stops with the transport	auto	test:synth unit is registered as an instrument;test:synth unit sounds while a note is held;test:synth unit answers pitch bend, mod wheel and sustain;test:synth unit stops on the transport's all-notes-off;test:synth unit state round-trips
 Plugins > Built-in insert units > Sunset	loading it converts an audio track to MIDI	auto	scenario:gui.sunset_track_defaults		loads Sunset through the channel-strip action and checks instrument identity and MIDI mode in the model and selector
-Plugins > Built-in insert units > Editing a unit	DuskVerb 2 and Tape Echo 2 open their own editors; the others get knob panels	auto	test:the built-in editor draws every unit inside the size it asks for;test:the built-in editor keeps every parameter reachable;test:a plug-in editor host pushes every value in when it opens;test:a plug-in editor host follows the geometry it is given
+Plugins > Built-in insert units > Editing a unit	DuskVerb 2, Tape Echo 2 and Tape Machine 2 open their own editors; the others get knob panels	auto	test:DAF units with their own editor remain in the built-in picker;test:the built-in editor draws every unit inside the size it asks for;test:the built-in editor keeps every parameter reachable;test:a plug-in editor host pushes every value in when it opens;test:a plug-in editor host follows the geometry it is given
 Plugins > Built-in insert units > Editing a unit	transport keys keep working after a knob move in a unit editor	auto	test:a gesture marks the parameter touched and hands focus back at its end
 Plugins > Built-in insert units > Editing a unit	MIDI Learn last-touched parameter on a unit	auto	scenario:gui.builtin_midi_learn
 Plugins > Opening the editor	click the slot for a centred modal; Esc or outside click closes	auto	scenario:gui.editor_open_close_loop

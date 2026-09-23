@@ -33,7 +33,10 @@ class DafUnitInstance final : public hosting::INativeInstance
 {
 public:
     // stateId names the blob saveState writes and the only one loadState accepts.
-    DafUnitInstance (std::string stateId, std::unique_ptr<DafPlugin> plugin);
+    // legacyParams, when given, restores a blob the knob unit this plug-in
+    // replaced wrote under the same id.
+    DafUnitInstance (std::string stateId, std::unique_ptr<DafPlugin> plugin,
+                     const std::vector<LegacyParam>* legacyParams = nullptr);
     ~DafUnitInstance() override;
 
     const hosting::PortLayout& portLayout() const noexcept override { return layout; }
@@ -77,9 +80,11 @@ private:
     void pushAllParams() noexcept;
     void refreshParamMirrors() noexcept;
     void applyEditorState (const std::string& key, const std::string& value);
+    const char* legacyKnobId (const std::string& symbol) const noexcept;
 
     std::string id;
     std::unique_ptr<DafPlugin> plugin;
+    const std::vector<LegacyParam>* legacy = nullptr;
     std::vector<ParamInfo> infos;
     std::vector<std::vector<std::string>> choiceText;
     std::vector<std::vector<const char*>> choicePointers;

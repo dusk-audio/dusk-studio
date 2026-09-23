@@ -22,6 +22,8 @@ struct UnitInfo
     bool isInstrument;
     std::unique_ptr<BuiltinUnit> (*create)();
     std::unique_ptr<DafPlugin> (*createPlugin)() = nullptr;
+    // For a plug-in unit that replaced a knob unit under this id.
+    const std::vector<LegacyParam>* legacyParams = nullptr;
 };
 
 // The suite, in picker order. Compiled in, so it is identical on every
