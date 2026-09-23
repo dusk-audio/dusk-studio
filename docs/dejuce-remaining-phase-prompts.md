@@ -198,6 +198,9 @@ Update spec status; end with resume phrase.
 
 ## Prompt 7 — H1d (TapeMachine2 DAF UI embed)
 
+Done on `fix/696-donor-main-pin` (master tape and built-in tape unit on the
+Tape Machine 2 plug-in with its own editor). Kept for the record.
+
 ```
 You are executing hosting-tower phase H1d of the Dusk Studio de-JUCE campaign
 on the LINUX machine (X11 embed work; /home/marc/projects/DuskStudio).

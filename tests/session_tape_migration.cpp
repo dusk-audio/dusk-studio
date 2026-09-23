@@ -137,6 +137,9 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
         Session d;
         d.master().tape.wow.store (99.0f);
         d.master().tape.signalPath.store (3);
+        d.master().tape.reproHfDb.store (5.0f);
+        d.master().tape.headWidth.store (0);
+        d.master().tape.transformer.store (false);
         REQUIRE (SessionSerializer::load (d, target));
 
         REQUIRE (d.master().tape.machine.load() == 1);
@@ -148,6 +151,9 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
         REQUIRE_THAT (d.master().tape.wow.load(), WithinAbs (7.0f, 1.0e-5f));
         REQUIRE_THAT (d.master().tape.inputGainDb.load(), WithinAbs (0.0f, 1.0e-5f));
         REQUIRE (d.master().tape.autoCal.load());
+        REQUIRE_THAT (d.master().tape.reproHfDb.load(), WithinAbs (0.0f, 1.0e-5f));
+        REQUIRE (d.master().tape.headWidth.load() == 1);
+        REQUIRE (d.master().tape.transformer.load());
     }
 
     SECTION ("a corrupt blob leaves the defaults intact")

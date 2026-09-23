@@ -173,5 +173,5 @@ window-shim TU. XWayland remains only for third-party plugin editors.
 
 ## Resume phrase
 
-"Hosting H1, branch dejuce/hosting, spec docs/dejuce-hosting-h1-tape.md —
-continue at first unchecked phase."
+H1 is complete; nothing to resume. The TM2-embed usability pass above is
+Marc's bench debt.
