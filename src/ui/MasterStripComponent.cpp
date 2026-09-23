@@ -3,11 +3,18 @@
 #include "DuskComboBox.h"
 #include "../engine/AudioEngine.h"
 #include "DimOverlay.h"
+#include "DuskAlerts.h"
 #include "DuskStudioLookAndFeel.h"
 #include "SteppedKnob.h"
-#include "TapePanel.h"
+#include "../dsp/MasterTape.h"
+#include "../engine/builtin/DafPlugin.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "NativeEditorEmbedScale.h"
+ #include "PlatformWindowing.h"
+#endif
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace duskstudio
 {
@@ -942,7 +949,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                 const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
                 params.tapeEnabled.store (now, std::memory_order_relaxed);
             },
-            [this] { openTapeMachineModal(); },
+            [this] { openTapeEditor(); },
             [this] { showTapeSectionMenu(); });
         tapeButton.setTooltip ("Click the light to bypass/engage tape; click TAPE to open the editor; right-click for the TAPE menu.");
         addChildComponent (tapeButton);
@@ -957,7 +964,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                 const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
                 params.tapeEnabled.store (now, std::memory_order_relaxed);
             },
-            [this] { openTapeMachineModal(); },
+            [this] { openTapeEditor(); },
             [this] { showTapeSectionMenu(); });
         tapeHeaderBtn->setTooltip ("Click the light to bypass/engage tape; click TAPE to open the editor; right-click for the TAPE menu.");
         addAndMakeVisible (tapeHeaderBtn.get());
@@ -1069,15 +1076,11 @@ MasterStripComponent::~MasterStripComponent()
     // fire on objects we're about to clean up.
     stopTimer();
     recordFader (false, 0.0f);
-    if (tapeMachineDim != nullptr)
-        tapeMachineDim->onClick = nullptr;
-    if (auto* m = tapeMachineModal.getComponent())
-    {
-        if (auto* p = m->getParentComponent())
-            p->removeChildComponent (m);
-        delete m;
-    }
-    tapeMachineDim.reset();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (tapeEditor != nullptr)
+        tapeEditor->shutdown();
+    tapeEditorDim.reset();
+   #endif
 }
 
 void MasterStripComponent::timerCallback()
@@ -1747,55 +1750,194 @@ void MasterStripComponent::resized()
     }
 }
 
-void MasterStripComponent::openTapeMachineModal()
+#if DUSKSTUDIO_HAS_NATIVE_UI
+imgui::DafEditorHost::Geometry MasterStripComponent::tapeEditorGeometry()
 {
-    // Toggle: pressing the gear while modal is open dismisses it.
-    if (tapeMachineModal != nullptr)
+    auto* const topLevel = getTopLevelComponent();
+    if (topLevel == nullptr)
+        return {};
+
+    auto& plugin = engine.getMasterBus().getTape().plugin();
+    const int designWidth = (int) plugin.editorWidth();
+    const int designHeight = (int) plugin.editorHeight();
+    if (designWidth < 2 || designHeight < 2)
+        return {};
+
+    // The editor opens at its own size and is scaled down, never cropped, when the
+    // window cannot hold it.
+    const auto window = topLevel->getLocalBounds();
+    const double fit = std::min (
+        1.0, std::min ((double) std::max (0, window.getWidth() - 16) / designWidth,
+                       (double) std::max (0, window.getHeight() - 16) / designHeight));
+    const auto logical = embedscale::centredChildBounds (
+        *topLevel, (int) std::lround (designWidth * fit),
+        (int) std::lround (designHeight * fit));
+
+    if (tapeEditorDim != nullptr)
     {
-        if (auto* m = tapeMachineModal.getComponent())
-        {
-            if (auto* parent = m->getParentComponent()) parent->removeChildComponent (m);
-            delete m;
-        }
-        tapeMachineDim.reset();
-        // The panel held keyboard focus; this modal isn't an EmbeddedModal so
-        // there's no automatic hand-back. Restore focus to the main canvas (the
-        // EmbeddedModal focus-restore target) so transport / edit shortcuts work
-        // without a stray click.
-        if (auto* t = EmbeddedModal::focusRestoreTarget().getComponent())
-            t->grabKeyboardFocus();
+        tapeEditorDim->setBounds (topLevel->getLocalBounds());
+        tapeEditorDim->setNativeChildArea (logical.expanded (1));
+    }
+
+    auto geometry = embedscale::childGeometryFor (*topLevel, logical);
+    geometry.scale *= fit;
+    return { geometry.x, geometry.y, geometry.width, geometry.height, geometry.scale };
+}
+
+void MasterStripComponent::finishTapeEditorClose()
+{
+    tapeEditorDim.reset();
+    tapeEditorHider.restore();
+    if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+        target->grabKeyboardFocus();
+}
+#endif
+
+void MasterStripComponent::openTapeEditor()
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    showDuskAlert (*this, "Tape",
+                   "The tape editor needs the native UI, which this build was made without.");
+   #else
+    if (isTapeEditorOpen())
+    {
+        closeTapeEditor();
+        return;
+    }
+    if (eqEditorModal.isOpen())   eqEditorModal.close();
+    if (compEditorModal.isOpen()) compEditorModal.close();
+
+    auto* topLevel = getTopLevelComponent();
+    if (topLevel == nullptr) topLevel = this;
+    const auto parentHandle = embedscale::nativeParentHandle (*topLevel);
+    if (parentHandle == 0)
+    {
+        showDuskAlert (*topLevel, "Tape",
+                       "The editor cannot open: the main window is not ready.");
         return;
     }
 
-    auto* topLevel = getTopLevelComponent();
-    if (topLevel == nullptr) return;
+    if (auto hook = EmbeddedModal::beforeModalShown())
+        hook();
 
-    auto* body = new TapePanel (params, engine);
-
-    tapeMachineDim = std::make_unique<DimOverlay>();
-    tapeMachineDim->setBounds (topLevel->getLocalBounds());
-    // Defer the close: openTapeMachineModal() resets tapeMachineDim, which would
-    // destroy this DimOverlay while its own onClick is on the stack (UAF). Run it
-    // on the next message-loop tick, after the click handler unwinds.
-    tapeMachineDim->onClick = [this]
+    if (tapeEditor == nullptr)
     {
-        juce::Component::SafePointer<MasterStripComponent> safe (this);
-        dusk::callAsync ([safe]
-        {
-            if (auto* s = safe.getComponent()) s->openTapeMachineModal();
-        });
-    };
-    topLevel->addAndMakeVisible (tapeMachineDim.get());
+        tapeEditor = std::make_unique<imgui::DafEditorHost> (
+            "tape-editor", "The tape editor", imgui::firstFrameMarkerPath ("tape-editor"));
 
-    body->setBounds (topLevel->getLocalBounds()
-                        .withSizeKeepingCentre (body->getWidth(), body->getHeight()));
-    topLevel->addAndMakeVisible (body);
-    // This modal uses a raw DimOverlay rather than EmbeddedModal, so it doesn't
-    // get EmbeddedModal's key forwarding for free - attach the forwarder so
-    // Space / R / Home / loop+punch shortcuts still reach MainComponent while
-    // the tape panel holds focus.
-    attachTransportKeyForwarder (*body);
-    tapeMachineModal = body;
+        // The engine owns the master tape for the life of the application, so
+        // the editor never outlives the plug-in it draws.
+        imgui::DafEditorHost::Unit unit;
+        unit.createEditor = [this] (std::uintptr_t parent, std::uint32_t width,
+                                    std::uint32_t height, double scale,
+                                    builtin::DafEditorCallbacks callbacks,
+                                    std::string& error)
+        {
+            return engine.getMasterBus().getTape().plugin()
+                       .createEditor (parent, width, height, scale, std::move (callbacks), error);
+        };
+        unit.paramCount = [this]
+            { return (int) engine.getMasterBus().getTape().plugin().params().size(); };
+        unit.paramValue = [this] (int index)
+            { return engine.getMasterBus().getTape().sessionValue (params, index); };
+        // Working any control but the power switch engages the tape, so dialling
+        // it in never needs a separate engage click.
+        unit.setParam = [this] (int index, float value)
+        {
+            const auto& tape = engine.getMasterBus().getTape();
+            tape.setSessionValue (params, index, value);
+            if (! tape.isEngageParam (index))
+                params.tapeEnabled.store (true, std::memory_order_relaxed);
+        };
+        unit.noteTouched = [this] (int index)
+        {
+            if (! engine.getMasterBus().getTape().isEngageParam (index))
+                params.tapeEnabled.store (true, std::memory_order_relaxed);
+        };
+        tapeEditor->setUnit (std::move (unit));
+
+        // Raw `this`: the strip owns the host and shuts it down before its own
+        // teardown, so none of these outlives the strip.
+        imgui::DafEditorHost::Callbacks callbacks;
+        callbacks.closed = [this] { finishTapeEditorClose(); };
+        callbacks.gestureEnded = []
+        {
+            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+                target->grabKeyboardFocus();
+        };
+        callbacks.geometry = [this] { return tapeEditorGeometry(); };
+        tapeEditor->setCallbacks (std::move (callbacks));
+    }
+
+    tapeEditorDim = std::make_unique<DimOverlay> (0.28f);
+    tapeEditorDim->setBounds (topLevel->getLocalBounds());
+    tapeEditorDim->onClick = [this] { closeTapeEditor(); };
+    topLevel->addAndMakeVisible (tapeEditorDim.get());
+    tapeEditorHider.hideUnder (*topLevel, { tapeEditorDim.get() });
+
+    const auto geometry = tapeEditorGeometry();
+    if (geometry.width >= 2 && geometry.height >= 2
+        && tapeEditor->open (parentHandle, geometry))
+        return;
+
+    tapeEditorDim.reset();
+    tapeEditorHider.restore();
+    const auto& why = tapeEditor->lastOpenFailure();
+    showDuskAlert (*topLevel, "Tape",
+                   why.empty() ? "The editor cannot open on this display backend."
+                               : why.c_str());
+   #endif
+}
+
+void MasterStripComponent::closeTapeEditor()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (tapeEditor != nullptr && tapeEditor->isOpen())
+        tapeEditor->close();
+   #endif
+}
+
+bool MasterStripComponent::isTapeEditorOpen() const noexcept
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return tapeEditor != nullptr && tapeEditor->isOpen();
+   #else
+    return false;
+   #endif
+}
+
+bool MasterStripComponent::tapeEditorDrawnForScenario() const noexcept
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return isTapeEditorOpen() && tapeEditor->hasRenderedFrame();
+   #else
+    return false;
+   #endif
+}
+
+void MasterStripComponent::captureTapeEditor (const std::string& capturePath)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // A partial file, or one left by an earlier run, would still be converted
+    // into a manual figure.
+    if (! isTapeEditorOpen() || ! tapeEditor->hasRenderedFrame())
+    {
+        std::remove (capturePath.c_str());
+        std::fprintf (stderr, "[capture] the tape editor had not drawn a frame for %s\n",
+                      capturePath.c_str());
+        return;
+    }
+
+    if (! duskstudio::platform::captureNativeWindowToPpm (tapeEditor->nativeWindow(),
+                                                          capturePath))
+    {
+        std::remove (capturePath.c_str());
+        std::fprintf (stderr, "[capture] could not read the tape editor back to %s\n",
+                      capturePath.c_str());
+    }
+   #else
+    (void) capturePath;
+   #endif
 }
 
 void MasterStripComponent::mouseDown (const juce::MouseEvent& e)
@@ -1880,7 +2022,7 @@ void MasterStripComponent::showTapeSectionMenu()
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
-            if (chosen == 11) self->openTapeMachineModal();
+            if (chosen == 11) self->openTapeEditor();
         });
 }
 

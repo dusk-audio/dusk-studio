@@ -97,7 +97,7 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
     REQUIRE (t.speed.load() == 2);
     REQUIRE (t.type.load() == 3);
     REQUIRE (t.signalPath.load() == 1);
-    REQUIRE (t.eqStandard.load() == 2);
+    REQUIRE (t.eqStandard.load() == 1);   // AES is gone; the nearest standard left
     REQUIRE (t.calibration.load() == 2);
     REQUIRE_THAT (t.inputGainDb.load(),  WithinAbs (5.5f, 1.0e-5f));
     REQUIRE_THAT (t.bias.load(),         WithinAbs (71.5f, 1.0e-5f));
@@ -109,6 +109,7 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
     REQUIRE_THAT (t.outputGainDb.load(), WithinAbs (-2.5f, 1.0e-5f));
     REQUIRE_FALSE (t.autoCal.load());
     REQUIRE_FALSE (t.autoComp.load());
+    REQUIRE (t.noiseEnabled.load());
     REQUIRE (s.master().tapeEnabled.load());
 
     SECTION ("saving drops the blob and the values survive a plain round-trip")
@@ -164,4 +165,73 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
     }
 
     dir.deleteRecursively();
+}
+
+TEST_CASE ("SessionSerializer round-trips every Tape Machine 2 control", "[session][serializer][tape]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir    = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session s;
+    auto& t = s.master().tape;
+    t.speed.store (3);   // 3.75 IPS
+    t.eqStandard.store (1);
+    t.headWidth.store (2);
+    t.noiseEnabled.store (true);
+    t.crosstalk.store (false);
+    t.wowFlutterOn.store (false);
+    t.transformer.store (false);
+    t.reproLfDb.store (1.5f);
+    t.reproLmfDb.store (-2.0f);
+    t.reproHmfDb.store (3.0f);
+    t.reproHfDb.store (-4.5f);
+    t.levelHmfTrimDb.store (6.0f);
+    t.levelHfTrimDb.store (-7.0f);
+    t.lowpassQ.store (1.8f);
+    t.progHmfTrimDb.store (2.25f);
+    t.progHfTrimDb.store (-1.25f);
+    t.reproSubBellDb.store (4.0f);
+    t.progLfTrimDb.store (-3.5f);
+    REQUIRE (SessionSerializer::save (s, target));
+
+    Session b;
+    REQUIRE (SessionSerializer::load (b, target));
+    const auto& r = b.master().tape;
+    REQUIRE (r.speed.load() == 3);
+    REQUIRE (r.eqStandard.load() == 1);
+    REQUIRE (r.headWidth.load() == 2);
+    REQUIRE (r.noiseEnabled.load());
+    REQUIRE_FALSE (r.crosstalk.load());
+    REQUIRE_FALSE (r.wowFlutterOn.load());
+    REQUIRE_FALSE (r.transformer.load());
+    REQUIRE_THAT (r.reproLfDb.load(),      WithinAbs (1.5f, 1.0e-5f));
+    REQUIRE_THAT (r.reproLmfDb.load(),     WithinAbs (-2.0f, 1.0e-5f));
+    REQUIRE_THAT (r.reproHmfDb.load(),     WithinAbs (3.0f, 1.0e-5f));
+    REQUIRE_THAT (r.reproHfDb.load(),      WithinAbs (-4.5f, 1.0e-5f));
+    REQUIRE_THAT (r.levelHmfTrimDb.load(), WithinAbs (6.0f, 1.0e-5f));
+    REQUIRE_THAT (r.levelHfTrimDb.load(),  WithinAbs (-7.0f, 1.0e-5f));
+    REQUIRE_THAT (r.lowpassQ.load(),       WithinAbs (1.8f, 1.0e-5f));
+    REQUIRE_THAT (r.progHmfTrimDb.load(),  WithinAbs (2.25f, 1.0e-5f));
+    REQUIRE_THAT (r.progHfTrimDb.load(),   WithinAbs (-1.25f, 1.0e-5f));
+    REQUIRE_THAT (r.reproSubBellDb.load(), WithinAbs (4.0f, 1.0e-5f));
+    REQUIRE_THAT (r.progLfTrimDb.load(),   WithinAbs (-3.5f, 1.0e-5f));
+
+    SECTION ("out-of-range values clamp to the plug-in's ranges")
+    {
+        const juce::String wild =
+            "{\"version\":7,\"master\":{\"tape\":{\"speed\":9,\"eq_standard\":2,"
+            "\"head_width\":5,\"repro_lf_db\":40,\"lowpass_q\":0.1}}}";
+        REQUIRE (target.replaceWithText (wild));
+
+        Session c;
+        REQUIRE (SessionSerializer::load (c, target));
+        REQUIRE (c.master().tape.speed.load() == 3);
+        REQUIRE (c.master().tape.eqStandard.load() == 1);
+        REQUIRE (c.master().tape.headWidth.load() == 2);
+        REQUIRE_THAT (c.master().tape.reproLfDb.load(), WithinAbs (12.0f, 1.0e-5f));
+        REQUIRE_THAT (c.master().tape.lowpassQ.load(),  WithinAbs (0.5f, 1.0e-5f));
+    }
 }

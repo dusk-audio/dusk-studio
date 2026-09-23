@@ -30,10 +30,10 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
                        ? oversamplingFactor : 1;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    // The tape core's own oversampling follows the global Audio Settings factor
-    // (Session::oversamplingFactor).
+    // Tape Machine 2 runs its own fixed oversampling, so the global factor does
+    // not reach it.
     tapeMaxBlock = std::max (1, blockSize);
-    tape.prepare (sampleRate, tapeMaxBlock, currentOxFactor);
+    tape.prepare (sampleRate, tapeMaxBlock);
     tapeDryL.resize ((size_t) tapeMaxBlock);
     tapeDryR.resize ((size_t) tapeMaxBlock);
 
@@ -43,9 +43,9 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     tapeMix.reset (sampleRate, 0.020);
     tapeMixPrimed = false;
 
-    // Resolve the tape's engaged latency (0 at 1×) now that prepare() has
-    // set it from the factor above, and size the dry delay to match so the
-    // crossfade is phase-coherent and bit-perfect.
+    // Resolve the tape's engaged latency now that prepare() has measured it,
+    // and size the dry delay to match so the crossfade is phase-coherent and
+    // bit-perfect.
     tapeLatencySamples = std::max (0, tape.latencySamples());
     {
         const int maxDelay = std::max (1, tapeLatencySamples);
@@ -61,8 +61,8 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     // saturation that aliases at native rate; the wrap moves them to
     // oversampled rate. The comp core's internal oversampling path is never
     // engaged because Dusk Studio does the up/downsample around the chain.
-    // The tape core has its own internal oversampling (set above) so it
-    // processes at native rate AFTER this wrap.
+    // The tape has its own internal oversampling, so it processes at native
+    // rate AFTER this wrap.
     const int bsClamped = std::max (1, blockSize);
     oversampler.setFactor (currentOxFactor);
     oversampler.prepare (bsClamped);
@@ -281,8 +281,8 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     if (paramsRef != nullptr)
         tape.pushParameters (paramsRef->tape);
 
-    // The tape core handles its own internal oversampling (factor set in
-    // prepare()). It hard-bypasses (early-returns, no ramp), so we own the
+    // The tape handles its own internal oversampling. It hard-bypasses
+    // (early-returns, no ramp), so we own the
     // on/off crossfade here: blend the dry (pre-tape) signal against the wet
     // output over 20 ms. Tape is run only while audible - fully on, or still
     // fading - so a disengaged tape costs ~nothing. Chunked to tapeMaxBlock

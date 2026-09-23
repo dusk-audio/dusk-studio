@@ -983,9 +983,13 @@ MainComponent::MainComponent()
         closeVirtualKeyboard();
         closeAudioSettings();
         if (consoleView != nullptr)
+        {
             for (int t = 0; t < Session::kNumTracks; ++t)
                 if (auto* strip = consoleView->getStripComponent (t))
                     strip->closeCompEditorPopup();
+            if (auto* master = consoleView->getMasterStripComponent())
+                master->closeTapeEditor();
+        }
        #endif
     };
 

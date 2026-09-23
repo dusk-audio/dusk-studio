@@ -3,11 +3,36 @@
 #include "UtilityUnit.h"
 #if DUSKSTUDIO_HAS_DONOR_UNITS
  #include "SynthUnit.h"
- #include "TapeUnit.h"
 #endif
 
 namespace duskstudio::builtin
 {
+namespace
+{
+#if DUSKSTUDIO_HAS_DAF_UNITS
+// The knob tape unit's controls, which Tape Machine 2 took over under its id.
+const std::vector<LegacyParam> kTapeKnobParams
+{
+    { "machine",     "tapeMachine" },
+    { "speed",       "tapeSpeed" },
+    { "type",        "tapeType" },
+    { "signal_path", "signalPath" },
+    { "eq_standard", "eqStandard" },
+    { "input",       "inputGain" },
+    { "bias",        "bias" },
+    { "calibration", "calibration" },
+    { "output",      "outputGain" },
+    { "hpf",         "highpassFreq" },
+    { "lpf",         "lowpassFreq" },
+    { "wow",         "wowAmount" },
+    { "flutter",     "flutterAmount" },
+    { "noise",       "noiseAmount" },
+    { "auto_cal",    "autoCal" },
+    { "auto_comp",   "autoComp" },
+};
+#endif
+} // namespace
+
 const std::vector<UnitInfo>& registry()
 {
     static const std::vector<UnitInfo> units
@@ -17,10 +42,10 @@ const std::vector<UnitInfo>& registry()
 #if DUSKSTUDIO_HAS_DAF_UNITS
         { "dusk.builtin.reverb", "DuskVerb 2", "Fx|Reverb", false, nullptr, &createDuskVerb2 },
         { "dusk.builtin.delay", "Tape Echo 2", "Fx|Delay", false, nullptr, &createTapeEcho2 },
+        { "dusk.builtin.tape", "Tape Machine 2", "Fx|Distortion", false, nullptr,
+          &createTapeMachine2, &kTapeKnobParams },
 #endif
 #if DUSKSTUDIO_HAS_DONOR_UNITS
-        { "dusk.builtin.tape", "Tape", "Fx|Distortion", false,
-          [] () -> std::unique_ptr<BuiltinUnit> { return std::make_unique<TapeUnit>(); } },
         { "dusk.builtin.synth", "Sunset", "Instrument|Synth", true,
           [] () -> std::unique_ptr<BuiltinUnit> { return std::make_unique<SynthUnit>(); } },
 #endif

@@ -113,13 +113,13 @@ private:
 // distinguish the app's plug-in-editor units here. These are the effect units that
 // the native-UI app actually sends through the generic lane view.
 const char* const kGenericEffects[] = {
-    "dusk.builtin.utility", "dusk.builtin.tape",
+    "dusk.builtin.utility",
 };
 
 // The effects and the instrument, which reaches this view only through its section
 // fallback: twenty-six parameters is the worst case the layout meets.
 const char* const kGenericUnits[] = {
-    "dusk.builtin.utility", "dusk.builtin.tape", "dusk.builtin.synth",
+    "dusk.builtin.utility", "dusk.builtin.synth",
 };
 
 struct PickerUnit
@@ -128,10 +128,11 @@ struct PickerUnit
     const char* name;
 };
 
-// Both are DAF units whose editor-enabled app libraries report hasPluginEditor().
+// DAF units whose editor-enabled app libraries report hasPluginEditor().
 const PickerUnit kPluginEditorUnits[] = {
     { "dusk.builtin.delay", "Tape Echo 2" },
     { "dusk.builtin.reverb", "DuskVerb 2" },
+    { "dusk.builtin.tape", "Tape Machine 2" },
 };
 
 // The lane's editor rectangle, in design pixels: at the smallest window Dusk Studio
@@ -367,7 +368,7 @@ TEST_CASE ("the aux lane view's controls answer the pointer", "[builtin][imgui][
         lane.frame (*view, kRoomyLane);
 
         // Swiss, American: the right-hand button, below the caption.
-        const int machine = indexOf (slot, "machine");
+        const int machine = indexOf (slot, "tapeMachine");
         const auto* at = placementOf (*view, machine);
         REQUIRE (at != nullptr);
         REQUIRE (slot.getParamValue (machine) < 0.5f);

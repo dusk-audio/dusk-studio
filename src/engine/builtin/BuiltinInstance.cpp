@@ -72,7 +72,8 @@ bool BuiltinInstance::create (const BuiltinBundle& bundle, const std::string& pl
             errorOut = "no plug-in for built-in unit '" + id + "'";
             return false;
         }
-        dafUnit = std::make_unique<DafUnitInstance> (id, std::move (plugin));
+        dafUnit = std::make_unique<DafUnitInstance> (id, std::move (plugin),
+                                                     info->legacyParams);
         return true;
     }
 

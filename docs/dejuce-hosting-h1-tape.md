@@ -2,8 +2,10 @@
 
 # Hosting tower H1 — TapeMachine2 swap (executable spec)
 
-Status: **H1a–H1c implemented; H1d pending donor consolidation.** Branch
-`dejuce/hosting`. One PR for H1.
+Status: **H1a–H1c implemented; H1d implemented on `fix/696-donor-main-pin`**
+(the master tape runs the Tape Machine 2 DAF plug-in as a static-target
+built-in, its editor hosted through DafEditorHost; TapePanel deleted). H1a–H1c
+landed on `dejuce/hosting`.
 Parent plan: [dejuce-hosting-plan.md](dejuce-hosting-plan.md). Donor core:
 `plugins/TapeMachine/core/TapeMachineDSP.{hpp,cpp}` at the build's
 DUSK_PLUGINS_PATH (worktree @ 69f0431; PORT_NOTES.md in that dir is

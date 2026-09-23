@@ -18,7 +18,6 @@
 #include "AudioRegionEditor.h"
 #include "PianoRollComponent.h"
 #include "ChannelEqEditor.h"
-#include "TapePanel.h"
 #include "MidiBindingsPanel.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerPanel.h"
@@ -395,16 +394,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         const int h = eq.getHeight() > 0 ? eq.getHeight() : 360;
         modalShot (eq, w, h, "fx-01-eq.png", 300);
     }
-    {
-        auto& m = session.master();
-        const bool wasTapeEnabled = m.tapeEnabled.load (std::memory_order_relaxed);
-        m.tapeEnabled.store (true, std::memory_order_relaxed);
-        TapePanel tp (m, engine);
-        const int w = tp.getWidth()  > 0 ? tp.getWidth()  : 720;
-        const int h = tp.getHeight() > 0 ? tp.getHeight() : 420;
-        modalShot (tp, w, h, "fx-03-tape.png", 300);
-        m.tapeEnabled.store (wasTapeEnabled, std::memory_order_relaxed);
-    }
+    // fx-03-tape is Tape Machine 2's own editor, read back in captureNativePanels.
     // qg-01-startup and qg-02-audio-settings are native panels now, captured with
     // the other framework children in captureNativePanels below.
     {
@@ -596,6 +586,31 @@ void MainComponent::captureNativePanels (std::string outDir)
         if (self.consoleView != nullptr)
             if (auto* strip0 = self.consoleView->getStripComponent (0))
                 strip0->closeCompEditorForCapture();
+    } });
+    // The master tape's editor is Tape Machine 2's own, a window the panel capture
+    // cannot reach, so it is read back once painted.
+    auto tapeWasEnabled = std::make_shared<bool> (false);
+    steps->push_back ({ 400, [tapeWasEnabled] (MainComponent& self)
+    {
+        auto& m = self.session.master();
+        *tapeWasEnabled = m.tapeEnabled.load (std::memory_order_relaxed);
+        m.tapeEnabled.store (true, std::memory_order_relaxed);
+        if (self.consoleView != nullptr)
+            if (auto* master = self.consoleView->getMasterStripComponent())
+                master->openTapeEditor();
+    } });
+    steps->push_back ({ 1200, [outDir] (MainComponent& self)
+    {
+        if (self.consoleView != nullptr)
+            if (auto* master = self.consoleView->getMasterStripComponent())
+                master->captureTapeEditor (outDir + "/fx-03-tape.ppm");
+    } });
+    steps->push_back ({ 300, [tapeWasEnabled] (MainComponent& self)
+    {
+        if (self.consoleView != nullptr)
+            if (auto* master = self.consoleView->getMasterStripComponent())
+                master->closeTapeEditor();
+        self.session.master().tapeEnabled.store (*tapeWasEnabled, std::memory_order_relaxed);
     } });
     // One figure per built-in unit, each loaded onto track 1's insert and shot
     // through the same panel window the user opens.

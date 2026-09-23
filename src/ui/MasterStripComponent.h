@@ -10,6 +10,7 @@
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
 #include "SplitModuleButton.h"
+#include "imgui/DafEditorHost.h"
 #include "../foundation/MessageThread.h"
 
 namespace duskstudio
@@ -34,6 +35,18 @@ public:
     // Scenario-harness only: the mode label and whether the fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
+
+    // The tape's editor, which is Tape Machine 2's own. TAPE toggles it; these
+    // are for the harnesses that drive it without a click.
+    void openTapeEditor();
+    void closeTapeEditor();
+    bool isTapeEditorOpen() const noexcept;
+    void captureTapeEditor (const std::string& capturePath);
+    SplitModuleButton* tapeButtonForScenario() noexcept
+    {
+        return compactMode ? &tapeButton : tapeHeaderBtn.get();
+    }
+    bool tapeEditorDrawnForScenario() const noexcept;
 
 private:
     bool compactVu = false;
@@ -91,9 +104,13 @@ private:
     // opens the editor; right-clicking either side opens the section menu.
     SplitModuleButton tapeButton { "TAPE" };
     std::unique_ptr<SplitModuleButton> tapeHeaderBtn;
-    void openTapeMachineModal();
-    std::unique_ptr<class DimOverlay> tapeMachineDim;
-    juce::Component::SafePointer<juce::Component> tapeMachineModal;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::DafEditorHost::Geometry tapeEditorGeometry();
+    void finishTapeEditorClose();
+    std::unique_ptr<imgui::DafEditorHost> tapeEditor;
+    std::unique_ptr<class DimOverlay> tapeEditorDim;
+    PluginEditorHider tapeEditorHider;
+   #endif
 
     juce::Slider faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
     juce::Label  faderValueLabel;

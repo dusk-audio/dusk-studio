@@ -28,6 +28,15 @@ struct DafParamDesc
     std::vector<std::string> enumLabels;
 };
 
+// A control of the knob unit a DAF plug-in replaced under the same unit id, and
+// the plug-in parameter that took it over, so a session saved with the knob unit
+// restores into the plug-in. The ranges must agree.
+struct LegacyParam
+{
+    const char* knobId;
+    const char* symbol;
+};
+
 // What a plug-in's editor tells the host as the user works it. Message thread.
 struct DafEditorCallbacks
 {
@@ -123,4 +132,5 @@ public:
 // Defined by each plug-in's bridge, in the builds that compile it.
 std::unique_ptr<DafPlugin> createTapeEcho2();
 std::unique_ptr<DafPlugin> createDuskVerb2();
+std::unique_ptr<DafPlugin> createTapeMachine2();
 } // namespace duskstudio::builtin

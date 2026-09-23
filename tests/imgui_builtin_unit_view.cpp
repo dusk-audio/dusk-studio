@@ -122,7 +122,7 @@ std::vector<float> snapshot (const builtin::NativeBuiltinSlot& slot)
 // native-UI app actually sends through the generic parameter-table editor.
 const char* const kGenericUnits[] =
 {
-    "dusk.builtin.utility", "dusk.builtin.tape", "dusk.builtin.synth",
+    "dusk.builtin.utility", "dusk.builtin.synth",
 };
 } // namespace
 

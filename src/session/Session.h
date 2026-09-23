@@ -1093,17 +1093,19 @@ struct AuxLane
     std::array<HardwareInsertParams, AuxLaneParams::kMaxLanePlugins> hardwareInserts;
 };
 
-// Master tape emulation controls. Defaults mirror the tape core's own
-// defaults so a session that predates the "tape" JSON object loads with the
-// same character it had when the settings lived in the plugin state blob.
+// Master tape controls: every Tape Machine 2 parameter, in the plug-in's own
+// ranges. Defaults mirror the plug-in's defaults so a session that predates the
+// "tape" JSON object loads with the same character it had when the settings
+// lived in the plugin state blob.
 struct TapeParams
 {
-    std::atomic<int>   machine     { 0 };      // 0 Swiss 800, 1 Classic 102
-    std::atomic<int>   speed       { 1 };      // 0 7.5, 1 15, 2 30 IPS
-    std::atomic<int>   type        { 0 };      // 0 456, 1 GP9, 2 911, 3 250
+    std::atomic<int>   machine     { 0 };      // 0 Swiss, 1 American
+    std::atomic<int>   speed       { 1 };      // 0 7.5, 1 15, 2 30, 3 3.75 IPS
+    std::atomic<int>   type        { 0 };      // 0 456, 1 GP9, 2 900, 3 250
     std::atomic<int>   signalPath  { 0 };      // 0 Repro, 1 Sync, 2 Input, 3 Thru
-    std::atomic<int>   eqStandard  { 0 };      // 0 NAB, 1 CCIR, 2 AES
-    std::atomic<int>   calibration { 0 };      // 0..3 -> +0/+3/+6/+9 dB
+    std::atomic<int>   eqStandard  { 0 };      // 0 NAB, 1 CCIR
+    std::atomic<int>   calibration { 0 };      // 0..3 -> +3/+6/+7.5/+9 dB
+    std::atomic<int>   headWidth   { 1 };      // 0 1/4", 1 1/2", 2 1" (American only)
 
     std::atomic<float> inputGainDb  { 0.0f };      // -12..+12; also sets tape drive
     std::atomic<float> bias         { 50.0f };     // 0..100 %, ignored while autoCal
@@ -1116,6 +1118,28 @@ struct TapeParams
 
     std::atomic<bool>  autoCal  { true };
     std::atomic<bool>  autoComp { true };
+    std::atomic<bool>  noiseEnabled { false };
+
+    // American front-panel switches; ignored on the Swiss deck.
+    std::atomic<bool>  crosstalk    { true };
+    std::atomic<bool>  wowFlutterOn { true };
+    std::atomic<bool>  transformer  { true };
+
+    // The Advanced page's repro-head EQ, -12..+12 dB.
+    std::atomic<float> reproLfDb  { 0.0f };
+    std::atomic<float> reproLmfDb { 0.0f };
+    std::atomic<float> reproHmfDb { 0.0f };
+    std::atomic<float> reproHfDb  { 0.0f };
+
+    // Factory-preset calibration the plug-in hides from its controls; its
+    // presets set them, so a session must keep them to keep the preset.
+    std::atomic<float> levelHmfTrimDb { 0.0f };    // -24..+24
+    std::atomic<float> levelHfTrimDb  { 0.0f };    // -24..+24
+    std::atomic<float> lowpassQ       { 0.707f };  // 0.5..2.5
+    std::atomic<float> progHmfTrimDb  { 0.0f };    // -24..+24
+    std::atomic<float> progHfTrimDb   { 0.0f };    // -24..+24
+    std::atomic<float> reproSubBellDb { 0.0f };    // -12..+12
+    std::atomic<float> progLfTrimDb   { 0.0f };    // -24..+24
 };
 
 struct MasterBusParams
