@@ -953,6 +953,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                  owner.getWidth(), owner.getHeight(), stack.back()->dimmedForScenario() ? 1 : 0 };
     }
 
+    bool modalHasKeyboardFocus() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        auto* body = stack.empty() ? nullptr : stack.back()->getBody();
+        return body != nullptr && body->hasKeyboardFocus (true);
+    }
+
+    std::vector<std::string> contextMenuItems() const override { return contextMenuItemsForScenario(); }
+
     // Just inside the window's top-left corner, which a centred body and its
     // frame leave uncovered.
     bool clickModalBackdrop() override
@@ -1451,10 +1460,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index) : nullptr;
             return strip != nullptr && click (strip, strip->namePointForScenario());
         }
-        if (kind == StripKind::Aux && (control == "name" || control == "mute"))
+        if (kind == StripKind::Aux && (control == "name" || control == "mute" || control == "fader"))
         {
             auto* lane = owner.auxView != nullptr ? owner.auxView->getLaneComponent (index) : nullptr;
-            return lane != nullptr && click (lane, lane->controlPointForScenario (control == "mute"));
+            return lane != nullptr && click (lane, lane->controlPointForScenario (control));
         }
         return false;
     }

@@ -1,6 +1,6 @@
 #include "GuiHost.h"
 #include "AppConfig.h"
-#include "DuskStudioLookAndFeel.h"
+#include "FourKColours.h"
 #include "../foundation/Fs.h"
 
 #include "../engine/AudioEngine.h"
@@ -7009,17 +7009,29 @@ const ScenarioRegistrar markerGestures { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runMarkerGestures (host, ctx); }
 } };
 
-// A modal sits centred over a dimmed window, and Escape or a click on the dim
-// outside it closes it.
+// A modal sits centred over a dimmed window and holds the keyboard; Escape, bare
+// and wherever it lands, or a click on the dim outside it closes it. A native
+// panel the modal pushes aside hands the keyboard back late, and the modal keeps
+// it all the same.
 std::optional<ScenarioResult> runModalDismissal (GuiHost& host, ScenarioContext& ctx)
 {
-    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
-    ctx.cleanup ([&host] { drainModals (host); });
+    if (! host.modalStackEmpty() || host.virtualKeyboardOpen())
+        return ScenarioResult::skip ("requires no modal and no virtual keyboard");
+    ctx.cleanup ([&host]
+    {
+        host.closeVirtualKeyboard();
+        drainModals (host);
+    });
     auto steps = std::make_shared<std::vector<Step>>();
     const auto open = [&host, &ctx, steps]
     {
         steps->push_back ({ 200, [&host, &ctx]
         { ctx.expect (host.pressKey ("shift + /", '?'), "the shortcuts key was not handled"); } });
+    };
+    const auto closedBy = [&host, &ctx, steps] (const std::string& how)
+    {
+        steps->push_back ({ 200, [&host, &ctx, how]
+        { ctx.expect (host.modalStackEmpty(), how + " did not close the modal"); } });
     };
     open();
     steps->push_back ({ 200, [&host, &ctx]
@@ -7030,25 +7042,54 @@ std::optional<ScenarioResult> runModalDismissal (GuiHost& host, ScenarioContext&
                     && std::abs ((layout[1] + layout[3] / 2) - layout[5] / 2) <= 1,
                     "the modal is not centred in the window");
         ctx.expect (layout[6] == 1, "the window behind the modal is not dimmed");
+        ctx.expect (host.modalHasKeyboardFocus(), "the modal did not take the keyboard");
         ctx.expect (host.pressPeerKey ("escape"), "Escape was not handled");
     } });
+    closedBy ("Escape");
+    // Escape delivered to the window behind the modal rather than to the modal.
+    open();
     steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.modalStackEmpty(), "Escape did not close the modal"); } });
+    {
+        if (! ctx.expect (host.shortcutsOpen(), "? did not reopen Keyboard Shortcuts")) return;
+        host.pressKey ("shift + escape");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        if (! ctx.expect (host.shortcutsOpen(), "Shift+Escape at the window closed the modal")) return;
+        ctx.expect (host.pressKey ("escape"), "Escape at the window was not handled");
+    } });
+    closedBy ("Escape at the window");
     open();
     steps->push_back ({ 200, [&host, &ctx]
     {
         if (! ctx.expect (host.shortcutsOpen(), "? did not reopen Keyboard Shortcuts")) return;
         ctx.expect (host.clickModalBackdrop(), "the dimmed window did not take a click");
     } });
+    closedBy ("a click outside the modal");
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.modalStackEmpty(), "a click outside the modal did not close it"); } });
+    { ctx.expect (host.pressKey ("K", 'k'), "K was not handled"); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        if (! ctx.expect (host.virtualKeyboardOpen(), "K did not open the virtual keyboard")) return;
+        ctx.expect (host.pressKey ("shift + /", '?'), "the shortcuts key was not handled over the keyboard");
+    } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        if (! ctx.expect (host.shortcutsOpen() && ! host.virtualKeyboardOpen(),
+                          "the modal did not push the virtual keyboard aside")) return;
+        ctx.expect (host.modalHasKeyboardFocus(), "the closing virtual keyboard took the keyboard from the modal");
+        ctx.expect (host.pressPeerKey ("escape"), "Escape was not handled");
+    } });
+    closedBy ("Escape after the virtual keyboard closed");
+   #endif
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
 
 const ScenarioRegistrar modalDismissal { Scenario {
     "gui.modal_escape_and_backdrop", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
-    {}, {}, 10000,
+    {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runModalDismissal (host, ctx); }
 } };
 
@@ -7081,7 +7122,15 @@ std::optional<ScenarioResult> runTrackNameAndColour (GuiHost& host, ScenarioCont
                     "the strip name did not take a right-click");
     } });
     steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.clickContextMenuItem ("Blue"), "the track colour menu has no Blue"); } });
+    {
+        const std::vector<std::string> colours { "Red", "Orange", "Amber", "Green", "Cyan", "Blue", "Purple", "Tan" };
+        const auto items = host.contextMenuItems();
+        const auto header = std::find (items.begin(), items.end(), "Track colour");
+        ctx.expect (items.end() - header > 9 && std::vector<std::string> (header + 1, header + 9) == colours
+                    && header[9] == "-",
+                    "the colour menu does not offer exactly the eight track colours");
+        ctx.expect (host.clickContextMenuItem ("Blue"), "the track colour menu has no Blue");
+    } });
     steps->push_back ({ 200, [&host, &ctx, &track]
     {
         ctx.expect (track.colour.getARGB() == fourKColors::kHpfBlue, "Blue did not colour the track");
@@ -7098,16 +7147,19 @@ const ScenarioRegistrar trackNameAndColour { Scenario {
 } };
 
 // The aux lane's return strip: double-click the title to rename, the mute
-// button, and a return fader running from off to +12 dB.
+// button, and a return fader running from off to +12 dB that sets the return
+// level. The drawn meter is not checked here.
 std::optional<ScenarioResult> runAuxReturnStrip (GuiHost& host, ScenarioContext& ctx)
 {
     if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
     auto& lane = ctx.session().auxLane (0);
     ctx.keep (lane.params.mute);
+    ctx.keep (lane.params.returnLevelDb);
     ctx.cleanup ([&lane, name = lane.name] { lane.name = name; });
     keepStage (host, ctx);
     host.switchToStage (GuiHost::Stage::Aux);
     lane.params.mute.store (false);
+    lane.params.returnLevelDb.store (-60.0f);
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 300, [&host, &ctx]
     {
@@ -7134,8 +7186,26 @@ std::optional<ScenarioResult> runAuxReturnStrip (GuiHost& host, ScenarioContext&
         ctx.expect (lane.params.mute.load(), "the mute button did not mute the lane");
         ctx.expect (host.clickStripControl (GuiHost::StripKind::Aux, 0, "mute", 1, false), "the mute button did not take a click");
     } });
+    steps->push_back ({ 200, [&host, &ctx, &lane]
+    {
+        ctx.expect (! lane.params.mute.load(), "a second click did not unmute the lane");
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Aux, 0, "fader", 1, false),
+                    "the return fader did not take a click");
+    } });
+    // Midway up the track, which the fader's skew puts near -12 dB. Held back
+    // far enough that the double-click below does not count this click.
+    steps->push_back ({ 700, [&host, &ctx, &lane]
+    {
+        const float level = lane.params.returnLevelDb.load();
+        ctx.expect (level > -40.0f && level < 0.0f, "a click on the return fader did not set the return level");
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Aux, 0, "fader", 2, false),
+                    "the return fader did not take a double-click");
+    } });
     steps->push_back ({ 200, [&ctx, &lane]
-    { ctx.expect (! lane.params.mute.load(), "a second click did not unmute the lane"); } });
+    {
+        ctx.expect (std::abs (lane.params.returnLevelDb.load()) < 1.0e-3f,
+                    "a double-click did not return the fader to 0 dB");
+    } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -7229,7 +7299,9 @@ std::optional<ScenarioResult> runMidiBindingsPanel (GuiHost& host, ScenarioConte
     steps->push_back ({ 200, [&host, &ctx, button]
     {
         const auto text = host.confirmationText();
-        ctx.expect (! text.empty() && text[0] == "Clear all MIDI bindings", "Clear all did not ask first");
+        ctx.expect (text == std::vector<std::string> { "Clear all MIDI bindings",
+                                                       "Remove every MIDI binding? This cannot be undone." },
+                    "Clear all did not ask first");
         button ("Cancel");
     } });
     steps->push_back ({ 200, [&ctx, bound, button]
@@ -7252,17 +7324,20 @@ std::optional<ScenarioResult> runMidiBindingsPanel (GuiHost& host, ScenarioConte
         button ("Import...");
     } });
     steps->push_back ({ 300, [browse, broken] { browse (broken, "Open"); } });
-    steps->push_back ({ 300, [&host, &ctx, bound, button]
+    steps->push_back ({ 300, [&host, &ctx, broken, bound, button]
     {
-        ctx.expect (host.modalText().rfind ("Import failed\n", 0) == 0, "an unreadable import was not reported");
+        ctx.expect (host.modalText() == "Import failed\nCould not read bindings from " + broken.string()
+                                        + ". File is missing, malformed, or written by a newer version of Dusk Studio.",
+                    "an unreadable import was not reported");
         ctx.expect (bound().size() == 1, "a failed import changed the bindings");
         button ("OK");
     } });
     steps->push_back ({ 200, [button] { button ("Export..."); } });
     steps->push_back ({ 300, [browse, taken] { browse (taken, "Save"); } });
-    steps->push_back ({ 300, [&host, &ctx, button]
+    steps->push_back ({ 300, [&host, &ctx, taken, button]
     {
-        ctx.expect (host.modalText().rfind ("Export failed\n", 0) == 0, "an export that could not be written was not reported");
+        ctx.expect (host.modalText() == "Export failed\nCould not write to " + taken.string(),
+                    "an export that could not be written was not reported");
         button ("OK");
     } });
     steps->push_back ({ 200, [&host, &ctx]

@@ -183,7 +183,7 @@ In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` become
 
 | #   | Name                | Description                                                                                                 |
 | --- | ------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 1   | Name                | Click to rename; right-click for the colour palette.                                                        |
+| 1   | Name                | Double-click to rename; right-click for the eight track colours.                                            |
 | 2   | Insert slot         | One plugin or one hardware insert. 20 ms equal-power crossfade between modes.                               |
 | 3   | HPF                 | High-pass filter, 20–300 Hz. LED green when on.                                                             |
 | 4   | LPF                 | Low-pass filter, 3 kHz–20 kHz.                                                                              |
@@ -778,7 +778,7 @@ The four bands are:
 
 Each knob is a rotary slider. Drag up to increase, down to decrease. Use a vertical drag for gain, a horizontal drag for frequency. There are no numeric text boxes on the knobs; the values display below.
 
-At 2× or 4× **Effect oversampling** the EQ does not cramp near Nyquist: a boost placed high keeps its shape up to 20 kHz. At the default 1×, a boost set above about 10 kHz rolls off early towards the top of the band, by several dB at 20 kHz for a band at 13–16 kHz. Raise Effect oversampling in **Settings → Advanced** when that top octave matters.
+At the default 1× **Effect oversampling** the HM bell cramps near Nyquist. An HM boost at the top of its range falls short of its true shape above about 12 kHz, and a +12 dB boost there reads about 5 to 7 dB low at 20 kHz. The HF shelf does not cramp at 1×. At 2× or 4× the HM bell keeps its shape up to 20 kHz. At a 44.1 kHz session rate, 2× and 4× also take about 1 dB off the very top of the band, around 20 kHz, in each oversampled stage, whatever the EQ is set to; at 48 kHz they do not. Raise Effect oversampling in the **Advanced** section of **Settings → Audio…** when that top octave matters.
 
 The band curves, the filter slopes and the console character are calibrated against measurements of the hardware at each marked position, so a setting reads as the console's own rather than as a textbook filter at the same frequency. The console character is always on, at a fixed light amount, whether the EQ section is engaged or not; a silent channel stays silent through it.
 

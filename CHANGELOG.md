@@ -112,9 +112,11 @@ publishes.
 
 ### Fixed
 
-- **Escape closes a dialog even after the window has taken the keyboard
-  back.** Closing a native panel could return focus to the main window after
-  a dialog opened, and Escape then did nothing until the dialog was clicked.
+- **A dialog keeps the keyboard when a native panel gives it back.** A dialog
+  opened while the virtual keyboard, the audio settings or another native panel
+  had the keyboard lost it to the main window a moment later: Return no longer
+  pressed the dialog's button, typing went astray, and Escape did nothing until
+  the dialog was clicked.
 - **Right-clicking a track's name opens its colour menu.** The name label
   said so in its tooltip, but the click stopped at the label; only the empty
   parts of the strip opened the menu.
