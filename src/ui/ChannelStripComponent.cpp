@@ -208,6 +208,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     nameLabel.setEditable (false, true, false);  // single-click no, double-click YES, no submit-on-empty
     disableLabelEditorPopup (nameLabel);
     nameLabel.setTooltip ("Double-click to rename, right-click for colour");
+    nameLabel.addMouseListener (this, false);
     nameLabel.onTextChange = [this]
     {
         auto txt = nameLabel.getText().trim();
@@ -5564,8 +5565,6 @@ void ChannelStripComponent::applyTrackColour (juce::Colour c)
 
 void ChannelStripComponent::showColourMenu()
 {
-    // Eight 4K-palette presets for fast picking, plus a "Custom..." entry that
-    // pops a JUCE ColourSelector for fine-grained choice.
     const std::pair<const char*, std::uint32_t> presets[] = {
         { "Red",        fourKColors::kHfRed     },
         { "Orange",     fourKColors::kHmOrange  },

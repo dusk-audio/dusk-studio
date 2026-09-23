@@ -1,5 +1,6 @@
 #include "GuiHost.h"
 #include "AppConfig.h"
+#include "FourKColours.h"
 #include "../foundation/Fs.h"
 
 #include "../engine/AudioEngine.h"
@@ -7006,6 +7007,350 @@ const ScenarioRegistrar markerGestures { Scenario {
     "gui.marker_key_prompt_and_pill", { "gui", "keyboard", "marker" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMarkerGestures (host, ctx); }
+} };
+
+// A modal sits centred over a dimmed window and holds the keyboard; Escape, bare
+// and wherever it lands, or a click on the dim outside it closes it. A native
+// panel the modal pushes aside hands the keyboard back late, and the modal keeps
+// it all the same.
+std::optional<ScenarioResult> runModalDismissal (GuiHost& host, ScenarioContext& ctx)
+{
+    if (! host.modalStackEmpty() || host.virtualKeyboardOpen())
+        return ScenarioResult::skip ("requires no modal and no virtual keyboard");
+    ctx.cleanup ([&host]
+    {
+        host.closeVirtualKeyboard();
+        drainModals (host);
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto open = [&host, &ctx, steps]
+    {
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.pressKey ("shift + /", '?'), "the shortcuts key was not handled"); } });
+    };
+    const auto closedBy = [&host, &ctx, steps] (const std::string& how)
+    {
+        steps->push_back ({ 200, [&host, &ctx, how]
+        { ctx.expect (host.modalStackEmpty(), how + " did not close the modal"); } });
+    };
+    open();
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        const auto layout = host.modalLayout();
+        if (! ctx.expect (host.shortcutsOpen() && layout.size() == 7, "? did not open Keyboard Shortcuts")) return;
+        ctx.expect (std::abs ((layout[0] + layout[2] / 2) - layout[4] / 2) <= 1
+                    && std::abs ((layout[1] + layout[3] / 2) - layout[5] / 2) <= 1,
+                    "the modal is not centred in the window");
+        ctx.expect (layout[6] == 1, "the window behind the modal is not dimmed");
+        ctx.expect (host.modalHasKeyboardFocus(), "the modal did not take the keyboard");
+        ctx.expect (host.pressPeerKey ("escape"), "Escape was not handled");
+    } });
+    closedBy ("Escape");
+    // Escape delivered to the window behind the modal rather than to the modal.
+    open();
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        if (! ctx.expect (host.shortcutsOpen(), "? did not reopen Keyboard Shortcuts")) return;
+        host.pressKey ("shift + escape");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        if (! ctx.expect (host.shortcutsOpen(), "Shift+Escape at the window closed the modal")) return;
+        ctx.expect (host.pressKey ("escape"), "Escape at the window was not handled");
+    } });
+    closedBy ("Escape at the window");
+    open();
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        if (! ctx.expect (host.shortcutsOpen(), "? did not reopen Keyboard Shortcuts")) return;
+        ctx.expect (host.clickModalBackdrop(), "the dimmed window did not take a click");
+    } });
+    closedBy ("a click outside the modal");
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.pressKey ("K", 'k'), "K was not handled"); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        if (! ctx.expect (host.virtualKeyboardOpen(), "K did not open the virtual keyboard")) return;
+        ctx.expect (host.pressKey ("shift + /", '?'), "the shortcuts key was not handled over the keyboard");
+    } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        if (! ctx.expect (host.shortcutsOpen() && ! host.virtualKeyboardOpen(),
+                          "the modal did not push the virtual keyboard aside")) return;
+        ctx.expect (host.modalHasKeyboardFocus(), "the closing virtual keyboard took the keyboard from the modal");
+        ctx.expect (host.pressPeerKey ("escape"), "Escape was not handled");
+    } });
+    closedBy ("Escape after the virtual keyboard closed");
+   #endif
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar modalDismissal { Scenario {
+    "gui.modal_escape_and_backdrop", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runModalDismissal (host, ctx); }
+} };
+
+// Double-clicking the strip's name renames the track; right-clicking it offers
+// the track colours, and the one picked also colours the track's regions.
+std::optional<ScenarioResult> runTrackNameAndColour (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion region;
+    if (auto early = seedTapeRegion (host, ctx, region)) return early;
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    auto& track = ctx.session().track (0);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Channel, 0, "name", 2, false),
+                    "the strip name did not take a double-click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (host.pressPeerKey ("command + A"), "the name editor did not accept Select All");
+        for (const char character : std::string ("vox"))
+            ctx.expect (host.pressPeerKey (std::string (1, character), character), "the name editor rejected a character");
+        ctx.expect (host.pressPeerKey ("return"), "the name editor did not accept Return");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &track]
+    {
+        ctx.expect (track.name == "vox", "double-clicking the name did not rename the track");
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Channel, 0, "name", 1, true),
+                    "the strip name did not take a right-click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        const std::vector<std::string> colours { "Red", "Orange", "Amber", "Green", "Cyan", "Blue", "Purple", "Tan" };
+        const auto items = host.contextMenuItems();
+        const auto header = std::find (items.begin(), items.end(), "Track colour");
+        ctx.expect (items.end() - header > 9 && std::vector<std::string> (header + 1, header + 9) == colours
+                    && header[9] == "-",
+                    "the colour menu does not offer exactly the eight track colours");
+        ctx.expect (host.clickContextMenuItem ("Blue"), "the track colour menu has no Blue");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &track]
+    {
+        ctx.expect (track.colour.getARGB() == fourKColors::kHpfBlue, "Blue did not colour the track");
+        ctx.expect (host.tapeRegionColour (0, 0) == fourKColors::kHpfBlue, "the track's region did not take its colour");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar trackNameAndColour { Scenario {
+    "gui.track_name_and_colour", { "gui", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTrackNameAndColour (host, ctx); }
+} };
+
+// The aux lane's return strip: double-click the title to rename, the mute
+// button, and a return fader running from off to +12 dB that sets the return
+// level. The drawn meter is not checked here.
+std::optional<ScenarioResult> runAuxReturnStrip (GuiHost& host, ScenarioContext& ctx)
+{
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
+    auto& lane = ctx.session().auxLane (0);
+    ctx.keep (lane.params.mute);
+    ctx.keep (lane.params.returnLevelDb);
+    ctx.cleanup ([&lane, name = lane.name] { lane.name = name; });
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Aux);
+    lane.params.mute.store (false);
+    lane.params.returnLevelDb.store (-60.0f);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        const auto range = host.auxReturnRange (0);
+        ctx.expect (range.size() == 2 && range[0] <= -90.0 && std::abs (range[1] - 12.0) < 1.0e-6,
+                    "the return fader does not run from off to +12 dB");
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Aux, 0, "name", 2, false),
+                    "the lane title did not take a double-click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (host.pressPeerKey ("command + A"), "the title editor did not accept Select All");
+        for (const char character : std::string ("verb"))
+            ctx.expect (host.pressPeerKey (std::string (1, character), character), "the title editor rejected a character");
+        ctx.expect (host.pressPeerKey ("return"), "the title editor did not accept Return");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &lane]
+    {
+        ctx.expect (lane.name == "verb", "double-clicking the title did not rename the lane");
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Aux, 0, "mute", 1, false), "the mute button did not take a click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &lane]
+    {
+        ctx.expect (lane.params.mute.load(), "the mute button did not mute the lane");
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Aux, 0, "mute", 1, false), "the mute button did not take a click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &lane]
+    {
+        ctx.expect (! lane.params.mute.load(), "a second click did not unmute the lane");
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Aux, 0, "fader", 1, false),
+                    "the return fader did not take a click");
+    } });
+    // Midway up the track, which the fader's skew puts near -12 dB. Held back
+    // far enough that the double-click below does not count this click.
+    steps->push_back ({ 700, [&host, &ctx, &lane]
+    {
+        const float level = lane.params.returnLevelDb.load();
+        ctx.expect (level > -40.0f && level < 0.0f, "a click on the return fader did not set the return level");
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Aux, 0, "fader", 2, false),
+                    "the return fader did not take a double-click");
+    } });
+    steps->push_back ({ 200, [&ctx, &lane]
+    {
+        ctx.expect (std::abs (lane.params.returnLevelDb.load()) < 1.0e-3f,
+                    "a double-click did not return the fader to 0 dB");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar auxReturnStrip { Scenario {
+    "gui.aux_return_strip", { "gui", "aux" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAuxReturnStrip (host, ctx); }
+} };
+
+// The MIDI Bindings panel lists each binding with a Remove button, exports and
+// imports the set, asks before Clear all, and reports an export or import it
+// cannot complete.
+std::optional<ScenarioResult> runMidiBindingsPanel (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("built without native settings UI");
+   #else
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const auto publish = [&session] (std::vector<MidiBinding> binds)
+    {
+        session.midiBindings.mutate ([&binds] (std::vector<MidiBinding>& current) { current = binds; });
+    };
+    ctx.cleanup ([&host, publish, original = session.midiBindings.current()]
+    {
+        drainModals (host);
+        host.closeAudioSettings();
+        publish (original);
+    });
+    MidiBinding fader;
+    fader.channel = 1; fader.dataNumber = 7; fader.target = MidiBindingTarget::TrackFader; fader.targetIndex = 0;
+    MidiBinding pan;
+    pan.channel = 2; pan.dataNumber = 10; pan.target = MidiBindingTarget::TrackPan; pan.targetIndex = 1;
+    publish ({ fader, pan });
+    const auto row = [&engine] (const MidiBinding& b)
+    {
+        return describeBindingTarget (b, &engine).toStdString() + " | " + describeBindingSource (b).toStdString();
+    };
+    const auto exported = ctx.tempDir() / "bindings.json";
+    const auto taken = ctx.tempDir() / "taken.json";
+    const auto broken = ctx.tempDir() / "broken.json";
+    // A folder holding a file: an empty one is simply replaced by the export.
+    std::filesystem::create_directory (taken);
+    std::ofstream (taken / "keep") << "occupied";
+    std::ofstream (broken) << "not a bindings preset";
+    const auto browse = [&host, &ctx] (const std::filesystem::path& path, const std::string& accept)
+    {
+        if (! ctx.expect (host.focusFileName(), "the file browser has no name field")) return;
+        host.pressPeerKey ("command + A");
+        for (const char character : path.string())
+            host.pressPeerKey (character == ' ' ? "Space" : std::string (1, character), character);
+        ctx.expect (host.clickModalButton (accept), "the file browser has no " + accept + " button");
+    };
+    const auto button = [&host, &ctx] (const std::string& label)
+    { ctx.expect (host.clickModalButton (label), "no " + label + " button on the top modal"); };
+    const auto bound = [&session] { return session.midiBindings.current(); };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "native audio settings did not open"); } });
+    steps->push_back ({ 400, [&host, &ctx]
+    { ctx.expect (host.clickAudioSettingsControl ("midi-bindings"), "MIDI Bindings button was not drawn"); } });
+    steps->push_back ({ 300, [&host, &ctx, row, fader, pan]
+    {
+        ctx.expect (host.midiBindingRows() == std::vector<std::string> { row (fader), row (pan) },
+                    "the panel does not list each binding's target and source");
+        ctx.expect (host.clickMidiBindingRemove (0), "the first row has no Remove button");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, row, pan, bound, button]
+    {
+        ctx.expect (bound().size() == 1 && bound()[0].target == MidiBindingTarget::TrackPan
+                    && host.midiBindingRows() == std::vector<std::string> { row (pan) },
+                    "Remove did not remove only its own binding");
+        button ("Export...");
+    } });
+    steps->push_back ({ 300, [browse, exported] { browse (exported, "Save"); } });
+    steps->push_back ({ 300, [&ctx, exported, bound, button]
+    {
+        std::ifstream input (exported);
+        const std::string json ((std::istreambuf_iterator<char> (input)), std::istreambuf_iterator<char>());
+        const auto parsed = deserializeBindingsPreset (json);
+        ctx.expect (parsed.has_value() && parsed->size() == 1 && (*parsed)[0].target == MidiBindingTarget::TrackPan
+                    && (*parsed)[0].dataNumber == 10 && bound().size() == 1,
+                    "Export did not write the binding set");
+        button ("Clear all");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, button]
+    {
+        const auto text = host.confirmationText();
+        ctx.expect (text == std::vector<std::string> { "Clear all MIDI bindings",
+                                                       "Remove every MIDI binding? This cannot be undone." },
+                    "Clear all did not ask first");
+        button ("Cancel");
+    } });
+    steps->push_back ({ 200, [&ctx, bound, button]
+    {
+        ctx.expect (bound().size() == 1, "cancelling Clear all removed bindings");
+        button ("Clear all");
+    } });
+    steps->push_back ({ 200, [button] { button ("Clear all"); } });
+    steps->push_back ({ 200, [&host, &ctx, bound, button]
+    {
+        ctx.expect (bound().empty() && host.midiBindingRows().empty(), "confirming Clear all left bindings");
+        button ("Import...");
+    } });
+    steps->push_back ({ 300, [browse, exported] { browse (exported, "Open"); } });
+    steps->push_back ({ 300, [&host, &ctx, row, pan, bound, button]
+    {
+        ctx.expect (bound().size() == 1 && bound()[0].target == MidiBindingTarget::TrackPan
+                    && host.midiBindingRows() == std::vector<std::string> { row (pan) },
+                    "Import did not load the exported set");
+        button ("Import...");
+    } });
+    steps->push_back ({ 300, [browse, broken] { browse (broken, "Open"); } });
+    steps->push_back ({ 300, [&host, &ctx, broken, bound, button]
+    {
+        ctx.expect (host.modalText() == "Import failed\nCould not read bindings from " + broken.string()
+                                        + ". File is missing, malformed, or written by a newer version of Dusk Studio.",
+                    "an unreadable import was not reported");
+        ctx.expect (bound().size() == 1, "a failed import changed the bindings");
+        button ("OK");
+    } });
+    steps->push_back ({ 200, [button] { button ("Export..."); } });
+    steps->push_back ({ 300, [browse, taken] { browse (taken, "Save"); } });
+    steps->push_back ({ 300, [&host, &ctx, taken, button]
+    {
+        ctx.expect (host.modalText() == "Export failed\nCould not write to " + taken.string(),
+                    "an export that could not be written was not reported");
+        button ("OK");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.midiBindingsOpen(), "a failed export closed the panel"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar midiBindingsPanel { Scenario {
+    "gui.midi_bindings_panel", { "gui", "settings", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMidiBindingsPanel (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runPianoRollNavigation (GuiHost& host, ScenarioContext& ctx)

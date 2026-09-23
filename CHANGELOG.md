@@ -112,6 +112,16 @@ publishes.
 
 ### Fixed
 
+- **A dialog keeps the keyboard when a native panel gives it back.** A dialog
+  opened while the virtual keyboard, the audio settings or another native panel
+  had the keyboard lost it to the main window a moment later: Return no longer
+  pressed the dialog's button, typing went astray, and Escape did nothing until
+  the dialog was clicked.
+- **Right-clicking a track's name opens its colour menu.** The name label
+  said so in its tooltip, but the click stopped at the label; only the empty
+  parts of the strip opened the menu.
+- **MIDI Bindings > Clear all asks before removing every binding.** It used
+  to clear them at once, with no way back.
 - **Take cycling and nudges keep going on the selected region** (#701). Every
   edit on the tape strip used to drop the selection, so a second Alt+T,
   Alt+Shift+T or Cmd+Left/Right did nothing until the region was clicked

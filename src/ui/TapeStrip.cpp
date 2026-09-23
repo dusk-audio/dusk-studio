@@ -673,6 +673,13 @@ void TapeStrip::clearAllSelections() noexcept
     heldSelectionHistory.clear();
 }
 
+std::uint32_t TapeStrip::regionAccentForScenario (int track, int region) const
+{
+    const auto& regions = session.track (track).regions;
+    return region >= 0 && region < (int) regions.size()
+               ? regionAccent (track, regions[(size_t) region]).getARGB() : 0u;
+}
+
 std::vector<std::string> TapeStrip::undoHistory() const
 {
     auto& um = engine.getUndoManager();
@@ -3175,20 +3182,14 @@ void TapeStrip::paint (juce::Graphics& g)
 
             const bool isSelected = isRegionSelected (t, ri);
 
-            // Region colour - per-region override when set, otherwise
-            // the parent track's colour. customColour defaults to
-            // transparent so the test below cleanly distinguishes
-            // "user picked a colour" from "leave it on track default".
-            const auto regionAccent = region.customColour.isTransparent()
-                ? session.track (t).colour
-                : region.customColour;
+            const auto accent = regionAccent (t, region);
 
             // Block fill - region colour, slightly darker so the row label
             // still pops. Selected regions get a brighter mix so they read
             // as the focused thing. Muted regions get desaturated + half
             // alpha so they read as "skipped" without disappearing.
-            auto fillColour = regionAccent.withMultipliedSaturation (0.85f)
-                                            .withMultipliedBrightness (0.65f);
+            auto fillColour = accent.withMultipliedSaturation (0.85f)
+                                      .withMultipliedBrightness (0.65f);
             if (isSelected) fillColour = fillColour.brighter (0.30f);
             if (region.muted)
                 fillColour = fillColour.withMultipliedSaturation (0.20f)
@@ -3204,7 +3205,7 @@ void TapeStrip::paint (juce::Graphics& g)
             }
             else
             {
-                g.setColour (regionAccent.withAlpha (0.9f));
+                g.setColour (accent.withAlpha (0.9f));
                 g.drawRoundedRectangle (regionRect.toFloat().reduced (0.5f), 2.0f, 0.8f);
             }
 
@@ -3463,9 +3464,7 @@ void TapeStrip::paint (juce::Graphics& g)
             // regions brighten the fill + paint a white outline,
             // mirroring the audio selection look. Muted regions get
             // further desaturated + half alpha to read as "skipped".
-            const auto base = region.customColour.isTransparent()
-                ? session.track (t).colour
-                : region.customColour;
+            const auto base = regionAccent (t, region);
             auto midiFill = base.withMultipliedSaturation (0.5f).withMultipliedBrightness (0.55f);
             if (isMidiSelected) midiFill = midiFill.brighter (0.30f);
             if (region.muted)

@@ -1269,6 +1269,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (code >= 'a' && code <= 'z') code -= ('a' - 'A');
     const bool cmd     = mods.isCommandDown();   // Ctrl on Linux/Windows, Cmd on macOS
     const bool shift   = mods.isShiftDown();
+    const bool escape  = code == juce::KeyPress::escapeKey;
+
+    // Should an open modal's body lose the keyboard to this canvas, Escape
+    // still closes it, taken bare as the modal's own handler takes it.
+    if (escape && ! mods.isAnyModifierKeyDown() && EmbeddedModal::escapeTopModal())
+        return true;
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
     // The audio settings panel is a native child window with its own Escape
@@ -1279,7 +1285,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // outside the panel.
     // The built-in unit editors and the master tape's editor are more such
     // children, so the same branch closes whichever one is showing.
-    if (code == juce::KeyPress::escapeKey)
+    if (escape)
     {
         if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
         {
@@ -2750,7 +2756,16 @@ void MainComponent::takePendingCanvasFocus()
     if (! canvasFocusPending || ! isShowing())
         return;
     canvasFocusPending = false;
-    grabKeyboardFocus();
+    focusCanvasOrTopModal();
+}
+
+void MainComponent::focusCanvasOrTopModal()
+{
+    const auto& modals = EmbeddedModal::activeModalStack();
+    if (auto* body = modals.empty() ? nullptr : modals.back()->getBody())
+        body->grabKeyboardFocus();
+    else if (isShowing())
+        grabKeyboardFocus();
 }
 
 // Showing the window walks this down every descendant, and it is the first
@@ -2758,6 +2773,15 @@ void MainComponent::takePendingCanvasFocus()
 void MainComponent::parentHierarchyChanged()
 {
     takePendingCanvasFocus();
+}
+
+// A window that gets the keyboard back from a native child restores it to
+// whatever held it before the child took it, which is this canvas even when a
+// modal has opened since.
+void MainComponent::focusGained (FocusChangeType cause)
+{
+    if (cause == focusChangedDirectly)
+        focusCanvasOrTopModal();
 }
 
 void MainComponent::openStartupForCapture (const std::string& capturePath)
@@ -2964,8 +2988,8 @@ void MainComponent::dismissStartupDialog (std::function<void()> onDone)
         // main canvas so transport / edit shortcuts work without a stray click
         // first (StartupDialog isn't an EmbeddedModal, so there's no
         // focusRestoreTarget hand-back to lean on).
-        if (! safeThis->startupQuitRequested && safeThis->isShowing())
-            safeThis->grabKeyboardFocus();
+        if (! safeThis->startupQuitRequested)
+            safeThis->focusCanvasOrTopModal();
         // Run the caller's follow-up FIRST: onDone may open UI (a session-
         // recovery prompt, an open-with load) that must not be overlaid by the
         // scan-progress modal kicked off below.
@@ -4232,7 +4256,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         // is up (a missing-plugin / missing-audio alert raised by the load) - that
         // would steal focus from the dialog the user needs to dismiss.
         if (juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
-            self->grabKeyboardFocus();
+            self->focusCanvasOrTopModal();
 
         // Pre-warm the AUX view if this session has any aux insert loaded. Building it
         // here (hidden) moves the AuxView construction + the native-CLAP gui->create off
@@ -6351,8 +6375,7 @@ void MainComponent::reclaimFocusFromNotepad()
     // as dismissStartupDialog).
     if (auto* window = getTopLevelComponent())
         window->toFront (true);
-    if (isShowing())
-        grabKeyboardFocus();
+    focusCanvasOrTopModal();
 }
 
 void MainComponent::yieldNotepadWindow (bool saveChanges)

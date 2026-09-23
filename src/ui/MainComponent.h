@@ -37,6 +37,7 @@ public:
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
     void parentHierarchyChanged() override;
+    void focusGained (FocusChangeType cause) override;
 
     // Capture tail for the views that render into a framework child, which the
     // snapshot path cannot reach. Runs from the live message loop and quits when
@@ -174,6 +175,9 @@ private:
     void focusMainCanvas();
     void takePendingCanvasFocus();
     bool canvasFocusPending = false;
+    // A late hand-back of the keyboard: to the newest open modal while there
+    // is one, as EmbeddedModal::close does, otherwise to the canvas.
+    void focusCanvasOrTopModal();
     void newSessionPrompt (SessionTemplate tmpl = SessionTemplate::Blank);
     // The folder-pick + create half of newSessionPrompt - runs only once any
     // unsaved-changes prompt has been resolved.

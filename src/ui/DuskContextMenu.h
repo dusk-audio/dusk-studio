@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace duskstudio
 {
@@ -44,4 +45,6 @@ void showContextMenu (const juce::PopupMenu& menu,
                        juce::Point<int> screenPos,
                        std::function<void (int)> onResult);
 bool contextMenuItemPointForScenario (const std::string& text, int& x, int& y);
+// The open menu's rows in order: separators as "-", headers by their text.
+std::vector<std::string> contextMenuItemsForScenario();
 } // namespace duskstudio

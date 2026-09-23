@@ -15,6 +15,7 @@
 #include "ChannelStripComponent.h"
 #include "ConsoleView.h"
 #include "EmbeddedModal.h"
+#include "MidiBindingsPanel.h"
 #include "DuskContextMenu.h"
 #include "DpImportDialog.h"
 #include "MultiImportTargetPicker.h"
@@ -924,6 +925,56 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return clickAt (point.x, point.y, 1);
     }
 
+    std::vector<std::string> midiBindingRows() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* panel = dynamic_cast<const MidiBindingsPanel*> (stack.back()->getBody());
+        return panel != nullptr ? panel->rowsForScenario() : std::vector<std::string> {};
+    }
+
+    bool clickMidiBindingRemove (int row) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return false;
+        auto* panel = dynamic_cast<MidiBindingsPanel*> (stack.back()->getBody());
+        auto* button = panel != nullptr ? panel->removeButtonForScenario (row) : nullptr;
+        if (button == nullptr || ! button->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (button, button->getLocalBounds().getCentre()).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+
+    std::vector<int> modalLayout() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return {};
+        const auto area = owner.getLocalArea (stack.back()->getBody(), stack.back()->getBody()->getLocalBounds());
+        return { area.getX(), area.getY(), area.getWidth(), area.getHeight(),
+                 owner.getWidth(), owner.getHeight(), stack.back()->dimmedForScenario() ? 1 : 0 };
+    }
+
+    bool modalHasKeyboardFocus() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        auto* body = stack.empty() ? nullptr : stack.back()->getBody();
+        return body != nullptr && body->hasKeyboardFocus (true);
+    }
+
+    std::vector<std::string> contextMenuItems() const override { return contextMenuItemsForScenario(); }
+
+    // Just inside the window's top-left corner, which a centred body and its
+    // frame leave uncovered.
+    bool clickModalBackdrop() override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return false;
+        const auto corner = owner.getLocalBounds().getTopLeft().translated (6, 6);
+        const auto body = owner.getLocalArea (stack.back()->getBody(), stack.back()->getBody()->getLocalBounds());
+        if (body.expanded (24).contains (corner)) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (&owner, corner).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+
     bool clickModalAt (float xFraction, float yFraction) override
     {
         const auto& stack = EmbeddedModal::activeModalStack();
@@ -1394,6 +1445,38 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (bounds.isEmpty()) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
         return clickAt (point.x, point.y, 1, right);
+    }
+
+    bool clickStripControl (StripKind kind, int index, const std::string& control, int clicks, bool right) override
+    {
+        const auto click = [this, clicks, right] (auto* component, auto point)
+        {
+            if (component == nullptr || ! component->isShowing()) return false;
+            const auto at = owner.getTopLevelComponent()->getLocalPoint (component, point).toFloat();
+            return clickAt (at.x, at.y, clicks, right);
+        };
+        if (kind == StripKind::Channel && control == "name")
+        {
+            auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index) : nullptr;
+            return strip != nullptr && click (strip, strip->namePointForScenario());
+        }
+        if (kind == StripKind::Aux && (control == "name" || control == "mute" || control == "fader"))
+        {
+            auto* lane = owner.auxView != nullptr ? owner.auxView->getLaneComponent (index) : nullptr;
+            return lane != nullptr && click (lane, lane->controlPointForScenario (control));
+        }
+        return false;
+    }
+
+    std::vector<double> auxReturnRange (int lane) const override
+    {
+        auto* component = owner.auxView != nullptr ? owner.auxView->getLaneComponent (lane) : nullptr;
+        return component != nullptr ? component->returnRangeForScenario() : std::vector<double> {};
+    }
+
+    std::uint32_t tapeRegionColour (int track, int region) const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->regionAccentForScenario (track, region) : 0u;
     }
 
     bool clickTakeBadge (int track, int region) override

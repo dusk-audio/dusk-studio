@@ -226,6 +226,14 @@ public:
         return isShowing();
     }
 
+    std::vector<std::string> itemsForScenario() const
+    {
+        std::vector<std::string> texts;
+        for (const auto& row : rowsData)
+            texts.push_back (row.isSep ? "-" : row.text.toStdString());
+        return texts;
+    }
+
     bool keyPressed (const juce::KeyPress& k) override
     {
         if (k == juce::KeyPress::escapeKey)
@@ -394,5 +402,13 @@ bool contextMenuItemPointForScenario (const std::string& text, int& x, int& y)
     if (stack.empty()) return false;
     const auto* menu = dynamic_cast<const DuskContextMenuPanel*> (stack.back()->getBody());
     return menu != nullptr && menu->itemPointForScenario (text, x, y);
+}
+
+std::vector<std::string> contextMenuItemsForScenario()
+{
+    const auto& stack = EmbeddedModal::activeModalStack();
+    if (stack.empty()) return {};
+    const auto* menu = dynamic_cast<const DuskContextMenuPanel*> (stack.back()->getBody());
+    return menu != nullptr ? menu->itemsForScenario() : std::vector<std::string> {};
 }
 } // namespace duskstudio

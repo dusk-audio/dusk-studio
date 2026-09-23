@@ -172,6 +172,7 @@ public:
     auto dropPointForScenario (int track) const { return rowBounds (track).getCentre(); }
     auto rulerPointForScenario (float fraction) const { return rulerBounds().getRelativePoint (fraction, 0.25f); }
     std::int64_t rulerSampleForScenario (float fraction) const { return sampleAtX (rulerPointForScenario (fraction).x); }
+    std::uint32_t regionAccentForScenario (int track, int region) const;
     // On the take badge but clear of the fade-in handle, which wins the
     // badge's top-left corner in hitTestRegion.
     auto takeBadgePointForScenario (int track, int region) const
@@ -509,6 +510,14 @@ private:
     bool isRegionSelected (int track, int idx) const noexcept;
     std::vector<RegionId> allSelectedRegions() const;
     void clearAllSelections() noexcept;
+
+    // A region's own colour when it has one, otherwise its track's. An unset
+    // customColour is transparent.
+    template <typename Region>
+    auto regionAccent (int track, const Region& region) const
+    {
+        return region.customColour.isTransparent() ? session.track (track).colour : region.customColour;
+    }
 
     // For an edit that leaves every region at its index. The undo history as
     // it stands afterwards is kept: while the change listener still finds it
