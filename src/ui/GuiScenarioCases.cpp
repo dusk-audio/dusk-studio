@@ -3223,13 +3223,15 @@ std::optional<ScenarioResult> runMasterTapeEditor (GuiHost& host, ScenarioContex
         host.switchToStage (guiStage (originalStage));
     });
     session.master().tapeEnabled.store (false);
+    const auto stripStage = engine.getStage();
 
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickMasterTape (true), "the master TAPE label is unavailable"); } });
-    steps->push_back ({ 1500, [&host, &ctx, &session]
+    steps->push_back ({ 1500, [&host, &ctx, &session, &engine, stripStage]
     {
         ctx.expect (host.masterTapeEditorOpen(), "TAPE did not open the tape editor");
+        ctx.expect (engine.getStage() == stripStage, "opening the tape editor changed the stage");
         ctx.expect (host.masterTapeEditorDrawn(), "the tape editor never drew a frame");
         ctx.expect (! session.master().tapeEnabled.load(), "opening the editor engaged the tape");
         ctx.expect (host.pressPeerKey ("escape"), "the window did not handle Escape");
@@ -3239,9 +3241,10 @@ std::optional<ScenarioResult> runMasterTapeEditor (GuiHost& host, ScenarioContex
         ctx.expect (! host.masterTapeEditorOpen(), "Escape left the tape editor open");
         ctx.expect (host.clickMasterTape (true), "the master TAPE label is unavailable");
     } });
-    steps->push_back ({ 1500, [&host, &ctx]
+    steps->push_back ({ 1500, [&host, &ctx, &engine, stripStage]
     {
         ctx.expect (host.masterTapeEditorOpen(), "TAPE did not reopen the tape editor");
+        ctx.expect (engine.getStage() == stripStage, "reopening the tape editor changed the stage");
         ctx.expect (host.clickMasterTape (true), "the master TAPE label is unavailable over its editor");
     } });
     steps->push_back ({ 600, [&host, &ctx]

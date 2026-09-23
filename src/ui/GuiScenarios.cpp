@@ -1662,6 +1662,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (audioSettingsOpen())  lines.push_back ("audio settings open");
         if (virtualKeyboardOpen()) lines.push_back ("virtual keyboard open");
         if (tunerOpen())          lines.push_back ("tuner open");
+        if (masterTapeEditorOpen()) lines.push_back ("master tape editor open");
         if (owner.session.master().mute.load() != launch.masterMute)
             lines.push_back (owner.session.master().mute.load() ? "master muted" : "master unmuted");
 
@@ -1707,6 +1708,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.closeAudioSettings();
         owner.closeVirtualKeyboard();
         owner.closeTuner();
+        closeMasterTape();
         for (int track = 0; track < Session::kNumTracks; ++track)
             if (auto* component = owner.consoleView != nullptr
                                       ? owner.consoleView->getStripComponent (track) : nullptr)
