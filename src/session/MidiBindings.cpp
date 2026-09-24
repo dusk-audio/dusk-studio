@@ -154,6 +154,7 @@ juce::String describeBindingTarget (const MidiBinding& b,
         case MidiBindingTarget::BusPan:          return "Bus " + trk() + " pan";
         case MidiBindingTarget::BusMute:         return "Bus " + trk() + " mute";
         case MidiBindingTarget::BusSolo:         return "Bus " + trk() + " solo";
+        case MidiBindingTarget::BusHpfFreq:      return "Bus " + trk() + " HPF cutoff";
         case MidiBindingTarget::AuxLaneFader:    return "AUX " + trk() + " return";
         case MidiBindingTarget::AuxLaneMute:     return "AUX " + trk() + " mute";
         case MidiBindingTarget::AuxPluginParam:  return "AUX " + trk() + " plugin param "
@@ -233,6 +234,7 @@ const char* nameForTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::BusPan:          return "Bus pan";
         case MidiBindingTarget::BusMute:         return "Bus mute";
         case MidiBindingTarget::BusSolo:         return "Bus solo";
+        case MidiBindingTarget::BusHpfFreq:      return "Bus HPF cutoff";
         case MidiBindingTarget::AuxLaneFader:    return "AUX return";
         case MidiBindingTarget::AuxLaneMute:     return "AUX mute";
         case MidiBindingTarget::AuxPluginParam:  return "AUX plugin parameter";

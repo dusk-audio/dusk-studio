@@ -144,6 +144,10 @@ ScenarioResult runTargets (ScenarioContext& ctx)
     ctx.keep (strip.pan);
     ctx.keep (strip.mute);
     ctx.keep (session.pendingTransportAction);
+    constexpr int kBus = 2;
+    auto& bus = session.bus (kBus).strip;
+    ctx.keep (bus.hpfEnabled);
+    ctx.keep (bus.hpfFreq);
     restoreBindings (ctx);
 
     MidiBinding mute;
@@ -159,6 +163,7 @@ ScenarioResult runTargets (ScenarioContext& ctx)
 
     publish (session, { ccBinding (23, MidiBindingTarget::TrackFader, kTrack),
                         ccBinding (24, MidiBindingTarget::TrackPan, kTrack),
+                        ccBinding (25, MidiBindingTarget::BusHpfFreq, kBus),
                         mute, play });
     ctx.pump (1);
 
@@ -178,6 +183,17 @@ ScenarioResult runTargets (ScenarioContext& ctx)
     ctx.pumpWithMidi (kInput, cc (1, 24, 64));
     ctx.expect (std::abs (strip.pan.load (std::memory_order_relaxed)) < 0.02f,
                 "a centred CC did not centre the pan");
+
+    // The bus highpass sweeps 20 Hz..3 kHz over the travel; the bottom is OFF.
+    ctx.pumpWithMidi (kInput, cc (1, 25, 127));
+    ctx.note ("bus highpass at CC 127: " + std::to_string (bus.hpfFreq.load()) + " Hz");
+    ctx.expect (bus.hpfEnabled.load (std::memory_order_relaxed)
+                    && std::abs (bus.hpfFreq.load (std::memory_order_relaxed) - BusParams::kHpfMaxHz) < 1.0f,
+                "a full CC did not take the bus highpass to 3 kHz");
+    ctx.pumpWithMidi (kInput, cc (1, 25, 0));
+    ctx.expect (! bus.hpfEnabled.load (std::memory_order_relaxed)
+                    && std::abs (bus.hpfFreq.load (std::memory_order_relaxed) - BusParams::kHpfOffHz) < 0.01f,
+                "a zeroed CC did not turn the bus highpass off");
 
     const bool wasMuted = strip.mute.load (std::memory_order_relaxed);
     ctx.pumpWithMidi (kInput, noteOn (1, 60, 127));

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BusToneEq.h"
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/StereoOversampler.h"
@@ -7,18 +8,15 @@
 #include <atomic>
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-  #include <dsp/FourKEQDSP.hpp>
   #include <core/UniversalCompressorDSP.hpp>
 #endif
 
 namespace duskstudio
 {
-// Phase 1a aux bus: 3-band EQ -> bus compressor -> pan -> fader -> meter.
-// EQ uses FourKEQDSP's LF / LM / HF bands (with the LM band exposed as MID and
-// the HM band fixed-zero). Comp uses UniversalCompressorDSP's Bus mode. Both
-// cores are framework-free donor DSP; their parameter setters are atomic, so
-// updateEqParameters / updateCompParameters write lock-free from the audio
-// thread.
+// Bus strip: Tone EQ + highpass -> bus compressor -> pan -> fader -> meter.
+// The EQ is BusToneEq, a saturation-free digital tone control. The comp is the
+// donor UniversalCompressorDSP in Bus mode, whose parameter setters are atomic,
+// so updateCompParameters writes lock-free from the audio thread.
 //
 // Buses are subgroups (16 channels -> 4 buses -> master). They do NOT host
 // plugins - that responsibility lives on the AUX return lanes accessed via
@@ -50,13 +48,12 @@ private:
     dusk::audio::SmoothedValue<float> panGainL  { 1.0f };
     dusk::audio::SmoothedValue<float> panGainR  { 1.0f };
 
+    // Linear and native-rate: it never aliases, so it always runs outside
+    // the comp's oversampler and adds no latency.
+    BusToneEq toneEq;
+    void updateEqParameters() noexcept;
+
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    duskaudio::FourKEQDSP eq;
-    // Only the three band gains vary at runtime (every other EQ param is fixed
-    // in prepare); cache them so the per-block update pushes setters only on
-    // change - see the ChannelStrip equivalent.
-    struct EqGains { float lf = 0.0f, mid = 0.0f, hf = 0.0f; };
-    EqGains lastEqGains {};
     duskaudio::UniversalCompressorDSP busComp;
     // Max samples per busComp.processBlock call (the oversampled prepare block
     // size - the core degrades to dry passthrough beyond it); the process
@@ -64,8 +61,8 @@ private:
     int compMaxBlock = 0;
 
     // Per-bus Dusk Studio-side oversampler wrapping the comp. Its saturation
-    // aliases hard at native rate; the bus EQ runs with saturation at zero
-    // (linear), so only the comp needs the wrap.
+    // aliases hard at native rate; the bus EQ is linear, so only the comp
+    // needs the wrap.
     dusk::audio::StereoOversampler oversampler;
     int osFactor = 1;
 
@@ -87,13 +84,6 @@ private:
     // tail from the last time the comp ran.
     bool prevCompOsActive { false };
 
-    // Skip the EQ filter entirely when the bus EQ is disengaged (it would
-    // otherwise run at unity, burning cycles for nothing). Init true so the
-    // first block with EQ off doesn't fire a spurious reset; reset on the
-    // off->on edge clears stale filter state so re-enabling doesn't click.
-    bool prevEqEnabled { true };
-
-    void updateEqParameters() noexcept;
     void updateCompParameters() noexcept;
 #endif
 

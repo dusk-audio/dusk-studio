@@ -1085,6 +1085,8 @@ JObj busToObject (const Bus& a)
     obj["eq_lf_db"]   = a.strip.eqLfGainDb.load();
     obj["eq_mid_db"]  = a.strip.eqMidGainDb.load();
     obj["eq_hf_db"]   = a.strip.eqHfGainDb.load();
+    obj["hpf_enabled"] = a.strip.hpfEnabled.load();
+    obj["hpf_freq"]    = a.strip.hpfFreq.load();
 
     obj["comp_enabled"]      = a.strip.compEnabled.load();
     obj["comp_thresh_db"]    = a.strip.compThreshDb.load();
@@ -1785,6 +1787,12 @@ void restoreBus (Bus& a, const nlohmann::json& v, double defaultRecordBpm)
         storeFiniteClampedFloat (a.strip.eqMidGainDb, v["eq_mid_db"], 0.0f, -9.0f, 9.0f);
     if (json::has (v, "eq_hf_db"))
         storeFiniteClampedFloat (a.strip.eqHfGainDb,  v["eq_hf_db"],  0.0f, -9.0f, 9.0f);
+    // Sessions saved before the bus highpass have neither key; the section
+    // defaults fill them in, so it loads off at 20 Hz.
+    if (json::has (v, "hpf_enabled")) a.strip.hpfEnabled.store (json::getBool (v, "hpf_enabled", false));
+    if (json::has (v, "hpf_freq"))
+        storeFiniteClampedFloat (a.strip.hpfFreq, v["hpf_freq"], BusParams::kHpfOffHz,
+                                 BusParams::kHpfMinHz, BusParams::kHpfMaxHz);
 
     if (json::has (v, "comp_enabled"))     a.strip.compEnabled  .store (json::getBool (v, "comp_enabled", false));
     if (json::has (v, "comp_thresh_db"))
@@ -2922,6 +2930,7 @@ bool SessionSerializer::load (Session& s, const File& source)
                     case (int) MidiBindingTarget::BusPan:
                     case (int) MidiBindingTarget::BusMute:
                     case (int) MidiBindingTarget::BusSolo:
+                    case (int) MidiBindingTarget::BusHpfFreq:
                     case (int) MidiBindingTarget::AuxLaneFader:
                     case (int) MidiBindingTarget::AuxLaneMute:
                     case (int) MidiBindingTarget::AuxPluginParam:

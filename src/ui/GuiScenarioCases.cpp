@@ -6593,6 +6593,99 @@ const ScenarioRegistrar eqMidiLearnBand { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runEqMidiLearnBand (host, ctx); }
 } };
 
+// The bus highpass knob: its floor is OFF, typed values read back the way the
+// knob prints them ("1.2k"), the sweep stops at 3 kHz, and turning it up off
+// the floor arms the bus EQ, as the band knobs do. A highpass or band gain set
+// behind the strip's back, as the EQ editor and a MIDI binding set them, shows
+// on its knob, and Reset EQ turns the highpass OFF from there.
+std::optional<ScenarioResult> runBusHpfKnob (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& bus = ctx.session().bus (0).strip;
+    ctx.keep (bus.eqEnabled);
+    ctx.keep (bus.hpfEnabled);
+    ctx.keep (bus.hpfFreq);
+    ctx.keep (bus.eqLfGainDb);
+    ctx.keep (bus.eqMidGainDb);
+    ctx.keep (bus.eqHfGainDb);
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+
+    const std::string title = "Bus 1 high-pass filter frequency";
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx, &bus, title]
+    {
+        ctx.expect (host.setAccessibleValue (title, "OFF"), "the bus highpass knob has no accessible value");
+        bus.eqEnabled.store (false, std::memory_order_release);
+    } });
+    struct Value { const char* input; const char* shown; float hz; bool on; };
+    const Value values[] {
+        { "80", "80", 80.0f, true },
+        { "1.2k", "1.2k", 1200.0f, true },
+        { "5k", "3k", 3000.0f, true },
+        { "OFF", "OFF", BusParams::kHpfOffHz, false },
+    };
+    for (const auto value : values)
+    {
+        steps->push_back ({ 100, [&host, &ctx, title, value]
+        { ctx.expect (host.setAccessibleValue (title, value.input), "the bus highpass knob refused a value"); } });
+        steps->push_back ({ 100, [&host, &ctx, &bus, title, value]
+        {
+            std::string shown, help;
+            const bool found = host.accessibleControl (title, shown, help);
+            ctx.expect (found && shown == value.shown,
+                        std::string ("typing ") + value.input + " showed " + shown + ", not " + value.shown);
+            ctx.expect (! help.empty(), "the bus highpass knob has no accessible help");
+            ctx.expect (std::abs (bus.hpfFreq.load() - value.hz) < 0.5f && bus.hpfEnabled.load() == value.on,
+                        std::string ("typing ") + value.input + " left the bus highpass at "
+                            + std::to_string (bus.hpfFreq.load()) + " Hz, "
+                            + (bus.hpfEnabled.load() ? "on" : "off"));
+            ctx.expect (bus.eqEnabled.load(), "turning the bus highpass up did not arm the bus EQ");
+        } });
+    }
+
+    const std::string lfTitle = "Bus 1 EQ low shelf gain";
+    steps->push_back ({ 100, [&bus]
+    {
+        bus.hpfFreq.store (150.0f);
+        bus.hpfEnabled.store (true);
+        bus.eqLfGainDb.store (4.5f);
+    } });
+    steps->push_back ({ 100, [&host, &ctx, title, lfTitle]
+    {
+        std::string hpf, lf, help;
+        const bool hpfFound = host.accessibleControl (title, hpf, help);
+        const bool lfFound = host.accessibleControl (lfTitle, lf, help);
+        ctx.expect (hpfFound && hpf == "150",
+                    "a 150 Hz highpass set in the session shows " + hpf + " on the strip knob");
+        ctx.expect (lfFound && lf == "4.5", "a +4.5 dB LF set in the session shows " + lf + " on the strip knob");
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Bus, 0, "eq", 1, true),
+                    "the bus EQ header did not take a right-click");
+    } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Reset EQ"), "the bus EQ menu has no Reset EQ"); } });
+    steps->push_back ({ 100, [&host, &ctx, &bus, title, lfTitle]
+    {
+        ctx.expect (! bus.hpfEnabled.load() && std::abs (bus.hpfFreq.load() - BusParams::kHpfOffHz) < 0.5f,
+                    "Reset EQ left the bus highpass at " + std::to_string (bus.hpfFreq.load()) + " Hz, "
+                        + (bus.hpfEnabled.load() ? "on" : "off"));
+        ctx.expect (std::abs (bus.eqLfGainDb.load()) < 1.0e-6f, "Reset EQ left the LF gain up");
+        ctx.expect (bus.eqEnabled.load(), "Reset EQ bypassed the bus EQ");
+        std::string hpf, lf, help;
+        const bool hpfFound = host.accessibleControl (title, hpf, help);
+        const bool lfFound = host.accessibleControl (lfTitle, lf, help);
+        ctx.expect (hpfFound && hpf == "OFF", "after Reset EQ the strip's highpass knob shows " + hpf);
+        ctx.expect (lfFound && lf == "0.0", "after Reset EQ the strip's LF knob shows " + lf);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar busHpfKnob { Scenario {
+    "gui.bus_hpf_knob", { "gui", "bus" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBusHpfKnob (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runWindowKeys (GuiHost& host, ScenarioContext& ctx)
 {
     const bool fullscreen = host.fullScreen();
