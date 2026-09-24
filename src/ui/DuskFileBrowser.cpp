@@ -67,6 +67,7 @@ public:
                                                        : (opts.mode == Mode::Save ? "Save file"
                                                                                    : "Open file"),
                               juce::dontSendNotification);
+        setTitle (titleLabel.getText());
         titleLabel.setColour (juce::Label::textColourId, juce::Colours::white);
         titleLabel.setFont (juce::Font (juce::FontOptions (15.0f, juce::Font::bold)));
         addAndMakeVisible (titleLabel);
@@ -160,6 +161,15 @@ public:
         return false;
     }
 
+    void dismissCancelled()
+    {
+        auto single = resultFn;
+        auto multi  = multiResultFn;
+        sharedFileBrowserModal().close();
+        if (single) single (juce::File());
+        if (multi)  multi  (juce::Array<juce::File>());
+    }
+
 private:
     // FileBrowserListener - double-click on a file triggers Open. Single
     // selection writes the path into the active filename for Save mode.
@@ -211,15 +221,6 @@ private:
         const auto file = chosen;
         sharedFileBrowserModal().close();
         if (cb) cb (file);
-    }
-
-    void dismissCancelled()
-    {
-        auto single = resultFn;
-        auto multi  = multiResultFn;
-        sharedFileBrowserModal().close();
-        if (single) single (juce::File());
-        if (multi)  multi  (juce::Array<juce::File>());
     }
 
     void toggleNewFolderRow()
@@ -283,8 +284,9 @@ void open (juce::Component& host, Options opts,
     auto panel = std::make_unique<DuskFileBrowserPanel> (
         std::move (opts), std::move (onResult), nullptr);
 
+    auto* const shown = panel.get();
     sharedFileBrowserModal().show (*parent, std::move (panel),
-        [] { sharedFileBrowserModal().close(); });
+        [shown] { shown->dismissCancelled(); });
 }
 
 void openMulti (juce::Component& host, Options opts,
@@ -296,7 +298,8 @@ void openMulti (juce::Component& host, Options opts,
     auto panel = std::make_unique<DuskFileBrowserPanel> (
         std::move (opts), nullptr, std::move (onResult));
 
+    auto* const shown = panel.get();
     sharedFileBrowserModal().show (*parent, std::move (panel),
-        [] { sharedFileBrowserModal().close(); });
+        [shown] { shown->dismissCancelled(); });
 }
 } // namespace duskstudio::filebrowser

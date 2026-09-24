@@ -439,6 +439,8 @@ public:
                            "Your session has unsaved changes since the last manual save. "
                            "If you don't save, those changes are discarded.")
     {
+        setTitle (title);
+        setDescription (body);
         titleLabel.setText (title, juce::dontSendNotification);
         titleLabel.setFont (juce::Font (juce::FontOptions (18.0f, juce::Font::bold)));
         titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe8e8e8));
@@ -523,7 +525,8 @@ public:
                               const juce::Time& autosaveTime,
                               const juce::Time& savedTime)
     {
-        titleLabel.setText ("Recover from autosave?", juce::dontSendNotification);
+        setTitle ("Recover from autosave?");
+        titleLabel.setText (getTitle(), juce::dontSendNotification);
         titleLabel.setFont (juce::Font (juce::FontOptions (18.0f, juce::Font::bold)));
         titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe8e8e8));
         addAndMakeVisible (titleLabel);
@@ -1074,7 +1077,8 @@ MainComponent::MainComponent()
 
             if (loadsSession)
             {
-                self->loadSessionFromJson (juce::File (pathStr), armScriptedQuit);
+                self->loadSessionFromJson (juce::File (pathStr),
+                                           [armScriptedQuit] (bool) { armScriptedQuit(); });
             }
             else if (wantsPicker)
             {
@@ -2913,7 +2917,34 @@ void MainComponent::runStartupChoice()
     }
 
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    dismissStartupDialog ([safeThis, action, path, tmpl]
+    const int pick = ++startupPickSerial;
+    startupPickInFlight = pick;
+    // Every path a pick takes calls this exactly once. A pick that is backed out
+    // of or fails returns to the dialog a tick later, once the closing modal's
+    // focus hand-back has run, so the dialog keeps the keyboard.
+    const auto resolve = [safeThis, pick] (bool opened)
+    {
+        auto* const self = safeThis.getComponent();
+        if (self == nullptr || self->startupPickInFlight != pick)
+            return;
+        if (opened)
+        {
+            self->startupPickInFlight = 0;
+            self->startupDialogPending = false;
+            self->maybeStartStartupPluginScan();
+            return;
+        }
+        dusk::callAsync ([safeThis, pick]
+        {
+            auto* const s = safeThis.getComponent();
+            if (s == nullptr || s->startupPickInFlight != pick)
+                return;
+            s->startupPickInFlight = 0;
+            if (s->startupWindow == nullptr)
+                s->launchStartupDialog();
+        });
+    };
+    dismissStartupDialog ([safeThis, action, path, tmpl, resolve]
     {
         auto* const self = safeThis.getComponent();
         if (self == nullptr)
@@ -2921,20 +2952,29 @@ void MainComponent::runStartupChoice()
         switch (action)
         {
             case imgui::StartupAction::openRecent:
+            {
                 // Through toFile: the row carries a UTF-8 path out of RecentSessions,
                 // and the narrow conversion a bare construction would use drops
                 // non-ASCII on Windows.
-                self->loadSessionFromJson (
-                    toFile (std::filesystem::u8path (path)).getChildFile ("session.json"));
+                const auto sessionJson =
+                    toFile (std::filesystem::u8path (path)).getChildFile ("session.json");
+                self->guardSessionSwitchThen (
+                    "Save changes before opening another session?",
+                    "Your current session has unsaved changes. If you don't save, "
+                    "those changes are discarded when the other session opens.",
+                    [self, sessionJson, resolve] { self->loadSessionFromJson (sessionJson, resolve); },
+                    [resolve] { resolve (false); });
                 break;
+            }
             case imgui::StartupAction::newSession:
-                self->newSessionPrompt ((SessionTemplate) tmpl);
+                self->newSessionPrompt ((SessionTemplate) tmpl, resolve);
                 break;
-            case imgui::StartupAction::openFile:   self->openFromFilePrompt(); break;
+            case imgui::StartupAction::openFile:   self->openFromFilePrompt (resolve); break;
             case imgui::StartupAction::skip:
             case imgui::StartupAction::quit:
             case imgui::StartupAction::none:
-                break;   // the bootstrap default dir stays
+                resolve (true);   // the bootstrap default dir stays
+                break;
         }
     });
    #endif
@@ -2994,6 +3034,8 @@ void MainComponent::dismissStartupDialog (std::function<void()> onDone)
         // focusRestoreTarget hand-back to lean on).
         if (! safeThis->startupQuitRequested)
             safeThis->focusCanvasOrTopModal();
+        if (safeThis->startupPickInFlight == 0)
+            safeThis->startupDialogPending = false;
         // Run the caller's follow-up FIRST: onDone may open UI (a session-
         // recovery prompt, an open-with load) that must not be overlaid by the
         // scan-progress modal kicked off below.
@@ -3002,7 +3044,6 @@ void MainComponent::dismissStartupDialog (std::function<void()> onDone)
         // Now safe to run the startup plugin scan we held off in
         // maybeStartStartupPluginScan(). Skip it when the dismissal came from
         // Quit: the app is shutting down, no point scanning.
-        safeThis->startupDialogPending = false;
         if (! safeThis->startupQuitRequested)
             safeThis->maybeStartStartupPluginScan();
     });
@@ -3010,7 +3051,8 @@ void MainComponent::dismissStartupDialog (std::function<void()> onDone)
 
 void MainComponent::guardUnsavedThen (const juce::String& title,
                                        const juce::String& message,
-                                       std::function<void()> proceed)
+                                       std::function<void()> proceed,
+                                       std::function<void()> onCancelled)
 {
     // Clean session - nothing to lose, run straight through.
     if (! currentSessionDirty())
@@ -3030,13 +3072,14 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
     auto go = std::make_shared<std::function<void()>> (std::move (proceed));
     // Every exit re-invokes the startup plugin scan, which holds off while this
     // prompt is up so its progress modal can't stack over the decision.
-    dialog->onCancel = [safe]
+    dialog->onCancel = [safe, onCancelled]
     {
-        dusk::callAsync ([safe]
+        dusk::callAsync ([safe, onCancelled]
         {
             if (auto* s = safe.getComponent())
             {
                 s->quitModal.close();
+                if (onCancelled) onCancelled();
                 s->maybeStartStartupPluginScan();
             }
         });
@@ -3057,17 +3100,20 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
             if (auto* s = safe.getComponent()) s->maybeStartStartupPluginScan();
         });
     };
-    dialog->onSave = [safe, go]
+    dialog->onSave = [safe, go, onCancelled]
     {
-        dusk::callAsync ([safe, go]
+        dusk::callAsync ([safe, go, onCancelled]
         {
             auto* s = safe.getComponent();
             if (s == nullptr) return;
             s->quitModal.close();
-            s->saveSessionAndThen ([safe, go] (bool ok)
+            s->saveSessionAndThen ([safe, go, onCancelled] (bool ok)
             {
-                if (ok && safe.getComponent() != nullptr)
+                if (safe.getComponent() == nullptr) return;
+                if (ok)
                     (*go)();
+                else if (onCancelled)
+                    onCancelled();
                 if (auto* self = safe.getComponent())
                     self->maybeStartStartupPluginScan();
             });
@@ -3106,7 +3152,8 @@ void MainComponent::stopTransportForSessionSwitch()
 
 void MainComponent::guardSessionSwitchThen (const char* title,
                                               const char* message,
-                                              std::function<void()> proceed)
+                                              std::function<void()> proceed,
+                                              std::function<void()> onCancelled)
 {
     // A bounce owns the transport and fails outright if anything stops it, and
     // its modal is the only thing standing between the user and these entries.
@@ -3114,6 +3161,7 @@ void MainComponent::guardSessionSwitchThen (const char* title,
     if (bounceModal.isOpen() || mixdownModal.isOpen())
     {
         setStatusText ("Session not switched: finish or cancel the bounce first");
+        if (onCancelled) onCancelled();
         return;
     }
     // guardUnsavedThen would drop the request on a busy modal, and the recovery
@@ -3122,6 +3170,7 @@ void MainComponent::guardSessionSwitchThen (const char* title,
     if (quitModal.isOpen() || recoveryModal.isOpen())
     {
         setStatusText ("Session not switched: close the open prompt first");
+        if (onCancelled) onCancelled();
         return;
     }
 
@@ -3130,20 +3179,23 @@ void MainComponent::guardSessionSwitchThen (const char* title,
     // first, so the prompt offers to save the work rather than passing a
     // recording session off as clean and discarding it at the load.
     stopTransportForSessionSwitch();
-    guardUnsavedThen (title, message, std::move (proceed));
+    guardUnsavedThen (title, message, std::move (proceed), std::move (onCancelled));
 }
 
-void MainComponent::newSessionPrompt (SessionTemplate tmpl)
+void MainComponent::newSessionPrompt (SessionTemplate tmpl,
+                                      std::function<void (bool opened)> onResolved)
 {
     // Starting a new session blanks the current one - guard unsaved work first.
     guardSessionSwitchThen (
         "Save changes before starting a new session?",
         "Your current session has unsaved changes. If you don't save, "
         "those changes are discarded when the new session opens.",
-        [this, tmpl] { promptNewSessionLocation (tmpl); });
+        [this, tmpl, onResolved] { promptNewSessionLocation (tmpl, onResolved); },
+        [onResolved] { if (onResolved) onResolved (false); });
 }
 
-void MainComponent::promptNewSessionLocation (SessionTemplate tmpl)
+void MainComponent::promptNewSessionLocation (SessionTemplate tmpl,
+                                              std::function<void (bool opened)> onResolved)
 {
     // Single-dialog "Save As" UX: filename text field + folder browser in
     // one step. The typed name becomes the session folder; the navigated
@@ -3160,18 +3212,18 @@ void MainComponent::promptNewSessionLocation (SessionTemplate tmpl)
         /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
     },
-    [this, tmpl] (juce::File chosen)
+    [this, tmpl, onResolved] (juce::File chosen)
     {
-        if (chosen == juce::File()) return;
         // The chosen path becomes the new session folder. Start from a clean
         // default state - NOT the current session saved under a new name.
-        createNewSessionAt (chosen, tmpl);
+        const bool created = createNewSessionAt (chosen, tmpl);
+        if (onResolved) onResolved (created);
     });
 }
 
-void MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate tmpl)
+bool MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate tmpl)
 {
-    if (dir == juce::File()) return;
+    if (dir == juce::File()) return false;
     dir.createDirectory();
 
     // "New Session" must be a clean slate. Write a fresh, default session.json
@@ -3187,7 +3239,7 @@ void MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate t
     if (target.existsAsFile())
     {
         setStatusForPath ("A session already exists at", target);
-        return;
+        return false;
     }
 
     auto fresh = std::make_unique<Session>();
@@ -3197,12 +3249,14 @@ void MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate t
     if (! SessionSerializer::writeAtomic (target, SessionSerializer::serialize (*fresh)))
     {
         setStatusForPath ("Could not create session at", target);
-        return;
+        return false;
     }
     fresh.reset();   // release the scratch Session before the live load runs
 
-    if (finishLoadingSessionFrom (target, dir))
-        setStatusForPath ("New session", target);
+    if (! finishLoadingSessionFrom (target, dir))
+        return false;
+    setStatusForPath ("New session", target);
+    return true;
 }
 
 bool MainComponent::saveSessionTo (const juce::File& dir)
@@ -3865,6 +3919,10 @@ void MainComponent::openSessionPath (const juce::File& path)
 
     if (sessionJson.existsAsFile())
     {
+        // A handed-over session ends a startup pick still in flight. Its browser
+        // may be replaced by the switch's own Save As, which would never answer,
+        // and the startup dialog must not come back over the session either way.
+        startupPickInFlight = 0;
         // Clear the startup New / Open-recent flow first so a CLI / file-manager
         // open doesn't stack a session-load (recovery) modal over the startup
         // dialog. dismissStartupDialog tears down asynchronously, so defer the
@@ -3905,12 +3963,12 @@ bool MainComponent::answerRecoveryPrompt (int choice)
 }
 
 bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
-                                         std::function<void()> onComplete)
+                                         std::function<void (bool loaded)> onComplete)
 {
     if (! sessionJson.existsAsFile())
     {
         setStatusForPath ("No session at", sessionJson);
-        if (onComplete) onComplete();
+        if (onComplete) onComplete (false);
         return false;
     }
 
@@ -3937,9 +3995,9 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
-                self->finishLoadingSessionFrom (autosave, dir);
+                const bool loaded = self->finishLoadingSessionFrom (autosave, dir);
                 self->maybeStartStartupPluginScan();   // deferred past the recovery prompt
-                if (onComplete) onComplete();
+                if (onComplete) onComplete (loaded);
             }
         };
         raw->onLoad = [safe, sessionJson, dir, onComplete]
@@ -3947,9 +4005,9 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
-                self->finishLoadingSessionFrom (sessionJson, dir);
+                const bool loaded = self->finishLoadingSessionFrom (sessionJson, dir);
                 self->maybeStartStartupPluginScan();
-                if (onComplete) onComplete();
+                if (onComplete) onComplete (loaded);
             }
         };
         raw->onCancel = [safe, onComplete]
@@ -3958,7 +4016,7 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
             {
                 self->recoveryModal.close();
                 self->maybeStartStartupPluginScan();
-                if (onComplete) onComplete();
+                if (onComplete) onComplete (false);
             }
         };
 
@@ -3969,14 +4027,14 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
                                   {
                                       self->recoveryModal.close();
                                       self->maybeStartStartupPluginScan();
-                                      if (onComplete) onComplete();
+                                      if (onComplete) onComplete (false);
                                   }
                               });
         return true;
     }
 
     const bool loaded = finishLoadingSessionFrom (sessionJson, dir);
-    if (onComplete) onComplete();
+    if (onComplete) onComplete (loaded);
     return loaded;
 }
 
@@ -4286,7 +4344,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     return true;
 }
 
-void MainComponent::openFromFilePrompt()
+void MainComponent::openFromFilePrompt (std::function<void (bool opened)> onResolved)
 {
     // Opening another session discards the current one - guard unsaved work
     // before the browser appears (mirrors New Session / Open Recent).
@@ -4294,7 +4352,7 @@ void MainComponent::openFromFilePrompt()
         "Save changes before opening another session?",
         "Your current session has unsaved changes. If you don't save, "
         "those changes are discarded when the other session opens.",
-        [this]
+        [this, onResolved]
     {
         auto startDir = session.getSessionDirectory();
         if (! startDir.isDirectory())
@@ -4308,12 +4366,14 @@ void MainComponent::openFromFilePrompt()
             /*warnAboutOverwriting*/   false,
             /*selectDirectories*/      false,
         },
-        [this] (juce::File chosen)
+        [this, onResolved] (juce::File chosen)
         {
-            if (chosen == juce::File()) return;
-            loadSessionFromJson (chosen);
+            if (chosen != juce::File())
+                loadSessionFromJson (chosen, onResolved);
+            else if (onResolved)
+                onResolved (false);
         });
-    });
+    }, [onResolved] { if (onResolved) onResolved (false); });
 }
 
 void MainComponent::openBounceDialog()

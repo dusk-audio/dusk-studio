@@ -149,28 +149,38 @@ private:
 
     bool saveSessionTo (const juce::File& sessionDir);
     void saveAsPrompt();
-    // onComplete runs after the load attempt or any recovery-prompt choice.
+    // onComplete runs once, after the load attempt or any recovery-prompt choice,
+    // with whether a session loaded. The return value only says the attempt was
+    // accepted when the recovery prompt is up.
     bool loadSessionFromJson (const juce::File& sessionJson,
-                              std::function<void()> onComplete = {});
+                              std::function<void (bool loaded)> onComplete = {});
     // Tail-half called either directly (no autosave) or from the
     // recovery prompt callback.
     bool finishLoadingSessionFrom (const juce::File& sessionJson,
                                     const juce::File& sessionDir);
-    void openFromFilePrompt();
+    // onResolved runs once with whether a session opened: false when the user
+    // backs out of the unsaved-changes prompt, the browser or the recovery prompt,
+    // or the chosen session fails to load.
+    void openFromFilePrompt (std::function<void (bool opened)> onResolved = {});
     // Runs `proceed` immediately if the session is clean, otherwise shows the
     // Save / Don't Save / Cancel prompt and runs `proceed` only after a
-    // successful Save or an explicit Don't Save. Shared by New / Open / Open
-    // Recent / New-from-Template so none of them silently discards unsaved work.
+    // successful Save or an explicit Don't Save, and `onCancelled` after Cancel
+    // or a Save that does not complete.
+    // Shared by New / Open / Open Recent / New-from-Template so none of them
+    // silently discards unsaved work.
     void guardUnsavedThen (const juce::String& title, const juce::String& message,
-                            std::function<void()> proceed);
+                            std::function<void()> proceed,
+                            std::function<void()> onCancelled = {});
     // Commit any in-flight take and silence both transports.
     void stopTransportForSessionSwitch();
     // The front half of every session switch: refuses while a bounce or another
-    // prompt is up, parks the transport, then runs guardUnsavedThen. Reaching
-    // for guardUnsavedThen directly on a switch path leaves the dirty check
-    // reading a session that is missing the take still being recorded.
+    // prompt is up (running `onCancelled`), parks the transport, then runs
+    // guardUnsavedThen. Reaching for guardUnsavedThen directly on a switch path
+    // leaves the dirty check reading a session that is missing the take still
+    // being recorded.
     void guardSessionSwitchThen (const char* title, const char* message,
-                                   std::function<void()> proceed);
+                                   std::function<void()> proceed,
+                                   std::function<void()> onCancelled = {});
     // Give the canvas keyboard focus. Every route that opens without the
     // startup picker has to call this; the picker's dismissal does it itself.
     void focusMainCanvas();
@@ -179,16 +189,21 @@ private:
     // A late hand-back of the keyboard: to the newest open modal while there
     // is one, as EmbeddedModal::close does, otherwise to the canvas.
     void focusCanvasOrTopModal();
-    void newSessionPrompt (SessionTemplate tmpl = SessionTemplate::Blank);
+    // onResolved runs once with whether the new session was created and loaded:
+    // false when the user backs out of the unsaved-changes prompt or the browser,
+    // or the create fails.
+    void newSessionPrompt (SessionTemplate tmpl = SessionTemplate::Blank,
+                           std::function<void (bool opened)> onResolved = {});
     // The folder-pick + create half of newSessionPrompt - runs only once any
     // unsaved-changes prompt has been resolved.
-    void promptNewSessionLocation (SessionTemplate tmpl);
+    void promptNewSessionLocation (SessionTemplate tmpl, std::function<void (bool opened)> onResolved);
     // True if the live session diverges from the last manual save / autosave.
     // Drives the unsaved-changes prompt on quit and on New Session.
     bool currentSessionDirty();
     // Reset to a clean default session in `dir` (NOT the current session saved
-    // under a new name) and open it through the normal load path.
-    void createNewSessionAt (const juce::File& dir, SessionTemplate tmpl);
+    // under a new name) and open it through the normal load path. True only
+    // once the new session has loaded.
+    bool createNewSessionAt (const juce::File& dir, SessionTemplate tmpl);
 
     // FileChooser -> ImportTargetPicker (24 tracks, smart-sort +
     // recommendation) -> FileImporter on commit. Flips track.mode if
@@ -369,8 +384,15 @@ private:
     bool startupScanTriggered = false;
     // Set synchronously in the ctor when a startup dialog will be shown, so the
     // resized()-driven scan defers instead of stacking a second modal over it.
-    // dismissStartupDialog() clears it and re-invokes the scan.
+    // dismissStartupDialog() clears it and re-invokes the scan, unless a startup
+    // pick is still in flight: then the pick's resolution does.
     bool startupDialogPending = false;
+    // The startup pick in flight, 0 for none. It holds the gate so the scan's
+    // modal cannot open over the file browser or a prompt the pick brought up.
+    // Numbered so a pick that a handed-over session ended does nothing when its
+    // browser or prompt finally resolves.
+    int startupPickInFlight = 0;
+    int startupPickSerial = 0;
     // Set when the user picks Quit from the startup dialog: the dialog still
     // dismisses (tearing down the dim backdrop), but dismissStartupDialog must
     // NOT kick the deferred plugin scan into a process that's shutting down.

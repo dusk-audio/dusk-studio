@@ -7636,6 +7636,11 @@ const ScenarioRegistrar firstLaunch { Scenario {
 
 std::optional<ScenarioResult> runStartupClicks (GuiHost& host, ScenarioContext& ctx)
 {
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
     auto& session = ctx.session();
     if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.startupDialogOpen())
         return ScenarioResult::skip ("requires a stopped transport and no dialog");
@@ -7651,6 +7656,11 @@ std::optional<ScenarioResult> runStartupClicks (GuiHost& host, ScenarioContext& 
         reopenSavedSession (host, restore);
         applySessionDirectory (session, originalDir);
     });
+    // Clean, so opening a recent row loads it without the unsaved-changes prompt.
+    const auto clean = ctx.tempDir() / "clean" / "session.json";
+    std::filesystem::create_directories (clean.parent_path());
+    if (! SessionSerializer::save (session, clean)) return ScenarioResult::fail ("could not save the clean session");
+    reopenSavedSession (host, clean);
 
     // More rows than the table shows, so the wheel has somewhere to go.
     std::vector<std::filesystem::path> recents;
@@ -7754,12 +7764,261 @@ std::optional<ScenarioResult> runStartupClicks (GuiHost& host, ScenarioContext& 
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
+   #endif
 }
 
 const ScenarioRegistrar startupClicks { Scenario {
     "gui.startup_recent_clicks", { "gui", "startup" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runStartupClicks (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.startupDialogOpen())
+        return ScenarioResult::skip ("requires a stopped transport and no dialog");
+    const auto fixture = ctx.tempDir() / "fixture";
+    std::filesystem::create_directories (fixture);
+    const auto restore = fixture / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    const auto originalDir = currentSessionDirectory (session);
+    ctx.cleanup ([&host, &session, restore, originalDir]
+    {
+        host.closeStartupDialog();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    // Clean, so a pick goes straight to the browser; a later pass dirties it to
+    // reach the unsaved-changes prompt instead.
+    const auto clean = ctx.tempDir() / "clean" / "session.json";
+    std::filesystem::create_directories (clean.parent_path());
+    if (! SessionSerializer::save (session, clean)) return ScenarioResult::fail ("could not save the clean session");
+    reopenSavedSession (host, clean);
+    const auto cleanDir = currentSessionDirectory (session);
+
+    const auto click = [&host, &ctx] (const std::string& control)
+    { ctx.expect (host.clickStartupControl (control), "the startup dialog did not show " + control); };
+    const auto shown = [&host, &ctx] (const std::string& title, const std::string& what)
+    {
+        ctx.expect (! host.startupDialogOpen(), what + " left the startup dialog up");
+        ctx.expect (host.modalText().rfind (title, 0) == 0,
+                    what + " showed '" + host.modalText() + "' rather than " + title);
+    };
+    const auto cancel = [&host, &ctx, shown] (const std::string& title, const std::string& what)
+    {
+        shown (title, what);
+        ctx.expect (host.clickModalButton ("Cancel"), title + " did not offer Cancel");
+    };
+    const auto back = [&host, &ctx, &session, cleanDir] (const std::string& what)
+    {
+        ctx.expect (host.modalStackEmpty(), what + " left a modal open");
+        ctx.expect (host.startupDialogOpen(), what + " did not bring the startup dialog back");
+        ctx.expect (currentSessionDirectory (session) == cleanDir, what + " switched the session");
+    };
+    const auto browse = [&host, &ctx] (const std::filesystem::path& path, const std::string& accept)
+    {
+        if (! ctx.expect (host.focusFileName(), "the file browser has no name field")) return;
+       #if defined (__APPLE__)
+        host.pressPeerKey ("command + A", 'a');
+       #else
+        host.pressPeerKey ("ctrl + A", 'a');
+       #endif
+        for (const char ch : path.string())
+            host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+        ctx.expect (host.clickModalButton (accept), "the file browser has no " + accept + " button");
+    };
+    const auto failed = [&host, &ctx, back] (const std::string& status, const std::string& what)
+    {
+        back (what);
+        ctx.expect (host.statusMessage().rfind (status, 0) == 0,
+                    what + " left the status '" + host.statusMessage() + "' rather than " + status);
+    };
+    const auto taken = ctx.tempDir() / "taken";
+    std::filesystem::create_directories (taken);
+    std::ofstream (taken / "session.json") << "{}";
+    const auto missing = ctx.tempDir() / "missing.json";
+    // Recent rows: a folder with no session.json, and a session whose autosave
+    // differs from it, which raises the recovery prompt.
+    const auto noSession = ctx.tempDir() / "no-session";
+    std::filesystem::create_directories (noSession);
+    const auto recovering = ctx.tempDir() / "recovering";
+    std::filesystem::create_directories (recovering);
+    auto& fader = session.track (0).strip.faderDb;
+    const float faderAtStart = fader.load();
+    fader.store (-11.0f);
+    const bool autosaved = SessionSerializer::save (session, recovering / "session.json.autosave");
+    fader.store (faderAtStart);
+    if (! autosaved || ! SessionSerializer::save (session, recovering / "session.json"))
+        return ScenarioResult::fail ("could not write the recovery fixture");
+    const std::vector<std::filesystem::path> recents { noSession, recovering };
+    const auto reopen = [&host, &ctx, recents]
+    {
+        host.closeStartupDialog();
+        ctx.expect (host.openStartupDialog (recents, true), "the startup dialog did not reopen");
+    };
+
+    host.closeStartupDialog();
+    ctx.expect (host.openStartupDialog ({}, true), "the startup dialog did not open");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [click] { click ("tab-open"); } });
+    steps->push_back ({ 600, [cancel] { cancel ("Open session.json", "OPEN"); } });
+    steps->push_back ({ 700, [&host, &ctx, back, click]
+    {
+        ctx.expect (host.startupChoice() == "open-file", "OPEN chose '" + host.startupChoice() + "'");
+        back ("Cancel in the browser after OPEN");
+        click ("tab-new");
+    } });
+    steps->push_back ({ 400, [click] { click ("template:1"); } });
+    steps->push_back ({ 600, [cancel] { cancel ("Name your new session", "a NEW template"); } });
+    steps->push_back ({ 700, [back, click]
+    {
+        back ("Cancel in the browser after a NEW template");
+        click ("tab-open");
+    } });
+    steps->push_back ({ 600, [&host, &ctx, shown]
+    {
+        shown ("Open session.json", "OPEN from the returned dialog");
+        ctx.expect (host.pressPeerKey ("escape"), "the browser did not handle Escape");
+    } });
+    steps->push_back ({ 700, [back, click]
+    {
+        back ("Escape in the browser");
+        click ("tab-open");
+    } });
+    steps->push_back ({ 600, [&host, &ctx, shown]
+    {
+        shown ("Open session.json", "OPEN after Escape");
+        ctx.expect (host.clickModalBackdrop(), "the browser left no backdrop to click");
+    } });
+    // The same Cancels from the File menu leave the DAW as it is.
+    const auto stays = [&host, &ctx] (const std::string& what)
+    {
+        ctx.expect (host.modalStackEmpty(), what + " left a modal open");
+        ctx.expect (! host.startupDialogOpen(), what + " brought the startup dialog up");
+    };
+    steps->push_back ({ 700, [back, click]
+    {
+        back ("a click outside the browser");
+        click ("tab-new");
+    } });
+    steps->push_back ({ 400, [click] { click ("template:1"); } });
+    steps->push_back ({ 600, [shown, browse, taken]
+    {
+        shown ("Name your new session", "a NEW template over an existing session");
+        browse (taken, "Save");
+    } });
+    steps->push_back ({ 700, [failed, click]
+    {
+        failed ("A session already exists at", "a NEW over an existing session");
+        click ("tab-open");
+    } });
+    steps->push_back ({ 600, [shown, browse, missing]
+    {
+        shown ("Open session.json", "OPEN of a missing session");
+        browse (missing, "Open");
+    } });
+    steps->push_back ({ 700, [&host, &ctx, failed]
+    {
+        failed ("No session at", "an OPEN of a missing session");
+        host.closeStartupDialog();
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("New session..."), "the File menu has no New session..."); } });
+    steps->push_back ({ 600, [cancel] { cancel ("Name your new session", "File > New"); } });
+    steps->push_back ({ 700, [stays, reopen]
+    {
+        stays ("Cancel in the browser after File > New");
+        reopen();
+    } });
+    const auto openRow = [&steps, click] (const std::string& row)
+    {
+        steps->push_back ({ 400, [click, row] { click (row); } });
+        steps->push_back ({ 100, [click, row] { click (row); } });
+    };
+    openRow ("row:0");
+    steps->push_back ({ 700, [&host, &ctx, failed, reopen, noSession]
+    {
+        ctx.expect (host.startupChoice() == "recent:" + noSession.u8string(),
+                    "the first recent row chose '" + host.startupChoice() + "'");
+        failed ("No session at", "a recent session with no session.json");
+        reopen();
+    } });
+    openRow ("row:1");
+    steps->push_back ({ 700, [cancel]
+    { cancel ("Recover from autosave?", "a recent session with a newer autosave"); } });
+    steps->push_back ({ 700, [back, reopen]
+    {
+        back ("Cancel in the recovery prompt after a recent pick");
+        reopen();
+    } });
+    openRow ("row:1");
+    steps->push_back ({ 700, [&host, &ctx, shown]
+    {
+        shown ("Recover from autosave?", "the recent session with a newer autosave, again");
+        ctx.expect (host.pressPeerKey ("escape"), "the recovery prompt did not handle Escape");
+    } });
+    steps->push_back ({ 700, [&host, &ctx, &session, back]
+    {
+        back ("Escape in the recovery prompt");
+        host.closeStartupDialog();
+        ctx.expect (host.openStartupDialog ({}, true), "the startup dialog did not reopen");
+        session.track (0).strip.faderDb.store (-7.0f);
+    } });
+    steps->push_back ({ 400, [click] { click ("tab-open"); } });
+    steps->push_back ({ 600, [cancel]
+    { cancel ("Save changes before opening another session?", "OPEN over unsaved changes"); } });
+    steps->push_back ({ 700, [back, click]
+    {
+        back ("Cancel in the unsaved-changes prompt after OPEN");
+        click ("tab-new");
+    } });
+    steps->push_back ({ 400, [click] { click ("template:1"); } });
+    steps->push_back ({ 600, [cancel]
+    { cancel ("Save changes before starting a new session?", "a NEW template over unsaved changes"); } });
+    steps->push_back ({ 700, [back, click]
+    {
+        back ("Cancel in the unsaved-changes prompt after a NEW template");
+        click ("tab-open");
+    } });
+    // With no session.json to save into, Save asks where to save, and cancelling
+    // that is a save that did not complete.
+    steps->push_back ({ 600, [&host, &ctx, shown, cleanDir]
+    {
+        shown ("Save changes before opening another session?", "OPEN over unsaved changes, again");
+        std::error_code error;
+        std::filesystem::remove (cleanDir / "session.json", error);
+        ctx.expect (host.clickModalButton ("Save"), "the unsaved-changes prompt did not offer Save");
+    } });
+    steps->push_back ({ 700, [cancel] { cancel ("Save session as...", "Save with no session.json"); } });
+    steps->push_back ({ 700, [&host, &ctx, back]
+    {
+        back ("Cancel in Save As from the unsaved-changes prompt");
+        host.closeStartupDialog();
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Open..."), "the File menu has no Open..."); } });
+    steps->push_back ({ 600, [cancel]
+    { cancel ("Save changes before opening another session?", "File > Open over unsaved changes"); } });
+    steps->push_back ({ 700, [stays] { stays ("Cancel in the unsaved-changes prompt after File > Open"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar startupCancel { Scenario {
+    "gui.startup_cancel_returns", { "gui", "startup" }, Needs::Engine | Needs::Gui,
+    {}, {}, 45000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStartupCancel (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runPianoCc (GuiHost& host, ScenarioContext& ctx)
