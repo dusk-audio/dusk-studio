@@ -274,6 +274,83 @@ ScenarioResult runEqFreqDropsDial (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// A bound controller is a move of the control it is bound to, as the knob on
+// screen is: a band's gain, frequency or Q engages a bypassed channel EQ, and
+// so does the HPF leaving OFF, while turning it back to OFF leaves the EQ as it
+// is. The bus EQ's gains and highpass engage the bus EQ, and the compressor's
+// threshold and makeup engage the compressor.
+ScenarioResult runMovesEngage (ScenarioContext& ctx)
+{
+    using EqFreq = ChannelStripParams::EqFreq;
+    auto& session = ctx.session();
+    constexpr int kTrack = 7;   // position 7 of the first bank, for the banked binding
+    constexpr int kBus = 1;
+    auto& strip = session.track (kTrack).strip;
+    auto& bus = session.bus (kBus).strip;
+    keepEqDials (ctx, strip);
+    for (const auto f : { EqFreq::Hpf, EqFreq::Lm })
+        ctx.keep (strip.eqFreq (f));
+    for (auto* value : { &strip.lfGainDb, &strip.hfGainDb, &strip.hmQ,
+                         &strip.compFetThresholdDb, &strip.compFetOutput })
+        ctx.keep (*value);
+    for (auto* value : { &strip.eqEnabled, &strip.hpfEnabled, &strip.compEnabled,
+                         &bus.eqEnabled, &bus.hpfEnabled })
+        ctx.keep (*value);
+    for (auto* value : { &bus.hpfFreq, &bus.eqMidGainDb })
+        ctx.keep (*value);
+    ctx.keep (strip.compMode);
+    ctx.keep (session.activeBank);
+    restoreBindings (ctx);
+
+    publish (session, { ccBinding (40, MidiBindingTarget::TrackEqGain, packTrackEqBand (kTrack, 0)),
+                        ccBinding (41, MidiBindingTarget::TrackEqFreq, packTrackEqBand (kTrack, 1)),
+                        ccBinding (42, MidiBindingTarget::TrackEqQ, packTrackEqBand (kTrack, 2)),
+                        ccBinding (43, MidiBindingTarget::TrackEqQ, packTrackEqBand (kTrack, 0)),
+                        ccBinding (44, MidiBindingTarget::TrackHpfFreq, kTrack),
+                        ccBinding (45, MidiBindingTarget::TrackEqGainBank, packTrackEqBand (kTrack, 3)),
+                        ccBinding (46, MidiBindingTarget::BusEqGain, packBusEqBand (kBus, 1)),
+                        ccBinding (47, MidiBindingTarget::BusHpfFreq, kBus),
+                        ccBinding (48, MidiBindingTarget::TrackCompThresh, kTrack),
+                        ccBinding (49, MidiBindingTarget::TrackCompMakeup, kTrack) });
+    session.activeBank.store (0, std::memory_order_relaxed);
+    strip.compMode.store (1, std::memory_order_relaxed);   // FET
+    ctx.pump (1);
+
+    const auto engages = [&ctx] (std::atomic<bool>& flag, int number, int value, const std::string& what)
+    {
+        flag.store (false, std::memory_order_relaxed);
+        ctx.pumpWithMidi (kInput, cc (1, number, value));
+        ctx.note (what + ": " + (flag.load (std::memory_order_relaxed) ? "engaged" : "left bypassed"));
+        return flag.load (std::memory_order_relaxed);
+    };
+
+    ctx.expect (engages (strip.eqEnabled, 40, 100, "LF gain"), "a bound LF gain left the EQ bypassed");
+    ctx.expect (engages (strip.eqEnabled, 41, 100, "LM frequency"), "a bound LM frequency left the EQ bypassed");
+    ctx.expect (engages (strip.eqEnabled, 42, 100, "HM Q"), "a bound HM Q left the EQ bypassed");
+    ctx.expect (engages (strip.eqEnabled, 45, 100, "banked HF gain"), "a banked HF gain left the EQ bypassed");
+    ctx.expect (! engages (strip.eqEnabled, 43, 100, "LF Q"),
+                "a Q binding on the LF shelf, which has no Q, engaged the EQ");
+
+    ctx.expect (! engages (strip.eqEnabled, 44, 0, "HPF at OFF"), "the HPF held at OFF engaged the EQ");
+    ctx.expect (engages (strip.eqEnabled, 44, 64, "HPF up off OFF"), "turning the HPF up off OFF left the EQ bypassed");
+    ctx.expect (strip.hpfEnabled.load (std::memory_order_relaxed), "turning the HPF up off OFF left it off");
+    ctx.pumpWithMidi (kInput, cc (1, 44, 0));
+    ctx.expect (! strip.hpfEnabled.load (std::memory_order_relaxed) && strip.eqEnabled.load (std::memory_order_relaxed),
+                "turning the HPF down to OFF did not switch it off and leave the EQ engaged");
+
+    ctx.expect (engages (bus.eqEnabled, 46, 100, "bus MID gain"), "a bound bus MID gain left the bus EQ bypassed");
+    ctx.expect (! engages (bus.eqEnabled, 47, 0, "bus HPF at OFF"), "the bus highpass held at OFF engaged the bus EQ");
+    ctx.expect (engages (bus.eqEnabled, 47, 64, "bus HPF up off OFF"),
+                "turning the bus highpass up off OFF left the bus EQ bypassed");
+    ctx.pumpWithMidi (kInput, cc (1, 47, 0));
+    ctx.expect (! bus.hpfEnabled.load (std::memory_order_relaxed) && bus.eqEnabled.load (std::memory_order_relaxed),
+                "turning the bus highpass down to OFF did not switch it off and leave the bus EQ engaged");
+
+    ctx.expect (engages (strip.compEnabled, 48, 40, "comp threshold"), "a bound threshold left the compressor bypassed");
+    ctx.expect (engages (strip.compEnabled, 49, 80, "comp makeup"), "a bound makeup left the compressor bypassed");
+    return ctx.verdict();
+}
+
 ScenarioResult runButtonModes (ScenarioContext& ctx)
 {
     auto& session = ctx.session();
@@ -432,6 +509,14 @@ const ScenarioRegistrar eqFreqDropsDial { Scenario {
     Needs::Engine,
     {},
     [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runEqFreqDropsDial (ctx); }
+} };
+
+const ScenarioRegistrar movesEngage { Scenario {
+    "midi.eq_and_comp_moves_engage_their_section",
+    { "midi", "bindings", "eq" },
+    Needs::Engine,
+    {},
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runMovesEngage (ctx); }
 } };
 
 const ScenarioRegistrar buttons { Scenario {

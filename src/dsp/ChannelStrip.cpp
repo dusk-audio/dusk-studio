@@ -514,7 +514,7 @@ ChannelStrip::EqSnapshot ChannelStrip::eqSnapshotFor (const ChannelStripParams& 
     using EqFreq = ChannelStripParams::EqFreq;
     EqSnapshot p {};
     const bool black = params.eqBlackMode.load (std::memory_order_relaxed);
-    if (params.eqEnabled.load (std::memory_order_relaxed))
+    if (params.eqEnabled.load (std::memory_order_acquire))
     {
         const auto& dial = params.eqFreqDial;
         p.hpfEnabled = params.hpfEnabled.load (std::memory_order_relaxed) ? 1.0f : 0.0f;

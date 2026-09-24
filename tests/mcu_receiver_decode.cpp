@@ -371,6 +371,81 @@ TEST_CASE ("McuReceiver: V-pot push (EQ mode) resets each encoder to the strip's
     CHECK_THAT (fresh.hfFreq.load(),   WithinAbs (8000.0f, 0.0f));
 }
 
+// A turn is a move of the control its encoder names, as the knob on screen is,
+// so it engages a bypassed EQ. The HPF engages it only once it leaves OFF, and
+// turning it back to OFF leaves the EQ as it is. A push resets without
+// engaging, as the strip's Reset EQ does.
+TEST_CASE ("McuReceiver: an EQ encoder turn engages the EQ and a push does not",
+           "[mcu][receiver]")
+{
+    for (int encoder = 1; encoder < 8; ++encoder)
+    {
+        CAPTURE (encoder);
+        Session s;
+        McuReceiver r (s);
+        s.mcu.assignMode.store (5, std::memory_order_relaxed);   // EQ
+        s.mcu.selectedChannel.store (3, std::memory_order_relaxed);
+        auto& strip = s.track (3).strip;
+        REQUIRE_FALSE (strip.eqEnabled.load());
+        r.process (makeCc (mcu::cc::VPotRotateBase + encoder, 0x01), 0);
+        CHECK (strip.eqEnabled.load());
+    }
+
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (5, std::memory_order_relaxed);
+    s.mcu.selectedChannel.store (3, std::memory_order_relaxed);
+    auto& strip = s.track (3).strip;
+
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x40 | 0x01), 0);   // HPF down at OFF
+    CHECK_FALSE (strip.eqEnabled.load());
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x05), 0);          // up off OFF
+    CHECK (strip.hpfEnabled.load());
+    CHECK (strip.eqEnabled.load());
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x40 | 0x05), 0);   // back to OFF
+    CHECK_FALSE (strip.hpfEnabled.load());
+    CHECK (strip.eqEnabled.load());
+
+    strip.eqEnabled.store (false);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, 120.0f);
+    strip.hpfEnabled.store (true);
+    strip.lfGainDb.store (6.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Lm, 1500.0f);
+    strip.hfGainDb.store (-5.0f);
+    for (int encoder = 0; encoder < 8; ++encoder)
+        r.process (makeNoteOn (mcu::btn::VPotPushBase + encoder, 0x7F), 0);
+    CHECK_THAT (strip.lfGainDb.load(), WithinAbs (0.0f, 0.0f));
+    CHECK_FALSE (strip.hpfEnabled.load());
+    CHECK_FALSE (strip.eqEnabled.load());
+}
+
+// The compressor follows the strip's comp knobs and threshold handle: a turn
+// engages it, a push resets without engaging, as a double-click on the handle
+// does. Opto has no ratio, attack or release, so those encoders move nothing
+// there and engage nothing.
+TEST_CASE ("McuReceiver: a COMP encoder turn engages the compressor and a push does not",
+           "[mcu][receiver]")
+{
+    for (const int mode : { 0, 1, 2 })
+        for (int encoder = 0; encoder < 5; ++encoder)
+        {
+            CAPTURE (mode, encoder);
+            Session s;
+            McuReceiver r (s);
+            s.mcu.assignMode.store (6, std::memory_order_relaxed);   // COMP
+            s.mcu.selectedChannel.store (2, std::memory_order_relaxed);
+            auto& strip = s.track (2).strip;
+            strip.compMode.store (mode, std::memory_order_relaxed);
+            REQUIRE_FALSE (strip.compEnabled.load());
+
+            r.process (makeNoteOn (mcu::btn::VPotPushBase + encoder, 0x7F), 0);
+            CHECK_FALSE (strip.compEnabled.load());
+            r.process (makeCc (mcu::cc::VPotRotateBase + encoder, 0x40 | 0x02), 0);
+            const bool moves = mode != 0 || encoder == 0 || encoder == 4;
+            CHECK (strip.compEnabled.load() == moves);
+        }
+}
+
 TEST_CASE ("McuReceiver: V-pot rotate (COMP mode) makeup moves the audible param",
            "[mcu][receiver]")
 {

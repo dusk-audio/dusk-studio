@@ -4543,10 +4543,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                          * std::exp (kHpfLogRange * frac);
                                 }
                                 session.track (b.targetIndex).strip
-                                    .setEqFreq (ChannelStripParams::EqFreq::Hpf, freq);
-                                session.track (b.targetIndex).strip.hpfEnabled
-                                    .store (freq > ChannelStripParams::kHpfOffHz + 0.5f,
-                                             std::memory_order_relaxed);
+                                    .moveEqFreq (ChannelStripParams::EqFreq::Hpf, freq);
                             }
                             break;
                         }
@@ -4564,10 +4561,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                 auto& strip = session.track (trk).strip;
                                 switch (band)
                                 {
-                                    case 0: strip.lfGainDb.store (db, std::memory_order_relaxed); break;
-                                    case 1: strip.lmGainDb.store (db, std::memory_order_relaxed); break;
-                                    case 2: strip.hmGainDb.store (db, std::memory_order_relaxed); break;
-                                    case 3: strip.hfGainDb.store (db, std::memory_order_relaxed); break;
+                                    case 0: strip.moveEqBand (strip.lfGainDb, db); break;
+                                    case 1: strip.moveEqBand (strip.lmGainDb, db); break;
+                                    case 2: strip.moveEqBand (strip.hmGainDb, db); break;
+                                    case 3: strip.moveEqBand (strip.hfGainDb, db); break;
                                 }
                             }
                             break;
@@ -4586,10 +4583,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                 auto& strip = session.track (trk).strip;
                                 switch (band)
                                 {
-                                    case 0: strip.setEqFreq (ChannelStripParams::EqFreq::Lf, logFreq (ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax)); break;
-                                    case 1: strip.setEqFreq (ChannelStripParams::EqFreq::Lm, logFreq (ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax)); break;
-                                    case 2: strip.setEqFreq (ChannelStripParams::EqFreq::Hm, logFreq (ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax)); break;
-                                    case 3: strip.setEqFreq (ChannelStripParams::EqFreq::Hf, logFreq (ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax)); break;
+                                    case 0: strip.moveEqFreq (ChannelStripParams::EqFreq::Lf, logFreq (ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax)); break;
+                                    case 1: strip.moveEqFreq (ChannelStripParams::EqFreq::Lm, logFreq (ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax)); break;
+                                    case 2: strip.moveEqFreq (ChannelStripParams::EqFreq::Hm, logFreq (ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax)); break;
+                                    case 3: strip.moveEqFreq (ChannelStripParams::EqFreq::Hf, logFreq (ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax)); break;
                                 }
                             }
                             break;
@@ -4605,8 +4602,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                 const float q = ChannelStripParams::kBandQMin
                                     + frac * (ChannelStripParams::kBandQMax - ChannelStripParams::kBandQMin);
                                 auto& strip = session.track (trk).strip;
-                                if (band == 1) strip.lmQ.store (q, std::memory_order_relaxed);
-                                else if (band == 2) strip.hmQ.store (q, std::memory_order_relaxed);
+                                if (band == 1) strip.moveEqBand (strip.lmQ, q);
+                                else if (band == 2) strip.moveEqBand (strip.hmQ, q);
                             }
                             break;
                         }
@@ -4628,6 +4625,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             else
                                 comp::applyTrackCompThresholdDb (
                                     strip, comp::thresholdBindingFracToDb (strip, frac));
+                            strip.armComp();
                             break;
                         }
                         case MidiBindingTarget::BusFader:
@@ -4655,10 +4653,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                 const float freq = val == 0
                                     ? BusParams::kHpfOffHz
                                     : BusParams::kHpfMinHz * std::exp (kBusHpfLogRange * frac);
-                                auto& strip = session.bus (b.targetIndex).strip;
-                                strip.hpfFreq.store (freq, std::memory_order_relaxed);
-                                strip.hpfEnabled.store (freq > BusParams::kHpfOffHz + 0.5f,
-                                                        std::memory_order_relaxed);
+                                session.bus (b.targetIndex).strip.moveHpf (freq);
                             }
                             break;
                         case MidiBindingTarget::BusMute:
@@ -4884,9 +4879,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             auto& strip = session.bus (bus).strip;
                             switch (band)
                             {
-                                case 0: strip.eqLfGainDb .store (db, std::memory_order_relaxed); break;
-                                case 1: strip.eqMidGainDb.store (db, std::memory_order_relaxed); break;
-                                case 2: strip.eqHfGainDb .store (db, std::memory_order_relaxed); break;
+                                case 0: strip.moveEqGain (strip.eqLfGainDb,  db); break;
+                                case 1: strip.moveEqGain (strip.eqMidGainDb, db); break;
+                                case 2: strip.moveEqGain (strip.eqHfGainDb,  db); break;
                                 default: break;
                             }
                             break;

@@ -798,3 +798,62 @@ TEST_CASE ("A v8 file's EQ dial plays only beside the frequency the migrator kep
     }
     CHECK (kept.legacyDial (EqFreq::Hf).raw() == 0);
 }
+
+// Every move of a band or filter, from its knob, a MIDI binding or a control
+// surface, goes through ChannelStripParams' move helpers: it drops the dial as
+// setEqFreq does and engages a bypassed EQ. A filter engages it once it leaves
+// OFF, and turned back to OFF it switches off and leaves the EQ as it is. A
+// load stores its values directly, so a session saved bypassed stays bypassed.
+TEST_CASE ("Moving a band or filter engages the channel EQ, and loading a session does not",
+           "[session][eq]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    for (const auto f : kAllFreqs)
+    {
+        CAPTURE ((int) f);
+        ChannelStripParams strip;
+        strip.legacyDial (f).set (100.0f, strip.eqFreq (f).load(), false);
+        const float hz = f == EqFreq::Hpf ? 150.0f : f == EqFreq::Lpf ? 12000.0f
+                       : f == EqFreq::Lf  ? 120.0f : f == EqFreq::Lm  ? 800.0f
+                       : f == EqFreq::Hm  ? 4000.0f : 9000.0f;
+        CHECK (strip.moveEqFreq (f, hz));
+        CHECK_THAT (strip.eqFreq (f).load(), WithinAbs (hz, 0.0f));
+        CHECK (strip.legacyDial (f).raw() == 0);
+        CHECK (strip.eqEnabled.load());
+    }
+
+    for (const auto control : { &ChannelStripParams::lfGainDb, &ChannelStripParams::lmGainDb,
+                                &ChannelStripParams::hmGainDb, &ChannelStripParams::hfGainDb,
+                                &ChannelStripParams::lmQ, &ChannelStripParams::hmQ })
+    {
+        ChannelStripParams strip;
+        strip.moveEqBand (strip.*control, 2.5f);
+        CHECK_THAT ((strip.*control).load(), WithinAbs (2.5f, 0.0f));
+        CHECK (strip.eqEnabled.load());
+    }
+
+    ChannelStripParams filters;
+    CHECK_FALSE (filters.moveEqFreq (EqFreq::Hpf, ChannelStripParams::kHpfOffHz));
+    CHECK_FALSE (filters.moveEqFreq (EqFreq::Lpf, ChannelStripParams::kLpfOffHz));
+    CHECK_FALSE (filters.eqEnabled.load());
+    CHECK (filters.moveEqFreq (EqFreq::Lpf, 8000.0f));
+    CHECK (filters.lpfEnabled.load());
+    CHECK (filters.eqEnabled.load());
+    CHECK_FALSE (filters.moveEqFreq (EqFreq::Lpf, ChannelStripParams::kLpfOffHz));
+    CHECK_FALSE (filters.lpfEnabled.load());
+    CHECK (filters.eqEnabled.load());
+
+    duskstudio::test::TempDirectory dir ("dusk-eq-move-load-");
+    const auto file = dir.path() / "session.json";
+    auto document = v7Session (false, kDials);
+    document["tracks"][0]["eq"]["enabled"] = false;
+    write (file, document);
+    auto session = std::make_unique<Session>();
+    REQUIRE (SessionSerializer::load (*session, file));
+    const auto& loaded = session->track (0).strip;
+    CHECK_THAT (loaded.lfGainDb.load(), WithinAbs (6.0f, 0.0f));
+    CHECK (loaded.hpfEnabled.load());
+    CHECK_FALSE (loaded.eqEnabled.load());
+}

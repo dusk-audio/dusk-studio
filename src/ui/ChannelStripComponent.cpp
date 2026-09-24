@@ -591,16 +591,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                             juce::dontSendNotification);
         row.gain->updateText();  // setValue skips updateText() when value didn't change (default 0 -> loaded 0)
         {
+            auto* strip = &track.strip;
             auto* atomicPtr = spec.gainPtr (track.strip);
             auto* knob = row.gain.get();
-            auto* eqEnabledPtr = &track.strip.eqEnabled;
-            knob->onValueChange = [knob, atomicPtr, eqEnabledPtr]
+            knob->onValueChange = [knob, strip, atomicPtr]
             {
-                atomicPtr->store ((float) knob->getValue(), std::memory_order_relaxed);
-                // Auto-arm: touching any EQ-band knob engages the EQ.
-                // Off by default (Session.h) so the LED only lights once
-                // the engineer actually shapes the sound.
-                eqEnabledPtr->store (true, std::memory_order_release);
+                strip->moveEqBand (*atomicPtr, (float) knob->getValue());
             };
         }
         // Mouse listener so the strip's mouseDown handler can route a
@@ -645,13 +641,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             row.q->setValue (spec.qPtr (track.strip)->load (std::memory_order_relaxed),
                               juce::dontSendNotification);
             {
+                auto* strip = &track.strip;
                 auto* atomicPtr = spec.qPtr (track.strip);
                 auto* knob = row.q.get();
-                auto* eqEnabledPtr = &track.strip.eqEnabled;
-                knob->onValueChange = [knob, atomicPtr, eqEnabledPtr]
+                knob->onValueChange = [knob, strip, atomicPtr]
                 {
-                    atomicPtr->store ((float) knob->getValue(), std::memory_order_relaxed);
-                    eqEnabledPtr->store (true, std::memory_order_release);
+                    strip->moveEqBand (*atomicPtr, (float) knob->getValue());
                 };
             }
             row.q->addMouseListener (this, false);   // right-click -> MIDI Learn (TrackEqQ)
@@ -663,8 +658,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             auto* knob = row.freq.get();
             knob->onValueChange = [knob, strip, band = spec.freq]
             {
-                strip->setEqFreq (band, (float) knob->getValue());
-                strip->eqEnabled.store (true, std::memory_order_release);
+                strip->moveEqFreq (band, (float) knob->getValue());
             };
         }
         row.freq->addMouseListener (this, false);   // right-click -> MIDI Learn (TrackEqFreq)
@@ -5875,32 +5869,15 @@ void ChannelStripComponent::refreshInputSelectorVisibility()
 
 void ChannelStripComponent::onHpfKnobChanged()
 {
-    const float freq = (float) hpfKnob.getValue();
-    track.strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, freq);
-    // Bypass the HPF DSP entirely when the knob is at the floor - saves
-    // 16 channels worth of biquad cost when nobody's using HPF.
-    const bool hpfOn = freq > ChannelStripParams::kHpfOffHz + 0.5f;
-    track.strip.hpfEnabled.store (hpfOn, std::memory_order_relaxed);
+    track.strip.moveEqFreq (ChannelStripParams::EqFreq::Hpf, (float) hpfKnob.getValue());
     // The knob wrote its text before this switched the filter.
     hpfKnob.updateText();
-    // Auto-arm the EQ header LED whenever the HPF is engaged - band-
-    // knob touches do the same via the EQ rows' onValueChange paths.
-    if (hpfOn)
-        track.strip.eqEnabled.store (true, std::memory_order_release);
 }
 
 void ChannelStripComponent::onLpfKnobChanged()
 {
-    const float freq = (float) lpfKnob.getValue();
-    track.strip.setEqFreq (ChannelStripParams::EqFreq::Lpf, freq);
-    // At max -> bypass the LPF DSP. Same per-channel cost optimisation
-    // as HPF - donor BritishEQProcessor skips its LPF biquad when the
-    // enabled flag is false.
-    const bool lpfOn = freq < ChannelStripParams::kLpfOffHz - 0.5f;
-    track.strip.lpfEnabled.store (lpfOn, std::memory_order_relaxed);
+    track.strip.moveEqFreq (ChannelStripParams::EqFreq::Lpf, (float) lpfKnob.getValue());
     lpfKnob.updateText();
-    if (lpfOn)
-        track.strip.eqEnabled.store (true, std::memory_order_release);
 }
 
 void ChannelStripComponent::setCompMode (int modeIndex)
@@ -6130,7 +6107,7 @@ void ChannelStripComponent::armCompOnUserEdit()
 {
     if (! track.strip.compEnabled.load (std::memory_order_relaxed))
     {
-        track.strip.compEnabled.store (true, std::memory_order_relaxed);
+        track.strip.armComp();
         refreshCompModeButtonState();
     }
 }

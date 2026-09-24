@@ -102,16 +102,6 @@ void setUpBusHpfKnob (juce::Slider& s, const BusParams& strip)
     s.updateText();
 }
 
-// The floor is OFF, as on the channel strip. Returns whether the highpass is
-// now engaged, so the caller can arm the EQ.
-bool storeBusHpf (BusParams& strip, double hz)
-{
-    const bool on = hz > BusParams::kHpfOffHz + 0.5;
-    strip.hpfFreq.store ((float) hz, std::memory_order_relaxed);
-    strip.hpfEnabled.store (on, std::memory_order_relaxed);
-    return on;
-}
-
 // Dusk editor-modal styling helpers - match ChannelEqEditor / ChannelCompEditor
 // (380-wide popups, 56-px rotary knobs, 80×18 text boxes, 16-pt bold accent
 // band labels). Used by Bus / Master EQ + COMP modals so the UI conforms
@@ -206,14 +196,10 @@ public:
         mid.setValue (bus.strip.eqMidGainDb.load(), juce::dontSendNotification);
         hf .setValue (bus.strip.eqHfGainDb .load(), juce::dontSendNotification);
 
-        auto arm = [this]
-        {
-            bus.strip.eqEnabled.store (true, std::memory_order_release);
-            enableBtn.setToggleState (true, juce::dontSendNotification);
-        };
-        lf .onValueChange = [this, arm] { bus.strip.eqLfGainDb .store ((float) lf .getValue(), std::memory_order_relaxed); arm(); };
-        mid.onValueChange = [this, arm] { bus.strip.eqMidGainDb.store ((float) mid.getValue(), std::memory_order_relaxed); arm(); };
-        hf .onValueChange = [this, arm] { bus.strip.eqHfGainDb .store ((float) hf .getValue(), std::memory_order_relaxed); arm(); };
+        auto armed = [this] { enableBtn.setToggleState (true, juce::dontSendNotification); };
+        lf .onValueChange = [this, armed] { bus.strip.moveEqGain (bus.strip.eqLfGainDb,  (float) lf .getValue()); armed(); };
+        mid.onValueChange = [this, armed] { bus.strip.moveEqGain (bus.strip.eqMidGainDb, (float) mid.getValue()); armed(); };
+        hf .onValueChange = [this, armed] { bus.strip.moveEqGain (bus.strip.eqHfGainDb,  (float) hf .getValue()); armed(); };
         lf .setTooltip ("Bus EQ low shelf @ 300 Hz (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
         mid.setTooltip ("Bus EQ mid bell @ 800 Hz, Q 0.7 (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
         hf .setTooltip ("Bus EQ high shelf @ 2 kHz (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
@@ -223,7 +209,7 @@ public:
         styleEditorKnob (hpf, filterWhite, BusParams::kHpfMinHz, BusParams::kHpfMaxHz,
                          BusParams::kHpfOffHz, 245.0, "", 0);
         setUpBusHpfKnob (hpf, bus.strip);
-        hpf.onValueChange = [this, arm] { if (storeBusHpf (bus.strip, hpf.getValue())) arm(); };
+        hpf.onValueChange = [this, armed] { if (bus.strip.moveHpf ((float) hpf.getValue())) armed(); };
         hpf.setTooltip ("Bus highpass, 12 dB/oct, 20 Hz..3 kHz; fully down is OFF. Double-click for OFF; Shift-drag for fine.");
         addAndMakeVisible (hpf);
 
@@ -661,18 +647,10 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     eqLfGain .setTitle (busTitle + " EQ low shelf gain");
     eqMidGain.setTitle (busTitle + " EQ mid bell gain");
     eqHfGain .setTitle (busTitle + " EQ high shelf gain");
-    // Auto-arm the bus EQ on any band touch (same UX as the channel
-    // strip): EQ defaults to off and the LED only lights once the
-    // engineer shapes the sound. release ordering pairs with audio-
-    // thread's relaxed read in the DSP gate.
-    auto armBusEq = [this]
-    {
-        bus.strip.eqEnabled.store (true, std::memory_order_release);
-        if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
-    };
-    eqLfGain .onValueChange = [this, armBusEq] { bus.strip.eqLfGainDb .store ((float) eqLfGain .getValue(), std::memory_order_relaxed); armBusEq(); };
-    eqMidGain.onValueChange = [this, armBusEq] { bus.strip.eqMidGainDb.store ((float) eqMidGain.getValue(), std::memory_order_relaxed); armBusEq(); };
-    eqHfGain .onValueChange = [this, armBusEq] { bus.strip.eqHfGainDb .store ((float) eqHfGain .getValue(), std::memory_order_relaxed); armBusEq(); };
+    auto busEqArmed = [this] { if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh(); };
+    eqLfGain .onValueChange = [this, busEqArmed] { bus.strip.moveEqGain (bus.strip.eqLfGainDb,  (float) eqLfGain .getValue()); busEqArmed(); };
+    eqMidGain.onValueChange = [this, busEqArmed] { bus.strip.moveEqGain (bus.strip.eqMidGainDb, (float) eqMidGain.getValue()); busEqArmed(); };
+    eqHfGain .onValueChange = [this, busEqArmed] { bus.strip.moveEqGain (bus.strip.eqHfGainDb,  (float) eqHfGain .getValue()); busEqArmed(); };
     addAndMakeVisible (eqLfGain); addAndMakeVisible (eqMidGain); addAndMakeVisible (eqHfGain);
 
     // Highpass, white-faced like the channel strip's filters. Turning it up
@@ -684,7 +662,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     eqHpfFreq.setTooltip ("Bus highpass, 12 dB/oct, 20 Hz..3 kHz; fully down is OFF. Double-click for OFF; Shift-drag for fine.");
     eqHpfFreq.setTitle (busTitle + " high-pass filter frequency");
     eqHpfFreq.setHelpText ("Bus high-pass filter corner, in hertz; OFF when fully down.");
-    eqHpfFreq.onValueChange = [this, armBusEq] { if (storeBusHpf (bus.strip, eqHpfFreq.getValue())) armBusEq(); };
+    eqHpfFreq.onValueChange = [this, busEqArmed] { if (bus.strip.moveHpf ((float) eqHpfFreq.getValue())) busEqArmed(); };
     addAndMakeVisible (eqHpfFreq);
 
     styleSmallLabel (eqHpfLbl, "HPF", filterWhite);
