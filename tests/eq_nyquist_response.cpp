@@ -230,11 +230,12 @@ TEST_CASE ("Channel EQ shelf has its corner at the frequency its knob shows", "[
 TEST_CASE ("Channel EQ gain moves a bell's centre by at most about 2.5 percent", "[dsp][eq]")
 {
     using EQ = duskaudio::FourKEQDSP;
+    const std::array<float, 3> lowMidKnobs { 200.0f, 600.0f, 2000.0f };
+    const std::array<float, 3> highMidKnobs { 600.0f, 3000.0f, 7000.0f };
     double widest = 0.0;
     for (const bool black : { false, true })
         for (const bool high : { false, true })
-            for (const float knob : high ? std::initializer_list<float> { 600.0f, 3000.0f, 7000.0f }
-                                         : std::initializer_list<float> { 200.0f, 600.0f, 2000.0f })
+            for (const float knob : high ? highMidKnobs : lowMidKnobs)
                 for (const float gainDb : { 1.5f, 3.0f, 7.5f, 12.0f, 15.0f, -3.0f, -7.5f, -15.0f })
                 {
                     EQ::CurveControls c;
