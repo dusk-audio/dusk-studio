@@ -28,7 +28,7 @@ namespace duskstudio
 enum class AutomationMode : int { Off = 0, Read = 1, Write = 2, Touch = 3 };
 
 // EQ, Comp, HPF and bus assigns are deliberately NOT automatable per
-// DuskStudio.md - automation is for dynamics gestures, not tone shaping.
+// docs/DuskStudio.md - automation is for dynamics gestures, not tone shaping.
 enum class AutomationParam : int
 {
     FaderDb = 0,
@@ -623,7 +623,7 @@ private:
 
 enum class TimeDisplayMode : int { Bars = 0, Time = 1 };
 
-// Ardour-style. Stretch is deliberately absent - DuskStudio.md forbids
+// Ardour-style. Stretch is deliberately absent - docs/DuskStudio.md forbids
 // time-stretching.
 enum class EditMode : int
 {

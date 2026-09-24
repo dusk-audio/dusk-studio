@@ -1,7 +1,7 @@
 // Increment 1 of the native CLAP host: load a real .clap, create + activate the
 // instance, and process audio offline. Gated on DUSKSTUDIO_TEST_CLAP=/path/to.clap
 // (e.g. ~/.clap/DuskVerb.clap) so CI without a CLAP plugin stays green.
-// See docs/native-clap-host-plan.md.
+// See docs/archive/native-clap-host-plan.md.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>

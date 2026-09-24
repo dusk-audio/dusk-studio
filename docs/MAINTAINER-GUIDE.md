@@ -3,9 +3,9 @@
 A guide to understanding, building, debugging, and extending Dusk Studio. It assumes you can read C++ but does **not** assume you know JUCE, real-time audio, or this codebase. Work through Part 1 once, then keep Parts 2–6 open as reference.
 
 > Companion docs:
-> - [DuskStudio.md](../DuskStudio.md) — the product spec (the *why* and the *what*). ~1000 lines.
+> - [DuskStudio.md](DuskStudio.md) — the product spec (the *why* and the *what*). ~1000 lines.
 > - [MANUAL.md](../MANUAL.md) — the end-user manual (what each control does).
-> - [README.md](../README.md), [BUILDING-LINUX.md](../BUILDING-LINUX.md), [BUILDING-WINDOWS.md](../BUILDING-WINDOWS.md) — build entry points.
+> - [README.md](../README.md), [BUILDING-LINUX.md](BUILDING-LINUX.md), [BUILDING-WINDOWS.md](BUILDING-WINDOWS.md) — build entry points.
 
 ---
 
@@ -26,7 +26,7 @@ Dusk Studio is deliberately constrained. These aren't arbitrary limits to be "im
 - **Regions, not waveforms.** Move/split/trim/fade/delete — no sample-level destructive editing.
 - **Minimal preferences.** The settings surface is the audio device panel plus a handful of adjacent config (MIDI bindings, sync). Resist adding options — pick a good default instead.
 
-The touchstone is hardware like the Tascam DP-24: "would this exist on a standalone hardware recorder?" is the right instinct when judging a feature request, even though it's a sensibility rather than a law. Many "missing feature" requests are intentional omissions — check [DuskStudio.md](../DuskStudio.md) before assuming something was forgotten.
+The touchstone is hardware like the Tascam DP-24: "would this exist on a standalone hardware recorder?" is the right instinct when judging a feature request, even though it's a sensibility rather than a law. Many "missing feature" requests are intentional omissions — check [DuskStudio.md](DuskStudio.md) before assuming something was forgotten.
 
 ---
 

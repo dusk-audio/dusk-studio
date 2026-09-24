@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # De-JUCE — GUI tower (campaign plan)
 
@@ -12,7 +12,7 @@ remaining JUCE module. This document is the execution spec: the gate evidence,
 the framework revision to build on, the backend gaps that have to be closed, the
 phase order, and what each phase must prove before it lands.
 
-Gate issue: #301. Campaign map: [dejuce-campaign.md](dejuce-campaign.md).
+Gate issue: #301. Campaign map: [campaign.md](campaign.md).
 
 ## Recommendation: GO
 
@@ -153,7 +153,7 @@ notepad escape into a separate top-level. A `-DDGL_BACKEND=wayland` app build
 therefore ships a notepad that cannot open, which G0 is not allowed to do. The
 flag belongs to the spike's build directory today; the app's Linux configures
 take it at G5, in the same change that stops embedding and gives the shell its
-own decorations. `BUILDING-LINUX.md` documents the rule.
+own decorations. `docs/BUILDING-LINUX.md` documents the rule.
 
 ### 1.5 What was agreed, and what is left
 
@@ -329,7 +329,7 @@ desktop application.
 | 6 | Keyboard focus | Fixed on `dusk/302-app-contract`, lands with the G0 repin | `wayland.c:1555`, `Widget::onFocusChanged` |
 | 7 | Clipboard | Partial (text only, no primary) | `wayland.c:4093`, `:4109` |
 | 8 | Cursors | Hide fixed on `dusk/302-app-contract`, lands with the G0 repin; still no custom image | `wayland.c:2519`, `kMouseCursorNone` |
-| 9 | Accessibility | Bridge chosen; implementation and parity outstanding | [Accessibility plan](dejuce-accessibility-plan.md) |
+| 9 | Accessibility | Bridge chosen; implementation and parity outstanding | [Accessibility plan](accessibility-plan.md) |
 | 10 | Headless automation | Absent in the backend | `wayland.c:2911` |
 | 11 | HiDPI / fractional scaling | Present | `wayland.c:312`, `:355` |
 | 12 | Timers and event loop | Present, real blocking wait with timeout | `wayland.c:3454`, `:3612` |
@@ -376,7 +376,7 @@ Detail on the ones that change the plan:
 - **Accessibility (9).** Marc chose a platform accessibility bridge on
   2026-09-08. Preserve existing JUCE semantics and provide native platform
   exposure; G3 waits for implementation, parity and desktop checks. The
-  [accessibility plan](dejuce-accessibility-plan.md) records the source inventory,
+  [accessibility plan](accessibility-plan.md) records the source inventory,
   the distinction between current semantics and new Linux AT-SPI support, and
   the first native control slice. The framework/ImGui bridge is still unbuilt.
 - **Headless automation (10).** The backend hard-fails without a compositor and
@@ -497,11 +497,11 @@ Each phase ends with the app shipping.
 **Landed.** No user-visible change. `DAF_REV` and `DAF_WIDGETS_REV` moved to the
 reconciled revisions (§1), the dual-spelling handling is gone, `LICENSES.txt`
 carries the new provenance, and the spike's two validation commits are in the
-tree. `DGL_BACKEND` is documented in `BUILDING-LINUX.md` but **not** passed on
+tree. `DGL_BACKEND` is documented in `docs/BUILDING-LINUX.md` but **not** passed on
 any app configure: §1.4 says why, and G5 is where the app takes it.
 
 Owned: `CMakeLists.txt`, `.github/actions/clone-daf-stack/action.yml`,
-`src/ui/NativeNotepadWindow.cpp`, `LICENSES.txt`, `BUILDING-LINUX.md`. The
+`src/ui/NativeNotepadWindow.cpp`, `LICENSES.txt`, `docs/BUILDING-LINUX.md`. The
 leftover legacy checkout-directory and path-variable spellings were named by 16
 references across 8 workflow files and deliberately stayed out for a mechanical
 pass of their own.
@@ -691,7 +691,7 @@ Loaded slots still keep the picker closed; empty slots still open it. The gate
 stays at 164 / 8,097. Issue #305's first phase corrects the fader's accessible
 mute label to use the DSP's existing -90 dB threshold, keeps infinity-text input
 muted, and records the
-[accessibility support floor and bridge plan](dejuce-accessibility-plan.md).
+[accessibility support floor and bridge plan](accessibility-plan.md).
 It does not implement the native bridge or complete #305.
 
 G0, G1 and both G2 passes are already on main (G2 remainder: PR #356).
@@ -806,7 +806,7 @@ only `../DAF` / `../DAF-Widgets`, and CI uses
 ## 8. Resume phrase
 
 "GUI tower, phase G<n>" — read this file, then
-[dejuce-campaign.md](dejuce-campaign.md) for the ritual. The gate evidence is
+[campaign.md](campaign.md) for the ritual. The gate evidence is
 §2, the framework work is §1 and §4, and the phase you are on owns exactly the
 files listed under it.
 

@@ -27,7 +27,7 @@ struct PluginDesc
 //
 // Foundation of the native CLAP host (replaces JUCE plugin hosting, aux-first).
 // This stage only loads + enumerates; instance/process/editor land in later
-// increments. See docs/native-clap-host-plan.md.
+// increments. See docs/archive/native-clap-host-plan.md.
 class ClapBundle
 {
 public:

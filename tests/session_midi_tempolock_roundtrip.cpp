@@ -21,7 +21,7 @@ juce::File makeTempSessionDir()
 } // namespace
 
 // MidiRegion gained tempoLock + recordedAtBPM in the Phase-4 BPM-retime
-// work. The fields are spec'd in DuskStudio.md §5b and only matter once
+// work. The fields are spec'd in docs/DuskStudio.md §5b and only matter once
 // the user changes BPM after recording. A round-trip miss here means a
 // post-load BPM change retimes the wrong direction (or not at all),
 // silently destroying the take's musical timing.

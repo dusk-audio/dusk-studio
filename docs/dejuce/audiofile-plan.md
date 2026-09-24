@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # De-JUCE tower spec — Audio-file call-site sweep (juce_audio_formats consumers → dusk libsndfile seam)
 
@@ -16,7 +16,7 @@ JUCE audio-format APIs; the module unlink waits on juce_audio_utils (GUI
 tower). Bench debts at §Owed.**
 This spec is archival once PR-2 merges.
 
-Read order for an executing session: `docs/dejuce-campaign.md` → this file →
+Read order for an executing session: `docs/dejuce/campaign.md` → this file →
 memory ledger `project_dejuce_roadmap.md` → the files of the ONE phase you are
 about to execute. Execute one phase per session, then stop.
 
@@ -248,7 +248,7 @@ Thread::sleep) untouched.
 - Delete now-dead juce includes/members in flipped files (WavAudioFormat,
   AudioFormatManager, BufferingAudioReader, ThreadedWriter, TimeSliceThread
   where orphaned). juce_audio_formats link STAYS (transitive + tests).
-- docs/dejuce-campaign.md: tower entry → done line (with the honest-yield
+- docs/dejuce/campaign.md: tower entry → done line (with the honest-yield
   caveat restated); MANUAL.md audit (expected no-op); ledger + STATUS.
 
 ## Risk register
@@ -271,7 +271,7 @@ Thread::sleep) untouched.
 
 ## Opus session prompts
 
-Common preamble: as in the device-tower spec (docs/dejuce-device-phase3-audio-plan.md
+Common preamble: as in the device-tower spec (docs/dejuce/device-phase3-audio-plan.md
 §Opus session prompts) with this file as the spec. One phase per session.
 
 - **A0**: "Phase A0 on new branch `dejuce/audiofile-sweep-1`: wire

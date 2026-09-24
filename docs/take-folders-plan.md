@@ -62,7 +62,7 @@ exact behavior is not confirmed from Apple's documentation, the item is marked
     punch is trimmed from other takes.
 
 1.7 Comp boundaries play with the existing 64-sample raised-cosine crossfade
-    (DuskStudio.md §5b). No clicks at selection edges.
+    (docs/DuskStudio.md §5b). No clicks at selection edges.
 
 ## 2. Display
 

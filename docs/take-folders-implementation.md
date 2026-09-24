@@ -271,7 +271,7 @@ Loader validation should repair duplicate/zero IDs deterministically, keeping on
 
 ### Timeline
 
-`TapeStrip` remains compact at its existing row height; this aligns with `docs/fit-8-tracks-1080p-plan.md` and `TapeStrip.h:45-49`.
+`TapeStrip` remains compact at its existing row height; this aligns with `docs/archive/fit-8-tracks-1080p-plan.md` and `TapeStrip.h:45-49`.
 
 Replace index-only selection/hits with a discriminated stable target:
 
@@ -404,7 +404,7 @@ For audio-path phases, also run `scripts/run-selftest-xvfb.sh` where practical, 
 | 11 | **Audio UI:** Quick Swipe take editor | `AudioRegionEditor.{h,cpp}`, `MainComponent.{h,cpp}`, `ScreenshotCapture.cpp` | Pure hit cases in `tests/take_folder_model.cpp`: `boundary hit wins over swipe`; `swipe replaces exactly its interval`; `mouse-up produces one comp state` | Audio take lanes and comp row | 1,100–1,500 |
 | 12 | **MIDI core + UI:** piano-roll take mode | `PianoRollComponent.{h,cpp}`, `MainComponent.{h,cpp}`, `ScreenshotCapture.cpp` | `MIDI comp uses half-open note-on ownership`; `CC and other events use event time`; `take editor mutates selected take only` | MIDI comp lanes plus detailed take editing | 1,000–1,400 |
 | 13 | **Audio/MIDI integration:** freeze, bounce length, cleanup | `AudioEngine.cpp`, `BounceEngine.{h,cpp}`, `MainComponent.cpp`, `tests/session_region_bounds.cpp` | `freeze length includes folder content and MIDI note tails`; `bounce length includes folder spans`; `clean-out retains unused folder takes` | Freeze/bounce/clean-out understand folders | 250–400 |
-| 14 | **UI/docs:** final documentation | `MANUAL.md`, `DuskStudio.md`, `README.md`, `ScreenshotCapture.cpp` | `V`; screenshot checklist for audio/MIDI folders and MIDI Merge | Documented first-release feature | 200–350 |
+| 14 | **UI/docs:** final documentation | `MANUAL.md`, `docs/DuskStudio.md`, `README.md`, `ScreenshotCapture.cpp` | `V`; screenshot checklist for audio/MIDI folders and MIDI Merge | Documented first-release feature | 200–350 |
 
 Approval should pause between every phase. Phases 1–7 and 10A are required for #594/#595; phases 6, 10B, and 12 are the binding MIDI/Merge work; phases 8–9 are the binding first-release Flatten work.
 

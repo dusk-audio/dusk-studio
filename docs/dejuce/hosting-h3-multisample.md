@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # Hosting tower H3 — DuskMultisample re-home (executable spec)
 
@@ -9,7 +9,7 @@ AUDIO PRESENT through the native rung with a synthetic full-range .sfz,
 selftest 36 PASS under Xvfb. Behavior fix shipped: pitch-wheel was passed
 uncentred (0..16383) to sfizz in the JUCE-hosted build too - bends now work.
 Branch `dejuce/hosting-h3`. One PR.
-Parent plan: [dejuce-hosting-plan.md](dejuce-hosting-plan.md). Prior scout
+Parent plan: [hosting-plan.md](hosting-plan.md). Prior scout
 2026-07-27 mapped the full coupling (session notes); re-verify line numbers
 before editing.
 
@@ -88,5 +88,5 @@ route now names the picker's actual "Load Soundfont" button.
 
 ## Resume phrase
 
-"Hosting H3, branch dejuce/hosting-h3, spec docs/dejuce-hosting-h3-multisample.md
+"Hosting H3, branch dejuce/hosting-h3, spec docs/dejuce/hosting-h3-multisample.md
 — continue at first unchecked item."

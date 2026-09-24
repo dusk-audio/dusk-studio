@@ -2,7 +2,7 @@
 
 This file is the single source of truth for every agent working in this repo. `AGENTS.md` is a symlink to it, so Claude Code and Codex read the same bytes; edit this file, never the link.
 
-Dusk Studio is a portastudio-style DAW for Linux, C++17. It is being actively de-JUCE'd (see **De-JUCE — no new JUCE** below; read it before writing any new code). The authoritative spec is [DuskStudio.md](DuskStudio.md). Read it before changing anything non-trivial.
+Dusk Studio is a portastudio-style DAW for Linux, C++17. It is being actively de-JUCE'd (see **De-JUCE — no new JUCE** below; read it before writing any new code). The authoritative spec is [DuskStudio.md](docs/DuskStudio.md). Read it before changing anything non-trivial.
 
 ## Architecture cheat-sheet
 
@@ -14,7 +14,7 @@ Dusk Studio is a portastudio-style DAW for Linux, C++17. It is being actively de
 
 ## De-JUCE — no new JUCE (READ FIRST)
 
-Dusk Studio is being re-platformed to remove **all** JUCE by 1.0, incrementally, tower by tower (campaign map + tower order in [docs/dejuce-campaign.md](docs/dejuce-campaign.md); live state in the [de-JUCE roadmap memory](../../.claude/projects/-home-marc-projects-DuskStudio/memory/project_dejuce_roadmap.md)). Much of the code documented below still uses `juce::` — that is the *migration surface*, not a pattern to copy. **New code must not add JUCE.** Reach for the JUCE-free seam first; fall back to `juce::` only inside a file that is already coupled and has no seam yet.
+Dusk Studio is being re-platformed to remove **all** JUCE by 1.0, incrementally, tower by tower (campaign map + tower order in [docs/dejuce/campaign.md](docs/dejuce/campaign.md); live state in the [de-JUCE roadmap memory](../../.claude/projects/-home-marc-projects-DuskStudio/memory/project_dejuce_roadmap.md)). Much of the code documented below still uses `juce::` — that is the *migration surface*, not a pattern to copy. **New code must not add JUCE.** Reach for the JUCE-free seam first; fall back to `juce::` only inside a file that is already coupled and has no seam yet.
 
 **The gate.** [tools/juce-gate.sh](tools/juce-gate.sh) (CI, via `linux-build.yml`) is a ratchet over `src/`, enforcing three one-way rules against `tools/juce-allowlist.txt` (`path<TAB>count`, one line per coupled file):
 - A *clean* file that gains `juce::`/`<juce_` and isn't listed **fails the build**.
@@ -88,7 +88,7 @@ The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/
 
 ## Phase plan
 
-Phases 1a → 5 of [DuskStudio.md](DuskStudio.md) have all shipped, so there is no phase to work toward: the live mixer, multitrack recording with atomic JSON save/load and autosave, send-bus plugin hosting, take history and loop-record take stacking, markers, console automation (Write / Read / Touch) with breakpoint editing, punch and loop, and MTC + MIDI Clock sync are working features. Check the feature table in [README.md](README.md) and the relevant chapter of [MANUAL.md](MANUAL.md) before assuming something is unbuilt.
+Phases 1a → 5 of [DuskStudio.md](docs/DuskStudio.md) have all shipped, so there is no phase to work toward: the live mixer, multitrack recording with atomic JSON save/load and autosave, send-bus plugin hosting, take history and loop-record take stacking, markers, console automation (Write / Read / Touch) with breakpoint editing, punch and loop, and MTC + MIDI Clock sync are working features. Check the feature table in [README.md](README.md) and the relevant chapter of [MANUAL.md](MANUAL.md) before assuming something is unbuilt.
 
 Current focus is milestone 0.14 (GitHub milestone #7): finish automated coverage of every behaviour MANUAL.md documents, close the open blockers, then bump and tag. The tag is gated on the maintainer's own manual pass on Linux, macOS and Windows - never tag or run a release flow on your own initiative.
 
@@ -252,7 +252,7 @@ Operating within a constrained context window. Adhere to these regardless of any
 ### Context management
 5. **Sub-agent strategy.** For research tasks touching >5 independent files, spawn parallel `Explore` agents (each gets its own clean context) rather than serially loading every file into the main context. We did this earlier in this session — works well.
 6. **Context decay awareness.** After ~10 messages or any focus shift, re-read the files you're about to edit. Don't trust prior memory — auto-compaction may have altered it. The conversation summary is lossy.
-7. **File read budget.** `Read` is hard-capped at ~25k tokens (~2000 lines for typical source). For files over that limit (notably [DuskStudio.md](DuskStudio.md), ~30k tokens), read in offset/limit chunks or delegate to an Explore agent. Never assume a single read covered the whole file.
+7. **File read budget.** `Read` is hard-capped at ~25k tokens (~2000 lines for typical source). For files over that limit (notably [DuskStudio.md](docs/DuskStudio.md), ~30k tokens), read in offset/limit chunks or delegate to an Explore agent. Never assume a single read covered the whole file.
 8. **Tool result blindness.** Large tool outputs may be silently truncated. If a `grep` or `find` returns suspiciously few results, re-run with narrower scope and explicitly say in the summary that earlier output may have been truncated.
 
 ### Edit safety

@@ -28,7 +28,7 @@ Dusk Studio registers with GNOME Software / KDE Discover and double-clicking
   ship, announced by nothing louder than a
   `Native UI: DAF / DAF widgets not found - disabled` line in the
   configure log. Clone instructions and the pinned revisions are in
-  `BUILDING-LINUX.md` under "The native notepad".
+  `docs/BUILDING-LINUX.md` under "The native notepad".
 - The committed 256×256 icon at `packaging/DuskStudio.png` — the size the
   desktop entry's `Icon=DuskStudio` key resolves. Edit the master
   `assets/ds-icon.png` and you must regenerate it by hand with

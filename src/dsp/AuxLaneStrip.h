@@ -69,7 +69,7 @@ public:
 
     // Native CLAP host path. When a slot's native CLAP is loaded, processStereoBlock
     // routes the kInsertPlugin pass through it INSTEAD of the JUCE PluginSlot - this
-    // is the JUCE-hosting replacement (see docs/native-clap-host-plan.md). Empty by
+    // is the JUCE-hosting replacement (see docs/archive/native-clap-host-plan.md). Empty by
     // default, so a lane with no native CLAP behaves exactly as before. Message thread.
     bool isPrepared() const noexcept { return preparedSampleRate > 0.0 && preparedBlockSize > 0; }
     std::vector<hosting::NativeRestoreFailure> takeNativeRestoreFailures();

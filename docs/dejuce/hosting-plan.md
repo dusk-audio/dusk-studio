@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # De-JUCE — plugin-hosting tower (campaign plan)
 
@@ -10,7 +10,7 @@ plugin-hosting path gets deleted entirely; native hosting must cover CLAP and
 VST3 on Linux, macOS, and Windows, LV2 on Linux and macOS, plus AU on macOS.
 Multi-PR tower (>15 files per phase, RT-risky and mechanical work mixed) —
 one PR per phase, sequenced below. Do not start phase N+1's PR before N
-merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
+merges. Read `docs/dejuce/campaign.md` + the memory ledger first.
 
 ## End-state
 
@@ -76,7 +76,7 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
   TapeMachine sources left the app build. A/B null test in
   `tests/tape_core_ab.cpp`. H1d (TM2 DAF UI) replaced TapePanel with the
   plug-in's own editor - see
-  [dejuce-hosting-h1-tape.md](dejuce-hosting-h1-tape.md).
+  [hosting-h1-tape.md](hosting-h1-tape.md).
 - **H2 — Mastering multiband (donor first, then Dusk Studio).** Donor:
   port Multiband mode into a JUCE-free core (extend
   multi-comp/core scope or sibling MultibandCompressorDSP; Marc's direction
@@ -91,7 +91,7 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
   session keys native_multisample_path/state with one-way legacy desc-XML
   migration; format wrapper deleted (gate 183 -> 181); two-phase
   prime/commit keeps sfizz parses outside the engine gate; spec:
-  [dejuce-hosting-h3-multisample.md](dejuce-hosting-h3-multisample.md).
+  [hosting-h3-multisample.md](hosting-h3-multisample.md).
 - **H4 — descriptor/plumbing de-JUCE. DONE (PR #119, `3c5c901`).** Dusk
   `PluginDescriptor` now owns picker, native scan/cache, scan-protocol,
   session-reference, offline/clone, screenshot-fixture, and restore plumbing.
@@ -100,7 +100,7 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
   native sidecar caches are versioned JSON with one-way XML import. Gate
   181 -> 179; full CTest 493/493 plus private-Xvfb self-test, synthetic SFZ
   sound verdict, and picker screenshot review passed. Spec:
-  [dejuce-hosting-h4-descriptors.md](dejuce-hosting-h4-descriptors.md).
+  [hosting-h4-descriptors.md](hosting-h4-descriptors.md).
 - **H5 — platform ports (three sequential PRs; H5a is READY).** H5a ports
   CLAP/LV2/VST3 to macOS, including bundle discovery/loading, Cocoa editor
   embeds, and the portable VST3 host context. H5b adds the native macOS AU
@@ -108,7 +108,7 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
   with CLAP POSIX-fd support absent and VST3's Linux IRunLoop removed.
   Windows LV2 stays deferred. H5a must merge before H5b starts, and H5b must
   merge before H5c starts. Executable spec:
-  [dejuce-hosting-h5-platform.md](dejuce-hosting-h5-platform.md). Verification
+  [hosting-h5-platform.md](hosting-h5-platform.md). Verification
   runs through macos-build.yml, macos-release.yml, and windows-tests.yml;
   windows-build.yml's full app remains workflow_dispatch. Runtime sign-off is
   owed to Marc's real Mac/Windows bench.
@@ -135,5 +135,5 @@ gates H2's app half, not the other phases.
 
 ## Resume phrase
 
-"Hosting tower, plan docs/dejuce-hosting-plan.md — check phase statuses,
+"Hosting tower, plan docs/dejuce/hosting-plan.md — check phase statuses,
 execute next pending phase (one PR per phase)."

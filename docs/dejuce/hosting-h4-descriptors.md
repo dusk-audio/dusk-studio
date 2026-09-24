@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # Hosting tower H4 — descriptor/plumbing de-JUCE (executable spec)
 
@@ -6,7 +6,7 @@ Status: **IMPLEMENTED AND VALIDATED 2026-07-29 on
 `dejuce/hosting-h4`; not pushed.** Baseline is `main` at `64eb5a3`, plus the
 docs-only status commits `698fd71` and `28ac471`; gate 181 -> 179. One PR.
 H1d and H2 remain blocked on donor consolidation and are out of scope.
-Parent plan: [dejuce-hosting-plan.md](dejuce-hosting-plan.md). The post-H3
+Parent plan: [hosting-plan.md](hosting-plan.md). The post-H3
 re-scout was repeated on `698fd71`; the old 36-file table is obsolete.
 
 Validation: Release app and plugin-host builds completed without new warnings;
@@ -200,5 +200,5 @@ H4 does not change which host processes audio or which native rung wins.
 ## Resume phrase
 
 "Hosting H4, branch dejuce/hosting-h4, spec
-docs/dejuce-hosting-h4-descriptors.md — execute the descriptor/plumbing phase
+docs/dejuce/hosting-h4-descriptors.md — execute the descriptor/plumbing phase
 only, then review, validate, and commit locally; do not push."

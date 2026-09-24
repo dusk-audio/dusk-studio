@@ -24,7 +24,7 @@ std::filesystem::path audioPath (const juce::File& file)
 constexpr int kLoopCacheSamples = 32768;
 
 // Declick ramp applied on both sides of an in-block loop seam. 64 samples
-// matches the punch-in click-mask fade (DuskStudio.md §5b).
+// matches the punch-in click-mask fade (docs/DuskStudio.md §5b).
 constexpr int kLoopSeamFade = 64;
 
 // Loops shorter than this fall back to a plain linear read: the split loop

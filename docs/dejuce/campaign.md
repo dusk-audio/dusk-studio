@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # De-JUCE campaign — map and working agreement
 
@@ -100,7 +100,7 @@ reimplemented.
   Bench debts outstanding at merge: ALSA hot-unplug mid-play, xrun recovery
   under load, buffer/SR swap, periods knob, PipeWire streaming + SR/quantum
   renegotiation (UMC1820 perf matrix green pre-merge). Spec:
-  [dejuce-device-phase3-audio-plan.md](dejuce-device-phase3-audio-plan.md).
+  [device-phase3-audio-plan.md](device-phase3-audio-plan.md).
 - **Audio-file call-site sweep (A0–A4, PR #107 + the sweep-2 PR)**: every
   production consumer of the JUCE audio-format APIs
   (record/playback/bounce/importers/mastering) runs on the dusk audio-file
@@ -116,7 +116,7 @@ reimplemented.
   `juce_audio_formats` and `juce_audio_utils` still link pending a transitive
   include and cross-platform module-unlink audit.
   Bench debts at spec §Owed. Spec:
-  [dejuce-audiofile-plan.md](dejuce-audiofile-plan.md).
+  [audiofile-plan.md](audiofile-plan.md).
 
 ## Remaining towers, in order
 
@@ -124,7 +124,7 @@ reimplemented.
    2026-07-01 keep-fallback decision). Native hosting becomes the only path:
    VST3/CLAP on all three platforms, AU on macOS, LV2 on Linux and macOS
    (Windows LV2 pending the H5 suil decision recorded in
-   [dejuce-hosting-plan.md](dejuce-hosting-plan.md)); the whole JUCE
+   [hosting-plan.md](hosting-plan.md)); the whole JUCE
    hosting path (PluginSlot/PluginManager JUCE half/PluginHostMain loop) and
    both remaining in-app JUCE donor processors (TapeMachine -> TapeMachineDSP,
    Multiband UniversalCompressor -> framework-free donor port) are deleted. Unlinks
@@ -132,7 +132,7 @@ reimplemented.
    the remaining `juce_audio_utils` and `juce_audio_formats` links need their
    own transitive-dependency audit before removal.
    Multi-PR tower, phases H1-H6 in
-   [dejuce-hosting-plan.md](dejuce-hosting-plan.md).
+   [hosting-plan.md](hosting-plan.md).
 2. **GUI tower (finale)** — framework decision (Marc, 2026-07-27): build on
    the hard-forked DAF stack, not a bespoke retained toolkit. App UI =
    Dear ImGui + DuskImGuiWidgets on EGL, over a Dusk-written **Wayland
@@ -156,7 +156,7 @@ reimplemented.
    effort, multi-release. Unlinks everything else, `juce_core` last.
    **Gate passed (#301, 2026-08-24): GO.** Spike, measurements, backend gap
    audit, framework revision reconciliation and phases G0-G6 in
-   [dejuce-gui-plan.md](dejuce-gui-plan.md) — read that first, this entry is
+   [gui-plan.md](gui-plan.md) — read that first, this entry is
    the summary it supersedes. The fork stack is now DAF (Dusk Audio Framework):
    one repository, `dusk-audio/DAF`, carrying pugl and the shared ImGui widget
    kit in-tree; the kit left the plugins repo's former shared widget directory,

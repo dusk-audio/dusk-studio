@@ -501,7 +501,7 @@ private:
 
     // Constructed on demand on MidiRegion click; dismissed by clicking
     // backdrop or Esc. The roll is the single visible exception to
-    // "no tabs / no hidden panels" per DuskStudio.md. Tracked indices
+    // "no tabs / no hidden panels" per docs/DuskStudio.md. Tracked indices
     // let the tape-strip click handler toggle (same region) vs swap
     // (different region).
     std::unique_ptr<class DimOverlay>          pianoRollDim;

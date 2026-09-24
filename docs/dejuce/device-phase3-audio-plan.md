@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # De-JUCE tower spec — Device Phase-3-audio
 
@@ -14,7 +14,7 @@ buffer/SR swap, periods knob; PipeWire streaming + SR/quantum renegotiation
 archival; no further phases.**
 Update this line each session (phase done, branch, resume phrase).
 
-Read order for an executing session: `docs/dejuce-campaign.md` → this file →
+Read order for an executing session: `docs/dejuce/campaign.md` → this file →
 memory ledger `project_dejuce_roadmap.md` → the files of the ONE phase you are
 about to execute. Execute one phase per session, then stop.
 
@@ -371,7 +371,7 @@ PR-A merges (squash-merge hygiene: retire the PR-A branch).
   `CMakeLists.txt` (line ~1038: the juce_audio_devices link moves into a
   NOT-Linux block with the transitive-dep caveat comment);
   `tools/juce-allowlist.txt` (DeviceManager.cpp leaves; 194 → ~184);
-  `docs/dejuce-campaign.md` (tower status + metric caveat); MANUAL.md check
+  `docs/dejuce/campaign.md` (tower status + metric caveat); MANUAL.md check
   (expected no-op — nothing user-visible moves).
 - Verify: full build; confirm the module's headers appear in no Linux src/
   TU (grep compile_commands.json) and state the transitive result honestly
@@ -411,8 +411,8 @@ end with a resume phrase.
 
 Common preamble (prepend to every prompt):
 
-> De-JUCE tower session, Dusk Studio repo. Read `docs/dejuce-campaign.md`
-> (rules + ritual), then `docs/dejuce-device-phase3-audio-plan.md` (this
+> De-JUCE tower session, Dusk Studio repo. Read `docs/dejuce/campaign.md`
+> (rules + ritual), then `docs/dejuce/device-phase3-audio-plan.md` (this
 > tower's spec), then the memory ledger `project_dejuce_roadmap.md`. Follow
 > the campaign ritual exactly: branch first, commit never push, no
 > attribution trailers, AI-slop sweep before commit, gate script before
@@ -449,5 +449,5 @@ Common preamble (prepend to every prompt):
   consumer sweep + Linux unlink + docs per spec §P5. Verify zero
   juce_audio_devices includes in Linux src/ TUs via compile_commands.json.
   Prepare the PR-B description (bench debts + caveat). Update
-  docs/dejuce-campaign.md tower status and the campaign metric caveat.
+  docs/dejuce/campaign.md tower status and the campaign metric caveat.
   Commit and stop."
