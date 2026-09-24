@@ -6334,6 +6334,19 @@ std::optional<ScenarioResult> runEqHeldPastKnob (GuiHost& host, ScenarioContext&
         ctx.expect (strip.legacyDial (EqFreq::Hf).raw() == 0, "moving the editor's HF knob kept its format 7 dial");
         host.closeStripModuleEditors (0);
     } });
+    // A write from MIDI or a control surface lands on the strip's own knobs.
+    steps->push_back ({ 100, [&strip]
+    {
+        strip.setEqFreq (EqFreq::Lf, 250.0f);
+        strip.lfGainDb.store (5.0f);
+        strip.lmQ.store (1.5f);
+    } });
+    steps->push_back ({ 200, [boxReads]
+    {
+        boxReads ("Track 1 LF frequency", "250", "the LF value box after an outside write");
+        boxReads ("Track 1 LF gain", "+5", "the LF gain value box after an outside write");
+        boxReads ("Track 1 LM Q", "1.5", "the LM Q value box after an outside write");
+    } });
     // Reset EQ writes each knob's default even onto a knob already there: an
     // LM band stored between the knob's 1 Hz steps, with a dial, reads 600.
     steps->push_back ({ 200, [&host, &ctx, &strip]

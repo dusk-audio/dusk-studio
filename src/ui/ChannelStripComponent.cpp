@@ -5046,6 +5046,20 @@ void ChannelStripComponent::timerCallback()
         // without moving this knob, and its text reads the switch.
         hpfKnob.updateText();
         lpfKnob.updateText();
+        for (size_t i = 0; i < eqRows.size(); ++i)
+        {
+            const auto& spec = bandSpecs()[i];
+            auto& row = eqRows[i];
+            if (row.gain != nullptr) syncKnob (*row.gain, spec.gainPtr (track.strip)->load (std::memory_order_relaxed));
+            if (row.q != nullptr)    syncKnob (*row.q,    spec.qPtr (track.strip)->load (std::memory_order_relaxed));
+            if (row.freq != nullptr)
+            {
+                syncKnob (*row.freq, track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed));
+                // A frequency held past the knob's range leaves it on its end stop,
+                // where a new held value moves nothing, but the text reads it.
+                row.freq->updateText();
+            }
+        }
     }
 
     // Keep split-button state visuals in sync with atom changes made by
