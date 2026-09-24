@@ -72,6 +72,11 @@ publishes.
 - **MIDI Learn reaches a built-in unit's controls.** A learned binding on a
   built-in insert now arrives at the unit, on a channel strip and on an aux lane
   alike; it was resolved and stored but never applied.
+- **Each bus has a highpass** (#705). A new HPF knob in the bus EQ section adds
+  a 12 dB/octave highpass from 20 Hz to 3 kHz. Fully down is OFF, which is where
+  it starts in a session from an earlier version, and the EQ's status light
+  bypasses it with the bands. It is a new MIDI binding target. Right-click MIDI
+  Learn works on it and, for the first time, on the bus EQ's three band knobs.
 
 ### Changed
 
@@ -112,6 +117,43 @@ publishes.
 
 ### Fixed
 
+- **The channel EQ plays the frequency its knobs show** (#704). Each band's
+  frequency went to the EQ as a position on the console's dial, so the readout
+  was wrong and parts of every knob did nothing: the HF shelf at 16 kHz had
+  its corner around 6 kHz, and HM stopped moving above 6.4 kHz. A peaking band
+  is now centred on its frequency and a shelf has its corner there. The ranges
+  now match the EQ's own: LF 30 to 450 Hz, LM 200 Hz to 2.5 kHz, HM 600 Hz to
+  7 kHz, HF 1.5 to 16 kHz. Sessions from earlier versions are converted when
+  they open: each band keeps the frequency and shape it had until its
+  frequency is changed. The one difference is at the very top of the audio
+  band at 1x and 2x Effect oversampling, where the EQ no longer cramps
+  (below). A band that played outside the new range keeps that frequency, its
+  knob resting at the end and showing it, until its frequency is changed. A
+  session saved by this version does not open in earlier ones.
+- **The channel HPF and LPF are 3 dB down at the frequency their knobs show**
+  (#704). They had the same fault as the bands: an HPF set to 80 Hz was 3 dB
+  down around 26 Hz, and an LPF at 12 kHz around 19.6 kHz. Their ranges stay
+  20 to 300 Hz and 3 to 20 kHz. Sessions from earlier versions are converted
+  when they open, and each filter keeps the frequency and slope it had until
+  its frequency is changed; at 1x and 2x the top of the LPF, like the bands,
+  no longer cramps. An HPF that played above 300 Hz keeps that frequency until
+  it is changed, and a filter that played past its OFF end stays on where it
+  played, its knob one hertz short of OFF.
+- **Clone Track copies the channel LPF and the EQ's on/off switch.** A clone
+  took the source's EQ bands and HPF but kept its own LPF and EQ switch, so it
+  could sound unlike the source; undoing the clone now puts both back too.
+- **The channel EQ no longer cramps near Nyquist.** At the default 1x Effect
+  oversampling a high HM boost used to fall 5 to 7 dB short at 20 kHz. Every
+  band now holds its shape up to 20 kHz at 1x, 2x and 4x.
+- **The control surface's EQ encoders switch the HPF and reset HF to its
+  default.** In EQ assign mode, turning the HPF encoder up from OFF left the
+  filter switched off, and pushing it back to OFF left it on. Pushing the HF
+  frequency encoder reset the band to 4 kHz; it now goes to 8 kHz, the
+  knob's default.
+- **MIDI Learn on a channel EQ knob binds that knob's band.** The strip lists
+  its bands HF first, and learning on a row bound the band in the mirrored
+  position: HF's knobs bound LF, HM's bound LM. Bindings learned that way keep
+  the band the MIDI Bindings panel names.
 - **A dialog keeps the keyboard when a native panel gives it back.** A dialog
   opened while the virtual keyboard, the audio settings or another native panel
   had the keyboard lost it to the main window a moment later: Return no longer
@@ -242,6 +284,13 @@ publishes.
   that the native 7-Zip resolved elsewhere, and read the contract with a
   trailing carriage return per line, so its first real run reported every
   required file missing from a complete installer.
+- **The bus EQ plays what its knobs say** (#705). It ran on the channel strip's
+  console EQ, so its +/-9 dB marks moved a band about 7 dB, MID sat near 620 Hz
+  and the shelves turned over well below their marks. It is now its own clean
+  digital tone EQ with no saturation, at exactly its marks: LF shelf at 300 Hz,
+  MID bell at 800 Hz (Q 0.7) and HF shelf at 2 kHz, +/-9 dB each, holding its
+  shape up to 20 kHz at any sample rate. A bus EQ in a session from an earlier
+  version sounds different now, since the same settings play the new curves.
 
 ## [0.13.3] - 2026-09-05
 

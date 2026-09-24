@@ -8,6 +8,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <iterator>
 #include <string>
 
 namespace duskstudio::scenario
@@ -94,11 +95,12 @@ void liveInput (ScenarioContext& ctx, Track::Mode mode)
     for (auto* value : { &track.inputMonitor, &strip.busAssign[0], &strip.auxSendsBypassed,
                          &strip.auxSendPreFader[0], &strip.eqEnabled, &strip.hpfEnabled,
                          &strip.lpfEnabled, &strip.phaseInvert, &strip.compEnabled, &bus.eqEnabled,
-                         &master.monoSum, &master.eqEnabled, &master.compEnabled, &master.tapeEnabled })
+                         &bus.hpfEnabled, &master.monoSum, &master.eqEnabled, &master.compEnabled,
+                         &master.tapeEnabled })
         ctx.keep (*value);
     for (auto* value : { &strip.faderDb, &strip.pan, &strip.auxSendDb[0], &strip.hpfFreq, &strip.lpfFreq,
                          &strip.compFetThresholdDb, &strip.compVcaThreshDb, &strip.compVcaRatio,
-                         &bus.eqLfGainDb, &bus.eqMidGainDb, &bus.eqHfGainDb })
+                         &bus.eqLfGainDb, &bus.eqMidGainDb, &bus.eqHfGainDb, &bus.hpfFreq })
         ctx.keep (*value);
 
     track.mode.store ((int) mode);
@@ -125,9 +127,9 @@ ScenarioResult filterRanges (ScenarioContext& ctx)
 
     const double lowRef = playTone (ctx, 60.0, 0.25f, 0.0f).left;
     strip.hpfEnabled.store (true);
-    strip.hpfFreq.store (20.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, 20.0f);
     const double hpfOpen = db (playTone (ctx, 60.0, 0.25f, 0.0f).left, lowRef);
-    strip.hpfFreq.store (300.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, 300.0f);
     const double hpfShut = db (playTone (ctx, 60.0, 0.25f, 0.0f).left, lowRef);
     strip.hpfEnabled.store (false);
     ctx.note ("60 Hz through the HPF: " + std::to_string (hpfOpen) + " dB at 20 Hz, "
@@ -137,9 +139,9 @@ ScenarioResult filterRanges (ScenarioContext& ctx)
 
     const double highRef = playTone (ctx, 10000.0, 0.25f, 0.0f).left;
     strip.lpfEnabled.store (true);
-    strip.lpfFreq.store (20000.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Lpf, 20000.0f);
     const double lpfOpen = db (playTone (ctx, 10000.0, 0.25f, 0.0f).left, highRef);
-    strip.lpfFreq.store (3000.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Lpf, 3000.0f);
     const double lpfShut = db (playTone (ctx, 10000.0, 0.25f, 0.0f).left, highRef);
     ctx.note ("10 kHz through the LPF: " + std::to_string (lpfOpen) + " dB at 20 kHz, "
               + std::to_string (lpfShut) + " dB at 3 kHz");
@@ -218,9 +220,10 @@ ScenarioResult masterMonoSums (ScenarioContext& ctx)
 // ---------------------------------------------------------------- bus EQ
 
 // The bus EQ's three bands - a 300 Hz low shelf, an 800 Hz bell and a 2 kHz
-// high shelf - each go to +/-9 dB on the knob. Like the channel EQ the curves
-// follow the console's own markings, which read about 7 dB at the band's
-// centre at the 9 dB mark.
+// high shelf - each go to +/-9 dB, and +/-9 dB is what they play: the bell at
+// its centre, each shelf on its plateau. A shelf's own frequency is its
+// half-way point, so there it reads 4.5 dB. The plateau tone, 37.5 Hz, fits a
+// whole number of cycles in the measuring window, so its level reads true.
 ScenarioResult busEqReachesNineDb (ScenarioContext& ctx)
 {
     liveInput (ctx, Track::Mode::Mono);
@@ -230,11 +233,14 @@ ScenarioResult busEqReachesNineDb (ScenarioContext& ctx)
     strip.busAssign[0].store (true);
     bus.eqEnabled.store (true);
 
-    struct Band { const char* name; std::atomic<float>& gain; double hz; float db; };
+    struct Band { const char* name; std::atomic<float>& gain; double hz; float db; double expected; };
     const Band bands[] = {
-        { "LF", bus.eqLfGainDb, 60.0, 9.0f },
-        { "MID", bus.eqMidGainDb, 800.0, -9.0f },
-        { "HF", bus.eqHfGainDb, 10000.0, 9.0f },
+        { "LF", bus.eqLfGainDb, 37.5, 9.0f, 9.0 },
+        { "LF", bus.eqLfGainDb, 300.0, 9.0f, 4.5 },
+        { "MID", bus.eqMidGainDb, 800.0, -9.0f, -9.0 },
+        { "MID", bus.eqMidGainDb, 800.0, 9.0f, 9.0 },
+        { "HF", bus.eqHfGainDb, 2000.0, 9.0f, 4.5 },
+        { "HF", bus.eqHfGainDb, 16000.0, 9.0f, 9.0 },
     };
     for (const auto& band : bands)
     {
@@ -244,10 +250,57 @@ ScenarioResult busEqReachesNineDb (ScenarioContext& ctx)
         band.gain.store (0.0f);
         ctx.note (std::string (band.name) + " at " + std::to_string (band.db) + " dB moves "
                   + std::to_string (band.hz) + " Hz by " + std::to_string (shaped) + " dB");
-        ctx.expect (shaped * band.db > 0.0 && std::abs (shaped) > 6.0 && std::abs (shaped) < 9.5,
-                    std::string ("the bus ") + band.name + " band at "
-                        + std::to_string ((int) band.db) + " dB did not move its band by the marked amount");
+        ctx.expect (std::abs (shaped - band.expected) < 0.1,
+                    std::string ("the bus ") + band.name + " band at " + std::to_string ((int) band.db)
+                        + " dB did not play " + std::to_string (band.expected) + " dB at "
+                        + std::to_string ((int) band.hz) + " Hz");
     }
+    return ctx.verdict();
+}
+
+// The bus highpass is 3 dB down at its corner and 12 dB/oct below it, and
+// leaves the passband alone. Its knob's floor is OFF, and the EQ's status
+// light takes it out with the bands. The corner, 93.75 Hz, and the tones an
+// octave and two below it fit whole cycles in the measuring window.
+ScenarioResult busHpfCornerAndSlope (ScenarioContext& ctx)
+{
+    liveInput (ctx, Track::Mode::Mono);
+    auto& session = ctx.session();
+    auto& strip = session.track (kTrack).strip;
+    auto& bus = session.bus (0).strip;
+    strip.busAssign[0].store (true);
+    bus.eqEnabled.store (true);
+
+    struct Point { double hz; double expected; };
+    constexpr float corner = 93.75f;
+    const Point points[] = { { corner / 4.0, -24.1 }, { corner / 2.0, -12.3 }, { corner, -3.01 },
+                             { corner * 10.0, 0.0 } };
+    std::array<double, std::size (points)> flat {};
+    for (std::size_t i = 0; i < std::size (points); ++i)
+        flat[i] = playTone (ctx, points[i].hz, 0.1f, 0.0f).left;
+
+    bus.hpfEnabled.store (true);
+    bus.hpfFreq.store (corner);
+    for (std::size_t i = 0; i < std::size (points); ++i)
+    {
+        const double cut = db (playTone (ctx, points[i].hz, 0.1f, 0.0f).left, flat[i]);
+        ctx.note ("highpass at 93.75 Hz: " + std::to_string (points[i].hz) + " Hz at "
+                  + std::to_string (cut) + " dB");
+        ctx.expect (std::abs (cut - points[i].expected) < 0.15,
+                    "the bus highpass at 93.75 Hz did not put " + std::to_string (points[i].hz)
+                        + " Hz at " + std::to_string (points[i].expected) + " dB");
+    }
+
+    bus.eqEnabled.store (false);
+    const double bypassed = db (playTone (ctx, points[0].hz, 0.1f, 0.0f).left, flat[0]);
+    bus.eqEnabled.store (true);
+    bus.hpfEnabled.store (false);
+    bus.hpfFreq.store (BusParams::kHpfOffHz);
+    const double off = db (playTone (ctx, points[0].hz, 0.1f, 0.0f).left, flat[0]);
+    ctx.note ("23.4 Hz with the EQ bypassed " + std::to_string (bypassed) + " dB, with the highpass off "
+              + std::to_string (off) + " dB");
+    ctx.expect (std::abs (bypassed) < 0.05, "bypassing the bus EQ left its highpass in");
+    ctx.expect (std::abs (off) < 0.05, "the bus highpass at its OFF floor still cut the low end");
     return ctx.verdict();
 }
 
@@ -452,6 +505,9 @@ const ScenarioRegistrar monoRegistrar { Scenario {
 const ScenarioRegistrar busEqRegistrar { Scenario {
     "bus.eq_reaches_nine_db", { "bus", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (busEqReachesNineDb, ctx); } } };
+const ScenarioRegistrar busHpfRegistrar { Scenario {
+    "bus.hpf_corner_and_slope", { "bus", "dsp" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (busHpfCornerAndSlope, ctx); } } };
 const ScenarioRegistrar sendsRegistrar { Scenario {
     "strip.sends_pre_post_and_bypass", { "strip", "aux", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (sendsPrePostAndBypass, ctx); } } };

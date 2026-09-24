@@ -705,6 +705,8 @@ TEST_CASE ("SessionSerializer round-trips the mixer", "[session][serializer]")
     bus.eqLfGainDb.store (6.0f);
     bus.eqMidGainDb.store (-2.5f);
     bus.eqHfGainDb.store (3.5f);
+    bus.hpfEnabled.store (true);
+    bus.hpfFreq.store (140.0f);
     bus.compEnabled.store (true);
     bus.compThreshDb.store (-12.0f);
 
@@ -736,6 +738,8 @@ TEST_CASE ("SessionSerializer round-trips the mixer", "[session][serializer]")
     CHECK_THAT (busB.eqLfGainDb.load(), WithinAbs (6.0f, 1.0e-6f));
     CHECK_THAT (busB.eqMidGainDb.load(), WithinAbs (-2.5f, 1.0e-6f));
     CHECK_THAT (busB.eqHfGainDb.load(), WithinAbs (3.5f, 1.0e-6f));
+    CHECK (busB.hpfEnabled.load());
+    CHECK_THAT (busB.hpfFreq.load(), WithinAbs (140.0f, 1.0e-6f));
     CHECK (busB.compEnabled.load());
     CHECK_THAT (busB.compThreshDb.load(), WithinAbs (-12.0f, 1.0e-6f));
 
@@ -754,6 +758,45 @@ TEST_CASE ("SessionSerializer round-trips the mixer", "[session][serializer]")
     CHECK_THAT (auxB.params.returnLevelDb.load(), WithinAbs (-6.0f, 1.0e-6f));
     CHECK (auxB.params.mute.load());
     CHECK (auxB.params.outputPair.load() == 3);
+
+    dir.deleteRecursively();
+}
+
+// Sessions saved before the bus highpass carry no key for it. They load with it
+// off at 20 Hz, whatever the previously open session had, so their low end is
+// what it was.
+TEST_CASE ("SessionSerializer loads a bus without highpass keys with the highpass off",
+           "[session][serializer]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    REQUIRE (SessionSerializer::save (Session {}, target));
+    auto document = nlohmann::json::parse (target.loadFileAsString().toStdString());
+    for (auto& bus : document["buses"])
+    {
+        REQUIRE (bus.contains ("hpf_enabled"));
+        bus.erase ("hpf_enabled");
+        bus.erase ("hpf_freq");
+    }
+    REQUIRE (target.replaceWithText (document.dump()));
+
+    auto loaded = std::make_unique<Session>();
+    for (int i = 0; i < Session::kNumBuses; ++i)
+    {
+        loaded->bus (i).strip.hpfEnabled.store (true);
+        loaded->bus (i).strip.hpfFreq.store (900.0f);
+    }
+    REQUIRE (SessionSerializer::load (*loaded, target));
+    for (int i = 0; i < Session::kNumBuses; ++i)
+    {
+        CAPTURE (i);
+        CHECK_FALSE (loaded->bus (i).strip.hpfEnabled.load());
+        CHECK_THAT (loaded->bus (i).strip.hpfFreq.load(), WithinAbs (20.0f, 1.0e-6f));
+    }
 
     dir.deleteRecursively();
 }

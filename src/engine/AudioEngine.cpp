@@ -55,6 +55,7 @@ static void copyDuskMidiToJuce (const dusk::MidiBuffer& source,
 // std::log(max/min) on every CC message.
 static const float kHpfLogRange = std::log (ChannelStripParams::kHpfMaxHz
                                              / ChannelStripParams::kHpfMinHz);
+static const float kBusHpfLogRange = std::log (BusParams::kHpfMaxHz / BusParams::kHpfMinHz);
 
 // Soft-takeover read-back: the parameter's CURRENT position as the same 0..1
 // fraction the apply switch below maps FROM. Each case is the exact inverse
@@ -163,6 +164,15 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumBuses) return -1.0f;
             return inv (session.bus (b.targetIndex).strip.pan.load (std::memory_order_relaxed),
                         -1.0f, 1.0f);
+        case MidiBindingTarget::BusHpfFreq:
+        {
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumBuses) return -1.0f;
+            const auto& strip = session.bus (b.targetIndex).strip;
+            if (! strip.hpfEnabled.load (std::memory_order_relaxed)) return 0.0f;
+            const float f = strip.hpfFreq.load (std::memory_order_relaxed);
+            if (f <= BusParams::kHpfMinHz) return 0.0f;
+            return std::clamp (std::log (f / BusParams::kHpfMinHz) / kBusHpfLogRange, 0.0f, 1.0f);
+        }
         case MidiBindingTarget::BusEqGain:
         {
             const int bus  = unpackBusEqBus  (b.targetIndex);
@@ -4532,8 +4542,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                     freq = ChannelStripParams::kHpfMinHz
                                          * std::exp (kHpfLogRange * frac);
                                 }
-                                session.track (b.targetIndex).strip.hpfFreq
-                                    .store (freq, std::memory_order_relaxed);
+                                session.track (b.targetIndex).strip
+                                    .setEqFreq (ChannelStripParams::EqFreq::Hpf, freq);
                                 session.track (b.targetIndex).strip.hpfEnabled
                                     .store (freq > ChannelStripParams::kHpfOffHz + 0.5f,
                                              std::memory_order_relaxed);
@@ -4576,10 +4586,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                 auto& strip = session.track (trk).strip;
                                 switch (band)
                                 {
-                                    case 0: strip.lfFreq.store (logFreq (ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax), std::memory_order_relaxed); break;
-                                    case 1: strip.lmFreq.store (logFreq (ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax), std::memory_order_relaxed); break;
-                                    case 2: strip.hmFreq.store (logFreq (ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax), std::memory_order_relaxed); break;
-                                    case 3: strip.hfFreq.store (logFreq (ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax), std::memory_order_relaxed); break;
+                                    case 0: strip.setEqFreq (ChannelStripParams::EqFreq::Lf, logFreq (ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax)); break;
+                                    case 1: strip.setEqFreq (ChannelStripParams::EqFreq::Lm, logFreq (ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax)); break;
+                                    case 2: strip.setEqFreq (ChannelStripParams::EqFreq::Hm, logFreq (ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax)); break;
+                                    case 3: strip.setEqFreq (ChannelStripParams::EqFreq::Hf, logFreq (ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax)); break;
                                 }
                             }
                             break;
@@ -4635,6 +4645,20 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                 const float p = frac * 2.0f - 1.0f;
                                 session.bus (b.targetIndex).strip.pan.store (
                                     p, std::memory_order_relaxed);
+                            }
+                            break;
+                        case MidiBindingTarget::BusHpfFreq:
+                            // As the track HPF: the bottom of the travel is
+                            // OFF, the rest log-maps across the sweep.
+                            if (b.targetIndex >= 0 && b.targetIndex < Session::kNumBuses)
+                            {
+                                const float freq = val == 0
+                                    ? BusParams::kHpfOffHz
+                                    : BusParams::kHpfMinHz * std::exp (kBusHpfLogRange * frac);
+                                auto& strip = session.bus (b.targetIndex).strip;
+                                strip.hpfFreq.store (freq, std::memory_order_relaxed);
+                                strip.hpfEnabled.store (freq > BusParams::kHpfOffHz + 0.5f,
+                                                        std::memory_order_relaxed);
                             }
                             break;
                         case MidiBindingTarget::BusMute:
@@ -4855,8 +4879,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             const int bus  = unpackBusEqBus  (b.targetIndex);
                             const int band = unpackBusEqBand (b.targetIndex);
                             if (bus < 0 || bus >= Session::kNumBuses) break;
-                            // -9..+9 dB matches BusParams::eqLfGainDb's
-                            // doc comment ("Mixbus-style, musical").
+                            // The bus Tone EQ's -9..+9 dB band range.
                             const float db = -9.0f + frac * 18.0f;
                             auto& strip = session.bus (bus).strip;
                             switch (band)

@@ -14,6 +14,29 @@ namespace
 // clamp with jlimit's argument order (lo, hi, value).
 template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
+
+// One encoder turn on a band or filter frequency. A converted older session can
+// hold a frequency past its knob's range: a turn further toward the end it is
+// already past leaves it where it is, and a turn back starts from the end stop,
+// as dragging the knob on screen does. Any turn that stores drops the band's
+// format-7 dial. Returns whether it stored.
+bool nudgeEqFreq (ChannelStripParams& strip, ChannelStripParams::EqFreq f,
+                  float lo, float hi, float step, float d) noexcept
+{
+    const float cur = strip.eqFreq (f).load (std::memory_order_relaxed);
+    if ((d > 0.0f && cur >= hi) || (d < 0.0f && cur <= lo)) return false;
+    strip.setEqFreq (f, jlimit (lo, hi, jlimit (lo, hi, cur) + d * step));
+    return true;
+}
+
+// The HPF is on above its OFF end and off at it, as its knob and a MIDI
+// binding switch it when they set its frequency.
+void switchHpfWithFreq (ChannelStripParams& strip) noexcept
+{
+    strip.hpfEnabled.store (strip.hpfFreq.load (std::memory_order_relaxed)
+                                > ChannelStripParams::kHpfOffHz + 0.5f,
+                            std::memory_order_relaxed);
+}
 } // namespace
 
 namespace mcu_local
@@ -62,18 +85,20 @@ void McuReceiver::resetVpotTarget (int stripIndex) noexcept
         if (mode == 5)
         {
             // EQ encoders 1=HPF, 2=LF gain, 3=LF freq, 4=LM gain,
-            // 5=LM freq, 6=HM gain, 7=HF gain, 8=HF freq. Push -> 0
-            // gain / centre freq. Encoder index = stripIndex (0..7).
+            // 5=LM freq, 6=HM gain, 7=HF gain, 8=HF freq. Push -> the strip
+            // knob's default: HPF OFF, 0 dB, a fresh strip's frequency.
+            // Encoder index = stripIndex (0..7).
             switch (stripIndex)
             {
-                case 0: strip.hpfFreq.store (20.0f, std::memory_order_relaxed); break;
+                case 0: strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, ChannelStripParams::kHpfOffHz);
+                        switchHpfWithFreq (strip); break;
                 case 1: strip.lfGainDb.store (0.0f, std::memory_order_relaxed); break;
-                case 2: strip.lfFreq.store (100.0f, std::memory_order_relaxed); break;
+                case 2: strip.setEqFreq (ChannelStripParams::EqFreq::Lf, 100.0f); break;
                 case 3: strip.lmGainDb.store (0.0f, std::memory_order_relaxed); break;
-                case 4: strip.lmFreq.store (600.0f, std::memory_order_relaxed); break;
+                case 4: strip.setEqFreq (ChannelStripParams::EqFreq::Lm, 600.0f); break;
                 case 5: strip.hmGainDb.store (0.0f, std::memory_order_relaxed); break;
                 case 6: strip.hfGainDb.store (0.0f, std::memory_order_relaxed); break;
-                case 7: strip.hfFreq.store (4000.0f, std::memory_order_relaxed); break;
+                case 7: strip.setEqFreq (ChannelStripParams::EqFreq::Hf, 8000.0f); break;
                 default: break;
             }
         }
@@ -124,26 +149,25 @@ void McuReceiver::applyVpotDelta (int stripIndex, int delta) noexcept
         {
             switch (stripIndex)
             {
-                case 0: strip.hpfFreq.store (jlimit (ChannelStripParams::kHpfMinHz,
-                                                            ChannelStripParams::kHpfMaxHz,
-                                                            strip.hpfFreq.load() + d * 4.0f),
-                                              std::memory_order_relaxed); break;
+                case 0: if (nudgeEqFreq (strip, ChannelStripParams::EqFreq::Hpf,
+                                         ChannelStripParams::kHpfMinHz,
+                                         ChannelStripParams::kHpfMaxHz, 4.0f, d))
+                            switchHpfWithFreq (strip);
+                        break;
                 case 1: strip.lfGainDb.store (jlimit (ChannelStripParams::kBandGainMin,
                                                              ChannelStripParams::kBandGainMax,
                                                              strip.lfGainDb.load() + d * 0.3f),
                                                std::memory_order_relaxed); break;
-                case 2: strip.lfFreq.store (jlimit (ChannelStripParams::kLfFreqMin,
-                                                           ChannelStripParams::kLfFreqMax,
-                                                           strip.lfFreq.load() + d * 5.0f),
-                                             std::memory_order_relaxed); break;
+                case 2: nudgeEqFreq (strip, ChannelStripParams::EqFreq::Lf,
+                                     ChannelStripParams::kLfFreqMin,
+                                     ChannelStripParams::kLfFreqMax, 5.0f, d); break;
                 case 3: strip.lmGainDb.store (jlimit (ChannelStripParams::kBandGainMin,
                                                              ChannelStripParams::kBandGainMax,
                                                              strip.lmGainDb.load() + d * 0.3f),
                                                std::memory_order_relaxed); break;
-                case 4: strip.lmFreq.store (jlimit (ChannelStripParams::kLmFreqMin,
-                                                           ChannelStripParams::kLmFreqMax,
-                                                           strip.lmFreq.load() + d * 20.0f),
-                                             std::memory_order_relaxed); break;
+                case 4: nudgeEqFreq (strip, ChannelStripParams::EqFreq::Lm,
+                                     ChannelStripParams::kLmFreqMin,
+                                     ChannelStripParams::kLmFreqMax, 20.0f, d); break;
                 case 5: strip.hmGainDb.store (jlimit (ChannelStripParams::kBandGainMin,
                                                              ChannelStripParams::kBandGainMax,
                                                              strip.hmGainDb.load() + d * 0.3f),
@@ -152,10 +176,9 @@ void McuReceiver::applyVpotDelta (int stripIndex, int delta) noexcept
                                                              ChannelStripParams::kBandGainMax,
                                                              strip.hfGainDb.load() + d * 0.3f),
                                                std::memory_order_relaxed); break;
-                case 7: strip.hfFreq.store (jlimit (ChannelStripParams::kHfFreqMin,
-                                                           ChannelStripParams::kHfFreqMax,
-                                                           strip.hfFreq.load() + d * 100.0f),
-                                             std::memory_order_relaxed); break;
+                case 7: nudgeEqFreq (strip, ChannelStripParams::EqFreq::Hf,
+                                     ChannelStripParams::kHfFreqMin,
+                                     ChannelStripParams::kHfFreqMax, 100.0f, d); break;
                 default: break;
             }
         }

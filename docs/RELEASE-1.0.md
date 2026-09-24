@@ -102,7 +102,7 @@ Every open issue, one bucket each; completed release work is marked done.
 | 314 | [Final gate] Remove the framework from CMake, CI, packaging, tests, docs | post-1.0 | Framework-removal campaign. |
 | 320 | Route macOS builds to the dusk-mac-air self-hosted runner | post-1.0 | Cost optimisation with no user-visible effect, and the runner is offline. |
 | 340 | Change Tape Machine to use the Tape Machine 2 plugin | 1.0 | The built-in colour insert (#75) runs this core, and the master bus cannot run a different one from the same donor path. Landed with a tone regression pinning the new voicing. |
-| 341 | Change EQ DSP to 4K-EQ-2 DSP | done | Channel and bus EQ run the 4K EQ 2 core. Landed with a tone regression pinning the new voicing. |
+| 341 | Change EQ DSP to 4K-EQ-2 DSP | done | The channel EQ runs the 4K EQ 2 core. Landed with a tone regression pinning the new voicing. The bus EQ has since moved to its own Tone EQ (#705). |
 | 342 | Change compressors to use Multi-Comp-2 DSP | deferred (1.1) | Moved to 1.1 on 2026-09-15: the Multi-Comp 2 core is not finished in the plugins repo, so 1.0 ships the current compressor core. |
 | 442 | ASan+UBSan and Raspberry Pi jobs are not required checks | done | Both are required checks on `main` now, the Pi build included. |
 | 500 | CloneTrackAction native-insert clone and undo has no coverage | 1.0 | A shipped clone and undo path with no automated test. |
@@ -178,7 +178,7 @@ the follow-ups are known before the schedule is committed.
 | CloneTrackAction coverage | 500 | 3-4 | `tests/`, self-test leg |
 | Milestone-6 audit residues | 503 | 4-6 | `src/util/SingleInstance.cpp`, `src/engine/PluginSlot.cpp`, `src/ui/ChannelStripComponent.cpp` |
 | Windows self-test harness child resolution | 504 | 2-3 | `src/DuskStudioApp.cpp`, `src/engine/PluginManager.h` |
-| Channel and bus EQ on the 4K EQ 2 core | 341 | 4-6 | donor shared DSP, `src/dsp/ChannelStrip.*`, `src/dsp/BusStrip.*`, `tests/` |
+| Channel EQ on the 4K EQ 2 core | 341 | 4-6 | donor shared DSP, `src/dsp/ChannelStrip.*`, `tests/` |
 
 The two 75 items are sequential. The rest of stage 3 is independent of both.
 

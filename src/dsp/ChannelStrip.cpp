@@ -500,6 +500,75 @@ void ChannelStrip::updateGainTargets() noexcept
     }
 }
 
+#if DUSKSTUDIO_HAS_DUSK_DSP
+// The console saturation is the channel's always-on console floor, so the EQ
+// processor runs every block regardless of the EQ bypass. When the EQ section
+// is bypassed the band / filter params stay at their flat value-init zeros
+// (filters off, every band 0 dB) so only the saturation + transformer
+// character is applied - the tone shaping is what bypasses. FourKEQDSP
+// tolerates the zero-freq/zero-Q flat image: the HPF/LPF are gated by their
+// enable flags (so their coeffs never process), the Hz setters lift a zero
+// frequency to the core's floor, and a band at 0 dB is flat wherever it sits.
+ChannelStrip::EqSnapshot ChannelStrip::eqSnapshotFor (const ChannelStripParams& params) noexcept
+{
+    using EqFreq = ChannelStripParams::EqFreq;
+    EqSnapshot p {};
+    const bool black = params.eqBlackMode.load (std::memory_order_relaxed);
+    if (params.eqEnabled.load (std::memory_order_relaxed))
+    {
+        const auto& dial = params.eqFreqDial;
+        p.hpfEnabled = params.hpfEnabled.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
+        p.hpfDial    = dial[(size_t) EqFreq::Hpf].dialFor (params.hpfFreq, black, p.hpfFreq);
+        p.lpfEnabled = params.lpfEnabled.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
+        p.lpfDial    = dial[(size_t) EqFreq::Lpf].dialFor (params.lpfFreq, black, p.lpfFreq);
+        p.lfGain     = params.lfGainDb.load (std::memory_order_relaxed);
+        p.lfDial     = dial[(size_t) EqFreq::Lf].dialFor (params.lfFreq, black, p.lfFreq);
+        p.lfBell     = 0.0f;
+        p.lmGain     = params.lmGainDb.load (std::memory_order_relaxed);
+        p.lmDial     = dial[(size_t) EqFreq::Lm].dialFor (params.lmFreq, black, p.lmFreq);
+        p.lmQ        = params.lmQ.load      (std::memory_order_relaxed);
+        p.hmGain     = params.hmGainDb.load (std::memory_order_relaxed);
+        p.hmDial     = dial[(size_t) EqFreq::Hm].dialFor (params.hmFreq, black, p.hmFreq);
+        p.hmQ        = params.hmQ.load      (std::memory_order_relaxed);
+        p.hfGain     = params.hfGainDb.load (std::memory_order_relaxed);
+        p.hfDial     = dial[(size_t) EqFreq::Hf].dialFor (params.hfFreq, black, p.hfFreq);
+        p.hfBell     = 0.0f;
+    }
+    p.eqType     = black ? 1.0f : 0.0f;
+    p.saturation = kConsoleSaturationDrive;
+    p.inputGain  = 0.0f;
+    p.outputGain = 0.0f;
+    return p;
+}
+
+// Each band and filter takes exactly one frequency setter per push: the core
+// plays whichever of its dial and Hz setters ran last.
+void ChannelStrip::applyEqSnapshot (duskaudio::FourKEQDSP& core, const EqSnapshot& p) noexcept
+{
+    core.setHpfEnabled (p.hpfEnabled > 0.5f);
+    if (p.hpfDial > 0.0f) core.setHpfFreq (p.hpfDial); else core.setHpfFreqHz (p.hpfFreq);
+    core.setLpfEnabled (p.lpfEnabled > 0.5f);
+    if (p.lpfDial > 0.0f) core.setLpfFreq (p.lpfDial); else core.setLpfFreqHz (p.lpfFreq);
+    core.setLfGain (p.lfGain);  core.setLfBell (p.lfBell > 0.5f);
+    if (p.lfDial > 0.0f) core.setLfFreq (p.lfDial); else core.setLfFreqHz (p.lfFreq);
+    core.setLmGain (p.lmGain);  core.setLmQ (p.lmQ);
+    if (p.lmDial > 0.0f) core.setLmFreq (p.lmDial); else core.setLmFreqHz (p.lmFreq);
+    core.setHmGain (p.hmGain);  core.setHmQ (p.hmQ);
+    if (p.hmDial > 0.0f) core.setHmFreq (p.hmDial); else core.setHmFreqHz (p.hmFreq);
+    core.setHfGain (p.hfGain);  core.setHfBell (p.hfBell > 0.5f);
+    if (p.hfDial > 0.0f) core.setHfFreq (p.hfDial); else core.setHfFreqHz (p.hfFreq);
+    core.setEqType ((int) p.eqType);
+    core.setSaturation (p.saturation);
+    core.setInputGainDb (p.inputGain);
+    core.setOutputGainDb (p.outputGain);
+}
+
+void ChannelStrip::pushEqParameters (duskaudio::FourKEQDSP& core, const ChannelStripParams& params) noexcept
+{
+    applyEqSnapshot (core, eqSnapshotFor (params));
+}
+#endif
+
 void ChannelStrip::updateEqParameters() noexcept
 {
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -509,51 +578,10 @@ void ChannelStrip::updateEqParameters() noexcept
     // actually changed since last block. Skipping the setter push when they
     // haven't avoids a full FourKEQDSP coefficient recompute on every silent
     // block on every channel.
-    //
-    // The console saturation is the channel's always-on console floor, so the
-    // EQ processor runs every block regardless of the EQ bypass. When the EQ
-    // section is bypassed we leave the band / filter params at their flat
-    // value-init zeros (filters off, every band 0 dB) so only the saturation +
-    // transformer character is applied - the tone shaping is what bypasses.
-    // FourKEQDSP tolerates the zero-freq/zero-Q flat image: the HPF/LPF are
-    // gated by their enable flags (so their freq-0 coeffs never process), and
-    // the parallel bands compute a finite (zero) output scaled by K = 0.
-    EqSnapshot p {};
-    if (paramsRef->eqEnabled.load (std::memory_order_relaxed))
-    {
-        p.hpfEnabled = paramsRef->hpfEnabled.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
-        p.hpfFreq    = paramsRef->hpfFreq.load    (std::memory_order_relaxed);
-        p.lpfEnabled = paramsRef->lpfEnabled.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
-        p.lpfFreq    = paramsRef->lpfFreq.load    (std::memory_order_relaxed);
-        p.lfGain     = paramsRef->lfGainDb.load (std::memory_order_relaxed);
-        p.lfFreq     = paramsRef->lfFreq.load   (std::memory_order_relaxed);
-        p.lfBell     = 0.0f;
-        p.lmGain     = paramsRef->lmGainDb.load (std::memory_order_relaxed);
-        p.lmFreq     = paramsRef->lmFreq.load   (std::memory_order_relaxed);
-        p.lmQ        = paramsRef->lmQ.load      (std::memory_order_relaxed);
-        p.hmGain     = paramsRef->hmGainDb.load (std::memory_order_relaxed);
-        p.hmFreq     = paramsRef->hmFreq.load   (std::memory_order_relaxed);
-        p.hmQ        = paramsRef->hmQ.load      (std::memory_order_relaxed);
-        p.hfGain     = paramsRef->hfGainDb.load (std::memory_order_relaxed);
-        p.hfFreq     = paramsRef->hfFreq.load   (std::memory_order_relaxed);
-        p.hfBell     = 0.0f;
-    }
-    p.eqType     = paramsRef->eqBlackMode.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
-    p.saturation = kConsoleSaturationDrive;
-    p.inputGain  = 0.0f;
-    p.outputGain = 0.0f;
+    const EqSnapshot p = eqSnapshotFor (*paramsRef);
     if (std::memcmp (&p, &lastEqParams, sizeof (p)) != 0)
     {
-        eq.setHpfEnabled (p.hpfEnabled > 0.5f);  eq.setHpfFreq (p.hpfFreq);
-        eq.setLpfEnabled (p.lpfEnabled > 0.5f);  eq.setLpfFreq (p.lpfFreq);
-        eq.setLfGain (p.lfGain);  eq.setLfFreq (p.lfFreq);  eq.setLfBell (p.lfBell > 0.5f);
-        eq.setLmGain (p.lmGain);  eq.setLmFreq (p.lmFreq);  eq.setLmQ (p.lmQ);
-        eq.setHmGain (p.hmGain);  eq.setHmFreq (p.hmFreq);  eq.setHmQ (p.hmQ);
-        eq.setHfGain (p.hfGain);  eq.setHfFreq (p.hfFreq);  eq.setHfBell (p.hfBell > 0.5f);
-        eq.setEqType ((int) p.eqType);
-        eq.setSaturation (p.saturation);
-        eq.setInputGainDb (p.inputGain);
-        eq.setOutputGainDb (p.outputGain);
+        applyEqSnapshot (eq, p);
         lastEqParams = p;
     }
 #endif

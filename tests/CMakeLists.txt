@@ -254,6 +254,8 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_audio_math.cpp
     foundation_int_delay_line.cpp
     foundation_spsc_index_fifo.cpp
+    bus_tone_eq.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/BusToneEq.cpp
     foundation_lagrange_interpolator.cpp
     foundation_windowed_sinc_interpolator.cpp
     foundation_midi_buffer.cpp
@@ -770,6 +772,7 @@ if(DUSK_PLUGINS_PATH)
         console_saturation.cpp
         eq_core_regression.cpp
         eq_nyquist_response.cpp
+        session_eq_dial_migration.cpp
         tube_multiq_ab.cpp
         comp_core_ab.cpp
         smoke_brickwall_limiter.cpp

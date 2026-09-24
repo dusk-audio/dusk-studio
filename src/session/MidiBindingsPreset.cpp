@@ -101,6 +101,7 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const std::st
             case MidiBindingTarget::BusPan:
             case MidiBindingTarget::BusMute:
             case MidiBindingTarget::BusSolo:
+            case MidiBindingTarget::BusHpfFreq:
             case MidiBindingTarget::AuxLaneFader:
             case MidiBindingTarget::AuxLaneMute:
             case MidiBindingTarget::AuxPluginParam:

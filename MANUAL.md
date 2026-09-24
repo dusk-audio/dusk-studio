@@ -27,7 +27,7 @@ Dusk Studio includes:
 - 24 tracks of audio or MIDI recording, paged on screen to fit the window and addressed by a control surface in three banks of 8.
 - A fixed channel signal chain: phase, insert, HPF, LPF, 4-band EQ, compressor (Opto/FET/VCA), aux sends, pan, fader.
 - Four aux return lanes, each with one plugin or hardware insert slot.
-- Four mix buses, each with a 3-band EQ and console-style bus compressor.
+- Four mix buses, each with a 3-band tone EQ, a highpass and a console-style bus compressor.
 - A master bus with tape saturation, a tube program EQ, bus compressor, and mono-sum check.
 - A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, and BS.1770 loudness metering.
 - VST3, LV2, AU, and CLAP plugin hosting, with optional out-of-process sandboxing for crash isolation. CLAP and VST3 — effects and instruments — run through Dusk Studio's own native hosts on Linux, macOS, and Windows; LV2 does on Linux and macOS, and Audio Units do on macOS.
@@ -222,7 +222,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | #   | Name           | Description                                                              |
 | --- | -------------- | ------------------------------------------------------------------------ |
 | 1   | Name           | Right-click to rename.                                                   |
-| 2   | 3-band EQ      | LF shelf / MID peak / HF shelf, ±9 dB per band.                          |
+| 2   | Tone EQ        | HPF, then LF shelf / MID bell / HF shelf, ±9 dB per band.                |
 | 3   | Bus compressor | Console-style glue. Threshold, ratio, attack, release, auto-release, makeup. |
 | 4   | Pan            | Same equal-power law as channel strips.                                  |
 | 5   | Fader          | −∞ to +12 dB.                                                            |
@@ -497,7 +497,7 @@ All seven are saved with the session, so a project that syncs to an external clo
 
 ### Advanced
 
-- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus EQ and compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Each oversampled stage adds about half a millisecond of delay at 2× and 4×; delay compensation keeps tracks, buses and aux returns lined up, and bounces trim it out. The master tape is the exception: it anti-aliases locally at a fixed internal rate and ignores this setting.
+- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Each oversampled stage adds about half a millisecond of delay at 2× and 4×; delay compensation keeps tracks, buses and aux returns lined up, and bounces trim it out. The master tape is the exception: it anti-aliases locally at a fixed internal rate and ignores this setting.
 - **Multicore DSP**: spreads the per-block DSP of the 24 channel strips across several CPU cores instead of running them all on the single audio thread. **Auto** (default) uses *cores − 2* worker threads on machines with 4 or more cores — leaving one core for the interface and one for the operating system — and falls back to single-core on smaller machines. **Off** forces the single-core path; you can also pin an explicit worker count. This is a **per-machine** setting: it is stored on this computer and is **not** saved in the session, so a project made on a many-core workstation will not overload a smaller machine (a 4-core Raspberry Pi 5, say) when you open it there. The bus, aux, and master stages always run on the audio thread; only the channel strips fan out, and on a quad-core machine that heavy strip work runs roughly three times faster. Hosted plugins on those strips process on the worker threads too; in the unlikely event a specific plugin misbehaves with this enabled, switch it Off.
 - **Recording offset**: a manual correction, in samples, subtracted from where each newly recorded audio take is placed on the timeline. Use it when your monitoring path adds a round-trip delay that isn't already reported — analog converters, an external effects loop, or a plugin that under-reports its latency — so what you played lands back in time instead of slightly late. A positive value pulls takes earlier; the take is never moved before sample 0 — a take that would land entirely before it is discarded with a warning. It affects **audio** takes only — MIDI is captured with no converter delay and is left where it was played. **To calibrate**: route your interface's output back into an input (a physical loopback cable, or the same converter you monitor through), record the metronome click for a few bars, then open the take in the audio editor and read off, in samples, how far the recorded click sits after the beat it should land on. Enter that number here. The value is **per-machine** — it describes this desk's I/O latency, not the session — and applies to the next take, no restart needed.
 - **Run self-test**: runs Dusk Studio's headless audio engine against a synthetic test signal and reports pass/fail. The suite includes a determinism check that the multicore mix matches the single-core mix sample-for-sample (within floating-point rounding). As with the bindings panel, the settings panel steps out of the way while the self-test is open and comes back when you close it.
@@ -747,16 +747,18 @@ The insert sits **before** the HPF, so any plugin you load drives the rest of th
 ## HPF (high-pass filter)
 
 - **Enable**: click the label to toggle. The LED lights green when on.
-- **Frequency**: 20 to 300 Hz. At 20 Hz the filter is effectively bypassed (the LED stays unlit until you drag above 20 Hz).
+- **Frequency**: 20 to 300 Hz, the frequency where the filter is 3 dB down. At 20 Hz the filter is effectively bypassed (the LED stays unlit until you drag above 20 Hz). The E character's HPF rolls off at 12 dB per octave, the G character's at 18.
 
 A modest HPF (60–80 Hz on vocals, 100 Hz on most instruments, 30 Hz on bass) cleans up rumble before it hits the EQ.
 
 ## LPF (low-pass filter)
 
 - **Enable**: toggle as for HPF.
-- **Frequency**: 3 kHz to 20 kHz. At 20 kHz the filter is effectively bypassed.
+- **Frequency**: 3 kHz to 20 kHz, again the 3 dB point. At 20 kHz the filter is effectively bypassed.
 
 Useful for taming hi-hat bleed, cymbal harshness on a mic that's picking up too much top, or muffling a track you want pushed to the back of the mix.
+
+Sessions saved by earlier versions are converted when they open. Each filter keeps the frequency and slope it had until its frequency is changed (knob, MIDI or control surface). The one difference is at the very top of the audio band at 1× and 2× **Effect oversampling**, where the LPF, like the EQ bands, no longer cramps (see the 4-band EQ below). An HPF that played above 300 Hz keeps that frequency: the knob rests at the top and shows it, and the filter moves into the range only when its frequency is changed. A filter that played past its OFF end stays on where it played, its knob one hertz short of OFF. A filter that was left switched on at its OFF end stays on there, and its knob shows 20 Hz or 20 kHz rather than OFF.
 
 ## 4-band parametric EQ
 
@@ -769,18 +771,20 @@ A British console-style 4-band EQ. Click the header's left status light to bypas
 
 The four bands are:
 
-| Band   | Type       | Freq range    | Default freq | Gain   | Q range |
-| ------ | ---------- | ------------- | ------------ | ------ | ------- |
-| **LF** | Low shelf  | 20–400 Hz     | 100 Hz       | ±15 dB | n/a     |
-| **LM** | Peaking    | 100 Hz–4 kHz  | 600 Hz       | ±15 dB | 0.4–4.0 |
-| **HM** | Peaking    | 600 Hz–13 kHz | 2 kHz        | ±15 dB | 0.4–4.0 |
-| **HF** | High shelf | 1–20 kHz      | 8 kHz        | ±15 dB | n/a     |
+| Band   | Type       | Freq range     | Default freq | Gain   | Q range |
+| ------ | ---------- | -------------- | ------------ | ------ | ------- |
+| **LF** | Low shelf  | 30–450 Hz      | 100 Hz       | ±15 dB | n/a     |
+| **LM** | Peaking    | 200 Hz–2.5 kHz | 600 Hz       | ±15 dB | 0.4–4.0 |
+| **HM** | Peaking    | 600 Hz–7 kHz   | 2 kHz        | ±15 dB | 0.4–4.0 |
+| **HF** | High shelf | 1.5–16 kHz     | 8 kHz        | ±15 dB | n/a     |
+
+The frequency is where you hear the band: a peaking band is centred on it, and a shelf has its corner there. From 3 dB of boost or cut, roughly half to two-thirds of a shelf's boost or cut is in at its frequency, and nearly all of it two octaves further out. As on the console, gain moves a peaking band's centre, by up to about 2.5%. Sessions saved by earlier versions are converted when they open. Each knob shows the frequency its band plays, and each band keeps the frequency and shape it had until its frequency is changed (knob, MIDI or control surface). The one difference is at the very top of the audio band at 1× and 2× **Effect oversampling**, where the EQ no longer cramps (below). Switching such a track's saturation character plays each band at the frequency its knob shows, and switching back brings the old sound back, also after the session is saved and reopened in between. A band that played outside today's range keeps that frequency: its knob rests at the end and shows it, and the band moves into the range only when its frequency is changed.
 
 Each knob is a rotary slider. Drag up to increase, down to decrease. Use a vertical drag for gain, a horizontal drag for frequency. There are no numeric text boxes on the knobs; the values display below.
 
-At the default 1× **Effect oversampling** the HM bell cramps near Nyquist. An HM boost at the top of its range falls short of its true shape above about 12 kHz, and a +12 dB boost there reads about 5 to 7 dB low at 20 kHz. The HF shelf does not cramp at 1×. At 2× or 4× the HM bell keeps its shape up to 20 kHz. At a 44.1 kHz session rate, 2× and 4× also take about 1 dB off the very top of the band, around 20 kHz, in each oversampled stage, whatever the EQ is set to; at 48 kHz they do not. Raise Effect oversampling in the **Advanced** section of **Settings → Audio…** when that top octave matters.
+The EQ does not cramp near Nyquist at any **Effect oversampling** setting, the default 1× included: a band set high keeps its shape up to 20 kHz. At a 44.1 kHz session rate, 2× and 4× take about 1 dB off the very top of the band, around 20 kHz, in each oversampled stage, whatever the EQ is set to; at 48 kHz they do not.
 
-The band curves, the filter slopes and the console character are calibrated against measurements of the hardware at each marked position, so a setting reads as the console's own rather than as a textbook filter at the same frequency. The console character is always on, at a fixed light amount, whether the EQ section is engaged or not; a silent channel stays silent through it.
+The band shapes, the way gain lands, the filter slopes and the console character are calibrated against measurements of the hardware, so a setting reads as the console's own rather than as a textbook filter at the same frequency. The console character is always on, at a fixed light amount, whether the EQ section is engaged or not; a silent channel stays silent through it.
 
 ## Compressor
 
@@ -879,21 +883,27 @@ Between the channel strips and the master strip are four bus strips. They are sm
 ## Signal flow
 
 <!-- Source: src/dsp/BusStrip.cpp::processInPlace
-     EQ (:195, :214) → comp (:204, :223) → pan × fader (:236–:240).
+     HPF + tone EQ (:157, src/dsp/BusToneEq.cpp::process) → comp (:197, :209) →
+     pan × fader (:232–:236).
      Mute is applied at AudioEngine sum-into-master, not inside BusStrip. -->
 
 ```text
-bus input (sum of assigned channels) → 3-band EQ → bus compressor →
+bus input (sum of assigned channels) → HPF → tone EQ → bus compressor →
 pan → fader → master   (mute and solo gate the sum into master)
 ```
 
-## 3-band EQ
+## Tone EQ
 
-A simplified British EQ with three bands at fixed musical defaults. Gain range is ±9 dB per band (a Mixbus-style restrained range — buses don't need wide cuts and boosts). As on the channel EQ, the curves follow the console's own markings rather than textbook filters, so the ±9 dB marks move each band by about 7 dB at its centre.
+A clean digital tone control for the whole bus, separate from the channel strip's console EQ. It adds no saturation, and each band plays exactly what its knob says. The three bands sit at fixed frequencies with wide, gentle curves, and a highpass sits in front of them.
 
-- **LF**: low shelf at 300 Hz.
-- **MID**: peaking at 800 Hz.
-- **HF**: high shelf at 2 kHz.
+- **HPF**: 12 dB/octave highpass, 3 dB down at the frequency shown, from 20 Hz to 3 kHz. Fully down is **OFF**, the default.
+- **LF**: low shelf at 300 Hz, ±9 dB.
+- **MID**: bell at 800 Hz, Q 0.7, ±9 dB.
+- **HF**: high shelf at 2 kHz, ±9 dB.
+
+MID's gain is its level at 800 Hz. A shelf's gain is the level it reaches beyond its frequency, and at the frequency itself it is half way: +9 dB on LF is +4.5 dB at 300 Hz and the full +9 dB by 60 Hz, and +9 dB on HF is +4.5 dB at 2 kHz and the full +9 dB above 10 kHz. The shelves rise smoothly, with no bump past their level.
+
+The EQ's status light bypasses the HPF with the bands, and moving any band knob or turning the HPF up off OFF engages the EQ. Moves glide over 20 ms, so turning a knob never clicks, and an EQ with every band at 0 dB and the HPF off passes the signal untouched. The curves keep their shape up to 20 kHz at every sample rate; the bus EQ is never oversampled and adds no delay.
 
 ## Bus compressor
 
@@ -1918,7 +1928,8 @@ Once connected:
 - At EightUp density, the surface's three banks match the console pages exactly: 1–8, 9–16, and 17–24. At other widths they are separate axes kept in step: a bank step moves the page to the one holding that bank's first track, and picking a page moves the surface the other way. With all 24 strips on screen there is no page to pick, and the surface keeps whichever bank you left it on.
 - **Channel Left** / **Channel Right** step the selected channel by 1.
 - **Mute / Solo / Arm / Select** buttons mirror and drive the on-screen buttons. LEDs reflect state.
-- **V-pot** rotaries drive pan, sends, EQ band gain, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped.
+- **V-pot** rotaries drive pan, sends, the channel EQ, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped.
+- In **EQ** assign mode the encoders act on the *selected* channel: 1 = HPF frequency, 2 = LF gain, 3 = LF frequency, 4 = LM gain, 5 = LM frequency, 6 = HM gain, 7 = HF gain, 8 = HF frequency. Turning the HPF encoder up from OFF switches the HPF on, and turning it back down to OFF switches it off. Pushing an encoder resets it to its knob's default: the HPF to OFF, switched off; a gain to 0 dB; LF to 100 Hz, LM to 600 Hz, HF to 8 kHz. A band that a converted older session holds past its knob's range stays there when turned further out, and steps in from the end of the range when turned back.
 - In **compressor** assign mode the encoders act on the *selected* channel: 1 = threshold, 2 = ratio, 3 = attack, 4 = release, 5 = makeup. Each drives the active compressor mode's own parameter over that mode's range. Pushing an encoder resets it: threshold goes to **no compression** (the top of the mode's range), makeup to unity, and ratio, attack and release to the mode's default. Opto has no ratio, attack or release, so encoders 2–4 do nothing in that mode. Attack, release and the VCA ratio step by a fixed percentage per detent rather than a fixed amount, so the fast end of each range stays dialable. The FET ratio is a five-position switch, so its encoder moves one position per turn of the wrist however fast you spin it, where the VCA's continuous ratio scales with every detent.
 - **Transport buttons** map to Play, Stop, Record, Rewind, Forward, Loop.
 - **Jog wheel** scrubs the playhead.
@@ -1981,7 +1992,7 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 - **Per-track DSP**: HPF frequency, EQ band gain (4 bands), EQ band frequency (4 bands), EQ band Q (the two bell bands, LM / HM), compressor threshold, compressor makeup.
 - **Per-track toggles**: EQ on/off, compressor on/off, hardware insert bypass, aux-send pre/post.
 - **Per-track plugin parameter**: any indexed parameter on the loaded plugin.
-- **Per-bus**: Fader, Pan, Mute, Solo, EQ band gain (LF / MID / HF — 3 bands).
+- **Per-bus**: Fader, Pan, Mute, Solo, EQ band gain (LF / MID / HF — 3 bands), HPF frequency.
 - **Per-aux**: Fader, Mute.
 - **Master**: Fader, EQ low boost, EQ high boost, compressor threshold, compressor makeup, compressor ratio.
 - **Per-track aux send**: send level for each of the four aux destinations.
@@ -2617,20 +2628,20 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Phase    | Invert         | Off / On                      | Off      |
 | Insert   | Mode           | Empty / Plugin / Hardware     | Plugin   |
 | HPF      | Enable         | Off / On                      | Off      |
-| HPF      | Frequency      | 20–300 Hz                     | 20 Hz    |
+| HPF      | Frequency (−3 dB) | 20–300 Hz                  | 20 Hz    |
 | LPF      | Enable         | Off / On                      | Off      |
-| LPF      | Frequency      | 3–20 kHz                      | 20 kHz   |
+| LPF      | Frequency (−3 dB) | 3–20 kHz                   | 20 kHz   |
 | EQ       | Enable         | Off / On                      | Off      |
 | EQ       | Mode           | E (brown) / G (black)         | E        |
-| EQ LF    | Frequency      | 20–400 Hz                     | 100 Hz   |
+| EQ LF    | Frequency      | 30–450 Hz                     | 100 Hz   |
 | EQ LF    | Gain           | ±15 dB                        | 0 dB     |
-| EQ LM    | Frequency      | 100 Hz–4 kHz                  | 600 Hz   |
+| EQ LM    | Frequency      | 200 Hz–2.5 kHz                | 600 Hz   |
 | EQ LM    | Gain           | ±15 dB                        | 0 dB     |
 | EQ LM    | Q              | 0.4–4.0                       | 0.7      |
-| EQ HM    | Frequency      | 600 Hz–13 kHz                 | 2 kHz    |
+| EQ HM    | Frequency      | 600 Hz–7 kHz                  | 2 kHz    |
 | EQ HM    | Gain           | ±15 dB                        | 0 dB     |
 | EQ HM    | Q              | 0.4–4.0                       | 0.7      |
-| EQ HF    | Frequency      | 1–20 kHz                      | 8 kHz    |
+| EQ HF    | Frequency      | 1.5–16 kHz                    | 8 kHz    |
 | EQ HF    | Gain           | ±15 dB                        | 0 dB     |
 | Comp     | Enable         | Off / On                      | Off      |
 | Comp     | Mode           | Opto / FET / VCA              | Opto     |
@@ -2659,6 +2670,8 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Block  | Param        | Range         | Default |
 | ------ | ------------ | ------------- | ------- |
 | EQ     | Enable       | Off / On      | Off     |
+| EQ HPF | Enable       | Off / On      | Off     |
+| EQ HPF | Frequency    | 20 Hz–3 kHz   | 20 Hz   |
 | EQ LF  | Gain         | ±9 dB         | 0 dB    |
 | EQ MID | Gain         | ±9 dB         | 0 dB    |
 | EQ HF  | Gain         | ±9 dB         | 0 dB    |

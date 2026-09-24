@@ -23,6 +23,7 @@
 
 #include <juce_core/juce_core.h>
 #include <nlohmann/json.hpp>
+#include <cmath>
 #include <memory>
 
 namespace duskstudio
@@ -79,11 +80,12 @@ TEST_CASE ("migrateSession advances a mock v1 root to the current schema",
 
     // version field must now match the current build's kFormatVersion.
     // We don't reach kFormatVersion symbolically from the test (it's
-    // in an anonymous namespace inside the .cpp), so we check that built-in
-    // inserts own version 7; the original payload must survive every step.
+    // in an anonymous namespace inside the .cpp), so we check that EQ
+    // frequencies in Hz own version 8; the original payload must survive
+    // every step.
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() == 7);
+    REQUIRE (root["version"].get<int>() == 8);
     REQUIRE (root.contains ("tempo"));
     REQUIRE (root["tempo"].get<double>() == 98.5);
 }
@@ -100,7 +102,7 @@ TEST_CASE ("migrateSession carries v5 AUX-send bypass data to the current schema
 
     auto migrated = root;
     REQUIRE (duskstudio::migrateSession (migrated, 5));
-    REQUIRE (migrated["version"].get<int>() == 7);
+    REQUIRE (migrated["version"].get<int>() == 8);
     REQUIRE (migrated["tracks"][0]["aux_sends_bypassed"].get<bool>());
 
     const auto dir = makeTempMigrationDir();
@@ -114,12 +116,12 @@ TEST_CASE ("migrateSession carries v5 AUX-send bypass data to the current schema
 
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    REQUIRE (saved["version"].get<int>() == 7);
+    REQUIRE (saved["version"].get<int>() == 8);
     REQUIRE (saved["tracks"][0]["aux_sends_bypassed"].get<bool>());
     dir.deleteRecursively();
 }
 
-TEST_CASE ("migrateSession stamps an ordinary v6 session as v7",
+TEST_CASE ("migrateSession carries an ordinary v6 session to the current format",
            "[session][serializer][migration][builtin]")
 {
     using duskstudio::Session;
@@ -137,7 +139,7 @@ TEST_CASE ("migrateSession stamps an ordinary v6 session as v7",
 
     auto migrated = root;
     REQUIRE (duskstudio::migrateSession (migrated, 6));
-    CHECK (migrated["version"].get<int>() == 7);
+    CHECK (migrated["version"].get<int>() == 8);
     CHECK (migrated["tracks"][0]["name"].get<std::string>() == "Legacy strip");
     CHECK_FALSE (migrated["tracks"][0].contains ("builtin_id"));
 
@@ -153,9 +155,60 @@ TEST_CASE ("migrateSession stamps an ordinary v6 session as v7",
     REQUIRE (SessionSerializer::save (*session, target));
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    CHECK (saved["version"].get<int>() == 7);
+    CHECK (saved["version"].get<int>() == 8);
 
     dir.deleteRecursively();
+}
+
+TEST_CASE ("migrateSession rewrites only the channel EQ frequencies of a v7 session",
+           "[session][serializer][migration][eq]")
+{
+    // v7 -> v8 turns each stored EQ and filter dial position into the Hz it
+    // played and keeps the position beside it as freq_dial, which the strip
+    // plays until the frequency moves (session_eq_dial_migration.cpp checks
+    // the values and the sound against the core). A filter at OFF keeps its
+    // frequency and gets its dial too. Everything else, gains, Qs and filter
+    // switches included, passes through.
+    nlohmann::json root {
+        { "version", 7 },
+        { "tempo", 97.0 },
+        { "tracks", nlohmann::json::array ({
+            { { "name", "Dialled" },
+              { "eq", { { "type", "brown" },
+                        { "lf", { { "gain", 3.0 }, { "freq", 100.0 } } },
+                        { "hm", { { "gain", -2.0 }, { "freq", 2000.0 }, { "q", 1.1 } } },
+                        { "hf", { { "gain", 4.0 }, { "freq", 8000.0 } } } } },
+              { "hpf", { { "enabled", true }, { "freq", 120.0 } } },
+              { "lpf", { { "enabled", false }, { "freq", 20000.0 } } } },
+            { { "name", "No EQ" }, { "lpf", { { "enabled", true }, { "freq", 8000.0 } } } },
+            nullptr
+        }) }
+    };
+
+    const auto original = root;
+    REQUIRE (duskstudio::migrateSession (root, 7));
+    CHECK (root["version"].get<int>() == 8);
+
+    const auto& eq = root["tracks"][0]["eq"];
+    CHECK (std::abs (eq["lf"]["freq"].get<double>() - 100.0) > 1.0);
+    CHECK (std::abs (eq["hm"]["freq"].get<double>() - 2000.0) > 1.0);
+    CHECK (eq["hf"]["freq"].get<double>() < 8000.0);
+    CHECK (root["tracks"][0]["hpf"]["freq"].get<double>() < 100.0);
+    CHECK (root["tracks"][1]["lpf"]["freq"].get<double>() > 9000.0);
+
+    auto expected = original;
+    expected["version"] = 8;
+    for (const char* band : { "lf", "hm", "hf" })
+    {
+        expected["tracks"][0]["eq"][band]["freq"] = eq[band]["freq"];
+        expected["tracks"][0]["eq"][band]["freq_dial"] = original["tracks"][0]["eq"][band]["freq"];
+    }
+    expected["tracks"][0]["hpf"]["freq"] = root["tracks"][0]["hpf"]["freq"];
+    expected["tracks"][0]["hpf"]["freq_dial"] = 120.0;
+    expected["tracks"][0]["lpf"]["freq_dial"] = 20000.0;
+    expected["tracks"][1]["lpf"]["freq"] = root["tracks"][1]["lpf"]["freq"];
+    expected["tracks"][1]["lpf"]["freq_dial"] = 8000.0;
+    CHECK (root == expected);
 }
 
 TEST_CASE ("Loading a v6 session clears built-ins the live session was holding",
@@ -191,7 +244,7 @@ TEST_CASE ("Loading a v6 session clears built-ins the live session was holding",
     REQUIRE (SessionSerializer::save (live, target));
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    CHECK (saved["version"].get<int>() == 7);
+    CHECK (saved["version"].get<int>() == 8);
     CHECK_FALSE (saved["tracks"][0].contains ("builtin_id"));
 
     dir.deleteRecursively();
@@ -220,12 +273,12 @@ TEST_CASE ("SessionSerializer loads a v1-tagged session file end-to-end",
     auto root = nlohmann::json::parse (target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() == 7);
+    REQUIRE (root["version"].get<int>() == 8);
 
     dir.deleteRecursively();
 }
 
-TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a v7 save",
+TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a current save",
            "[session][serializer][migration][plugin-descriptor]")
 {
     using duskstudio::Session;
@@ -255,7 +308,7 @@ TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a v7 save
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (saved.is_object());
-    CHECK (saved["version"].get<int>() == 7);
+    CHECK (saved["version"].get<int>() == 8);
     CHECK (saved["tracks"][0]["plugin_desc_xml"].get<std::string>() == legacyXml);
     CHECK (saved["tracks"][0]["plugin_state"].get<std::string>()
            == "bGVnYWN5LXN0YXRl");
@@ -302,7 +355,7 @@ TEST_CASE ("SessionSerializer round-trips active and historical take provenance"
     REQUIRE (SessionSerializer::save (*source, target));
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    REQUIRE (saved["version"].get<int>() == 7);
+    REQUIRE (saved["version"].get<int>() == 8);
     const auto& savedAudio = saved["tracks"][0]["regions"][0];
     CHECK (savedAudio["take_provenance"]["captured_at_ms"].get<std::int64_t>() == 101);
     CHECK (savedAudio["take_provenance"]["loop_pass"].get<int>() == 2);
@@ -412,7 +465,7 @@ TEST_CASE ("SessionSerializer gives legacy v4 takes default provenance",
     REQUIRE (SessionSerializer::save (*clamped, target));
     const auto upgraded = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    CHECK (upgraded["version"].get<int>() == 7);
+    CHECK (upgraded["version"].get<int>() == 8);
 
     dir.deleteRecursively();
 }

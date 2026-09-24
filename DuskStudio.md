@@ -116,7 +116,7 @@ Modeled after the Tascam Model 2400 layout:
   * Mute + Solo buttons
   * Channel fader (vertical slider)
 * **4 Aux bus strips** (narrower, to the right of channels):
-  * EQ (simplified 3-band)
+  * Tone EQ: highpass (20 Hz to 3 kHz, OFF at the floor) + LF shelf / MID bell / HF shelf, ±9 dB
   * Bus compressor (threshold, ratio, attack, release)
   * Fader
   * Mute

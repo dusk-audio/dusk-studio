@@ -1473,12 +1473,33 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     bool setAccessibleValue (const std::string& title, const std::string& value) override
     {
-        auto* control = findTitledControl (owner, title);
+        // From the window, as valueBoxText does: an embedded modal's controls
+        // hang off it rather than off the main component.
+        auto* control = findTitledControl (*owner.getTopLevelComponent(), title);
         auto* handler = control != nullptr ? control->getAccessibilityHandler() : nullptr;
         auto* interface = handler != nullptr ? handler->getValueInterface() : nullptr;
         if (interface == nullptr || interface->isReadOnly()) return false;
         interface->setValueAsString (HostString (value.c_str()));
         return true;
+    }
+
+    std::string valueBoxText (const std::string& title) override
+    {
+        using ValueBox = std::remove_reference_t<decltype (owner.statusLabel)>;
+        auto* control = findTitledControl (*owner.getTopLevelComponent(), title);
+        if (control == nullptr) return "<missing>";
+        for (auto* child : control->getChildren())
+            if (auto* box = dynamic_cast<ValueBox*> (child))
+                return box->getText().toStdString();
+        return "<no value box>";
+    }
+
+    bool clickTitledControl (const std::string& title, bool right) override
+    {
+        auto* control = findTitledControl (*owner.getTopLevelComponent(), title);
+        if (control == nullptr || ! control->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (control, control->getLocalBounds().getCentre()).toFloat();
+        return clickAt (point.x, point.y, 1, right);
     }
 
     int activeAuxLane() const override
@@ -1549,6 +1570,12 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         {
             auto* lane = owner.auxView != nullptr ? owner.auxView->getLaneComponent (index) : nullptr;
             return lane != nullptr && click (lane, lane->controlPointForScenario (control));
+        }
+        if (kind == StripKind::Bus && control == "eq")
+        {
+            auto* bus = owner.consoleView != nullptr ? owner.consoleView->getBusComponent (index) : nullptr;
+            auto* header = bus != nullptr ? bus->eqHeaderForScenario() : nullptr;
+            return header != nullptr && click (header, header->getLocalBounds().getRelativePoint (0.6f, 0.5f));
         }
         return false;
     }

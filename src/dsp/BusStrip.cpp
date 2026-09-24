@@ -3,7 +3,6 @@
 #include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 
 namespace duskstudio
 {
@@ -31,10 +30,15 @@ void BusStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor
     panGainL .setCurrentAndTargetValue (1.0f);
     panGainR .setCurrentAndTargetValue (1.0f);
 
+    // Seed the EQ from the session first so the opening block plays the
+    // stored setting instead of gliding in from flat.
+    updateEqParameters();
+    toneEq.prepare (sampleRate);
+
     // Bus oversampling: wrap the comp externally. The core's own oversampling
     // path is never engaged because Dusk Studio does the up/downsample around
-    // it - having the core oversample on top would compound. The EQ runs
-    // linear (saturation zero), so it stays outside the wrap entirely.
+    // it - having the core oversample on top would compound. The EQ is
+    // linear, so it stays outside the wrap entirely.
     // 4x, 2x, or 1x (no oversampling).
     const int factor = (oversamplingFactor == 2 || oversamplingFactor == 4)
                             ? oversamplingFactor : 1;
@@ -57,36 +61,6 @@ void BusStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor
     const int    prepBs = bsClamped * factor;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    // The bus EQ is linear tone-shaping (no saturation), so it never aliases
-    // and is prepared at NATIVE rate - it always runs outside the oversampler.
-    // Only the comp (below) is wrapped, and only when engaged.
-    //
-    // Bus EQ frequencies + gain range mirror Harrison Mixbus's mix-bus Tone EQ
-    // exactly: LO 300 Hz shelf / MID 800 Hz Q0.7 bell / HI 2 kHz shelf,
-    // +/-9 dB - wide, musical tone-shaping for subgroups. (NOT the narrower
-    // Mixbus master-bus EQ, which is 90/300/4000 Hz +/-6 dB.) Everything but
-    // the three band gains (updateEqParameters) is fixed here.
-    eq.setHpfEnabled (false); eq.setHpfFreq (80.0f);
-    eq.setLpfEnabled (false); eq.setLpfFreq (20000.0f);
-    eq.setLfFreq (300.0f);    eq.setLfBell (false);   // shelf
-    eq.setLmFreq (800.0f);    eq.setLmQ (0.7f);
-    // HM unused; Bus EQ exposes only LF / MID / HF.
-    eq.setHmGain (0.0f);      eq.setHmFreq (4000.0f); eq.setHmQ (0.7f);
-    eq.setHfFreq (2000.0f);   eq.setHfBell (false);
-    eq.setEqType (0);         // Brown (E-series voicing)
-    eq.setSaturation (0.0f);
-    eq.setInputGainDb (0.0f);
-    eq.setOutputGainDb (0.0f);
-    eq.setOversampling (0);   // 1x - linear chain, and the strip owns any OS
-    eq.setMsMode (false);
-    eq.setAutoGain (false);
-    eq.setBypass (false);
-    eq.setLfGain (lastEqGains.lf);
-    eq.setLmGain (lastEqGains.mid);
-    eq.setHfGain (lastEqGains.hf);
-    eq.prepare (sampleRate, bsClamped);
-    eq.reset();
-
     busComp.setMode (3);            // Bus mode
     busComp.setMix (100.0f);
     busComp.setBusMix (100.0f);
@@ -100,23 +74,22 @@ void BusStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor
 #endif
 }
 
-#if DUSKSTUDIO_HAS_DUSK_DSP
 void BusStrip::updateEqParameters() noexcept
 {
     if (paramsRef == nullptr) return;
-    EqGains g;
-    g.lf  = paramsRef->eqLfGainDb.load  (std::memory_order_relaxed);
-    g.mid = paramsRef->eqMidGainDb.load (std::memory_order_relaxed);
-    g.hf  = paramsRef->eqHfGainDb.load  (std::memory_order_relaxed);
-    if (std::memcmp (&g, &lastEqGains, sizeof (g)) != 0)
-    {
-        eq.setLfGain (g.lf);
-        eq.setLmGain (g.mid);
-        eq.setHfGain (g.hf);
-        lastEqGains = g;
-    }
+    // The EQ section's status light takes the highpass out with the bands, as
+    // on the channel strip.
+    BusToneEq::Targets t;
+    t.eqOn = paramsRef->eqEnabled.load (std::memory_order_relaxed);
+    t.gainDb = { paramsRef->eqLfGainDb.load  (std::memory_order_relaxed),
+                 paramsRef->eqMidGainDb.load (std::memory_order_relaxed),
+                 paramsRef->eqHfGainDb.load  (std::memory_order_relaxed) };
+    t.hpfOn = t.eqOn && paramsRef->hpfEnabled.load (std::memory_order_relaxed);
+    t.hpfHz = paramsRef->hpfFreq.load (std::memory_order_relaxed);
+    toneEq.setTargets (t);
 }
 
+#if DUSKSTUDIO_HAS_DUSK_DSP
 void BusStrip::updateCompParameters() noexcept
 {
     if (paramsRef == nullptr) return;
@@ -178,31 +151,20 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
 
     updateGainTargets();
 
-#if DUSKSTUDIO_HAS_DUSK_DSP
+    // Native-rate and outside the oversampler. A disengaged or flat EQ drops
+    // out of the path on its own once its last move has settled.
     updateEqParameters();
+    toneEq.process (L, R, numSamples);
+
+#if DUSKSTUDIO_HAS_DUSK_DSP
     updateCompParameters();
 
-    // EQ is linear and native-rate, so it runs outside the oversampler - but
-    // only when engaged (a disabled EQ would otherwise run at unity, wasting
-    // cycles). The comp is the only saturating stage; the oversampler wraps
-    // just the comp and only when it's engaged. With comp off we delay the
-    // signal by the oversampler latency so the bus stays aligned with comp-on
-    // buses - EQ on/off is latency-free, so the delay logic is unaffected.
-    const bool eqEnabled = paramsRef != nullptr
-                        && paramsRef->eqEnabled.load (std::memory_order_relaxed);
+    // The comp is the only saturating stage; the oversampler wraps just the
+    // comp and only when it's engaged. With comp off we delay the signal by
+    // the oversampler latency so the bus stays aligned with comp-on buses -
+    // the EQ is latency-free, so the delay logic is unaffected.
     const bool compEnabled = paramsRef != nullptr
                           && paramsRef->compEnabled.load (std::memory_order_relaxed);
-
-    if (eqEnabled && ! prevEqEnabled)
-        eq.reset();                 // clear stale state so re-enabling doesn't click
-    prevEqEnabled = eqEnabled;
-
-    if (eqEnabled)
-    {
-        const float* eqIn[2]  = { L, R };
-        float*       eqOut[2] = { L, R };
-        eq.processBlock (eqIn, eqOut, 2, numSamples);
-    }
 
     const bool compOsActive = compEnabled && osFactor > 1;
     if (compOsActive && ! prevCompOsActive)

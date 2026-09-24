@@ -1,5 +1,6 @@
 #include "ChannelEqEditor.h"
 #include "DuskStudioLookAndFeel.h"
+#include "../foundation/Text.h"
 
 #include <algorithm>
 
@@ -13,7 +14,7 @@ struct BandSpec
     juce::Colour accent;
     float freqMin, freqMax;
     std::atomic<float>* (*gain) (ChannelStripParams&);
-    std::atomic<float>* (*freq) (ChannelStripParams&);
+    ChannelStripParams::EqFreq freq;
     // q is non-null only for bell bands (HM, LM). Shelves return nullptr.
     std::atomic<float>* (*q)    (ChannelStripParams&);
 };
@@ -23,28 +24,36 @@ const std::array<BandSpec, 4>& bandSpecs()
     static const std::array<BandSpec, 4> specs {{
         { "HF", juce::Colour (sslEqColors::kHfRed),    ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hfGainDb; },
-            [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hfFreq; },
+            ChannelStripParams::EqFreq::Hf,
             [] (ChannelStripParams&)   -> std::atomic<float>* { return nullptr; } },
         { "HM", juce::Colour (sslEqColors::kHmGreen),  ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmGainDb; },
-            [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmFreq; },
+            ChannelStripParams::EqFreq::Hm,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmQ; } },
         { "LM", juce::Colour (sslEqColors::kLmBlue),   ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmGainDb; },
-            [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmFreq; },
+            ChannelStripParams::EqFreq::Lm,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmQ; } },
         { "LF", juce::Colour (sslEqColors::kLfBlack),  ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lfGainDb; },
-            [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lfFreq; },
+            ChannelStripParams::EqFreq::Lf,
             [] (ChannelStripParams&)   -> std::atomic<float>* { return nullptr; } },
     }};
     return specs;
 }
 
-inline juce::String formatFrequency (double hz)
+inline std::string formatFrequency (double hz)
 {
-    if (hz >= 1000.0) return juce::String (hz / 1000.0, 1) + " kHz";
-    return juce::String ((int) std::round (hz)) + " Hz";
+    if (hz >= 1000.0) return dusk::text::format ("%.1f kHz", hz / 1000.0);
+    return dusk::text::format ("%d Hz", (int) std::round (hz));
+}
+
+// What a frequency knob reads: a converted older session can hold a band or
+// filter past the knob's range, where it keeps playing while the knob rests on
+// its end stop.
+inline double shownFrequency (double knob, float held, double lo, double hi)
+{
+    return (knob <= lo && held < lo) || (knob >= hi && held > hi) ? (double) held : knob;
 }
 } // namespace
 
@@ -112,10 +121,12 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     const auto filterWhite = juce::Colour (sslEqColors::kFilterWhite);
     setupLabel (hpfLabel, "HPF", filterWhite, 16.0f);
 
+    // OFF follows the switch, not the knob: a converted older session can
+    // leave a filter on at its OFF end, where it still plays.
     auto setupFilterKnob = [this] (juce::Slider& k, juce::Colour fill,
                                       double minHz, double maxHz, double offHz,
-                                      double skewMid,
-                                      bool offIsMax)
+                                      double skewMid, const std::atomic<bool>& enabled,
+                                      const std::atomic<float>& held)
     {
         k.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
         k.setColour (juce::Slider::rotarySliderFillColourId, fill);
@@ -127,23 +138,26 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
         k.setColour (juce::Slider::textBoxTextColourId, juce::Colour (0xffe0e0e0));
         k.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0));
         k.setColour (juce::Slider::textBoxOutlineColourId, juce::Colour (0));
-        k.textFromValueFunction = [offHz, offIsMax] (double v) -> juce::String
+        k.textFromValueFunction = [minHz, maxHz, &enabled, &held] (double v)
         {
-            if (offIsMax ? (v >= offHz - 0.5) : (v <= offHz + 0.5)) return "off";
-            return formatFrequency (v);
+            if (! enabled.load (std::memory_order_relaxed)) return std::string ("off");
+            return formatFrequency (shownFrequency (v, held.load (std::memory_order_relaxed), minHz, maxHz));
         };
     };
     setupFilterKnob (hpfKnob, filterWhite,
                       ChannelStripParams::kHpfMinHz, ChannelStripParams::kHpfMaxHz,
-                      ChannelStripParams::kHpfOffHz, 80.0, /*offIsMax*/ false);
+                      ChannelStripParams::kHpfOffHz, 80.0, track.strip.hpfEnabled, track.strip.hpfFreq);
+    hpfKnob.setTitle ("EQ editor high-pass filter frequency");
     hpfKnob.setValue (track.strip.hpfFreq.load (std::memory_order_relaxed),
                        juce::dontSendNotification);
+    hpfKnob.updateText();
     hpfKnob.onValueChange = [this]
     {
         const float freq = (float) hpfKnob.getValue();
-        track.strip.hpfFreq.store (freq, std::memory_order_relaxed);
+        track.strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, freq);
         const bool hpfOn = freq > ChannelStripParams::kHpfOffHz + 0.5f;
         track.strip.hpfEnabled.store (hpfOn, std::memory_order_relaxed);
+        hpfKnob.updateText();
         if (hpfOn)
         {
             track.strip.eqEnabled.store (true, std::memory_order_release);
@@ -157,15 +171,18 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
 
     setupFilterKnob (lpfKnob, filterWhite,
                       ChannelStripParams::kLpfMinHz, ChannelStripParams::kLpfMaxHz,
-                      ChannelStripParams::kLpfOffHz, 8000.0, /*offIsMax*/ true);
+                      ChannelStripParams::kLpfOffHz, 8000.0, track.strip.lpfEnabled, track.strip.lpfFreq);
+    lpfKnob.setTitle ("EQ editor low-pass filter frequency");
     lpfKnob.setValue (track.strip.lpfFreq.load (std::memory_order_relaxed),
                        juce::dontSendNotification);
+    lpfKnob.updateText();
     lpfKnob.onValueChange = [this]
     {
         const float freq = (float) lpfKnob.getValue();
-        track.strip.lpfFreq.store (freq, std::memory_order_relaxed);
+        track.strip.setEqFreq (ChannelStripParams::EqFreq::Lpf, freq);
         const bool lpfOn = freq < ChannelStripParams::kLpfOffHz - 0.5f;
         track.strip.lpfEnabled.store (lpfOn, std::memory_order_relaxed);
+        lpfKnob.updateText();
         if (lpfOn)
         {
             track.strip.eqEnabled.store (true, std::memory_order_release);
@@ -203,6 +220,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
                   ChannelStripParams::kBandGainMin, ChannelStripParams::kBandGainMax, 0.0, 0.0);
         row.gain->setNumDecimalPlacesToDisplay (1);
         row.gain->setTextValueSuffix (" dB");
+        row.gain->setTitle ("EQ editor " + std::string (spec.name) + " gain");
         row.gain->setValue (spec.gain (track.strip)->load (std::memory_order_relaxed),
                              juce::dontSendNotification);
         {
@@ -223,17 +241,23 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
         makeKnob (*row.freq, spec.accent, spec.freqMin, spec.freqMax,
                    defaultFreq, defaultFreq);
         row.freq->setNumDecimalPlacesToDisplay (0);
-        row.freq->textFromValueFunction = [] (double v) { return formatFrequency (v); };
-        row.freq->setValue (spec.freq (track.strip)->load (std::memory_order_relaxed),
-                             juce::dontSendNotification);
+        row.freq->textFromValueFunction = [held = &track.strip.eqFreq (spec.freq), lo = spec.freqMin, hi = spec.freqMax] (double v)
         {
-            auto* atomicPtr = spec.freq (track.strip);
+            return formatFrequency (shownFrequency (v, held->load (std::memory_order_relaxed), lo, hi));
+        };
+        row.freq->setTitle ("EQ editor " + std::string (spec.name) + " frequency");
+        row.freq->setValue (track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed),
+                             juce::dontSendNotification);
+        // setValue skips updateText() when the stored value clamps to where
+        // the knob already sits, and the text was built before the formatter.
+        row.freq->updateText();
+        {
+            auto* strip = &track.strip;
             auto* knob = row.freq.get();
-            auto* eqEnabledPtr = &track.strip.eqEnabled;
-            knob->onValueChange = [knob, atomicPtr, eqEnabledPtr]
+            knob->onValueChange = [knob, strip, band = spec.freq]
             {
-                atomicPtr->store ((float) knob->getValue(), std::memory_order_relaxed);
-                eqEnabledPtr->store (true, std::memory_order_release);
+                strip->setEqFreq (band, (float) knob->getValue());
+                strip->eqEnabled.store (true, std::memory_order_release);
             };
         }
         addAndMakeVisible (row.freq.get());
@@ -250,6 +274,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
                           ChannelStripParams::kBandQMin, ChannelStripParams::kBandQMax,
                           0.7, 0.0, 0.01);
                 row.q->setNumDecimalPlacesToDisplay (2);
+                row.q->setTitle ("EQ editor " + std::string (spec.name) + " Q");
                 row.q->setValue (qAtom->load (std::memory_order_relaxed),
                                   juce::dontSendNotification);
                 auto* knob = row.q.get();
@@ -274,6 +299,17 @@ void ChannelEqEditor::refreshTitle()
 {
     if (titleLabel.getText (false) != track.name)
         titleLabel.setText (track.name, juce::dontSendNotification);
+}
+
+void ChannelEqEditor::refreshFilters()
+{
+    const auto sync = [] (juce::Slider& k, float hz)
+    {
+        if (! k.isMouseButtonDown()) k.setValue (hz, juce::dontSendNotification);
+        k.updateText();
+    };
+    sync (hpfKnob, track.strip.hpfFreq.load (std::memory_order_relaxed));
+    sync (lpfKnob, track.strip.lpfFreq.load (std::memory_order_relaxed));
 }
 
 std::string ChannelEqEditor::titleForScenario() const

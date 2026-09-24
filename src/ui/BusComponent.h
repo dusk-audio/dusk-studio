@@ -41,6 +41,7 @@ public:
     // Scenario-harness only: the mode label and whether the fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
+    auto* eqHeaderForScenario() const { return eqHeaderBtn.get(); }
 
 private:
     bool compactVu = false;
@@ -61,13 +62,14 @@ private:
     int busIndex;
     juce::Label nameLabel;
 
-    // 3-band EQ controls (LF / MID / HF gains, fixed musical frequencies).
+    // Tone EQ: highpass corner + LF / MID / HF gains at fixed frequencies.
     // Split EQ header shared with the channel and master strips.
     std::unique_ptr<SplitModuleButton> eqHeaderBtn;
     juce::Slider     eqLfGain  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqMidGain { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqHfGain  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
-    juce::Label      eqLfLbl, eqMidLbl, eqHfLbl;
+    decltype (eqHfGain) eqHpfFreq { eqHfGain.getSliderStyle(), eqHfGain.getTextBoxPosition() };
+    juce::Label      eqLfLbl, eqMidLbl, eqHfLbl, eqHpfLbl;
 
     std::unique_ptr<SplitModuleButton> compHeaderBtn;
     std::unique_ptr<CompMeterStrip>   compMeter;
@@ -140,6 +142,7 @@ private:
     void showCompSectionMenu();
     void resetEqSection();
     void resetCompSection();
+    void syncEqKnobs();
     juce::Label outputPeakLabel;
     float displayedOutputLDb = -100.0f;
     float displayedOutputRDb = -100.0f;

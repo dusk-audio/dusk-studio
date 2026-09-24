@@ -4,10 +4,12 @@
 #include "DuskLabelEditor.h"
 #include "SteppedKnob.h"
 #include "DuskStudioLookAndFeel.h"  // fourKColors palette
+#include "../foundation/Text.h"
 #include "../session/MidiBindings.h"
 #include "../session/ParamEditAction.h"
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 namespace duskstudio
 {
@@ -50,6 +52,64 @@ void styleSmallLabel (juce::Label& lbl, const juce::String& text, juce::Colour c
     lbl.setJustificationType (juce::Justification::centred);
     lbl.setColour (juce::Label::textColourId, col);
     lbl.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
+}
+
+// The bus highpass readout: OFF at the floor, then Hz, "1.2k" from 1 kHz.
+std::string busHpfText (double hz)
+{
+    if (hz <= BusParams::kHpfOffHz + 0.5) return "OFF";
+    if (hz >= 1000.0)
+    {
+        const double khz = hz / 1000.0;
+        return std::abs (khz - std::round (khz)) < 0.05
+                   ? dusk::text::format ("%dk", (int) std::round (khz))
+                   : dusk::text::format ("%.1fk", khz);
+    }
+    return dusk::text::format ("%d", (int) std::round (hz));
+}
+
+// Reads what busHpfText writes, so a typed "1.2k" is 1200 Hz, not 1.2.
+template <typename Text>
+double busHpfFromText (const Text& raw)
+{
+    auto text = raw.trim().toLowerCase();
+    if (text == "off") return BusParams::kHpfOffHz;
+    if (text.endsWith ("hz")) text = text.dropLastCharacters (2).trimEnd();
+    const bool isKhz = text.endsWithChar ('k');
+    if (isKhz) text = text.dropLastCharacters (1);
+    return text.getDoubleValue() * (isKhz ? 1000.0 : 1.0);
+}
+
+// Where the knob sits for the session's highpass: a disengaged one reads OFF
+// whatever corner it last had.
+double busHpfShownHz (const BusParams& strip)
+{
+    return strip.hpfEnabled.load (std::memory_order_relaxed)
+               ? (double) strip.hpfFreq.load (std::memory_order_relaxed)
+               : (double) BusParams::kHpfOffHz;
+}
+
+// Range, skew (245 Hz, the sweep's geometric middle, at twelve o'clock),
+// double-click to OFF and the readout, for the strip knob and the editor's.
+void setUpBusHpfKnob (juce::Slider& s, const BusParams& strip)
+{
+    s.setRange (BusParams::kHpfMinHz, BusParams::kHpfMaxHz, 1.0);
+    s.setSkewFactorFromMidPoint (245.0);
+    s.setDoubleClickReturnValue (true, BusParams::kHpfOffHz);
+    s.textFromValueFunction = [] (double v) { return busHpfText (v); };
+    s.valueFromTextFunction = [] (const auto& text) { return busHpfFromText (text); };
+    s.setValue (busHpfShownHz (strip), juce::dontSendNotification);
+    s.updateText();
+}
+
+// The floor is OFF, as on the channel strip. Returns whether the highpass is
+// now engaged, so the caller can arm the EQ.
+bool storeBusHpf (BusParams& strip, double hz)
+{
+    const bool on = hz > BusParams::kHpfOffHz + 0.5;
+    strip.hpfFreq.store ((float) hz, std::memory_order_relaxed);
+    strip.hpfEnabled.store (on, std::memory_order_relaxed);
+    return on;
 }
 
 // Dusk editor-modal styling helpers - match ChannelEqEditor / ChannelCompEditor
@@ -159,9 +219,19 @@ public:
         hf .setTooltip ("Bus EQ high shelf @ 2 kHz (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
         addAndMakeVisible (lf); addAndMakeVisible (mid); addAndMakeVisible (hf);
 
+        const auto filterWhite = juce::Colour (sslEqColors::kFilterWhite);
+        styleEditorKnob (hpf, filterWhite, BusParams::kHpfMinHz, BusParams::kHpfMaxHz,
+                         BusParams::kHpfOffHz, 245.0, "", 0);
+        setUpBusHpfKnob (hpf, bus.strip);
+        hpf.onValueChange = [this, arm] { if (storeBusHpf (bus.strip, hpf.getValue())) arm(); };
+        hpf.setTooltip ("Bus highpass, 12 dB/oct, 20 Hz..3 kHz; fully down is OFF. Double-click for OFF; Shift-drag for fine.");
+        addAndMakeVisible (hpf);
+
+        styleEditorLabel (hpfLbl, "HPF", filterWhite);
         styleEditorLabel (lfLbl,  "LF",  eqGreen);
         styleEditorLabel (midLbl, "MID", eqGreen);
         styleEditorLabel (hfLbl,  "HF",  eqGreen);
+        addAndMakeVisible (hpfLbl);
         addAndMakeVisible (lfLbl); addAndMakeVisible (midLbl); addAndMakeVisible (hfLbl);
 
         setSize (380, kEditorOuterPad * 2 + kEditorHeaderH + kEditorHeaderGap
@@ -185,10 +255,12 @@ public:
 
         auto labelRow = area.removeFromTop (kEditorLabelRowH);
         auto knobRow  = area.removeFromTop (kEditorKnobBlockH);
-        const int colW = knobRow.getWidth() / 3;
+        const int colW = knobRow.getWidth() / 4;
+        hpfLbl.setBounds (labelRow.removeFromLeft (colW));
         lfLbl .setBounds (labelRow.removeFromLeft (colW));
         midLbl.setBounds (labelRow.removeFromLeft (colW));
         hfLbl .setBounds (labelRow);
+        hpf.setBounds (knobRow.removeFromLeft (colW));
         lf .setBounds (knobRow.removeFromLeft (colW));
         mid.setBounds (knobRow.removeFromLeft (colW));
         hf .setBounds (knobRow);
@@ -205,8 +277,8 @@ private:
     Bus& bus;
     juce::TextButton enableBtn;
     juce::Label titleLbl;
-    juce::Slider lf, mid, hf;
-    juce::Label  lfLbl, midLbl, hfLbl;
+    juce::Slider lf, mid, hf, hpf;
+    juce::Label  lfLbl, midLbl, hfLbl, hpfLbl;
 };
 
 // Bus COMP modal. Mirrors ChannelCompEditor:
@@ -338,14 +410,14 @@ public:
                             juce::Colour (0xffd05a5a),
                             juce::Colour (0xff60c060),
                             "IN",
-                            displayedInputDb <= -99.0f ? juce::String ("-inf")
-                                                       : juce::String::formatted ("%.1f", displayedInputDb));
+                            displayedInputDb <= -99.0f ? std::string ("-inf")
+                                                       : dusk::text::format ("%.1f", displayedInputDb));
 
         drawVerticalMeter (grMeterArea, -displayedGrDb, 0.0f, 20.0f,
                             juce::Colour (0xffff7060),
                             juce::Colour (0xffe0c050).brighter (0.2f),
                             "GR",
-                            juce::String::formatted ("%.1f", displayedGrDb));
+                            dusk::text::format ("%.1f", displayedGrDb));
 
         // Threshold triangle handle, drawn on the LEFT of the IN meter.
         if (! inputMeterArea.isEmpty() && ! threshHandleArea.isEmpty())
@@ -585,6 +657,10 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     eqLfGain .setTooltip ("Bus EQ low shelf @ 300 Hz (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
     eqMidGain.setTooltip ("Bus EQ mid bell @ 800 Hz, Q 0.7 (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
     eqHfGain .setTooltip ("Bus EQ high shelf @ 2 kHz (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
+    const auto busTitle = "Bus " + std::to_string (busIndex + 1);
+    eqLfGain .setTitle (busTitle + " EQ low shelf gain");
+    eqMidGain.setTitle (busTitle + " EQ mid bell gain");
+    eqHfGain .setTitle (busTitle + " EQ high shelf gain");
     // Auto-arm the bus EQ on any band touch (same UX as the channel
     // strip): EQ defaults to off and the LED only lights once the
     // engineer shapes the sound. release ordering pairs with audio-
@@ -598,10 +674,25 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     eqMidGain.onValueChange = [this, armBusEq] { bus.strip.eqMidGainDb.store ((float) eqMidGain.getValue(), std::memory_order_relaxed); armBusEq(); };
     eqHfGain .onValueChange = [this, armBusEq] { bus.strip.eqHfGainDb .store ((float) eqHfGain .getValue(), std::memory_order_relaxed); armBusEq(); };
     addAndMakeVisible (eqLfGain); addAndMakeVisible (eqMidGain); addAndMakeVisible (eqHfGain);
+
+    // Highpass, white-faced like the channel strip's filters. Turning it up
+    // off the floor arms the EQ, whose status light bypasses it with the bands.
+    const auto filterWhite = juce::Colour (sslEqColors::kFilterWhite);
+    styleSmallKnob (eqHpfFreq, BusParams::kHpfMinHz, BusParams::kHpfMaxHz, 245.0,
+                    busHpfShownHz (bus.strip), filterWhite, "", 0);
+    setUpBusHpfKnob (eqHpfFreq, bus.strip);
+    eqHpfFreq.setTooltip ("Bus highpass, 12 dB/oct, 20 Hz..3 kHz; fully down is OFF. Double-click for OFF; Shift-drag for fine.");
+    eqHpfFreq.setTitle (busTitle + " high-pass filter frequency");
+    eqHpfFreq.setHelpText ("Bus high-pass filter corner, in hertz; OFF when fully down.");
+    eqHpfFreq.onValueChange = [this, armBusEq] { if (storeBusHpf (bus.strip, eqHpfFreq.getValue())) armBusEq(); };
+    addAndMakeVisible (eqHpfFreq);
+
+    styleSmallLabel (eqHpfLbl, "HPF", filterWhite);
     // L = low shelf, M = bell, H = high shelf - standard 3-band EQ labelling.
     styleSmallLabel (eqLfLbl,  "L", eqGreen);
     styleSmallLabel (eqMidLbl, "M", eqGreen);
     styleSmallLabel (eqHfLbl,  "H", eqGreen);
+    addAndMakeVisible (eqHpfLbl);
     addAndMakeVisible (eqLfLbl); addAndMakeVisible (eqMidLbl); addAndMakeVisible (eqHfLbl);
 
     // Comp section. The split header mirrors the channel-strip COMP and the
@@ -706,11 +797,11 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     // "L<pct>" / "R<pct>" otherwise - no decimals, no raw -1..1 number.
     styleSmallKnob (panKnob, -1.0, 1.0, 0.0, bus.strip.pan.load(), panRed, "", 0);
     panKnob.setNumDecimalPlacesToDisplay (0);
-    panKnob.textFromValueFunction = [] (double v) -> juce::String
+    panKnob.textFromValueFunction = [] (double v) -> std::string
     {
         if (std::abs (v) < 0.01) return "C";
         const int pct = (int) std::round (std::abs (v) * 100.0);
-        return (v < 0 ? "L" : "R") + juce::String (pct);
+        return (v < 0 ? "L" : "R") + std::to_string (pct);
     };
     panKnob.updateText();
     panKnob.setTooltip ("Bus pan (L100..C..R100). Double-click for centre; Shift-drag for fine.");
@@ -812,6 +903,8 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     muteButton .addMouseListener (this, false);
     soloButton .addMouseListener (this, false);
     panKnob    .addMouseListener (this, false);
+    for (auto* knob : { &eqHpfFreq, &eqLfGain, &eqMidGain, &eqHfGain })
+        knob->addMouseListener (this, false);
 
     auto styleReadout = [] (juce::Label& lbl, juce::Colour col)
     {
@@ -1090,6 +1183,8 @@ void BusComponent::timerCallback()
         if (soloButton.getToggleState() != s)
             soloButton.setToggleState (s, juce::dontSendNotification);
     }
+    syncEqKnobs();
+
     // Refresh both split headers so external atom changes (session reload,
     // editor actions, MIDI bindings) are reflected without a click.
     if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
@@ -1127,6 +1222,23 @@ void BusComponent::mouseDown (const juce::MouseEvent& e)
             midilearn::showLearnMenu (panKnob, sessionRef,
                                         MidiBindingTarget::BusPan, busIndex);
             return;
+        }
+        if (e.eventComponent == &eqHpfFreq)
+        {
+            midilearn::showLearnMenu (eqHpfFreq, sessionRef,
+                                        MidiBindingTarget::BusHpfFreq, busIndex);
+            return;
+        }
+        int band = 0;
+        for (auto* knob : { &eqLfGain, &eqMidGain, &eqHfGain })
+        {
+            if (e.eventComponent == knob)
+            {
+                midilearn::showLearnMenu (*knob, sessionRef, MidiBindingTarget::BusEqGain,
+                                            packBusEqBand (busIndex, band));
+                return;
+            }
+            ++band;
         }
         showColourMenu();
     }
@@ -1373,6 +1485,7 @@ void BusComponent::setCompactMode (bool compact)
     // collapses behind the compact placeholder button.
     const bool sec = ! compact;
     if (eqHeaderBtn != nullptr) eqHeaderBtn->setVisible (sec);
+    eqHpfFreq .setVisible (sec);  eqHpfLbl.setVisible (sec);
     eqLfGain  .setVisible (sec);  eqLfLbl .setVisible (sec);
     eqMidGain .setVisible (sec);  eqMidLbl.setVisible (sec);
     eqHfGain  .setVisible (sec);  eqHfLbl .setVisible (sec);
@@ -1473,15 +1586,20 @@ void BusComponent::resized()
         auto s = eqArea;
         if (eqHeaderBtn != nullptr) eqHeaderBtn->setBounds (s.removeFromTop (16).reduced (4, 0));
         s.removeFromTop (1);
-        auto rows = layKnobRow (s, 3);
+        // Four blocks fill the narrowest bus strip exactly; below that they
+        // share what there is.
+        const int blockW = std::min (kKnobBlockW, s.getWidth() / 4);
+        auto rows = layKnobRow (s, 4);
         auto& lblRow  = rows.first;
         auto& knobRow = rows.second;
-        eqLfLbl .setBounds (lblRow .removeFromLeft (kKnobBlockW));
-        eqMidLbl.setBounds (lblRow .removeFromLeft (kKnobBlockW));
-        eqHfLbl .setBounds (lblRow .removeFromLeft (kKnobBlockW));
-        eqLfGain .setBounds (knobRow.removeFromLeft (kKnobBlockW));
-        eqMidGain.setBounds (knobRow.removeFromLeft (kKnobBlockW));
-        eqHfGain .setBounds (knobRow.removeFromLeft (kKnobBlockW));
+        eqHpfLbl.setBounds (lblRow .removeFromLeft (blockW));
+        eqLfLbl .setBounds (lblRow .removeFromLeft (blockW));
+        eqMidLbl.setBounds (lblRow .removeFromLeft (blockW));
+        eqHfLbl .setBounds (lblRow .removeFromLeft (blockW));
+        eqHpfFreq.setBounds (knobRow.removeFromLeft (blockW));
+        eqLfGain .setBounds (knobRow.removeFromLeft (blockW));
+        eqMidGain.setBounds (knobRow.removeFromLeft (blockW));
+        eqHfGain .setBounds (knobRow.removeFromLeft (blockW));
     }
     area.removeFromTop (3);
 
@@ -1698,19 +1816,33 @@ void BusComponent::showCompSectionMenu()
         });
 }
 
+// The EQ editor, MIDI bindings and a reset all write the atoms directly, so
+// the strip knobs follow them here. A knob held by the mouse is left alone so
+// a drag never snaps back mid-gesture.
+void BusComponent::syncEqKnobs()
+{
+    auto sync = [] (auto& knob, double target)
+    {
+        if (knob.isMouseButtonDown() || std::abs (knob.getValue() - target) < 1.0e-4) return;
+        knob.setValue (target, juce::dontSendNotification);
+    };
+    sync (eqHpfFreq, busHpfShownHz (bus.strip));
+    sync (eqLfGain,  bus.strip.eqLfGainDb .load (std::memory_order_relaxed));
+    sync (eqMidGain, bus.strip.eqMidGainDb.load (std::memory_order_relaxed));
+    sync (eqHfGain,  bus.strip.eqHfGainDb .load (std::memory_order_relaxed));
+}
+
+// Flattens the bands and turns the highpass OFF, leaving the EQ engaged or
+// bypassed as it was.
 void BusComponent::resetEqSection()
 {
-    // Replays each EQ gain knob's double-click return value (flat, 0 dB) through
-    // its live onValueChange path. The band knobs auto-arm on change, so restore
-    // the prior engaged state - a reset flattens the EQ but shouldn't toggle it on.
-    const bool wasEnabled = bus.strip.eqEnabled.load (std::memory_order_relaxed);
-    auto reset = [] (juce::Slider& s)
-    {
-        if (s.isDoubleClickReturnEnabled())
-            s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
-    };
-    reset (eqLfGain);  reset (eqMidGain);  reset (eqHfGain);
-    bus.strip.eqEnabled.store (wasEnabled, std::memory_order_release);
+    auto& strip = bus.strip;
+    strip.hpfEnabled .store (false, std::memory_order_relaxed);
+    strip.hpfFreq    .store (BusParams::kHpfOffHz, std::memory_order_relaxed);
+    strip.eqLfGainDb .store (0.0f, std::memory_order_relaxed);
+    strip.eqMidGainDb.store (0.0f, std::memory_order_relaxed);
+    strip.eqHfGainDb .store (0.0f, std::memory_order_relaxed);
+    syncEqKnobs();
     if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
 }
 

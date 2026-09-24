@@ -2,11 +2,13 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "dsp/BusStrip.h"
+#include "dsp/BusToneEq.h"
 #include "session/Session.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <utility>
 #include <vector>
@@ -78,10 +80,9 @@ TEST_CASE ("BusStrip: unity fader + center pan + flat EQ + comp off ~= passthrou
     // Settle past the smoother ramp, then capture.
     driveSine (strip, 0.0, 1000.0, amp, 16, &outL, &outR, 8);
 
-    // EQ and comp are disabled, but the donor EQ instance still processes
-    // (flat) — allow a small tolerance for its near-DC settling, and for the
-    // equal-power center-pan law (cos/sin(pi/4) * sqrt2 = 1.0 exactly, so the
-    // pan contributes no gain change at center).
+    // EQ and comp are disabled, so the only gain is the equal-power
+    // center-pan law (cos/sin(pi/4) * sqrt2 = 1.0, so the pan contributes no
+    // gain change at center).
     REQUIRE_THAT (rms (outL), WithinRel (rms (outR), 1.0e-4f));
     REQUIRE_THAT (peak (outL), WithinRel (amp, 0.02f));
     REQUIRE_THAT (peak (outR), WithinRel (amp, 0.02f));
@@ -200,6 +201,76 @@ TEST_CASE ("BusStrip: comp-off EQ response is independent of OS factor", "[BusSt
     const float p4 = runAt (4);
     REQUIRE (p1 > amp);                         // LF shelf actually boosted
     REQUIRE_THAT (p4, WithinRel (p1, 0.01f));   // same boost at 4× (native EQ)
+}
+
+namespace
+{
+// Steady-state gain in dB the strip applies to a sine at `hz`, measured over
+// whole periods (every frequency used here has an integer period at 48 kHz).
+double stripGainDb (duskstudio::BusParams& params, double hz)
+{
+    duskstudio::BusStrip strip;
+    strip.prepare (kSr, kBlock, 1);
+    strip.bind (params);
+    const float amp = 0.1f;
+    std::vector<float> outL, outR;
+    driveSine (strip, 0.0, hz, amp, 40, &outL, &outR, 20);
+    const auto period = (size_t) std::lround (kSr / hz);
+    outL.resize (outL.size() / period * period);
+    return 20.0 * std::log10 ((double) rms (outL) / ((double) amp / std::sqrt (2.0)));
+}
+} // namespace
+
+TEST_CASE ("BusStrip: the bus EQ plays the Tone EQ spec", "[BusStrip]")
+{
+    // +/-9 dB is 9 dB at the band: the MID bell at its 800 Hz centre, and the
+    // shelves on their plateaux (half the gain at their 300 Hz / 2 kHz points).
+    using duskstudio::BusToneEq;
+    struct Case { std::atomic<float> duskstudio::BusParams::* gain; BusToneEq::Band band; float db; double hz; };
+    const Case cases[] {
+        { &duskstudio::BusParams::eqMidGainDb, BusToneEq::Mid,  -9.0f,   800.0 },
+        { &duskstudio::BusParams::eqMidGainDb, BusToneEq::Mid,   9.0f,   800.0 },
+        { &duskstudio::BusParams::eqLfGainDb,  BusToneEq::Low,   9.0f,   300.0 },
+        { &duskstudio::BusParams::eqLfGainDb,  BusToneEq::Low,   9.0f,    40.0 },
+        { &duskstudio::BusParams::eqHfGainDb,  BusToneEq::High, -9.0f,  2000.0 },
+        { &duskstudio::BusParams::eqHfGainDb,  BusToneEq::High, -9.0f, 12000.0 },
+    };
+    for (const auto& c : cases)
+    {
+        duskstudio::BusParams params;
+        params.eqEnabled.store (true);
+        (params.*(c.gain)).store (c.db);
+        const double expected = BusToneEq::magnitudeDb (BusToneEq::bandCoeffs (c.band, kSr, c.db), kSr, c.hz);
+        CAPTURE ((int) c.band, c.db, c.hz, expected);
+        CHECK_THAT (stripGainDb (params, c.hz), WithinAbs (expected, 0.02));
+    }
+    duskstudio::BusParams mid;
+    mid.eqEnabled.store (true);
+    mid.eqMidGainDb.store (9.0f);
+    CHECK_THAT (stripGainDb (mid, 800.0), WithinAbs (9.0, 0.02));
+}
+
+TEST_CASE ("BusStrip: the highpass cuts below its corner and follows the EQ switch", "[BusStrip]")
+{
+    // The session's knob range is the one the EQ plays.
+    CHECK_THAT (duskstudio::BusParams::kHpfMinHz, WithinAbs (duskstudio::BusToneEq::kHpfMinHz, 0.0f));
+    CHECK_THAT (duskstudio::BusParams::kHpfMaxHz, WithinAbs (duskstudio::BusToneEq::kHpfMaxHz, 0.0f));
+
+    duskstudio::BusParams params;
+    params.eqEnabled.store (true);
+    params.hpfEnabled.store (true);
+    params.hpfFreq.store (3000.0f);
+    CHECK_THAT (stripGainDb (params, 3000.0), WithinAbs (-3.01, 0.02));
+    CHECK_THAT (stripGainDb (params, 300.0),  WithinAbs (-40.0, 0.1));
+
+    // The EQ's status light takes the highpass out with the bands.
+    params.eqEnabled.store (false);
+    CHECK_THAT (stripGainDb (params, 300.0), WithinAbs (0.0, 0.01));
+
+    // So does its own switch (the knob's OFF floor).
+    params.eqEnabled.store (true);
+    params.hpfEnabled.store (false);
+    CHECK_THAT (stripGainDb (params, 300.0), WithinAbs (0.0, 0.01));
 }
 
 TEST_CASE ("BusStrip: comp-off bus is OS-latency compensated at 4x", "[BusStrip]")
