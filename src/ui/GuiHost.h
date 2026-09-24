@@ -322,6 +322,12 @@ public:
 
     // One tick of the autosave heartbeat, as its timer runs it.
     virtual void autosaveTick() = 0;
+    virtual bool autosaveRunning() const = 0;
+    // The latch a quit's Save sets while it holds the audio callback off.
+    virtual bool engineDetached() const = 0;
+    // The titlebar X. False, with nothing asked, when there are no unsaved
+    // changes: that quit would end the run.
+    virtual bool requestQuit() = 0;
     virtual bool mixdownRunning() const = 0;
     virtual std::string statusMessage() const = 0;
     virtual void requestSessionSwitch (const std::filesystem::path& sessionJson) = 0;

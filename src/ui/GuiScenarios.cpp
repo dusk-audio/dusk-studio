@@ -1407,6 +1407,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
 
     void autosaveTick() override { owner.writeAutosave(); }
+    bool autosaveRunning() const override { return owner.isTimerRunning(); }
+    bool engineDetached() const override { return owner.engineDetached; }
+    bool requestQuit() override
+    {
+        if (! owner.currentSessionDirty() && ! owner.notepadDirty) return false;
+        owner.requestQuit();
+        return true;
+    }
     bool doubleClickTempo() override
     {
         auto* bar = owner.transportBar.get();
