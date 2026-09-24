@@ -747,16 +747,18 @@ The insert sits **before** the HPF, so any plugin you load drives the rest of th
 ## HPF (high-pass filter)
 
 - **Enable**: click the label to toggle. The LED lights green when on.
-- **Frequency**: 20 to 300 Hz. At 20 Hz the filter is effectively bypassed (the LED stays unlit until you drag above 20 Hz).
+- **Frequency**: 20 to 300 Hz, the frequency where the filter is 3 dB down. At 20 Hz the filter is effectively bypassed (the LED stays unlit until you drag above 20 Hz). The E character's HPF rolls off at 12 dB per octave, the G character's at 18.
 
 A modest HPF (60–80 Hz on vocals, 100 Hz on most instruments, 30 Hz on bass) cleans up rumble before it hits the EQ.
 
 ## LPF (low-pass filter)
 
 - **Enable**: toggle as for HPF.
-- **Frequency**: 3 kHz to 20 kHz. At 20 kHz the filter is effectively bypassed.
+- **Frequency**: 3 kHz to 20 kHz, again the 3 dB point. At 20 kHz the filter is effectively bypassed.
 
 Useful for taming hi-hat bleed, cymbal harshness on a mic that's picking up too much top, or muffling a track you want pushed to the back of the mix.
+
+Sessions saved by earlier versions are converted when they open. Each filter keeps the frequency and slope it had until its frequency is changed (knob, MIDI or control surface). The one difference is at the very top of the audio band at 1× and 2× **Effect oversampling**, where the LPF, like the EQ bands, no longer cramps (see the 4-band EQ below). An HPF that played above 300 Hz keeps that frequency: the knob rests at the top and shows it, and the filter moves into the range only when its frequency is changed. A filter that played past its OFF end stays on where it played, its knob one hertz short of OFF. A filter that was left switched on at its OFF end stays on there, and its knob shows 20 Hz or 20 kHz rather than OFF.
 
 ## 4-band parametric EQ
 
@@ -769,18 +771,20 @@ A British console-style 4-band EQ. Click the header's left status light to bypas
 
 The four bands are:
 
-| Band   | Type       | Freq range    | Default freq | Gain   | Q range |
-| ------ | ---------- | ------------- | ------------ | ------ | ------- |
-| **LF** | Low shelf  | 20–400 Hz     | 100 Hz       | ±15 dB | n/a     |
-| **LM** | Peaking    | 100 Hz–4 kHz  | 600 Hz       | ±15 dB | 0.4–4.0 |
-| **HM** | Peaking    | 600 Hz–13 kHz | 2 kHz        | ±15 dB | 0.4–4.0 |
-| **HF** | High shelf | 1–20 kHz      | 8 kHz        | ±15 dB | n/a     |
+| Band   | Type       | Freq range     | Default freq | Gain   | Q range |
+| ------ | ---------- | -------------- | ------------ | ------ | ------- |
+| **LF** | Low shelf  | 30–450 Hz      | 100 Hz       | ±15 dB | n/a     |
+| **LM** | Peaking    | 200 Hz–2.5 kHz | 600 Hz       | ±15 dB | 0.4–4.0 |
+| **HM** | Peaking    | 600 Hz–7 kHz   | 2 kHz        | ±15 dB | 0.4–4.0 |
+| **HF** | High shelf | 1.5–16 kHz     | 8 kHz        | ±15 dB | n/a     |
+
+The frequency is where you hear the band: a peaking band is centred on it, and a shelf has its corner there. From 3 dB of boost or cut, roughly half to two-thirds of a shelf's boost or cut is in at its frequency, and nearly all of it two octaves further out. As on the console, gain moves a peaking band's centre, by up to about 2.5%. Sessions saved by earlier versions are converted when they open. Each knob shows the frequency its band plays, and each band keeps the frequency and shape it had until its frequency is changed (knob, MIDI or control surface). The one difference is at the very top of the audio band at 1× and 2× **Effect oversampling**, where the EQ no longer cramps (below). Switching such a track's saturation character plays each band at the frequency its knob shows, and switching back brings the old sound back, also after the session is saved and reopened in between. A band that played outside today's range keeps that frequency: its knob rests at the end and shows it, and the band moves into the range only when its frequency is changed.
 
 Each knob is a rotary slider. Drag up to increase, down to decrease. Use a vertical drag for gain, a horizontal drag for frequency. There are no numeric text boxes on the knobs; the values display below.
 
-At the default 1× **Effect oversampling** the HM bell cramps near Nyquist. An HM boost at the top of its range falls short of its true shape above about 12 kHz, and a +12 dB boost there reads about 5 to 7 dB low at 20 kHz. The HF shelf does not cramp at 1×. At 2× or 4× the HM bell keeps its shape up to 20 kHz. At a 44.1 kHz session rate, 2× and 4× also take about 1 dB off the very top of the band, around 20 kHz, in each oversampled stage, whatever the EQ is set to; at 48 kHz they do not. Raise Effect oversampling in the **Advanced** section of **Settings → Audio…** when that top octave matters.
+The EQ does not cramp near Nyquist at any **Effect oversampling** setting, the default 1× included: a band set high keeps its shape up to 20 kHz. At a 44.1 kHz session rate, 2× and 4× take about 1 dB off the very top of the band, around 20 kHz, in each oversampled stage, whatever the EQ is set to; at 48 kHz they do not.
 
-The band curves, the filter slopes and the console character are calibrated against measurements of the hardware at each marked position, so a setting reads as the console's own rather than as a textbook filter at the same frequency. The console character is always on, at a fixed light amount, whether the EQ section is engaged or not; a silent channel stays silent through it.
+The band shapes, the way gain lands, the filter slopes and the console character are calibrated against measurements of the hardware, so a setting reads as the console's own rather than as a textbook filter at the same frequency. The console character is always on, at a fixed light amount, whether the EQ section is engaged or not; a silent channel stays silent through it.
 
 ## Compressor
 
@@ -1918,7 +1922,8 @@ Once connected:
 - At EightUp density, the surface's three banks match the console pages exactly: 1–8, 9–16, and 17–24. At other widths they are separate axes kept in step: a bank step moves the page to the one holding that bank's first track, and picking a page moves the surface the other way. With all 24 strips on screen there is no page to pick, and the surface keeps whichever bank you left it on.
 - **Channel Left** / **Channel Right** step the selected channel by 1.
 - **Mute / Solo / Arm / Select** buttons mirror and drive the on-screen buttons. LEDs reflect state.
-- **V-pot** rotaries drive pan, sends, EQ band gain, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped.
+- **V-pot** rotaries drive pan, sends, the channel EQ, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped.
+- In **EQ** assign mode the encoders act on the *selected* channel: 1 = HPF frequency, 2 = LF gain, 3 = LF frequency, 4 = LM gain, 5 = LM frequency, 6 = HM gain, 7 = HF gain, 8 = HF frequency. Turning the HPF encoder up from OFF switches the HPF on, and turning it back down to OFF switches it off. Pushing an encoder resets it to its knob's default: the HPF to OFF, switched off; a gain to 0 dB; LF to 100 Hz, LM to 600 Hz, HF to 8 kHz. A band that a converted older session holds past its knob's range stays there when turned further out, and steps in from the end of the range when turned back.
 - In **compressor** assign mode the encoders act on the *selected* channel: 1 = threshold, 2 = ratio, 3 = attack, 4 = release, 5 = makeup. Each drives the active compressor mode's own parameter over that mode's range. Pushing an encoder resets it: threshold goes to **no compression** (the top of the mode's range), makeup to unity, and ratio, attack and release to the mode's default. Opto has no ratio, attack or release, so encoders 2–4 do nothing in that mode. Attack, release and the VCA ratio step by a fixed percentage per detent rather than a fixed amount, so the fast end of each range stays dialable. The FET ratio is a five-position switch, so its encoder moves one position per turn of the wrist however fast you spin it, where the VCA's continuous ratio scales with every detent.
 - **Transport buttons** map to Play, Stop, Record, Rewind, Forward, Loop.
 - **Jog wheel** scrubs the playhead.
@@ -2617,20 +2622,20 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Phase    | Invert         | Off / On                      | Off      |
 | Insert   | Mode           | Empty / Plugin / Hardware     | Plugin   |
 | HPF      | Enable         | Off / On                      | Off      |
-| HPF      | Frequency      | 20–300 Hz                     | 20 Hz    |
+| HPF      | Frequency (−3 dB) | 20–300 Hz                  | 20 Hz    |
 | LPF      | Enable         | Off / On                      | Off      |
-| LPF      | Frequency      | 3–20 kHz                      | 20 kHz   |
+| LPF      | Frequency (−3 dB) | 3–20 kHz                   | 20 kHz   |
 | EQ       | Enable         | Off / On                      | Off      |
 | EQ       | Mode           | E (brown) / G (black)         | E        |
-| EQ LF    | Frequency      | 20–400 Hz                     | 100 Hz   |
+| EQ LF    | Frequency      | 30–450 Hz                     | 100 Hz   |
 | EQ LF    | Gain           | ±15 dB                        | 0 dB     |
-| EQ LM    | Frequency      | 100 Hz–4 kHz                  | 600 Hz   |
+| EQ LM    | Frequency      | 200 Hz–2.5 kHz                | 600 Hz   |
 | EQ LM    | Gain           | ±15 dB                        | 0 dB     |
 | EQ LM    | Q              | 0.4–4.0                       | 0.7      |
-| EQ HM    | Frequency      | 600 Hz–13 kHz                 | 2 kHz    |
+| EQ HM    | Frequency      | 600 Hz–7 kHz                  | 2 kHz    |
 | EQ HM    | Gain           | ±15 dB                        | 0 dB     |
 | EQ HM    | Q              | 0.4–4.0                       | 0.7      |
-| EQ HF    | Frequency      | 1–20 kHz                      | 8 kHz    |
+| EQ HF    | Frequency      | 1.5–16 kHz                    | 8 kHz    |
 | EQ HF    | Gain           | ±15 dB                        | 0 dB     |
 | Comp     | Enable         | Off / On                      | Off      |
 | Comp     | Mode           | Opto / FET / VCA              | Opto     |

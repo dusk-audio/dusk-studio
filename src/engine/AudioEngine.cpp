@@ -4532,8 +4532,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                     freq = ChannelStripParams::kHpfMinHz
                                          * std::exp (kHpfLogRange * frac);
                                 }
-                                session.track (b.targetIndex).strip.hpfFreq
-                                    .store (freq, std::memory_order_relaxed);
+                                session.track (b.targetIndex).strip
+                                    .setEqFreq (ChannelStripParams::EqFreq::Hpf, freq);
                                 session.track (b.targetIndex).strip.hpfEnabled
                                     .store (freq > ChannelStripParams::kHpfOffHz + 0.5f,
                                              std::memory_order_relaxed);
@@ -4576,10 +4576,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                 auto& strip = session.track (trk).strip;
                                 switch (band)
                                 {
-                                    case 0: strip.lfFreq.store (logFreq (ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax), std::memory_order_relaxed); break;
-                                    case 1: strip.lmFreq.store (logFreq (ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax), std::memory_order_relaxed); break;
-                                    case 2: strip.hmFreq.store (logFreq (ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax), std::memory_order_relaxed); break;
-                                    case 3: strip.hfFreq.store (logFreq (ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax), std::memory_order_relaxed); break;
+                                    case 0: strip.setEqFreq (ChannelStripParams::EqFreq::Lf, logFreq (ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax)); break;
+                                    case 1: strip.setEqFreq (ChannelStripParams::EqFreq::Lm, logFreq (ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax)); break;
+                                    case 2: strip.setEqFreq (ChannelStripParams::EqFreq::Hm, logFreq (ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax)); break;
+                                    case 3: strip.setEqFreq (ChannelStripParams::EqFreq::Hf, logFreq (ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax)); break;
                                 }
                             }
                             break;

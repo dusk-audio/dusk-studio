@@ -12,8 +12,9 @@
 // and every bus runs.
 //
 // This file is the drift guard. The expectations were measured from this core at
-// the revision that was listened to and accepted, so they do not prove it is
-// right; they prove it has not moved since.
+// the donor revision that gave its bands and filters a Hz API and stopped them
+// cramping at 1x, driven in Hz as the strips drive it, so they do not prove it
+// is right; they prove it has not moved since.
 //
 // Aggregate measures rather than a checksum: a float checksum does not survive a
 // different compiler, libm or architecture, and this suite runs on GCC, Clang,
@@ -90,6 +91,7 @@ void makeInput (std::vector<float>& L, std::vector<float>& R)
 }
 
 // One dialled-in strip: filters in, both mids cut and lifted, both shelves up.
+// Band and filter frequencies go through the Hz API, as the strips drive them.
 void applyToCore (duskaudio::FourKEQDSP& eq, bool black)
 {
     eq.setOversampling (0);
@@ -97,12 +99,12 @@ void applyToCore (duskaudio::FourKEQDSP& eq, bool black)
     eq.setAutoGain (false);
     eq.setBypass (false);
     eq.setEqType (black ? 1 : 0);
-    eq.setHpfEnabled (true);   eq.setHpfFreq (80.0f);
-    eq.setLpfEnabled (true);   eq.setLpfFreq (16000.0f);
-    eq.setLfGain (4.0f);   eq.setLfFreq (100.0f);   eq.setLfBell (false);
-    eq.setLmGain (-3.0f);  eq.setLmFreq (400.0f);   eq.setLmQ (1.2f);
-    eq.setHmGain (2.5f);   eq.setHmFreq (3000.0f);  eq.setHmQ (0.8f);
-    eq.setHfGain (3.0f);   eq.setHfFreq (10000.0f); eq.setHfBell (false);
+    eq.setHpfEnabled (true);   eq.setHpfFreqHz (80.0f);
+    eq.setLpfEnabled (true);   eq.setLpfFreqHz (16000.0f);
+    eq.setLfGain (4.0f);   eq.setLfFreqHz (100.0f);   eq.setLfBell (false);
+    eq.setLmGain (-3.0f);  eq.setLmFreqHz (400.0f);   eq.setLmQ (1.2f);
+    eq.setHmGain (2.5f);   eq.setHmFreqHz (3000.0f);  eq.setHmQ (0.8f);
+    eq.setHfGain (3.0f);   eq.setHfFreqHz (10000.0f); eq.setHfBell (false);
     eq.setInputGainDb (0.0f);
     eq.setOutputGainDb (0.0f);
     eq.setSaturation (kConsoleSaturationDrive);
@@ -189,16 +191,16 @@ TEST_CASE ("FourKEQDSP holds its tone across a fixed render", "[eq][regression]"
     {
         const auto m = measure (renderCore (false, inL, inR));
         INFO ("peak " << m.peak << " rms " << m.rms);
-        REQUIRE_THAT (m.peak, Catch::Matchers::WithinRel (0.704084, 0.002));
-        REQUIRE_THAT (m.rms,  Catch::Matchers::WithinRel (0.0847519, 0.001));
+        REQUIRE_THAT (m.peak, Catch::Matchers::WithinRel (0.566561, 0.002));
+        REQUIRE_THAT (m.rms,  Catch::Matchers::WithinRel (0.0564508, 0.001));
     }
 
     SECTION ("black")
     {
         const auto m = measure (renderCore (true, inL, inR));
         INFO ("peak " << m.peak << " rms " << m.rms);
-        REQUIRE_THAT (m.peak, Catch::Matchers::WithinRel (0.783426, 0.002));
-        REQUIRE_THAT (m.rms,  Catch::Matchers::WithinRel (0.0882388, 0.001));
+        REQUIRE_THAT (m.peak, Catch::Matchers::WithinRel (0.641218, 0.002));
+        REQUIRE_THAT (m.rms,  Catch::Matchers::WithinRel (0.0603144, 0.001));
     }
 }
 
@@ -217,12 +219,12 @@ TEST_CASE ("the flat image a bypassed strip pushes is safe", "[eq][regression]")
     eq.setMsMode (false);
     eq.setAutoGain (false);
     eq.setBypass (false);
-    eq.setHpfEnabled (false); eq.setHpfFreq (0.0f);
-    eq.setLpfEnabled (false); eq.setLpfFreq (0.0f);
-    eq.setLfGain (0.0f); eq.setLfFreq (0.0f); eq.setLfBell (false);
-    eq.setLmGain (0.0f); eq.setLmFreq (0.0f); eq.setLmQ (0.0f);
-    eq.setHmGain (0.0f); eq.setHmFreq (0.0f); eq.setHmQ (0.0f);
-    eq.setHfGain (0.0f); eq.setHfFreq (0.0f); eq.setHfBell (false);
+    eq.setHpfEnabled (false); eq.setHpfFreqHz (0.0f);
+    eq.setLpfEnabled (false); eq.setLpfFreqHz (0.0f);
+    eq.setLfGain (0.0f); eq.setLfFreqHz (0.0f); eq.setLfBell (false);
+    eq.setLmGain (0.0f); eq.setLmFreqHz (0.0f); eq.setLmQ (0.0f);
+    eq.setHmGain (0.0f); eq.setHmFreqHz (0.0f); eq.setHmQ (0.0f);
+    eq.setHfGain (0.0f); eq.setHfFreqHz (0.0f); eq.setHfBell (false);
     eq.setEqType (0);
     eq.setSaturation (kConsoleSaturationDrive);
     eq.setInputGainDb (0.0f);

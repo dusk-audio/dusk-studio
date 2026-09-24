@@ -419,11 +419,16 @@ struct CloneTrackAction::Impl
     std::array<bool,  ChannelStripParams::kNumAuxSends> auxSendPreFader {};
 
     bool  hpfEnabled = false; float hpfFreq = 20.0f;
+    bool  lpfEnabled = false; float lpfFreq = 20000.0f;
     float lfGainDb = 0.0f, lfFreq = 100.0f;
     float lmGainDb = 0.0f, lmFreq = 600.0f, lmQ = 0.7f;
     float hmGainDb = 0.0f, hmFreq = 2000.0f, hmQ = 0.7f;
     float hfGainDb = 0.0f, hfFreq = 8000.0f;
     bool  eqBlackMode = false;
+    bool  eqEnabled = false;
+    // Each frequency's format-7 dial with the frequency and voicing it pairs
+    // with (LegacyEqDial::raw), so a clone and its undo keep the exact sound.
+    std::array<std::uint64_t, ChannelStripParams::kNumEqFreqs> eqFreqDial {};
 
     bool  compEnabled = false;
     int   compMode = 2;
@@ -589,6 +594,8 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 
     s.hpfEnabled = t.strip.hpfEnabled.load (std::memory_order_relaxed);
     s.hpfFreq    = t.strip.hpfFreq.load    (std::memory_order_relaxed);
+    s.lpfEnabled = t.strip.lpfEnabled.load (std::memory_order_relaxed);
+    s.lpfFreq    = t.strip.lpfFreq.load    (std::memory_order_relaxed);
     s.lfGainDb   = t.strip.lfGainDb.load   (std::memory_order_relaxed);
     s.lfFreq     = t.strip.lfFreq.load     (std::memory_order_relaxed);
     s.lmGainDb   = t.strip.lmGainDb.load   (std::memory_order_relaxed);
@@ -600,6 +607,9 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     s.hfGainDb   = t.strip.hfGainDb.load   (std::memory_order_relaxed);
     s.hfFreq     = t.strip.hfFreq.load     (std::memory_order_relaxed);
     s.eqBlackMode = t.strip.eqBlackMode.load (std::memory_order_relaxed);
+    s.eqEnabled   = t.strip.eqEnabled.load   (std::memory_order_relaxed);
+    for (size_t i = 0; i < s.eqFreqDial.size(); ++i)
+        s.eqFreqDial[i] = t.strip.eqFreqDial[i].raw();
 
     s.compEnabled    = t.strip.compEnabled.load    (std::memory_order_relaxed);
     s.compMode       = t.strip.compMode.load       (std::memory_order_relaxed);
@@ -812,6 +822,8 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
 
     t.strip.hpfEnabled.store (s.hpfEnabled, std::memory_order_relaxed);
     t.strip.hpfFreq.store    (s.hpfFreq,    std::memory_order_relaxed);
+    t.strip.lpfEnabled.store (s.lpfEnabled, std::memory_order_relaxed);
+    t.strip.lpfFreq.store    (s.lpfFreq,    std::memory_order_relaxed);
     t.strip.lfGainDb.store   (s.lfGainDb,   std::memory_order_relaxed);
     t.strip.lfFreq.store     (s.lfFreq,     std::memory_order_relaxed);
     t.strip.lmGainDb.store   (s.lmGainDb,   std::memory_order_relaxed);
@@ -823,6 +835,10 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     t.strip.hfGainDb.store   (s.hfGainDb,   std::memory_order_relaxed);
     t.strip.hfFreq.store     (s.hfFreq,     std::memory_order_relaxed);
     t.strip.eqBlackMode.store (s.eqBlackMode, std::memory_order_relaxed);
+    // After the frequencies and voicing they pair with.
+    for (size_t i = 0; i < s.eqFreqDial.size(); ++i)
+        t.strip.eqFreqDial[i].setRaw (s.eqFreqDial[i]);
+    t.strip.eqEnabled.store (s.eqEnabled, std::memory_order_release);
 
     t.strip.compEnabled.store    (s.compEnabled,    std::memory_order_relaxed);
     t.strip.compMode.store       (s.compMode,       std::memory_order_relaxed);

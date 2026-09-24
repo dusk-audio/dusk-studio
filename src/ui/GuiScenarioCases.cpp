@@ -6218,6 +6218,381 @@ const ScenarioRegistrar accessibleControls { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAccessibleControls (host, ctx); }
 } };
 
+// Format 7 stored channel EQ dial positions, and some played past today's
+// knobs. The session loads at the Hz it played and keeps each dial, which the
+// band plays until its frequency moves; the knob rests on its end stop reading
+// that Hz, and nothing writes the end stop back, or drops the dial, until the
+// knob moves. The strip's knobs and the EQ editor's each drop only their own
+// dial, and Reset EQ drops them all.
+std::optional<ScenarioResult> runEqHeldPastKnob (GuiHost& host, ScenarioContext& ctx)
+{
+    using EqFreq = ChannelStripParams::EqFreq;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    const bool originalCompact = host.setStripCompact (0, false);
+    ctx.cleanup ([&host, &session, originalDir, restore, originalCompact]
+    {
+        host.closeStripModuleEditors (0);
+        drainModals (host);
+        host.setStripCompact (0, originalCompact);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    // A Black LF dial at 400 played about 660 Hz and a Black HPF at 300 about
+    // 316 Hz, past the 450 Hz and 300 Hz tops of today's knobs. A Black HF
+    // dial at 1000 played about 637 Hz, below the knob's 1.5 kHz.
+    const auto legacy = ctx.tempDir() / "legacy" / "session.json";
+    std::error_code created;
+    std::filesystem::create_directories (legacy.parent_path(), created);
+    {
+        std::ofstream out (legacy);
+        out << R"({"version":7,"tracks":[{"eq":{"enabled":true,"type":"black","lf":{"gain":6,"freq":400},)"
+               R"("hf":{"gain":6,"freq":1000}},"hpf":{"enabled":true,"freq":300}}]})";
+        if (! out) return ScenarioResult::fail ("could not write the format 7 session");
+    }
+    if (! host.openSession (legacy)) return ScenarioResult::fail ("could not open the format 7 session");
+    auto& strip = session.track (0).strip;
+    const float lf = strip.lfFreq.load(), hf = strip.hfFreq.load(), hpf = strip.hpfFreq.load();
+    const auto dialOf = [&strip] (EqFreq f)
+    {
+        float hz = 0.0f;
+        return strip.legacyDial (f).dialFor (strip.eqFreq (f), strip.eqBlackMode.load(), hz);
+    };
+    if (! (lf > ChannelStripParams::kLfFreqMax && hf < ChannelStripParams::kHfFreqMin
+           && hpf > ChannelStripParams::kHpfMaxHz))
+        return ScenarioResult::fail ("the format 7 session did not load past the knobs, or opening it wrote the end stops back");
+
+    const auto reads = [&host] (const std::string& title)
+    {
+        std::string value, help;
+        return host.accessibleControl (title, value, help) ? value : std::string ("<missing>");
+    };
+    const auto shown = [] (float hz) { return std::to_string ((int) std::lround (hz)); };
+    const auto boxReads = [&host, &ctx] (const std::string& title, const std::string& expected, const std::string& what)
+    {
+        const auto text = host.valueBoxText (title);
+        ctx.expect (text == expected, what + " reads " + text + ", expected " + expected);
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&ctx, &strip, lf, hf, hpf, reads, shown, boxReads, dialOf]
+    {
+        ctx.expect (dialOf (EqFreq::Lf) > 0.0f && dialOf (EqFreq::Hf) > 0.0f && dialOf (EqFreq::Hpf) > 0.0f,
+                    "the format 7 session's bands are not playing their dials");
+        ctx.expect (std::abs (strip.lfFreq.load() - lf) < 1.0e-3f, "building the strip wrote the LF knob's end stop back");
+        ctx.expect (std::abs (strip.hfFreq.load() - hf) < 1.0e-3f, "building the strip wrote the HF knob's end stop back");
+        ctx.expect (std::abs (strip.hpfFreq.load() - hpf) < 1.0e-3f, "building the strip wrote the HPF knob's end stop back");
+        ctx.expect (reads ("Track 1 LF frequency") == shown (lf),
+                    "the LF knob reads " + reads ("Track 1 LF frequency") + ", the band plays " + shown (lf));
+        ctx.expect (reads ("Track 1 high-pass filter frequency") == shown (hpf),
+                    "the HPF knob reads " + reads ("Track 1 high-pass filter frequency") + ", the filter plays " + shown (hpf));
+        boxReads ("Track 1 LF frequency", shown (lf), "the LF value box");
+        boxReads ("Track 1 HF frequency", shown (hf), "the HF value box");
+        boxReads ("Track 1 high-pass filter frequency", shown (hpf), "the HPF value box");
+        boxReads ("Track 2 high-pass filter frequency", "OFF", "track 2's HPF value box");
+    } });
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        ctx.expect (host.setAccessibleValue ("Track 1 LF frequency", "300"), "the LF knob takes no value");
+        ctx.expect (host.setAccessibleValue ("Track 1 high-pass filter frequency", "120"), "the HPF knob takes no value");
+    } });
+    steps->push_back ({ 100, [&ctx, &strip, reads, dialOf]
+    {
+        ctx.expect (std::abs (strip.lfFreq.load() - 300.0f) < 0.5f, "moving the LF knob did not bring the band into range");
+        ctx.expect (std::abs (strip.hpfFreq.load() - 120.0f) < 0.5f && strip.hpfEnabled.load(),
+                    "moving the HPF knob did not bring the filter into range");
+        ctx.expect (reads ("Track 1 LF frequency") == "300", "the LF knob reads " + reads ("Track 1 LF frequency"));
+        ctx.expect (strip.legacyDial (EqFreq::Lf).raw() == 0 && strip.legacyDial (EqFreq::Hpf).raw() == 0,
+                    "moving the LF and HPF knobs kept their format 7 dials");
+        ctx.expect (dialOf (EqFreq::Hf) > 0.0f, "moving the LF and HPF knobs dropped the HF band's dial");
+        strip.setEqFreq (EqFreq::Hpf, ChannelStripParams::kHpfOffHz);
+        strip.hpfEnabled.store (false);
+    } });
+    // The EQ editor builds its knobs on each open, from the stored values.
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickStripModule (0, 0, true, false), "EQ module label is unavailable"); } });
+    steps->push_back ({ 500, [&host, &ctx, &strip, hf, shown, boxReads, dialOf]
+    {
+        ctx.expect (host.stripModuleEditorOpen (0, 0), "the EQ label did not open its editor");
+        boxReads ("EQ editor HF frequency", shown (hf) + " Hz", "the editor's HF value box");
+        boxReads ("EQ editor LF frequency", "300 Hz", "the editor's LF value box");
+        boxReads ("EQ editor high-pass filter frequency", "off", "the editor's HPF value box");
+        ctx.expect (std::abs (strip.hfFreq.load() - hf) < 1.0e-3f && dialOf (EqFreq::Hf) > 0.0f,
+                    "opening the EQ editor wrote the HF band back or dropped its dial");
+        ctx.expect (host.setAccessibleValue ("EQ editor HF frequency", "2000"), "the editor's HF knob takes no value");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, &strip]
+    {
+        ctx.expect (std::abs (strip.hfFreq.load() - 2000.0f) < 0.5f, "moving the editor's HF knob did not move the band");
+        ctx.expect (strip.legacyDial (EqFreq::Hf).raw() == 0, "moving the editor's HF knob kept its format 7 dial");
+        host.closeStripModuleEditors (0);
+    } });
+    // A write from MIDI or a control surface lands on the strip's own knobs.
+    steps->push_back ({ 100, [&strip]
+    {
+        strip.setEqFreq (EqFreq::Lf, 250.0f);
+        strip.lfGainDb.store (5.0f);
+        strip.lmQ.store (1.5f);
+    } });
+    steps->push_back ({ 200, [boxReads]
+    {
+        boxReads ("Track 1 LF frequency", "250", "the LF value box after an outside write");
+        boxReads ("Track 1 LF gain", "+5", "the LF gain value box after an outside write");
+        boxReads ("Track 1 LM Q", "1.5", "the LM Q value box after an outside write");
+    } });
+    // Reset EQ writes each knob's default even onto a knob already there: an
+    // LM band stored between the knob's 1 Hz steps, with a dial, reads 600.
+    steps->push_back ({ 200, [&host, &ctx, &strip]
+    {
+        strip.lmFreq.store (600.3f);
+        strip.legacyDial (EqFreq::Lm).set (870.0f, 600.3f, strip.eqBlackMode.load());
+        ctx.expect (host.clickStripModule (0, 0, true, true), "EQ module right-click failed");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Reset EQ"), "the EQ menu did not offer Reset EQ"); } });
+    steps->push_back ({ 200, [&ctx, &strip]
+    {
+        ctx.expect (std::abs (strip.lmFreq.load() - 600.0f) < 1.0e-3f && strip.legacyDial (EqFreq::Lm).raw() == 0,
+                    "Reset EQ left LM between its knob's steps, or kept its dial");
+        ctx.expect (std::abs (strip.lfFreq.load() - 100.0f) < 0.5f && std::abs (strip.hfFreq.load() - 8000.0f) < 0.5f,
+                    "Reset EQ did not reset LF and HF");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar eqHeldPastKnob { Scenario {
+    "gui.eq_held_past_knob", { "gui", "eq" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runEqHeldPastKnob (host, ctx); }
+} };
+
+// A filter's value box reads OFF from its switch, not its knob: format 7 could
+// leave a filter on at its OFF end, where it plays, and one off anywhere else.
+// Both views follow a switch made under them, as MIDI or a control surface
+// makes it, and a knob that switches its own filter.
+std::optional<ScenarioResult> runEqFilterReadsItsSwitch (GuiHost& host, ScenarioContext& ctx)
+{
+    using EqFreq = ChannelStripParams::EqFreq;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    const bool originalCompact = host.setStripCompact (0, false);
+    ctx.cleanup ([&host, &session, originalDir, restore, originalCompact]
+    {
+        host.closeStripModuleEditors (0);
+        drainModals (host);
+        host.setStripCompact (0, originalCompact);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto legacy = ctx.tempDir() / "legacy" / "session.json";
+    std::error_code created;
+    std::filesystem::create_directories (legacy.parent_path(), created);
+    {
+        std::ofstream out (legacy);
+        out << R"({"version":7,"tracks":[{"hpf":{"enabled":true,"freq":20},"lpf":{"enabled":true,"freq":20000}},)"
+               R"({"hpf":{"enabled":false,"freq":150},"lpf":{"enabled":false,"freq":8000}}]})";
+        if (! out) return ScenarioResult::fail ("could not write the format 7 session");
+    }
+    if (! host.openSession (legacy)) return ScenarioResult::fail ("could not open the format 7 session");
+    auto& on = session.track (0).strip;
+    const auto& off = session.track (1).strip;
+    if (! (on.hpfEnabled.load() && on.lpfEnabled.load()
+           && std::abs (on.hpfFreq.load() - ChannelStripParams::kHpfOffHz) < 1.0e-3f
+           && std::abs (on.lpfFreq.load() - ChannelStripParams::kLpfOffHz) < 1.0e-3f
+           && ! off.hpfEnabled.load() && ! off.lpfEnabled.load()
+           && off.hpfFreq.load() > ChannelStripParams::kHpfOffHz + 0.5f
+           && off.lpfFreq.load() < ChannelStripParams::kLpfOffHz - 0.5f))
+        return ScenarioResult::fail ("the format 7 session did not load its filters on at OFF and off away from it");
+
+    const auto reads = [&host] (const std::string& title)
+    {
+        std::string value, help;
+        return host.accessibleControl (title, value, help) ? value : std::string ("<missing>");
+    };
+    const auto boxReads = [&host, &ctx] (const std::string& title, const std::string& expected, const std::string& what)
+    {
+        const auto text = host.valueBoxText (title);
+        ctx.expect (text == expected, what + " reads " + text + ", expected " + expected);
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx, reads, boxReads]
+    {
+        boxReads ("Track 1 high-pass filter frequency", "20", "an HPF on at OFF");
+        boxReads ("Track 1 low-pass filter frequency", "20k", "an LPF on at OFF");
+        boxReads ("Track 2 high-pass filter frequency", "OFF", "an HPF off at 150");
+        boxReads ("Track 2 low-pass filter frequency", "OFF", "an LPF off at 8k");
+        ctx.expect (reads ("Track 1 high-pass filter frequency") == "20",
+                    "an HPF on at OFF reports " + reads ("Track 1 high-pass filter frequency"));
+        ctx.expect (reads ("Track 2 low-pass filter frequency") == "OFF",
+                    "an LPF off at 8k reports " + reads ("Track 2 low-pass filter frequency"));
+        ctx.expect (host.clickStripModule (0, 0, true, false), "EQ module label is unavailable");
+    } });
+    steps->push_back ({ 500, [&host, &ctx, &on, boxReads]
+    {
+        ctx.expect (host.stripModuleEditorOpen (0, 0), "the EQ label did not open its editor");
+        boxReads ("EQ editor high-pass filter frequency", "20 Hz", "the editor's HPF on at OFF");
+        boxReads ("EQ editor low-pass filter frequency", "20.0 kHz", "the editor's LPF on at OFF");
+        on.setEqFreq (EqFreq::Hpf, ChannelStripParams::kHpfOffHz);
+        on.hpfEnabled.store (false);
+        on.setEqFreq (EqFreq::Lpf, 8000.0f);
+    } });
+    steps->push_back ({ 200, [&host, &ctx, boxReads]
+    {
+        boxReads ("EQ editor high-pass filter frequency", "off", "the editor's HPF switched off under it");
+        boxReads ("EQ editor low-pass filter frequency", "8.0 kHz", "the editor's LPF moved under it");
+        boxReads ("Track 1 high-pass filter frequency", "OFF", "the strip's HPF switched off under it");
+        boxReads ("Track 1 low-pass filter frequency", "8k", "the strip's LPF moved under it");
+        ctx.expect (host.setAccessibleValue ("EQ editor high-pass filter frequency", "120"), "the editor's HPF takes no value");
+        boxReads ("EQ editor high-pass filter frequency", "120 Hz", "the editor's HPF knob switching it on");
+        ctx.expect (host.setAccessibleValue ("EQ editor low-pass filter frequency", "20000"), "the editor's LPF takes no value");
+        boxReads ("EQ editor low-pass filter frequency", "off", "the editor's LPF knob switching it off");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, boxReads]
+    {
+        boxReads ("Track 1 high-pass filter frequency", "120", "the strip's HPF moved on by the editor");
+        boxReads ("Track 1 low-pass filter frequency", "OFF", "the strip's LPF switched off by the editor");
+        host.closeStripModuleEditors (0);
+        ctx.expect (host.setAccessibleValue ("Track 1 high-pass filter frequency", "OFF"), "the HPF knob takes no value");
+        boxReads ("Track 1 high-pass filter frequency", "OFF", "the strip's HPF knob switching it off");
+        ctx.expect (host.setAccessibleValue ("Track 1 low-pass filter frequency", "5000"), "the LPF knob takes no value");
+        boxReads ("Track 1 low-pass filter frequency", "5k", "the strip's LPF knob switching it on");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar eqFilterReadsItsSwitch { Scenario {
+    "gui.eq_filter_reads_its_switch", { "gui", "eq" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runEqFilterReadsItsSwitch (host, ctx); }
+} };
+
+// Each band's frequency knob spans the range the manual's EQ table gives.
+std::optional<ScenarioResult> runEqBandKnobRanges (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& strip = ctx.session().track (0).strip;
+    struct Band { const char* control; std::atomic<float>* freq; float lo, hi; };
+    const Band bands[] {
+        { "Track 1 LF frequency", &strip.lfFreq,   30.0f,   450.0f },
+        { "Track 1 LM frequency", &strip.lmFreq,  200.0f,  2500.0f },
+        { "Track 1 HM frequency", &strip.hmFreq,  600.0f,  7000.0f },
+        { "Track 1 HF frequency", &strip.hfFreq, 1500.0f, 16000.0f },
+    };
+    ctx.keep (strip.eqEnabled);
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    const bool originalCompact = host.setStripCompact (0, false);
+    ctx.cleanup ([&host, originalCompact] { host.setStripCompact (0, originalCompact); });
+    for (const auto& band : bands)
+        ctx.cleanup ([&host, band, was = band.freq->load()]
+        {
+            host.setAccessibleValue (band.control, std::to_string (was));
+            band.freq->store (was);
+        });
+    for (const auto& band : bands)
+    {
+        for (const bool top : { true, false })
+        {
+            const auto label = std::string (band.control) + (top ? " top" : " bottom");
+            ctx.expect (host.setAccessibleValue (band.control, top ? "99999" : "1"), label + ": the knob takes no value");
+            const float expected = top ? band.hi : band.lo;
+            ctx.expect (std::abs (band.freq->load() - expected) < 0.5f,
+                        label + " stored " + std::to_string (band.freq->load()) + ", expected " + std::to_string (expected));
+        }
+    }
+    return ctx.verdict();
+}
+
+const ScenarioRegistrar eqBandKnobRanges { Scenario {
+    "gui.eq_band_knob_ranges", { "gui", "eq" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runEqBandKnobRanges (host, ctx); }
+} };
+
+// The strip lists its bands HF first, top to bottom; a binding numbers them
+// from LF. Learning on a row has to bind that row's band.
+std::optional<ScenarioResult> runEqMidiLearnBand (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty() || session.midiLearnPending.load() >= 0)
+        return ScenarioResult::skip ("requires stopped transport, no modal and no pending learn");
+    const auto capture = session.midiLearnCapture.load();
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    const bool originalCompact = host.setStripCompact (0, false);
+    // A click on a strip focuses it and selects its track; reopening the
+    // session rebuilds the console without either.
+    ctx.cleanup ([&host, &session, capture, originalCompact, originalDir, restore]
+    {
+        drainModals (host);
+        host.setStripCompact (0, originalCompact);
+        session.midiLearnPending.store (-1);
+        session.midiLearnCapture.store (capture);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    struct Row { const char* control; MidiBindingTarget kind; int band; };
+    static constexpr Row kRows[] {
+        { "Track 1 HF frequency", MidiBindingTarget::TrackEqFreq, 3 },
+        { "Track 1 HF gain",      MidiBindingTarget::TrackEqGain, 3 },
+        { "Track 1 HM Q",         MidiBindingTarget::TrackEqQ,    2 },
+        { "Track 1 LM frequency", MidiBindingTarget::TrackEqFreq, 1 },
+        { "Track 1 LF gain",      MidiBindingTarget::TrackEqGain, 0 },
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const auto& row : kRows)
+    {
+        steps->push_back ({ 150, [&host, &ctx, &session, row]
+        {
+            session.midiLearnPending.store (-1);
+            ctx.expect (host.clickTitledControl (row.control, true), std::string (row.control) + " is unavailable");
+        } });
+        steps->push_back ({ 150, [&host, &ctx, row]
+        {
+            ctx.expect (host.clickContextMenuItem ("MIDI Learn (this track)..."),
+                        std::string (row.control) + " offers no MIDI Learn");
+        } });
+        steps->push_back ({ 150, [&ctx, &session, row]
+        {
+            const auto pending = session.midiLearnPending.load();
+            const bool bound = pending >= 0 && unpackLearnTargetKind (pending) == row.kind
+                               && unpackLearnTargetIndex (pending) == packTrackEqBand (0, row.band);
+            ctx.expect (bound, std::string ("MIDI Learn on ") + row.control + " armed band "
+                                   + std::to_string (pending >= 0 ? unpackTrackEqBand (unpackLearnTargetIndex (pending)) : -1)
+                                   + ", expected " + std::to_string (row.band));
+            session.midiLearnPending.store (-1);
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar eqMidiLearnBand { Scenario {
+    "gui.eq_midi_learn_band", { "gui", "eq", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runEqMidiLearnBand (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runWindowKeys (GuiHost& host, ScenarioContext& ctx)
 {
     const bool fullscreen = host.fullScreen();

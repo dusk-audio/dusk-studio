@@ -4962,30 +4962,30 @@ void MainComponent::finishDpImport()
             const auto& m = it.mixer;
             s.eqEnabled.store (m.eqOn, std::memory_order_relaxed);
             s.lfGainDb.store (jlimit (-15.0f, 15.0f, m.lowGainDb), std::memory_order_relaxed);
-            s.lfFreq  .store (jlimit (20.0f, 400.0f, m.lowFreqHz), std::memory_order_relaxed);
+            s.setEqFreq (ChannelStripParams::EqFreq::Lf, jlimit (ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax, m.lowFreqHz));
             // DP has one mid band -> Dusk has two (LM/HM). Drive the band that
             // matches the frequency and reset the other to flat defaults, so an
             // import into a non-empty session doesn't leave stale EQ behind.
             if (m.midFreqHz < 1500.0f)
             {
                 s.lmGainDb.store (jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
-                s.lmFreq  .store (jlimit (100.0f, 4000.0f, m.midFreqHz), std::memory_order_relaxed);
+                s.setEqFreq (ChannelStripParams::EqFreq::Lm, jlimit (ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax, m.midFreqHz));
                 s.lmQ     .store (jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
                 s.hmGainDb.store (0.0f, std::memory_order_relaxed);
-                s.hmFreq  .store (2000.0f, std::memory_order_relaxed);
+                s.setEqFreq (ChannelStripParams::EqFreq::Hm, 2000.0f);
                 s.hmQ     .store (0.7f, std::memory_order_relaxed);
             }
             else
             {
                 s.hmGainDb.store (jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
-                s.hmFreq  .store (jlimit (600.0f, 13000.0f, m.midFreqHz), std::memory_order_relaxed);
+                s.setEqFreq (ChannelStripParams::EqFreq::Hm, jlimit (ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax, m.midFreqHz));
                 s.hmQ     .store (jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
                 s.lmGainDb.store (0.0f, std::memory_order_relaxed);
-                s.lmFreq  .store (600.0f, std::memory_order_relaxed);
+                s.setEqFreq (ChannelStripParams::EqFreq::Lm, 600.0f);
                 s.lmQ     .store (0.7f, std::memory_order_relaxed);
             }
             s.hfGainDb.store (jlimit (-15.0f, 15.0f, m.highGainDb), std::memory_order_relaxed);
-            s.hfFreq  .store (jlimit (1000.0f, 20000.0f, m.highFreqHz), std::memory_order_relaxed);
+            s.setEqFreq (ChannelStripParams::EqFreq::Hf, jlimit (ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax, m.highFreqHz));
         }
         ++imported;
     }

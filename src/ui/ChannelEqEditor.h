@@ -23,6 +23,9 @@ public:
     // The popup outlives a rename, so the strip pushes the current name in
     // from the poll that already watches it.
     void refreshTitle();
+    // MIDI, a control surface or the strip can move or switch a filter under
+    // the open popup; the strip's poll brings its knobs up to date.
+    void refreshFilters();
     std::string titleForScenario() const;
 
 private:

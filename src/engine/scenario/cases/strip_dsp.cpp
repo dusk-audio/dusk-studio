@@ -125,9 +125,9 @@ ScenarioResult filterRanges (ScenarioContext& ctx)
 
     const double lowRef = playTone (ctx, 60.0, 0.25f, 0.0f).left;
     strip.hpfEnabled.store (true);
-    strip.hpfFreq.store (20.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, 20.0f);
     const double hpfOpen = db (playTone (ctx, 60.0, 0.25f, 0.0f).left, lowRef);
-    strip.hpfFreq.store (300.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, 300.0f);
     const double hpfShut = db (playTone (ctx, 60.0, 0.25f, 0.0f).left, lowRef);
     strip.hpfEnabled.store (false);
     ctx.note ("60 Hz through the HPF: " + std::to_string (hpfOpen) + " dB at 20 Hz, "
@@ -137,9 +137,9 @@ ScenarioResult filterRanges (ScenarioContext& ctx)
 
     const double highRef = playTone (ctx, 10000.0, 0.25f, 0.0f).left;
     strip.lpfEnabled.store (true);
-    strip.lpfFreq.store (20000.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Lpf, 20000.0f);
     const double lpfOpen = db (playTone (ctx, 10000.0, 0.25f, 0.0f).left, highRef);
-    strip.lpfFreq.store (3000.0f);
+    strip.setEqFreq (ChannelStripParams::EqFreq::Lpf, 3000.0f);
     const double lpfShut = db (playTone (ctx, 10000.0, 0.25f, 0.0f).left, highRef);
     ctx.note ("10 kHz through the LPF: " + std::to_string (lpfOpen) + " dB at 20 kHz, "
               + std::to_string (lpfShut) + " dB at 3 kHz");

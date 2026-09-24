@@ -770,6 +770,7 @@ if(DUSK_PLUGINS_PATH)
         console_saturation.cpp
         eq_core_regression.cpp
         eq_nyquist_response.cpp
+        session_eq_dial_migration.cpp
         tube_multiq_ab.cpp
         comp_core_ab.cpp
         smoke_brickwall_limiter.cpp
