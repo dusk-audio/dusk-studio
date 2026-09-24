@@ -8489,6 +8489,88 @@ const ScenarioRegistrar startupCancel { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runStartupCancel (host, ctx); }
 } };
 
+// Save in the quit prompt parks the audio callback and the autosave heartbeat
+// for the shutdown. With no session.json that Save is a Save As, and backing out
+// of it abandons the quit, so each way out has to hand both back.
+std::optional<ScenarioResult> runQuitSaveCancel (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered() || ! host.autosaveRunning() || host.engineDetached())
+        return ScenarioResult::skip ("requires a stopped transport, no modal, and live audio and autosave");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        drainModals (host);
+        engine.reattachAudioCallback();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto untitled = ctx.tempDir() / "Untitled";
+    std::filesystem::create_directories (untitled);
+    const auto sessionJson = untitled / "session.json";
+    applySessionDirectory (session, untitled);
+    auto& fader = session.track (0).strip.faderDb;
+    const float dirtied = fader.load() - 3.0f;
+    fader.store (dirtied);
+
+    // Save is clicked only on the quit prompt of a session with no session.json:
+    // anywhere else it could complete, and a completed Save ends the process.
+    const auto save = [&host, &ctx, sessionJson] (const std::string& how)
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save changes before quitting?", 0) == 0,
+                          how + ": Quit showed '" + host.modalText() + "' rather than its prompt")
+            || ! ctx.expect (! std::filesystem::exists (sessionJson), how + ": the session gained a session.json"))
+            return;
+        ctx.expect (host.clickModalButton ("Save"), how + ": the quit prompt did not offer Save");
+    };
+    const auto dismiss = [&host, &ctx] (const std::string& how)
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                          how + ": Save showed '" + host.modalText() + "' rather than Save As"))
+            return;
+        const bool reached = how == "Cancel" ? host.clickModalButton ("Cancel")
+                           : how == "Escape" ? host.pressPeerKey ("escape")
+                                             : host.clickModalBackdrop();
+        ctx.expect (reached, how + " did not reach the Save As browser");
+    };
+    const auto running = [&host, &ctx, &engine, &session, &fader, untitled, sessionJson, dirtied]
+                         (const std::string& how)
+    {
+        const auto what = how + " in the Save As from the quit prompt";
+        ctx.expect (host.modalStackEmpty(), what + " left a modal open");
+        ctx.expect (engine.isAudioCallbackRegistered(), what + " left the audio callback detached");
+        ctx.expect (! host.engineDetached(), what + " left the engine latched as detached");
+        ctx.expect (host.autosaveRunning(), what + " left the autosave timer stopped");
+        ctx.expect (currentSessionDirectory (session) == untitled && nearly (fader.load(), dirtied)
+                        && ! std::filesystem::exists (sessionJson),
+                    what + " did not leave the session as it was");
+    };
+
+    // Each round quits again from where the last one left off.
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const std::string how : { "Cancel", "Escape", "a click outside" })
+    {
+        steps->push_back ({ 200, [&host, &ctx, how]
+        { ctx.expect (host.requestQuit(), how + ": the unsaved session did not ask before quitting"); } });
+        steps->push_back ({ 400, [save, how] { save (how); } });
+        steps->push_back ({ 600, [dismiss, how] { dismiss (how); } });
+        steps->push_back ({ 600, [running, how] { running (how); } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar quitSaveCancel { Scenario {
+    "gui.quit_save_cancel_keeps_running", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runQuitSaveCancel (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPianoCc (GuiHost& host, ScenarioContext& ctx)
 {
     auto& track = ctx.session().track (0);

@@ -3688,7 +3688,7 @@ void MainComponent::requestQuit()
         // async (Save As file chooser) paths. Close the modal first so
         // the chooser, if it opens, isn't fighting our overlay for
         // input. On save success, quit; on failure (chooser cancel,
-        // disk error) the user is left in the app and can retry.
+        // disk error) the user is left in the app as it was before Quit.
         dusk::callAsync ([safeThis]
         {
             auto* self = safeThis.getComponent();
@@ -3706,9 +3706,18 @@ void MainComponent::requestQuit()
 
             self->saveSessionAndThen ([safeThis] (bool ok)
             {
-                if (! ok) return;
-                if (auto* s = safeThis.getComponent())
+                auto* s = safeThis.getComponent();
+                if (s == nullptr) return;
+                if (ok)
+                {
                     s->beginSafeShutdown();
+                    return;
+                }
+                // The quit is abandoned, so hand back what quiescing for it
+                // took. saveSessionTo never re-attaches a detach it did not make.
+                s->engine.reattachAudioCallback();
+                s->engineDetached = false;
+                s->startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
             });
         });
     };
