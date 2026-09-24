@@ -208,6 +208,21 @@ public:
     virtual bool clickAudioSettingsControl (const std::string& control) = 0;
     virtual bool inputAudioSettings (const std::string& input) = 0;
     virtual bool pointerAudioSettings (const std::string& control, float position, bool pressed) = 0;
+    // The launch dialog over the running window, listing `sessions` as its
+    // recents. With `runChoice` false the choice it is dismissed with is only
+    // recorded, for startupChoice(): pressing Quit would otherwise end the run.
+    virtual bool openStartupDialog (const std::vector<std::filesystem::path>& sessions,
+                                    bool runChoice) = 0;
+    virtual bool startupDialogOpen() const = 0;
+    virtual void closeStartupDialog() = 0;
+    // "row:N", "template:N", "tab-recent", "tab-open", "tab-new", "open" or
+    // "quit", clicked where the dialog last drew it; "scroll-down" wheels the
+    // list. False when the control is not on screen.
+    virtual bool clickStartupControl (const std::string& control) = 0;
+    virtual int startupSelectedRow() const = 0;
+    // "recent:<path>", "new:<template>", "open-file", "quit" or "skip"; empty
+    // until the dialog has been dismissed.
+    virtual std::string startupChoice() const = 0;
     virtual double uiScale() const = 0;
     virtual void restoreUiScale (float scale) = 0;
     virtual int tapeExpansionState() const = 0;

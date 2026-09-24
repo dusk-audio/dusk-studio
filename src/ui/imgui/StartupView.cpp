@@ -4,9 +4,11 @@
 #include "../../foundation/Fs.h"
 
 #include <algorithm>
+#include <array>
 #include <string>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <system_error>
 #include <utility>
@@ -50,6 +52,11 @@ constexpr int kMaxBlinks = 10;
 ImU32 rgba (unsigned int hex)
 {
     return IM_COL32 ((hex >> 24) & 0xff, (hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff);
+}
+
+ImVec2 centre (ImVec2 tl, ImVec2 br)
+{
+    return ImVec2 ((tl.x + br.x) * 0.5f, (tl.y + br.y) * 0.5f);
 }
 
 struct Column
@@ -200,6 +207,32 @@ public:
         return true;
     }
 
+    int selectedRecent() const override { return selectedRow; }
+
+    bool controlPointForScenario (const std::string& control, ImVec2& point, float) const override
+    {
+        const auto indexed = [&control] (const char* prefix, const std::vector<ImVec2>& points,
+                                         ImVec2& out)
+        {
+            const std::string head (prefix);
+            if (control.compare (0, head.size(), head) != 0)
+                return false;
+            const auto index = static_cast<std::size_t> (std::atoi (control.c_str() + head.size()));
+            if (index >= points.size())
+                return false;
+            out = points[index];
+            return true;
+        };
+        if (control == "tab-recent") point = scenarioTabs[0];
+        else if (control == "tab-open") point = scenarioTabs[1];
+        else if (control == "tab-new") point = scenarioTabs[2];
+        else if (control == "open") point = scenarioOpen;
+        else if (control == "quit") point = scenarioQuit;
+        else if (! indexed ("row:", scenarioRows, point)
+                 && ! indexed ("template:", scenarioTemplates, point)) return false;
+        return point.x > 0.0f;
+    }
+
     StartupAction chosenAction() const override { return action; }
     const std::string& chosenPath() const override { return path; }
     int chosenTemplate() const override { return selectedTemplate; }
@@ -209,6 +242,8 @@ public:
         const float scale = ctx.scale;
         const ImVec2 br (origin.x + size.x, origin.y + size.y);
         ctx.dl->AddRectFilled (origin, br, rgba (kBg));
+        scenarioRows.assign (recents.size(), ImVec2());
+        scenarioTemplates.assign (templateNames.size(), ImVec2());
 
         const float sidebarRight = origin.x + scale * kSidebarW;
         ctx.dl->AddRectFilled (origin, ImVec2 (sidebarRight, br.y), rgba (kSidebarBg));
@@ -244,17 +279,17 @@ private:
 
         // RECENT and NEW are panels this dialog draws; OPEN is the action it
         // names and dismisses for.
-        if (drawTab (ctx, "##tab-recent", ImVec2 (left, y), width, "RECENT", ! showTemplates))
+        if (drawTab (ctx, 0, "##tab-recent", ImVec2 (left, y), width, "RECENT", ! showTemplates))
             showTemplates = false;
         y += scale * kTabH;
-        if (drawTab (ctx, "##tab-open", ImVec2 (left, y), width, "OPEN", false))
+        if (drawTab (ctx, 1, "##tab-open", ImVec2 (left, y), width, "OPEN", false))
             action = StartupAction::openFile;
         y += scale * kTabH;
-        if (drawTab (ctx, "##tab-new", ImVec2 (left, y), width, "NEW", showTemplates))
+        if (drawTab (ctx, 2, "##tab-new", ImVec2 (left, y), width, "NEW", showTemplates))
             showTemplates = true;
     }
 
-    bool drawTab (dw::Context& ctx, const char* id, ImVec2 at, float width,
+    bool drawTab (dw::Context& ctx, std::size_t tab, const char* id, ImVec2 at, float width,
                   const char* label, bool active)
     {
         dw::ButtonStyle style;
@@ -264,8 +299,9 @@ private:
         style.onText = rgba (kAccent);
         style.fontSize = 11.0f;
         style.rounding = 0.0f;
-        return dw::textButton (ctx, id, at, ImVec2 (at.x + width, at.y + ctx.scale * kTabH),
-                               label, active, style).clicked;
+        const ImVec2 br (at.x + width, at.y + ctx.scale * kTabH);
+        scenarioTabs[tab] = centre (at, br);
+        return dw::textButton (ctx, id, at, br, label, active, style).clicked;
     }
 
     void drawFooter (dw::Context& ctx, float top, ImVec2 br)
@@ -288,9 +324,10 @@ private:
             open.offFill = rgba (0x28303aff);
             open.offText = rgba (kTextLo);
         }
-        if (dw::textButton (ctx, "##open",
-                            ImVec2 (right - scale * kFooterButtonW, buttonTop),
-                            ImVec2 (right, buttonBottom), "Open", false, open).clicked
+        const ImVec2 openTl (right - scale * kFooterButtonW, buttonTop);
+        const ImVec2 openBr (right, buttonBottom);
+        scenarioOpen = centre (openTl, openBr);
+        if (dw::textButton (ctx, "##open", openTl, openBr, "Open", false, open).clicked
             && canOpen)
             openSelected();
 
@@ -302,9 +339,10 @@ private:
         quit.offText = rgba (kTextHi);
         quit.onText = rgba (kTextHi);
         quit.fontSize = 12.0f;
-        if (dw::textButton (ctx, "##quit",
-                            ImVec2 (right - scale * kFooterButtonW, buttonTop),
-                            ImVec2 (right, buttonBottom), "Quit", false, quit).clicked)
+        const ImVec2 quitTl (right - scale * kFooterButtonW, buttonTop);
+        const ImVec2 quitBr (right, buttonBottom);
+        scenarioQuit = centre (quitTl, quitBr);
+        if (dw::textButton (ctx, "##quit", quitTl, quitBr, "Quit", false, quit).clicked)
             action = StartupAction::quit;
     }
 
@@ -370,6 +408,7 @@ private:
             style.fontSize = 13.0f;
             style.rounding = 2.0f;
 
+            scenarioTemplates[static_cast<std::size_t> (i)] = centre (rowTl, rowBr);
             if (dw::textButton (ctx, ("##template-" + std::to_string (i)).c_str(),
                                 rowTl, rowBr, templateNames[(size_t) i].c_str(),
                                 false, style).clicked)
@@ -434,8 +473,10 @@ private:
         visibleRows = std::max (0, static_cast<int> ((br.y - rowsTop) / rowH));
 
         // The list scrolls under the pointer rather than growing a scrollbar: at
-        // twenty visible rows a wheel is the only gesture that matters here.
-        if (dw::hitArea (ctx, "##recent-rows", ImVec2 (tl.x, rowsTop), br))
+        // twenty visible rows a wheel is the only gesture that matters here. A hover
+        // test, not a hit area: an item under the rows turns active on the press and
+        // the rows then never see their click.
+        if (ImGui::IsMouseHoveringRect (ImVec2 (tl.x, rowsTop), br))
         {
             const float wheel = ImGui::GetIO().MouseWheel;
             if (wheel < 0.0f || wheel > 0.0f)
@@ -456,6 +497,7 @@ private:
             const ImVec2 rowBr (br.x - scale, rowTl.y + rowH);
             const bool selected = index == selectedRow;
             dl.AddRectFilled (rowTl, rowBr, selected ? rgba (kSelection) : rgba (kBg));
+            scenarioRows[static_cast<std::size_t> (index)] = centre (rowTl, rowBr);
 
             char id[32];
             std::snprintf (id, sizeof id, "##row%d", index);
@@ -510,6 +552,8 @@ private:
             selectedRow = std::clamp (selectedRow + 1, 0, last);
         else if (ImGui::IsKeyPressed (ImGuiKey_UpArrow, true))
             selectedRow = std::clamp (selectedRow - 1, 0, last);
+        else
+            return;
         scrollToSelection();
     }
 
@@ -553,6 +597,9 @@ private:
     int blinkFrames = 0;
     int blinks = kMaxBlinks;
     bool flashOn = true;
+    std::array<ImVec2, 3> scenarioTabs {};
+    ImVec2 scenarioOpen {}, scenarioQuit {};
+    std::vector<ImVec2> scenarioRows, scenarioTemplates;
 };
 } // namespace
 

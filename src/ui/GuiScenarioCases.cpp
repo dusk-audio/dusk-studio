@@ -7634,6 +7634,125 @@ const ScenarioRegistrar firstLaunch { Scenario {
     }
 } };
 
+std::optional<ScenarioResult> runStartupClicks (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.startupDialogOpen())
+        return ScenarioResult::skip ("requires a stopped transport and no dialog");
+    const auto fixture = ctx.tempDir() / "fixture";
+    std::filesystem::create_directories (fixture);
+    const auto restore = fixture / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    const auto originalDir = currentSessionDirectory (session);
+    ctx.cleanup ([&host, &session, restore, originalDir]
+    {
+        host.closeStartupDialog();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    // More rows than the table shows, so the wheel has somewhere to go.
+    std::vector<std::filesystem::path> recents;
+    for (int i = 0; i < 20; ++i)
+    {
+        recents.push_back (ctx.tempDir() / "recents" / ("Recent " + std::to_string (100 + i).substr (1)));
+        std::filesystem::create_directories (recents.back());
+    }
+    if (! SessionSerializer::save (session, recents[1] / "session.json"))
+        return ScenarioResult::fail ("could not save the recent session");
+    const auto recentChoice = [recents] (int index) { return "recent:" + recents[(std::size_t) index].u8string(); };
+    // A dialog a failed step left up is closed first, so each later control reports
+    // its own verdict.
+    const auto reopen = [&host, &ctx, recents] (bool runChoice)
+    {
+        host.closeStartupDialog();
+        ctx.expect (host.openStartupDialog (recents, runChoice), "the startup dialog did not open");
+    };
+    const auto click = [&host, &ctx] (const std::string& control)
+    { ctx.expect (host.clickStartupControl (control), "the startup dialog did not show " + control); };
+    const auto chosen = [&host, &ctx] (const std::string& expected, const std::string& what)
+    {
+        ctx.expect (host.startupChoice() == expected, what + " chose '" + host.startupChoice() + "'");
+        ctx.expect (! host.startupDialogOpen(), what + " left the startup dialog open");
+    };
+
+    reopen (false);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&host, &ctx, click]
+    {
+        ctx.expect (host.startupSelectedRow() == 0, "the newest recent session was not selected on open");
+        click ("row:1");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, click]
+    {
+        ctx.expect (host.startupSelectedRow() == 1, "clicking the second recent row did not select it");
+        ctx.expect (host.startupDialogOpen() && host.startupChoice().empty(),
+                    "a single click on a recent row dismissed the dialog");
+        click ("open");
+    } });
+    steps->push_back ({ 300, [reopen, chosen, recentChoice]
+    {
+        chosen (recentChoice (1), "Open after selecting the second row");
+        reopen (false);
+    } });
+    steps->push_back ({ 400, [click] { click ("row:2"); } });
+    steps->push_back ({ 100, [click] { click ("row:2"); } });
+    steps->push_back ({ 300, [reopen, chosen, recentChoice]
+    {
+        chosen (recentChoice (2), "double-clicking the third row");
+        reopen (false);
+    } });
+    steps->push_back ({ 400, [click] { click ("tab-new"); } });
+    steps->push_back ({ 300, [click] { click ("template:2"); } });
+    steps->push_back ({ 300, [reopen, chosen]
+    {
+        chosen ("new:2", "the third template under NEW");
+        reopen (false);
+    } });
+    steps->push_back ({ 400, [click] { click ("tab-new"); } });
+    steps->push_back ({ 300, [click] { click ("tab-recent"); } });
+    steps->push_back ({ 300, [click] { click ("scroll-down"); } });
+    steps->push_back ({ 300, [&host, &ctx, click]
+    {
+        ctx.expect (! host.clickStartupControl ("row:0"), "the wheel did not scroll the recent list");
+        click ("row:15");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, click]
+    {
+        ctx.expect (host.startupSelectedRow() == 15, "clicking a row scrolled into view did not select it");
+        click ("tab-open");
+    } });
+    steps->push_back ({ 300, [reopen, chosen]
+    {
+        chosen ("open-file", "the OPEN tab");
+        reopen (false);
+    } });
+    steps->push_back ({ 400, [click] { click ("quit"); } });
+    steps->push_back ({ 300, [reopen, chosen]
+    {
+        chosen ("quit", "Quit");
+        reopen (true);
+    } });
+    steps->push_back ({ 400, [click] { click ("row:1"); } });
+    steps->push_back ({ 100, [click] { click ("row:1"); } });
+    steps->push_back ({ 1000, [&ctx, &session, chosen, recentChoice, recents]
+    {
+        chosen (recentChoice (1), "double-clicking the second row to open it");
+        std::error_code error;
+        ctx.expect (std::filesystem::equivalent (currentSessionDirectory (session), recents[1], error),
+                    "double-clicking a recent row did not open that session");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar startupClicks { Scenario {
+    "gui.startup_recent_clicks", { "gui", "startup" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStartupClicks (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPianoCc (GuiHost& host, ScenarioContext& ctx)
 {
     auto& track = ctx.session().track (0);

@@ -2,6 +2,7 @@
 #include "BounceDialog.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "imgui/DuskPanelWindow.h"
+ #include "imgui/StartupView.h"
 #endif
 
 #include "AuxLaneComponent.h"
@@ -1064,6 +1065,73 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
        #endif
     }
+    bool openStartupDialog (const std::vector<std::filesystem::path>& sessions, bool runChoice) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.startupWindow != nullptr) return false;
+        startupChoiceMade.clear();
+        owner.startupChoiceForScenario = [this, runChoice]
+        {
+            const auto* view = owner.startupView;
+            if (view == nullptr) startupChoiceMade = "skip";
+            else switch (view->chosenAction())
+            {
+                case imgui::StartupAction::openRecent: startupChoiceMade = "recent:" + view->chosenPath(); break;
+                case imgui::StartupAction::newSession:
+                    startupChoiceMade = "new:" + std::to_string (view->chosenTemplate()); break;
+                case imgui::StartupAction::openFile:   startupChoiceMade = "open-file"; break;
+                case imgui::StartupAction::quit:       startupChoiceMade = "quit"; break;
+                case imgui::StartupAction::skip:
+                case imgui::StartupAction::none:       startupChoiceMade = "skip"; break;
+            }
+            return ! runChoice;
+        };
+        if (owner.openStartupPanel (imgui::scanRecentSessions (sessions))) return true;
+        owner.startupChoiceForScenario = {};
+        return false;
+       #else
+        (void) sessions;
+        (void) runChoice;
+        return false;
+       #endif
+    }
+    bool startupDialogOpen() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.startupWindow != nullptr && owner.startupWindow->isOpen();
+       #else
+        return false;
+       #endif
+    }
+    void closeStartupDialog() override
+    {
+        owner.startupChoiceForScenario = {};
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        owner.startupView = nullptr;
+        owner.startupWindow.reset();
+       #endif
+        owner.startupDim.reset();
+    }
+    bool clickStartupControl (const std::string& control) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! startupDialogOpen()) return false;
+        if (control == "scroll-down") return owner.startupWindow->inputForScenario (control);
+        return owner.startupWindow->clickControlForScenario (control);
+       #else
+        (void) control;
+        return false;
+       #endif
+    }
+    int startupSelectedRow() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.startupView != nullptr ? owner.startupView->selectedRecent() : -2;
+       #else
+        return -2;
+       #endif
+    }
+    std::string startupChoice() const override { return startupChoiceMade; }
     double uiScale() const override { return embedscale::globalScale(); }
     void restoreUiScale (float scale) override { owner.restoreUiScaleForScenario (scale); }
     int tapeExpansionState() const override
@@ -1772,6 +1840,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (pianoRollOpen())      lines.push_back ("piano roll open");
         if (audioEditorOpen())    lines.push_back ("audio editor open");
         if (audioSettingsOpen())  lines.push_back ("audio settings open");
+        if (startupDialogOpen())  lines.push_back ("startup dialog open");
         if (virtualKeyboardOpen()) lines.push_back ("virtual keyboard open");
         if (tunerOpen())          lines.push_back ("tuner open");
         if (masterTapeEditorOpen()) lines.push_back ("master tape editor open");
@@ -1818,6 +1887,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.closePianoRoll();
         owner.closeAudioEditor();
         owner.closeAudioSettings();
+        closeStartupDialog();
         owner.closeVirtualKeyboard();
         owner.closeTuner();
         closeMasterTape();
@@ -1891,6 +1961,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     MainComponent& owner;
     LaunchState launch;
     std::vector<std::string> startupErrors;
+    std::string startupChoiceMade;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;
     std::array<std::unique_ptr<ScenarioAuxLaneHandle>, Session::kNumAuxLanes> lanes;
 };
