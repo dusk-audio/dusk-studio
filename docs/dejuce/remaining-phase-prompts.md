@@ -1,9 +1,9 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # De-JUCE campaign — handoff prompts for remaining phases
 
 One prompt per remaining phase, each written for a fresh context window
-(Opus execution sessions per [dejuce-campaign.md](dejuce-campaign.md)
+(Opus execution sessions per [campaign.md](campaign.md)
 §Model/token policy; prompt 10 is a Fable spec session). Snapshot date:
 2026-07-30. If phase statuses have moved since, trust the tower specs'
 status lines and `git log` over this file.
@@ -53,8 +53,8 @@ ALL H5a increments (H5a.0–H5a.6) are merged — PR #120 (H5a.0–.2), PR #121
 merged, stop and report. The spec's status line on main predates the #122
 merge (still says "PUSHED AS DRAFT PR #122") — correct it to record H5a
 merged when you make your first status update. Read, in order:
-docs/dejuce-campaign.md, docs/dejuce-hosting-plan.md,
-docs/dejuce-hosting-h5-platform.md §H5b, and the memory ledger
+docs/dejuce/campaign.md, docs/dejuce/hosting-plan.md,
+docs/dejuce/hosting-h5-platform.md §H5b, and the memory ledger
 project_dejuce_roadmap.md if present on this machine.
 
 Create branch dejuce/hosting-h5b. Build the macOS-only native AU layer in
@@ -83,8 +83,8 @@ phrase.
 ```
 You are executing one phase of the Dusk Studio de-JUCE campaign. Precondition:
 H5b PR merged — verify with git log; if not, stop. Read, in order:
-docs/dejuce-campaign.md, docs/dejuce-hosting-plan.md,
-docs/dejuce-hosting-h5-platform.md §H5c, and the memory ledger if present.
+docs/dejuce/campaign.md, docs/dejuce/hosting-plan.md,
+docs/dejuce/hosting-h5-platform.md §H5c, and the memory ledger if present.
 
 Create branch dejuce/hosting-h5c. Enable native CLAP/VST3 on Windows: CMake
 selects the VST3 SDK's module_win32.cpp + threadchecker_win32.cpp; CLAP
@@ -112,8 +112,8 @@ spec status; end with resume phrase.
 
 ```
 You are executing the donor-consolidation step of the Dusk Studio de-JUCE
-hosting tower (see docs/dejuce-hosting-plan.md §Standing risks and §H1d
-version-prerequisite, plus docs/dejuce-hosting-h1-tape.md §H1d, in
+hosting tower (see docs/dejuce/hosting-plan.md §Standing risks and §H1d
+version-prerequisite, plus docs/dejuce/hosting-h1-tape.md §H1d, in
 /home/marc/projects/DuskStudio). Work happens primarily in the DONOR plugins
 repo (Linux: /home/marc/projects/plugins with the multicomp-core worktree at
 /home/marc/projects/plugins-multicomp-core; Mac mirror:
@@ -143,7 +143,7 @@ consolidation is done and H1d + H2 are unblocked.
 You are executing the donor half of hosting-tower phase H2 of the Dusk Studio
 de-JUCE campaign. Precondition: donor consolidation done (one donor rev, no
 multicomp-core worktree) — verify; if not, stop and run that step first. Read
-docs/dejuce-campaign.md and docs/dejuce-hosting-plan.md §H2 in the DuskStudio
+docs/dejuce/campaign.md and docs/dejuce/hosting-plan.md §H2 in the DuskStudio
 repo, then work in the donor plugins repo.
 
 Goal: port UniversalCompressor mode 7 (Multiband) into a JUCE-free core —
@@ -171,12 +171,12 @@ plan and ledger.
 You are executing the app half of hosting-tower phase H2 of the Dusk Studio
 de-JUCE campaign in the DuskStudio repo. Precondition: the donor Multiband
 core is merged to donor main and DONOR_REV is bumped — verify; if not, stop.
-Read docs/dejuce-campaign.md, docs/dejuce-hosting-plan.md §H2, the memory
+Read docs/dejuce/campaign.md, docs/dejuce/hosting-plan.md §H2, the memory
 ledger if present, and the donor core's PORT_NOTES.
 
 Create branch dejuce/hosting-h2. Flip MasteringChain off
 UniversalCompressor/APVTS onto the new JUCE-free Multiband core, following the
-H1a house pattern (docs/dejuce-hosting-h1-tape.md): session-level atomic
+H1a house pattern (docs/dejuce/hosting-h1-tape.md): session-level atomic
 params per Session.h convention #1, UI writes atoms, chain pushes all live
 params to core setters per block (lock-free stores), one-way migration from
 any persisted APVTS state, latency reported from the core. Replace
@@ -206,7 +206,7 @@ You are executing hosting-tower phase H1d of the Dusk Studio de-JUCE campaign
 on the LINUX machine (X11 embed work; /home/marc/projects/DuskStudio).
 Precondition: donor consolidation done (UI and core MUST come from one donor
 rev — the pinned 69f0431 predates TM2's current param surface) — verify; if
-not, stop. Read docs/dejuce-campaign.md, docs/dejuce-hosting-h1-tape.md §H1d
+not, stop. Read docs/dejuce/campaign.md, docs/dejuce/hosting-h1-tape.md §H1d
 (the executable spec for this phase), and the memory ledger — it holds the
 2026-07-26 feasibility-spike recipe and param-delta table; if the ledger is
 absent on this machine, say so and reconstruct the delta by diffing
@@ -243,8 +243,8 @@ You are executing hosting-tower phase H6 — the drop — of the Dusk Studio
 de-JUCE campaign. Preconditions (verify each in git log; stop if any missing):
 H5a, H5b, H5c merged (native CLAP/LV2/VST3 on Linux+macOS, AU on macOS,
 CLAP/VST3 on Windows) AND H2-app merged (no JUCE donor processors left in the
-app). Read docs/dejuce-campaign.md, docs/dejuce-hosting-plan.md (§End-state is
-the checklist), docs/dejuce-hosting-h5-platform.md, and the ledger if present.
+app). Read docs/dejuce/campaign.md, docs/dejuce/hosting-plan.md (§End-state is
+the checklist), docs/dejuce/hosting-h5-platform.md, and the ledger if present.
 
 Create branch dejuce/hosting-h6. Delete the JUCE hosting path everywhere at
 once: PluginSlot, PluginManager's JUCE half (AudioPluginFormatManager /
@@ -276,7 +276,7 @@ GUI tower is next. End with the campaign resume state written down.
 
 ```
 You are executing the GUI-tower entry gate of the Dusk Studio de-JUCE campaign
-on the LINUX machine (Wayland work). Read docs/dejuce-campaign.md §Remaining
+on the LINUX machine (Wayland work). Read docs/dejuce/campaign.md §Remaining
 towers item 2 — it records Marc's 2026-07-27 framework decision: app UI =
 Dear ImGui + DuskImGuiWidgets on EGL over a Dusk-written Wayland backend for
 pugl in the hard-forked DAF stack (pugl ships mac/win/X11 only today; the
@@ -304,14 +304,14 @@ findings in the ledger and a docs/ spike note.
 ```
 You are writing the executable spec for the FINAL tower of the Dusk Studio
 de-JUCE campaign: the GUI tower. This is a Fable-tier planning session per
-docs/dejuce-campaign.md §Model/token policy (spec-writing, not execution).
+docs/dejuce/campaign.md §Model/token policy (spec-writing, not execution).
 Preconditions: hosting tower complete (H6 merged, module count 11), GUI spike
-returned GO with a findings report — read both, plus docs/dejuce-campaign.md
+returned GO with a findings report — read both, plus docs/dejuce/campaign.md
 §Remaining towers item 2 (the locked framework decision and its owned
-consequences) and the DuskStudio.md spec sections covering the UI.
+consequences) and the docs/DuskStudio.md spec sections covering the UI.
 
-Produce docs/dejuce-gui-plan.md in the house style of
-docs/dejuce-hosting-h5-platform.md (status line, locked decisions, scout
+Produce docs/dejuce/gui-plan.md in the house style of
+docs/dejuce/hosting-h5-platform.md (status line, locked decisions, scout
 ground truth, phased increments with ≤5-file lists, per-phase verification,
 bench debts, resume phrase). The spec must own, at minimum: completing the
 pugl Wayland backend (xdg-shell, EGL, input, clipboard, cursors, IME, DnD,

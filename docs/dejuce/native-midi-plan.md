@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # Native ALSA-seq MIDI backend — executable spec (M1 → M3)
 
@@ -10,7 +10,7 @@ ALSA loopback + migration suites passed.
 What shipped: the seam runs on `IMidiInput/OutputBackend` (per-input
 `dusk::MidiCollector`, SPSC slot queue + `std::thread` pump, `std::string`
 device info); Linux uses `AlsaSeqMidi`, macOS has an opt-in
-[CoreMIDI backend](dejuce-coremidi-plan.md), and the default macOS/Windows path
+[CoreMIDI backend](coremidi-plan.md), and the default macOS/Windows path
 uses `JuceMidiBackend`; both
 device-API leaks outside the seam are routed through it; `juceManager()` is
 compiled out on Linux; legacy JUCE identifiers migrate by re-resolving the old
@@ -35,7 +35,7 @@ allows it. The JUCE fallback retains manual rescan.
 
 The phase-by-phase spec below is kept as the record of what was built and why.
 
-Read [dejuce-campaign.md](dejuce-campaign.md) first for the workflow ritual.
+Read [campaign.md](campaign.md) first for the workflow ritual.
 This tower replaces the JUCE backing of the MIDI device seam with a native
 ALSA sequencer backend on Linux, keeping a JUCE fallback for mac/win, and
 deletes the last `juceManager()` escape-hatch consumer.

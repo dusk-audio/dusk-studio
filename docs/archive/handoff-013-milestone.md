@@ -106,8 +106,8 @@ DAF_WIDGETS=/home/marc/projects/dusk-daf-widgets-013
 
 Before using the revisions above, compare them with every file under
 `.github/workflows/` that defines `JUCE_REV` or `DONOR_REV`, plus
-`.github/actions/clone-daf-stack/action.yml`, `BUILDING-LINUX.md`,
-`BUILDING-WINDOWS.md`, `docs/MAINTAINER-GUIDE.md`, and `LICENSES.txt`; all
+`.github/actions/clone-daf-stack/action.yml`, `docs/BUILDING-LINUX.md`,
+`docs/BUILDING-WINDOWS.md`, `docs/MAINTAINER-GUIDE.md`, and `LICENSES.txt`; all
 tracked copies must move together when a pin changes. Initialize this
 repository's submodules as well:
 

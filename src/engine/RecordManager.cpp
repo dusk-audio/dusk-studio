@@ -1054,7 +1054,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
             auto& regs = session.track (t).regions;
 
             // Crossfade length: 64 samples per side, raised-cosine
-            // shape. DuskStudio.md §5b specifies the click-mask fade as
+            // shape. docs/DuskStudio.md §5b specifies the click-mask fade as
             // 64 samples ~ 1.3 ms at 48 kHz - imperceptible as a fade
             // but enough to suppress the boundary discontinuity. Bound
             // by half the new take's length so a punch shorter than 128

@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # De-JUCE — events-remainder tower (executable spec)
 
@@ -7,7 +7,7 @@ awaiting Marc's review + push.** Verified: app build zero new warnings, gate
 182 (no rise), ctest 450/450 (one later rerun hit the documented
 alsa_seq_midi PipeWire env flake; binary functionally unchanged from the
 green run), selftest + screenshot harness green under Xvfb. One PR for the
-tower. Read `docs/dejuce-campaign.md` and the memory ledger first, per ritual.
+tower. Read `docs/dejuce/campaign.md` and the memory ledger first, per ritual.
 
 ## Goal, honestly stated
 

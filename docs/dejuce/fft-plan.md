@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # De-JUCE — FFT tower (executable spec)
 
@@ -7,7 +7,7 @@ review + push.** Verified: build zero new warnings, ctest 457/457 (+7 parity
 cases), gate 182, selftest + screenshot harness green under Xvfb, mastering
 view renders identically. Owed: bench ear-check on a real DP import.
 Branch `dejuce/fft`. One PR. Read
-`docs/dejuce-campaign.md` + the memory ledger first, per ritual.
+`docs/dejuce/campaign.md` + the memory ledger first, per ritual.
 
 ## Goal
 

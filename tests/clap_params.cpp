@@ -1,6 +1,6 @@
 // Increment 4: CLAP parameter enumeration + read + set-via-events. Gated on
 // DUSKSTUDIO_TEST_CLAP=/path/to.clap (e.g. ~/.clap/DuskVerb.clap) so CI without a
-// CLAP plugin stays green. See docs/native-clap-host-plan.md.
+// CLAP plugin stays green. See docs/archive/native-clap-host-plan.md.
 
 #include <catch2/catch_test_macros.hpp>
 

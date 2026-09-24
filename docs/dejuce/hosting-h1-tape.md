@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # Hosting tower H1 — TapeMachine2 swap (executable spec)
 
@@ -6,7 +6,7 @@ Status: **H1a–H1c implemented; H1d implemented on `fix/696-donor-main-pin`**
 (the master tape runs the Tape Machine 2 DAF plug-in as a static-target
 built-in, its editor hosted through DafEditorHost; TapePanel deleted). H1a–H1c
 landed on `dejuce/hosting`.
-Parent plan: [dejuce-hosting-plan.md](dejuce-hosting-plan.md). Donor core:
+Parent plan: [hosting-plan.md](hosting-plan.md). Donor core:
 `plugins/TapeMachine/core/TapeMachineDSP.{hpp,cpp}` at the build's
 donor rev in DONOR_REV (PORT_NOTES.md in that dir is authoritative on
 semantics).

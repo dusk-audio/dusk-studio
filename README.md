@@ -23,7 +23,7 @@ LV2, AU), audio file IO and the DSP primitives are Dusk's own code.
 
 New here? [QUICKSTART.md](QUICKSTART.md) takes you from download to a
 mixed-down track in five minutes. Full manual: [MANUAL.md](MANUAL.md).
-Authoritative spec: [DuskStudio.md](DuskStudio.md).
+Authoritative spec: [DuskStudio.md](docs/DuskStudio.md).
 
 ## Get Dusk Studio
 
@@ -35,7 +35,7 @@ compile time. What you pay for is a packaged, ready-to-run build plus support
 access: Patreon tiers from $5 a month, a $49 one-time licence for the current
 major version, or $89 for every future major version. There is a 30-day
 guarantee, and the founder pricing rises at 1.0. Full terms, tiers and what
-each one includes are in [PRICING.md](PRICING.md).
+each one includes are in [PRICING.md](docs/PRICING.md).
 
 **First launch:** beta builds are ad-hoc signed on macOS and unsigned on
 Windows, so Gatekeeper and SmartScreen warn the first time you open one.
@@ -196,7 +196,7 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
   [dusk-fizz](https://github.com/dusk-audio/dusk-fizz) engine, our maintained
   hard fork of sfizz, converting SF2 to SFZ on load. No external synth required.
 - **Removing the framework** is a standing campaign, tracked in
-  [docs/dejuce-campaign.md](docs/dejuce-campaign.md) and enforced by a ratchet
+  [docs/dejuce/campaign.md](docs/dejuce/campaign.md) and enforced by a ratchet
   in CI that lets framework coupling fall but never rise. It resumes after 1.0.
 
 ## Repository
@@ -223,7 +223,7 @@ src/
 tests/         # 1247 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds
 docs/          # maintainer guide, the 1.0 plan, migration plans
-DuskStudio.md  # authoritative product spec
+  DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via docs/build-pdf.sh)
 ```
 
@@ -239,8 +239,8 @@ Linux and Windows guides list the exact packages and manifest setup.
 
 | Platform | Doc |
 |----------|-----|
-| Linux | [BUILDING-LINUX.md](BUILDING-LINUX.md) |
-| Windows | [BUILDING-WINDOWS.md](BUILDING-WINDOWS.md) |
+| Linux | [BUILDING-LINUX.md](docs/BUILDING-LINUX.md) |
+| Windows | [BUILDING-WINDOWS.md](docs/BUILDING-WINDOWS.md) |
 | macOS | Mirrors the Linux flow: upstream JUCE 8.0.4, the donor plugins checkout at the pinned revision, DAF `main`, and static libsodium supplied through `DUSKSTUDIO_SODIUM_ROOT`. Built and tested per push on `macos-14` (Apple Silicon), see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
 | Linux tarball packaging | [packaging/README.md](packaging/README.md) |
 | End-user manual and troubleshooting | [MANUAL.md](MANUAL.md) |
@@ -277,5 +277,5 @@ Dusk Studio ships under a **dual access model**:
   not for the code; the source stays open. Self-builders get no support, but the
   binary is the same.
 
-Full terms in [PRICING.md](PRICING.md). Buy at
+Full terms in [PRICING.md](docs/PRICING.md). Buy at
 [duskaudio.com](https://duskaudio.com).

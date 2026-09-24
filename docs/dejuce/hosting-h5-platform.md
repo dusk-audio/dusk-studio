@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # Hosting tower H5 — native platform ports + AU (executable spec)
 
@@ -14,8 +14,8 @@ scout verified the live source/CMake/CI surface from that baseline. Windows
 LV2 is deferred. H5 is three sequential PRs: H5a macOS CLAP/LV2/VST3, H5b
 macOS AU, H5c Windows CLAP/VST3. No H5 branch is pushed without Marc's word.
 
-Parent plan: [dejuce-hosting-plan.md](dejuce-hosting-plan.md). Campaign ritual:
-[dejuce-campaign.md](dejuce-campaign.md). H1d and H2 remain blocked on donor
+Parent plan: [hosting-plan.md](hosting-plan.md). Campaign ritual:
+[campaign.md](campaign.md). H1d and H2 remain blocked on donor
 consolidation and are not part of H5.
 
 ## Goal
@@ -108,7 +108,7 @@ Files:
 2. `tests/CMakeLists.txt`
 3. `.github/workflows/macos-build.yml`
 4. `.github/workflows/macos-release.yml`
-5. `docs/dejuce-hosting-plan.md`
+5. `docs/dejuce/hosting-plan.md`
 
 Work:
 
@@ -384,7 +384,7 @@ H5 is complete only when:
 
 ## Resume phrase
 
-"Hosting H5c, spec docs/dejuce-hosting-h5-platform.md — PR #317 is open with
+"Hosting H5c, spec docs/dejuce/hosting-h5-platform.md — PR #317 is open with
 green checks; record the Windows CLAP/VST3 bench sign-off (editor DPI,
 resize/reopen, state, latency, ASIO playback), then get Marc's word to merge
 and start H6."

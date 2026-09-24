@@ -10,7 +10,7 @@ This document is aimed at a developer with a Windows machine who has been handed
    - During install, check the **"Desktop development with C++"** workload.
    - This brings MSVC, the Windows 10/11 SDK, and CMake. No separate CMake install needed.
 2. **Git for Windows**: https://git-scm.com/download/win
-3. **vcpkg**, for libsndfile, libsodium and LAME. libsndfile is not optional on any platform: all audio file I/O goes through it and configure hard-fails without it ([CMakeLists.txt:603-628](CMakeLists.txt#L603-L628)). libsodium provides the signed SFZ catalog verification layer and is also required. LAME enables MP3 bounce. All three are declared in [vcpkg.json](vcpkg.json) at the repo root, with a `builtin-baseline` that pins the exact codec versions, so run vcpkg in manifest mode from the checkout root and it installs what CI installs:
+3. **vcpkg**, for libsndfile, libsodium and LAME. libsndfile is not optional on any platform: all audio file I/O goes through it and configure hard-fails without it ([CMakeLists.txt:603-628](../CMakeLists.txt#L603-L628)). libsodium provides the signed SFZ catalog verification layer and is also required. LAME enables MP3 bounce. All three are declared in [vcpkg.json](../vcpkg.json) at the repo root, with a `builtin-baseline` that pins the exact codec versions, so run vcpkg in manifest mode from the checkout root and it installs what CI installs:
 
    ```cmd
    vcpkg install --triplet x64-windows-static
@@ -32,7 +32,7 @@ C:\dev\
 
 CMake auto-discovers these. If you put them elsewhere, pass `-DJUCE_PATH=...` and `-DDAF_PATH=...` at configure time.
 
-The Dusk Audio plugins repo (donor DSP) is not a sibling: configure fetches it into `build\_deps\dusk-plugins` at the commit named in [DONOR_REV](DONOR_REV), the same commit CI and every release build. That needs git and network access on the first configure. To build against your own plugins checkout instead, pass `-DDUSK_PLUGINS_PATH=C:/path/to/plugins`.
+The Dusk Audio plugins repo (donor DSP) is not a sibling: configure fetches it into `build\_deps\dusk-plugins` at the commit named in [DONOR_REV](../DONOR_REV), the same commit CI and every release build. That needs git and network access on the first configure. To build against your own plugins checkout instead, pass `-DDUSK_PLUGINS_PATH=C:/path/to/plugins`.
 
 ### Clone everything
 
@@ -44,7 +44,7 @@ git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch 8.0.4 https://github.com/juce-framework/JUCE.git
 ```
 
-`--recurse-submodules` matters: `external/dusk-fizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1164](CMakeLists.txt#L1164)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.
+`--recurse-submodules` matters: `external/dusk-fizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1164](../CMakeLists.txt#L1164)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.
 
 The Dusk Studio repo's own directory name (`dusk-studio\`) doesn't matter to the build, so rename it if you prefer.
 
@@ -175,7 +175,7 @@ Useful for confirming the audio engine wires up correctly without needing to dri
 
 ## Known caveats on Windows
 
-- **PlatformWindowing_Windows.cpp is a stub.** Most things work; the file exists as the place to land Windows-specific window-management fixes if/when XEmbed-equivalent bugs surface. CMake picks the per-platform implementation at [CMakeLists.txt:641-647](CMakeLists.txt#L641-L647).
+- **PlatformWindowing_Windows.cpp is a stub.** Most things work; the file exists as the place to land Windows-specific window-management fixes if/when XEmbed-equivalent bugs surface. CMake picks the per-platform implementation at [CMakeLists.txt:641-647](../CMakeLists.txt#L641-L647).
 - **The packaged notepad uses software OpenGL.** The packaged application uses
   the bundled llvmpipe renderer so the notepad behaves consistently on native,
   virtual, and remote displays. This uses CPU rendering for OpenGL surfaces in
@@ -183,7 +183,7 @@ Useful for confirming the audio engine wires up correctly without needing to dri
 - **Every Windows build requires the ASIO SDK.** This is a build-time
   requirement. At runtime, Dusk Studio prefers an installed ASIO driver and
   falls back to WASAPI when no ASIO driver is available.
-- **The ALSA backend is not compiled.** [CMakeLists.txt:754](CMakeLists.txt#L754) gates Dusk Studio's custom ALSA `AudioIODeviceType` behind `UNIX AND NOT APPLE`. Windows falls through to JUCE's stock WASAPI/ASIO types.
+- **The ALSA backend is not compiled.** [CMakeLists.txt:754](../CMakeLists.txt#L754) gates Dusk Studio's custom ALSA `AudioIODeviceType` behind `UNIX AND NOT APPLE`. Windows falls through to JUCE's stock WASAPI/ASIO types.
 - **Compiler warnings.** Project is primarily developed on Clang/GCC. MSVC may emit warnings; none are fatal. `/WX` (warnings-as-errors) is not enabled.
 - **MinGW/MSYS2 not tested.** Stick to MSVC via Visual Studio 2022.
 

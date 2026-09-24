@@ -766,7 +766,7 @@ assert "xvfb-run" not in selftest_helper, (
 )
 safe_selftest_callers = {
     "maintainer guide": source_root / "docs" / "MAINTAINER-GUIDE.md",
-    "Linux build guide": source_root / "BUILDING-LINUX.md",
+    "Linux build guide": source_root / "docs" / "BUILDING-LINUX.md",
     "developer helper": source_root / "scripts" / "dev.sh",
     "agent instructions": source_root / "CLAUDE.md",
 }
@@ -1005,11 +1005,11 @@ assert len(set(sodium_pins.values())) == 1, (
     f"libsodium version/hash drift across workflows: {sodium_pins}"
 )
 for guide_name in ("BUILDING-LINUX.md", "BUILDING-WINDOWS.md"):
-    guide = (source_root / guide_name).read_text(encoding="utf-8")
+    guide = (source_root / "docs" / guide_name).read_text(encoding="utf-8")
     assert donor_rev not in guide, (
         f"{guide_name} must leave the donor revision to DONOR_REV"
     )
-windows_guide = (source_root / "BUILDING-WINDOWS.md").read_text(encoding="utf-8")
+windows_guide = (source_root / "docs" / "BUILDING-WINDOWS.md").read_text(encoding="utf-8")
 cmake_source = (source_root / "CMakeLists.txt").read_text(encoding="utf-8")
 assert "DUSKSTUDIO_REQUIRE_ASIO=OFF" not in cmake_source, (
     "CMake must not offer an ASIO-less Windows build"
@@ -1131,7 +1131,7 @@ assert "workflow-pinned donor" in packaging_guide, (
 assert "missing Patreon" in packaging_guide, (
     "packaging checklist must stop a stale committed-list fallback"
 )
-handoff_guide = (source_root / "docs" / "handoff-013-milestone.md").read_text(
+handoff_guide = (source_root / "docs" / "archive" / "handoff-013-milestone.md").read_text(
     encoding="utf-8"
 )
 assert "env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run" in handoff_guide, (

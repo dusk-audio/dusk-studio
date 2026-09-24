@@ -63,7 +63,7 @@ Dusk Studio expects two sibling repositories alongside its own checkout:
 
 CMake auto-discovers these. Override with `-DJUCE_PATH=...` or `-DDAF_PATH=...` if you keep them elsewhere.
 
-The Dusk Audio plugins repo (donor DSP) is not a sibling: configure fetches it into `build/_deps/dusk-plugins` at the commit named in [DONOR_REV](DONOR_REV), the same commit CI and every release build. That needs git and network access on the first configure. To build against your own plugins checkout instead, pass `-DDUSK_PLUGINS_PATH=/path/to/plugins`.
+The Dusk Audio plugins repo (donor DSP) is not a sibling: configure fetches it into `build/_deps/dusk-plugins` at the commit named in [DONOR_REV](../DONOR_REV), the same commit CI and every release build. That needs git and network access on the first configure. To build against your own plugins checkout instead, pass `-DDUSK_PLUGINS_PATH=/path/to/plugins`.
 
 ### Why the JUCE-wayland fork (Linux-only)
 
@@ -71,7 +71,7 @@ Stock JUCE on Linux uses X11 for top-level windows, which under GNOME / Wayland 
 
 Cross-platform Dusk Studio source compiles against either upstream JUCE or the fork; the wayland fork is required at runtime on Linux desktops. Mac dev uses upstream JUCE.
 
-`wayland-juce8` is a third-party branch head that moves under you, so the clone below is a dev convenience, not a reproducible input. CI and every release build the Dusk-owned mirror at an immutable tag instead — `dusk-audio/JUCE-wayland`, tag `dusk-wayland-v2`, rev `4d85afa175a45e0b5da11f9211de3ba88705588e` ([release.yml](.github/workflows/release.yml)). Match a release exactly by cloning that tag rather than the branch.
+`wayland-juce8` is a third-party branch head that moves under you, so the clone below is a dev convenience, not a reproducible input. CI and every release build the Dusk-owned mirror at an immutable tag instead — `dusk-audio/JUCE-wayland`, tag `dusk-wayland-v2`, rev `4d85afa175a45e0b5da11f9211de3ba88705588e` ([release.yml](../.github/workflows/release.yml)). Match a release exactly by cloning that tag rather than the branch.
 
 ### Clone everything
 
@@ -81,7 +81,7 @@ git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch wayland-juce8 https://github.com/plugdata-team/JUCE.git JUCE-wayland
 ```
 
-`--recurse-submodules` is required, not tidiness. Dusk Studio carries three: `external/clap`, `external/dusk-fizz`, and `external/vst3sdk`. A clone without them fails configure outright on the CLAP headers (the native CLAP host defaults ON here, [CMakeLists.txt:27-33](CMakeLists.txt#L27-L33), and [CMakeLists.txt:1076-1081](CMakeLists.txt#L1076-L1081) stops the build), and a missing `external/dusk-fizz` costs you the SF2 / multisample instrument with no diagnostic at all ([CMakeLists.txt:1163](CMakeLists.txt#L1163) simply gates on the header being there). Already cloned without them:
+`--recurse-submodules` is required, not tidiness. Dusk Studio carries three: `external/clap`, `external/dusk-fizz`, and `external/vst3sdk`. A clone without them fails configure outright on the CLAP headers (the native CLAP host defaults ON here, [CMakeLists.txt:27-33](../CMakeLists.txt#L27-L33), and [CMakeLists.txt:1076-1081](../CMakeLists.txt#L1076-L1081) stops the build), and a missing `external/dusk-fizz` costs you the SF2 / multisample instrument with no diagnostic at all ([CMakeLists.txt:1163](../CMakeLists.txt#L1163) simply gates on the header being there). Already cloned without them:
 
 ```bash
 git submodule update --init --recursive
@@ -192,7 +192,7 @@ ASAN_OPTIONS="halt_on_error=1:abort_on_error=1:detect_leaks=0" \
   ctest --test-dir build-asan --output-on-failure
 ```
 
-CI runs this nightly via [.github/workflows/linux-sanitizer.yml](.github/workflows/linux-sanitizer.yml).
+CI runs this nightly via [.github/workflows/linux-sanitizer.yml](../.github/workflows/linux-sanitizer.yml).
 
 ## Headless self-test
 
@@ -209,14 +209,14 @@ Useful for confirming the audio engine wires up correctly without needing to dri
 
 Dusk Studio ships two backends of its own, both speaking to the system directly rather than through JUCE. Pick from the **Audio Device** panel inside Dusk Studio, where they appear as **PipeWire** and **ALSA**.
 
-- **PipeWire** ([src/engine/pipewire/](src/engine/pipewire/)) — a single `pw_filter` node on the graph; every Sink / Source node is listed as its own device. Correct graph latency and a client that shows up as "Dusk Studio" instead of a generic JACK name. Registered first ([src/engine/device/DeviceManager.cpp:204-218](src/engine/device/DeviceManager.cpp#L204-L218)), so it wins the first-run pick.
-- **ALSA** ([src/engine/alsa/](src/engine/alsa/)) — direct hardware access, no graph hops. What you get when PipeWire isn't running, and what to pick when you want the interface to yourself.
+- **PipeWire** ([src/engine/pipewire/](../src/engine/pipewire/)) — a single `pw_filter` node on the graph; every Sink / Source node is listed as its own device. Correct graph latency and a client that shows up as "Dusk Studio" instead of a generic JACK name. Registered first ([src/engine/device/DeviceManager.cpp:204-218](../src/engine/device/DeviceManager.cpp#L204-L218)), so it wins the first-run pick.
+- **ALSA** ([src/engine/alsa/](../src/engine/alsa/)) — direct hardware access, no graph hops. What you get when PipeWire isn't running, and what to pick when you want the interface to yourself.
 
-On a machine with no saved settings the first backend that enumerates any device is selected ([DeviceManager.cpp:227-236](src/engine/device/DeviceManager.cpp#L227-L236)), which is PipeWire when it's built in and the graph is up. After that your saved choice wins: the stored device blob names its backend and that lookup runs first ([DeviceManager.cpp:426-430](src/engine/device/DeviceManager.cpp#L426-L430)).
+On a machine with no saved settings the first backend that enumerates any device is selected ([DeviceManager.cpp:227-236](../src/engine/device/DeviceManager.cpp#L227-L236)), which is PipeWire when it's built in and the graph is up. After that your saved choice wins: the stored device blob names its backend and that lookup runs first ([DeviceManager.cpp:426-430](../src/engine/device/DeviceManager.cpp#L426-L430)).
 
-There is no JACK backend to pick — no JACK device type is registered, so nothing JACK-shaped appears in the panel. Dusk Studio used to reach PipeWire through JUCE's JACK path over the pipewire-jack shim, and the native backend replaced it; `juce_audio_devices` still compiles (pulled in transitively by `juce_audio_utils`, [CMakeLists.txt:1316-1320](CMakeLists.txt#L1316-L1320)) with `JUCE_JACK=1`, which is why the JACK development headers stay a build dependency. To feed other applications while the PipeWire backend is active, patch Dusk Studio inside the graph with qpwgraph or Helvum; on the ALSA backend there is no graph to patch.
+There is no JACK backend to pick — no JACK device type is registered, so nothing JACK-shaped appears in the panel. Dusk Studio used to reach PipeWire through JUCE's JACK path over the pipewire-jack shim, and the native backend replaced it; `juce_audio_devices` still compiles (pulled in transitively by `juce_audio_utils`, [CMakeLists.txt:1316-1320](../CMakeLists.txt#L1316-L1320)) with `JUCE_JACK=1`, which is why the JACK development headers stay a build dependency. To feed other applications while the PipeWire backend is active, patch Dusk Studio inside the graph with qpwgraph or Helvum; on the ALSA backend there is no graph to patch.
 
-The Dusk Studio-native ALSA backend handles USB hot-unplug by surfacing the device error to the engine, which finalises any in-flight take. Details in [MANUAL.md](MANUAL.md#audio-device-disconnected-mid-session).
+The Dusk Studio-native ALSA backend handles USB hot-unplug by surfacing the device error to the engine, which finalises any in-flight take. Details in [MANUAL.md](../MANUAL.md#audio-device-disconnected-mid-session).
 
 ## Out-of-process plugin host (opt-in, all platforms)
 
@@ -228,13 +228,13 @@ Routes new plugin loads through the `dusk-studio-plugin-host` child process so a
 
 ## Packaging the Linux tarball
 
-See [packaging/README.md](packaging/README.md). Run `scripts/package-tarball.sh` after a Release build in `build-linux/`; it emits `dusk-studio-<version>-Linux-<arch>.tar.xz` (a portable program dir + `install.sh`).
+See [packaging/README.md](../packaging/README.md). Run `scripts/package-tarball.sh` after a Release build in `build-linux/`; it emits `dusk-studio-<version>-Linux-<arch>.tar.xz` (a portable program dir + `install.sh`).
 
 ## Known caveats on Linux
 
-- **JUCE-wayland fork is required at runtime.** The fork has five local commits (XEmbed mapping, X11-on-Wayland fix, peer-creation latch, XEmbed bg fix) on top of plugdata-team's `wayland-juce8` branch. Vanilla upstream JUCE will compile (the `addDefaultFormats` shim in [src/engine/JuceCompat.h](src/engine/JuceCompat.h) abstracts the API split) but will hit the mutter crash on plugin-editor close under GNOME/Wayland. See [CLAUDE.md](CLAUDE.md) for context.
-- **Plugin destructors are intentionally leaked at shutdown.** [src/DuskStudioApp.cpp](src/DuskStudioApp.cpp) `leakAllPluginInstancesForShutdown` is a Linux-only workaround for Diva's `__cxa_pure_virtual` abort in `~AM_VST3_ViewInterface`. The OS reclaims memory on process exit.
-- **No PipeWire backend without its dev package.** The backend compiles only when pkg-config finds `libpipewire-0.3` 0.3.48 or newer at configure time ([CMakeLists.txt:783-789](CMakeLists.txt#L783-L789)). The configure log says which way it went — `Native PipeWire backend: libpipewire-0.3 <version> found - enabled`, or `... not found - disabled, ALSA only` — and the symptom of a miss is an ALSA-only **Audio Device** panel. Install `libpipewire-0.3-dev` and configure again; the probe re-runs every time, so the same build directory is fine. Pass `-DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON` (what CI and the release build use) to turn the miss into a configure error instead.
+- **JUCE-wayland fork is required at runtime.** The fork has five local commits (XEmbed mapping, X11-on-Wayland fix, peer-creation latch, XEmbed bg fix) on top of plugdata-team's `wayland-juce8` branch. Vanilla upstream JUCE will compile (the `addDefaultFormats` shim in [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) abstracts the API split) but will hit the mutter crash on plugin-editor close under GNOME/Wayland. See [CLAUDE.md](../CLAUDE.md) for context.
+- **Plugin destructors are intentionally leaked at shutdown.** [src/DuskStudioApp.cpp](../src/DuskStudioApp.cpp) `leakAllPluginInstancesForShutdown` is a Linux-only workaround for Diva's `__cxa_pure_virtual` abort in `~AM_VST3_ViewInterface`. The OS reclaims memory on process exit.
+- **No PipeWire backend without its dev package.** The backend compiles only when pkg-config finds `libpipewire-0.3` 0.3.48 or newer at configure time ([CMakeLists.txt:783-789](../CMakeLists.txt#L783-L789)). The configure log says which way it went — `Native PipeWire backend: libpipewire-0.3 <version> found - enabled`, or `... not found - disabled, ALSA only` — and the symptom of a miss is an ALSA-only **Audio Device** panel. Install `libpipewire-0.3-dev` and configure again; the probe re-runs every time, so the same build directory is fine. Pass `-DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON` (what CI and the release build use) to turn the miss into a configure error instead.
 - **Compiler warnings.** The vendored Dusk DSP `.cpp` files compiled into Dusk Studio emit shadow/sign-conversion warnings. `DUSKSTUDIO_STRICT_WARNINGS=ON` (`-Werror`) is opt-in but not yet enabled in CI until those are cleaned upstream or wrapped with per-source overrides.
 
 ## Reporting build issues

@@ -16,7 +16,7 @@ namespace duskstudio::clap
 // everywhere but Windows (the extension must not exist there). One per plugin
 // instance. The plugin's embedded editor asks us to pump its fds + timers;
 // pumpGui() does that from the message thread.
-// See docs/native-clap-host-plan.md.
+// See docs/archive/native-clap-host-plan.md.
 class ClapHost
 {
 public:

@@ -988,7 +988,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
             if (r.locked) rObj["locked"] = true;
             addTakeProvenance (rObj, r.provenance);
 
-            // BPM-change semantics (DuskStudio.md §5b). Default is locked,
+            // BPM-change semantics (docs/DuskStudio.md §5b). Default is locked,
             // so emit only when the user has explicitly unlocked. recorded_at_bpm
             // is always emitted so legacy sessions can be anchored deterministically
             // on first BPM change.

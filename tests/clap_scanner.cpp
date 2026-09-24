@@ -1,7 +1,7 @@
 // CLAP discovery: ClapScanner enumerates *.clap files + reads their descriptors.
 // The path-shape cases run everywhere; the live load+enumerate case is gated on
 // DUSKSTUDIO_TEST_CLAP=/path/to/Plugin.clap so CI without a CLAP plugin stays
-// green. See docs/native-clap-host-plan.md.
+// green. See docs/archive/native-clap-host-plan.md.
 
 #include <catch2/catch_test_macros.hpp>
 

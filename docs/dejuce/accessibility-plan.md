@@ -1,11 +1,11 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
 
 # GUI accessibility bridge — issue #305
 
 **Decision, 2026-09-08:** preserve screen-reader support with a platform
 accessibility bridge. G3 must preserve the existing semantic controls and pass
 desktop accessibility checks before the JUCE console is replaced. This decision
-does not waive the G2 desktop checks in [the GUI plan](dejuce-gui-plan.md).
+does not waive the G2 desktop checks in [the GUI plan](gui-plan.md).
 
 **First phase:** inventory the current support floor and correct the channel
 fader's accessible mute value and infinity-text parsing. No native bridge is implemented by this phase;
@@ -32,16 +32,16 @@ this source audit.
 
 | Surface and source | Existing names, roles, values and actions | Limits to carry into the bridge work |
 |---|---|---|
-| [MainComponent](../src/ui/MainComponent.cpp), constructor | Title `Dusk Studio mixer`; description `16-channel portastudio-style mixer`; default component role is unspecified. The root requests keyboard focus. | The description is stale: the session has 24 tracks. The comment promising per-strip focus setup is not supported by a `setWantsKeyboardFocus` call in ChannelStripComponent or ConsoleView. Do not claim a verified strip traversal order. |
-| [ChannelStripComponent](../src/ui/ChannelStripComponent.cpp), constructor | Container title `Track N`, description `Channel strip for track N`. Track-qualified titles identify fader, pan, mute, solo, record arm, input monitor, print effects, HPF/LPF, EQ, insert slot and aux sends. | Compressor helper titles use their control label; the constructor's claim that every control is named is broader than the track-qualified title list. Preserve default button text and tooltip help too. |
+| [MainComponent](../../src/ui/MainComponent.cpp), constructor | Title `Dusk Studio mixer`; description `16-channel portastudio-style mixer`; default component role is unspecified. The root requests keyboard focus. | The description is stale: the session has 24 tracks. The comment promising per-strip focus setup is not supported by a `setWantsKeyboardFocus` call in ChannelStripComponent or ConsoleView. Do not claim a verified strip traversal order. |
+| [ChannelStripComponent](../../src/ui/ChannelStripComponent.cpp), constructor | Container title `Track N`, description `Channel strip for track N`. Track-qualified titles identify fader, pan, mute, solo, record arm, input monitor, print effects, HPF/LPF, EQ, insert slot and aux sends. | Compressor helper titles use their control label; the constructor's claim that every control is named is broader than the track-qualified title list. Preserve default button text and tooltip help too. |
 | Channel fader | Slider role, range −100 to +12 dB, step 0.1, reset to 0 dB on double-click. Value text is `-INF dB` at or below `ChannelStripParams::kFaderInfThreshDb` (−90), otherwise one decimal plus ` dB`. Case-insensitive `-INF` / `-INF dB` input selects the muted minimum. | Before this phase the formatter used −99.95, misreporting 100 valid hard-muted slider values. DSP uses ≤ −90; the standalone visible label uses ≤ −89.95, equivalent for the 0.1 dB slider grid. The default text parser interpreted the infinity label as zero; this phase keeps an accessible string round-trip muted and retains the default finite-number parsing. |
 | Channel pan and filter knobs | Slider roles. Pan speaks `C`, `L<pct>` or `R<pct>`. HPF/LPF speak `OFF` at their bypass ends, otherwise formatted frequency. Compressor helpers supply titles, suffixes and formatted values, including FET ratio. | Preserve units and bypass words. Pan and FET ratio still lack matching text parsers: `L50`/`R50` parse to centre, and `4:1`/`8:1`/`12:1`/`20:1` parse or clamp to index 4 (`All`). Their editable readouts and accessible string setters need separate corrections before native parity; this phase changes only the fader. |
-| Channel mute/solo/arm/monitor and [TransportBar](../src/ui/TransportBar.cpp) | JUCE button handler supplies press, checkable/checked state and `On`/`Off` for toggleable buttons. Transport has `Transport bar` plus `Play`, `Stop`, `Record`, `Rewind`, `Fast forward` titles. | Actions must use the existing callback path. A transport press invokes engine behavior; mute callbacks also handle automation. Writing only a boolean would omit these effects. |
+| Channel mute/solo/arm/monitor and [TransportBar](../../src/ui/TransportBar.cpp) | JUCE button handler supplies press, checkable/checked state and `On`/`Off` for toggleable buttons. Transport has `Transport bar` plus `Play`, `Stop`, `Record`, `Rewind`, `Fast forward` titles. | Actions must use the existing callback path. A transport press invokes engine behavior; mute callbacks also handle automation. Writing only a boolean would omit these effects. |
 | Channel print/freeze control | `refreshPrintButtonForMode()` updates title and help between `Print effects on record`, `Freeze track` and `Unfreeze track`. | The dynamic title loses the constructor's track prefix. Preserve the mode-dependent meaning; track disambiguation is a follow-up, not established parity. |
-| [AuxLaneComponent](../src/ui/AuxLaneComponent.cpp), constructor | `Aux N`, description `Aux send/return lane N`; `Aux N return fader`, `Aux N mute`, `Aux N plugin slot M`. JUCE slider/button defaults supply value and actions. | Bus and master controls also inherit JUCE defaults; this audit found no matching explicit title pass there. They need a per-control inventory before their port. |
-| [SplitModuleButton](../src/ui/SplitModuleButton.h) | Explicit group role; two real child buttons named `<label> enabled` and `Open <label> editor`. The indicator is toggleable, and `refresh()` synchronizes external model state before repaint. | Keep both children actionable. A single painted region with one press loses the bypass/editor distinction. Child titles do not inherit a custom track-qualified group title. |
-| [DuskComboBox](../src/ui/DuskComboBox.cpp), MenuPanel | Explicit popup-menu role with press action. Painted rows are represented by the panel's active-row title; navigation emits `titleChanged`. Empty grid search announces no matching presets. | This is active-row announcement, not a tree of selectable row children. Disabled entries and headings cannot be activated. A richer row tree would improve this floor, not describe existing behavior. |
-| [EmbeddedModal](../src/ui/EmbeddedModal.h) | Opening requests body keyboard focus. A modal stack restores focus to the newest remaining body, or the registered shell target. Deferred restoration is invalidated when a newer modal opens. | There is no explicit accessible dialog/modal role or accessibility-tree exclusion in this seam. Visual dimming and keyboard handling do not establish screen-reader modality. |
+| [AuxLaneComponent](../../src/ui/AuxLaneComponent.cpp), constructor | `Aux N`, description `Aux send/return lane N`; `Aux N return fader`, `Aux N mute`, `Aux N plugin slot M`. JUCE slider/button defaults supply value and actions. | Bus and master controls also inherit JUCE defaults; this audit found no matching explicit title pass there. They need a per-control inventory before their port. |
+| [SplitModuleButton](../../src/ui/SplitModuleButton.h) | Explicit group role; two real child buttons named `<label> enabled` and `Open <label> editor`. The indicator is toggleable, and `refresh()` synchronizes external model state before repaint. | Keep both children actionable. A single painted region with one press loses the bypass/editor distinction. Child titles do not inherit a custom track-qualified group title. |
+| [DuskComboBox](../../src/ui/DuskComboBox.cpp), MenuPanel | Explicit popup-menu role with press action. Painted rows are represented by the panel's active-row title; navigation emits `titleChanged`. Empty grid search announces no matching presets. | This is active-row announcement, not a tree of selectable row children. Disabled entries and headings cannot be activated. A richer row tree would improve this floor, not describe existing behavior. |
+| [EmbeddedModal](../../src/ui/EmbeddedModal.h) | Opening requests body keyboard focus. A modal stack restores focus to the newest remaining body, or the registered shell target. Deferred restoration is invalidated when a newer modal opens. | There is no explicit accessible dialog/modal role or accessibility-tree exclusion in this seam. Visual dimming and keyboard handling do not establish screen-reader modality. |
 
 The JUCE behavior above is grounded in `juce_Slider.cpp`,
 `detail/juce_ButtonAccessibilityHandler.h`, `juce_Button.cpp` and
@@ -79,17 +79,17 @@ from Tab in the shipped layout:
 
 ## Native seams and the first bridge slice
 
-[DuskPanelView and DuskPanelWindow](../src/ui/imgui/DuskPanelWindow.h) already
+[DuskPanelView and DuskPanelWindow](../../src/ui/imgui/DuskPanelWindow.h) already
 separate view drawing from window lifecycle, modal dismissal and shortcut
-ownership. [DuskImGuiHost](../src/ui/imgui/DuskImGuiHost.h) owns the native window,
+ownership. [DuskImGuiHost](../../src/ui/imgui/DuskImGuiHost.h) owns the native window,
 geometry and deferred teardown. Neither exposes an accessibility tree.
-[PanelControls](../src/ui/imgui/PanelControls.cpp) owns form combos, buttons,
+[PanelControls](../../src/ui/imgui/PanelControls.cpp) owns form combos, buttons,
 checkboxes and sliders, but its `##` IDs, separate painted labels, tooltips and
 ImGui focus do not currently publish platform semantics. DAF/DAF-Widgets remain
 shared read-only inputs during this application phase.
 
 The first implementation candidate is the **General section of the existing
-[AudioSettingsView](../src/ui/imgui/AudioSettingsView.cpp)**: `Expand tape strip
+[AudioSettingsView](../../src/ui/imgui/AudioSettingsView.cpp)**: `Expand tape strip
 by default` (checkbox), `Autosave every` (combo with five named choices), and
 `UI scale` (0.50–2.00 slider with `%.2fx` value). These exercise state, selection,
 numeric value, clipping, help and modal focus using real controls. UI scale is
