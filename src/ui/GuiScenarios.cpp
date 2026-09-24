@@ -1123,6 +1123,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
        #endif
     }
+    bool scrollStartupList (float wheel) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return startupDialogOpen() && owner.startupWindow->scrollForScenario (wheel);
+       #else
+        (void) wheel;
+        return false;
+       #endif
+    }
     int startupSelectedRow() const override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI

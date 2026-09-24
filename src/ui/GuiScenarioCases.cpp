@@ -7710,7 +7710,16 @@ std::optional<ScenarioResult> runStartupClicks (GuiHost& host, ScenarioContext& 
         chosen ("new:2", "the third template under NEW");
         reopen (false);
     } });
-    steps->push_back ({ 400, [click] { click ("tab-new"); } });
+    // A trackpad's quarter notches, one per frame, add up to one row.
+    for (int i = 0; i < 4; ++i)
+        steps->push_back ({ i == 0 ? 400 : 100, [&host, &ctx]
+        { ctx.expect (host.scrollStartupList (-0.25f), "the startup dialog did not take the wheel"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (! host.clickStartupControl ("row:0") && host.clickStartupControl ("row:1"),
+                    "four quarter wheel notches did not scroll the recent list by one row");
+    } });
+    steps->push_back ({ 300, [click] { click ("tab-new"); } });
     steps->push_back ({ 300, [click] { click ("tab-recent"); } });
     steps->push_back ({ 300, [click] { click ("scroll-down"); } });
     steps->push_back ({ 300, [&host, &ctx, click]

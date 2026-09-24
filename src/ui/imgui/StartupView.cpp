@@ -478,9 +478,13 @@ private:
         // the rows then never see their click.
         if (ImGui::IsMouseHoveringRect (ImVec2 (tl.x, rowsTop), br))
         {
-            const float wheel = ImGui::GetIO().MouseWheel;
-            if (wheel < 0.0f || wheel > 0.0f)
-                scrollRow = std::clamp (scrollRow - static_cast<int> (wheel), 0,
+            // A trackpad reports fractions of a notch per frame, which truncate to no
+            // rows at all, so the remainder carries over to the next frame.
+            wheelRows += ImGui::GetIO().MouseWheel;
+            const int rows = static_cast<int> (wheelRows);
+            wheelRows -= static_cast<float> (rows);
+            if (rows != 0)
+                scrollRow = std::clamp (scrollRow - rows, 0,
                                         std::max (0, static_cast<int> (recents.size())
                                                          - visibleRows));
         }
@@ -564,6 +568,7 @@ private:
     {
         if (visibleRows < 1 || selectedRow < 0)
             return;
+        wheelRows = 0.0f;
         scrollRow = std::clamp (scrollRow, std::max (0, selectedRow - visibleRows + 1),
                                 selectedRow);
         scrollRow = std::clamp (scrollRow, 0,
@@ -593,6 +598,7 @@ private:
     bool reported = false;
     int selectedRow = -1;
     int scrollRow = 0;
+    float wheelRows = 0.0f;
     int visibleRows = 0;
     int blinkFrames = 0;
     int blinks = kMaxBlinks;

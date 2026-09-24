@@ -219,6 +219,8 @@ public:
     // "quit", clicked where the dialog last drew it; "scroll-down" wheels the
     // list. False when the control is not on screen.
     virtual bool clickStartupControl (const std::string& control) = 0;
+    // Wheels the list by `wheel` notches, which may be a trackpad's fraction.
+    virtual bool scrollStartupList (float wheel) = 0;
     virtual int startupSelectedRow() const = 0;
     // "recent:<path>", "new:<template>", "open-file", "quit" or "skip"; empty
     // until the dialog has been dismissed.
