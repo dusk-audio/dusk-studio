@@ -143,6 +143,8 @@ public:
     bool isOpen() const noexcept;
     bool clickControlForScenario (const std::string& control);
     bool inputForScenario (const std::string& input);
+    // A vertical wheel at the window centre; negative scrolls down.
+    bool scrollForScenario (float wheel);
     bool pointerControlForScenario (const std::string& control, float position, bool pressed);
 
 private:

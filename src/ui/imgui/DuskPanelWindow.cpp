@@ -130,19 +130,24 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             onMouse (button);
         }
 
+        void scrollForScenario (double wheel)
+        {
+            MotionEvent motion;
+            motion.pos = { getWidth() * 0.5, getHeight() * 0.5 };
+            motion.absolutePos = motion.pos;
+            onMotion (motion);
+            ScrollEvent scroll;
+            scroll.pos = motion.pos;
+            scroll.absolutePos = motion.pos;
+            scroll.delta = { 0.0, wheel };
+            onScroll (scroll);
+        }
+
         bool inputForScenario (const std::string& input)
         {
             if (input == "scroll-down")
             {
-                MotionEvent motion;
-                motion.pos = { getWidth() * 0.5, getHeight() * 0.5 };
-                motion.absolutePos = motion.pos;
-                onMotion (motion);
-                ScrollEvent scroll;
-                scroll.pos = motion.pos;
-                scroll.absolutePos = motion.pos;
-                scroll.delta = { 0.0, -20.0 };
-                onScroll (scroll);
+                scrollForScenario (-20.0);
                 return true;
             }
             KeyboardEvent key;
@@ -499,6 +504,12 @@ bool DuskPanelWindow::inputForScenario (const std::string& input)
 {
     if (! isOpen() || impl->scenarioWidget == nullptr) return false;
     return impl->scenarioWidget->inputForScenario (input);
+}
+bool DuskPanelWindow::scrollForScenario (float wheel)
+{
+    if (! isOpen() || impl->scenarioWidget == nullptr) return false;
+    impl->scenarioWidget->scrollForScenario (wheel);
+    return true;
 }
 bool DuskPanelWindow::pointerControlForScenario (const std::string& control, float position, bool pressed)
 {

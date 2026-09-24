@@ -46,6 +46,9 @@ public:
     // check finds a release newer than this build.
     virtual void setUpdateAvailable (const std::string& tagName) = 0;
 
+    // The highlighted recent row, or -1 when the list is empty.
+    virtual int selectedRecent() const = 0;
+
     // Read from the dismissed callback, while the view is still alive.
     virtual StartupAction chosenAction() const = 0;
     virtual const std::string& chosenPath() const = 0;

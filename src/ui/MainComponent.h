@@ -23,6 +23,7 @@ namespace imgui
 {
 class DuskPanelWindow;
 class StartupView;
+struct RecentSession;
 }
 
 class MainComponent final : public juce::Component,
@@ -461,9 +462,12 @@ private:
     // Reads what the startup panel was dismissed with and runs it once the panel is
     // down. Called from the panel's dismissed callback, while its view is alive.
     void runStartupChoice();
-    // demoRecents fills the table with three fixed names for the manual's figure,
-    // where the real list is whatever the capture machine happens to have.
-    bool openStartupPanel (bool demoRecents);
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    bool openStartupPanel (std::vector<imgui::RecentSession> recents);
+   #endif
+    // A GUI scenario's one-shot hold on the startup choice: returning true takes the
+    // choice instead of running it, so a scenario can press Quit without ending the run.
+    std::function<bool()> startupChoiceForScenario;
     // Screenshot-harness only: open the startup panel and read its own steady frame
     // back into `capturePath`.
     void openStartupForCapture (const std::string& capturePath);

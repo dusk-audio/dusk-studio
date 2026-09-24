@@ -2721,7 +2721,7 @@ void MainComponent::launchStartupDialog()
     focusMainCanvas();
     maybeStartStartupPluginScan();
    #else
-    if (openStartupPanel (false))
+    if (openStartupPanel (imgui::scanRecentSessions (RecentSessions::load())))
     {
         std::fprintf (stderr, "[Dusk Studio/startup] picker shown\n");
         std::fflush (stderr);
@@ -2787,19 +2787,16 @@ void MainComponent::focusGained (FocusChangeType cause)
 void MainComponent::openStartupForCapture (const std::string& capturePath)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (openStartupPanel (true))
+    if (openStartupPanel (demoStartupRecents()))
         startupWindow->captureNextFrameTo (capturePath);
    #else
     (void) capturePath;
    #endif
 }
 
-bool MainComponent::openStartupPanel (bool demoRecents)
+#if DUSKSTUDIO_HAS_NATIVE_UI
+bool MainComponent::openStartupPanel (std::vector<imgui::RecentSession> recents)
 {
-   #if ! DUSKSTUDIO_HAS_NATIVE_UI
-    (void) demoRecents;
-    return false;
-   #else
     auto* const topLevel = getTopLevelComponent();
     const auto parentHandle = topLevel != nullptr
                             ? embedscale::nativeParentHandle (*topLevel) : 0;
@@ -2839,8 +2836,6 @@ bool MainComponent::openStartupPanel (bool demoRecents)
     startupWindow->setCallbacks (std::move (callbacks));
 
     loadStartupBrandImage();
-    auto recents = demoRecents ? demoStartupRecents()
-                               : imgui::scanRecentSessions (RecentSessions::load());
     // The downloads page is Dusk-owned so the destination can change without an app
     // update, and the artifacts behind it are supporter-gated, so no direct URL
     // exists. It is the one banner action that leaves the dialog up.
@@ -2877,7 +2872,10 @@ bool MainComponent::openStartupPanel (bool demoRecents)
     }
 
     // Background tag probe, then a flashing badge in the dialog when a newer
-    // release exists. The response can arrive after the dialog is dismissed.
+    // release exists. The response can arrive after the dialog is dismissed. A
+    // scenario run skips it: the banner arriving mid-case moves every row.
+    if (std::getenv ("DUSKSTUDIO_RUN_SCENARIOS") != nullptr)
+        return true;
     juce::Component::SafePointer<MainComponent> safeThis (this);
     updatecheck::checkForNewerTagAsync (JUCE_APPLICATION_VERSION_STRING,
         [safeThis] (const juce::String& tag)
@@ -2888,8 +2886,8 @@ bool MainComponent::openStartupPanel (bool demoRecents)
             self->startupView->setUpdateAvailable (tag.toStdString());
         });
     return true;
-   #endif
 }
+#endif
 
 void MainComponent::runStartupChoice()
 {
@@ -2898,6 +2896,12 @@ void MainComponent::runStartupChoice()
                                                : imgui::StartupAction::skip;
     const auto path = startupView != nullptr ? startupView->chosenPath() : std::string();
     const int tmpl = startupView != nullptr ? startupView->chosenTemplate() : 0;
+
+    if (auto hook = std::exchange (startupChoiceForScenario, {}); hook && hook())
+    {
+        dismissStartupDialog();
+        return;
+    }
 
     if (action == imgui::StartupAction::quit)
     {
