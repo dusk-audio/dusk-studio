@@ -2807,6 +2807,83 @@ const ScenarioRegistrar dpImportConfirmation { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runDpImportConfirmation (host, ctx); }
 } };
 
+// Open in an import browser with no file picked closes it like Cancel. Both
+// browsers ask to start in ~/Music, which the scenario HOME lacks, and a
+// missing start path must not come back from Open as the user's choice.
+std::optional<ScenarioResult> runImportOpenNothingPicked (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no open modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto textOnly = ctx.tempDir() / "TextOnly";
+    std::filesystem::create_directory (textOnly);
+    if (! (std::ofstream (textOnly / "notes.txt") << "not audio"))
+        return ScenarioResult::fail ("could not write text fixture");
+    const auto read = [] (const std::filesystem::path& path)
+    {
+        std::ifstream input (path);
+        return std::string (std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>());
+    };
+    const auto before = read (restore);
+    const auto unchanged = [&ctx, &session, before, read] (const std::string& browser)
+    {
+        const auto after = ctx.tempDir() / "after.json";
+        ctx.expect (SessionSerializer::save (session, after), "could not save comparison snapshot");
+        ctx.expect (! before.empty() && read (after) == before, browser + " Open with nothing picked changed the session");
+    };
+    const auto pickNothing = [&host, &ctx] (
+        const std::string& menuItem, const std::filesystem::path& folder)
+    {
+        return std::vector<Step> {
+            { 150, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "File menu is unavailable"); } },
+            { 200, [&host, &ctx, menuItem]
+            { ctx.expect (host.clickContextMenuItem (menuItem), "menu item is unavailable: " + menuItem); } },
+            { 250, [&host, &ctx, menuItem, folder]
+            {
+                if (! ctx.expect (host.clickFileBrowserControl (true), menuItem + " opened no file browser")) return;
+               #if defined (__APPLE__)
+                host.pressPeerKey ("command + A", 'a');
+               #else
+                host.pressPeerKey ("ctrl + A", 'a');
+               #endif
+                for (const char ch : folder.string()) host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+                host.pressPeerKey ("Return", 0);
+            } },
+            { 400, [&host, &ctx, menuItem]
+            { ctx.expect (host.clickModalButton ("Open"), menuItem + " browser has no Open button"); } },
+            { 600, [&host, &ctx, menuItem]
+            {
+                ctx.expect (host.modalStackEmpty(),
+                            menuItem + " Open with nothing picked left a modal up: " + host.modalText());
+                drainModals (host);
+            } },
+        };
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const auto* item : { "Import Audio or MIDI...", "Import DP-24/32 Session (experimental)..." })
+    {
+        for (auto& step : pickNothing (item, textOnly)) steps->push_back (std::move (step));
+        steps->push_back ({ 50, [unchanged, item] { unchanged (item); } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar importOpenNothingPicked { Scenario {
+    "gui.import_open_nothing_picked", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runImportOpenNothingPicked (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runTapeRuler (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
@@ -8312,7 +8389,9 @@ std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& 
     const auto taken = ctx.tempDir() / "taken";
     std::filesystem::create_directories (taken);
     std::ofstream (taken / "session.json") << "{}";
-    const auto missing = ctx.tempDir() / "missing.json";
+    const auto corrupt = ctx.tempDir() / "corrupt" / "session.json";
+    std::filesystem::create_directories (corrupt.parent_path());
+    std::ofstream (corrupt) << "not a session";
     // Recent rows: a folder with no session.json, and a session whose autosave
     // differs from it, which raises the recovery prompt.
     const auto noSession = ctx.tempDir() / "no-session";
@@ -8388,14 +8467,14 @@ std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& 
         failed ("A session already exists at", "a NEW over an existing session");
         click ("tab-open");
     } });
-    steps->push_back ({ 600, [shown, browse, missing]
+    steps->push_back ({ 600, [shown, browse, corrupt]
     {
-        shown ("Open session.json", "OPEN of a missing session");
-        browse (missing, "Open");
+        shown ("Open session.json", "OPEN of an unreadable session");
+        browse (corrupt, "Open");
     } });
     steps->push_back ({ 700, [&host, &ctx, failed]
     {
-        failed ("No session at", "an OPEN of a missing session");
+        failed ("Load failed", "an OPEN of an unreadable session");
         host.closeStartupDialog();
         ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
     } });

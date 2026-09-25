@@ -46,10 +46,20 @@ public:
                         opts.filePatternsAllowed, juce::String(),
                         opts.filePatternsAllowed);
 
-        const auto initial = opts.initialFileOrDirectory != juce::File()
-                                ? opts.initialFileOrDirectory
-                                : juce::File::getSpecialLocation (
-                                      juce::File::userHomeDirectory);
+        const auto home = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+        auto initial = opts.initialFileOrDirectory.getFullPathName().isNotEmpty()
+                           ? opts.initialFileOrDirectory
+                           : home;
+        // The browser takes a start path that isn't there as a file already
+        // chosen, and keeps it after the user moves to another folder. For
+        // Open, start in the nearest folder that exists instead.
+        if (opts.mode == Mode::Open)
+        {
+            while (! initial.exists() && initial.getParentDirectory() != initial)
+                initial = initial.getParentDirectory();
+            if (! initial.exists())
+                initial = home;
+        }
         browser = std::make_unique<juce::FileBrowserComponent> (
             browserFlags, initial, filter.get(), /*previewComp*/ nullptr);
         browser->addListener (this);
@@ -187,21 +197,13 @@ private:
     {
         if (browser == nullptr) { dismissCancelled(); return; }
 
-        // Multi-select branch: collect every selected file. JUCE's
-        // FileBrowserComponent exposes a count + indexed access.
         if (multiResultFn)
         {
             juce::Array<juce::File> files;
             for (int i = 0; i < browser->getNumSelectedFiles(); ++i)
             {
                 const auto f = browser->getSelectedFile (i);
-                if (f != juce::File()) files.add (f);
-            }
-            if (files.isEmpty())
-            {
-                // Fall back to the currently-highlighted single file.
-                const auto f = browser->getSelectedFile (0);
-                if (f != juce::File()) files.add (f);
+                if (accepts (f)) files.add (f);
             }
             if (files.isEmpty()) { dismissCancelled(); return; }
             auto cb = multiResultFn;
@@ -210,17 +212,18 @@ private:
             return;
         }
 
-        // Single-select branch.
-        if (! chosen.exists() && ! chosen.getParentDirectory().isDirectory())
-            chosen = browser->getSelectedFile (0);
-        if (chosen == juce::File())
-            chosen = browser->getSelectedFile (0);
-        if (chosen == juce::File()) { dismissCancelled(); return; }
+        const auto file = chosen.exists() ? chosen : browser->getSelectedFile (0);
+        if (! accepts (file)) { dismissCancelled(); return; }
 
         auto cb = resultFn;
-        const auto file = chosen;
         sharedFileBrowserModal().close();
         if (cb) cb (file);
+    }
+
+    bool accepts (const juce::File& f) const
+    {
+        return isAcceptableChoice (f.getFullPathName().toStdString(),
+                                   opts.mode, opts.selectDirectories);
     }
 
     void toggleNewFolderRow()

@@ -1,15 +1,11 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "FileBrowserChoice.h"
 #include <functional>
 
 namespace duskstudio::filebrowser
 {
-// Mode hint - same shape as juce::FileBrowserComponent's flag bitmask
-// but enum'd so callers don't deal with OR'd constants. Save mode adds
-// a name field at the bottom + warns about overwriting existing files.
-enum class Mode { Open, Save };
-
 struct Options
 {
     juce::String title;                  // shown in the modal header
@@ -28,7 +24,8 @@ struct Options
 // `host` is any Component inside the main window (typically `this` from
 // a caller's method); the modal is shown on the host's top-level.
 // `onResult` fires once with the chosen file, or a default-constructed
-// juce::File on Cancel / Esc / click-outside dismiss.
+// juce::File on Cancel / Esc / click-outside dismiss. Open with no existing
+// file picked (files mode) is a Cancel too.
 void open (juce::Component& host,
             Options opts,
             std::function<void (juce::File)> onResult);
