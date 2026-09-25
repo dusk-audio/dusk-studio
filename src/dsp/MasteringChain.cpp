@@ -23,17 +23,19 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
     digitalEq.reset();
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
+    // Pin multiband before prepareToPlay, which is where the donor reports its
+    // latency. A bypassed donor delays its dry output by that report, and in its
+    // default mode the report includes a 2x oversampler multiband never runs.
+    bindCompParams();
     busComp.setPlayConfigDetails (2, 2, sampleRate, bs);
     busComp.prepareToPlay (sampleRate, bs);
     // Honor the global Effect Oversampling setting. The donor defaults to
-    // internal-oversampling=ON, so without this the mastering bus comp
-    // always oversamples regardless of the user's pick. 1× -> off; 2× / 4× ->
-    // engages the donor's internal 2× (it doesn't expose 4× at the comp
-    // level today, but enables anti-aliasing for the saturation stage).
+    // internal-oversampling=ON; 1x -> off, 2x / 4x -> on. Multiband mode runs
+    // at the session rate either way, so the flag adds no latency while pinned.
     busComp.setInternalOversamplingEnabled (oversamplingFactor > 1);
+    compLatencySamples.store (busComp.getLatencySamples(), std::memory_order_relaxed);
     compStereoBuffer.setSize (2, bs, false, false, true);
     compMidi.clear();
-    bindCompParams();
 #endif
 
     const double initialLookaheadMs = (paramsRef != nullptr)
