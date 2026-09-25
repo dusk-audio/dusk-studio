@@ -1,5 +1,5 @@
 <!-- summary-start -->
-A built-in plugin suite that works on a fresh install (Utility, DuskVerb 2, Tape Echo 2, Tape and the Sunset synth), the 4K EQ 2 and Tape Machine 2 engines in the console, a one-page quickstart, an offline instrument library, a first launch that picks an input and follows the system audio default, a signed checksum file, and the fixes from walking record, overdub and bounce on all three platforms.
+A built-in plugin suite that works on a fresh install (Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2 and the Sunset synth), the 4K EQ 2 engine on the channels with EQ knobs that play the frequency they show, Tape Machine 2 on the master, a one-page quickstart, an offline instrument library, a first launch that picks an input and follows the system audio default, a signed checksum file, and the fixes found by walking record, overdub and bounce on all three platforms and by testing each behaviour the manual documents.
 <!-- summary-end -->
 
 ### Downloads

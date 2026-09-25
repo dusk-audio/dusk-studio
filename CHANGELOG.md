@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.14.0] - 2026-09-18
+## [0.14.0] - 2026-09-25
 
 The first five minutes of using Dusk Studio, offline instrument browsing,
 quitting cleanly by any route, and a release pipeline that signs what it
@@ -45,20 +45,23 @@ publishes.
 - **The built-in suite is complete: five units.** **Utility** (gain, polarity,
   width, mono), **DuskVerb 2** (sixteen reverb engines from plate to shimmer),
   **Tape Echo 2** (the Tape Echo 2 plug-in's own DSP running inside Dusk Studio:
-  a three-head tape delay with a spring tank that syncs to the session tempo), **Tape**
-  (per-channel tape colour on the same engine as the master bus) and **Sunset**
+  a three-head tape delay with a spring tank that syncs to the session tempo),
+  **Tape Machine 2** (per-channel tape colour on the same engine as the master
+  bus) and **Sunset**
   (a six-engine polyphonic synthesiser, the instrument a MIDI track can reach
   with nothing installed).
   On a channel insert, click a loaded unit's slot, or right-click it and choose
-  Open editor. On an aux lane the unit's controls are always on screen, filling
-  the lane under the slot header as sections of knobs, switch banks, drop-down
-  lists and toggles sized to the room the lane has (#596). MIDI Learn binds to a
-  built-in unit's controls the way it does to a plugin's.
+  Open editor. On an aux lane, Utility and Sunset keep their controls on
+  screen, filling the lane under the slot header as sections of knobs, switch
+  banks, drop-down lists and toggles sized to the room the lane has (#596);
+  DuskVerb 2, Tape Echo 2 and Tape Machine 2 show their own editors. MIDI
+  Learn binds to a built-in unit's controls the way it does to a plugin's.
 
 - **DuskVerb 2 is now the built-in reverb.** It shows its own editor on channel
   inserts and aux lanes, and its presets, INIT and the active side of its A/B
-  comparison are saved with the session. Sessions using the old Reverb still load under the same unit, at
-  DuskVerb 2's defaults rather than with converted settings.
+  comparison are saved with the session. Sessions using the old Reverb still
+  load under the same unit, at DuskVerb 2's defaults rather than with
+  converted settings.
 
 - **Tape Echo 2 brings its own editor.** A built-in unit that is one of Dusk
   Audio's plug-ins now shows the plug-in's own editor rather than a panel of
@@ -77,6 +80,11 @@ publishes.
   it starts in a session from an earlier version, and the EQ's status light
   bypasses it with the bands. It is a new MIDI binding target. Right-click MIDI
   Learn works on it and, for the first time, on the bus EQ's three band knobs.
+- **Every per-strip editor names its strip** (#694). The channel EQ, COMP and
+  AUX popups, the bus and master EQ and COMP popups and the compressor editor
+  show the strip's name centred on their header row. A rename while an editor
+  is open reaches its title, and a name too long for the row is shortened with
+  an ellipsis.
 
 ### Changed
 
@@ -87,12 +95,12 @@ publishes.
   other oversampled stage. The tape stage now reports a constant 56 samples of
   latency, which delay compensation covers, where it previously reported none
   at 1x.
-- **The channel strips and the buses run the 4K EQ 2 engine** (#341). Its band
-  curves, filter slopes and console character are calibrated against
-  measurements of the hardware at each marked position, so it is voiced
-  differently from the engine it replaces while the controls, their ranges and
-  their defaults are unchanged. The console character stage no longer adds a
-  noise floor, so a silent channel stays silent through it.
+- **The channel strips run the 4K EQ 2 engine** (#341). Its band curves,
+  filter slopes and console character are calibrated against measurements of
+  the hardware at each marked position, so it is voiced differently from the
+  engine it replaces while the controls and their defaults are unchanged. The
+  console character stage no longer adds a noise floor, so a silent channel
+  stays silent through it.
 - **Stop returns the playhead to where play or record started** (#591). It is
   the new default for **Playhead on Stop**, so Play after a take hears the take.
   Moving the playhead during playback moves the return point with it. Pressing
@@ -114,6 +122,16 @@ publishes.
   of JUCE's thumbnail cache. Short files keep fine detail, sample-level
   zoom reads exact column ranges, and the paint path performs no file reads.
   Clicking to seek works while a file is still loading.
+- **The tape unit is Tape Machine 2, with the plug-in's own editor** (#296).
+  The master tape and the built-in tape insert run the Tape Machine 2 plug-in
+  itself and show its editor in place of Dusk Studio's knob panel. On the
+  master, click **TAPE** to open it; touching any control engages the tape
+  stage, and Escape, a second click on **TAPE** or a click outside closes it.
+  Sessions saved with the older Tape unit load into Tape Machine 2 with their
+  settings.
+- **The DP import is named after the machines it reads.** **File > Import DP
+  Song (experimental)...** is now **File > Import DP-24/32 Session
+  (experimental)...**, and its confirmation and alerts use the same name.
 
 ### Fixed
 
@@ -291,6 +309,168 @@ publishes.
   MID bell at 800 Hz (Q 0.7) and HF shelf at 2 kHz, +/-9 dB each, holding its
   shape up to 20 kHz at any sample rate. A bus EQ in a session from an earlier
   version sounds different now, since the same settings play the new curves.
+- **Recent sessions in the startup dialog take the mouse** (#706). Clicking a
+  recent session did nothing and double-clicking did not open it; only the
+  arrow keys moved the selection. A click now selects, a double-click opens,
+  and the scroll wheel and slow trackpad scrolling move through a long list.
+- **Backing out of a startup pick brings the startup dialog back** (#707).
+  Cancelling the file browser, the unsaved-changes prompt or the autosave
+  recovery prompt after choosing Open, a New template or a recent session left
+  you in the DAW on an empty Untitled session. The dialog now comes back so you
+  can pick again. It also comes back when the session cannot be created or
+  opened, and the status bar says why. **File > New** and **File > Open** in a
+  running session are unchanged.
+- **A quit whose Save does not complete leaves Dusk Studio running** (#708).
+  Choosing Save at the quit prompt and then cancelling the Save As browser, or
+  hitting a failed write, kept the window open with audio stopped and autosave
+  off until a restart. Audio and autosave now carry on as they were before
+  Quit.
+- **EQ and compressor moves from MIDI or a control surface engage their
+  section** (#715). A MIDI-learned controller or the Mackie Control encoders
+  changed an EQ band or a compressor control but left the section bypassed, so
+  nothing changed in the sound. They now engage it the way the on-screen knobs
+  do, on channels and buses. An HPF or LPF leaving OFF switches on, and
+  turning it back to OFF switches the filter off and leaves the EQ as it is.
+  An encoder push that resets a value engages nothing.
+- **The mastering compressor lines up with the rest of the mastering chain**
+  (#720). It reported the latency of a mode it never runs, so until it was
+  first engaged it played 60 samples late, and an export did not trim its
+  delay. Both are fixed. **Effect oversampling** does not change the
+  mastering chain: its EQ and limiter always run at 4x and the multiband
+  compressor at the session rate, which the manual now says.
+- **Plugin loads are refused while no audio device is open** (#721).
+  **Browse file...** and the picker's in-process plugin rows still loaded a
+  plugin with nothing to prepare it against, replacing the one in the slot,
+  and with sandboxing on they stayed in-process. They now refuse like the
+  native, built-in and soundfont loads, and the slot keeps what it held.
+- **The no-device Record alert shows its arrow** (#722). Pressing Record with
+  no audio device open showed three stray characters where the arrow between
+  Settings and Audio belongs.
+- **An OFF aux send reads OFF to a screen reader** (#723). A send turned fully
+  down showed "-" on the strip but read "-60.0", an audible level, and typing
+  OFF through the accessibility text action set it to 0 dB. The send knobs on
+  the strip and in the AUX editor now read and accept OFF, and the manual gives
+  the range as OFF, then -59.9 to +6 dB.
+- **Open with nothing picked closes the file browser like Cancel** (#724). On
+  an account without a Music folder, pressing Open in **File > Import Audio or
+  MIDI...** with no file selected tried to import that missing folder and
+  raised an unreadable-file alert. Open now hands back only files that exist,
+  and otherwise closes as a cancel. A browser asked to start in a missing
+  folder starts in the nearest one that exists.
+- **Save never writes a file named after a folder** (#731). In the bounce,
+  stems, Export master and Save MIDI bindings preset browsers, pressing Save
+  with the name box empty, or with the name of an existing folder, wrote the
+  file beside that folder under its name. A folder name now opens the folder,
+  and an empty name does nothing.
+- **A save asks before it replaces a file, and Save As will not replace another
+  session** (#732). Bounce master mix, Export master and the MIDI bindings export
+  now ask **Replace** or **Cancel** when the file they are about to write already
+  exists; they used to replace it without asking. Save As into a folder that
+  already holds a different session is refused and changes nothing, and Save
+  As to the session's own folder by another path, such as through a link,
+  saves in place instead of deleting the audio it was copying.
+- **A new session never saves over one kept as Untitled** (#734). Dusk Studio
+  starts in `~/Music/Dusk Studio/Untitled`. If a session had once been saved
+  under that name, Save, Cmd+S and the Save in the quit prompt wrote the fresh
+  session over it without asking. A session that has never been saved or
+  opened now always goes through Save As.
+- **Bus-routed tracks line up with direct ones at 2x and 4x** (#655). With
+  Effect oversampling on, tracks routed through a bus trailed direct ones,
+  bounces printed about 1 ms late and stems were offset from each other. The
+  direct sum and the aux returns are now delayed to match, and bounces, stems
+  and Export master trim the delay at their tap, to within a sample.
+- **An automation pass replaces only the span it covered** (#656). A WRITE or
+  TOUCH pass cut off every point after its first one. The pass now lands over
+  the stretch it was recorded on and keeps the ride before and after it, and
+  TOUCH glides back to that ride on release. A pass ends the way the mode it
+  was recorded in ends it, even if the mode changes first, and a loop wrap or
+  a seek ends it.
+- **The metronome follows the mix** (#657). It played ahead of the mix by the
+  oversampler, bus and tape delays, from 56 samples at 1x to 137 at 4x.
+- **Every strip shows its automation mode, and READ locks its automated
+  controls** (#658). A mode set somewhere other than the strip's label, such as
+  drawing a point that arms READ or a session load setting an aux lane, did not
+  show on the label, and READ did not lock the automated controls on every
+  strip. It now does on track, bus, master and aux strips.
+- **A frozen track plays where it did before it was frozen** (#665). It landed
+  26 samples late at 1x and 3 at 2x, and lined up only at 4x. Frozen playback
+  now matches the live strip at every factor, with the insert's latency
+  counted.
+- **The VCA compressor's sidechain high-pass works** (#664). The channel
+  compressor's 60 Hz sidechain high-pass in VCA mode did nothing, so bass drove
+  the compressor as hard as the rest of the signal.
+- **An older session no longer inherits the last session's MIDI sync.**
+  Opening a session saved before the MIDI Sync settings existed kept the sync
+  source, clock output port and clock-send setting of the session open before
+  it. Settings missing from the file now load at their defaults.
+- **MIDI bindings presets are checked before they import.** A preset written
+  by a newer version is refused rather than partly read, and the alert says
+  so: "File is missing, malformed, or written by a newer version of Dusk
+  Studio." An entry that names a control no target has is dropped instead of
+  bound.
+- **Channel inserts show the crashed and stalled labels, and recover** (#681).
+  Only aux lanes showed `! <name> (crashed)` and `! <name> (stalled)`; a channel
+  insert kept its plain name, and its right-click menu never offered **Re-enable
+  plugin** for a crashed plugin. It now does, and on both the plain name comes
+  back after Re-enable.
+- **Keyboard shortcuts with a modifier work** (#680). Several chords were
+  checked in a way that fails whenever a modifier is held, so they did nothing:
+  Cmd+Left/Right region nudge on the tape strip, Shift+Left/Right marker jumps,
+  Cmd+Left/Right view panning in the piano roll and the region editor, and the
+  piano roll's Shift+arrow transpose and nudge. On Linux the piano roll's Q, S,
+  V, C, L, Cmd+D, Cmd+L, Cmd+[ and Cmd+] and the window's Cmd+\ were dead too.
+- **R reports a take that could not be set up.** Starting a recording with R
+  skipped the alert that lists armed tracks whose file could not be created,
+  which the Record button shows, so a dropped take went unannounced.
+- **Piano roll notes are drawn at the grid length.** A click in Draw mode
+  always made a quarter note. It now follows the note-entry grid, and makes a
+  quarter note only with snap off.
+- **The piano roll's velocity and CC lanes answer where they are drawn.**
+  Clicks and drags in both lanes were offset by the height of the scroll bar,
+  so they landed on the wrong value or missed the lane.
+- **The fader's dB readout takes a typed value.** The manual said to click the
+  readout beneath the fader to type a precise level, but the readout could not
+  be edited.
+- **The input meter's clip indicator holds for a second.** Crossing 0 dBFS now
+  lights a red mark at the top of a channel's input meter and holds it for one
+  second, as the manual describes.
+- **TAP averages the last four intervals.** It averaged three, one fewer than
+  the manual says.
+- **The plugin picker's alerts reach a screen reader.** The kind mismatch,
+  load failed and scan complete alerts had no accessible title or description.
+- **Removing or replacing a built-in on an aux lane no longer risks a crash**
+  (#652). Tape Echo 2's or DuskVerb 2's editor kept running over the unit after
+  it was freed. The editor now closes before the unit goes, on aux lanes and
+  channel inserts.
+- **Unloading a sandboxed plugin ends its process** (#659). The child process
+  kept running until two more sandboxed loads pushed it out, and replacing a
+  sandboxed plugin through **Browse file...** left the old one running and
+  still receiving the slot's audio.
+- **Sunset plays each MIDI event at its place in the block** (#650). Notes
+  started at the beginning of the audio block that carried them, and a note
+  that started and stopped inside one block did not sound at all.
+- **Native panels open at the right size on a mixed-scale Mac.** With a Retina
+  display and a 1x display, the startup dialog, compressor editor, mastering EQ
+  and limiter, audio settings, notepad and virtual keyboard opened at half or
+  double size, clipped, when the window sat on the display without the menu
+  bar.
+- **Keys pressed in a native panel stay there** (#691). Playing X on the
+  virtual keyboard also toggled Mute on the selected track, and A and S armed
+  and soloed it; the same happened from every native panel. The transport keys
+  a panel forwards on purpose fire once.
+- **The mastering EQ and limiter stay up while a drop-down is open** (#697).
+  Opening the multiband compressor's PRESET list made both panels vanish until
+  the list closed.
+- **A stereo track's right input names the input it records** (#645). The R
+  selector and the strip header kept the name of the track's default right
+  input after the left input changed, so a track recording In 1 and In 2 could
+  read "In 4 (follow)".
+- **The Windows quickstart opens without asking for an app** (#634).
+  **Settings > Quickstart** handed Windows a `.md` file, which a stock Windows
+  11 has no program for. The installer now ships it as `QUICKSTART.txt`.
+- **The Optimize automation refusal names Write.** It said a strip in Read or
+  Touch could race the audio thread; a strip in Write blocks it too, and the
+  alert now says so.
 
 ## [0.13.3] - 2026-09-05
 
