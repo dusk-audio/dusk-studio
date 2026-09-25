@@ -1,6 +1,7 @@
 #include "MidiBindingsPanel.h"
 #include "DuskAlerts.h"
 #include "DuskFileBrowser.h"
+#include "SaveTargetChecks.h"
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 #include "../session/MidiBindings.h"
@@ -188,23 +189,35 @@ void MidiBindingsPanel::exportPreset()
         /*initialFileOrDirectory*/ defaultDir.getChildFile ("dusk-studio-bindings.json"),
         /*filePatternsAllowed*/    "*.json",
         /*mode*/                   filebrowser::Mode::Save,
-        /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
     },
     [safe] (juce::File file)
     {
         auto* self = safe.getComponent();
         if (self == nullptr || file == juce::File()) return;
-        const auto json = serializeBindingsPreset (
-            self->session.midiBindings.current());
         auto target = file.hasFileExtension ("json")
                         ? file : file.withFileExtension ("json");
-        if (! target.replaceWithText (json))
+        auto write = [safe, target]
         {
-            if (auto* tlw = self->getTopLevelComponent())
-                showDuskAlert (*tlw, "Export failed",
-                                  "Could not write to " + target.getFullPathName());
+            auto* panel = safe.getComponent();
+            if (panel == nullptr) return;
+            const auto json = serializeBindingsPreset (panel->session.midiBindings.current());
+            if (! target.replaceWithText (json))
+            {
+                if (auto* tlw = panel->getTopLevelComponent())
+                    showDuskAlert (*tlw, "Export failed",
+                                      "Could not write to " + target.getFullPathName());
+            }
+        };
+        if (! target.existsAsFile())
+        {
+            write();
+            return;
         }
+        auto* tlw = self->getTopLevelComponent();
+        showDuskConfirm (tlw != nullptr ? *tlw : *self, savecheck::kReplaceFileTitle,
+                         savecheck::replaceFileMessage (target.getFileName().toStdString()),
+                         savecheck::kReplaceFileButton, write, "Cancel", {}, /*destructive*/ true);
     });
 }
 
@@ -218,7 +231,6 @@ void MidiBindingsPanel::importPreset()
         /*initialFileOrDirectory*/ defaultDir,
         /*filePatternsAllowed*/    "*.json",
         /*mode*/                   filebrowser::Mode::Open,
-        /*warnAboutOverwriting*/   false,
         /*selectDirectories*/      false,
     },
     [safe] (juce::File file)

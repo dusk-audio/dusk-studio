@@ -338,7 +338,6 @@ void DuskMultisampleEditor::openFileChooser()
         /*initialFileOrDirectory*/ juce::File::getSpecialLocation (juce::File::userHomeDirectory),
         /*filePatternsAllowed*/    "*.sfz;*.sf2;*.bank.xml",
         /*mode*/                   filebrowser::Mode::Open,
-        /*warnAboutOverwriting*/   false,
         /*selectDirectories*/      false,
     },
     [safe] (juce::File file)
