@@ -1,5 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "TestTempDirectory.h"
+#include "session/Session.h"
+#include "session/SessionSerializer.h"
 #include "session/SnapHelpers.h"
 
 namespace
@@ -179,5 +182,40 @@ TEST_CASE ("snap math agrees with the legacy TapeStrip inline expression",
                             (juce::int64) 100000 })
     {
         REQUIRE (duskstudio::snap::snapAbsolute (s, step120) == legacyAbs (s, step120));
+    }
+}
+
+TEST_CASE ("the audio editor's snap and grid resolution survive a session save and reload",
+           "[SnapHelpers][session][serializer]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+    using duskstudio::SnapResolution;
+
+    duskstudio::test::TempDirectory dir ("dusk-snap-roundtrip-");
+    const auto file = dir.path() / "session.json";
+    constexpr int kResolutions = (int) SnapResolution::CDFrames + 1;
+
+    Session saved;
+    Session loaded;
+    for (int r = 0; r < kResolutions; ++r)
+    {
+        CAPTURE (r);
+        // The editor's snap toggle is independent of the timeline's, so each
+        // resolution goes through with the two set opposite ways.
+        const bool editorSnap = r % 2 == 0;
+        saved.snapResolution  = (SnapResolution) r;
+        saved.audioEditorSnap = editorSnap;
+        saved.snapToGrid      = ! editorSnap;
+        REQUIRE (SessionSerializer::save (saved, file));
+
+        loaded.snapResolution  = (SnapResolution) ((r + 1) % kResolutions);
+        loaded.audioEditorSnap = ! editorSnap;
+        loaded.snapToGrid      = editorSnap;
+        REQUIRE (SessionSerializer::load (loaded, file));
+
+        REQUIRE (loaded.snapResolution == (SnapResolution) r);
+        REQUIRE (loaded.audioEditorSnap == editorSnap);
+        REQUIRE (loaded.snapToGrid == ! editorSnap);
     }
 }

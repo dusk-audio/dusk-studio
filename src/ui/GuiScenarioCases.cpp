@@ -13,8 +13,10 @@
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/cases/OopStubHarness.h"
 #include "../dsp/ChannelStrip.h"
+#include "../session/RegionEditActions.h"
 #include "../session/Session.h"
 #include "../session/SessionSerializer.h"
+#include "../session/SessionTemplates.h"
 
 #include <algorithm>
 #include <array>
@@ -22,6 +24,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -5971,6 +5974,123 @@ const ScenarioRegistrar unarmedRecord { Scenario {
     {}, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runUnarmedRecord (host, ctx); }
 } };
+// File > Optimize automation rewrites every lane, so it refuses while the
+// transport rolls or any track, aux lane or the master is in Read, Touch or
+// Write, and says so; once both are clear it thins the lanes and reports the
+// point counts.
+std::optional<ScenarioResult> runOptimizeAutomation (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& transport = ctx.engine().getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no open modal");
+
+    std::vector<AutomationLane*> lanes;
+    std::vector<std::atomic<int>*> modes;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        for (auto& lane : session.track (t).automationLanes) lanes.push_back (&lane);
+        modes.push_back (&session.track (t).automationMode);
+    }
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+    {
+        for (auto& lane : session.auxLane (a).params.automationLanes) lanes.push_back (&lane);
+        modes.push_back (&session.auxLane (a).params.automationMode);
+    }
+    for (auto& lane : session.master().automationLanes) lanes.push_back (&lane);
+    modes.push_back (&session.master().automationMode);
+
+    std::vector<std::vector<AutomationPoint>> savedLanes;
+    for (auto* lane : lanes) savedLanes.push_back (lane->pointsConst());
+    for (auto* mode : modes) ctx.keep (*mode);
+    ctx.cleanup ([&host, &transport, lanes, savedLanes, state = transport.getState(),
+                  position = transport.getPlayhead()]
+    {
+        drainModals (host);
+        transport.setPlayhead (position);
+        transport.setState (state);
+        for (std::size_t i = 0; i < lanes.size(); ++i) lanes[i]->publishPoints (savedLanes[i]);
+    });
+    for (auto* lane : lanes) lane->publishPoints ({});
+    for (auto* mode : modes) mode->store ((int) AutomationMode::Off, std::memory_order_release);
+
+    // A straight fader ramp: the three interior points lie on the chord.
+    auto& ramp = session.track (kStripIndex).automationLanes[(std::size_t) AutomationParam::FaderDb];
+    std::vector<AutomationPoint> seeded;
+    for (int i = 0; i < 5; ++i)
+        seeded.push_back ({ (std::int64_t) i * 12000, 0.2f + 0.1f * (float) i, 120.0f });
+    ramp.publishPoints (seeded);
+
+    auto& readMode  = session.track (5).automationMode;
+    auto& touchMode = session.auxLane (0).params.automationMode;
+    auto& writeMode = session.master().automationMode;
+    const std::string stopPlayback =
+        "Optimize automation\nStop playback before optimising automation. The optimiser rewrites "
+        "every lane's point data; running it while the audio thread may be reading the lanes is unsafe.";
+    const std::string setOff =
+        "Optimize automation\nSet every strip's automation mode to Off before optimising. The "
+        "optimiser rewrites lane data; doing it while a strip is in Read, Touch or Write can race the audio thread.";
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto attempt = [&host, &ctx, &ramp, steps] (const std::string& expected, std::size_t points,
+                                                      const std::string& how, std::function<void()> after)
+    {
+        steps->push_back ({ 300, [&host, &ctx, how]
+        {
+            ctx.expect (host.modalStackEmpty(), how + ": a modal was still open");
+            ctx.expect (host.clickFileMenu(), how + ": the File menu is unavailable");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, how]
+        {
+            ctx.expect (host.clickContextMenuItem ("Optimize automation..."),
+                        how + ": the File menu has no Optimize automation...");
+        } });
+        steps->push_back ({ 400, [&host, &ctx, &ramp, expected, points, how, after]
+        {
+            ctx.expect (host.modalText() == expected, how + ": the alert read '" + host.modalText() + "'");
+            ctx.expect (ramp.pointsConst().size() == points,
+                        how + ": the lane holds " + std::to_string (ramp.pointsConst().size()) + " points");
+            ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+            after();
+        } });
+    };
+
+    transport.setState (Transport::State::Playing);
+    attempt (stopPlayback, 5, "while playing", [&transport, &readMode]
+    {
+        transport.setState (Transport::State::Stopped);
+        readMode.store ((int) AutomationMode::Read, std::memory_order_release);
+    });
+    attempt (setOff, 5, "with a track in Read", [&readMode, &touchMode]
+    {
+        readMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        touchMode.store ((int) AutomationMode::Touch, std::memory_order_release);
+    });
+    attempt (setOff, 5, "with an aux lane in Touch", [&touchMode, &writeMode]
+    {
+        touchMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        writeMode.store ((int) AutomationMode::Write, std::memory_order_release);
+    });
+    attempt (setOff, 5, "with the master in Write", [&writeMode]
+    { writeMode.store ((int) AutomationMode::Off, std::memory_order_release); });
+    attempt ("Optimize automation\nThinned 5 automation points down to 2.", 2, "stopped with every strip Off",
+             [&ctx, &ramp, seeded]
+    {
+        const auto& kept = ramp.pointsConst();
+        ctx.expect (kept.size() == 2 && kept.front() == seeded.front() && kept.back() == seeded.back(),
+                    "thinning did not keep the ramp's endpoints");
+    });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.modalStackEmpty(), "the success alert did not close"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar optimizeAutomation { Scenario {
+    "gui.optimize_automation_refusals", { "gui", "automation" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runOptimizeAutomation (host, ctx); }
+} };
 std::optional<ScenarioResult> runPianoRollNoteKeys (GuiHost& host, ScenarioContext& ctx)
 {
     auto& track = ctx.session().track (0);
@@ -9659,6 +9779,1165 @@ const ScenarioRegistrar pluginKindMismatch { Scenario {
     "gui.plugin_kind_mismatch", { "gui", "plugins", "messages" }, Needs::Engine | Needs::Gui,
     { "panic_probe.vst3", "relayout.vst3" }, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPluginKindMismatch (host, ctx); }
+} };
+
+std::string commandChord (char letter)
+{
+   #if defined (__APPLE__)
+    return std::string ("command + ") + letter;
+   #else
+    return std::string ("ctrl + ") + letter;
+   #endif
+}
+
+// Replaces whatever the focused text field holds, a key at a time.
+void typeReplacing (GuiHost& host, const std::string& text)
+{
+    host.pressPeerKey (commandChord ('A'), 'a');
+    for (const char ch : text)
+        host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+}
+
+// NEW, a template, a fresh name typed into the browser and Save: the folder
+// gains a session.json holding that template's tracks, and the window opens it.
+std::optional<ScenarioResult> runStartupNewCreates (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.startupDialogOpen())
+        return ScenarioResult::skip ("requires a stopped transport and no dialog");
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    const auto originalDir = currentSessionDirectory (session);
+    ctx.cleanup ([&host, &session, restore, originalDir]
+    {
+        host.closeStartupDialog();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    // Clean, so the pick goes straight to the naming prompt.
+    const auto clean = ctx.tempDir() / "clean" / "session.json";
+    std::filesystem::create_directories (clean.parent_path());
+    if (! SessionSerializer::save (session, clean)) return ScenarioResult::fail ("could not save the clean session");
+    reopenSavedSession (host, clean);
+
+    static constexpr auto kTemplate = SessionTemplate::SingerSongwriter;
+    const auto templateIndex = std::to_string ((int) kTemplate);
+    std::shared_ptr<const Session> expected = []
+    {
+        auto stamped = std::make_shared<Session>();
+        applyTemplate (*stamped, kTemplate);
+        return stamped;
+    }();
+    const auto created = ctx.tempDir() / "Fresh Song";
+    const auto sessionJson = created / "session.json";
+    const auto matches = [&ctx, expected] (const Session& got, const std::string& what)
+    {
+        for (int i = 0; i < Session::kNumTracks; ++i)
+        {
+            const auto& want = expected->track (i);
+            const auto& track = got.track (i);
+            if (! ctx.expect (track.name == want.name && track.colour == want.colour
+                                  && track.mode.load() == want.mode.load(),
+                              what + ": track " + std::to_string (i + 1) + " is '" + track.name.toStdString()
+                                  + "' in mode " + std::to_string (track.mode.load()) + ", the template's is '"
+                                  + want.name.toStdString() + "' in mode " + std::to_string (want.mode.load())))
+                return;
+        }
+    };
+
+    host.closeStartupDialog();
+    if (! host.openStartupDialog ({}, true)) return ScenarioResult::fail ("the startup dialog did not open");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&host, &ctx]
+    { ctx.expect (host.clickStartupControl ("tab-new"), "the startup dialog did not show its NEW tab"); } });
+    steps->push_back ({ 300, [&host, &ctx, templateIndex]
+    {
+        ctx.expect (host.clickStartupControl ("template:" + templateIndex),
+                    "NEW did not list Singer-Songwriter as template " + templateIndex);
+    } });
+    steps->push_back ({ 700, [&host, &ctx, created]
+    {
+        if (! ctx.expect (host.modalText().rfind ("Name your new session", 0) == 0,
+                          "Singer-Songwriter showed '" + host.modalText() + "' rather than the naming prompt")
+            || ! ctx.expect (host.focusFileName(), "the naming prompt has no name field"))
+            return;
+        typeReplacing (host, created.string());
+        ctx.expect (host.clickModalButton ("Save"), "the naming prompt has no Save button");
+    } });
+    steps->push_back ({ 1500, [&host, &ctx, &session, matches, templateIndex, created, sessionJson]
+    {
+        ctx.expect (host.startupChoice() == "new:" + templateIndex,
+                    "the startup dialog recorded '" + host.startupChoice() + "' for the pick");
+        ctx.expect (! host.startupDialogOpen(),
+                    "the startup dialog came back rather than the new session opening; status '"
+                        + host.statusMessage() + "'");
+        ctx.expect (host.modalStackEmpty(), "creating the session left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == created,
+                    "the window has '" + currentSessionDirectory (session).string() + "' open, not the new session");
+        ctx.expect (host.statusMessage() == "New session: Fresh Song",
+                    "the status bar says '" + host.statusMessage() + "'");
+        auto written = std::make_unique<Session>();
+        if (ctx.expect (SessionSerializer::load (*written, sessionJson),
+                        "the new folder holds no loadable session.json"))
+            matches (*written, "the new session.json");
+        matches (session, "the opened session");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar startupNewCreates { Scenario {
+    "gui.startup_new_creates_session", { "gui", "startup" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStartupNewCreates (host, ctx); }
+} };
+
+// The Quick Guide's first take: with a track armed, R rolls and records, Space
+// stops, and the take lands as a region on that track's row of the tape strip.
+std::optional<ScenarioResult> runRecordKeyRegion (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (! engine.isAudioCallbackRegistered() || session.deviceCaptureChannels.load() <= 0)
+        return ScenarioResult::skip ("requires a running audio device with an input to record from");
+    const auto rate = engine.getCurrentSampleRate();
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a positive engine sample rate");
+    auto& track = session.track (0);
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Recording);
+    ctx.keep (track.mode);
+    ctx.keep (track.inputSource);
+    ctx.keep (session.countInEnabled);
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        const bool armed = session.track (index).recordArmed.load();
+        ctx.cleanup ([&session, index, armed] { session.setTrackArmed (index, armed); });
+        session.setTrackArmed (index, false);
+    }
+    const bool timeline = host.setTimelineShown (true);
+    ctx.cleanup ([&host, timeline] { host.setTimelineShown (timeline); });
+    auto regionsAtStart = std::make_shared<std::vector<std::decay_t<decltype (track.regions)>>>();
+    for (int index = 0; index < Session::kNumTracks; ++index)
+        regionsAtStart->push_back (session.track (index).regions);
+    ctx.cleanup ([&engine, &session, &transport, regionsAtStart, originalDir = currentSessionDirectory (session),
+                  loop = transport.isLoopEnabled(), punch = transport.isPunchEnabled(), at = transport.getPlayhead()]
+    {
+        engine.stop();
+        for (int index = 0; index < Session::kNumTracks; ++index)
+            session.track (index).regions = (*regionsAtStart)[(std::size_t) index];
+        engine.getPlaybackEngine().preparePlayback();
+        transport.setLoopEnabled (loop);
+        transport.setPunchEnabled (punch);
+        transport.setPlayhead (at);
+        engine.getUndoManager().clearUndoHistory();
+        applySessionDirectory (session, originalDir);
+    });
+
+    // The take is written under the session folder, so that is scratch space.
+    const auto takeDir = ctx.tempDir() / "Take session";
+    applySessionDirectory (session, takeDir);
+    engine.stop();
+    track.regions.clear();
+    engine.getPlaybackEngine().preparePlayback();
+    transport.setPlayhead (0);
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    session.countInEnabled.store (false);
+    track.mode.store ((int) Track::Mode::Mono);
+    track.inputSource.store (0);
+    session.setTrackArmed (0, true);
+    if (! track.recordArmed.load())
+        return ScenarioResult::fail ("track 1 would not arm on input 1");
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (keyCodeDescription ('r'), 'r'), "the window did not handle R"); } });
+    steps->push_back ({ 300, [&host, &ctx, &transport]
+    {
+        ctx.expect (transport.isRecording(),
+                    "R did not start recording the armed track"
+                        + (host.modalStackEmpty() ? std::string() : "; up: '" + host.modalText() + "'"));
+    } });
+    steps->push_back ({ 1500, [&host, &ctx, &transport, rate]
+    {
+        ctx.expect (transport.isRecording() && transport.getPlayhead() > (std::int64_t) (rate * 0.5),
+                    "the transport did not roll while recording; playhead at "
+                        + std::to_string (transport.getPlayhead()));
+        ctx.expect (host.pressPeerKey ("spacebar", ' '), "the window did not handle Space");
+    } });
+    runSteps (ctx, steps, [&host, &ctx, &session, &transport, &track, regionsAtStart, takeDir, rate]
+    {
+        ctx.waitUntil ([&transport, &track] { return transport.isStopped() && ! track.regions.empty(); }, 5000,
+            [&host, &ctx, &session, &track, regionsAtStart, takeDir, rate]
+            {
+                ctx.expect (track.regions.size() == 1,
+                            "the take left " + std::to_string (track.regions.size()) + " regions on track 1");
+                const auto& region = track.regions.front();
+                ctx.expect (region.lengthInSamples >= (std::int64_t) (rate * 0.5),
+                            "the take's region is only " + std::to_string (region.lengthInSamples) + " samples long");
+                const auto file = region.file.getFullPathName().toStdString();
+                ctx.expect (region.file.existsAsFile() && file.rfind (takeDir.string(), 0) == 0,
+                            "the take's file '" + file + "' is not in the session folder");
+                for (int index = 1; index < Session::kNumTracks; ++index)
+                    ctx.expect (session.track (index).regions.size() == (*regionsAtStart)[(std::size_t) index].size(),
+                                "unarmed track " + std::to_string (index + 1) + " gained a region");
+                ctx.expect (host.tapeRegionShown (0, 0), "the tape strip does not lay the take out on track 1's row");
+                ctx.complete (ctx.verdict());
+            }, "Space did not stop the transport with a region on track 1");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar recordKeyRegion { Scenario {
+    "gui.record_key_draws_region", { "gui", "recording", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRecordKeyRegion (host, ctx); }
+} };
+
+// Cmd+B opens the bounce browser in the session folder. Its default name
+// renders a stereo 24-bit WAV there at the session rate; a name ending in .mp3
+// renders an MP3.
+std::optional<ScenarioResult> runBounceKeyFormats (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto rate = engine.getCurrentSampleRate();
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        drainModals (host);
+        engine.setRenderOversamplingOverride (0);
+        engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    // An empty session, so each render is the tail alone.
+    const auto folder = ctx.tempDir() / "Bounce session";
+    std::filesystem::create_directories (folder);
+    if (! SessionSerializer::save (*std::make_unique<Session>(), folder / "session.json"))
+        return ScenarioResult::fail ("could not write the empty session");
+    reopenSavedSession (host, folder / "session.json");
+    if (currentSessionDirectory (session) != folder)
+        return ScenarioResult::fail ("could not open the empty session");
+
+    const auto wav = folder / "bounce.wav";
+   #if DUSKSTUDIO_HAS_LAME
+    const auto mp3 = folder / "Mix.mp3";
+   #else
+    // Without the encoder a typed .mp3 falls back to WAV.
+    const auto mp3 = folder / "Mix.wav";
+   #endif
+    const auto shortcut = [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (commandChord ('b'), 'b'), "the window did not handle Cmd+B"); };
+    // An empty name keeps the one the browser offers.
+    const auto name = [&host, &ctx] (const std::string& typed)
+    {
+        if (! ctx.expect (host.modalText().rfind ("Bounce master mix", 0) == 0,
+                          "Cmd+B showed '" + host.modalText() + "' rather than the bounce browser"))
+            return;
+        if (! typed.empty())
+        {
+            if (! ctx.expect (host.focusFileName(), "the bounce browser has no name field")) return;
+            typeReplacing (host, typed);
+        }
+        ctx.expect (host.clickModalButton ("Save"), "the bounce browser has no Save button");
+    };
+    const auto rendered = [&host, &ctx] (std::function<void()> then)
+    {
+        ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000, std::move (then),
+                       "the bounce did not finish with a Close button");
+    };
+
+    auto first = std::make_shared<std::vector<Step>>();
+    first->push_back ({ 300, shortcut });
+    first->push_back ({ 700, [name] { name (""); } });
+    runSteps (ctx, first, [&ctx, shortcut, name, rendered, wav, mp3, rate]
+    {
+        rendered ([&ctx, shortcut, name, rendered, wav, mp3, rate]
+        {
+            auto reader = dusk::audio::FileReader::open (wav);
+            if (ctx.expect (reader != nullptr, "the default bounce left no readable bounce.wav in the session folder"))
+            {
+                const auto& info = reader->info();
+                ctx.expect (info.numChannels == 2 && info.bitsPerSample == 24
+                                && std::abs (info.sampleRate - rate) < 0.5 && info.numFrames > 0,
+                            "bounce.wav is " + std::to_string (info.numChannels) + " channels of "
+                                + std::to_string (info.bitsPerSample) + "-bit at " + std::to_string (info.sampleRate)
+                                + " Hz, not stereo 24-bit at " + std::to_string (rate));
+            }
+            auto second = std::make_shared<std::vector<Step>>();
+            second->push_back ({ 400, shortcut });
+            second->push_back ({ 700, [name] { name ("Mix.mp3"); } });
+            runSteps (ctx, second, [&ctx, rendered, mp3]
+            {
+                rendered ([&ctx, mp3]
+                {
+                   #if DUSKSTUDIO_HAS_LAME
+                    std::ifstream in (mp3, std::ios::binary);
+                    unsigned char head[3] {};
+                    in.read (reinterpret_cast<char*> (head), 3);
+                    const bool id3 = in.gcount() == 3 && head[0] == 'I' && head[1] == 'D' && head[2] == '3';
+                    const bool frameSync = in.gcount() >= 2 && head[0] == 0xFF && (head[1] & 0xE0) == 0xE0;
+                    ctx.expect (id3 || frameSync, "Mix.mp3 is missing from the session folder or is not an MP3 stream");
+                    ctx.expect (! std::filesystem::exists (mp3.parent_path() / "Mix.wav"),
+                                "naming the bounce .mp3 also wrote a WAV");
+                   #else
+                    auto reader = dusk::audio::FileReader::open (mp3);
+                    ctx.expect (reader != nullptr && reader->info().bitsPerSample == 24,
+                                "a .mp3 name without the encoder did not fall back to a 24-bit Mix.wav");
+                   #endif
+                    ctx.complete (ctx.verdict());
+                });
+            });
+        });
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar bounceKeyFormats { Scenario {
+    "gui.bounce_key_format_by_extension", { "gui", "bounce", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBounceKeyFormats (host, ctx); }
+} };
+
+// File > Open..., browse to a session's folder and choose its session.json from
+// the list: that session loads.
+std::optional<ScenarioResult> runOpenSessionFolder (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    // Clean, so Open goes straight to the browser.
+    const auto clean = ctx.tempDir() / "clean" / "session.json";
+    std::filesystem::create_directories (clean.parent_path());
+    if (! SessionSerializer::save (session, clean)) return ScenarioResult::fail ("could not save the clean session");
+    reopenSavedSession (host, clean);
+
+    // Holds session.json alone, so the first row of its listing is that file.
+    const auto target = ctx.tempDir() / "Open Me";
+    std::filesystem::create_directories (target);
+    {
+        auto other = std::make_unique<Session>();
+        other->track (0).name = "Opened";
+        other->track (0).strip.faderDb.store (-13.0f);
+        if (! SessionSerializer::save (*other, target / "session.json"))
+            return ScenarioResult::fail ("could not write the session to open");
+    }
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Open..."), "the File menu has no Open..."); } });
+    steps->push_back ({ 700, [&host, &ctx, target]
+    {
+        if (! ctx.expect (host.modalText().rfind ("Open session.json", 0) == 0,
+                          "File > Open showed '" + host.modalText() + "' rather than its browser")
+            || ! ctx.expect (host.clickFileBrowserControl (true), "the Open browser has no path box"))
+            return;
+        typeReplacing (host, target.string());
+        ctx.expect (host.pressPeerKey ("Return", 0), "the path box did not take Return");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        ctx.expect (host.clickFileBrowserControl (false), "the Open browser has no file list");
+        host.pressPeerKey ("Home", 0);
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Open"), "the Open browser has no Open button"); } });
+    steps->push_back ({ 1000, [&host, &ctx, &session, target]
+    {
+        ctx.expect (host.modalStackEmpty(), "Open left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == target,
+                    "Open left '" + currentSessionDirectory (session).string() + "' open; status '"
+                        + host.statusMessage() + "'");
+        ctx.expect (session.track (0).name.toStdString() == "Opened" && nearly (session.track (0).strip.faderDb.load(), -13.0f),
+                    "the window does not hold the chosen session's track 1");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar openSessionFolder { Scenario {
+    "gui.open_session_folder", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runOpenSessionFolder (host, ctx); }
+} };
+
+// A session folder that cannot be written: Save, from the File menu and by
+// Cmd+S, raises "Save failed" as the manual quotes it, and the edited session
+// stays in memory while session.json on disk stays as it was.
+std::optional<ScenarioResult> runSaveFailedAlert (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto locked = ctx.tempDir() / "Locked session";
+    const auto sessionJson = locked / "session.json";
+    fs::create_directories (locked / "audio");
+    if (! SessionSerializer::save (session, sessionJson)) return ScenarioResult::fail ("could not save the session to lock");
+    reopenSavedSession (host, sessionJson);
+    if (currentSessionDirectory (session) != locked) return ScenarioResult::fail ("could not open the session to lock");
+    auto& fader = session.track (0).strip.faderDb;
+    const float onDisk = savedFaderOf (sessionJson);
+    const float edited = onDisk - 4.0f;
+    fader.store (edited);
+
+    std::error_code error;
+    fs::permissions (locked, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace, error);
+    ctx.cleanup ([locked]
+    {
+        std::error_code ignored;
+        std::filesystem::permissions (locked, std::filesystem::perms::owner_all,
+                                      std::filesystem::perm_options::replace, ignored);
+    });
+    {
+        const auto probe = locked / "probe";
+        std::ofstream out (probe);
+        if (error || out.is_open())
+        {
+            out.close();
+            std::error_code ignored;
+            fs::remove (probe, ignored);
+            return ScenarioResult::skip ("the session folder stays writable without write permission, as it does for root");
+        }
+    }
+
+    const auto alerted = [&host, &ctx] (const std::string& how)
+    {
+        const auto text = host.modalText();
+        ctx.expect (text.rfind ("Save failed\nDusk Studio could not write the session file:", 0) == 0,
+                    how + " showed '" + text + "' rather than the Save failed alert");
+        ctx.expect (text.find ("Locked session") != std::string::npos && text.find ("session.json") != std::string::npos,
+                    how + ": the alert does not name the session file");
+        ctx.expect (text.find ("Common causes: disk full, missing write permission, or the parent folder was moved "
+                               "since the session was opened. The session is unchanged in memory; try Save As to a "
+                               "different location.") != std::string::npos,
+                    how + ": the alert does not give the manual's causes and advice");
+        ctx.expect (host.statusMessage() == "Save failed: Locked session",
+                    how + " left the status '" + host.statusMessage() + "'");
+        ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+    };
+    const auto kept = [&host, &ctx, &session, &fader, locked, sessionJson, onDisk, edited] (const std::string& how)
+    {
+        ctx.expect (host.modalStackEmpty(), how + ": OK left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == locked && nearly (fader.load(), edited),
+                    how + " did not keep the edited session in memory");
+        ctx.expect (nearly (savedFaderOf (sessionJson), onDisk), how + " changed session.json on disk");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save"), "the File menu has no Save"); } });
+    steps->push_back ({ 800, [alerted] { alerted ("File > Save"); } });
+    steps->push_back ({ 400, [&host, &ctx, kept]
+    {
+        kept ("File > Save");
+        ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
+    } });
+    steps->push_back ({ 800, [alerted] { alerted ("Cmd+S"); } });
+    steps->push_back ({ 400, [kept] { kept ("Cmd+S"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar saveFailedAlert { Scenario {
+    "gui.save_failed_alert", { "gui", "session", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSaveFailedAlert (host, ctx); }
+} };
+
+bool writeBytes (const std::filesystem::path& path, std::size_t size, char fill)
+{
+    std::ofstream out (path, std::ios::binary);
+    const std::string bytes (size, fill);
+    out.write (bytes.data(), (std::streamsize) bytes.size());
+    return static_cast<bool> (out);
+}
+
+std::string joinedLines (const std::vector<std::string>& lines)
+{
+    std::string text;
+    for (const auto& line : lines) text += (text.empty() ? "" : " | ") + line;
+    return text;
+}
+
+// A folder the case may lock: false when locking it leaves it listable, as it
+// does for root.
+bool permissionsBite (const std::filesystem::path& probe)
+{
+    namespace fs = std::filesystem;
+    std::error_code error;
+    fs::create_directories (probe, error);
+    fs::permissions (probe, fs::perms::none, fs::perm_options::replace, error);
+    std::error_code listing;
+    fs::directory_iterator it (probe, listing);
+    fs::permissions (probe, fs::perms::owner_all, fs::perm_options::replace, error);
+    return ! error && static_cast<bool> (listing);
+}
+
+// File > Clean out unreferenced files... in each state the manual lists: no
+// audio folder, one it cannot read, nothing to clean, and stray takes. Cancel
+// keeps the strays; Delete removes only the unreferenced .wav files in the
+// audio folder and clears the undo history.
+std::optional<ScenarioResult> runCleanOutAlerts (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto rate = engine.getCurrentSampleRate();
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    const auto folder = ctx.tempDir() / "Clean session";
+    const auto audio = folder / "audio";
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore, audio]
+    {
+        std::error_code ignored;
+        std::filesystem::permissions (audio, std::filesystem::perms::owner_all,
+                                      std::filesystem::perm_options::replace, ignored);
+        drainModals (host);
+        engine.getUndoManager().clearUndoHistory();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    fs::create_directories (folder);
+    if (! SessionSerializer::save (*std::make_unique<Session>(), folder / "session.json"))
+        return ScenarioResult::fail ("could not write the empty session");
+    reopenSavedSession (host, folder / "session.json");
+    if (currentSessionDirectory (session) != folder) return ScenarioResult::fail ("could not open the empty session");
+    const bool canLock = permissionsBite (ctx.tempDir() / "probe");
+    if (! canLock) ctx.note ("an unreadable folder stays listable here, as it does for root; that leg is skipped");
+
+    const auto take = audio / "Take.wav";
+    const std::vector<fs::path> strays { audio / "Stray 1.wav", audio / "Stray 2.wav" };
+    const std::vector<fs::path> kept { take, audio / "Notes.txt", audio / "Freeze" / "Frozen.wav" };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto choose = [&host, &ctx, steps] (const std::string& how, std::function<void()> before)
+    {
+        steps->push_back ({ 300, [&host, &ctx, how, before]
+        {
+            if (before) before();
+            ctx.expect (host.modalStackEmpty(), how + ": a modal was still open");
+            ctx.expect (host.clickFileMenu(), how + ": the File menu is unavailable");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, how]
+        {
+            ctx.expect (host.clickContextMenuItem ("Clean out unreferenced files..."),
+                        how + ": the File menu has no Clean out unreferenced files...");
+        } });
+    };
+    const auto alerted = [&host, &ctx, steps] (const std::string& how, const std::string& body)
+    {
+        steps->push_back ({ 400, [&host, &ctx, how, body]
+        {
+            ctx.expect (host.modalText() == "Clean out\n" + body, how + ": the alert read '" + host.modalText() + "'");
+            ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+        } });
+    };
+
+    choose ("with no audio folder", [audio]
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all (audio, ignored);
+    });
+    alerted ("with no audio folder", "This session has no audio directory yet, so there's nothing to clean.");
+    if (canLock)
+    {
+        choose ("with an unreadable audio folder", [audio]
+        {
+            std::error_code ignored;
+            std::filesystem::create_directories (audio, ignored);
+            std::filesystem::permissions (audio, std::filesystem::perms::none,
+                                          std::filesystem::perm_options::replace, ignored);
+        });
+        alerted ("with an unreadable audio folder",
+                 "Could not read this session's audio directory, so there is no telling what is unreferenced. "
+                 "Check the folder's permissions and that its drive is still connected, then try again.");
+    }
+    choose ("with nothing to clean", [&ctx, &session, audio, take, rate]
+    {
+        std::error_code ignored;
+        std::filesystem::permissions (audio, std::filesystem::perms::owner_all,
+                                      std::filesystem::perm_options::replace, ignored);
+        std::filesystem::create_directories (audio / "Freeze", ignored);
+        ctx.expect (writeRampFixture (take, rate, (std::int64_t) (rate / 2.0))
+                        && writeBytes (audio / "Notes.txt", 64, 'n')
+                        && writeBytes (audio / "Freeze" / "Frozen.wav", 4096, 'f'),
+                    "could not write the audio folder's files");
+        AudioRegion region;
+        region.lengthInSamples = (std::int64_t) (rate / 2.0);
+        region.file = decltype (region.file) (take.u8string().c_str());
+        session.track (0).regions = { region };
+    });
+    alerted ("with nothing to clean", "No unreferenced files found. The audio directory is already clean.");
+
+    const std::string confirm =
+        "Found 2 unreferenced .wav file(s) totalling 1.5 MB.\n\nThese were created by past record passes that no "
+        "longer have any region or take pointing at them. Deleting cannot be undone, and the session's undo "
+        "history will be cleared (undone edits may still reference these files).";
+    const auto confirmed = [&host, &ctx, steps, confirm] (const std::string& how, const std::string& button)
+    {
+        steps->push_back ({ 400, [&host, &ctx, confirm, how, button]
+        {
+            const auto text = host.confirmationText();
+            ctx.expect (text == std::vector<std::string> { "Clean out unreferenced files", confirm },
+                        how + ": the confirmation read '" + joinedLines (text) + "'");
+            ctx.expect (host.clickModalButton (button), how + ": the confirmation has no " + button + " button");
+        } });
+    };
+    const auto allExist = [] (const std::vector<fs::path>& files)
+    {
+        return std::all_of (files.begin(), files.end(), [] (const fs::path& file) { return fs::exists (file); });
+    };
+    choose ("with stray takes", [&ctx, &engine, &session, strays]
+    {
+        for (const auto& stray : strays)
+            ctx.expect (writeBytes (stray, 786432, 's'), "could not write " + stray.filename().string());
+        if (! ctx.expect (session.track (0).regions.size() == 1, "the take's region is missing")) return;
+        const auto before = session.track (0).regions.front();
+        auto after = before;
+        after.gainDb = -1.0f;
+        engine.getUndoManager().perform (new RegionEditAction (session, engine, 0, 0, before, after));
+        ctx.expect (engine.getUndoManager().canUndo(), "the region edit left nothing to undo");
+    });
+    confirmed ("Cancel", "Cancel");
+    steps->push_back ({ 300, [&host, &ctx, &engine, strays, kept, allExist]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (allExist (strays) && allExist (kept), "Cancel deleted a file");
+        ctx.expect (engine.getUndoManager().canUndo(), "Cancel cleared the undo history");
+    } });
+    choose ("Delete", {});
+    confirmed ("Delete", "Delete");
+    steps->push_back ({ 400, [&host, &ctx, &engine, &session, strays, kept, allExist, take]
+    {
+        ctx.expect (host.modalStackEmpty(), "Delete left '" + host.modalText() + "' up");
+        for (const auto& stray : strays)
+            ctx.expect (! fs::exists (stray), "Delete kept the unreferenced " + stray.filename().string());
+        ctx.expect (allExist (kept), "Delete removed the referenced take, a non-WAV file or a file in a subfolder");
+        ctx.expect (session.track (0).regions.size() == 1
+                        && fs::u8path (session.track (0).regions.front().file.getFullPathName().toStdString()) == take,
+                    "Delete changed the region that points at the take");
+        ctx.expect (! engine.getUndoManager().canUndo(), "Delete left the undo history in place");
+        ctx.expect (host.statusMessage() == "Deleted 2 unreferenced file(s).",
+                    "the status bar says '" + host.statusMessage() + "'");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar cleanOutAlerts { Scenario {
+    "gui.clean_out_alerts", { "gui", "session", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runCleanOutAlerts (host, ctx); }
+} };
+
+// File > Import Audio or MIDI... refuses while playback runs, and names each
+// file it cannot use: bytes that are not audio, a file it may not read, and a
+// WAV that opens but holds no audio.
+std::optional<ScenarioResult> runImportRefusals (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto rate = engine.getCurrentSampleRate();
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    const auto locked = ctx.tempDir() / "Unreadable" / "Locked.wav";
+    ctx.cleanup ([&host, &session, &transport, originalDir, restore, locked, state = transport.getState(),
+                  position = transport.getPlayhead()]
+    {
+        std::error_code ignored;
+        std::filesystem::permissions (locked, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                      std::filesystem::perm_options::replace, ignored);
+        drainModals (host);
+        transport.setState (state);
+        transport.setPlayhead (position);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto folder = ctx.tempDir() / "Import session";
+    fs::create_directories (folder);
+    if (! SessionSerializer::save (*std::make_unique<Session>(), folder / "session.json"))
+        return ScenarioResult::fail ("could not write the empty session");
+    reopenSavedSession (host, folder / "session.json");
+    if (currentSessionDirectory (session) != folder) return ScenarioResult::fail ("could not open the empty session");
+
+    // One file to a folder, so the browser's first row is the file.
+    const auto garbage = ctx.tempDir() / "Garbage" / "Garbage.wav";
+    const auto empty = ctx.tempDir() / "Empty" / "Empty.wav";
+    for (const auto& file : { garbage, locked, empty }) fs::create_directories (file.parent_path());
+    if (! writeBytes (garbage, 4096, 'g') || ! writeRampFixture (locked, rate, 4800))
+        return ScenarioResult::fail ("could not write the import fixtures");
+    if (dusk::audio::FileReader::open (garbage) != nullptr)
+        return ScenarioResult::fail ("the garbage fixture opens as audio");
+    if (dusk::audio::FileWriter::create (empty, { rate, 1, 24 }) == nullptr)
+        return ScenarioResult::fail ("could not write the empty WAV");
+    {
+        auto reader = dusk::audio::FileReader::open (empty);
+        if (reader == nullptr || reader->info().numFrames != 0)
+            return ScenarioResult::fail ("the empty WAV fixture does not open as a stream with no frames");
+    }
+    std::error_code error;
+    fs::permissions (locked, fs::perms::none, fs::perm_options::replace, error);
+    const bool canLock = ! error && ! std::ifstream (locked).is_open();
+    if (! canLock) ctx.note ("an unreadable file stays readable here, as it does for root; that leg is skipped");
+
+    const auto regionCount = [&session]
+    {
+        std::size_t count = 0;
+        for (int index = 0; index < Session::kNumTracks; ++index)
+            count += session.track (index).regions.size() + session.track (index).midiRegions.current().size();
+        return count;
+    };
+    const auto audioFolderEmpty = [folder]
+    {
+        std::error_code ignored;
+        return fs::is_empty (folder / "audio", ignored);
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto openImport = [&host, &ctx, steps] (const std::string& how)
+    {
+        steps->push_back ({ 300, [&host, &ctx, how]
+        {
+            ctx.expect (host.modalStackEmpty(), how + ": a modal was still open");
+            ctx.expect (host.clickFileMenu(), how + ": the File menu is unavailable");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, how]
+        {
+            ctx.expect (host.clickContextMenuItem ("Import Audio or MIDI..."),
+                        how + ": the File menu has no Import Audio or MIDI...");
+        } });
+    };
+    const auto pick = [&host, &ctx, steps, openImport] (const std::string& how, const fs::path& file)
+    {
+        openImport (how);
+        steps->push_back ({ 700, [&host, &ctx, how, file]
+        {
+            if (! ctx.expect (host.modalText().rfind ("Import audio or MIDI file(s)", 0) == 0,
+                              how + ": Import showed '" + host.modalText() + "' rather than its browser")
+                || ! ctx.expect (host.clickFileBrowserControl (true), how + ": the Import browser has no path box"))
+                return;
+            typeReplacing (host, file.parent_path().string());
+            ctx.expect (host.pressPeerKey ("Return", 0), how + ": the path box did not take Return");
+        } });
+        steps->push_back ({ 700, [&host, &ctx, how]
+        {
+            ctx.expect (host.clickFileBrowserControl (false), how + ": the Import browser has no file list");
+            host.pressPeerKey ("Home", 0);
+        } });
+        steps->push_back ({ 200, [&host, &ctx, how]
+        { ctx.expect (host.clickModalButton ("Open"), how + ": the Import browser has no Open button"); } });
+    };
+    const auto alerted = [&host, &ctx, steps, regionCount, audioFolderEmpty] (const std::string& how,
+                                                                              const std::string& expected)
+    {
+        steps->push_back ({ 700, [&host, &ctx, how, expected, regionCount, audioFolderEmpty]
+        {
+            ctx.expect (host.modalText() == expected, how + ": the alert read '" + host.modalText() + "'");
+            ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+            ctx.expect (regionCount() == 0 && audioFolderEmpty(), how + " imported something");
+        } });
+    };
+
+    steps->push_back ({ 200, [&transport] { transport.setState (Transport::State::Playing); } });
+    openImport ("while playing");
+    alerted ("while playing", "Import\nStop playback before importing files.");
+    steps->push_back ({ 100, [&transport]
+    {
+        transport.setState (Transport::State::Stopped);
+        transport.setPlayhead (0);
+    } });
+    pick ("bytes that are not audio", garbage);
+    alerted ("bytes that are not audio", "Import audio\nUnsupported or unreadable audio file: Garbage.wav");
+    if (canLock)
+    {
+        pick ("a file it may not read", locked);
+        alerted ("a file it may not read", "Import audio\nUnsupported or unreadable audio file: Locked.wav");
+    }
+    pick ("a WAV with no audio", empty);
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        ctx.expect (host.clickModalButton ("Import"),
+                    "a WAV with no audio: '" + host.modalText() + "' rather than the target picker's Import");
+    } });
+    alerted ("a WAV with no audio", "Import audio failed\nAudio file reports an empty or invalid stream");
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar importRefusals { Scenario {
+    "gui.import_refusals", { "gui", "import", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runImportRefusals (host, ctx); }
+} };
+
+// Typing a new BPM with a tempo-locked MIDI region in the session asks first,
+// in the manual's words. Cancel leaves everything where it was; Apply retimes
+// the MIDI region and leaves the audio region and the marker where they were.
+std::optional<ScenarioResult> runTempoChangeConfirmation (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto rate = engine.getCurrentSampleRate();
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore, points = session.tempoMap.points(),
+                  bpm = session.tempoBpm.load()]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        session.tempoBpm.store (bpm);
+        engine.setTempoPoints (points);
+        engine.getUndoManager().clearUndoHistory();
+    });
+    const auto folder = ctx.tempDir() / "Tempo session";
+    std::filesystem::create_directories (folder);
+    if (! SessionSerializer::save (*std::make_unique<Session>(), folder / "session.json"))
+        return ScenarioResult::fail ("could not write the empty session");
+    reopenSavedSession (host, folder / "session.json");
+    if (currentSessionDirectory (session) != folder) return ScenarioResult::fail ("could not open the empty session");
+    host.switchToStage (GuiHost::Stage::Recording);
+    engine.setTempoPoints ({});
+    session.tempoBpm.store (120.0f);
+
+    const auto second = (std::int64_t) std::llround (rate);
+    MidiRegion midi;
+    midi.timelineStart = second * 2;
+    midi.lengthInTicks = 4 * kMidiTicksPerQuarter;
+    midi.lengthInSamples = ticksToSamples (midi.lengthInTicks, rate, 120.0f);
+    midi.tempoLock = true;
+    midi.recordedAtBPM = 120.0;
+    midi.notes = { { 1, 60, 100, 0, kMidiTicksPerQuarter } };
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { midi }));
+    const auto source = folder / "audio" / "Ramp.wav";
+    if (! writeRampFixture (source, rate, second)) return ScenarioResult::fail ("could not write the audio fixture");
+    AudioRegion audio;
+    audio.timelineStart = second * 3;
+    audio.lengthInSamples = second;
+    audio.file = decltype (audio.file) (source.u8string().c_str());
+    session.track (1).regions = { audio };
+    const auto markerAt = second * 5;
+    session.getMarkers().clear();
+    session.getMarkers().push_back ({ "Verse", markerAt, {} });
+
+    const auto placed = [&ctx, &session, audio, markerAt] (const std::string& how, std::int64_t midiStart,
+                                                           std::int64_t midiLength)
+    {
+        const auto& regions = session.track (0).midiRegions.current();
+        ctx.expect (regions.size() == 1 && regions.front().timelineStart == midiStart
+                        && regions.front().lengthInSamples == midiLength,
+                    how + ": the MIDI region sits at " + (regions.empty() ? std::string ("nothing")
+                        : std::to_string (regions.front().timelineStart) + " for "
+                              + std::to_string (regions.front().lengthInSamples))
+                        + ", not " + std::to_string (midiStart) + " for " + std::to_string (midiLength));
+        const auto& tape = session.track (1).regions;
+        ctx.expect (tape.size() == 1 && tape.front().timelineStart == audio.timelineStart
+                        && tape.front().lengthInSamples == audio.lengthInSamples,
+                    how + ": the audio region moved");
+        const auto& markers = session.getMarkers();
+        ctx.expect (markers.size() == 1 && markers.front().timelineSamples == markerAt, how + ": the marker moved");
+    };
+    const std::string body = "Change tempo from 120 to 100 BPM?\n\n"
+                             "    1 tempo-locked MIDI region will retime to keep musical position.\n"
+                             "\nAudio regions and markers are NOT retimed.";
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto enter = [&host, &ctx, &session, steps, body, placed, midi] (const std::string& how)
+    {
+        steps->push_back ({ 300, [&host, &ctx, how]
+        { ctx.expect (host.doubleClickTempo(), how + ": the BPM readout was unavailable for double-click"); } });
+        steps->push_back ({ 300, [&host, &ctx, how]
+        {
+            if (! ctx.expect (host.focusModalTextInput(), how + ": double-clicking BPM did not open a text input"))
+                return;
+            typeReplacing (host, "100");
+            ctx.expect (host.pressPeerKey ("return"), how + ": the tempo input did not accept Return");
+        } });
+        steps->push_back ({ 400, [&host, &ctx, &session, how, body, placed, midi]
+        {
+            const auto text = host.confirmationText();
+            ctx.expect (text == std::vector<std::string> { "Confirm tempo change", body },
+                        how + ": the confirmation read '" + joinedLines (text) + "'");
+            ctx.expect (std::abs (session.tempoBpm.load() - 120.0f) < 0.001f, how + ": the tempo changed before the answer");
+            placed (how + " before the answer", midi.timelineStart, midi.lengthInSamples);
+            ctx.expect (host.clickModalButton (how), how + ": the confirmation has no " + how + " button");
+        } });
+    };
+    enter ("Cancel");
+    steps->push_back ({ 300, [&host, &ctx, &session, placed, midi]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (std::abs (session.tempoBpm.load() - 120.0f) < 0.001f, "Cancel changed the tempo");
+        placed ("Cancel", midi.timelineStart, midi.lengthInSamples);
+    } });
+    enter ("Apply");
+    steps->push_back ({ 300, [&host, &ctx, &session, placed, midi, rate]
+    {
+        ctx.expect (host.modalStackEmpty(), "Apply left '" + host.modalText() + "' up");
+        ctx.expect (std::abs (session.tempoBpm.load() - 100.0f) < 0.001f,
+                    "Apply left the tempo at " + std::to_string (session.tempoBpm.load()));
+        placed ("Apply", std::llround ((double) midi.timelineStart * 1.2),
+                ticksToSamples (midi.lengthInTicks, rate, 100.0f));
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar tempoChangeConfirmation { Scenario {
+    "gui.tempo_change_confirmation", { "gui", "transport", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTempoChangeConfirmation (host, ctx); }
+} };
+
+// A send knob runs OFF, then -59.9 to +6 dB, and reads OFF at the bottom of
+// its travel rather than an audible level; a send is post-fader until its
+// knob's right-click menu makes it pre, which the level text under the knob
+// then says; and the compact strip's AUX light mutes all four sends and gives
+// each its level back.
+std::optional<ScenarioResult> runAuxSendKnobs (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr auto kSends = ChannelStripParams::kNumAuxSends;
+    auto& strip = ctx.session().track (kStripIndex).strip;
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
+    // The right-click selects the track and focuses its strip.
+    ctx.cleanup (host.preserveKeyboardFocus());
+    for (int send = 0; send < kSends; ++send)
+    {
+        ctx.keep (strip.auxSendDb[(std::size_t) send]);
+        ctx.keep (strip.auxSendPreFader[(std::size_t) send]);
+    }
+    ctx.keep (strip.auxSendsBypassed);
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    const bool compact = host.setStripCompact (kStripIndex, false);
+    ctx.cleanup ([&host, compact]
+    {
+        drainModals (host);
+        host.setStripCompact (kStripIndex, compact);
+    });
+    strip.auxSendsBypassed.store (false);
+    for (int send = 0; send < kSends; ++send) strip.auxSendPreFader[(std::size_t) send].store (false);
+    const auto title = [] (int send) { return "Track 1 aux " + std::to_string (send + 1) + " send"; };
+    const std::string minus = "\xe2\x88\x92";
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    struct Turn { const char* input; float stored; const char* spoken; std::string shown; };
+    // Starts off the bottom so the move down to it changes the knob.
+    const std::vector<Turn> turns {
+        { "-12", -12.0f, "-12.0 dB", "-12" },
+        { "-80", ChannelStripParams::kAuxSendOffDb, "OFF", minus },
+        { "-59.9", -59.9f, "-59.9 dB", "-60" },
+        { "OFF", ChannelStripParams::kAuxSendOffDb, "OFF", minus },
+        { "10", ChannelStripParams::kAuxSendMaxDb, "6.0 dB", "6.0" },
+        { "-12", -12.0f, "-12.0 dB", "-12" }
+    };
+    for (const auto& turn : turns)
+    {
+        steps->push_back ({ 150, [&host, &ctx, title, turn]
+        {
+            ctx.expect (host.setAccessibleValue (title (0), turn.input),
+                        "the aux 1 send knob took no accessible value");
+        } });
+        steps->push_back ({ 150, [&host, &ctx, &strip, title, turn]
+        {
+            const auto label = std::string ("aux 1 set to ") + turn.input;
+            std::string spoken, help;
+            ctx.expect (std::abs (strip.auxSendDb[0].load() - turn.stored) < 0.01f,
+                        label + " stored " + std::to_string (strip.auxSendDb[0].load()));
+            ctx.expect (host.accessibleControl (title (0), spoken, help) && spoken == turn.spoken,
+                        label + ": the knob reads '" + spoken + "', not '" + turn.spoken + "'");
+            ctx.expect (host.stripSendLabel (kStripIndex, 0) == turn.shown,
+                        label + ": the strip shows '" + host.stripSendLabel (kStripIndex, 0) + "', not '" + turn.shown + "'");
+        } });
+    }
+    for (const bool pre : { true, false })
+    {
+        const std::string item = pre ? "Switch to PRE-fader" : "Switch to POST-fader";
+        steps->push_back ({ 200, [&host, &ctx, title, item]
+        { ctx.expect (host.clickTitledControl (title (0), true), item + ": the aux 1 send knob is not on screen"); } });
+        steps->push_back ({ 300, [&host, &ctx, item]
+        {
+            const auto items = host.contextMenuItems();
+            ctx.expect (std::find (items.begin(), items.end(), "Track 1 AUX 1 send") != items.end(),
+                        item + ": the right-click menu reads '" + joinedLines (items) + "'");
+            ctx.expect (host.clickContextMenuItem (item), "the right-click menu has no " + item);
+        } });
+        steps->push_back ({ 300, [&host, &ctx, &strip, pre, item]
+        {
+            ctx.expect (host.modalStackEmpty(), item + " left '" + host.modalText() + "' up");
+            ctx.expect (strip.auxSendPreFader[0].load() == pre, item + " did not flip aux 1");
+            for (int send = 1; send < kSends; ++send)
+                ctx.expect (! strip.auxSendPreFader[(std::size_t) send].load(), item + " flipped another send");
+            ctx.expect (std::abs (strip.auxSendDb[0].load() + 12.0f) < 0.01f, item + " changed the level");
+            const std::string shown = pre ? "-12 PRE" : "-12";
+            ctx.expect (host.stripSendLabel (kStripIndex, 0) == shown,
+                        item + ": the strip shows '" + host.stripSendLabel (kStripIndex, 0) + "', not '" + shown + "'");
+        } });
+    }
+
+    const std::array<const char*, kSends> levels { "-3", "-6", "-9", "-12" };
+    steps->push_back ({ 150, [&host, &ctx, title, levels]
+    {
+        for (int send = 0; send < kSends; ++send)
+            ctx.expect (host.setAccessibleValue (title (send), levels[(std::size_t) send]),
+                        "the aux " + std::to_string (send + 1) + " send knob took no accessible value");
+        host.setStripCompact (kStripIndex, true);
+    } });
+    const auto levelsKept = [&ctx, &strip] (const std::string& how)
+    {
+        for (int send = 0; send < kSends; ++send)
+            ctx.expect (std::abs (strip.auxSendDb[(std::size_t) send].load() + 3.0f * (float) (send + 1)) < 0.01f,
+                        how + " changed the aux " + std::to_string (send + 1) + " send level");
+    };
+    for (const bool bypassed : { true, false })
+    {
+        steps->push_back ({ 300, [&host, &ctx]
+        {
+            ctx.expect (host.stripCompact (kStripIndex), "the strip did not go compact");
+            ctx.expect (host.clickStripModule (kStripIndex, 2, false, false), "the compact AUX light is not on screen");
+        } });
+        steps->push_back ({ 200, [&ctx, &strip, levelsKept, bypassed]
+        {
+            const std::string how = bypassed ? "the compact AUX light" : "the second click on the compact AUX light";
+            ctx.expect (strip.auxSendsBypassed.load() == bypassed,
+                        how + (bypassed ? " did not mute the sends" : " did not bring the sends back"));
+            levelsKept (how);
+        } });
+    }
+    steps->push_back ({ 100, [&host] { host.setStripCompact (kStripIndex, false); } });
+    steps->push_back ({ 300, [&host, &ctx, title]
+    {
+        const std::array<const char*, kSends> shown { "-3.0", "-6.0", "-9.0", "-12" };
+        for (int send = 0; send < kSends; ++send)
+        {
+            std::string spoken, help;
+            const auto name = "aux " + std::to_string (send + 1);
+            ctx.expect (host.accessibleControl (title (send), spoken, help)
+                            && std::abs (std::strtof (spoken.c_str(), nullptr) + 3.0f * (float) (send + 1)) < 0.01f,
+                        name + ": the knob reads '" + spoken + "' after the bypass");
+            ctx.expect (host.stripSendLabel (kStripIndex, send) == shown[(std::size_t) send],
+                        name + ": the strip shows '" + host.stripSendLabel (kStripIndex, send) + "' after the bypass");
+        }
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar auxSendKnobs { Scenario {
+    "gui.aux_send_knobs", { "gui", "strip", "aux" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAuxSendKnobs (host, ctx); }
+} };
+
+// Settings > Quickstart is offered when the quickstart document sits where the
+// packages put it around the executable, and greyed out as "Quickstart  (not
+// installed)" when it does not. Choosing it hands the file to the desktop,
+// which a run under test must not do, so the case stops at the menu.
+std::optional<ScenarioResult> runQuickstartEntry (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
+    ctx.cleanup ([&host] { drainModals (host); });
+    const auto exeDir = host.executableDirectory();
+    if (exeDir.empty()) return ScenarioResult::skip ("the platform does not say where the executable is");
+    const std::vector<fs::path> roots {
+        exeDir.parent_path(), exeDir, exeDir.parent_path() / "Resources",
+        exeDir.parent_path().parent_path().parent_path()
+    };
+    const auto document = host.quickstartDocument();
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickMenuBar ("Settings"), "the Settings menu is unavailable"); } });
+    steps->push_back ({ 300, [&host, &ctx, roots, document]
+    {
+        const auto items = host.contextMenuItems();
+        const auto has = [&items] (const char* text) { return std::find (items.begin(), items.end(), text) != items.end(); };
+        if (! document.empty())
+        {
+            ctx.expect (has ("Quickstart") && ! has ("Quickstart  (not installed)"),
+                        "the Settings menu reads '" + joinedLines (items) + "' with a quickstart installed");
+            ctx.expect (host.contextMenuItemEnabled ("Quickstart"), "Quickstart is greyed out with the document installed");
+            const auto name = document.filename().string();
+            const auto root = document.parent_path().lexically_normal();
+            ctx.expect (fs::is_regular_file (document) && (name == "QUICKSTART.md" || name == "QUICKSTART.txt")
+                            && std::any_of (roots.begin(), roots.end(),
+                                            [&root] (const fs::path& at) { return at.lexically_normal() == root; }),
+                        "Quickstart would open '" + document.string() + "', which is not the shipped document");
+            ctx.note ("Quickstart would open " + document.string());
+        }
+        else
+        {
+            ctx.expect (has ("Quickstart  (not installed)") && ! has ("Quickstart"),
+                        "the Settings menu reads '" + joinedLines (items) + "' with no quickstart installed");
+            ctx.expect (! host.contextMenuItemEnabled ("Quickstart  (not installed)"),
+                        "Quickstart is offered with no document installed");
+            for (const auto& at : roots)
+                ctx.expect (! fs::is_regular_file (at / "QUICKSTART.md"),
+                            "the entry is greyed out though " + (at / "QUICKSTART.md").string() + " is installed");
+            ctx.note ("no quickstart beside this build; the entry is greyed out");
+        }
+        drainModals (host);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar quickstartEntry { Scenario {
+    "gui.settings_quickstart_entry", { "gui", "settings" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runQuickstartEntry (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario

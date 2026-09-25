@@ -11,6 +11,9 @@
 
 #include <juce_core/juce_core.h>
 
+#include <cmath>
+#include <string>
+
 using duskstudio::BounceEngine;
 
 TEST_CASE ("stemOutputFile builds <dir>/<base>_<NN>_<safe>.wav", "[bounce][stems]")
@@ -85,5 +88,35 @@ TEST_CASE ("namedStemOutputFile builds <dir>/<base>_<tag>_<safe>.wav", "[bounce]
                   == "mix_aux2.wav");
         REQUIRE (BounceEngine::namedStemOutputFile (base, "bus4", "   ").getFileName()
                   == "mix_bus4.wav");
+    }
+}
+
+// MANUAL "Exporting the master": the three presets the mastering stage's
+// Export menu offers, and what each hands the render.
+TEST_CASE ("masterExportPreset maps each mastering export preset to its render settings", "[bounce][mastering]")
+{
+    SECTION ("1: WAV 24-bit at the session rate")
+    {
+        const auto p = BounceEngine::masterExportPreset (1);
+        CHECK (p.format == BounceEngine::Format::Wav);
+        CHECK_FALSE (p.sampleRate > 0.0);
+        CHECK (p.wavBitDepth == 24);
+        CHECK (std::string (p.extension) == "wav");
+    }
+    SECTION ("2: WAV 16-bit at 44.1 kHz, the dithered CD preset")
+    {
+        const auto p = BounceEngine::masterExportPreset (2);
+        CHECK (p.format == BounceEngine::Format::Wav);
+        CHECK (std::lround (p.sampleRate) == 44100);
+        CHECK (p.wavBitDepth == 16);
+        CHECK (std::string (p.extension) == "wav");
+    }
+    SECTION ("3: MP3 at 320 kbps and the session rate")
+    {
+        const auto p = BounceEngine::masterExportPreset (3);
+        CHECK (p.format == BounceEngine::Format::Mp3);
+        CHECK (p.mp3Kbps == 320);
+        CHECK_FALSE (p.sampleRate > 0.0);
+        CHECK (std::string (p.extension) == "mp3");
     }
 }

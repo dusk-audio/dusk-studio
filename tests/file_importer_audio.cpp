@@ -56,6 +56,7 @@ struct ReadbackResult
     double sampleRate = 0.0;
     juce::int64 lengthInSamples = 0;
     int numChannels = 0;
+    int bitsPerSample = 0;
 };
 
 ReadbackResult readWav (const juce::File& file)
@@ -69,6 +70,7 @@ ReadbackResult readWav (const juce::File& file)
     r.sampleRate      = reader->sampleRate;
     r.lengthInSamples = (juce::int64) reader->lengthInSamples;
     r.numChannels     = (int) reader->numChannels;
+    r.bitsPerSample   = (int) reader->bitsPerSample;
     r.buffer.setSize (r.numChannels, (int) r.lengthInSamples);
     REQUIRE (reader->read (&r.buffer, 0, (int) r.lengthInSamples, 0, true, r.numChannels > 1));
     return r;
@@ -152,7 +154,7 @@ TEST_CASE ("FileImporter: 44.1k mono -> 48k session preserves length",
     writeTestWav (src, kSrcSr, 1, kSrcLen, [&] (int, int n)
     {
         return 0.5f * (float) std::sin (2.0 * kPi * 440.0 * (double) n / kSrcSr);
-    });
+    }, /*bitsPerSample*/ 16);
 
     duskstudio::fileimport::AudioImportRequest req;
     req.source            = src;
@@ -166,7 +168,10 @@ TEST_CASE ("FileImporter: 44.1k mono -> 48k session preserves length",
     REQUIRE (res.ok);
     REQUIRE (res.errorMessage.empty());
 
+    // A converted import is written as 24-bit WAV whatever the source depth.
     const auto rb = readWav (res.region.file);
+    REQUIRE (res.region.file.hasFileExtension ("wav"));
+    REQUIRE (rb.bitsPerSample == 24);
     REQUIRE (rb.sampleRate == 48000.0);
     REQUIRE (rb.numChannels == 1);
     // 1 s of audio at 48 kHz: 48000 samples ± tolerance for the

@@ -759,6 +759,163 @@ std::optional<ScenarioResult> exportMasterPostLimiter (ScenarioContext& ctx)
     return std::nullopt;
 }
 
+// The export presets that do not leave the session rate. Every export plays the
+// loaded mix through the mastering chain; `check` inspects the file.
+std::optional<ScenarioResult> exportMaster (ScenarioContext& ctx, const std::vector<float>& mix,
+                                            const Render& render, const char* name,
+                                            std::function<void (const std::filesystem::path&)> check)
+{
+    auto& player = ctx.engine().getMasteringPlayer();
+    const auto source = ctx.tempDir() / "mix.wav";
+    if (! writeMono (source, mix))
+        return ScenarioResult::fail ("could not write the source mix");
+    if (! player.loadFile (sessionFile (source)))
+        return ScenarioResult::fail ("the mastering player would not load the mix");
+    ctx.cleanup ([&player] { player.unloadFile(); });
+
+    const auto out = ctx.sessionDir() / name;
+    renderThen (ctx, out, render, [&ctx, out, check] (bool ok, const std::string& error)
+    {
+        if (ctx.expect (ok, "the export failed: " + error))
+            check (out);
+        ctx.complete (ctx.verdict());
+    });
+    return std::nullopt;
+}
+
+// WAV 24-bit keeps the session rate: the preset passes no rate of its own.
+std::optional<ScenarioResult> exportMasterWav24 (ScenarioContext& ctx)
+{
+    Render render;
+    render.mode = BounceEngine::Mode::MasteringChain;
+    render.sampleRate = 0.0;
+    render.tailSeconds = 0.5;
+    return exportMaster (ctx, sine (1000.0f, 0.25f, 48000), render, "master.wav",
+                         [&ctx] (const std::filesystem::path& out)
+    {
+        const auto master = readBack (out);
+        if (! ctx.expect (master.has_value(), "the export wrote no readable file"))
+            return;
+        const auto& info = master->info;
+        ctx.note ("rate " + std::to_string (info.sampleRate) + ", bits " + std::to_string (info.bitsPerSample)
+                  + ", channels " + std::to_string (info.numChannels) + ", peak " + std::to_string (master->peak()));
+        ctx.expect (std::abs (info.sampleRate - kRate) < 0.5, "the 24-bit preset is not at the session rate");
+        ctx.expect (info.bitsPerSample == 24 && ! info.isFloat, "the 24-bit preset is not 24-bit PCM");
+        ctx.expect (info.numChannels == 2, "the export is not stereo");
+        ctx.expect (master->peak() > 0.1f, "the export is nearly silent");
+    });
+}
+
+// MP3 320 kbps: every frame header carries MPEG-1 Layer III at 320 kbps and the
+// session's 48 kHz.
+std::optional<ScenarioResult> exportMasterMp3 (ScenarioContext& ctx)
+{
+   #if DUSKSTUDIO_HAS_LAME
+    Render render;
+    render.mode = BounceEngine::Mode::MasteringChain;
+    render.format = BounceEngine::Format::Mp3;
+    render.sampleRate = 0.0;
+    render.tailSeconds = 0.5;
+    const auto mix = sine (1000.0f, 0.25f, (int) kRate);
+    // An MPEG-1 Layer III frame holds 1152 samples, so the mix and its tail
+    // need at least this many.
+    const auto minFrames = (int) std::ceil (((double) mix.size() + render.tailSeconds * kRate) / 1152.0);
+    return exportMaster (ctx, mix, render, "master.mp3",
+                         [&ctx, minFrames] (const std::filesystem::path& out)
+    {
+        std::vector<unsigned char> bytes;
+        if (std::FILE* file = std::fopen (out.u8string().c_str(), "rb"))
+        {
+            unsigned char chunk[4096];
+            std::size_t got = 0;
+            while ((got = std::fread (chunk, 1, sizeof (chunk), file)) > 0)
+                bytes.insert (bytes.end(), chunk, chunk + got);
+            std::fclose (file);
+        }
+        std::size_t at = 0;
+        if (bytes.size() >= 10 && bytes[0] == 'I' && bytes[1] == 'D' && bytes[2] == '3')
+            at = 10 + (((std::size_t) bytes[6] & 0x7F) << 21 | ((std::size_t) bytes[7] & 0x7F) << 14
+                       | ((std::size_t) bytes[8] & 0x7F) << 7 | ((std::size_t) bytes[9] & 0x7F));
+        // At 320 kbps and 48 kHz an MPEG-1 Layer III frame is 144 * 320000 / 48000
+        // = 960 bytes, plus one when the padding bit is set.
+        int frames = 0, wrong = 0;
+        while (at + 4 <= bytes.size() && bytes[at] == 0xFF && (bytes[at + 1] & 0xE0) == 0xE0)
+        {
+            const int version = (bytes[at + 1] >> 3) & 3;
+            const int layer   = (bytes[at + 1] >> 1) & 3;
+            const int rate    = (bytes[at + 2] >> 4) & 0xF;
+            const int srIndex = (bytes[at + 2] >> 2) & 3;
+            const int padding = (bytes[at + 2] >> 1) & 1;
+            const auto length = (std::size_t) (960 + padding);
+            if (length > bytes.size() - at)
+                break;
+            if (version != 3 || layer != 1 || rate != 14 || srIndex != 1)
+                ++wrong;
+            ++frames;
+            at += length;
+        }
+        ctx.note (std::to_string (frames) + " frames, " + std::to_string (wrong) + " not 320 kbps MPEG-1 Layer III at 48 kHz, "
+                  + std::to_string (bytes.size() - std::min (at, bytes.size())) + " trailing bytes");
+        ctx.expect (frames >= minFrames, "the MP3 export has " + std::to_string (frames) + " frames, short of the "
+                                             + std::to_string (minFrames) + " the mix and its tail need");
+        ctx.expect (wrong == 0, "an MP3 frame is not 320 kbps MPEG-1 Layer III at 48 kHz");
+    });
+   #else
+    (void) ctx;
+    return ScenarioResult::skip ("built without the MP3 encoder");
+   #endif
+}
+
+// The CD preset's dither is TPDF at +/-1 LSB and not noise-shaped. On a silent
+// mix the file holds the dither alone: a triangular +/-1 LSB draw rounds to +1
+// or -1 LSB one time in eight each and to 0 the rest, and an unshaped (white)
+// dither leaves neighbouring samples uncorrelated, where a shaped one would
+// correlate them.
+std::optional<ScenarioResult> exportMasterDither (ScenarioContext& ctx)
+{
+    Render render;
+    render.mode = BounceEngine::Mode::MasteringChain;
+    render.sampleRate = 44100.0;
+    render.wavBitDepth = 16;
+    render.tailSeconds = 0.5;
+    return exportMaster (ctx, std::vector<float> (48000, 0.0f), render, "master-cd.wav",
+                         [&ctx] (const std::filesystem::path& out)
+    {
+        const auto master = readBack (out);
+        if (! ctx.expect (master.has_value(), "the export wrote no readable file"))
+            return;
+        ctx.expect (master->info.bitsPerSample == 16, "the CD preset is not 16-bit");
+        std::int64_t total = 0, up = 0, down = 0, wide = 0;
+        double lag0 = 0.0, lag1 = 0.0;
+        for (const auto* channel : { &master->left, &master->right })
+        {
+            long previous = 0;
+            for (const float s : *channel)
+            {
+                const long lsb = std::lround (s * 32768.0f);
+                if (lsb > 1 || lsb < -1) ++wide;
+                if (lsb == 1) ++up;
+                if (lsb == -1) ++down;
+                lag0 += (double) (lsb * lsb);
+                lag1 += (double) (lsb * previous);
+                previous = lsb;
+                ++total;
+            }
+        }
+        const double pUp = (double) up / (double) std::max<std::int64_t> (1, total);
+        const double pDown = (double) down / (double) std::max<std::int64_t> (1, total);
+        const double r1 = lag0 > 0.0 ? lag1 / lag0 : 1.0;
+        ctx.note ("samples " + std::to_string (total) + ", +1 LSB " + std::to_string (pUp) + ", -1 LSB "
+                  + std::to_string (pDown) + ", wider " + std::to_string (wide) + ", lag-1 correlation "
+                  + std::to_string (r1));
+        ctx.expect (total > 44100, "the export is too short to measure the dither");
+        ctx.expect (wide == 0, "the dither on silence reaches past 1 LSB");
+        ctx.expect (pUp > 0.1 && pUp < 0.15 && pDown > 0.1 && pDown < 0.15,
+                    "the dither does not round like a +/-1 LSB triangular draw");
+        ctx.expect (std::abs (r1) < 0.05, "neighbouring dither samples correlate, so the dither is shaped");
+    });
+}
+
 const ScenarioRegistrar mixRegistrar { Scenario {
     "bounce.master_mix_file", { "bounce" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return masterMixFile (ctx); }, 120000 } };
@@ -803,5 +960,14 @@ const ScenarioRegistrar cancelRegistrar { Scenario {
 const ScenarioRegistrar exportRegistrar { Scenario {
     "bounce.export_master_post_limiter", { "bounce", "mastering" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return exportMasterPostLimiter (ctx); }, 120000 } };
+const ScenarioRegistrar exportWav24Registrar { Scenario {
+    "bounce.export_master_wav24_session_rate", { "bounce", "mastering" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return exportMasterWav24 (ctx); }, 120000 } };
+const ScenarioRegistrar exportMp3Registrar { Scenario {
+    "bounce.export_master_mp3_320", { "bounce", "mastering", "mp3" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return exportMasterMp3 (ctx); }, 120000 } };
+const ScenarioRegistrar exportDitherRegistrar { Scenario {
+    "bounce.export_master_cd_dither_is_tpdf", { "bounce", "mastering" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return exportMasterDither (ctx); }, 120000 } };
 } // namespace
 } // namespace duskstudio::scenario

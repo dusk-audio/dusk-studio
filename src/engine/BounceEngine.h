@@ -44,6 +44,33 @@ public:
     // a clear error). The caller picks the matching file extension.
     enum class Format { Wav, Mp3 };
 
+    // The mastering stage's export presets, numbered as its Export menu lists
+    // them: 1 WAV 24-bit at the session rate, 2 WAV 16-bit 44.1 kHz dithered
+    // (CD), 3 MP3 320 kbps. A sample rate of 0 renders at the session rate.
+    struct MasterExportPreset
+    {
+        Format format = Format::Wav;
+        double sampleRate = 0.0;
+        int wavBitDepth = 24;
+        int mp3Kbps = 320;
+        const char* extension = "wav";
+    };
+    static MasterExportPreset masterExportPreset (int preset) noexcept
+    {
+        MasterExportPreset p;
+        if (preset == 2)
+        {
+            p.sampleRate = 44100.0;
+            p.wavBitDepth = 16;
+        }
+        else if (preset == 3)
+        {
+            p.format = Format::Mp3;
+            p.extension = "mp3";
+        }
+        return p;
+    }
+
     // lastError value set when a render is cancelled. Shared so the dialog can
     // tell a user cancel from a real failure without a string literal that
     // silently drifts out of sync with run().

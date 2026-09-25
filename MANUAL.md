@@ -561,7 +561,7 @@ From left to right:
   in Settings sends it. Press Stop again while stopped to return to bar 1. A stop
   that comes from MIDI clock or MTC chase leaves the playhead where the master
   stopped.
-- **Rewind** (◀◀). Brief press jumps to the previous marker; if there is no previous marker, jumps to bar 1. Hold for more than 180 milliseconds to scrub backwards at 10× speed.
+- **Rewind** (◀◀). Brief press jumps to the previous marker; if there is no previous marker, jumps to bar 1. Hold for more than 400 milliseconds to scrub backwards at 10× speed.
 - **Play** (▶). Toggles play. If loop is enabled and the playhead is outside the loop region, the playhead snaps to the loop start before playback begins.
 - **Forward** (▶▶). Brief press jumps to the next marker (no overshoot past the last one). Hold to scrub forward at 10× speed.
 - **Record** (●). Toggles record. Requires at least one track armed.
@@ -2045,7 +2045,7 @@ Because the session is a folder, you can copy or back up a session by copying th
 - **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file.
 - **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder.
 - **File → Open…** (or **Cmd+O**): load a session by choosing its `session.json` file.
-- **File → New from template**: start a fresh session with tracks pre-named and colour-coded for a common workflow. The built-in templates are **Blank** (numbered tracks), **Band** (Drums / Bass / Guitars / Keys / Vocals), **Beats** (Kick / Snare / Hat / Perc / 808 / Pad / Lead / Vox), and **Singer-Songwriter** (Vocal / Acoustic gtr / Bass / Synth / Drums). Templates only set track names and colours — they don't add plugins or audio.
+- **File → New from template**: start a fresh session with tracks pre-named and colour-coded for a common workflow. The built-in templates are **Blank** (numbered tracks), **Band** (Kick / Snare / Drums OH / Bass / Gtr 1 / Gtr 2 / Keys / Lead Vox / BG Vox), **Beats** (Kick / Snare / Hat / Perc / 808 / Pad / Lead / Vox), and **Singer-Songwriter** (Vocal / Ac Gtr L / Ac Gtr R / Bass / Synth / Drums). Templates set each track's name, colour and type (mono, stereo or MIDI); they don't add plugins or audio.
 
 ## Autosave
 
@@ -2524,7 +2524,7 @@ Four variants:
 
 Two variants:
 
-- **Automation active**: "Stop playback before optimising automation. The optimiser rewrites every lane's point data; running it while the audio thread may be reading the lanes is unsafe." (Or the equivalent "Set every strip's automation mode to Off before optimising. …" when the transport is stopped but lanes are still in Read/Touch.) — Buttons: OK.
+- **Automation active**: "Stop playback before optimising automation. The optimiser rewrites every lane's point data; running it while the audio thread may be reading the lanes is unsafe." (Or the equivalent "Set every strip's automation mode to Off before optimising. …" when the transport is stopped but any track, aux lane or the master is still in Read, Touch or Write.) — Buttons: OK.
 - **Success**: "Thinned [before] automation points down to [after]." — Buttons: OK.
 - **Action**: Stop playback and set all strips to **Off** mode, then retry.
 
@@ -2552,8 +2552,8 @@ Two variants:
 ### Import
 
 - **Stop playback**: "Stop playback before importing files." — Buttons: OK.
-- **Unsupported format**: "Unsupported or unreadable audio file: [filename]" — Buttons: OK.
-- **Decode failure**: "[error message from file decoder]" — Buttons: OK.
+- **Unsupported format**: "Unsupported or unreadable audio file: [filename]" — Buttons: OK. The browser and the tape only offer audio file types, so this is a file with an audio extension that cannot be read.
+- **Import failed**: titled "Import audio failed", with the importer's message, for example "Audio file reports an empty or invalid stream" — Buttons: OK.
 - **MIDI unreadable**: "Could not read MIDI file." — Buttons: OK.
 - **MIDI batch failure**: "[error message from MIDI importer]" — Buttons: OK.
 
@@ -2760,15 +2760,15 @@ The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These 
 
 # Appendix B — File formats
 
-| Artifact             | Format                                                 |
-| -------------------- | ------------------------------------------------------ |
-| Session              | JSON, atomic write                                     |
-| Recorded audio       | 24-bit PCM WAV, session sample rate                    |
-| Imported audio       | re-encoded to 24-bit WAV in session/audio/             |
-| Recorded MIDI        | embedded in session.json (note + CC arrays per region) |
-| Plugin scan cache    | XML, per-user config directory                         |
-| MIDI bindings export | JSON                                                   |
-| Bounce               | 24-bit PCM WAV, session sample rate                    |
+| Artifact             | Format                                                                                  |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| Session              | JSON, atomic write                                                                      |
+| Recorded audio       | 24-bit PCM WAV, session sample rate                                                     |
+| Imported audio       | copied as-is into session/audio/ when rate and channels match, otherwise 24-bit WAV     |
+| Recorded MIDI        | embedded in session.json (note + CC arrays per region)                                  |
+| Plugin scan cache    | XML, plus a JSON sidecar per native format, per-user config directory                   |
+| MIDI bindings export | JSON                                                                                    |
+| Bounce               | 24-bit PCM WAV, session sample rate                                                     |
 
 \newpage
 

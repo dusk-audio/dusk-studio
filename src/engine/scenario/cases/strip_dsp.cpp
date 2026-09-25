@@ -33,14 +33,15 @@ double db (double level, double reference)
 }
 
 // A steady tone into inputs 1 and 2 at the given amplitudes, warmed up and then
-// measured: RMS at the master outputs and in aux lane 1's return.
-Levels playTone (ScenarioContext& ctx, double hz, float ampL, float ampR)
+// measured: RMS at the master outputs and in one aux lane's return, lane 1's
+// unless another is named.
+Levels playTone (ScenarioContext& ctx, double hz, float ampL, float ampR, int auxLane = 0)
 {
     auto& engine = ctx.engine();
     std::array<float, kFrames> inL {}, inR {}, outL {}, outR {}, auxL {}, auxR {};
     const float* inputs[] = { inL.data(), inR.data() };
     float* outputs[] = { outL.data(), outR.data() };
-    engine.setAuxStemCapture (0, auxL.data(), auxR.data());
+    engine.setAuxStemCapture (auxLane, auxL.data(), auxR.data());
 
     Levels levels;
     double phase = 0.0, sumL = 0.0, sumR = 0.0, sumAux = 0.0;
@@ -66,7 +67,7 @@ Levels playTone (ScenarioContext& ctx, double hz, float ampL, float ampR)
             sumAux += (double) auxL[k] * auxL[k];
         }
     }
-    engine.setAuxStemCapture (0, nullptr, nullptr);
+    engine.setAuxStemCapture (auxLane, nullptr, nullptr);
 
     const double n = (double) kMeasureBlocks * kFrames;
     levels.left = std::sqrt (sumL / n);
@@ -350,6 +351,30 @@ ScenarioResult sendsPrePostAndBypass (ScenarioContext& ctx)
     ctx.note ("bypassed " + std::to_string (bypassed) + ", restored " + std::to_string (restored));
     ctx.expect (db (bypassed, post) < -60.0, "bypassing the sends did not silence them");
     ctx.expect (std::abs (db (restored, post)) < 0.5, "the sends did not come back at their level");
+
+    // The one bypass covers the other three sends too.
+    for (int lane = 1; lane < ChannelStripParams::kNumAuxSends; ++lane)
+    {
+        const auto send = (std::size_t) lane;
+        ctx.keep (strip.auxSendDb[send]);
+        ctx.keep (strip.auxSendPreFader[send]);
+        strip.auxSendDb[send].store (0.0f);
+        strip.auxSendPreFader[send].store (false);
+    }
+    for (int lane = 1; lane < ChannelStripParams::kNumAuxSends; ++lane)
+    {
+        const auto name = "send " + std::to_string (lane + 1);
+        const double open = playTone (ctx, 440.0, 0.25f, 0.0f, lane).aux;
+        strip.auxSendsBypassed.store (true);
+        const double muted = playTone (ctx, 440.0, 0.25f, 0.0f, lane).aux;
+        strip.auxSendsBypassed.store (false);
+        const double back = playTone (ctx, 440.0, 0.25f, 0.0f, lane).aux;
+        ctx.note (name + ": open " + std::to_string (open) + ", bypassed " + std::to_string (muted)
+                  + ", restored " + std::to_string (back));
+        ctx.expect (open > 0.02, name + " did not reach its aux");
+        ctx.expect (db (muted, open) < -60.0, "bypassing the sends did not silence " + name);
+        ctx.expect (std::abs (db (back, open)) < 0.5, name + " did not come back at its level");
+    }
     return ctx.verdict();
 }
 

@@ -5,6 +5,10 @@
 #include "session/SessionSerializer.h"
 
 #include <juce_core/juce_core.h>
+#include <nlohmann/json.hpp>
+
+#include <cstdint>
+#include <vector>
 
 using Catch::Matchers::WithinAbs;
 
@@ -124,4 +128,69 @@ TEST_CASE ("SessionSerializer legacy MidiRegion (no tempo_lock key) anchors to s
     REQUIRE (v.size() == 1);
     REQUIRE (v[0].tempoLock == true);
     REQUIRE_THAT (v[0].recordedAtBPM, WithinAbs (84.5, 1e-6));
+}
+
+// MANUAL Appendix B: recorded MIDI lives inside session.json as note and CC
+// arrays per region, not in side files.
+TEST_CASE ("SessionSerializer embeds a MIDI region's notes and CCs in session.json",
+           "[session][serializer][midi]")
+{
+    using duskstudio::MidiCc;
+    using duskstudio::MidiNote;
+    using duskstudio::MidiRegion;
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    const std::vector<MidiNote> notes { { 1, 60, 100, 0, 240 }, { 10, 36, 90, 480, 120 } };
+    const std::vector<MidiCc> ccs { { 1, 64, 127, 0 }, { 1, 1, 42, 360 } };
+
+    Session a;
+    {
+        MidiRegion region;
+        region.timelineStart   = 48000;
+        region.lengthInSamples = 96000;
+        region.lengthInTicks   = 960;
+        region.notes = notes;
+        region.ccs   = ccs;
+        auto& v = a.track (0).midiRegions.currentMutable();
+        v.clear();
+        v.push_back (std::move (region));
+    }
+    REQUIRE (SessionSerializer::save (a, target));
+
+    const auto root = nlohmann::json::parse (target.loadFileAsString().toStdString());
+    const auto& saved = root.at ("tracks").at (0).at ("midi_regions").at (0);
+    REQUIRE (saved.at ("notes").size() == notes.size());
+    for (std::size_t i = 0; i < notes.size(); ++i)
+    {
+        CAPTURE (i);
+        const auto& n = saved.at ("notes").at (i);
+        CHECK (n.at ("ch").get<int>() == notes[i].channel);
+        CHECK (n.at ("note").get<int>() == notes[i].noteNumber);
+        CHECK (n.at ("vel").get<int>() == notes[i].velocity);
+        CHECK (n.at ("start").get<std::int64_t>() == notes[i].startTick);
+        CHECK (n.at ("len").get<std::int64_t>() == notes[i].lengthInTicks);
+    }
+    REQUIRE (saved.at ("ccs").size() == ccs.size());
+    for (std::size_t i = 0; i < ccs.size(); ++i)
+    {
+        CAPTURE (i);
+        const auto& c = saved.at ("ccs").at (i);
+        CHECK (c.at ("ch").get<int>() == ccs[i].channel);
+        CHECK (c.at ("ctrl").get<int>() == ccs[i].controller);
+        CHECK (c.at ("val").get<int>() == ccs[i].value);
+        CHECK (c.at ("at").get<std::int64_t>() == ccs[i].atTick);
+    }
+    CHECK (dir.findChildFiles (juce::File::findFiles, true, "*.mid;*.midi").isEmpty());
+
+    Session b;
+    REQUIRE (SessionSerializer::load (b, target));
+    const auto& reloaded = b.track (0).midiRegions.current();
+    REQUIRE (reloaded.size() == 1);
+    CHECK (reloaded[0].notes == notes);
+    CHECK (reloaded[0].ccs == ccs);
+    dir.deleteRecursively();
 }

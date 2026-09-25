@@ -7,6 +7,7 @@
 #include "../../../session/Session.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -196,9 +197,49 @@ ScenarioResult reconnectReprepares (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// With no device open there is no sample rate to record at, so Record refuses,
+// says why, and leaves the transport, the recorder and the armed track as they
+// were.
+ScenarioResult noDeviceRefusesRecord (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    restoreOfflinePrepare (ctx);
+
+    auto refusal = std::make_shared<std::string>();
+    engine.setRecordBlockedSink ([refusal] (auto message) { *refusal = message.toStdString(); });
+    ctx.cleanup ([&engine] { engine.setRecordBlockedSink ({}); });
+
+    StubDevice device { ScenarioContext::kSampleRate, ScenarioContext::kBlockSize };
+    engine.audioDeviceAboutToStart (&device);
+    engine.audioDeviceStopped();
+    if (! ctx.expect (! (engine.getCurrentSampleRate() > 0.0), "closing the device left a sample rate behind"))
+        return ctx.verdict();
+
+    armTrack (ctx);
+    transport.setPlayhead (kTakeStart);
+    engine.record();
+
+    ctx.expect (transport.isStopped() && transport.getPlayhead() == kTakeStart,
+                "Record moved the transport with no audio device open");
+    ctx.expect (! engine.getRecordManager().isActive(), "the recorder armed with no audio device open");
+    ctx.expect (*refusal == "No audio device is open.\n\nOpen Settings \xE2\x86\x92 Audio and select "
+                            "a device before recording.",
+                "the refusal does not say that no device is open: '" + *refusal + "'");
+    ctx.expect (ctx.session().track (kTrack).regions.empty(), "a take was committed with no audio device open");
+    std::error_code ignored;
+    const auto audioDir = ctx.sessionDir() / "audio";
+    ctx.expect (! std::filesystem::exists (audioDir, ignored) || std::filesystem::is_empty (audioDir, ignored),
+                "a take file was written with no audio device open");
+    return ctx.verdict();
+}
+
 const ScenarioRegistrar lossRegistrar { Scenario {
     "device.loss_stops_and_commits", { "device", "record", "transport" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return lossStopsAndCommits (ctx); } } };
+const ScenarioRegistrar noDeviceRegistrar { Scenario {
+    "device.none_open_refuses_record", { "device", "record" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return noDeviceRefusesRecord (ctx); } } };
 const ScenarioRegistrar reconnectRegistrar { Scenario {
     "device.reconnect_reprepares", { "device", "transport" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return reconnectReprepares (ctx); } } };
