@@ -3027,7 +3027,9 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
             ? newSessionDir.getChildFile (f.getRelativePathFrom (oldDir))
             : newSessionDir.getChildFile ("audio").getChildFile (f.getFileName());
         const auto targetDir = target.getParentDirectory();
-        for (int n = 2; usedTargets.count (target.getFullPathName()) != 0; ++n)
+        // A file already in the destination is someone's, so it is never
+        // written over, and rollback can only ever delete copies made here.
+        for (int n = 2; usedTargets.count (target.getFullPathName()) != 0 || target.exists(); ++n)
             target = targetDir.getChildFile (f.getFileNameWithoutExtension()
                                               + "_" + juce::String (n)
                                               + f.getFileExtension());
@@ -3065,6 +3067,13 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
         if (oldStateDir.isDirectory())
         {
             const auto newStateDir = newSessionDir.getChildFile ("state");
+            if (newStateDir.exists())
+            {
+                res.ok = false;
+                res.errorMessage = "The folder already has a plugin state folder at \""
+                                 + newStateDir.getFullPathName() + "\"";
+                return res;
+            }
             if (! oldStateDir.copyDirectoryTo (newStateDir))
             {
                 newStateDir.deleteRecursively();

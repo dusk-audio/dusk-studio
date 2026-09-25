@@ -205,6 +205,34 @@ TEST_CASE ("consolidateInto edge cases", "[session][serializer][consolidate]")
         REQUIRE (s.track (0).regions[0].file == take);
     }
 
+    SECTION ("a file already in the destination is kept and the copy takes a suffix")
+    {
+        const auto theirs = dirB.getChildFile ("audio/take.wav");
+        theirs.getParentDirectory().createDirectory();
+        theirs.replaceWithText ("theirs");
+
+        const auto res = SessionSerializer::consolidateInto (s, dirB);
+        REQUIRE (res.ok);
+        REQUIRE (theirs.loadFileAsString() == "theirs");
+        REQUIRE (s.track (0).regions[0].file == dirB.getChildFile ("audio/take_2.wav"));
+        REQUIRE (s.track (0).regions[0].file.loadFileAsString() == "fake-wav");
+    }
+
+    SECTION ("an existing plugin state folder in the destination refuses and is left alone")
+    {
+        makeFakeWav (dirA.getChildFile ("state/lv2/slot/blob.ttl"));
+        const auto theirs = dirB.getChildFile ("state/lv2/other/blob.ttl");
+        theirs.getParentDirectory().createDirectory();
+        theirs.replaceWithText ("theirs");
+
+        const auto res = SessionSerializer::consolidateInto (s, dirB);
+        REQUIRE_FALSE (res.ok);
+        REQUIRE (theirs.loadFileAsString() == "theirs");
+        REQUIRE_FALSE (dirB.getChildFile ("state/lv2/slot/blob.ttl").exists());
+        REQUIRE_FALSE (dirB.getChildFile ("audio/take.wav").exists());
+        REQUIRE (s.track (0).regions[0].file == take);
+    }
+
     SECTION ("external mastering source stays absolute and is not copied")
     {
         const auto extMix = makeFakeWav (extDir.getChildFile ("master-source.wav"));
