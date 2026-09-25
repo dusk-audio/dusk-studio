@@ -26,6 +26,7 @@ constexpr long long kOopProcessTimeoutNs = 100'000'000LL;
 constexpr double kOopBudgetFraction = 0.85;
 #endif
 
+constexpr const char* kNotPreparedError = "plugin slot not prepared";
 
 // JUCE-hosted plugins often expose more than one bus (main + sidechain on
 // effects, main + aux output on some synths). Our processBlock contract
@@ -788,6 +789,11 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
         errorMessage = "PluginSlot has no PluginManager bound - call setManager() first";
         return false;
     }
+    if (! hasBeenPrepared())
+    {
+        errorMessage = kNotPreparedError;
+        return false;
+    }
 
     // Invalidate any audio-thread-queued ParamWrites still in the FIFO -
     // their paramIndex targeted the now-deposed plugin. Release pairs
@@ -908,6 +914,11 @@ bool PluginSlot::loadFromDescriptor (const PluginDescriptor& descriptor,
     if (manager == nullptr)
     {
         errorMessage = "PluginSlot has no PluginManager bound - call setManager() first";
+        return false;
+    }
+    if (! hasBeenPrepared())
+    {
+        errorMessage = kNotPreparedError;
         return false;
     }
 
@@ -1089,6 +1100,11 @@ void PluginSlot::loadFromDescriptorAsync (const PluginDescriptor& descriptor,
     if (manager == nullptr)
     {
         if (onDone) onDone (false, "PluginSlot has no PluginManager bound");
+        return;
+    }
+    if (! hasBeenPrepared())
+    {
+        if (onDone) onDone (false, kNotPreparedError);
         return;
     }
 

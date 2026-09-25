@@ -89,6 +89,75 @@ TEST_CASE ("PluginSlot republishes an in-process instance after release and prep
     CHECK (lifecycle->processCalls == 1);
 }
 
+// With no audio device open nothing has given the slot a sample rate or block
+// size, so a user load is refused the way the native hosts refuse theirs, before
+// any binary is opened and without disturbing what the slot already holds. The
+// paths below do not exist: a refusal for the right reason carries the
+// not-prepared message, not a file-not-found one.
+TEST_CASE ("PluginSlot refuses in-process loads until a device prepares it",
+           "[plugin][device]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    const juce::File missing = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                   .getChildFile ("dusk-unprepared-slot-never-opened.vst3");
+    PluginDescriptor descriptor;
+    descriptor.name = "Never opened";
+    descriptor.formatName = "VST3";
+    descriptor.location = missing.getFullPathName().toStdString();
+
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+
+    auto instance = std::make_unique<LifecyclePluginInstance>();
+    auto* lifecycle = instance.get();
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    REQUIRE (lifecycle->prepareCalls == 0);
+
+    const auto keptPrevious = [&]
+    {
+        CHECK (slot.isLoaded());
+        CHECK (slot.getInstance() == lifecycle);
+        CHECK (slot.getLoadedName() == "Lifecycle test");
+        CHECK_FALSE (slot.isOffline());
+    };
+
+    juce::String error;
+    CHECK_FALSE (slot.loadFromFile (missing, error));
+    CHECK (error == "plugin slot not prepared");
+    keptPrevious();
+
+    error.clear();
+    CHECK_FALSE (slot.loadFromDescriptor (descriptor, error));
+    CHECK (error == "plugin slot not prepared");
+    keptPrevious();
+
+    bool completed = false;
+    bool succeeded = true;
+    juce::String asyncError;
+    slot.loadFromDescriptorAsync (descriptor, [&] (bool ok, juce::String err)
+    {
+        completed = true;
+        succeeded = ok;
+        asyncError = err;
+    });
+    CHECK (completed);
+    CHECK_FALSE (succeeded);
+    CHECK (asyncError == "plugin slot not prepared");
+    keptPrevious();
+
+    // The kept plugin is prepared once a device arrives, and from then on the
+    // same load reaches the loader and fails on its own terms.
+    slot.prepareToPlay (48000.0, 64);
+    CHECK (lifecycle->prepareCalls == 1);
+
+    error.clear();
+    CHECK_FALSE (slot.loadFromFile (missing, error));
+    CHECK (error.isNotEmpty());
+    CHECK (error != "plugin slot not prepared");
+}
+
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
 namespace
 {

@@ -108,7 +108,7 @@ deeper accessibility.
 | Signed `SHA256SUMS` per release | Working (a tag cannot publish without it) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-The C++ suite declares 1251 Catch2 test cases across 220 test source files.
+The C++ suite declares 1252 Catch2 test cases across 220 test source files.
 Linux amd64, Linux arm64 and macOS build and run it on every push; Windows runs
 it on every push and PR; ThreadSanitizer and ASan plus UBSan run it on every
 push and PR. All of those, plus the framework-coupling ratchet, are required
@@ -220,7 +220,7 @@ src/
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
     imgui/     # native surfaces: startup, audio settings, unit editors, keyboard
   util/        # native log storage + CrashHandler signal reports
-tests/         # 1251 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 1252 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds
 docs/          # maintainer guide, the 1.0 plan, migration plans
   DuskStudio.md  # authoritative product spec

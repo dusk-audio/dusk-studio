@@ -322,6 +322,14 @@ private:
     int    preparedBlockSize  = 0;
     double secondsPerTick = 0.0;
 
+    // User loads are refused until a device has prepared the slot, like the
+    // native hosts' loads. Session restore is exempt: it builds the instance
+    // unprepared and prepareToPlay() prepares it when the device opens.
+    bool hasBeenPrepared() const noexcept
+    {
+        return preparedSampleRate > 0.0 && preparedBlockSize > 0;
+    }
+
     juce::AudioPlayHead* hostPlayHead = nullptr;
 
     std::atomic<int> cachedLatencySamples { 0 };
