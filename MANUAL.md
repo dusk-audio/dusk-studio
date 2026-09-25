@@ -1106,7 +1106,7 @@ The integrated reading measures up to an hour of material loud enough to count. 
 
 ## Exporting the master
 
-**Export master…** renders the mastering chain offline. Pick a delivery preset first — **WAV 24-bit at the session rate** (archive/streaming), **WAV 16-bit 44.1 kHz with TPDF dither** (CD spec), or **MP3 320 kbps** — then a destination (defaults to `master.wav` / `master.mp3` in the session folder). A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render.
+**Export master…** renders the mastering chain offline. Pick a delivery preset first — **WAV 24-bit at the session rate** (archive/streaming), **WAV 16-bit 44.1 kHz with TPDF dither** (CD spec), or **MP3 320 kbps** — then a destination (defaults to `master.wav` / `master.mp3` in the session folder), which asks before replacing a file that is already there. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render.
 
 \newpage
 
@@ -2014,7 +2014,7 @@ Each row shows:
 
 At the bottom:
 
-- **Export…** writes the entire binding set to a JSON file.
+- **Export…** writes the entire binding set to a JSON file. If that file is already there, it asks before replacing it.
 - **Import…** loads a binding set from JSON (replaces the current set).
 - **Clear all** removes every binding (with confirmation).
 
@@ -2043,7 +2043,7 @@ Because the session is a folder, you can copy or back up a session by copying th
 ## Save commands
 
 - **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file.
-- **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder.
+- **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder. A folder that already holds another session is refused: nothing is saved and that session is left as it was.
 - **File → Open…** (or **Cmd+O**): load a session by choosing its `session.json` file.
 - **File → New from template**: start a fresh session with tracks pre-named and colour-coded for a common workflow. The built-in templates are **Blank** (numbered tracks), **Band** (Kick / Snare / Drums OH / Bass / Gtr 1 / Gtr 2 / Keys / Lead Vox / BG Vox), **Beats** (Kick / Snare / Hat / Perc / 808 / Pad / Lead / Vox), and **Singer-Songwriter** (Vocal / Ac Gtr L / Ac Gtr R / Bass / Synth / Drums). Templates set each track's name, colour and type (mono, stereo or MIDI); they don't add plugins or audio.
 
@@ -2090,7 +2090,7 @@ For larger archives, `tar czf` the folder and store the tarball.
 To export your finished mix as a stereo audio file:
 
 1. From any stage, choose **File → Bounce…** (or **Cmd/Ctrl+B**).
-2. A file browser opens at the session folder; pick or rename the destination WAV and confirm.
+2. A file browser opens at the session folder; pick or rename the destination WAV and confirm. If a file of that name is already there, Dusk Studio asks before replacing it.
 3. A progress dialog renders the project offline. **Cancel** stops the render.
 4. When it finishes the dialog names the file it wrote. Long paths are shortened in the middle so the file name stays readable; hover the line for the whole path, or use **Copy path** to put it on the clipboard.
 
@@ -2117,7 +2117,7 @@ The metronome never prints in any bounce: it is a monitoring aid, mixed in after
 
 ## Where bounces go
 
-By default, bounces are written to the session folder itself (the same directory that holds `session.json`). The bounce dialog opens a file browser there so you can rename or redirect each export; **New folder…** in its bottom-left corner creates a subfolder and jumps into it, handy for keeping stem sets together. **Save** never writes a file named after a folder: typing the name of an existing folder and pressing **Save** opens that folder so you can name the file inside it, and **Save** with the name box empty does nothing. The Export master and Save MIDI bindings preset browsers work the same way. The mastering stage's **Load latest mixdown** button loads `mixdown.wav` from the session folder, or `bounce.wav` if there is no mixdown; a bounce saved under any other name opens with **Load mix…** instead.
+By default, bounces are written to the session folder itself (the same directory that holds `session.json`). The bounce dialog opens a file browser there so you can rename or redirect each export; **New folder…** in its bottom-left corner creates a subfolder and jumps into it, handy for keeping stem sets together. **Save** never writes a file named after a folder: typing the name of an existing folder and pressing **Save** opens that folder so you can name the file inside it, and **Save** with the name box empty does nothing. The Export master and Save MIDI bindings preset browsers work the same way. All three ask before replacing a file that is already there, and they check the name the file is really written under, so typing `mix` asks about `mix.wav`, and a realtime bounce named `.mp3` asks about the `.wav` it writes. The mastering stage's **Load latest mixdown** button loads `mixdown.wav` from the session folder, or `bounce.wav` if there is no mixdown; a bounce saved under any other name opens with **Load mix…** instead.
 
 \newpage
 
@@ -2494,7 +2494,7 @@ The format for each entry:
 - **When**: You quit with unsaved changes. Logging out, shutting the machine down, or stopping the app from a terminal counts as quitting: the prompt appears then too, and the session waits on your answer.
 - **Text**: "Your session has unsaved changes since the last manual save. If you don't save, those changes are discarded."
 - **Buttons**: **Save** / **Don't Save** / **Cancel**.
-- **Action**: Save unless you specifically want to discard. If the save does not complete, because you cancel the Save As browser that a never-saved session opens or the write fails, Dusk Studio stays open as it was, with audio running and autosave on, and you can carry on or quit again.
+- **Action**: Save unless you specifically want to discard. If the save does not complete, because you cancel the Save As browser that a never-saved session opens, pick a folder that already holds another session, or the write fails, Dusk Studio stays open as it was, with audio running and autosave on, and you can carry on or quit again.
 
 ### Save failed
 
@@ -2502,6 +2502,13 @@ The format for each entry:
 - **Text**: "Dusk Studio could not write the session file: [path]. Common causes: disk full, missing write permission, or the parent folder was moved since the session was opened. The session is unchanged in memory; try Save As to a different location."
 - **Buttons**: OK.
 - **Action**: Use **Save As…** to land the session somewhere writable. Do not quit before saving — your in-memory state is intact.
+
+### Folder holds another session
+
+- **When**: Save As, including the Save As that Save opens for a session that has never been saved, names a folder that already holds another session's `session.json`.
+- **Text**: "This folder already holds another session: [folder]. Saving here would replace it, so nothing was saved and nothing was changed. Choose a new name, or a folder without a session."
+- **Buttons**: OK.
+- **Action**: Save As again under a new name. Your session stays open as it was; if the Save came from quitting or switching sessions, that is abandoned too, just as if you had cancelled it.
 
 ### Missing audio files
 
@@ -2556,6 +2563,13 @@ Two variants:
 - **Import failed**: titled "Import audio failed", with the importer's message, for example "Audio file reports an empty or invalid stream" — Buttons: OK.
 - **MIDI unreadable**: "Could not read MIDI file." — Buttons: OK.
 - **MIDI batch failure**: "[error message from MIDI importer]" — Buttons: OK.
+
+### Replace file?
+
+- **When**: Bounce, Export master or Save MIDI bindings preset would write a file that is already there.
+- **Text**: "This file already exists and will be replaced: [file name]. Continue?" A realtime bounce named `.mp3` adds "Realtime bounces are always written as WAV." before the question.
+- **Buttons**: **Replace** (destructive, red) / **Cancel**.
+- **Action**: Replace writes over the file. Cancel writes nothing and leaves the file as it was; pick again under another name.
 
 ### Switch track to [mode]?
 

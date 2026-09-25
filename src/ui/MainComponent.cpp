@@ -13,6 +13,7 @@
  #define DUSKSTUDIO_HAS_BINARY_ICON 0
 #endif
 #include "DuskFileBrowser.h"
+#include "SaveTargetChecks.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
 #include "PluginScanModal.h"
@@ -3209,7 +3210,6 @@ void MainComponent::promptNewSessionLocation (SessionTemplate tmpl,
         /*initialFileOrDirectory*/ startDir.getChildFile ("MySong"),
         /*filePatternsAllowed*/    juce::String(),
         /*mode*/                   filebrowser::Mode::Save,
-        /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
         /*saveAnswerIsFolder*/     true,
     },
@@ -3260,16 +3260,29 @@ bool MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate t
     return true;
 }
 
-bool MainComponent::saveSessionTo (const juce::File& dir)
+bool MainComponent::saveSessionTo (const juce::File& requestedDir)
 {
-    if (dir == juce::File()) return false;
+    if (requestedDir == juce::File()) return false;
+
+    const auto oldDir = session.getSessionDirectory();
+    // Another spelling of the session's own folder (a link, a bind mount) is a
+    // plain Save: consolidating a folder onto itself deletes each source file
+    // before it copies it.
+    const auto dir = savecheck::isSameFolder (toPath (requestedDir), toPath (oldDir))
+                         ? oldDir : requestedDir;
+    if (dir != oldDir && savecheck::holdsAnotherSession (toPath (dir), toPath (oldDir)))
+    {
+        setStatusForPath ("A session already exists at", dir.getChildFile ("session.json"));
+        showDuskAlert (*this, savecheck::kOtherSessionTitle,
+                       savecheck::otherSessionMessage (dir.getFullPathName().toStdString()));
+        return false;
+    }
 
     // Save As to a different folder must take the audio along: copy every
     // session-owned file into the new dir and repoint the model BEFORE the
     // directory swap, so serialize below emits relative paths. Plain Ctrl+S
     // (same dir) is a no-op here. Copying precedes the audio-callback detach
     // - it touches no plugin state, so a long copy adds no dropout.
-    const auto oldDir   = session.getSessionDirectory();
     const bool isSaveAs = oldDir != juce::File() && dir != oldDir;
     if (isSaveAs)
     {
@@ -3873,7 +3886,6 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
         /*initialFileOrDirectory*/ startDir.getChildFile (defaultName),
         /*filePatternsAllowed*/    juce::String(),
         /*mode*/                   filebrowser::Mode::Save,
-        /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
         /*saveAnswerIsFolder*/     true,
     },
@@ -3909,7 +3921,6 @@ void MainComponent::saveAsPrompt()
         /*initialFileOrDirectory*/ startDir.getChildFile (defaultName),
         /*filePatternsAllowed*/    juce::String(),
         /*mode*/                   filebrowser::Mode::Save,
-        /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
         /*saveAnswerIsFolder*/     true,
     },
@@ -4375,7 +4386,6 @@ void MainComponent::openFromFilePrompt (std::function<void (bool opened)> onReso
             /*initialFileOrDirectory*/ startDir.getChildFile ("session.json"),
             /*filePatternsAllowed*/    "*.json",
             /*mode*/                   filebrowser::Mode::Open,
-            /*warnAboutOverwriting*/   false,
             /*selectDirectories*/      false,
         },
         [this, onResolved] (juce::File chosen)
@@ -4406,7 +4416,6 @@ void MainComponent::openBounceDialog()
         /*initialFileOrDirectory*/ defaultFile,
         /*filePatternsAllowed*/    patterns,
         /*mode*/                   filebrowser::Mode::Save,
-        /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
     },
     [this] (juce::File out)
@@ -4442,16 +4451,14 @@ void MainComponent::openBounceDialog()
                 bounceModal.show (*this, std::move (panel), {}, false, false);
             };
 
-            // The .mp3 -> .wav retarget skips the file browser's overwrite
-            // check (it inspected the .mp3 name), so re-check the real target.
-            if (target != outFile && target.existsAsFile())
+            if (target.existsAsFile())
             {
                 juce::Component::SafePointer<MainComponent> safe (this);
-                showDuskConfirm (*this, "Overwrite file?",
-                                 target.getFileName()
-                                   + " already exists (realtime bounces are written as WAV). "
-                                     "Overwrite it?",
-                                 "Overwrite",
+                showDuskConfirm (*this, savecheck::kReplaceFileTitle,
+                                 savecheck::replaceFileMessage (
+                                     target.getFileName().toStdString(),
+                                     target != outFile ? "Realtime bounces are always written as WAV." : ""),
+                                 savecheck::kReplaceFileButton,
                                  [safe, launchBounce] { if (safe != nullptr) launchBounce(); },
                                  "Cancel", {}, /*destructive*/ true);
                 return;
@@ -4483,7 +4490,6 @@ void MainComponent::openBounceStemsDialog()
         /*initialFileOrDirectory*/ defaultFile,
         /*filePatternsAllowed*/    "*.wav",
         /*mode*/                   filebrowser::Mode::Save,
-        /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
     },
     [this] (juce::File out)
@@ -4496,8 +4502,7 @@ void MainComponent::openBounceStemsDialog()
         // Preflight: the base WAV is never written for stems - the real
         // targets are the derived stem files. Ask BounceEngine for the exact
         // set it would write (tracks + bus / aux stems) and warn if any
-        // already exist, so the file browser's base-file overwrite check
-        // doesn't give false comfort.
+        // already exist.
         juce::StringArray conflicts;
         for (const auto& tgt : BounceEngine::collectStemTargets (session, outFile))
             if (tgt.file.existsAsFile())
@@ -4755,7 +4760,6 @@ void MainComponent::importPrompt()
         /*initialFileOrDirectory*/ startDir,
         /*filePatternsAllowed*/    "*.wav;*.aiff;*.aif;*.flac;*.mid;*.midi",
         /*mode*/                   filebrowser::Mode::Open,
-        /*warnAboutOverwriting*/   false,
         /*selectDirectories*/      false,
     },
     [safeThis = juce::Component::SafePointer<MainComponent> (this)]
@@ -4843,7 +4847,6 @@ void MainComponent::importDpSongPrompt()
         /*initialFileOrDirectory*/ startDir,
         /*filePatternsAllowed*/    "*.wav;*.sys",
         /*mode*/                   filebrowser::Mode::Open,
-        /*warnAboutOverwriting*/   false,
         /*selectDirectories*/      false,
     },
     [safeThis = juce::Component::SafePointer<MainComponent> (this)]
