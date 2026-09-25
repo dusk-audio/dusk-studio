@@ -368,7 +368,9 @@ publishes.
   exists; they used to replace it without asking. Save As into a folder that
   already holds a different session is refused and changes nothing, and Save
   As to the session's own folder by another path, such as through a link,
-  saves in place instead of deleting the audio it was copying.
+  saves in place instead of deleting the audio it was copying. Save As into
+  any other folder keeps the files already there: a copy whose name is taken
+  gets a numbered name instead of replacing it.
 - **A new session never saves over one kept as Untitled** (#734). Dusk Studio
   starts in `~/Music/Dusk Studio/Untitled`. If a session had once been saved
   under that name, Save, Cmd+S and the Save in the quit prompt wrote the fresh
