@@ -90,7 +90,7 @@ src/ui/DuskComboBox.cpp	190
 src/ui/DuskComboBox.h	5
 src/ui/DuskContextMenu.cpp	51
 src/ui/DuskContextMenu.h	8
-src/ui/DuskFileBrowser.cpp	71
+src/ui/DuskFileBrowser.cpp	70
 src/ui/DuskFileBrowser.h	12
 src/ui/DuskLabelEditor.h	3
 src/ui/DuskMenuBar.h	29

@@ -6,8 +6,8 @@
 
 namespace duskstudio::filebrowser
 {
-// Save mode adds a name field at the bottom + warns about overwriting
-// existing files.
+// Save mode adds a name field at the bottom. It never asks before replacing a
+// file: the caller settles the final name, so the caller asks.
 enum class Mode { Open, Save };
 
 // Whether a path the browser reports may be handed back when the user

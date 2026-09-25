@@ -323,7 +323,6 @@ void SfzLibraryPanel::addRootFolder()
         /*initialFileOrDirectory*/ juce::File(),
         /*filePatternsAllowed*/    {},
         /*mode*/                   filebrowser::Mode::Open,
-        /*warnAboutOverwriting*/   false,
         /*selectDirectories*/      true,
     },
     [safe] (juce::File folder)
