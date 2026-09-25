@@ -1721,8 +1721,9 @@ void AudioEngine::record()
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): no audio device open "
                               "(sample rate is 0); recording cannot start.\n");
         if (onRecordBlocked_)
-            onRecordBlocked_ ("No audio device is open.\n\nOpen Settings \xE2\x86\x92 Audio "
-                              "and select a device before recording.");
+            // Wide, so the arrow survives the conversion to the sink's string.
+            onRecordBlocked_ (L"No audio device is open.\n\nOpen Settings \u2192 Audio "
+                              L"and select a device before recording.");
         return;
     }
 
