@@ -846,10 +846,13 @@ std::optional<ScenarioResult> exportMasterMp3 (ScenarioContext& ctx)
             const int rate    = (bytes[at + 2] >> 4) & 0xF;
             const int srIndex = (bytes[at + 2] >> 2) & 3;
             const int padding = (bytes[at + 2] >> 1) & 1;
+            const auto length = (std::size_t) (960 + padding);
+            if (length > bytes.size() - at)
+                break;
             if (version != 3 || layer != 1 || rate != 14 || srIndex != 1)
                 ++wrong;
             ++frames;
-            at += (std::size_t) (960 + padding);
+            at += length;
         }
         ctx.note (std::to_string (frames) + " frames, " + std::to_string (wrong) + " not 320 kbps MPEG-1 Layer III at 48 kHz, "
                   + std::to_string (bytes.size() - std::min (at, bytes.size())) + " trailing bytes");
