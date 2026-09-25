@@ -5533,7 +5533,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                                     : juce::String ("Set every strip's automation mode to Off "
                                                       "before optimising. The optimiser rewrites "
                                                       "lane data; doing it while a strip is in "
-                                                      "Read or Touch can race the audio thread."));
+                                                      "Read, Touch or Write can race the audio thread."));
                 break;
             }
 

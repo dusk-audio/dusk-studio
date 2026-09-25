@@ -1,7 +1,6 @@
 #include "GuiHost.h"
 #include "AppConfig.h"
 #include "FourKColours.h"
-#include "PlatformWindowing.h"
 #include "../foundation/Fs.h"
 
 #include "../engine/AudioEngine.h"
@@ -5976,8 +5975,9 @@ const ScenarioRegistrar unarmedRecord { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runUnarmedRecord (host, ctx); }
 } };
 // File > Optimize automation rewrites every lane, so it refuses while the
-// transport rolls or any strip is still reading its lanes, and says so; once
-// both are clear it thins the lanes and reports the point counts.
+// transport rolls or any track, aux lane or the master is in Read, Touch or
+// Write, and says so; once both are clear it thins the lanes and reports the
+// point counts.
 std::optional<ScenarioResult> runOptimizeAutomation (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
@@ -6023,12 +6023,13 @@ std::optional<ScenarioResult> runOptimizeAutomation (GuiHost& host, ScenarioCont
 
     auto& readMode  = session.track (5).automationMode;
     auto& touchMode = session.auxLane (0).params.automationMode;
+    auto& writeMode = session.master().automationMode;
     const std::string stopPlayback =
         "Optimize automation\nStop playback before optimising automation. The optimiser rewrites "
         "every lane's point data; running it while the audio thread may be reading the lanes is unsafe.";
     const std::string setOff =
         "Optimize automation\nSet every strip's automation mode to Off before optimising. The "
-        "optimiser rewrites lane data; doing it while a strip is in Read or Touch can race the audio thread.";
+        "optimiser rewrites lane data; doing it while a strip is in Read, Touch or Write can race the audio thread.";
 
     auto steps = std::make_shared<std::vector<Step>>();
     const auto attempt = [&host, &ctx, &ramp, steps] (const std::string& expected, std::size_t points,
@@ -6065,8 +6066,13 @@ std::optional<ScenarioResult> runOptimizeAutomation (GuiHost& host, ScenarioCont
         readMode.store ((int) AutomationMode::Off, std::memory_order_release);
         touchMode.store ((int) AutomationMode::Touch, std::memory_order_release);
     });
-    attempt (setOff, 5, "with an aux lane in Touch", [&touchMode]
-    { touchMode.store ((int) AutomationMode::Off, std::memory_order_release); });
+    attempt (setOff, 5, "with an aux lane in Touch", [&touchMode, &writeMode]
+    {
+        touchMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        writeMode.store ((int) AutomationMode::Write, std::memory_order_release);
+    });
+    attempt (setOff, 5, "with the master in Write", [&writeMode]
+    { writeMode.store ((int) AutomationMode::Off, std::memory_order_release); });
     attempt ("Optimize automation\nThinned 5 automation points down to 2.", 2, "stopped with every strip Off",
              [&ctx, &ramp, seeded]
     {
@@ -9820,7 +9826,7 @@ std::optional<ScenarioResult> runStartupNewCreates (GuiHost& host, ScenarioConte
     if (! SessionSerializer::save (session, clean)) return ScenarioResult::fail ("could not save the clean session");
     reopenSavedSession (host, clean);
 
-    constexpr auto kTemplate = SessionTemplate::SingerSongwriter;
+    static constexpr auto kTemplate = SessionTemplate::SingerSongwriter;
     const auto templateIndex = std::to_string ((int) kTemplate);
     std::shared_ptr<const Session> expected = []
     {
@@ -10734,13 +10740,14 @@ const ScenarioRegistrar tempoChangeConfirmation { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runTempoChangeConfirmation (host, ctx); }
 } };
 
-// A send knob runs -60 to +6 dB with OFF at the bottom of its travel; a send is
-// post-fader until its knob's right-click menu makes it pre, which the level
-// text under the knob then says; and the compact strip's AUX light mutes all
-// four sends and gives each its level back.
+// A send knob runs OFF, then -59.9 to +6 dB, and reads OFF at the bottom of
+// its travel rather than an audible level; a send is post-fader until its
+// knob's right-click menu makes it pre, which the level text under the knob
+// then says; and the compact strip's AUX light mutes all four sends and gives
+// each its level back.
 std::optional<ScenarioResult> runAuxSendKnobs (GuiHost& host, ScenarioContext& ctx)
 {
-    constexpr auto kSends = ChannelStripParams::kNumAuxSends;
+    static constexpr auto kSends = ChannelStripParams::kNumAuxSends;
     auto& strip = ctx.session().track (kStripIndex).strip;
     if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
     // The right-click selects the track and focuses its strip.
@@ -10768,11 +10775,12 @@ std::optional<ScenarioResult> runAuxSendKnobs (GuiHost& host, ScenarioContext& c
     struct Turn { const char* input; float stored; const char* spoken; std::string shown; };
     // Starts off the bottom so the move down to it changes the knob.
     const std::vector<Turn> turns {
-        { "-12", -12.0f, "-12.0", "-12" },
-        { "-80", ChannelStripParams::kAuxSendOffDb, "-60.0", minus },
-        { "-59.9", -59.9f, "-59.9", "-60" },
-        { "10", ChannelStripParams::kAuxSendMaxDb, "6.0", "6.0" },
-        { "-12", -12.0f, "-12.0", "-12" }
+        { "-12", -12.0f, "-12.0 dB", "-12" },
+        { "-80", ChannelStripParams::kAuxSendOffDb, "OFF", minus },
+        { "-59.9", -59.9f, "-59.9 dB", "-60" },
+        { "OFF", ChannelStripParams::kAuxSendOffDb, "OFF", minus },
+        { "10", ChannelStripParams::kAuxSendMaxDb, "6.0 dB", "6.0" },
+        { "-12", -12.0f, "-12.0 dB", "-12" }
     };
     for (const auto& turn : turns)
     {
@@ -10881,7 +10889,7 @@ std::optional<ScenarioResult> runQuickstartEntry (GuiHost& host, ScenarioContext
     namespace fs = std::filesystem;
     if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
     ctx.cleanup ([&host] { drainModals (host); });
-    const auto exeDir = platform::executableDirectory();
+    const auto exeDir = host.executableDirectory();
     if (exeDir.empty()) return ScenarioResult::skip ("the platform does not say where the executable is");
     const std::vector<fs::path> roots {
         exeDir.parent_path(), exeDir, exeDir.parent_path() / "Resources",

@@ -981,34 +981,30 @@ void MasteringView::doExport()
 
 void MasteringView::openExportBrowser (int preset)
 {
-    const bool   mp3Preset = preset == 3;
-    const double rate      = preset == 2 ? 44100.0 : 0.0;
-    const int    depth     = preset == 2 ? 16 : 24;
+    const auto spec = BounceEngine::masterExportPreset (preset);
+    const juce::String extension (spec.extension);
 
-    const auto defaultFile = session.getSessionDirectory().getChildFile (
-        mp3Preset ? "master.mp3" : "master.wav");
-    const juce::String patterns = mp3Preset ? "*.mp3" : "*.wav";
+    const auto defaultFile = session.getSessionDirectory().getChildFile ("master." + extension);
 
     filebrowser::open (*this, {
         /*title*/                  "Export master",
         /*initialFileOrDirectory*/ defaultFile,
-        /*filePatternsAllowed*/    patterns,
+        /*filePatternsAllowed*/    "*." + extension,
         /*mode*/                   filebrowser::Mode::Save,
         /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
     },
-    [this, mp3Preset, rate, depth] (juce::File out)
+    [this, spec, extension] (juce::File out)
     {
         if (out == juce::File()) return;
         auto target = out;
-        if (! target.hasFileExtension (mp3Preset ? "mp3" : "wav"))
-            target = target.withFileExtension (mp3Preset ? "mp3" : "wav");
-        const auto fmt = mp3Preset ? BounceEngine::Format::Mp3 : BounceEngine::Format::Wav;
+        if (! target.hasFileExtension (extension))
+            target = target.withFileExtension (extension);
 
         auto panel = std::make_unique<BounceDialog> (engine, session,
                                                        target,
-                                                       BounceEngine::Mode::MasteringChain, fmt,
-                                                       320, rate, depth);
+                                                       BounceEngine::Mode::MasteringChain, spec.format,
+                                                       spec.mp3Kbps, spec.sampleRate, spec.wavBitDepth);
         panel->setSize (520, 200);
         juce::Component::SafePointer<MasteringView> safeThis (this);
         panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->exportModal.close(); };

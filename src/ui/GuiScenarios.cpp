@@ -698,6 +698,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return MainComponent::quickstartDocumentForScenario();
     }
+    std::filesystem::path executableDirectory() const override
+    {
+        return platform::executableDirectory();
+    }
     bool clickFileBrowserControl (bool path) override
     {
         const auto& stack = EmbeddedModal::activeModalStack();

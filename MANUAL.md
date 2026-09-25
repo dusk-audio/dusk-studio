@@ -2524,7 +2524,7 @@ Four variants:
 
 Two variants:
 
-- **Automation active**: "Stop playback before optimising automation. The optimiser rewrites every lane's point data; running it while the audio thread may be reading the lanes is unsafe." (Or the equivalent "Set every strip's automation mode to Off before optimising. …" when the transport is stopped but lanes are still in Read/Touch.) — Buttons: OK.
+- **Automation active**: "Stop playback before optimising automation. The optimiser rewrites every lane's point data; running it while the audio thread may be reading the lanes is unsafe." (Or the equivalent "Set every strip's automation mode to Off before optimising. …" when the transport is stopped but any track, aux lane or the master is still in Read, Touch or Write.) — Buttons: OK.
 - **Success**: "Thinned [before] automation points down to [after]." — Buttons: OK.
 - **Action**: Stop playback and set all strips to **Off** mode, then retry.
 
@@ -2760,15 +2760,15 @@ The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These 
 
 # Appendix B — File formats
 
-| Artifact             | Format                                                 |
-| -------------------- | ------------------------------------------------------ |
-| Session              | JSON, atomic write                                     |
-| Recorded audio       | 24-bit PCM WAV, session sample rate                    |
-| Imported audio       | re-encoded to 24-bit WAV in session/audio/             |
-| Recorded MIDI        | embedded in session.json (note + CC arrays per region) |
-| Plugin scan cache    | XML, per-user config directory                         |
-| MIDI bindings export | JSON                                                   |
-| Bounce               | 24-bit PCM WAV, session sample rate                    |
+| Artifact             | Format                                                                                  |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| Session              | JSON, atomic write                                                                      |
+| Recorded audio       | 24-bit PCM WAV, session sample rate                                                     |
+| Imported audio       | copied as-is into session/audio/ when rate and channels match, otherwise 24-bit WAV     |
+| Recorded MIDI        | embedded in session.json (note + CC arrays per region)                                  |
+| Plugin scan cache    | XML, plus a JSON sidecar per native format, per-user config directory                   |
+| MIDI bindings export | JSON                                                                                    |
+| Bounce               | 24-bit PCM WAV, session sample rate                                                     |
 
 \newpage
 

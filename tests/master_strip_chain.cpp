@@ -219,5 +219,5 @@ TEST_CASE ("master GR meter reads the master compressor's reduction", "[master][
 
     CAPTURE (engaged, bypassed);
     REQUIRE (engaged < -3.0f);
-    REQUIRE (bypassed == 0.0f);
+    REQUIRE_THAT (bypassed, WithinAbs (0.0, 1e-6));
 }

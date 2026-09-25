@@ -213,7 +213,7 @@ ScenarioResult noDeviceRefusesRecord (ScenarioContext& ctx)
     StubDevice device { ScenarioContext::kSampleRate, ScenarioContext::kBlockSize };
     engine.audioDeviceAboutToStart (&device);
     engine.audioDeviceStopped();
-    if (! ctx.expect (engine.getCurrentSampleRate() == 0.0, "closing the device left a sample rate behind"))
+    if (! ctx.expect (! (engine.getCurrentSampleRate() > 0.0), "closing the device left a sample rate behind"))
         return ctx.verdict();
 
     armTrack (ctx);

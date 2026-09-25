@@ -816,8 +816,12 @@ std::optional<ScenarioResult> exportMasterMp3 (ScenarioContext& ctx)
     render.format = BounceEngine::Format::Mp3;
     render.sampleRate = 0.0;
     render.tailSeconds = 0.5;
-    return exportMaster (ctx, sine (1000.0f, 0.25f, 48000), render, "master.mp3",
-                         [&ctx] (const std::filesystem::path& out)
+    const auto mix = sine (1000.0f, 0.25f, (int) kRate);
+    // An MPEG-1 Layer III frame holds 1152 samples, so the mix and its tail
+    // need at least this many.
+    const auto minFrames = (int) std::ceil (((double) mix.size() + render.tailSeconds * kRate) / 1152.0);
+    return exportMaster (ctx, mix, render, "master.mp3",
+                         [&ctx, minFrames] (const std::filesystem::path& out)
     {
         std::vector<unsigned char> bytes;
         if (std::FILE* file = std::fopen (out.u8string().c_str(), "rb"))
@@ -849,7 +853,8 @@ std::optional<ScenarioResult> exportMasterMp3 (ScenarioContext& ctx)
         }
         ctx.note (std::to_string (frames) + " frames, " + std::to_string (wrong) + " not 320 kbps MPEG-1 Layer III at 48 kHz, "
                   + std::to_string (bytes.size() - std::min (at, bytes.size())) + " trailing bytes");
-        ctx.expect (frames > 40, "the MP3 export has too few frames to be 1.5 s of audio");
+        ctx.expect (frames >= minFrames, "the MP3 export has " + std::to_string (frames) + " frames, short of the "
+                                             + std::to_string (minFrames) + " the mix and its tail need");
         ctx.expect (wrong == 0, "an MP3 frame is not 320 kbps MPEG-1 Layer III at 48 kHz");
     });
    #else

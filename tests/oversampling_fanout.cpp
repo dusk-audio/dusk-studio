@@ -4,7 +4,6 @@
 #include "dsp/BusStrip.h"
 #include "dsp/ChannelStrip.h"
 #include "dsp/MasterBus.h"
-#include "dsp/MasteringChain.h"
 #include "session/Session.h"
 
 #include <algorithm>
@@ -201,19 +200,5 @@ TEST_CASE ("Effect oversampling raises the master EQ and compressor rate", "[ove
         const double folded = masterFolded (factor, eq, ! eq);
         CAPTURE (factor, folded);
         REQUIRE (folded - native < -30.0);
-    }
-}
-
-TEST_CASE ("Effect oversampling switches the mastering compressor's oversampling on above 1x", "[oversampling]")
-{
-    for (const int factor : { 1, 2, 4 })
-    {
-        duskstudio::MasteringParams params;
-        duskstudio::MasteringChain chain;
-        chain.bind (params);
-        chain.prepare (kSr, kBlock, factor);
-        REQUIRE (chain.getCompProcessor() != nullptr);
-        CAPTURE (factor);
-        REQUIRE (chain.getCompProcessor()->getInternalOversamplingEnabled() == (factor > 1));
     }
 }

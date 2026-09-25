@@ -154,6 +154,8 @@ public:
     virtual bool contextMenuItemEnabled (const std::string& text) const = 0;
     // What Settings > Quickstart would hand to the desktop; empty when absent.
     virtual std::filesystem::path quickstartDocument() const = 0;
+    // The directory the running executable sits in; empty if the platform would not say.
+    virtual std::filesystem::path executableDirectory() const = 0;
     virtual void refreshMasteringSource() = 0;
     virtual bool focusFileName() = 0;
     virtual bool clickFileBrowserControl (bool path) = 0;
