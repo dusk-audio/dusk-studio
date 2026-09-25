@@ -3211,6 +3211,7 @@ void MainComponent::promptNewSessionLocation (SessionTemplate tmpl,
         /*mode*/                   filebrowser::Mode::Save,
         /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
+        /*saveAnswerIsFolder*/     true,
     },
     [this, tmpl, onResolved] (juce::File chosen)
     {
@@ -3874,6 +3875,7 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
         /*mode*/                   filebrowser::Mode::Save,
         /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
+        /*saveAnswerIsFolder*/     true,
     },
     [this, onComplete = std::move (onComplete)] (juce::File chosen)
     {
@@ -3909,6 +3911,7 @@ void MainComponent::saveAsPrompt()
         /*mode*/                   filebrowser::Mode::Save,
         /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
+        /*saveAnswerIsFolder*/     true,
     },
     [this] (juce::File chosen)
     {
