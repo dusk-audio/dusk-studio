@@ -2042,7 +2042,7 @@ Because the session is a folder, you can copy or back up a session by copying th
 
 ## Save commands
 
-- **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file.
+- **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file. A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, has no `session.json` of its own yet, so Save opens the Save As browser instead, even when a session you once saved as `Untitled` already sits in that folder.
 - **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder.
 - **File → Open…** (or **Cmd+O**): load a session by choosing its `session.json` file.
 - **File → New from template**: start a fresh session with tracks pre-named and colour-coded for a common workflow. The built-in templates are **Blank** (numbered tracks), **Band** (Kick / Snare / Drums OH / Bass / Gtr 1 / Gtr 2 / Keys / Lead Vox / BG Vox), **Beats** (Kick / Snare / Hat / Perc / 808 / Pad / Lead / Vox), and **Singer-Songwriter** (Vocal / Ac Gtr L / Ac Gtr R / Bass / Synth / Drums). Templates set each track's name, colour and type (mono, stereo or MIDI); they don't add plugins or audio.

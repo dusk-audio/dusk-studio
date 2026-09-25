@@ -10361,6 +10361,130 @@ const ScenarioRegistrar saveFailedAlert { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runSaveFailedAlert (host, ctx); }
 } };
 
+// The launch session's folder can already hold a real session someone saved
+// under that name. The launch session has still never been saved, so File >
+// Save, Cmd+S and the quit prompt's Save each ask where to save and leave that
+// session's files alone; a session opened from disk still saves in place.
+std::optional<ScenarioResult> runFreshSessionSaveAsks (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered() || ! host.autosaveRunning() || host.engineDetached())
+        return ScenarioResult::skip ("requires a stopped transport, no modal, and live audio and autosave");
+    if (host.sessionOnDisk()) return ScenarioResult::skip ("requires the launch session never to have been saved");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        drainModals (host);
+        engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto untitled = ctx.tempDir() / "Untitled";
+    const auto untitledJson = untitled / "session.json";
+    const auto untitledNotes = untitled / "notepad.md";
+    fs::create_directories (untitled / "audio");
+    auto& fader = session.track (0).strip.faderDb;
+    const float launchFader = fader.load();
+    fader.store (launchFader - 6.0f);
+    const bool wrote = SessionSerializer::save (session, untitledJson);
+    fader.store (launchFader);
+    std::ofstream (untitledNotes) << "Notes of the session saved as Untitled\n";
+    if (! wrote || ! fs::exists (untitledNotes)) return ScenarioResult::fail ("could not write the Untitled session");
+    const auto read = [] (const fs::path& path)
+    {
+        std::ifstream input (path, std::ios::binary);
+        return std::string (std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>());
+    };
+    const auto jsonBytes = read (untitledJson);
+    const auto notesBytes = read (untitledNotes);
+
+    applySessionDirectory (session, untitled);
+    const float dirtied = launchFader - 3.0f;
+    fader.store (dirtied);
+
+    const auto asked = std::make_shared<int> (0);
+    const auto askedWhere = [&host, &ctx, read, asked, untitledJson, untitledNotes, jsonBytes, notesBytes]
+                            (const std::string& how)
+    {
+        const bool saveAs = ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                                        how + " showed '" + host.modalText() + "' rather than Save As");
+        ctx.expect (read (untitledJson) == jsonBytes, how + " wrote over the Untitled session's session.json");
+        ctx.expect (read (untitledNotes) == notesBytes, how + " wrote over the Untitled session's notepad.md");
+        if (saveAs && ctx.expect (host.clickModalButton ("Cancel"), how + ": Save As has no Cancel"))
+            ++*asked;
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save"), "the File menu has no Save"); } });
+    steps->push_back ({ 700, [askedWhere] { askedWhere ("File > Save"); } });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
+    } });
+    steps->push_back ({ 700, [askedWhere] { askedWhere ("Cmd+S"); } });
+    // A Save from the quit prompt that completes ends the process, so it is only
+    // pressed once the other two have shown they ask first.
+    steps->push_back ({ 400, [&host, &ctx, asked]
+    {
+        if (*asked == 2)
+            ctx.expect (host.requestQuit(), "the edited session did not ask before quitting");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, asked]
+    {
+        if (*asked != 2) return;
+        if (ctx.expect (host.modalText().rfind ("Save changes before quitting?", 0) == 0,
+                        "Quit showed '" + host.modalText() + "' rather than its prompt"))
+            ctx.expect (host.clickModalButton ("Save"), "the quit prompt did not offer Save");
+    } });
+    steps->push_back ({ 700, [askedWhere, asked]
+    { if (*asked == 2) askedWhere ("the quit prompt's Save"); } });
+
+    const auto opened = ctx.tempDir() / "Opened";
+    const auto openedJson = opened / "session.json";
+    const float onDisk = launchFader - 9.0f;
+    const float edited = launchFader - 12.0f;
+    steps->push_back ({ 600, [&host, &ctx, &engine, &session, &fader, untitled, dirtied, opened, openedJson, onDisk, edited]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached() && host.autosaveRunning(),
+                    "backing out of the quit prompt's Save As left audio or autosave parked");
+        ctx.expect (currentSessionDirectory (session) == untitled && nearly (fader.load(), dirtied),
+                    "backing out of Save As did not leave the session as it was");
+        fs::create_directories (opened / "audio");
+        fader.store (onDisk);
+        if (! ctx.expect (SessionSerializer::save (session, openedJson), "could not write the session to open"))
+            return;
+        reopenSavedSession (host, openedJson);
+        ctx.expect (currentSessionDirectory (session) == opened, "the saved session did not open");
+        fader.store (edited);
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save"), "the File menu has no Save"); } });
+    steps->push_back ({ 700, [&host, &ctx, openedJson, edited]
+    {
+        ctx.expect (host.modalStackEmpty(), "File > Save on an opened session showed '" + host.modalText() + "'");
+        ctx.expect (nearly (savedFaderOf (openedJson), edited), "File > Save did not save the opened session in place");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar freshSessionSaveAsks { Scenario {
+    "gui.fresh_session_save_asks_where", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFreshSessionSaveAsks (host, ctx); }
+} };
+
 bool writeBytes (const std::filesystem::path& path, std::size_t size, char fill)
 {
     std::ofstream out (path, std::ios::binary);

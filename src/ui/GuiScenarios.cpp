@@ -438,6 +438,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         launch.uiScale = uiScale();
         launch.tapeExpanded = owner.tapeStripExpanded;
         launch.sessionDir = scenario::currentSessionDirectory (owner.session);
+        launch.sessionOnDisk = owner.sessionOnDisk;
         launch.masterMute = owner.session.master().mute.load();
         launch.masteringSource = owner.session.mastering().sourceFile.getFullPathName().toStdString();
         if (owner.tapeStrip != nullptr)
@@ -1436,6 +1437,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     void autosaveTick() override { owner.writeAutosave(); }
     bool autosaveRunning() const override { return owner.isTimerRunning(); }
     bool engineDetached() const override { return owner.engineDetached; }
+    bool sessionOnDisk() const override { return owner.sessionOnDisk; }
     bool requestQuit() override
     {
         if (! owner.currentSessionDirty() && ! owner.notepadDirty) return false;
@@ -2003,6 +2005,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
         if (scenario::currentSessionDirectory (owner.session) != launch.sessionDir)
             scenario::applySessionDirectory (owner.session, launch.sessionDir);
+        // Cases put their session back by opening a saved copy, which marks it
+        // opened from disk even when the launch session never was.
+        owner.sessionOnDisk = launch.sessionOnDisk;
 
         // Leaving full screen can recreate the peer, so it is fetched again
         // before the launch bounds go back.
@@ -2032,6 +2037,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         std::array<int, Session::kNumTracks> trackMode {};
         std::string masteringSource;
         std::filesystem::path sessionDir;
+        bool sessionOnDisk = false;
     };
 
     MainComponent& owner;

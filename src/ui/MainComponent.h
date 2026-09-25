@@ -153,6 +153,11 @@ private:
 
     bool saveSessionTo (const juce::File& sessionDir);
     void saveAsPrompt();
+    // Whether this session has been opened from or saved to its folder. The
+    // launch session's folder can hold a session someone saved under that
+    // name, so a session.json there does not make it this session's file.
+    bool sessionOnDisk = false;
+    bool saveGoesInPlace() const;
     // onComplete runs once, after the load attempt or any recovery-prompt choice,
     // with whether a session loaded. The return value only says the attempt was
     // accepted when the recovery prompt is up.
