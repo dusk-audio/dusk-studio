@@ -1,8 +1,10 @@
 #include "MasteringView.h"
 #include "BounceDialog.h"
 #include "CompHeaderButton.h"
+#include "DuskAlerts.h"
 #include "DuskContextMenu.h"
 #include "DuskFileBrowser.h"
+#include "SaveTargetChecks.h"
 #include "../dsp/MultibandCompPresets.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/MasteringPlayer.h"
@@ -922,7 +924,6 @@ void MasteringView::doLoadPrompt()
         /*initialFileOrDirectory*/ startDir,
         /*filePatternsAllowed*/    "*.wav;*.aiff;*.flac",
         /*mode*/                   filebrowser::Mode::Open,
-        /*warnAboutOverwriting*/   false,
         /*selectDirectories*/      false,
     },
     [this] (juce::File chosen)
@@ -991,7 +992,6 @@ void MasteringView::openExportBrowser (int preset)
         /*initialFileOrDirectory*/ defaultFile,
         /*filePatternsAllowed*/    "*." + extension,
         /*mode*/                   filebrowser::Mode::Save,
-        /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
     },
     [this, spec, extension] (juce::File out)
@@ -1001,14 +1001,28 @@ void MasteringView::openExportBrowser (int preset)
         if (! target.hasFileExtension (extension))
             target = target.withFileExtension (extension);
 
-        auto panel = std::make_unique<BounceDialog> (engine, session,
-                                                       target,
-                                                       BounceEngine::Mode::MasteringChain, spec.format,
-                                                       spec.mp3Kbps, spec.sampleRate, spec.wavBitDepth);
-        panel->setSize (520, 200);
         juce::Component::SafePointer<MasteringView> safeThis (this);
-        panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->exportModal.close(); };
-        exportModal.show (*this, std::move (panel), {}, false, false);
+        auto launch = [safeThis, spec, target]
+        {
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
+            auto panel = std::make_unique<BounceDialog> (self->engine, self->session,
+                                                           target,
+                                                           BounceEngine::Mode::MasteringChain, spec.format,
+                                                           spec.mp3Kbps, spec.sampleRate, spec.wavBitDepth);
+            panel->setSize (520, 200);
+            panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->exportModal.close(); };
+            self->exportModal.show (*self, std::move (panel), {}, false, false);
+        };
+        if (! target.existsAsFile())
+        {
+            launch();
+            return;
+        }
+        auto* window = getTopLevelComponent();
+        showDuskConfirm (window != nullptr ? *window : *this, savecheck::kReplaceFileTitle,
+                         savecheck::replaceFileMessage (target.getFileName().toStdString()),
+                         savecheck::kReplaceFileButton, launch, "Cancel", {}, /*destructive*/ true);
     });
 }
 } // namespace duskstudio

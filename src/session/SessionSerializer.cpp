@@ -21,9 +21,11 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <set>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -2989,6 +2991,13 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
     const auto oldDir = s.getSessionDirectory();
     if (newSessionDir == juce::File() || newSessionDir == oldDir)
         return res;
+    // The session's own folder spelled another way (a link, a bind mount):
+    // copying a file onto itself deletes it before the copy.
+    const auto newPath = std::filesystem::u8path (newSessionDir.getFullPathName().toStdString());
+    const auto oldPath = std::filesystem::u8path (oldDir.getFullPathName().toStdString());
+    std::error_code sameDirError;
+    if (! oldPath.empty() && std::filesystem::equivalent (newPath, oldPath, sameDirError))
+        return res;
 
     // Phase A - plan. Map each unique source to its destination without
     // touching the model. Files under the old session dir keep their relative
@@ -3018,7 +3027,9 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
             ? newSessionDir.getChildFile (f.getRelativePathFrom (oldDir))
             : newSessionDir.getChildFile ("audio").getChildFile (f.getFileName());
         const auto targetDir = target.getParentDirectory();
-        for (int n = 2; usedTargets.count (target.getFullPathName()) != 0; ++n)
+        // A file already in the destination is someone's, so it is never
+        // written over, and rollback can only ever delete copies made here.
+        for (int n = 2; usedTargets.count (target.getFullPathName()) != 0 || target.exists(); ++n)
             target = targetDir.getChildFile (f.getFileNameWithoutExtension()
                                               + "_" + juce::String (n)
                                               + f.getFileExtension());
@@ -3056,6 +3067,13 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
         if (oldStateDir.isDirectory())
         {
             const auto newStateDir = newSessionDir.getChildFile ("state");
+            if (newStateDir.exists())
+            {
+                res.ok = false;
+                res.errorMessage = "The folder already has a plugin state folder at \""
+                                 + newStateDir.getFullPathName() + "\"";
+                return res;
+            }
             if (! oldStateDir.copyDirectoryTo (newStateDir))
             {
                 newStateDir.deleteRecursively();

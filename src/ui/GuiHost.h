@@ -343,6 +343,9 @@ public:
     virtual bool autosaveRunning() const = 0;
     // The latch a quit's Save sets while it holds the audio callback off.
     virtual bool engineDetached() const = 0;
+    // Whether the session was opened from or saved to its folder, which is
+    // what lets Save write in place rather than ask where.
+    virtual bool sessionOnDisk() const = 0;
     // The titlebar X. False, with nothing asked, when there are no unsaved
     // changes: that quit would end the run.
     virtual bool requestQuit() = 0;
