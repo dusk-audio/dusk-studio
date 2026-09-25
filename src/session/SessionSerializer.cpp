@@ -21,9 +21,11 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <set>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -2988,6 +2990,13 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
     ConsolidationResult res;
     const auto oldDir = s.getSessionDirectory();
     if (newSessionDir == juce::File() || newSessionDir == oldDir)
+        return res;
+    // The session's own folder spelled another way (a link, a bind mount):
+    // copying a file onto itself deletes it before the copy.
+    const auto newPath = std::filesystem::u8path (newSessionDir.getFullPathName().toStdString());
+    const auto oldPath = std::filesystem::u8path (oldDir.getFullPathName().toStdString());
+    std::error_code sameDirError;
+    if (! oldPath.empty() && std::filesystem::equivalent (newPath, oldPath, sameDirError))
         return res;
 
     // Phase A - plan. Map each unique source to its destination without

@@ -25,11 +25,19 @@ inline std::string otherSessionMessage (const std::string& folder)
 
 // A folder reached through a link, or spelled differently, is still the
 // session's own folder, so the comparison is by identity, not by text.
+inline bool isSameFolder (const std::filesystem::path& a, const std::filesystem::path& b)
+{
+    if (a.empty() || b.empty()) return false;
+    if (a == b) return true;
+    std::error_code ec;
+    return std::filesystem::equivalent (a, b, ec);
+}
+
 inline bool holdsAnotherSession (const std::filesystem::path& targetDir,
                                  const std::filesystem::path& currentDir)
 {
     std::error_code ec;
     if (! std::filesystem::is_regular_file (targetDir / "session.json", ec)) return false;
-    return ! std::filesystem::equivalent (targetDir, currentDir, ec);
+    return ! isSameFolder (targetDir, currentDir);
 }
 } // namespace duskstudio::savecheck

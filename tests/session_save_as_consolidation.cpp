@@ -5,6 +5,9 @@
 
 #include <juce_core/juce_core.h>
 
+#include <filesystem>
+#include <system_error>
+
 using namespace duskstudio;
 
 namespace
@@ -182,6 +185,23 @@ TEST_CASE ("consolidateInto edge cases", "[session][serializer][consolidate]")
         const auto res = SessionSerializer::consolidateInto (s, dirA);
         REQUIRE (res.ok);
         REQUIRE (res.filesCopied == 0);
+        REQUIRE (s.track (0).regions[0].file == take);
+    }
+
+    SECTION ("the same directory through a link is a no-op and deletes nothing")
+    {
+        std::error_code ec;
+        const auto link = std::filesystem::u8path (dirB.getFullPathName().toStdString()) / "link-to-a";
+        std::filesystem::create_directory_symlink (
+            std::filesystem::u8path (dirA.getFullPathName().toStdString()), link, ec);
+        if (ec)
+            SKIP ("this filesystem cannot make a directory link");
+
+        const auto res = SessionSerializer::consolidateInto (s, juce::File (link.u8string()));
+        REQUIRE (res.ok);
+        REQUIRE (res.filesCopied == 0);
+        REQUIRE (take.existsAsFile());
+        REQUIRE (take.loadFileAsString() == "fake-wav");
         REQUIRE (s.track (0).regions[0].file == take);
     }
 

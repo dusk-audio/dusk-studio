@@ -3260,11 +3260,16 @@ bool MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate t
     return true;
 }
 
-bool MainComponent::saveSessionTo (const juce::File& dir)
+bool MainComponent::saveSessionTo (const juce::File& requestedDir)
 {
-    if (dir == juce::File()) return false;
+    if (requestedDir == juce::File()) return false;
 
     const auto oldDir = session.getSessionDirectory();
+    // Another spelling of the session's own folder (a link, a bind mount) is a
+    // plain Save: consolidating a folder onto itself deletes each source file
+    // before it copies it.
+    const auto dir = savecheck::isSameFolder (toPath (requestedDir), toPath (oldDir))
+                         ? oldDir : requestedDir;
     if (dir != oldDir && savecheck::holdsAnotherSession (toPath (dir), toPath (oldDir)))
     {
         setStatusForPath ("A session already exists at", dir.getChildFile ("session.json"));

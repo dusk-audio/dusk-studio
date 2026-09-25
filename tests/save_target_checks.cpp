@@ -75,3 +75,21 @@ TEST_CASE ("the replace prompt names the file and adds a note only when given on
            == "This file already exists and will be replaced:\n\nmix.wav\n\n"
               "Realtime bounces are always written as WAV.\n\nContinue?");
 }
+
+TEST_CASE ("Save As treats another spelling of the session's own folder as the same folder")
+{
+    using duskstudio::savecheck::isSameFolder;
+    const ScratchSessions s;
+    REQUIRE_FALSE (s.root.empty());
+
+    CHECK (isSameFolder (s.mine, s.mine));
+    CHECK (isSameFolder (s.root / "Other" / ".." / "Mine", s.mine));
+    CHECK_FALSE (isSameFolder (s.other, s.mine));
+    CHECK_FALSE (isSameFolder (s.root / "New", s.mine));
+    CHECK_FALSE (isSameFolder (s.mine, {}));
+
+    std::error_code ec;
+    stdfs::create_directory_symlink (s.mine, s.root / "Link", ec);
+    if (! ec)
+        CHECK (isSameFolder (s.root / "Link", s.mine));
+}
