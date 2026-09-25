@@ -681,6 +681,23 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             owner.menuBar.getLocalBounds().getTopLeft().translated (20, owner.menuBar.getHeight() / 2)).toFloat();
         return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
     }
+    bool clickMenuBar (const std::string& name) override
+    {
+        int x = 0, y = 0;
+        if (! owner.menuBar.menuPointForScenario (name, x, y)) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (&owner.menuBar,
+            owner.menuBar.getLocalBounds().getTopLeft().translated (x, y)).toFloat();
+        return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+    }
+    bool contextMenuItemEnabled (const std::string& text) const override
+    {
+        int x = 0, y = 0;
+        return contextMenuItemPointForScenario (text, x, y);
+    }
+    std::filesystem::path quickstartDocument() const override
+    {
+        return MainComponent::quickstartDocumentForScenario();
+    }
     bool clickFileBrowserControl (bool path) override
     {
         const auto& stack = EmbeddedModal::activeModalStack();
@@ -809,6 +826,12 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index) : nullptr;
         return strip != nullptr && strip->isCompactMode();
+    }
+
+    std::string stripSendLabel (int track, int send) const override
+    {
+        auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
+        return strip != nullptr ? strip->auxSendLabelForScenario (send) : std::string {};
     }
 
     std::string clockText() const override

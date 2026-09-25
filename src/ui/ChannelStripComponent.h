@@ -92,6 +92,11 @@ public:
              : module == 1 ? (compactMode ? &compCompactButton : compModeButton.get())
              : compactMode ? &auxCompactButton : nullptr;
     }
+    std::string auxSendLabelForScenario (int send) const
+    {
+        return send >= 0 && send < (int) auxKnobLabels.size() ? auxKnobLabels[(size_t) send].getText().toStdString()
+                                                              : std::string {};
+    }
     bool moduleEditorOpenForScenario (int module) const;
     // The strip name the open EQ editor is titled with, empty when it is not
     // up. The comp editor is a framework panel with no JUCE text to read.

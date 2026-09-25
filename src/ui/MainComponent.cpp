@@ -5335,6 +5335,11 @@ std::filesystem::path locateQuickstartDocument()
 }
 }
 
+std::filesystem::path MainComponent::quickstartDocumentForScenario()
+{
+    return locateQuickstartDocument();
+}
+
 juce::StringArray MainComponent::getMenuBarNames()
 {
     return { "File", "View", "Settings" };

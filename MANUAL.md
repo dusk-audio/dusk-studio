@@ -2552,8 +2552,8 @@ Two variants:
 ### Import
 
 - **Stop playback**: "Stop playback before importing files." — Buttons: OK.
-- **Unsupported format**: "Unsupported or unreadable audio file: [filename]" — Buttons: OK.
-- **Decode failure**: "[error message from file decoder]" — Buttons: OK.
+- **Unsupported format**: "Unsupported or unreadable audio file: [filename]" — Buttons: OK. The browser and the tape only offer audio file types, so this is a file with an audio extension that cannot be read.
+- **Import failed**: titled "Import audio failed", with the importer's message, for example "Audio file reports an empty or invalid stream" — Buttons: OK.
 - **MIDI unreadable**: "Could not read MIDI file." — Buttons: OK.
 - **MIDI batch failure**: "[error message from MIDI importer]" — Buttons: OK.
 

@@ -2,6 +2,7 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <filesystem>
 #include <memory>
 #include "EmbeddedModal.h"
 #include "DuskMenuBar.h"
@@ -107,6 +108,9 @@ private:
     void restoreUiScaleForScenario (float scale);
     struct ScenarioStripHandle;
     struct ScenarioAuxLaneHandle;
+    // The file Settings > Quickstart would hand to the desktop, empty when the
+    // entry is greyed out.
+    static std::filesystem::path quickstartDocumentForScenario();
     // Presses a button on the open autosave recovery prompt: 0 Recover,
     // 1 Load saved session, 2 Cancel. False when no prompt is up.
     bool answerRecoveryPrompt (int choice);

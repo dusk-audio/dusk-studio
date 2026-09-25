@@ -120,6 +120,8 @@ public:
     virtual bool consolePageMatches (int index) const = 0;
     virtual bool timelineViewMatches (bool expanded) const = 0;
     virtual bool stripCompact (int index) const = 0;
+    // The level text under a channel strip's send knob, as drawn.
+    virtual std::string stripSendLabel (int track, int send) const = 0;
 
     virtual bool builtinPointer (int track, const std::string& control, float position, bool pressed) = 0;
     virtual void closeBuiltin (int track) = 0;
@@ -146,6 +148,12 @@ public:
     virtual std::int64_t tapeRulerSample (float fraction) const = 0;
     virtual bool clickContextMenuItem (const std::string& text) = 0;
     virtual bool clickFileMenu() = 0;
+    // A menu bar title by name: "File", "View" or "Settings".
+    virtual bool clickMenuBar (const std::string& name) = 0;
+    // True when the open menu has that row and it can be chosen; clicks nothing.
+    virtual bool contextMenuItemEnabled (const std::string& text) const = 0;
+    // What Settings > Quickstart would hand to the desktop; empty when absent.
+    virtual std::filesystem::path quickstartDocument() const = 0;
     virtual void refreshMasteringSource() = 0;
     virtual bool focusFileName() = 0;
     virtual bool clickFileBrowserControl (bool path) = 0;

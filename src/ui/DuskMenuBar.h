@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "DuskContextMenu.h"
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace duskstudio
@@ -67,6 +68,18 @@ public:
     {
         const int idx = hitTest (e.getPosition());
         if (idx >= 0) showMenuForIndex (idx);
+    }
+
+    bool menuPointForScenario (const std::string& name, int& x, int& y) const
+    {
+        for (int i = 0; i < (int) hits.size() && i < names.size(); ++i)
+            if (names[i].toStdString() == name)
+            {
+                x = hits[(size_t) i].getCentreX();
+                y = hits[(size_t) i].getCentreY();
+                return isShowing();
+            }
+        return false;
     }
 
 private:
