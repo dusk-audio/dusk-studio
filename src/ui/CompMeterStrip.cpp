@@ -34,7 +34,7 @@ CompMeterStrip::CompMeterStrip (Track& t)
           /*setThresholdDb*/ [&t] (float db) { comp::applyTrackCompThresholdDb (t.strip, db); },
           /*resetThreshold*/ [&t] { comp::resetTrackCompThreshold (t.strip); },
           /*isEngaged*/      [&t] { return t.strip.compEnabled.load (std::memory_order_relaxed); },
-          /*autoEnable*/     [&t] { t.strip.compEnabled.store (true, std::memory_order_relaxed); },
+          /*autoEnable*/     [&t] { t.strip.armComp(); },
       })
 {
 }

@@ -273,6 +273,31 @@ TEST_CASE ("BusStrip: the highpass cuts below its corner and follows the EQ swit
     CHECK_THAT (stripGainDb (params, 300.0), WithinAbs (0.0, 0.01));
 }
 
+// The knobs, a MIDI binding and anything else that moves the bus EQ go through
+// BusParams' move helpers: a band move engages a bypassed EQ, which then plays
+// it, and so does the highpass leaving OFF. Turned back to OFF, the highpass
+// switches off and leaves the EQ engaged.
+TEST_CASE ("BusStrip: a band move or the highpass leaving OFF engages the bus EQ", "[BusStrip]")
+{
+    duskstudio::BusParams band;
+    REQUIRE_FALSE (band.eqEnabled.load());
+    band.moveEqGain (band.eqMidGainDb, 9.0f);
+    CHECK (band.eqEnabled.load());
+    CHECK_THAT (stripGainDb (band, 800.0), WithinAbs (9.0, 0.02));
+
+    duskstudio::BusParams hpf;
+    CHECK_FALSE (hpf.moveHpf (duskstudio::BusParams::kHpfOffHz));
+    CHECK_FALSE (hpf.eqEnabled.load());
+    CHECK (hpf.moveHpf (3000.0f));
+    CHECK (hpf.hpfEnabled.load());
+    CHECK (hpf.eqEnabled.load());
+    CHECK_THAT (stripGainDb (hpf, 300.0), WithinAbs (-40.0, 0.1));
+
+    CHECK_FALSE (hpf.moveHpf (duskstudio::BusParams::kHpfOffHz));
+    CHECK_FALSE (hpf.hpfEnabled.load());
+    CHECK (hpf.eqEnabled.load());
+}
+
 TEST_CASE ("BusStrip: comp-off bus is OS-latency compensated at 4x", "[BusStrip]")
 {
     // With comp off, factor 4 skips the comp oversampler but delays the signal

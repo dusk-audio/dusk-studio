@@ -345,6 +345,39 @@ struct ChannelStripParams
         legacyDial (f).clear();
     }
 
+    // A move of a band's gain, Q or frequency engages the EQ, from its knob, a
+    // MIDI binding or a control surface alike: while the EQ is off,
+    // eqSnapshotFor holds every band flat, so the move would be silent. A
+    // filter switches on above its OFF end and engages the EQ; turned to OFF
+    // it switches off and leaves the EQ as it is. Resets, session loads and
+    // undo store their values directly and engage nothing. The release pairs
+    // with eqSnapshotFor's acquire, so the block that engages the EQ plays the
+    // moved value. Lock-free, for the audio thread's writers too.
+    void moveEqBand (std::atomic<float>& gainOrQ, float v) noexcept
+    {
+        gainOrQ.store (v, std::memory_order_relaxed);
+        eqEnabled.store (true, std::memory_order_release);
+    }
+
+    // Returns whether the move engaged the EQ.
+    bool moveEqFreq (EqFreq f, float hz) noexcept
+    {
+        setEqFreq (f, hz);
+        bool engages = true;
+        if (f == EqFreq::Hpf)
+        {
+            engages = hz > kHpfOffHz + 0.5f;
+            hpfEnabled.store (engages, std::memory_order_relaxed);
+        }
+        else if (f == EqFreq::Lpf)
+        {
+            engages = hz < kLpfOffHz - 0.5f;
+            lpfEnabled.store (engages, std::memory_order_relaxed);
+        }
+        if (engages) eqEnabled.store (true, std::memory_order_release);
+        return engages;
+    }
+
     // Comp: each mode (Opto / FET / VCA) keeps its own atomics and the
     // UI swaps visible controls.
     std::atomic<bool>  compEnabled    { false };
@@ -353,6 +386,11 @@ struct ChannelStripParams
     // first-time users see a clear "click here" affordance. DSP still
     // uses compMode regardless.
     std::atomic<bool>  compModePicked { false };
+
+    // A move of a comp control engages the compressor, from the strip's knobs,
+    // its threshold handle, a MIDI binding or a control surface alike. A reset
+    // does not, as a double-click on the threshold handle does not.
+    void armComp() noexcept { compEnabled.store (true, std::memory_order_relaxed); }
 
     // Opto (LA-2A style).
     std::atomic<float> compOptoPeakRed { 0.0f };   // 0..100 %
@@ -1100,6 +1138,25 @@ struct BusParams
     static constexpr float kHpfOffHz = 20.0f;
     std::atomic<bool>  hpfEnabled { false };
     std::atomic<float> hpfFreq    { kHpfOffHz };
+
+    // The channel strip's rule (ChannelStripParams::moveEqBand): a band move
+    // engages the EQ, and so does the highpass leaving OFF. The release pairs
+    // with BusStrip's acquire.
+    void moveEqGain (std::atomic<float>& gain, float db) noexcept
+    {
+        gain.store (db, std::memory_order_relaxed);
+        eqEnabled.store (true, std::memory_order_release);
+    }
+
+    // Returns whether the move engaged the EQ.
+    bool moveHpf (float hz) noexcept
+    {
+        const bool on = hz > kHpfOffHz + 0.5f;
+        hpfFreq.store (hz, std::memory_order_relaxed);
+        hpfEnabled.store (on, std::memory_order_relaxed);
+        if (on) eqEnabled.store (true, std::memory_order_release);
+        return on;
+    }
 
     std::atomic<bool>  compEnabled   { false };
     std::atomic<float> compThreshDb  { 0.0f };

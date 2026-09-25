@@ -80,7 +80,7 @@ void BusStrip::updateEqParameters() noexcept
     // The EQ section's status light takes the highpass out with the bands, as
     // on the channel strip.
     BusToneEq::Targets t;
-    t.eqOn = paramsRef->eqEnabled.load (std::memory_order_relaxed);
+    t.eqOn = paramsRef->eqEnabled.load (std::memory_order_acquire);
     t.gainDb = { paramsRef->eqLfGainDb.load  (std::memory_order_relaxed),
                  paramsRef->eqMidGainDb.load (std::memory_order_relaxed),
                  paramsRef->eqHfGainDb.load  (std::memory_order_relaxed) };

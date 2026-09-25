@@ -366,7 +366,7 @@ private:
             strip, comp::fracToValue (comp::thresholdDomainFor (strip), frac));
         // Touching the threshold engages the comp, the same rule the inline strip's
         // meter drag follows: nobody sets a threshold meaning to leave it bypassed.
-        strip.compEnabled.store (true, std::memory_order_relaxed);
+        strip.armComp();
     }
 
     void drawThresholdHandle (dw::Context& ctx, const ChannelStripParams& strip,

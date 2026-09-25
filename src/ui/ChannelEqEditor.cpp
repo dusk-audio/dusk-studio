@@ -153,16 +153,10 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     hpfKnob.updateText();
     hpfKnob.onValueChange = [this]
     {
-        const float freq = (float) hpfKnob.getValue();
-        track.strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, freq);
-        const bool hpfOn = freq > ChannelStripParams::kHpfOffHz + 0.5f;
-        track.strip.hpfEnabled.store (hpfOn, std::memory_order_relaxed);
+        const bool engaged = track.strip.moveEqFreq (ChannelStripParams::EqFreq::Hpf,
+                                                     (float) hpfKnob.getValue());
         hpfKnob.updateText();
-        if (hpfOn)
-        {
-            track.strip.eqEnabled.store (true, std::memory_order_release);
-            enableButton.setToggleState (true, juce::dontSendNotification);
-        }
+        if (engaged) enableButton.setToggleState (true, juce::dontSendNotification);
     };
     addAndMakeVisible (hpfKnob);
 
@@ -178,16 +172,10 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     lpfKnob.updateText();
     lpfKnob.onValueChange = [this]
     {
-        const float freq = (float) lpfKnob.getValue();
-        track.strip.setEqFreq (ChannelStripParams::EqFreq::Lpf, freq);
-        const bool lpfOn = freq < ChannelStripParams::kLpfOffHz - 0.5f;
-        track.strip.lpfEnabled.store (lpfOn, std::memory_order_relaxed);
+        const bool engaged = track.strip.moveEqFreq (ChannelStripParams::EqFreq::Lpf,
+                                                     (float) lpfKnob.getValue());
         lpfKnob.updateText();
-        if (lpfOn)
-        {
-            track.strip.eqEnabled.store (true, std::memory_order_release);
-            enableButton.setToggleState (true, juce::dontSendNotification);
-        }
+        if (engaged) enableButton.setToggleState (true, juce::dontSendNotification);
     };
     addAndMakeVisible (lpfKnob);
 
@@ -224,14 +212,12 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
         row.gain->setValue (spec.gain (track.strip)->load (std::memory_order_relaxed),
                              juce::dontSendNotification);
         {
+            auto* strip = &track.strip;
             auto* atomicPtr = spec.gain (track.strip);
             auto* knob = row.gain.get();
-            auto* eqEnabledPtr = &track.strip.eqEnabled;
-            knob->onValueChange = [knob, atomicPtr, eqEnabledPtr]
+            knob->onValueChange = [knob, strip, atomicPtr]
             {
-                atomicPtr->store ((float) knob->getValue(), std::memory_order_relaxed);
-                // Auto-arm - same UX as the inline strip-band knobs.
-                eqEnabledPtr->store (true, std::memory_order_release);
+                strip->moveEqBand (*atomicPtr, (float) knob->getValue());
             };
         }
         addAndMakeVisible (row.gain.get());
@@ -256,8 +242,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
             auto* knob = row.freq.get();
             knob->onValueChange = [knob, strip, band = spec.freq]
             {
-                strip->setEqFreq (band, (float) knob->getValue());
-                strip->eqEnabled.store (true, std::memory_order_release);
+                strip->moveEqFreq (band, (float) knob->getValue());
             };
         }
         addAndMakeVisible (row.freq.get());
@@ -278,11 +263,10 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
                 row.q->setValue (qAtom->load (std::memory_order_relaxed),
                                   juce::dontSendNotification);
                 auto* knob = row.q.get();
-                auto* eqEnabledPtr = &track.strip.eqEnabled;
-                knob->onValueChange = [knob, qAtom, eqEnabledPtr]
+                auto* strip = &track.strip;
+                knob->onValueChange = [knob, strip, qAtom]
                 {
-                    qAtom->store ((float) knob->getValue(), std::memory_order_relaxed);
-                    eqEnabledPtr->store (true, std::memory_order_release);
+                    strip->moveEqBand (*qAtom, (float) knob->getValue());
                 };
                 addAndMakeVisible (row.q.get());
 
