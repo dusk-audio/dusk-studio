@@ -383,3 +383,59 @@ TEST_CASE ("BusStrip: hot input stays finite", "[BusStrip]")
         REQUIRE (std::isfinite (outR[i]));
     }
 }
+
+TEST_CASE ("BusStrip: meters read the post-fader peak and a 300 ms VU per side", "[BusStrip][meters]")
+{
+    // 480 samples is 10 ms, so a whole number of blocks lands on the VU's
+    // 300 ms time constant.
+    constexpr int kMeterBlock = 480;
+    duskstudio::BusParams params;
+    duskstudio::BusStrip strip;
+    strip.prepare (kSr, kMeterBlock, 1);
+    strip.bind (params);
+
+    const float ampL = 0.5f, ampR = 0.25f;
+    const double steadyL = ampL / std::sqrt (2.0);
+    const double steadyR = ampR / std::sqrt (2.0);
+    double phase = 0.0;
+    auto drive = [&] (int blocks)
+    {
+        const double inc = 2.0 * juce::MathConstants<double>::pi * 1000.0 / kSr;
+        std::vector<float> L (kMeterBlock), R (kMeterBlock);
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int i = 0; i < kMeterBlock; ++i)
+            {
+                const float s = (float) std::sin (phase);
+                phase += inc;
+                L[(size_t) i] = ampL * s;
+                R[(size_t) i] = ampR * s;
+            }
+            strip.processInPlace (L.data(), R.data(), kMeterBlock);
+        }
+    };
+
+    SECTION ("the VU integrates over 300 ms")
+    {
+        // From silence, a first-order 300 ms integrator reaches 1 - 1/e of the
+        // tone's RMS after 300 ms and 1 - 1/e^3 after 900 ms.
+        drive (30);
+        REQUIRE_THAT (params.meterPostBusRmsL.load(), WithinRel ((float) (steadyL * (1.0 - std::exp (-1.0))), 0.02f));
+        REQUIRE_THAT (params.meterPostBusRmsR.load(), WithinRel ((float) (steadyR * (1.0 - std::exp (-1.0))), 0.02f));
+        drive (60);
+        REQUIRE_THAT (params.meterPostBusRmsL.load(), WithinRel ((float) (steadyL * (1.0 - std::exp (-3.0))), 0.02f));
+        REQUIRE_THAT (params.meterPostBusRmsR.load(), WithinRel ((float) (steadyR * (1.0 - std::exp (-3.0))), 0.02f));
+    }
+
+    SECTION ("peak and VU read after the fader")
+    {
+        params.liveFaderDb.store (-6.0f);
+        drive (400);
+        const double g = std::pow (10.0, -6.0 / 20.0);
+        // A 1 kHz sine puts a sample on its crest every period at 48 kHz.
+        REQUIRE_THAT (params.meterPostBusLDb.load(), WithinAbs (20.0 * std::log10 (ampL * g), 0.05));
+        REQUIRE_THAT (params.meterPostBusRDb.load(), WithinAbs (20.0 * std::log10 (ampR * g), 0.05));
+        REQUIRE_THAT (params.meterPostBusRmsL.load(), WithinRel ((float) (steadyL * g), 0.01f));
+        REQUIRE_THAT (params.meterPostBusRmsR.load(), WithinRel ((float) (steadyR * g), 0.01f));
+    }
+}

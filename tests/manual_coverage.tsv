@@ -18,7 +18,7 @@
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
 # ceiling gap 0
-# ceiling partial 39
+# ceiling partial 32
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -89,7 +89,7 @@ Getting started > Configuring audio > General	Playhead on Stop choices	auto	test
 Getting started > Configuring audio > General	MIDI soft takeover keeps a control dormant until it crosses the value	auto	test:FaderBindingMap: apply and pickup inverse agree (soft-takeover symmetry)
 Getting started > Configuring audio > General	autosave cadence 15 s to 5 min	auto	scenario:gui.settings_autosave_cadence
 Getting started > Configuring audio > General	scan plugins on startup	auto	bb:bb-startup-scan		the launch reports the toggle off by default and opens no progress window; on, it opens one
-Getting started > Configuring audio > Advanced	effect oversampling 1x/2x/4x drives the channel and master EQ and comp and the bus comp, but not the bus EQ, the tape or the mastering chain	partial	test:TapeMachineDSP ignores the oversampling choice;test:BusStrip: comp-off EQ response is independent of OS factor;test:MasteringChain: the Effect Oversampling choice leaves the mastering output unchanged		the tape, the bus EQ and the mastering chain are shown to ignore the factor; the channel, bus comp and master fan-out is not
+Getting started > Configuring audio > Advanced	effect oversampling 1x/2x/4x drives the channel and master EQ and comp and the bus comp, but not the bus EQ, the tape or the mastering chain	auto	test:TapeMachineDSP ignores the oversampling choice;test:BusStrip: comp-off EQ response is independent of OS factor;test:Effect oversampling raises the channel EQ and compressor rate;test:Effect oversampling raises the bus compressor rate;test:Effect oversampling raises the master EQ and compressor rate;test:MasteringChain: the Effect Oversampling choice leaves the mastering output unchanged
 Getting started > Configuring audio > Advanced	oversampling latency is compensated: bus-routed and direct tracks stay aligned, bounces trim it	auto	scenario:mix.bus_routed_lands_with_direct;scenario:bounce.renders_land_on_the_timeline;scenario:bounce.export_master_in_place;scenario:bounce.export_master_in_place_comp_in;test:MasteringChain: the output lands at the reported latency with the comp in or out, at 1x, 2x and 4x
 Getting started > Configuring audio > Advanced	multicore DSP matches single-core output	auto	scenario:engine.pipeline_selftest;test:AudioWorkerPool: every lane runs exactly once per block over a soak
 Getting started > Configuring audio > Advanced	recording offset shifts audio takes earlier, never MIDI	auto	test:Latency offset shifts committed audio start earlier;test:Latency offset larger than start clamps audio to zero and trims head;test:Latency offset exceeding take length commits no region;test:Latency offset does not move MIDI region placement
@@ -131,7 +131,7 @@ The interface > The notepad	Source view edits land as one undo step; Esc closes 
 The interface > The notepad	typing never triggers transport shortcuts	auto	test:the shortcut rule withholds keys from a view that is taking text
 The interface > The notepad	closes and saves for an alert or stage switch; waits for the quit prompt	partial	test:Notepad sidecar round-trips through the session directory		the atomic sidecar write is tested; that an alert, a stage switch or the quit prompt triggers it, and that quit waits for the Save / Don't Save answer, needs a scenario seam on the native OpenGL notepad window, which does not exist
 
-The channel strip	fixed signal order: phase, insert, HPF, EQ, LPF, comp, pan, fader, routing	partial	scenario:engine.pipeline_selftest		pass-through, routing and comp are asserted; the order of every stage is not
+The channel strip	fixed signal order: phase, insert, HPF, EQ, LPF, comp, pan, fader, routing	auto	scenario:engine.pipeline_selftest;test:channel strip order: phase invert comes before the insert;test:channel strip order: the insert comes before HPF / EQ / LPF;test:channel strip order: HPF / EQ / LPF come before the compressor;test:channel strip order: the compressor comes before pan / fader / routing		HPF, EQ and LPF among themselves, and pan against fader, have no observable order: the first is a linear cascade ahead of the saturator, the second two plain gains
 The channel strip	mute, solo and IN gate everything the track sends	auto	scenario:engine.pipeline_selftest;test:MIDI strips with no instrument skip the chain
 The channel strip	split buttons: status light bypasses, label opens the editor, right-click for the menu	auto	scenario:gui.split_module_buttons
 The channel strip	every strip editor is titled with the strip's name and follows a rename	auto	scenario:gui.editor_title_names_strip		the channel EQ popup's title is asserted on open and after a rename; the bus, master and native comp titles are read from the same source and checked by hand
@@ -177,7 +177,7 @@ The channel strip > Fader	-inf to +12 dB; unity at 0 dB	auto	scenario:engine.pip
 The channel strip > Fader	click the readout to type; right-click for MIDI Learn	auto	scenario:gui.fader_entry_and_learn
 The channel strip > Fader	automation modes OFF / READ / WRITE / TOUCH	auto	test:evaluateLane: continuous interpolation + hold-first/last;scenario:automation.read_plays_the_lanes;scenario:automation.write_splices_its_span;scenario:automation.touch_glides_back;scenario:gui.automation_write_and_touch
 The channel strip > Mute, Solo, Phase	mute silences; solo is additive solo-in-place	auto	scenario:engine.pipeline_selftest
-The channel strip > Mute, Solo, Phase	phase inverts polarity before the insert	partial	scenario:strip.phase_inverts		the polarity flip is tested; that it comes before the insert is not
+The channel strip > Mute, Solo, Phase	phase inverts polarity before the insert	auto	scenario:strip.phase_inverts;test:channel strip order: phase invert comes before the insert
 The channel strip > Bus assigns	assigning a bus removes the direct master send	auto	scenario:engine.pipeline_selftest
 The channel strip > Meters	pre-fader input while armed or IN, otherwise post-fader	auto	test:Track meter source follows tracking controls without changing mix metering
 The channel strip > Meters	clip bar holds for one second	auto	scenario:gui.meter_clip_hold
@@ -190,10 +190,10 @@ The bus strips > Tone EQ	moving any band or turning the HPF up off OFF engages t
 The bus strips > Tone EQ	moves glide without clicking; a flat EQ passes the signal untouched	auto	test:BusToneEq: gain, corner and switch moves do not click;test:BusToneEq: a flat EQ is bit-transparent;test:BusToneEq: silence in gives silence out
 The bus strips > Bus compressor	glue comp ranges, 4:1 default, auto release, stereo link	auto	test:Bus mode matches analytic reduction at the chosen ratio;test:comp A/B: Bus matches JUCE;test:Bus comp stereo-links L/R: a loud L pulls down a quiet R
 The bus strips > Pan, fader, mute, solo	same laws as channels; additive bus solo	auto	test:BusStrip: center pan is unity on both channels (equal-power law);scenario:engine.pipeline_selftest
-The bus strips > Meters	post-bus peak and 300 ms VU	partial	test:meter ballistics attack instantly and release over time		meter ballistics tested; the 300 ms integration is not asserted
+The bus strips > Meters	post-bus peak and 300 ms VU	auto	test:meter ballistics attack instantly and release over time;test:BusStrip: meters read the post-fader peak and a 300 ms VU per side
 
 The master strip	receives unrouted channels, every bus and every aux return	auto	scenario:engine.pipeline_selftest
-The master strip > Signal flow	program EQ, comp, tape, fader, mono sum	partial	scenario:engine.pipeline_selftest;test:the master tape's output arrives where its reported latency says		fader, comp and tape are asserted; the program EQ in the chain is not
+The master strip > Signal flow	program EQ, comp, tape, fader, mono sum	auto	scenario:engine.pipeline_selftest;test:the master tape's output arrives where its reported latency says;test:master program EQ plays in the master chain;test:master program EQ comes before the master compressor;test:master program EQ comes before the tape
 The master strip > Tape saturation	bypass/engage; TAPE opens Tape Machine 2's own editor; auto cal and auto comp	partial	scenario:gui.master_tape_editor;test:the master tape pushes the session into the plug-in;test:TapeMachineDSP holds its tone across a fixed render;scenario:engine.pipeline_selftest		editor opening, dismissal and the status light tested; auto cal, auto comp and touching a control engaging the stage are not
 The master strip > Tape saturation	presets; every setting saved with the session	auto	test:SessionSerializer round-trips every Tape Machine 2 control;test:every Tape Machine 2 control has a home in the session;test:SessionSerializer migrates the legacy tape_state blob
 The master strip > Tape saturation	fixed internal oversampling and a constant 56-sample latency	auto	test:TapeMachineDSP ignores the oversampling choice;test:TapeMachineDSP latency is stable per oversampling factor;test:the master tape's output arrives where its reported latency says
@@ -201,7 +201,7 @@ The master strip > Program EQ	boost and cut bands, frequencies, output	auto	test
 The master strip > Master bus compressor	same DSP as the bus comp; silent in adds no noise	auto	test:comp A/B: Bus matches JUCE;scenario:engine.pipeline_selftest
 The master strip > Master fader	-inf to +12 dB	auto	scenario:engine.pipeline_selftest
 The master strip > Mono	sums L+R to mono on both outputs	auto	scenario:master.mono_sums
-The master strip > Output meters	peak and VU meters, GR meter	partial	test:meter ballistics attack instantly and release over time		ballistics tested; the master readings are not asserted
+The master strip > Output meters	peak and VU meters, GR meter	auto	test:meter ballistics attack instantly and release over time;test:master output meters read post-fader peak and 300 ms VU per side;test:master GR meter reads the master compressor's reduction
 
 Aux lanes	AUX stage shows one full-width lane chosen by four selectors	auto	scenario:gui.aux_selectors		all four selector buttons, exclusive lane visibility, full width and selection retention across stage changes
 Aux lanes > Aux lane layout	three columns: return, insert, sources	manual			layout; checked by screenshot review
@@ -225,7 +225,7 @@ The mastering stage > Mastering chain > Brickwall limiter	true-peak ceiling, thr
 The mastering stage > Loudness metering	momentary, short-term, integrated LUFS and true peak per BS.1770	auto	test:LoudnessMeter K-weighting matches the JUCE-designed filters;test:LoudnessMeter integrated equals momentary on a uniform program;test:LoudnessMeter relative gate excludes quiet material;test:LoudnessMeter true peak tracks a hot signal;test:LoudnessMeter gating is exact for windows sitting on the threshold
 The mastering stage > Loudness metering	Reset integrated; silence does not consume the hour	auto	test:LoudnessMeter requestReset zeroes readings and drops the history;test:LoudnessMeter silence does not consume integrated capacity
 The mastering stage > Loudness metering	platform presets colour-code the readings	auto	scenario:gui.mastering_targets
-The mastering stage > Exporting the master	WAV 24-bit, WAV 16-bit 44.1 kHz dithered, MP3 320; cancellable	partial	test:LameMp3Writer emits a valid 48k/320k MP3 carrying the signal;scenario:bounce.export_master_post_limiter;scenario:bounce.cancel_leaves_no_file		the 16-bit 44.1 kHz export and cancel (on the shared render loop) are tested; the 24-bit and MP3 presets and the dither's noise shape are not
+The mastering stage > Exporting the master	WAV 24-bit, WAV 16-bit 44.1 kHz dithered, MP3 320; cancellable	auto	test:LameMp3Writer emits a valid 48k/320k MP3 carrying the signal;scenario:bounce.export_master_post_limiter;scenario:bounce.cancel_leaves_no_file;scenario:bounce.export_master_wav24_session_rate;scenario:bounce.export_master_mp3_320;scenario:bounce.export_master_cd_dither_is_tpdf
 
 Recording	five-step workflow	n/a			walkthrough; each step is held in the sections below
 Recording > Setting the input	follow-track default; stereo picks two inputs; MIDI port and channel	auto	test:A stereo track's right input follows wherever the left one resolves;test:Seam resolves saved identifiers back to bank indices

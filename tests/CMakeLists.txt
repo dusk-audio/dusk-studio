@@ -759,6 +759,7 @@ if(DUSK_PLUGINS_PATH)
         bus_stereo_link.cpp
         tape_core_regression.cpp
         bus_strip.cpp
+        channel_strip_signal_order.cpp
         mastering_chain.cpp
         mastering_digital_eq.cpp
         # The mastering stage's native panels draw the chain through the widget kit, so
@@ -771,6 +772,7 @@ if(DUSK_PLUGINS_PATH)
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringEqView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringLimiterView.cpp>
         dsp_stereo_oversampler.cpp
+        oversampling_fanout.cpp
         console_saturation.cpp
         eq_core_regression.cpp
         eq_nyquist_response.cpp
@@ -781,6 +783,7 @@ if(DUSK_PLUGINS_PATH)
         dsp_loudness_meter.cpp
         master_tape_alignment.cpp
         master_tape_session.cpp
+        master_strip_chain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasterBus.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasterTape.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
