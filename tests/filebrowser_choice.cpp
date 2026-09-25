@@ -36,10 +36,10 @@ TEST_CASE ("file browser Open hands back only an existing file")
     const ScratchFolder scratch;
     REQUIRE_FALSE (scratch.dir.empty());
 
-    CHECK (isAcceptableChoice (scratch.path ("take.wav"), Mode::Open, false));
-    CHECK_FALSE (isAcceptableChoice (scratch.folder(), Mode::Open, false));
-    CHECK_FALSE (isAcceptableChoice (scratch.path ("Music"), Mode::Open, false));
-    CHECK_FALSE (isAcceptableChoice ({}, Mode::Open, false));
+    CHECK (isAcceptableChoice (scratch.path ("take.wav"), Mode::Open, false, false));
+    CHECK_FALSE (isAcceptableChoice (scratch.folder(), Mode::Open, false, false));
+    CHECK_FALSE (isAcceptableChoice (scratch.path ("Music"), Mode::Open, false, false));
+    CHECK_FALSE (isAcceptableChoice ({}, Mode::Open, false, false));
 }
 
 TEST_CASE ("file browser Save and folder pickers keep the browser's answer")
@@ -49,14 +49,36 @@ TEST_CASE ("file browser Save and folder pickers keep the browser's answer")
 
     SECTION ("Save takes a name that does not exist yet")
     {
-        CHECK (isAcceptableChoice (scratch.path ("new mix.wav"), Mode::Save, false));
-        CHECK (isAcceptableChoice (scratch.path ("take.wav"), Mode::Save, false));
-        CHECK_FALSE (isAcceptableChoice ({}, Mode::Save, false));
+        CHECK (isAcceptableChoice (scratch.path ("new mix.wav"), Mode::Save, false, false));
+        CHECK (isAcceptableChoice (scratch.path ("take.wav"), Mode::Save, false, false));
+        CHECK_FALSE (isAcceptableChoice ({}, Mode::Save, false, false));
     }
 
     SECTION ("a folder picker takes the folder")
     {
-        CHECK (isAcceptableChoice (scratch.folder(), Mode::Open, true));
-        CHECK_FALSE (isAcceptableChoice ({}, Mode::Open, true));
+        CHECK (isAcceptableChoice (scratch.folder(), Mode::Open, true, false));
+        CHECK_FALSE (isAcceptableChoice ({}, Mode::Open, true, false));
+    }
+}
+
+TEST_CASE ("file browser Save never hands back a folder as a file name")
+{
+    const ScratchFolder scratch;
+    REQUIRE_FALSE (scratch.dir.empty());
+    stdfs::create_directory (scratch.dir / "Mixes");
+
+    SECTION ("a file save refuses the browsed folder and a folder inside it")
+    {
+        CHECK_FALSE (isAcceptableChoice (scratch.folder(), Mode::Save, false, false));
+        CHECK_FALSE (isAcceptableChoice (scratch.path ("Mixes"), Mode::Save, false, false));
+        CHECK (isAcceptableChoice (scratch.path ("Mixes.wav"), Mode::Save, false, false));
+    }
+
+    SECTION ("a save whose answer is a folder takes an existing one or a new name")
+    {
+        CHECK (isAcceptableChoice (scratch.folder(), Mode::Save, false, true));
+        CHECK (isAcceptableChoice (scratch.path ("Mixes"), Mode::Save, false, true));
+        CHECK (isAcceptableChoice (scratch.path ("MySong"), Mode::Save, false, true));
+        CHECK_FALSE (isAcceptableChoice ({}, Mode::Save, false, true));
     }
 }

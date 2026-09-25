@@ -2117,7 +2117,7 @@ The metronome never prints in any bounce: it is a monitoring aid, mixed in after
 
 ## Where bounces go
 
-By default, bounces are written to the session folder itself (the same directory that holds `session.json`). The bounce dialog opens a file browser there so you can rename or redirect each export; **New folder…** in its bottom-left corner creates a subfolder and jumps into it, handy for keeping stem sets together. The mastering stage's **Load latest mixdown** button loads `mixdown.wav` from the session folder, or `bounce.wav` if there is no mixdown; a bounce saved under any other name opens with **Load mix…** instead.
+By default, bounces are written to the session folder itself (the same directory that holds `session.json`). The bounce dialog opens a file browser there so you can rename or redirect each export; **New folder…** in its bottom-left corner creates a subfolder and jumps into it, handy for keeping stem sets together. **Save** never writes a file named after a folder: typing the name of an existing folder and pressing **Save** opens that folder so you can name the file inside it, and **Save** with the name box empty does nothing. The Export master and Save MIDI bindings preset browsers work the same way. The mastering stage's **Load latest mixdown** button loads `mixdown.wav` from the session folder, or `bounce.wav` if there is no mixdown; a bounce saved under any other name opens with **Load mix…** instead.
 
 \newpage
 

@@ -7927,11 +7927,11 @@ std::optional<ScenarioResult> runMidiBindingsPanel (GuiHost& host, ScenarioConte
         return describeBindingTarget (b, &engine).toStdString() + " | " + describeBindingSource (b).toStdString();
     };
     const auto exported = ctx.tempDir() / "bindings.json";
-    const auto taken = ctx.tempDir() / "taken.json";
+    // Under a file, so it cannot be written. A folder's name would only open
+    // that folder in the browser.
+    const auto taken = ctx.tempDir() / "occupied" / "taken.json";
     const auto broken = ctx.tempDir() / "broken.json";
-    // A folder holding a file: an empty one is simply replaced by the export.
-    std::filesystem::create_directory (taken);
-    std::ofstream (taken / "keep") << "occupied";
+    std::ofstream (taken.parent_path()) << "occupied";
     std::ofstream (broken) << "not a bindings preset";
     const auto browse = [&host, &ctx] (const std::filesystem::path& path, const std::string& accept)
     {
@@ -10113,6 +10113,86 @@ const ScenarioRegistrar bounceKeyFormats { Scenario {
     "gui.bounce_key_format_by_extension", { "gui", "bounce", "keyboard" }, Needs::Engine | Needs::Gui,
     {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runBounceKeyFormats (host, ctx); }
+} };
+
+// The bounce browser never saves under a folder's name. Save on the name of a
+// folder opens it, Save with the name box empty does nothing, and a name typed
+// in that folder bounces into it.
+std::optional<ScenarioResult> runBounceFolderName (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        drainModals (host);
+        engine.setRenderOversamplingOverride (0);
+        engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto folder = ctx.tempDir() / "Bounce session";
+    const auto mixes = folder / "Mixes";
+    std::filesystem::create_directories (mixes);
+    if (! SessionSerializer::save (*std::make_unique<Session>(), folder / "session.json"))
+        return ScenarioResult::fail ("could not write the empty session");
+    reopenSavedSession (host, folder / "session.json");
+    if (currentSessionDirectory (session) != folder)
+        return ScenarioResult::fail ("could not open the empty session");
+
+    const auto browserUp = [&host, &ctx] (const std::string& after)
+    {
+        return ctx.expect (host.modalText().rfind ("Bounce master mix", 0) == 0,
+                           after + " left '" + host.modalText() + "' up rather than the bounce browser");
+    };
+    const auto noFolderNamedFile = [&ctx, folder, mixes] (const std::string& after)
+    {
+        for (const auto& wrong : { folder / "Mixes.wav", mixes / "Mixes.wav", ctx.tempDir() / "Bounce session.wav" })
+            ctx.expect (! std::filesystem::exists (wrong), after + " wrote " + wrong.string());
+    };
+    const auto save = [&host, &ctx] (const std::string& typed)
+    {
+        if (! ctx.expect (host.focusFileName(), "the bounce browser has no name field")) return;
+        typeReplacing (host, typed);
+        if (typed.empty()) host.pressPeerKey ("backspace", '\b');
+        ctx.expect (host.clickModalButton ("Save"), "the bounce browser has no Save button");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (commandChord ('b'), 'b'), "the window did not handle Cmd+B"); } });
+    steps->push_back ({ 700, [browserUp, save] { if (browserUp ("Cmd+B")) save ("Mixes"); } });
+    steps->push_back ({ 500, [browserUp, noFolderNamedFile, save]
+    {
+        noFolderNamedFile ("Save on a folder's name");
+        if (browserUp ("Save on a folder's name")) save ("");
+    } });
+    steps->push_back ({ 500, [browserUp, noFolderNamedFile, save]
+    {
+        noFolderNamedFile ("Save with an empty name");
+        if (browserUp ("Save with an empty name")) save ("Inner");
+    } });
+    runSteps (ctx, steps, [&host, &ctx, mixes, noFolderNamedFile]
+    {
+        ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000, [&ctx, mixes, noFolderNamedFile]
+        {
+            ctx.expect (std::filesystem::exists (mixes / "Inner.wav"),
+                        "a name typed after Save opened Mixes did not bounce into Mixes");
+            noFolderNamedFile ("the bounce");
+            ctx.complete (ctx.verdict());
+        }, "the bounce did not finish with a Close button");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar bounceFolderName { Scenario {
+    "gui.bounce_folder_name_opens_folder", { "gui", "bounce" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBounceFolderName (host, ctx); }
 } };
 
 // File > Open..., browse to a session's folder and choose its session.json from

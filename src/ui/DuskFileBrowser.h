@@ -14,6 +14,7 @@ struct Options
     Mode         mode = Mode::Open;
     bool         warnAboutOverwriting = true;  // Save mode only
     bool         selectDirectories     = false; // false = files only
+    bool         saveAnswerIsFolder    = false; // Save mode: the name is a folder to create or reuse
 };
 
 // In-window Dusk-native file browser. Hosts juce::FileBrowserComponent
@@ -25,7 +26,8 @@ struct Options
 // a caller's method); the modal is shown on the host's top-level.
 // `onResult` fires once with the chosen file, or a default-constructed
 // juce::File on Cancel / Esc / click-outside dismiss. Open with no existing
-// file picked (files mode) is a Cancel too.
+// file picked (files mode) is a Cancel too. A file Save named after a folder
+// opens that folder, and one with an empty name stays open.
 void open (juce::Component& host,
             Options opts,
             std::function<void (juce::File)> onResult);

@@ -213,7 +213,21 @@ private:
         }
 
         const auto file = chosen.exists() ? chosen : browser->getSelectedFile (0);
-        if (! accepts (file)) { dismissCancelled(); return; }
+        if (! accepts (file))
+        {
+            // The browser reports its own folder for an empty name box, so
+            // this also covers Save with nothing typed.
+            if (opts.mode == Mode::Save && file.isDirectory())
+            {
+                browser->setRoot (file);
+                browser->setFileName ({});
+            }
+            else
+            {
+                dismissCancelled();
+            }
+            return;
+        }
 
         auto cb = resultFn;
         sharedFileBrowserModal().close();
@@ -222,8 +236,8 @@ private:
 
     bool accepts (const juce::File& f) const
     {
-        return isAcceptableChoice (f.getFullPathName().toStdString(),
-                                   opts.mode, opts.selectDirectories);
+        return isAcceptableChoice (f.getFullPathName().toStdString(), opts.mode,
+                                   opts.selectDirectories, opts.saveAnswerIsFolder);
     }
 
     void toggleNewFolderRow()
