@@ -37,9 +37,13 @@ public:
     // integrated reading reflects only the current source.
     void resetLoudness();
 
-    // EQ (oversampler) and limiter are in series, so their latencies add.
+    // EQ (oversampler), comp and limiter are in series, so their latencies add.
     int getLatencySamples() const noexcept
-        { return digitalEq.getLatencySamples() + limiter.getLatencySamples(); }
+    {
+        return digitalEq.getLatencySamples()
+             + compLatencySamples.load (std::memory_order_relaxed)
+             + limiter.getLatencySamples();
+    }
 
     // UI-side accessors. The Mastering view embeds the UniversalCompressor's
     // own AudioProcessorEditor for the Multi-Comp panel and drives the
@@ -102,6 +106,10 @@ private:
         if (a != nullptr) a->store (v, std::memory_order_relaxed);
     }
 #endif
+
+    // The donor comp's latency, read once in prepare: its own counter is a plain
+    // int the audio thread may rewrite, and the bounce reads this from another thread.
+    std::atomic<int> compLatencySamples { 0 };
 
     int preparedBlockSize = 0;
 

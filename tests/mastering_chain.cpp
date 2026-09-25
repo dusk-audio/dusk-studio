@@ -8,6 +8,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <cmath>
+#include <iterator>
 #include <vector>
 
 using Catch::Matchers::WithinAbs;
@@ -133,7 +134,7 @@ TEST_CASE ("MasteringChain: silence in -> silence out", "[MasteringChain]")
     REQUIRE (outPeak < 1.0e-4f);
 }
 
-TEST_CASE ("MasteringChain: latency is the EQ oversampler plus the limiter", "[MasteringChain]")
+TEST_CASE ("MasteringChain: latency is the EQ oversampler, the comp and the limiter", "[MasteringChain]")
 {
     duskstudio::MasteringChain chain;
     chain.prepare (kSr, kBlock, 1);
@@ -143,9 +144,16 @@ TEST_CASE ("MasteringChain: latency is the EQ oversampler plus the limiter", "[M
     duskstudio::MasteringDigitalEq eqRef;
     eqRef.prepare (kSr, kBlock);
 
-    // EQ and limiter are in series; the chain reports the sum.
+    int compLatency = 0;
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    REQUIRE (chain.getCompProcessor() != nullptr);
+    compLatency = chain.getCompProcessor()->getLatencySamples();
+#endif
+
+    // EQ, comp and limiter are in series; the chain reports the sum.
     REQUIRE (chain.getLatencySamples() > 0);
-    REQUIRE (chain.getLatencySamples() == eqRef.getLatencySamples() + limRef.getLatencySamples());
+    REQUIRE (chain.getLatencySamples()
+             == eqRef.getLatencySamples() + compLatency + limRef.getLatencySamples());
 }
 
 TEST_CASE ("MasteringChain: comp over silent input adds no noise floor",
@@ -208,4 +216,123 @@ TEST_CASE ("MasteringChain: hot input stays finite and at/below the ceiling",
     // wouldn't show if we only checked L.
     REQUIRE (steadyPeakL <= ceiling * 1.04f);
     REQUIRE (steadyPeakR <= ceiling * 1.04f);
+}
+
+#if DUSKSTUDIO_HAS_DUSK_DSP
+namespace
+{
+constexpr int kImpulseAt = 100;
+constexpr bool kCompStates[] = { false, true, false };
+
+// A fresh chain on its first prepare: the case where the donor still held its
+// default mode when it reported its latency.
+void prepareTransparent (duskstudio::MasteringChain& chain, duskstudio::MasteringParams& params,
+                         int factor)
+{
+    chain.bind (params);
+    chain.prepare (kSr, kBlock, factor);
+    auto* comp = chain.getCompProcessor();
+    REQUIRE (comp != nullptr);
+    // Thresholds at the top of their range, so the comp passes the impulse unreduced.
+    for (const auto* band : { "low", "lowmid", "highmid", "high" })
+        if (auto* threshold = comp->getParameters().getParameter (juce::String ("mb_") + band + "_threshold"))
+            threshold->setValueNotifyingHost (1.0f);
+}
+
+std::vector<float> impulseResponse (duskstudio::MasteringChain& chain,
+                                    duskstudio::MasteringParams& params, bool compOn)
+{
+    params.compEnabled.store (compOn, std::memory_order_relaxed);
+    std::vector<float> L (kBlock), R (kBlock), out;
+    // Settle the comp's bypass crossfade and smoothers before the impulse.
+    for (int b = 0; b < 8; ++b)
+    {
+        std::fill (L.begin(), L.end(), 0.0f);
+        std::fill (R.begin(), R.end(), 0.0f);
+        chain.processInPlace (L.data(), R.data(), kBlock);
+    }
+    for (int b = 0; b < 4; ++b)
+    {
+        std::fill (L.begin(), L.end(), 0.0f);
+        std::fill (R.begin(), R.end(), 0.0f);
+        if (b == 0) { L[(size_t) kImpulseAt] = 0.5f; R[(size_t) kImpulseAt] = 0.5f; }
+        chain.processInPlace (L.data(), R.data(), kBlock);
+        out.insert (out.end(), L.begin(), L.end());
+    }
+    return out;
+}
+
+int landedAt (const std::vector<float>& response)
+{
+    std::size_t at = 0;
+    for (std::size_t i = 1; i < response.size(); ++i)
+        if (std::abs (response[i]) > std::abs (response[at])) at = i;
+    REQUIRE (std::abs (response[at]) > 0.1f);
+    return (int) at - kImpulseAt;
+}
+} // namespace
+#endif
+
+TEST_CASE ("MasteringChain: the output lands at the reported latency with the comp in or out, at 1x, 2x and 4x",
+           "[MasteringChain][latency]")
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    // The EQ's and the limiter's 4x oversamplers each have a fractional latency the
+    // integer report rounds, so an impulse's peak can land a sample either side per stage.
+    constexpr int kSlack = 2;
+
+    for (const int factor : { 1, 2, 4 })
+    {
+        CAPTURE (factor);
+        duskstudio::MasteringParams params;
+        duskstudio::MasteringChain chain;
+        prepareTransparent (chain, params, factor);
+        const int reported = chain.getLatencySamples();
+
+        for (const bool compOn : kCompStates)
+        {
+            CAPTURE (compOn);
+            const int landed = landedAt (impulseResponse (chain, params, compOn));
+            CAPTURE (reported, landed);
+            CHECK (chain.getLatencySamples() == reported);
+            CHECK (std::abs (landed - reported) <= kSlack);
+        }
+    }
+#else
+    SKIP ("requires the mastering compressor donor");
+#endif
+}
+
+TEST_CASE ("MasteringChain: the Effect Oversampling choice leaves the mastering output unchanged",
+           "[MasteringChain][latency]")
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    // The EQ and the limiter run fixed 4x oversamplers and the multiband comp runs
+    // at the session rate, so no stage takes the engine-wide factor.
+    std::vector<std::vector<float>> at1x;
+    for (const int factor : { 1, 2, 4 })
+    {
+        CAPTURE (factor);
+        duskstudio::MasteringParams params;
+        duskstudio::MasteringChain chain;
+        prepareTransparent (chain, params, factor);
+        for (std::size_t state = 0; state < std::size (kCompStates); ++state)
+        {
+            CAPTURE (kCompStates[state]);
+            const auto response = impulseResponse (chain, params, kCompStates[state]);
+            if (factor == 1)
+            {
+                at1x.push_back (response);
+                continue;
+            }
+            REQUIRE (response.size() == at1x[state].size());
+            float maxDiff = 0.0f;
+            for (std::size_t i = 0; i < response.size(); ++i)
+                maxDiff = std::max (maxDiff, std::abs (response[i] - at1x[state][i]));
+            CHECK_THAT (maxDiff, WithinAbs (0.0, 1.0e-6));
+        }
+    }
+#else
+    SKIP ("requires the mastering compressor donor");
+#endif
 }

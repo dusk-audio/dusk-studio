@@ -606,18 +606,26 @@ std::optional<ScenarioResult> pdcTrimmedFromRender (ScenarioContext& ctx)
 }
 #endif
 
-// Export master drops the mastering chain's own latency from the file. The
-// chain's EQ and limiter each oversample 4x, so it can land two samples out.
-std::optional<ScenarioResult> exportMasterInPlace (ScenarioContext& ctx)
+// Export master drops the mastering chain's own latency from the file, with the
+// multiband comp in or out. The chain's EQ and limiter each oversample 4x, so it
+// can land two samples out.
+std::optional<ScenarioResult> exportMasterInPlace (ScenarioContext& ctx, bool compIn)
 {
     static constexpr int kAt = 24000;
     auto& player = ctx.engine().getMasteringPlayer();
+    auto& mastering = ctx.session().mastering();
     const auto source = ctx.tempDir() / "impulse-mix.wav";
     if (! writeMono (source, impulse (48000, kAt)))
         return ScenarioResult::fail ("could not write the source mix");
     if (! player.loadFile (sessionFile (source)))
         return ScenarioResult::fail ("the mastering player would not load the mix");
-    ctx.cleanup ([&player] { player.unloadFile(); });
+    const bool compWas = mastering.compEnabled.load (std::memory_order_relaxed);
+    ctx.cleanup ([&player, &mastering, compWas]
+    {
+        player.unloadFile();
+        mastering.compEnabled.store (compWas, std::memory_order_relaxed);
+    });
+    mastering.compEnabled.store (compIn, std::memory_order_relaxed);
 
     const auto out = ctx.sessionDir() / "master.wav";
     Render render;
@@ -782,7 +790,10 @@ const ScenarioRegistrar pdcRegistrar { Scenario {
     }, 120000 } };
 const ScenarioRegistrar exportInPlaceRegistrar { Scenario {
     "bounce.export_master_in_place", { "bounce", "mastering", "pdc" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return exportMasterInPlace (ctx); }, 120000 } };
+    [] (ScenarioContext& ctx) { return exportMasterInPlace (ctx, false); }, 120000 } };
+const ScenarioRegistrar exportInPlaceCompRegistrar { Scenario {
+    "bounce.export_master_in_place_comp_in", { "bounce", "mastering", "pdc" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return exportMasterInPlace (ctx, true); }, 120000 } };
 const ScenarioRegistrar busAlignRegistrar { Scenario {
     "mix.bus_routed_lands_with_direct", { "mix", "pdc" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return busRoutedLandsWithDirect (ctx); } } };
