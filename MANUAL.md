@@ -834,7 +834,7 @@ The gain-reduction meter (the thin vertical bar to the left of the comp section)
 
 In the MIXING stage the input block is replaced by four send knobs, one per aux lane. Each knob is colour-matched to its destination aux.
 
-- **Range**: −60 to +6 dB, or **OFF** (−100 dB, the bottom of the knob's travel).
+- **Range**: **OFF**, then −59.9 to +6 dB. The bottom of the knob's travel, where it would read −60 dB, is OFF: the send is silent, its caption shows `−` and a screen reader reads `OFF`.
 - **Pre / post fader**: right-click the knob to toggle. Post-fader is the default. In compact mode, click the **AUX** button's left status light to bypass/restore all four sends without losing their levels, click the **AUX** label to open the editor, or right-click anywhere on it for the per-send pre/post toggles plus **Reset sends** and **Open AUX editor…**.
 
 Pre-fader sends are used for headphone cue mixes: the singer can hear their voice at the same level even when you pull their fader down. Post-fader sends are used for effects: when you pull the channel fader down, the reverb level falls with it.
@@ -2433,7 +2433,7 @@ Dusk Studio targets functional accessibility for screen reader users. The 24-cha
 
 ## Current support
 
-- Channel faders, pan, HPF/LPF, mute, solo, record arm, input monitor, insert slots and aux sends have track-specific accessible names. Several continuous controls report formatted values such as `-4.2 dB`, `L42`, `OFF` and `4:1`. Channel faders report `-INF dB` throughout the hard-mute range, at or below −90 dB. A screen reader's text-value action can send `-INF` or `-INF dB` to set the fader to its muted minimum; the fader has no editable text box.
+- Channel faders, pan, HPF/LPF, mute, solo, record arm, input monitor, insert slots and aux sends have track-specific accessible names. Several continuous controls report formatted values such as `-4.2 dB`, `L42`, `OFF` and `4:1`. Channel faders report `-INF dB` throughout the hard-mute range, at or below −90 dB. An aux send turned fully down reports `OFF`, and its text-value action accepts `OFF` or a level in dB. A screen reader's text-value action can send `-INF` or `-INF dB` to set the fader to its muted minimum; the fader has no editable text box.
 - Aux return faders, aux mute buttons and aux plugin slots have lane-specific names. Transport buttons are named Play, Stop, Record, Rewind and Fast forward. Standard sliders and buttons expose their tooltip text as accessible help.
 - The popup menu exposes its active option and an activation action. Keyboard navigation updates the active-option announcement; this is not a separately navigable accessible item for every painted row.
 - macOS and Windows have platform accessibility support for the existing component controls. Coverage and focus behavior still need hands-on screen-reader verification. Native panels need the accessibility bridge that is currently being developed.
@@ -2661,7 +2661,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | VCA      | Soft knee      | Off / On                      | Off      |
 | VCA      | Detector       | Adaptive / Classic            | Adaptive |
 | Comp     | Makeup         | −40 to +40 dB (Opto), −20 to +20 dB (FET / VCA) | 0 dB |
-| Send 1–4 | Level          | −60 to +6 dB (−60 selects OFF)         | OFF      |
+| Send 1–4 | Level          | OFF, or −59.9 to +6 dB                 | OFF      |
 | Send 1–4 | Pre/Post       | Pre / Post                    | Post     |
 | Pan      | Position       | −1.0 to +1.0                  | 0        |
 | Fader    | Level          | −∞ to +12 dB                  | 0 dB     |
