@@ -5971,6 +5971,116 @@ const ScenarioRegistrar unarmedRecord { Scenario {
     {}, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runUnarmedRecord (host, ctx); }
 } };
+// File > Optimize automation rewrites every lane, so it refuses while the
+// transport rolls or any strip is still reading its lanes, and says so; once
+// both are clear it thins the lanes and reports the point counts.
+std::optional<ScenarioResult> runOptimizeAutomation (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& transport = ctx.engine().getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no open modal");
+
+    std::vector<AutomationLane*> lanes;
+    std::vector<std::atomic<int>*> modes;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        for (auto& lane : session.track (t).automationLanes) lanes.push_back (&lane);
+        modes.push_back (&session.track (t).automationMode);
+    }
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+    {
+        for (auto& lane : session.auxLane (a).params.automationLanes) lanes.push_back (&lane);
+        modes.push_back (&session.auxLane (a).params.automationMode);
+    }
+    for (auto& lane : session.master().automationLanes) lanes.push_back (&lane);
+    modes.push_back (&session.master().automationMode);
+
+    std::vector<std::vector<AutomationPoint>> savedLanes;
+    for (auto* lane : lanes) savedLanes.push_back (lane->pointsConst());
+    for (auto* mode : modes) ctx.keep (*mode);
+    ctx.cleanup ([&host, &transport, lanes, savedLanes, state = transport.getState(),
+                  position = transport.getPlayhead()]
+    {
+        drainModals (host);
+        transport.setPlayhead (position);
+        transport.setState (state);
+        for (std::size_t i = 0; i < lanes.size(); ++i) lanes[i]->publishPoints (savedLanes[i]);
+    });
+    for (auto* lane : lanes) lane->publishPoints ({});
+    for (auto* mode : modes) mode->store ((int) AutomationMode::Off, std::memory_order_release);
+
+    // A straight fader ramp: the three interior points lie on the chord.
+    auto& ramp = session.track (kStripIndex).automationLanes[(std::size_t) AutomationParam::FaderDb];
+    std::vector<AutomationPoint> seeded;
+    for (int i = 0; i < 5; ++i)
+        seeded.push_back ({ (std::int64_t) i * 12000, 0.2f + 0.1f * (float) i, 120.0f });
+    ramp.publishPoints (seeded);
+
+    auto& readMode  = session.track (5).automationMode;
+    auto& touchMode = session.auxLane (0).params.automationMode;
+    const std::string stopPlayback =
+        "Optimize automation\nStop playback before optimising automation. The optimiser rewrites "
+        "every lane's point data; running it while the audio thread may be reading the lanes is unsafe.";
+    const std::string setOff =
+        "Optimize automation\nSet every strip's automation mode to Off before optimising. The "
+        "optimiser rewrites lane data; doing it while a strip is in Read or Touch can race the audio thread.";
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto attempt = [&host, &ctx, &ramp, steps] (const std::string& expected, std::size_t points,
+                                                      const std::string& how, std::function<void()> after)
+    {
+        steps->push_back ({ 300, [&host, &ctx, how]
+        {
+            ctx.expect (host.modalStackEmpty(), how + ": a modal was still open");
+            ctx.expect (host.clickFileMenu(), how + ": the File menu is unavailable");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, how]
+        {
+            ctx.expect (host.clickContextMenuItem ("Optimize automation..."),
+                        how + ": the File menu has no Optimize automation...");
+        } });
+        steps->push_back ({ 400, [&host, &ctx, &ramp, expected, points, how, after]
+        {
+            ctx.expect (host.modalText() == expected, how + ": the alert read '" + host.modalText() + "'");
+            ctx.expect (ramp.pointsConst().size() == points,
+                        how + ": the lane holds " + std::to_string (ramp.pointsConst().size()) + " points");
+            ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+            after();
+        } });
+    };
+
+    transport.setState (Transport::State::Playing);
+    attempt (stopPlayback, 5, "while playing", [&transport, &readMode]
+    {
+        transport.setState (Transport::State::Stopped);
+        readMode.store ((int) AutomationMode::Read, std::memory_order_release);
+    });
+    attempt (setOff, 5, "with a track in Read", [&readMode, &touchMode]
+    {
+        readMode.store ((int) AutomationMode::Off, std::memory_order_release);
+        touchMode.store ((int) AutomationMode::Touch, std::memory_order_release);
+    });
+    attempt (setOff, 5, "with an aux lane in Touch", [&touchMode]
+    { touchMode.store ((int) AutomationMode::Off, std::memory_order_release); });
+    attempt ("Optimize automation\nThinned 5 automation points down to 2.", 2, "stopped with every strip Off",
+             [&ctx, &ramp, seeded]
+    {
+        const auto& kept = ramp.pointsConst();
+        ctx.expect (kept.size() == 2 && kept.front() == seeded.front() && kept.back() == seeded.back(),
+                    "thinning did not keep the ramp's endpoints");
+    });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.modalStackEmpty(), "the success alert did not close"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar optimizeAutomation { Scenario {
+    "gui.optimize_automation_refusals", { "gui", "automation" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runOptimizeAutomation (host, ctx); }
+} };
 std::optional<ScenarioResult> runPianoRollNoteKeys (GuiHost& host, ScenarioContext& ctx)
 {
     auto& track = ctx.session().track (0);

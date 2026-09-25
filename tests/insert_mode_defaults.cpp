@@ -171,3 +171,72 @@ TEST_CASE ("Appendix A: aux insert defaults to Empty and routes every mode",
         }
     }
 }
+
+// With no audio device open nothing ever prepares the strips, so every insert
+// load - plug-in, built-in or soundfont - has to refuse rather than build a host
+// at a sample rate of zero.
+TEST_CASE ("an insert never prepared by a device refuses plug-in and soundfont loads",
+           "[channel-strip][aux-lane][device]")
+{
+    const juce::File missing = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                   .getChildFile ("dusk-unprepared-insert-never-opened");
+    std::string error;
+    const auto refused = [&error] (bool loaded, const char* expected)
+    {
+        CHECK_FALSE (loaded);
+        CHECK (error == expected);
+        error.clear();
+    };
+
+    ChannelStripParams params;
+    auto strip = std::make_unique<ChannelStrip>();
+    strip->bind (params);
+    refused (strip->loadBuiltin ("dusk.builtin.utility", error), "channel strip not prepared");
+   #if DUSKSTUDIO_HAS_NATIVE_CLAP
+    refused (strip->loadNativeClap (missing, error), "channel strip not prepared");
+   #endif
+   #if DUSKSTUDIO_HAS_NATIVE_LV2
+    refused (strip->loadNativeLv2 (missing, error), "channel strip not prepared");
+   #endif
+   #if DUSKSTUDIO_HAS_NATIVE_VST3
+    refused (strip->loadNativeVst3 (missing, error), "channel strip not prepared");
+   #endif
+   #if DUSKSTUDIO_HAS_NATIVE_AU
+    refused (strip->loadNativeAu ("aufx dusk Dusk", error), "channel strip not prepared");
+   #endif
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    refused (strip->loadNativeMultisample (missing, error), "channel strip not prepared");
+    refused ((bool) strip->primeNativeMultisample (missing, error), "channel strip not prepared");
+   #endif
+    CHECK_FALSE (strip->isBuiltinLoaded());
+    CHECK_FALSE (strip->isNativeClapLoaded());
+    CHECK_FALSE (strip->isNativeLv2Loaded());
+    CHECK_FALSE (strip->isNativeVst3Loaded());
+    CHECK_FALSE (strip->isNativeAuLoaded());
+    CHECK_FALSE (strip->isNativeMultisampleLoaded());
+
+    AuxLaneParams auxParams;
+    auto aux = std::make_unique<AuxLaneStrip>();
+    aux->bind (auxParams);
+    refused (aux->loadBuiltin (0, "dusk.builtin.utility", error), "aux lane not prepared");
+   #if DUSKSTUDIO_HAS_NATIVE_CLAP
+    refused (aux->loadNativeClap (0, missing, error), "aux lane not prepared");
+   #endif
+   #if DUSKSTUDIO_HAS_NATIVE_LV2
+    refused (aux->loadNativeLv2 (0, missing, error), "aux lane not prepared");
+   #endif
+   #if DUSKSTUDIO_HAS_NATIVE_VST3
+    refused (aux->loadNativeVst3 (0, missing, error), "aux lane not prepared");
+   #endif
+   #if DUSKSTUDIO_HAS_NATIVE_AU
+    refused (aux->loadNativeAu (0, "aufx dusk Dusk", error), "aux lane not prepared");
+   #endif
+    CHECK_FALSE (aux->isBuiltinLoaded (0));
+
+    // The refusal is the missing device, not the unit: once a device prepares
+    // the inserts the same loads go through.
+    strip->prepare (48000.0, kFrames);
+    aux->prepare (48000.0, kFrames);
+    CHECK (strip->loadBuiltin ("dusk.builtin.utility", error));
+    CHECK (aux->loadBuiltin (0, "dusk.builtin.utility", error));
+}

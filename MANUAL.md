@@ -561,7 +561,7 @@ From left to right:
   in Settings sends it. Press Stop again while stopped to return to bar 1. A stop
   that comes from MIDI clock or MTC chase leaves the playhead where the master
   stopped.
-- **Rewind** (◀◀). Brief press jumps to the previous marker; if there is no previous marker, jumps to bar 1. Hold for more than 180 milliseconds to scrub backwards at 10× speed.
+- **Rewind** (◀◀). Brief press jumps to the previous marker; if there is no previous marker, jumps to bar 1. Hold for more than 400 milliseconds to scrub backwards at 10× speed.
 - **Play** (▶). Toggles play. If loop is enabled and the playhead is outside the loop region, the playhead snaps to the loop start before playback begins.
 - **Forward** (▶▶). Brief press jumps to the next marker (no overshoot past the last one). Hold to scrub forward at 10× speed.
 - **Record** (●). Toggles record. Requires at least one track armed.
