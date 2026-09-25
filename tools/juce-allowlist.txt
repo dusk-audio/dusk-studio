@@ -69,7 +69,7 @@ src/ui/BusComponent.cpp	291
 src/ui/BusComponent.h	45
 src/ui/ChannelEqEditor.cpp	77
 src/ui/ChannelEqEditor.h	13
-src/ui/ChannelStripComponent.cpp	664
+src/ui/ChannelStripComponent.cpp	642
 src/ui/ChannelStripComponent.h	106
 src/ui/ClapPluginEditorComponent.cpp	18
 src/ui/ClapPluginEditorComponent.h	8
@@ -109,7 +109,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	456
+src/ui/MainComponent.cpp	455
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	328
 src/ui/MasterStripComponent.h	55

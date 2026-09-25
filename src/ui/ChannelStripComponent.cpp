@@ -40,12 +40,17 @@
 #include "PlatformWindowing.h"
 #include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
+#include "AuxSendText.h"
 #include <algorithm>
 #include <stdexcept>
 #include <cstdio>
 
 namespace duskstudio
 {
+static_assert (kAuxSendKnobOffDb <= ChannelStripParams::kAuxSendMinDb
+                   && kAuxSendKnobOffDb >= ChannelStripParams::kAuxSendMinDb,
+               "the send captions call the knob's bottom end stop OFF");
+
 namespace
 {
 // Stated once rather than ten times: the strip's default control fill.
@@ -1281,26 +1286,6 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         addAndMakeVisible (lbl);
     }
 
-    auto formatAuxSend = [] (float dB, bool preFader)
-    {
-        // Build the base level string (either the "−" sentinel for a
-        // muted send or the dB number), then append " PRE" if the send
-        // is pre-fader regardless of level - a user who's parked the
-        // knob at off still needs to see whether it's PRE so they know
-        // what'll happen when they bump it back up.
-        // Tight format: integer when |v| >= 10 ("-12"), else 1 decimal ("0.0").
-        // Drops the "dB" suffix so the label fits the narrow column.
-        juce::String text;
-        if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
-            text = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));   // "−" (U+2212)
-        else
-            text = (std::abs (dB) >= 10.0f)
-                       ? juce::String ((int) std::round (dB))
-                       : juce::String (dB, 1);
-        if (preFader) text += " PRE";
-        return text;
-    };
-
     for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
     {
         auto knob = std::make_unique<juce::Slider> (
@@ -1322,6 +1307,9 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         knob->setDoubleClickReturnValue (true, ChannelStripParams::kAuxSendOffDb);
         knob->setTooltip ("AUX " + juce::String (i + 1) + " send level. "
                           "Right-click for PRE/POST toggle + MIDI Learn.");
+        knob->setHelpText ("Aux " + std::to_string (i + 1) + " send level in decibels; OFF when fully down.");
+        knob->textFromValueFunction = [] (double v) { return duskstudio::auxSendValueText (v); };
+        knob->valueFromTextFunction = [] (const auto& text) { return duskstudio::auxSendFromText (text.toStdString()); };
 
         // Map "fully CCW" of the slider onto the kAuxSendOffDb sentinel so a
         // knob at minimum stops the audio path entirely (Phase B will read
@@ -1335,7 +1323,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
         auto* knobPtr = knob.get();
         const int idx = i;
-        knob->onValueChange = [this, knobPtr, idx, formatAuxSend]
+        knob->onValueChange = [this, knobPtr, idx]
         {
             const float v = (float) knobPtr->getValue();
             const float stored = (v <= ChannelStripParams::kAuxSendMinDb + 0.01f)
@@ -1343,7 +1331,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             track.strip.auxSendDb[idx].store (stored, std::memory_order_relaxed);
             const bool preFader = track.strip.auxSendPreFader[(size_t) idx]
                                        .load (std::memory_order_relaxed);
-            auxKnobLabels[(size_t) idx].setText (formatAuxSend (stored, preFader),
+            auxKnobLabels[(size_t) idx].setText (duskstudio::auxSendCaption (stored, preFader),
                                                     juce::dontSendNotification);
         };
         knob->onDragStart = [this, idx]
@@ -1365,7 +1353,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         auxKnobLabels[(size_t) i].setColour (juce::Label::textColourId, kAuxColours[i].brighter (0.2f));
         const bool initialPre = track.strip.auxSendPreFader[(size_t) i]
                                      .load (std::memory_order_relaxed);
-        auxKnobLabels[(size_t) i].setText (formatAuxSend (initial, initialPre),
+        auxKnobLabels[(size_t) i].setText (duskstudio::auxSendCaption (initial, initialPre),
                                               juce::dontSendNotification);
         addAndMakeVisible (auxKnobLabels[(size_t) i]);
     }
@@ -1494,7 +1482,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     pluginSlotButton.setTitle ("Track " + tn + " insert slot");
     for (size_t i = 0; i < auxKnobs.size(); ++i)
         if (auxKnobs[i] != nullptr)
-            auxKnobs[i]->setTitle ("Track " + tn + " aux " + juce::String ((int) i + 1) + " send");
+            auxKnobs[i]->setTitle ("Track " + tn + " aux " + std::to_string (i + 1) + " send");
 }
 
 ChannelStripComponent::~ChannelStripComponent()
@@ -3941,20 +3929,8 @@ void ChannelStripComponent::refreshAuxSendLabel (int auxIdx)
     const bool  isPre = track.strip.auxSendPreFader[(size_t) auxIdx]
                               .load (std::memory_order_relaxed);
 
-    // Inline the formatter - the ctor's `formatAuxSend` lambda is
-    // out of scope here. Same logic, kept terse. PRE suffix appended
-    // regardless of level so users can see pre-fader state even when
-    // the send is parked at off.
-    juce::String text;
-    if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
-        text = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));
-    else if (std::abs (dB) >= 10.0f)
-        text = juce::String ((int) std::round (dB));
-    else
-        text = juce::String (dB, 1);
-    if (isPre) text += " PRE";
-
-    auxKnobLabels[(size_t) auxIdx].setText (text, juce::dontSendNotification);
+    auxKnobLabels[(size_t) auxIdx].setText (duskstudio::auxSendCaption (dB, isPre),
+                                            juce::dontSendNotification);
 
     // Outline-colour cue mirrors the PRE text - bright amber ring when
     // pre-fader, dim default when post. Updated here (not just in ctor)
@@ -4639,19 +4615,6 @@ public:
         titleLabel.setMinimumHorizontalScale (1.0f);
         addAndMakeVisible (titleLabel);
 
-        auto formatAuxSend = [] (float dB, bool preFader) -> juce::String
-        {
-            juce::String s;
-            if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
-                s = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));   // "−"
-            else
-                s = (std::abs (dB) >= 10.0f)
-                        ? juce::String ((int) std::round (dB))
-                        : juce::String (dB, 1);
-            if (preFader) s += " PRE";
-            return s;
-        };
-
         for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
         {
             auto& k = knobs[(size_t) i];
@@ -4671,13 +4634,17 @@ public:
             k.setDoubleClickReturnValue (true, ChannelStripParams::kAuxSendOffDb);
             k.setTooltip ("AUX " + std::to_string (i + 1) + " send level. "
                             "Double-click for OFF.");
+            k.setTitle ("AUX editor aux " + std::to_string (i + 1) + " send");
+            k.setHelpText ("Aux " + std::to_string (i + 1) + " send level in decibels; OFF when fully down.");
+            k.textFromValueFunction = [] (double v) { return duskstudio::auxSendValueText (v); };
+            k.valueFromTextFunction = [] (const auto& text) { return duskstudio::auxSendFromText (text.toStdString()); };
 
             const float initial = track.strip.auxSendDb[(size_t) i].load (std::memory_order_relaxed);
             k.setValue (initial <= ChannelStripParams::kAuxSendMinDb + 0.01f
                             ? ChannelStripParams::kAuxSendOffDb : initial,
                           juce::dontSendNotification);
 
-            k.onValueChange = [this, i, formatAuxSend]
+            k.onValueChange = [this, i]
             {
                 const float v = (float) knobs[(size_t) i].getValue();
                 const float stored = (v <= ChannelStripParams::kAuxSendMinDb + 0.01f)
@@ -4685,7 +4652,7 @@ public:
                 track.strip.auxSendDb[(size_t) i].store (stored, std::memory_order_relaxed);
                 const bool preFader = track.strip.auxSendPreFader[(size_t) i]
                                           .load (std::memory_order_relaxed);
-                valueLabels[(size_t) i].setText (formatAuxSend (stored, preFader),
+                valueLabels[(size_t) i].setText (duskstudio::auxSendCaption (stored, preFader),
                                                     juce::dontSendNotification);
             };
             k.onDragStart = [this, i]
@@ -4729,7 +4696,7 @@ public:
             {
                 const bool initialPre = track.strip.auxSendPreFader[(size_t) i]
                                              .load (std::memory_order_relaxed);
-                vl.setText (formatAuxSend (initial, initialPre),
+                vl.setText (duskstudio::auxSendCaption (initial, initialPre),
                               juce::dontSendNotification);
             }
             addAndMakeVisible (vl);
@@ -4798,16 +4765,9 @@ public:
                     knobs[(size_t) i].setValue (knobVal, juce::dontSendNotification);
             }
 
-            juce::String txt;
-            if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
-                txt = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));
-            else
-                txt = (std::abs (dB) >= 10.0f)
-                          ? juce::String ((int) std::round (dB))
-                          : juce::String (dB, 1);
-            if (isPre) txt += " PRE";
+            const auto txt = duskstudio::auxSendCaption (dB, isPre);
             auto& vl = valueLabels[(size_t) i];
-            if (vl.getText (false) != txt)
+            if (vl.getText (false).toStdString() != txt)
                 vl.setText (txt, juce::dontSendNotification);
 
             // Outline-colour cue mirrors the PRE text - bright amber

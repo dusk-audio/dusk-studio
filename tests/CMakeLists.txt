@@ -140,6 +140,7 @@ add_executable(dusk-studio-tests
     transport_state_machine.cpp
     transport_stop_locate.cpp
     timeline_follow.cpp
+    aux_send_text.cpp
     loop_timeline.cpp
     generated_midi_budget.cpp
     midi_bindings_preset.cpp

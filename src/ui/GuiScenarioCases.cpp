@@ -6230,6 +6230,7 @@ std::optional<ScenarioResult> runAccessibleControls (GuiHost& host, ScenarioCont
     ctx.keep (strip.pan);
     ctx.keep (strip.hpfFreq);
     ctx.keep (strip.compFetRatio);
+    ctx.keep (strip.auxSendDb[0]);
     keepStage (host, ctx);
     host.switchToStage (GuiHost::Stage::Recording);
     std::string value, help;
@@ -6258,7 +6259,9 @@ std::optional<ScenarioResult> runAccessibleControls (GuiHost& host, ScenarioCont
         }
     host.switchToStage (GuiHost::Stage::Mixing);
     auto steps = std::make_shared<std::vector<Step>>();
-    struct Value { const char* title; const char* input; const char* output; };
+    // An aux send's bottom end stop stores the OFF sentinel and must read
+    // OFF, as the strip shows it, rather than an audible -60 dB.
+    struct Value { const char* title; const char* input; const char* output; float sendDb = std::nanf (""); };
     const Value values[] {
         { "Track 1 fader", "-4.2", "-4.2 dB" },
         { "Track 1 pan", "-0.42", "L42" },
@@ -6268,7 +6271,12 @@ std::optional<ScenarioResult> runAccessibleControls (GuiHost& host, ScenarioCont
         { "Track 1 fader", "-96", "-INF dB" },
         { "Track 1 fader", "-INF", "-INF dB" },
         { "Track 1 fader", "-4.2", "-4.2 dB" },
-        { "Track 1 fader", "-INF dB", "-INF dB" }
+        { "Track 1 fader", "-INF dB", "-INF dB" },
+        { "Track 1 aux 1 send", "-12", "-12.0 dB", -12.0f },
+        { "Track 1 aux 1 send", "-60", "OFF", ChannelStripParams::kAuxSendOffDb },
+        { "Track 1 aux 1 send", "-59.9", "-59.9 dB", -59.9f },
+        { "Track 1 aux 1 send", "OFF", "OFF", ChannelStripParams::kAuxSendOffDb },
+        { "Track 1 aux 1 send", "+3 dB", "3.0 dB", 3.0f }
     };
     for (const auto item : values)
     {
@@ -6283,6 +6291,11 @@ std::optional<ScenarioResult> runAccessibleControls (GuiHost& host, ScenarioCont
             if (std::string (item.input).find ("-INF") == 0)
                 ctx.expect (std::abs (strip.faderDb.load() - ChannelStripParams::kFaderMinDb) < 0.001f,
                             "the accessible -INF action did not mute the channel fader");
+            if (! std::isnan (item.sendDb))
+                ctx.expect (std::abs (strip.auxSendDb[0].load() - item.sendDb) < 0.001f,
+                            std::string ("aux 1 send after ") + item.input + ": expected "
+                                + std::to_string (item.sendDb) + " dB stored, got "
+                                + std::to_string (strip.auxSendDb[0].load()));
         } });
     }
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
