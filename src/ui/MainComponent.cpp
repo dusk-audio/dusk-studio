@@ -3399,6 +3399,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
         // idle (no further edits) state and skip the write.
         setLastSavedSessionJson    (json);
         setLastWrittenAutosaveJson (juce::String());
+        sessionOnDisk = true;
         setStatusForPath ("Saved", target);
         return true;
     }
@@ -3856,10 +3857,15 @@ void MainComponent::beginSafeShutdown()
     shutdown::emitPhase ("phase 8: beginSafeShutdown returning to message loop (yield to mutter)");
 }
 
+bool MainComponent::saveGoesInPlace() const
+{
+    return sessionOnDisk && session.getSessionDirectory().getChildFile ("session.json").existsAsFile();
+}
+
 void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
 {
     const auto dir = session.getSessionDirectory();
-    if (dir.getChildFile ("session.json").existsAsFile())
+    if (saveGoesInPlace())
     {
         // Sync save into the existing dir.
         const bool ok = saveSessionTo (dir);
@@ -4306,6 +4312,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // session remains untouched.
     setLastSavedSessionJson    (SessionSerializer::serialize (session));
     setLastWrittenAutosaveJson (juce::String());
+    sessionOnDisk = true;
 
     // Recovery must end with the recovered state on disk. Without this,
     // the snapshot seeded above makes the session look clean: the quit
@@ -5484,15 +5491,10 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
         case kMenuFileOpen:   openFromFilePrompt();     break;
         case kMenuFileSave:
         {
-            // Mirror the Save button's smart behavior: redirect to Save As
-            // if the session has never been saved (no session.json yet) so
-            // the user picks a real destination instead of clobbering the
-            // bootstrap "Untitled" dir.
-            const auto dir = session.getSessionDirectory();
-            if (! dir.getChildFile ("session.json").existsAsFile())
-                saveAsPrompt();
+            if (saveGoesInPlace())
+                saveSessionTo (session.getSessionDirectory());
             else
-                saveSessionTo (dir);
+                saveAsPrompt();
             break;
         }
         case kMenuFileSaveAs: saveAsPrompt();           break;
