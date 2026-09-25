@@ -35,6 +35,7 @@ fi
 DISPLAY_FILE=""
 XVFB_LOG=""
 XVFB_PID=""
+CONFIG_DIR=""
 
 cleanup() {
     trap - EXIT INT TERM
@@ -44,6 +45,7 @@ cleanup() {
     fi
     [[ -n "$DISPLAY_FILE" ]] && rm -f "$DISPLAY_FILE"
     [[ -n "$XVFB_LOG" ]] && rm -f "$XVFB_LOG"
+    [[ -n "$CONFIG_DIR" ]] && rm -rf "$CONFIG_DIR"
     :
 }
 trap cleanup EXIT
@@ -52,6 +54,14 @@ trap 'exit 143' TERM
 
 DISPLAY_FILE=$(mktemp "${TMPDIR:-/tmp}/duskstudio-xvfb-display.XXXXXX")
 XVFB_LOG=$(mktemp "${TMPDIR:-/tmp}/duskstudio-xvfb-log.XXXXXX")
+
+# The run keeps window state, app config, recents, the device choice and plugin
+# caches out of the user's own config directory. A caller that seeds a config
+# passes its own DUSKSTUDIO_CONFIG_DIR.
+if [[ -z "${DUSKSTUDIO_CONFIG_DIR:-}" ]]; then
+    CONFIG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-config.XXXXXX")
+    export DUSKSTUDIO_CONFIG_DIR="$CONFIG_DIR"
+fi
 
 Xvfb -displayfd 3 -screen 0 1920x1200x24 -nolisten tcp \
     3>"$DISPLAY_FILE" 2>"$XVFB_LOG" &

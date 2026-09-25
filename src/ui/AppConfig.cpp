@@ -1,6 +1,7 @@
 #include "AppConfig.h"
 #include "../engine/AudioEngine.h"   // AudioEngine::getMaxWorkerCount()
 
+#include "../foundation/AppConfigDir.h"
 #include "../foundation/Fs.h"
 #include "../foundation/Text.h"
 
@@ -76,9 +77,8 @@ bool looksSignedNumeric (const std::string& s)
 
 stdfs::path getStorePath()
 {
-    const auto cfg = dusk::fs::userConfigDir();
-    if (cfg.empty()) return {};
-    const auto cfgDir = cfg / "Dusk Studio";
+    const auto cfgDir = dusk::fs::appConfigDir();
+    if (cfgDir.empty()) return {};
     std::error_code ec;
     if (! stdfs::is_directory (cfgDir, ec) && ! stdfs::create_directories (cfgDir, ec))
         return {};   // config dir unusable (missing + uncreatable, or a non-dir file)

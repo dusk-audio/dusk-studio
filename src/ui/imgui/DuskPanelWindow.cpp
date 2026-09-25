@@ -1,7 +1,7 @@
 #include "DuskPanelWindow.h"
 #include "DuskImGuiHost.h"
 #include "DuskTheme.h"
-#include "../../foundation/Fs.h"
+#include "../../foundation/AppConfigDir.h"
 #include "../../foundation/MessageThread.h"
 
 #include <DearImGui.hpp>
@@ -80,10 +80,10 @@ bool writePpm (const std::string& path, int width, int height,
 
 std::filesystem::path firstFrameMarkerPath (const std::string& logTag)
 {
-    const auto cfg = dusk::fs::userConfigDir();
+    const auto cfg = dusk::fs::appConfigDir();
     if (cfg.empty())
         return {};
-    return cfg / "Dusk Studio" / (logTag + "-first-frame");
+    return cfg / (logTag + "-first-frame");
 }
 } // namespace
 

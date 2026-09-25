@@ -18,6 +18,7 @@
 #include "../session/RegionEditActions.h"
 #include "DeviceFallbackMessage.h"
 #include "LegacyStateBase64.h"
+#include "../foundation/AppConfigDir.h"
 #include "../foundation/Base64.h"
 #include "../foundation/MessageThread.h"
 #include "../foundation/Text.h"
@@ -213,10 +214,17 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
 // persisted on every device change broadcast.
 static juce::File audioDeviceStateFile()
 {
-    auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("Dusk Studio");
-    if (! dir.exists()) dir.createDirectory();
-    return dir.getChildFile ("audio-device.xml");
+    const auto dir = dusk::fs::appConfigDir();
+    if (dir.empty()) return {};
+    const juce::File cfgDir (dir.u8string());
+    if (! cfgDir.exists()) cfgDir.createDirectory();
+    return cfgDir.getChildFile ("audio-device.xml");
+}
+
+static void saveAudioDeviceState (const std::string& blob)
+{
+    if (const auto file = audioDeviceStateFile(); file != juce::File())
+        file.replaceWithText (juce::String (blob));
 }
 
 #if DUSKSTUDIO_HAS_NATIVE_LV2
@@ -1688,7 +1696,7 @@ void AudioEngine::clearDeviceFallbackHold()
     deviceFallbackHold_ = false;
     if (deviceManager.getCurrentDevice() != nullptr)
         if (const auto blob = deviceManager.getStateBlob(); ! blob.empty())
-            audioDeviceStateFile().replaceWithText (juce::String (blob));
+            saveAudioDeviceState (blob);
 }
 
 void AudioEngine::record()
@@ -3653,7 +3661,7 @@ void AudioEngine::onDeviceManagerChanged()
     // once the user picks.
     if (deviceManager.getCurrentDevice() != nullptr && ! deviceFallbackHold_)
         if (const auto blob = deviceManager.getStateBlob(); ! blob.empty())
-            audioDeviceStateFile().replaceWithText (juce::String (blob));
+            saveAudioDeviceState (blob);
 
     // The hot-unplug signal is "we had a live device, now the
     // current device is null." User-driven settings changes also

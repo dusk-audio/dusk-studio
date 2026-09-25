@@ -8,7 +8,7 @@
 namespace duskstudio::appconfig
 {
 // Per-machine preferences. Stored as a key=value text file at
-//   <userConfigDir>/Dusk Studio/app-config.properties
+//   <appConfigDir>/app-config.properties
 // - separate store from window-state.txt (geometry) and recent.txt
 // (recent sessions list) so each file has a single concern.
 //

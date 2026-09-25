@@ -1,5 +1,6 @@
 #include "RecentSessions.h"
 
+#include "../foundation/AppConfigDir.h"
 #include "../foundation/Fs.h"
 #include "../foundation/Text.h"
 
@@ -11,15 +12,9 @@ namespace duskstudio
 {
 namespace stdfs = std::filesystem;
 
-static stdfs::path configRoot()
-{
-    const auto cfg = dusk::fs::userConfigDir();
-    return cfg.empty() ? stdfs::path {} : cfg / "Dusk Studio";
-}
-
 stdfs::path RecentSessions::getStoreFile()
 {
-    const auto cfgDir = configRoot();
+    const auto cfgDir = dusk::fs::appConfigDir();
     if (cfgDir.empty()) return {};
 
     std::error_code ec;
@@ -86,7 +81,7 @@ void RecentSessions::clear()
     // Compute the path WITHOUT getStoreFile() - that creates the config dir as
     // a side effect, so clearing a never-used recents list would spawn an empty
     // "Dusk Studio" config dir. If the dir isn't there, there's nothing to clear.
-    const auto cfgDir = configRoot();
+    const auto cfgDir = dusk::fs::appConfigDir();
     std::error_code ec;
     if (cfgDir.empty() || ! stdfs::is_directory (cfgDir, ec)) return;
     const auto store = cfgDir / "recent.txt";

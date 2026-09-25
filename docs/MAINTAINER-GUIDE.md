@@ -510,8 +510,10 @@ display, so each leg gets a throwaway directory and a private environment:
 - Private `HOME` and `XDG_CONFIG_HOME`, mode 0700. `dusk::fs::userConfigDir()`
   resolves `$HOME/.config` and does **not** read `XDG_CONFIG_HOME`, so only a
   private `HOME` keeps Recent Sessions, `app-config.properties` and crash logs
-  out of your profile. It also means the legs start with no plugin cache, which
-  is why they start in well under a second.
+  out of your profile. `DUSKSTUDIO_CONFIG_DIR` names that same
+  `$HOME/.config/Dusk Studio` outright, which is how a scenario run inside a
+  leg reads what the leg seeded there. It also means the legs start with no
+  plugin cache, which is why they start in well under a second.
 - A private copy of `scripts/regress/sessions/minimal/session.json` per leg. The
   checked-in file is never loaded in place: an autosave tick would write
   `session.json.autosave` into the working tree.
@@ -586,9 +588,20 @@ reason`, with the notes a failing scenario recorded indented underneath, then
 `=== scenarios: N pass, M fail, K skip ===`; the exit status is 0 only when
 nothing failed, and 3 when nothing passed or failed (every selected scenario
 skipped, or the selection matched none), since a run that verified nothing is
-not a pass. The private `HOME` matters: the app reads
-Recent Sessions and the plug-in cache from `$HOME/.config`, and a scripted
-run must not touch yours. A desktop session exports the `XDG_*_HOME`
+not a pass.
+
+A scenario or self-test run never uses your own config directory. Window
+state, `app-config.properties`, Recent Sessions, `audio-device.xml`, the
+plug-in caches and the log go to `DUSKSTUDIO_CONFIG_DIR` when it is set, and
+otherwise to a fresh directory under the temp dir that the app removes at
+exit, so every run starts from an empty config: a centred default-size window,
+the default audio device, no plug-in cache. A case that needs a seeded config,
+such as `gui.plugin_picker_filter_and_load` and its cache, gets it from a
+script that writes the files and passes that directory in
+`DUSKSTUDIO_CONFIG_DIR` (`tests/gui_plugin_picker.sh`);
+`scripts/run-selftest-xvfb.sh` makes a per-run one when the caller has not.
+The private `HOME` still matters for everything else the app and its
+libraries write under it. A desktop session exports the `XDG_*_HOME`
 variables as absolute paths into the real home, so they move with it.
 `PIPEWIRE_RUNTIME_DIR` keeps the real runtime directory for PipeWire alone:
 without it the engine cannot find the PipeWire socket, falls back to ALSA and

@@ -1,6 +1,7 @@
 #include "CrashHandler.h"
 #include "HostInfo.h"
 #include "LogFile.h"
+#include "../foundation/AppConfigDir.h"
 
 #include <juce_core/juce_core.h>
 
@@ -48,8 +49,7 @@ std::unique_ptr<LogAdapter> ownedLogger;
 
 juce::File baseDir()
 {
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-              .getChildFile ("Dusk Studio");
+    return juce::File (dusk::fs::appConfigDir().u8string());
 }
 
 juce::File makeLogFile()

@@ -1,6 +1,7 @@
 #include "GuiHost.h"
 #include "AppConfig.h"
 #include "FourKColours.h"
+#include "../foundation/AppConfigDir.h"
 #include "../foundation/Fs.h"
 
 #include "../engine/AudioEngine.h"
@@ -4264,7 +4265,7 @@ std::optional<ScenarioResult> runSettingsDefaults (GuiHost& host, ScenarioContex
     const bool follow = appconfig::getFollowPlayheadDefault();
     ctx.expect (host.tapeExpansionState() == (tape ? 3 : 0), "launch ignored the tape-strip default");
     ctx.expect (host.timelineChaseState() == (follow ? 3 : 0), "launch ignored the timeline Chase default");
-    const auto config = dusk::fs::userConfigDir() / "Dusk Studio" / "app-config.properties";
+    const auto config = dusk::fs::appConfigDir() / "app-config.properties";
     const bool hadConfig = std::filesystem::exists (config);
     const auto configText = dusk::fs::loadFileAsString (config);
     const auto originalDir = currentSessionDirectory (session);
@@ -4357,7 +4358,7 @@ std::optional<ScenarioResult> runSettingsUiScale (GuiHost& host, ScenarioContext
    #else
     const auto originalScale = static_cast<float> (host.uiScale());
     const auto originalSaved = appconfig::getUiScaleOverride();
-    const auto config = dusk::fs::userConfigDir() / "Dusk Studio" / "app-config.properties";
+    const auto config = dusk::fs::appConfigDir() / "app-config.properties";
     const bool hadConfig = std::filesystem::exists (config);
     const auto configText = dusk::fs::loadFileAsString (config);
     ctx.cleanup ([&host, originalScale, config, hadConfig, configText]
@@ -4418,7 +4419,7 @@ std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContex
    #else
     namespace fs = std::filesystem;
     auto& session = ctx.session();
-    const auto config = dusk::fs::userConfigDir() / "Dusk Studio" / "app-config.properties";
+    const auto config = dusk::fs::appConfigDir() / "app-config.properties";
     const bool hadConfig = fs::exists (config);
     const auto configText = dusk::fs::loadFileAsString (config);
     const auto originalDir = currentSessionDirectory (session);

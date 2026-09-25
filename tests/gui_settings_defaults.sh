@@ -13,9 +13,9 @@ for enabled in 0 1; do
         run_dir="$scratch/$enabled-$attempt"
         mkdir -p "$run_dir"
         sandbox_env "$run_dir"
-        mkdir -p "$run_dir/config/Dusk Studio"
+        mkdir -p "$run_dir/home/.config/Dusk Studio"
         printf 'tape_strip_expanded_default=%s\nfollow_playhead_default=%s\n' \
-            "$enabled" "$enabled" > "$run_dir/config/Dusk Studio/app-config.properties"
+            "$enabled" "$enabled" > "$run_dir/home/.config/Dusk Studio/app-config.properties"
         xvfb_run 60 env -u DBUS_SESSION_BUS_ADDRESS "${SANDBOX_ENV[@]}" \
             DUSKSTUDIO_RUN_SCENARIOS=gui:gui.settings_defaults "$app" | tee "$run_dir/output.log"
         grep -Fq '[PASS] gui.settings_defaults' "$run_dir/output.log"
