@@ -4424,10 +4424,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             {
                                 constexpr float kPickupEps = 2.0f / 127.0f;
                                 const float prev = pickupPrevIn[idx];
-                                const bool near    = std::abs (frac - cur) <= kPickupEps;
-                                const bool crossed = prev >= 0.0f
+                                const bool atCurrent = std::abs (frac - cur) <= kPickupEps;
+                                const bool crossed   = prev >= 0.0f
                                                       && (prev - cur) * (frac - cur) <= 0.0f;
-                                if (near || crossed)
+                                if (atCurrent || crossed)
                                 {
                                     pickupLatched[idx] = 1;
                                 }
