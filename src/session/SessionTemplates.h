@@ -17,9 +17,9 @@ namespace duskstudio
 enum class SessionTemplate
 {
     Blank = 0,        // numeric track names + hue-rotated palette (default)
-    Band,             // Drums / Bass / Guitars / Keys / Vocals
+    Band,             // Kick / Snare / Drums OH / Bass / Gtr 1 / Gtr 2 / Keys / Lead Vox / BG Vox
     Beats,            // Kick / Snare / Hat / Perc / 808 / Pad / Lead / Vox
-    SingerSongwriter, // Vocal / Acoustic gtr / Bass / Synth / Drums
+    SingerSongwriter, // Vocal / Ac Gtr L / Ac Gtr R / Bass / Synth / Drums
     kCount
 };
 

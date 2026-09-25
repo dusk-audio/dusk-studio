@@ -186,6 +186,9 @@ public:
                                     int clicks, bool right) = 0;
     virtual std::vector<double> auxReturnRange (int lane) const = 0;
     virtual std::uint32_t tapeRegionColour (int track, int region) const = 0;
+    // True when the tape strip is up and lays that audio region out on its
+    // track's row.
+    virtual bool tapeRegionShown (int track, int region) const = 0;
     virtual std::vector<std::string> midiBindingRows() const = 0;
     virtual bool clickMidiBindingRemove (int row) = 0;
     // The top modal's body and the window it sits in, as x, y, width, height

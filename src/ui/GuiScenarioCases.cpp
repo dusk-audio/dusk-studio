@@ -15,6 +15,7 @@
 #include "../dsp/ChannelStrip.h"
 #include "../session/Session.h"
 #include "../session/SessionSerializer.h"
+#include "../session/SessionTemplates.h"
 
 #include <algorithm>
 #include <array>
@@ -9769,6 +9770,506 @@ const ScenarioRegistrar pluginKindMismatch { Scenario {
     "gui.plugin_kind_mismatch", { "gui", "plugins", "messages" }, Needs::Engine | Needs::Gui,
     { "panic_probe.vst3", "relayout.vst3" }, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPluginKindMismatch (host, ctx); }
+} };
+
+std::string commandChord (char letter)
+{
+   #if defined (__APPLE__)
+    return std::string ("command + ") + letter;
+   #else
+    return std::string ("ctrl + ") + letter;
+   #endif
+}
+
+// Replaces whatever the focused text field holds, a key at a time.
+void typeReplacing (GuiHost& host, const std::string& text)
+{
+    host.pressPeerKey (commandChord ('A'), 'a');
+    for (const char ch : text)
+        host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+}
+
+// NEW, a template, a fresh name typed into the browser and Save: the folder
+// gains a session.json holding that template's tracks, and the window opens it.
+std::optional<ScenarioResult> runStartupNewCreates (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.startupDialogOpen())
+        return ScenarioResult::skip ("requires a stopped transport and no dialog");
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    const auto originalDir = currentSessionDirectory (session);
+    ctx.cleanup ([&host, &session, restore, originalDir]
+    {
+        host.closeStartupDialog();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    // Clean, so the pick goes straight to the naming prompt.
+    const auto clean = ctx.tempDir() / "clean" / "session.json";
+    std::filesystem::create_directories (clean.parent_path());
+    if (! SessionSerializer::save (session, clean)) return ScenarioResult::fail ("could not save the clean session");
+    reopenSavedSession (host, clean);
+
+    constexpr auto kTemplate = SessionTemplate::SingerSongwriter;
+    const auto templateIndex = std::to_string ((int) kTemplate);
+    std::shared_ptr<const Session> expected = []
+    {
+        auto stamped = std::make_shared<Session>();
+        applyTemplate (*stamped, kTemplate);
+        return stamped;
+    }();
+    const auto created = ctx.tempDir() / "Fresh Song";
+    const auto sessionJson = created / "session.json";
+    const auto matches = [&ctx, expected] (const Session& got, const std::string& what)
+    {
+        for (int i = 0; i < Session::kNumTracks; ++i)
+        {
+            const auto& want = expected->track (i);
+            const auto& track = got.track (i);
+            if (! ctx.expect (track.name == want.name && track.colour == want.colour
+                                  && track.mode.load() == want.mode.load(),
+                              what + ": track " + std::to_string (i + 1) + " is '" + track.name.toStdString()
+                                  + "' in mode " + std::to_string (track.mode.load()) + ", the template's is '"
+                                  + want.name.toStdString() + "' in mode " + std::to_string (want.mode.load())))
+                return;
+        }
+    };
+
+    host.closeStartupDialog();
+    if (! host.openStartupDialog ({}, true)) return ScenarioResult::fail ("the startup dialog did not open");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&host, &ctx]
+    { ctx.expect (host.clickStartupControl ("tab-new"), "the startup dialog did not show its NEW tab"); } });
+    steps->push_back ({ 300, [&host, &ctx, templateIndex]
+    {
+        ctx.expect (host.clickStartupControl ("template:" + templateIndex),
+                    "NEW did not list Singer-Songwriter as template " + templateIndex);
+    } });
+    steps->push_back ({ 700, [&host, &ctx, created]
+    {
+        if (! ctx.expect (host.modalText().rfind ("Name your new session", 0) == 0,
+                          "Singer-Songwriter showed '" + host.modalText() + "' rather than the naming prompt")
+            || ! ctx.expect (host.focusFileName(), "the naming prompt has no name field"))
+            return;
+        typeReplacing (host, created.string());
+        ctx.expect (host.clickModalButton ("Save"), "the naming prompt has no Save button");
+    } });
+    steps->push_back ({ 1500, [&host, &ctx, &session, matches, templateIndex, created, sessionJson]
+    {
+        ctx.expect (host.startupChoice() == "new:" + templateIndex,
+                    "the startup dialog recorded '" + host.startupChoice() + "' for the pick");
+        ctx.expect (! host.startupDialogOpen(),
+                    "the startup dialog came back rather than the new session opening; status '"
+                        + host.statusMessage() + "'");
+        ctx.expect (host.modalStackEmpty(), "creating the session left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == created,
+                    "the window has '" + currentSessionDirectory (session).string() + "' open, not the new session");
+        ctx.expect (host.statusMessage() == "New session: Fresh Song",
+                    "the status bar says '" + host.statusMessage() + "'");
+        auto written = std::make_unique<Session>();
+        if (ctx.expect (SessionSerializer::load (*written, sessionJson),
+                        "the new folder holds no loadable session.json"))
+            matches (*written, "the new session.json");
+        matches (session, "the opened session");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar startupNewCreates { Scenario {
+    "gui.startup_new_creates_session", { "gui", "startup" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStartupNewCreates (host, ctx); }
+} };
+
+// The Quick Guide's first take: with a track armed, R rolls and records, Space
+// stops, and the take lands as a region on that track's row of the tape strip.
+std::optional<ScenarioResult> runRecordKeyRegion (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (! engine.isAudioCallbackRegistered() || session.deviceCaptureChannels.load() <= 0)
+        return ScenarioResult::skip ("requires a running audio device with an input to record from");
+    const auto rate = engine.getCurrentSampleRate();
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a positive engine sample rate");
+    auto& track = session.track (0);
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Recording);
+    ctx.keep (track.mode);
+    ctx.keep (track.inputSource);
+    ctx.keep (session.countInEnabled);
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        const bool armed = session.track (index).recordArmed.load();
+        ctx.cleanup ([&session, index, armed] { session.setTrackArmed (index, armed); });
+        session.setTrackArmed (index, false);
+    }
+    const bool timeline = host.setTimelineShown (true);
+    ctx.cleanup ([&host, timeline] { host.setTimelineShown (timeline); });
+    auto regionsAtStart = std::make_shared<std::vector<std::decay_t<decltype (track.regions)>>>();
+    for (int index = 0; index < Session::kNumTracks; ++index)
+        regionsAtStart->push_back (session.track (index).regions);
+    ctx.cleanup ([&engine, &session, &transport, regionsAtStart, originalDir = currentSessionDirectory (session),
+                  loop = transport.isLoopEnabled(), punch = transport.isPunchEnabled(), at = transport.getPlayhead()]
+    {
+        engine.stop();
+        for (int index = 0; index < Session::kNumTracks; ++index)
+            session.track (index).regions = (*regionsAtStart)[(std::size_t) index];
+        engine.getPlaybackEngine().preparePlayback();
+        transport.setLoopEnabled (loop);
+        transport.setPunchEnabled (punch);
+        transport.setPlayhead (at);
+        engine.getUndoManager().clearUndoHistory();
+        applySessionDirectory (session, originalDir);
+    });
+
+    // The take is written under the session folder, so that is scratch space.
+    const auto takeDir = ctx.tempDir() / "Take session";
+    applySessionDirectory (session, takeDir);
+    engine.stop();
+    track.regions.clear();
+    engine.getPlaybackEngine().preparePlayback();
+    transport.setPlayhead (0);
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    session.countInEnabled.store (false);
+    track.mode.store ((int) Track::Mode::Mono);
+    track.inputSource.store (0);
+    session.setTrackArmed (0, true);
+    if (! track.recordArmed.load())
+        return ScenarioResult::fail ("track 1 would not arm on input 1");
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (keyCodeDescription ('r'), 'r'), "the window did not handle R"); } });
+    steps->push_back ({ 300, [&host, &ctx, &transport]
+    {
+        ctx.expect (transport.isRecording(),
+                    "R did not start recording the armed track"
+                        + (host.modalStackEmpty() ? std::string() : "; up: '" + host.modalText() + "'"));
+    } });
+    steps->push_back ({ 1500, [&host, &ctx, &transport, rate]
+    {
+        ctx.expect (transport.isRecording() && transport.getPlayhead() > (std::int64_t) (rate * 0.5),
+                    "the transport did not roll while recording; playhead at "
+                        + std::to_string (transport.getPlayhead()));
+        ctx.expect (host.pressPeerKey ("spacebar", ' '), "the window did not handle Space");
+    } });
+    runSteps (ctx, steps, [&host, &ctx, &session, &transport, &track, regionsAtStart, takeDir, rate]
+    {
+        ctx.waitUntil ([&transport, &track] { return transport.isStopped() && ! track.regions.empty(); }, 5000,
+            [&host, &ctx, &session, &track, regionsAtStart, takeDir, rate]
+            {
+                ctx.expect (track.regions.size() == 1,
+                            "the take left " + std::to_string (track.regions.size()) + " regions on track 1");
+                const auto& region = track.regions.front();
+                ctx.expect (region.lengthInSamples >= (std::int64_t) (rate * 0.5),
+                            "the take's region is only " + std::to_string (region.lengthInSamples) + " samples long");
+                const auto file = region.file.getFullPathName().toStdString();
+                ctx.expect (region.file.existsAsFile() && file.rfind (takeDir.string(), 0) == 0,
+                            "the take's file '" + file + "' is not in the session folder");
+                for (int index = 1; index < Session::kNumTracks; ++index)
+                    ctx.expect (session.track (index).regions.size() == (*regionsAtStart)[(std::size_t) index].size(),
+                                "unarmed track " + std::to_string (index + 1) + " gained a region");
+                ctx.expect (host.tapeRegionShown (0, 0), "the tape strip does not lay the take out on track 1's row");
+                ctx.complete (ctx.verdict());
+            }, "Space did not stop the transport with a region on track 1");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar recordKeyRegion { Scenario {
+    "gui.record_key_draws_region", { "gui", "recording", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRecordKeyRegion (host, ctx); }
+} };
+
+// Cmd+B opens the bounce browser in the session folder. Its default name
+// renders a stereo 24-bit WAV there at the session rate; a name ending in .mp3
+// renders an MP3.
+std::optional<ScenarioResult> runBounceKeyFormats (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto rate = engine.getCurrentSampleRate();
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        drainModals (host);
+        engine.setRenderOversamplingOverride (0);
+        engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    // An empty session, so each render is the tail alone.
+    const auto folder = ctx.tempDir() / "Bounce session";
+    std::filesystem::create_directories (folder);
+    if (! SessionSerializer::save (*std::make_unique<Session>(), folder / "session.json"))
+        return ScenarioResult::fail ("could not write the empty session");
+    reopenSavedSession (host, folder / "session.json");
+    if (currentSessionDirectory (session) != folder)
+        return ScenarioResult::fail ("could not open the empty session");
+
+    const auto wav = folder / "bounce.wav";
+   #if DUSKSTUDIO_HAS_LAME
+    const auto mp3 = folder / "Mix.mp3";
+   #else
+    // Without the encoder a typed .mp3 falls back to WAV.
+    const auto mp3 = folder / "Mix.wav";
+   #endif
+    const auto shortcut = [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (commandChord ('b'), 'b'), "the window did not handle Cmd+B"); };
+    // An empty name keeps the one the browser offers.
+    const auto name = [&host, &ctx] (const std::string& typed)
+    {
+        if (! ctx.expect (host.modalText().rfind ("Bounce master mix", 0) == 0,
+                          "Cmd+B showed '" + host.modalText() + "' rather than the bounce browser"))
+            return;
+        if (! typed.empty())
+        {
+            if (! ctx.expect (host.focusFileName(), "the bounce browser has no name field")) return;
+            typeReplacing (host, typed);
+        }
+        ctx.expect (host.clickModalButton ("Save"), "the bounce browser has no Save button");
+    };
+    const auto rendered = [&host, &ctx] (std::function<void()> then)
+    {
+        ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000, std::move (then),
+                       "the bounce did not finish with a Close button");
+    };
+
+    auto first = std::make_shared<std::vector<Step>>();
+    first->push_back ({ 300, shortcut });
+    first->push_back ({ 700, [name] { name (""); } });
+    runSteps (ctx, first, [&ctx, shortcut, name, rendered, wav, mp3, rate]
+    {
+        rendered ([&ctx, shortcut, name, rendered, wav, mp3, rate]
+        {
+            auto reader = dusk::audio::FileReader::open (wav);
+            if (ctx.expect (reader != nullptr, "the default bounce left no readable bounce.wav in the session folder"))
+            {
+                const auto& info = reader->info();
+                ctx.expect (info.numChannels == 2 && info.bitsPerSample == 24
+                                && std::abs (info.sampleRate - rate) < 0.5 && info.numFrames > 0,
+                            "bounce.wav is " + std::to_string (info.numChannels) + " channels of "
+                                + std::to_string (info.bitsPerSample) + "-bit at " + std::to_string (info.sampleRate)
+                                + " Hz, not stereo 24-bit at " + std::to_string (rate));
+            }
+            auto second = std::make_shared<std::vector<Step>>();
+            second->push_back ({ 400, shortcut });
+            second->push_back ({ 700, [name] { name ("Mix.mp3"); } });
+            runSteps (ctx, second, [&ctx, rendered, mp3]
+            {
+                rendered ([&ctx, mp3]
+                {
+                   #if DUSKSTUDIO_HAS_LAME
+                    std::ifstream in (mp3, std::ios::binary);
+                    unsigned char head[3] {};
+                    in.read (reinterpret_cast<char*> (head), 3);
+                    const bool id3 = in.gcount() == 3 && head[0] == 'I' && head[1] == 'D' && head[2] == '3';
+                    const bool frameSync = in.gcount() >= 2 && head[0] == 0xFF && (head[1] & 0xE0) == 0xE0;
+                    ctx.expect (id3 || frameSync, "Mix.mp3 is missing from the session folder or is not an MP3 stream");
+                    ctx.expect (! std::filesystem::exists (mp3.parent_path() / "Mix.wav"),
+                                "naming the bounce .mp3 also wrote a WAV");
+                   #else
+                    auto reader = dusk::audio::FileReader::open (mp3);
+                    ctx.expect (reader != nullptr && reader->info().bitsPerSample == 24,
+                                "a .mp3 name without the encoder did not fall back to a 24-bit Mix.wav");
+                   #endif
+                    ctx.complete (ctx.verdict());
+                });
+            });
+        });
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar bounceKeyFormats { Scenario {
+    "gui.bounce_key_format_by_extension", { "gui", "bounce", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBounceKeyFormats (host, ctx); }
+} };
+
+// File > Open..., browse to a session's folder and choose its session.json from
+// the list: that session loads.
+std::optional<ScenarioResult> runOpenSessionFolder (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    // Clean, so Open goes straight to the browser.
+    const auto clean = ctx.tempDir() / "clean" / "session.json";
+    std::filesystem::create_directories (clean.parent_path());
+    if (! SessionSerializer::save (session, clean)) return ScenarioResult::fail ("could not save the clean session");
+    reopenSavedSession (host, clean);
+
+    // Holds session.json alone, so the first row of its listing is that file.
+    const auto target = ctx.tempDir() / "Open Me";
+    std::filesystem::create_directories (target);
+    {
+        auto other = std::make_unique<Session>();
+        other->track (0).name = "Opened";
+        other->track (0).strip.faderDb.store (-13.0f);
+        if (! SessionSerializer::save (*other, target / "session.json"))
+            return ScenarioResult::fail ("could not write the session to open");
+    }
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Open..."), "the File menu has no Open..."); } });
+    steps->push_back ({ 700, [&host, &ctx, target]
+    {
+        if (! ctx.expect (host.modalText().rfind ("Open session.json", 0) == 0,
+                          "File > Open showed '" + host.modalText() + "' rather than its browser")
+            || ! ctx.expect (host.clickFileBrowserControl (true), "the Open browser has no path box"))
+            return;
+        typeReplacing (host, target.string());
+        ctx.expect (host.pressPeerKey ("Return", 0), "the path box did not take Return");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        ctx.expect (host.clickFileBrowserControl (false), "the Open browser has no file list");
+        host.pressPeerKey ("Home", 0);
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Open"), "the Open browser has no Open button"); } });
+    steps->push_back ({ 1000, [&host, &ctx, &session, target]
+    {
+        ctx.expect (host.modalStackEmpty(), "Open left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == target,
+                    "Open left '" + currentSessionDirectory (session).string() + "' open; status '"
+                        + host.statusMessage() + "'");
+        ctx.expect (session.track (0).name.toStdString() == "Opened" && nearly (session.track (0).strip.faderDb.load(), -13.0f),
+                    "the window does not hold the chosen session's track 1");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar openSessionFolder { Scenario {
+    "gui.open_session_folder", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runOpenSessionFolder (host, ctx); }
+} };
+
+// A session folder that cannot be written: Save, from the File menu and by
+// Cmd+S, raises "Save failed" as the manual quotes it, and the edited session
+// stays in memory while session.json on disk stays as it was.
+std::optional<ScenarioResult> runSaveFailedAlert (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto locked = ctx.tempDir() / "Locked session";
+    const auto sessionJson = locked / "session.json";
+    fs::create_directories (locked / "audio");
+    if (! SessionSerializer::save (session, sessionJson)) return ScenarioResult::fail ("could not save the session to lock");
+    reopenSavedSession (host, sessionJson);
+    if (currentSessionDirectory (session) != locked) return ScenarioResult::fail ("could not open the session to lock");
+    auto& fader = session.track (0).strip.faderDb;
+    const float onDisk = savedFaderOf (sessionJson);
+    const float edited = onDisk - 4.0f;
+    fader.store (edited);
+
+    std::error_code error;
+    fs::permissions (locked, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace, error);
+    ctx.cleanup ([locked]
+    {
+        std::error_code ignored;
+        std::filesystem::permissions (locked, std::filesystem::perms::owner_all,
+                                      std::filesystem::perm_options::replace, ignored);
+    });
+    {
+        const auto probe = locked / "probe";
+        std::ofstream out (probe);
+        if (error || out.is_open())
+        {
+            out.close();
+            std::error_code ignored;
+            fs::remove (probe, ignored);
+            return ScenarioResult::skip ("the session folder stays writable without write permission, as it does for root");
+        }
+    }
+
+    const auto alerted = [&host, &ctx] (const std::string& how)
+    {
+        const auto text = host.modalText();
+        ctx.expect (text.rfind ("Save failed\nDusk Studio could not write the session file:", 0) == 0,
+                    how + " showed '" + text + "' rather than the Save failed alert");
+        ctx.expect (text.find ("Locked session") != std::string::npos && text.find ("session.json") != std::string::npos,
+                    how + ": the alert does not name the session file");
+        ctx.expect (text.find ("Common causes: disk full, missing write permission, or the parent folder was moved "
+                               "since the session was opened. The session is unchanged in memory; try Save As to a "
+                               "different location.") != std::string::npos,
+                    how + ": the alert does not give the manual's causes and advice");
+        ctx.expect (host.statusMessage() == "Save failed: Locked session",
+                    how + " left the status '" + host.statusMessage() + "'");
+        ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+    };
+    const auto kept = [&host, &ctx, &session, &fader, locked, sessionJson, onDisk, edited] (const std::string& how)
+    {
+        ctx.expect (host.modalStackEmpty(), how + ": OK left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == locked && nearly (fader.load(), edited),
+                    how + " did not keep the edited session in memory");
+        ctx.expect (nearly (savedFaderOf (sessionJson), onDisk), how + " changed session.json on disk");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save"), "the File menu has no Save"); } });
+    steps->push_back ({ 800, [alerted] { alerted ("File > Save"); } });
+    steps->push_back ({ 400, [&host, &ctx, kept]
+    {
+        kept ("File > Save");
+        ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
+    } });
+    steps->push_back ({ 800, [alerted] { alerted ("Cmd+S"); } });
+    steps->push_back ({ 400, [kept] { kept ("Cmd+S"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar saveFailedAlert { Scenario {
+    "gui.save_failed_alert", { "gui", "session", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSaveFailedAlert (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario

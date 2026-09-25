@@ -1590,6 +1590,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.tapeStrip != nullptr ? owner.tapeStrip->regionAccentForScenario (track, region) : 0u;
     }
+    bool tapeRegionShown (int track, int region) const override
+    {
+        return owner.tapeStrip != nullptr && owner.tapeStrip->isShowing()
+            && ! owner.tapeStrip->audioRegionScreenRect (track, region).isEmpty();
+    }
 
     bool clickTakeBadge (int track, int region) override
     {
