@@ -202,6 +202,7 @@ add_executable(dusk-studio-tests
     notepad_first_frame_probe.cpp
     appconfig_store.cpp
     filebrowser_choice.cpp
+    save_target_checks.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/AppConfig.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadDocument.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadEditorCore.cpp

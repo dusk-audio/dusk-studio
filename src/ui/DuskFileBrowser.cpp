@@ -35,8 +35,6 @@ public:
         browserFlags |= opts.selectDirectories
                     ? (int) juce::FileBrowserComponent::canSelectDirectories
                     : (int) juce::FileBrowserComponent::canSelectFiles;
-        if (opts.mode == Mode::Save && opts.warnAboutOverwriting)
-            browserFlags |= (int) juce::FileBrowserComponent::warnAboutOverwriting;
         if (multi)
             browserFlags |= (int) juce::FileBrowserComponent::canSelectMultipleItems;
 

@@ -141,6 +141,29 @@ void reopenSavedSession (GuiHost& host, const std::filesystem::path& sessionJson
     host.answerRecovery (GuiHost::Recovery::LoadSaved);
 }
 
+std::string fileBytes (const std::filesystem::path& path)
+{
+    std::ifstream input (path, std::ios::binary);
+    return std::string (std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>());
+}
+
+std::string commandChord (char letter)
+{
+   #if defined (__APPLE__)
+    return std::string ("command + ") + letter;
+   #else
+    return std::string ("ctrl + ") + letter;
+   #endif
+}
+
+// Replaces whatever the focused text field holds, a key at a time.
+void typeReplacing (GuiHost& host, const std::string& text)
+{
+    host.pressPeerKey (commandChord ('A'), 'a');
+    for (const char ch : text)
+        host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+}
+
 // A key press as the display server hands it over. X11 fills JUCE's key code
 // with the XLookupString glyph, so an unmodified letter arrives lowercase and a
 // Cmd/Ctrl chord arrives as the lowercase keysym with a control character for
@@ -2389,10 +2412,60 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
     } });
     steps->push_back ({ 150, [&host, &ctx]
     { ctx.expect (host.clickModalButton ("Save"), "export destination was not accepted"); } });
-    runSteps (ctx, steps, [&host, &ctx, &engine, output, registration]
+
+    // Export again onto that file, named without its extension: the file it
+    // would really write is asked about, Cancel keeps it and Replace exports
+    // over it.
+    const auto exportOverExisting = [&host, &ctx, output]
+    {
+        std::ofstream (output, std::ios::binary | std::ios::trunc) << "not a master";
+        const auto before = fileBytes (output);
+        const auto exportAs = [&host, &ctx, output] (std::vector<Step>& into)
+        {
+            into.push_back ({ 300, [&host, &ctx]
+            { ctx.expect (host.clickMasteringButton ("Export master..."), "export button unavailable"); } });
+            into.push_back ({ 200, [&host, &ctx]
+            { ctx.expect (host.clickContextMenuItem ("WAV 24-bit \xe2\x80\x94 session rate"), "archive preset unavailable"); } });
+            into.push_back ({ 200, [&host, &ctx, output]
+            {
+                ctx.expect (host.focusFileName(), "export file browser unavailable");
+                typeReplacing (host, (output.parent_path() / output.stem()).string());
+            } });
+            into.push_back ({ 150, [&host, &ctx]
+            { ctx.expect (host.clickModalButton ("Save"), "export destination was not accepted"); } });
+        };
+        const auto answer = [&host, &ctx] (const std::string& button)
+        {
+            ctx.expect (host.confirmationText() == std::vector<std::string> {
+                            "Replace file?",
+                            "This file already exists and will be replaced:\n\nFinished master.wav\n\nContinue?" },
+                        "Export master onto an existing file did not ask first; top modal '" + host.modalText() + "'");
+            ctx.expect (host.clickModalButton (button), "the replace prompt has no " + button + " button");
+        };
+        auto again = std::make_shared<std::vector<Step>>();
+        exportAs (*again);
+        again->push_back ({ 400, [answer] { answer ("Cancel"); } });
+        again->push_back ({ 400, [&host, &ctx, output, before]
+        {
+            ctx.expect (host.modalStackEmpty(), "Cancel in the replace prompt left '" + host.modalText() + "' up");
+            ctx.expect (fileBytes (output) == before, "Cancel in the replace prompt still exported");
+        } });
+        exportAs (*again);
+        again->push_back ({ 400, [answer] { answer ("Replace"); } });
+        runSteps (ctx, again, [&host, &ctx, output]
+        {
+            ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000, [&ctx, output]
+            {
+                auto reader = dusk::audio::FileReader::open (output);
+                ctx.expect (reader != nullptr && reader->info().numFrames > 0, "Replace did not export over the file");
+                ctx.complete (ctx.verdict());
+            }, "the export after Replace did not finish");
+        });
+    };
+    runSteps (ctx, steps, [&host, &ctx, &engine, output, registration, exportOverExisting]
     {
         ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000,
-            [&ctx, &engine, output, registration]
+            [&ctx, &engine, output, registration, exportOverExisting]
             {
                 ctx.expect (*registration == std::vector<bool> { false, true },
                             "export did not deregister and restore the live audio callback");
@@ -2413,7 +2486,8 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
                     const auto peak = *std::max_element (left.begin(), left.end());
                     ctx.expect (peak > 0.001f && peak <= 1.0f, "export did not carry the loaded mix signal");
                 }
-                ctx.complete (ctx.verdict());
+                reader.reset();
+                exportOverExisting();
             }, "master export did not finish");
     });
     return std::nullopt;
@@ -2421,7 +2495,7 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
 
 const ScenarioRegistrar masteringExportWorkflow { Scenario {
     "gui.mastering_export_workflow", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
-    {}, {}, 30000,
+    {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringExportWorkflow (host, ctx); }
 } };
 
@@ -8019,8 +8093,39 @@ std::optional<ScenarioResult> runMidiBindingsPanel (GuiHost& host, ScenarioConte
                     "an export that could not be written was not reported");
         button ("OK");
     } });
-    steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.midiBindingsOpen(), "a failed export closed the panel"); } });
+    // Export onto the preset already written, named without its extension: the
+    // file it would really write is asked about, Cancel keeps it and Replace
+    // writes over it.
+    const auto kept = std::make_shared<std::string>();
+    steps->push_back ({ 200, [&host, &ctx, exported, kept, button]
+    {
+        ctx.expect (host.midiBindingsOpen(), "a failed export closed the panel");
+        *kept = fileBytes (exported);
+        ctx.expect (host.clickMidiBindingRemove (0), "the remaining row has no Remove button");
+        button ("Export...");
+    } });
+    const auto replaceAsked = [&host, &ctx, button] (const std::string& answer)
+    {
+        ctx.expect (host.confirmationText() == std::vector<std::string> {
+                        "Replace file?", "This file already exists and will be replaced:\n\nbindings.json\n\nContinue?" },
+                    "Export onto an existing preset did not ask first; top modal '" + host.modalText() + "'");
+        button (answer);
+    };
+    steps->push_back ({ 300, [browse, exported] { browse (exported.parent_path() / "bindings", "Save"); } });
+    steps->push_back ({ 300, [replaceAsked] { replaceAsked ("Cancel"); } });
+    steps->push_back ({ 300, [&host, &ctx, exported, kept, button]
+    {
+        ctx.expect (host.midiBindingsOpen() && fileBytes (exported) == *kept,
+                    "Cancel in the replace prompt changed the exported preset");
+        button ("Export...");
+    } });
+    steps->push_back ({ 300, [browse, exported] { browse (exported.parent_path() / "bindings", "Save"); } });
+    steps->push_back ({ 300, [replaceAsked] { replaceAsked ("Replace"); } });
+    steps->push_back ({ 300, [&ctx, exported]
+    {
+        const auto parsed = deserializeBindingsPreset (fileBytes (exported));
+        ctx.expect (parsed.has_value() && parsed->empty(), "Replace did not export over the preset");
+    } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
    #endif
@@ -9782,23 +9887,6 @@ const ScenarioRegistrar pluginKindMismatch { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runPluginKindMismatch (host, ctx); }
 } };
 
-std::string commandChord (char letter)
-{
-   #if defined (__APPLE__)
-    return std::string ("command + ") + letter;
-   #else
-    return std::string ("ctrl + ") + letter;
-   #endif
-}
-
-// Replaces whatever the focused text field holds, a key at a time.
-void typeReplacing (GuiHost& host, const std::string& text)
-{
-    host.pressPeerKey (commandChord ('A'), 'a');
-    for (const char ch : text)
-        host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
-}
-
 // NEW, a template, a fresh name typed into the browser and Save: the folder
 // gains a session.json holding that template's tracks, and the window opens it.
 std::optional<ScenarioResult> runStartupNewCreates (GuiHost& host, ScenarioContext& ctx)
@@ -10196,6 +10284,238 @@ const ScenarioRegistrar bounceFolderName { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runBounceFolderName (host, ctx); }
 } };
 
+// A bounce onto a file that is already there asks first, about the name the
+// bounce really writes rather than the one typed: Cancel leaves the file as it
+// was, and Replace bounces over it.
+std::optional<ScenarioResult> runBounceReplaceConfirm (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        drainModals (host);
+        engine.setRenderOversamplingOverride (0);
+        engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto folder = ctx.tempDir() / "Bounce session";
+    std::filesystem::create_directories (folder);
+    if (! SessionSerializer::save (*std::make_unique<Session>(), folder / "session.json"))
+        return ScenarioResult::fail ("could not write the empty session");
+    reopenSavedSession (host, folder / "session.json");
+    if (currentSessionDirectory (session) != folder)
+        return ScenarioResult::fail ("could not open the empty session");
+
+    const auto existing = folder / "Mix.wav";
+    std::ofstream (existing, std::ios::binary) << "not a bounce";
+    const auto before = fileBytes (existing);
+    std::error_code error;
+    const auto stamped = std::filesystem::last_write_time (existing, error);
+    if (error || before.empty()) return ScenarioResult::fail ("could not write the file to replace");
+
+    const auto bounceAsMix = [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (commandChord ('b'), 'b'), "the window did not handle Cmd+B"); };
+    const auto name = [&host, &ctx] (const std::string& how)
+    {
+        if (! ctx.expect (host.modalText().rfind ("Bounce master mix", 0) == 0,
+                          how + ": Cmd+B showed '" + host.modalText() + "' rather than the bounce browser")
+            || ! ctx.expect (host.focusFileName(), how + ": the bounce browser has no name field"))
+            return;
+        typeReplacing (host, "Mix");
+        ctx.expect (host.clickModalButton ("Save"), how + ": the bounce browser has no Save button");
+    };
+    const auto answer = [&host, &ctx] (const std::string& how, const std::string& button)
+    {
+        ctx.expect (host.confirmationText() == std::vector<std::string> {
+                        "Replace file?", "This file already exists and will be replaced:\n\nMix.wav\n\nContinue?" },
+                    how + ": a bounce named Mix over Mix.wav did not ask first; top modal '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton (button), how + ": the replace prompt has no " + button + " button");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, bounceAsMix });
+    steps->push_back ({ 700, [name] { name ("Cancel"); } });
+    steps->push_back ({ 500, [answer] { answer ("Cancel", "Cancel"); } });
+    steps->push_back ({ 500, [&host, &ctx, existing, before, stamped, bounceAsMix]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel in the replace prompt left '" + host.modalText() + "' up");
+        std::error_code ignored;
+        ctx.expect (fileBytes (existing) == before && std::filesystem::last_write_time (existing, ignored) == stamped,
+                    "Cancel in the replace prompt still wrote Mix.wav");
+        bounceAsMix();
+    } });
+    steps->push_back ({ 700, [name] { name ("Replace"); } });
+    steps->push_back ({ 500, [answer] { answer ("Replace", "Replace"); } });
+    runSteps (ctx, steps, [&host, &ctx, existing]
+    {
+        ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000, [&ctx, existing]
+        {
+            auto reader = dusk::audio::FileReader::open (existing);
+            ctx.expect (reader != nullptr && reader->info().numChannels == 2 && reader->info().numFrames > 0,
+                        "Replace did not bounce over Mix.wav");
+            ctx.complete (ctx.verdict());
+        }, "the bounce after Replace did not finish with a Close button");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar bounceReplaceConfirm { Scenario {
+    "gui.bounce_replace_confirm", { "gui", "bounce", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBounceReplaceConfirm (host, ctx); }
+} };
+
+std::vector<std::string> folderListing (const std::filesystem::path& dir)
+{
+    std::vector<std::string> names;
+    std::error_code error;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator (dir, error))
+        names.push_back (entry.path().lexically_relative (dir).generic_string());
+    std::sort (names.begin(), names.end());
+    return names;
+}
+
+// Save as... into a folder that holds another session is refused and leaves
+// that session alone: from the File menu, and from the Save that a never-saved
+// session offers before opening another session and before quitting, neither
+// of which may then carry on as though it had saved.
+std::optional<ScenarioResult> runSaveAsOtherSession (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered() || ! host.autosaveRunning() || host.engineDetached())
+        return ScenarioResult::skip ("requires a stopped transport, no modal, and live audio and autosave");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        drainModals (host);
+        engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto mine = ctx.tempDir() / "Mine";
+    std::filesystem::create_directories (mine);
+    if (! SessionSerializer::save (session, mine / "session.json")) return ScenarioResult::fail ("could not save the session");
+    reopenSavedSession (host, mine / "session.json");
+    if (currentSessionDirectory (session) != mine) return ScenarioResult::fail ("could not open the saved session");
+    const auto other = ctx.tempDir() / "Other";
+    std::filesystem::create_directories (other);
+    {
+        auto theirs = std::make_unique<Session>();
+        theirs->track (0).name = "Theirs";
+        if (! SessionSerializer::save (*theirs, other / "session.json"))
+            return ScenarioResult::fail ("could not write the other session");
+    }
+    const auto untitled = ctx.tempDir() / "Untitled";
+    std::filesystem::create_directories (untitled);
+    const auto mineBytes = fileBytes (mine / "session.json");
+    const auto otherBytes = fileBytes (other / "session.json");
+    const auto otherListing = folderListing (other);
+
+    const auto saveIntoOther = [&host, &ctx, other] (const std::string& how)
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                          how + " showed '" + host.modalText() + "' rather than Save As")
+            || ! ctx.expect (host.focusFileName(), how + ": the Save As browser has no name field"))
+            return;
+        typeReplacing (host, other.string());
+        ctx.expect (host.clickModalButton ("Save"), how + ": the Save As browser has no Save button");
+    };
+    const auto refused = [&host, &ctx, other, otherBytes, otherListing] (const std::string& how)
+    {
+        const auto expected = "Folder holds another session\nThis folder already holds another session:\n\n    "
+                            + other.string()
+                            + "\n\nSaving here would replace it, so nothing was saved and nothing was changed. "
+                              "Choose a new name, or a folder without a session.";
+        ctx.expect (host.modalText() == expected, how + " showed '" + host.modalText() + "' rather than the refusal");
+        ctx.expect (host.statusMessage() == "A session already exists at: Other",
+                    how + " left the status '" + host.statusMessage() + "'");
+        ctx.expect (fileBytes (other / "session.json") == otherBytes && folderListing (other) == otherListing,
+                    how + " changed the other session's folder");
+        ctx.expect (host.clickModalButton ("OK"), how + ": the refusal has no OK button");
+    };
+    const auto kept = [&host, &ctx, &session] (const std::string& how, const std::filesystem::path& dir)
+    {
+        ctx.expect (host.modalStackEmpty(), how + ": OK left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == dir,
+                    how + " moved the session to '" + currentSessionDirectory (session).string() + "'");
+    };
+    auto& fader = session.track (0).strip.faderDb;
+    const float dirtied = fader.load() - 3.0f;
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+    steps->push_back ({ 700, [saveIntoOther] { saveIntoOther ("File > Save as..."); } });
+    steps->push_back ({ 700, [refused] { refused ("File > Save as..."); } });
+    steps->push_back ({ 400, [&host, &ctx, &session, &fader, kept, mine, mineBytes, untitled, dirtied]
+    {
+        kept ("File > Save as...", mine);
+        ctx.expect (fileBytes (mine / "session.json") == mineBytes, "a refused Save As rewrote the session's own file");
+        applySessionDirectory (session, untitled);
+        fader.store (dirtied);
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Open..."), "the File menu has no Open..."); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        ctx.expect (host.modalText().rfind ("Save changes before opening another session?", 0) == 0,
+                    "File > Open over unsaved changes showed '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton ("Save"), "the unsaved-changes prompt did not offer Save");
+    } });
+    steps->push_back ({ 700, [saveIntoOther] { saveIntoOther ("Save before File > Open"); } });
+    steps->push_back ({ 700, [refused] { refused ("Save before File > Open"); } });
+    steps->push_back ({ 700, [&host, &ctx, &fader, kept, untitled, dirtied]
+    {
+        kept ("Save before File > Open", untitled);
+        ctx.expect (nearly (fader.load(), dirtied) && ! std::filesystem::exists (untitled / "session.json"),
+                    "a refused Save before File > Open did not leave the session as it was");
+        // A refusal that did not hold would let the quit prompt's Save end the process.
+        if (ctx.verdict().status != ScenarioStatus::Pass)
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        ctx.expect (host.requestQuit(), "the unsaved session did not ask before quitting");
+    } });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (host.modalText().rfind ("Save changes before quitting?", 0) == 0,
+                    "Quit showed '" + host.modalText() + "' rather than its prompt");
+        ctx.expect (host.clickModalButton ("Save"), "the quit prompt did not offer Save");
+    } });
+    steps->push_back ({ 700, [saveIntoOther] { saveIntoOther ("Save in the quit prompt"); } });
+    steps->push_back ({ 700, [refused] { refused ("Save in the quit prompt"); } });
+    steps->push_back ({ 600, [&host, &ctx, &engine, &fader, kept, untitled, dirtied]
+    {
+        kept ("Save in the quit prompt", untitled);
+        ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached() && host.autosaveRunning(),
+                    "a refused Save in the quit prompt left audio or autosave parked for a shutdown");
+        ctx.expect (nearly (fader.load(), dirtied) && ! std::filesystem::exists (untitled / "session.json"),
+                    "a refused Save in the quit prompt did not leave the session as it was");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar saveAsOtherSession { Scenario {
+    "gui.save_as_refuses_other_session", { "gui", "session", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSaveAsOtherSession (host, ctx); }
+} };
+
 // File > Open..., browse to a session's folder and choose its session.json from
 // the list: that session loads.
 std::optional<ScenarioResult> runOpenSessionFolder (GuiHost& host, ScenarioContext& ctx)
@@ -10360,6 +10680,130 @@ const ScenarioRegistrar saveFailedAlert { Scenario {
     "gui.save_failed_alert", { "gui", "session", "messages" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runSaveFailedAlert (host, ctx); }
+} };
+
+// The launch session's folder can already hold a real session someone saved
+// under that name. The launch session has still never been saved, so File >
+// Save, Cmd+S and the quit prompt's Save each ask where to save and leave that
+// session's files alone; a session opened from disk still saves in place.
+std::optional<ScenarioResult> runFreshSessionSaveAsks (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered() || ! host.autosaveRunning() || host.engineDetached())
+        return ScenarioResult::skip ("requires a stopped transport, no modal, and live audio and autosave");
+    if (host.sessionOnDisk()) return ScenarioResult::skip ("requires the launch session never to have been saved");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        drainModals (host);
+        engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto untitled = ctx.tempDir() / "Untitled";
+    const auto untitledJson = untitled / "session.json";
+    const auto untitledNotes = untitled / "notepad.md";
+    fs::create_directories (untitled / "audio");
+    auto& fader = session.track (0).strip.faderDb;
+    const float launchFader = fader.load();
+    fader.store (launchFader - 6.0f);
+    const bool wrote = SessionSerializer::save (session, untitledJson);
+    fader.store (launchFader);
+    std::ofstream (untitledNotes) << "Notes of the session saved as Untitled\n";
+    if (! wrote || ! fs::exists (untitledNotes)) return ScenarioResult::fail ("could not write the Untitled session");
+    const auto read = [] (const fs::path& path)
+    {
+        std::ifstream input (path, std::ios::binary);
+        return std::string (std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>());
+    };
+    const auto jsonBytes = read (untitledJson);
+    const auto notesBytes = read (untitledNotes);
+
+    applySessionDirectory (session, untitled);
+    const float dirtied = launchFader - 3.0f;
+    fader.store (dirtied);
+
+    const auto asked = std::make_shared<int> (0);
+    const auto askedWhere = [&host, &ctx, read, asked, untitledJson, untitledNotes, jsonBytes, notesBytes]
+                            (const std::string& how)
+    {
+        const bool saveAs = ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                                        how + " showed '" + host.modalText() + "' rather than Save As");
+        ctx.expect (read (untitledJson) == jsonBytes, how + " wrote over the Untitled session's session.json");
+        ctx.expect (read (untitledNotes) == notesBytes, how + " wrote over the Untitled session's notepad.md");
+        if (saveAs && ctx.expect (host.clickModalButton ("Cancel"), how + ": Save As has no Cancel"))
+            ++*asked;
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save"), "the File menu has no Save"); } });
+    steps->push_back ({ 700, [askedWhere] { askedWhere ("File > Save"); } });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
+    } });
+    steps->push_back ({ 700, [askedWhere] { askedWhere ("Cmd+S"); } });
+    // A Save from the quit prompt that completes ends the process, so it is only
+    // pressed once the other two have shown they ask first.
+    steps->push_back ({ 400, [&host, &ctx, asked]
+    {
+        if (*asked == 2)
+            ctx.expect (host.requestQuit(), "the edited session did not ask before quitting");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, asked]
+    {
+        if (*asked != 2) return;
+        if (ctx.expect (host.modalText().rfind ("Save changes before quitting?", 0) == 0,
+                        "Quit showed '" + host.modalText() + "' rather than its prompt"))
+            ctx.expect (host.clickModalButton ("Save"), "the quit prompt did not offer Save");
+    } });
+    steps->push_back ({ 700, [askedWhere, asked]
+    { if (*asked == 2) askedWhere ("the quit prompt's Save"); } });
+
+    const auto opened = ctx.tempDir() / "Opened";
+    const auto openedJson = opened / "session.json";
+    const float onDisk = launchFader - 9.0f;
+    const float edited = launchFader - 12.0f;
+    steps->push_back ({ 600, [&host, &ctx, &engine, &session, &fader, untitled, dirtied, opened, openedJson, onDisk, edited]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached() && host.autosaveRunning(),
+                    "backing out of the quit prompt's Save As left audio or autosave parked");
+        ctx.expect (currentSessionDirectory (session) == untitled && nearly (fader.load(), dirtied),
+                    "backing out of Save As did not leave the session as it was");
+        fs::create_directories (opened / "audio");
+        fader.store (onDisk);
+        if (! ctx.expect (SessionSerializer::save (session, openedJson), "could not write the session to open"))
+            return;
+        reopenSavedSession (host, openedJson);
+        ctx.expect (currentSessionDirectory (session) == opened, "the saved session did not open");
+        fader.store (edited);
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save"), "the File menu has no Save"); } });
+    steps->push_back ({ 700, [&host, &ctx, openedJson, edited]
+    {
+        ctx.expect (host.modalStackEmpty(), "File > Save on an opened session showed '" + host.modalText() + "'");
+        ctx.expect (nearly (savedFaderOf (openedJson), edited), "File > Save did not save the opened session in place");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar freshSessionSaveAsks { Scenario {
+    "gui.fresh_session_save_asks_where", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFreshSessionSaveAsks (host, ctx); }
 } };
 
 bool writeBytes (const std::filesystem::path& path, std::size_t size, char fill)

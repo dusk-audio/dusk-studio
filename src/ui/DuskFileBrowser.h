@@ -12,7 +12,6 @@ struct Options
     juce::File   initialFileOrDirectory; // path to seed (file selected when Save)
     juce::String filePatternsAllowed;    // "*.wav;*.aiff" - empty = any
     Mode         mode = Mode::Open;
-    bool         warnAboutOverwriting = true;  // Save mode only
     bool         selectDirectories     = false; // false = files only
     bool         saveAnswerIsFolder    = false; // Save mode: the name is a folder to create or reuse
 };
