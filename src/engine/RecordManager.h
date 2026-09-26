@@ -152,12 +152,24 @@ public:
     }
     void clearLastCommitDiff() noexcept { lastCommitDiff.clear(); }
 
+    // Tests only. Holds audioInFlight up the way an audio-thread call stuck
+    // inside writeInputBlock would, which is what makes stopRecording bail.
+    void holdAudioInFlightForTest (bool held) noexcept
+    {
+        if (held) audioInFlight.fetch_add (1, std::memory_order_acq_rel);
+        else      audioInFlight.fetch_sub (1, std::memory_order_release);
+    }
+
 private:
     template <typename MidiEvents>
     void writeMidiBlockImpl (int trackIndex,
                              const MidiEvents& events,
                              std::int64_t blockStartFromRecord,
                              const LoopCaptureSpan* explicitLoopSpan) noexcept;
+
+    // Message thread, with active false and audioInFlight at zero. Drops
+    // whatever capture is still held without committing it.
+    void discardUncommittedTake();
 
     Session& session;
 
