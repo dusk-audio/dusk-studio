@@ -7199,6 +7199,151 @@ const ScenarioRegistrar windowKeys { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runWindowKeys (host, ctx); }
 } };
 
+// A prompt deciding what happens to the session takes no shortcuts. R and Space
+// under the quit prompt, a session-switch prompt and the autosave recovery
+// prompt leave the transport stopped, also once a click beside the prompt has
+// handed the window the keyboard. A dialog that passes the transport keys on
+// still does, and the keys work again once the prompts are answered.
+std::optional<ScenarioResult> runPromptsWithholdKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        session.setTrackArmed (0, false);
+    });
+
+    const auto home = ctx.tempDir() / "Home" / "session.json";
+    const auto other = ctx.tempDir() / "Other" / "session.json";
+    std::filesystem::create_directories (home.parent_path());
+    std::filesystem::create_directories (other.parent_path());
+    auto& fader = session.track (0).strip.faderDb;
+    const float savedFader = fader.load();
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+    if (! SessionSerializer::save (session, home) || ! SessionSerializer::save (session, other))
+        return ScenarioResult::fail ("could not save the sessions");
+    // An autosave that differs from Other's session.json, so opening Other asks.
+    fader.store (savedFader - 6.0f);
+    const bool autosaved = SessionSerializer::save (session, other.parent_path() / "session.json.autosave");
+    fader.store (savedFader);
+    if (! autosaved) return ScenarioResult::fail ("could not write Other's autosave");
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    // One key per step: R then Space in a row would start a take and stop it
+    // again, and the transport would read stopped either way.
+    const auto triesKeys = [&host, &ctx, &engine, &transport, steps] (const std::string& where)
+    {
+        steps->push_back ({ 200, [&host] { host.pressPeerKey (keyCodeDescription ('r'), 'r'); } });
+        steps->push_back ({ 200, [&host, &ctx, &engine, &transport, where]
+        {
+            if (! ctx.expect (transport.isStopped(), "R " + where + " started recording"))
+                engine.stop();
+            host.pressPeerKey ("spacebar", ' ');
+        } });
+        steps->push_back ({ 200, [&ctx, &engine, &transport, where]
+        {
+            if (! ctx.expect (transport.isStopped(), "Space " + where + " started the transport"))
+                engine.stop();
+        } });
+    };
+    const auto promptUp = [&host, &ctx] (const std::string& title, const std::string& where)
+    {
+        return ctx.expect (host.modalText().rfind (title, 0) == 0,
+                           where + ": '" + host.modalText() + "' is up rather than " + title);
+    };
+
+    steps->push_back ({ 200, [&host, &ctx, &session, &fader, home, savedFader]
+    {
+        ctx.expect (host.openSession (home), "could not open the session");
+        session.setTrackArmed (0, true);
+        fader.store (savedFader - 3.0f);
+        ctx.expect (host.requestQuit(), "the edited session did not ask before quitting");
+    } });
+    steps->push_back ({ 400, [promptUp] { promptUp ("Save changes before quitting?", "Quit"); } });
+    triesKeys ("under the quit prompt");
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickModalBackdrop(), "could not click beside the quit prompt"); } });
+    triesKeys ("after a click beside the quit prompt");
+    steps->push_back ({ 100, [&host, &ctx, promptUp]
+    {
+        if (promptUp ("Save changes before quitting?", "After the keys"))
+            ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt did not offer Cancel");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, other]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        host.requestSessionSwitch (other);
+    } });
+    steps->push_back ({ 400, [promptUp]
+    { promptUp ("Save changes before opening another session?", "The session switch"); } });
+    triesKeys ("under the session-switch prompt");
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickModalBackdrop(), "could not click beside the session-switch prompt"); } });
+    triesKeys ("after a click beside the session-switch prompt");
+    steps->push_back ({ 100, [&host, &ctx, promptUp]
+    {
+        if (promptUp ("Save changes before opening another session?", "After the keys"))
+            ctx.expect (host.clickModalButton ("Cancel"), "the session-switch prompt did not offer Cancel");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, promptUp, other]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        host.openSession (other);
+        promptUp ("Recover from autosave?", "Opening a session with a newer autosave");
+    } });
+    triesKeys ("under the recovery prompt");
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.answerRecovery (GuiHost::Recovery::Cancel), "the recovery prompt was not up for Cancel"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (host.pressKey ("shift + /", '?'), "the shortcuts key was not handled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.shortcutsOpen(), "? did not open Keyboard Shortcuts");
+        host.pressPeerKey ("spacebar", ' ');
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, &transport]
+    {
+        ctx.expect (transport.isPlaying(), "Space under Keyboard Shortcuts did not start playback");
+        engine.stop();
+        host.closeTopModal();
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty(), "Keyboard Shortcuts did not close");
+        host.pressPeerKey (keyCodeDescription ('r'), 'r');
+    } });
+    steps->push_back ({ 300, [&ctx, &engine, &transport]
+    {
+        ctx.expect (transport.isRecording(), "R did not record once the prompts were answered");
+        engine.stop();
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar promptsWithholdKeys { Scenario {
+    "gui.prompts_withhold_transport_keys", { "gui", "keyboard", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPromptsWithholdKeys (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runAudioEditorKeys (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();

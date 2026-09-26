@@ -1279,6 +1279,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (escape && ! mods.isAnyModifierKeyDown() && EmbeddedModal::escapeTopModal())
         return true;
 
+    // A prompt deciding what happens to the session is up. Unhandled rather
+    // than consumed, so Tab still moves between its buttons.
+    if (EmbeddedModal::shortcutsWithheld())
+        return false;
+
    #if DUSKSTUDIO_HAS_NATIVE_UI
     // The audio settings panel is a native child window with its own Escape
     // handling, which only runs when that window has the keyboard. On Windows
@@ -3787,10 +3792,13 @@ void MainComponent::requestQuit()
     // Focus-locked: save-before-quit MUST go through Save / Don't Save /
     // Cancel. Esc and click-outside would let the user dismiss with no
     // decision, leaving the dirty state ambiguous and the X-button quit
-    // request silently swallowed.
+    // request silently swallowed. Shortcuts stay off too: a take started under
+    // the prompt would begin after the check and end in the shutdown.
     quitModal.show (*this, std::move (dialog), /*onDismiss*/ {},
                        /*dismissOnClickOutside*/ false,
-                       /*dismissOnEscape*/        false);
+                       /*dismissOnEscape*/        false,
+                       /*dimAlpha*/ 0.55f, /*hidePluginEditors*/ true,
+                       /*useOverlay*/ true, /*forwardShortcuts*/ false);
 }
 
 void MainComponent::leakAllPluginInstancesForShutdown()
@@ -4096,6 +4104,8 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
             }
         };
 
+        // Shortcuts stay off: a take started under the prompt would be recorded
+        // into the session the load is about to replace.
         recoveryModal.show (*this, std::move (body),
                               [safe, onComplete]
                               {
@@ -4105,7 +4115,10 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
                                       self->maybeStartStartupPluginScan();
                                       if (onComplete) onComplete (false);
                                   }
-                              });
+                              },
+                              /*dismissOnClickOutside*/ true, /*dismissOnEscape*/ true,
+                              /*dimAlpha*/ 0.55f, /*hidePluginEditors*/ true,
+                              /*useOverlay*/ true, /*forwardShortcuts*/ false);
         return true;
     }
 

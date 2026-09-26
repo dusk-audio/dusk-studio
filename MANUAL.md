@@ -2311,6 +2311,7 @@ An open chord slot takes the keys instead:
 - Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback.
 - **M** drops a marker at the playhead, not mute; per-track mute is **X** to avoid the clash with the marker action.
 - Plain **B** taps tempo; **Cmd+B** triggers Bounce (Logic convention).
+- While a prompt that decides what happens to your session is up, no shortcut works: the unsaved-changes prompt when you quit, open or start another session, and **Recover from autosave?**. **Space** and **R** do nothing until you answer it, so nothing can start recording behind it. **Escape** still does whatever that prompt allows. Other dialogs and editors pass the transport keys through as usual.
 
 \newpage
 

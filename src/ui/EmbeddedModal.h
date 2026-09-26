@@ -279,10 +279,11 @@ public:
     //   host. Some embedded/native editor surfaces render black whenever any
     //   sibling covers them, even when that sibling paints fully transparent.
     //   Outside clicks are captured with a global mouse listener instead.
-    // forwardShortcuts=false : do NOT forward transport hotkeys (Space, R, L,
-    //   P, brackets) to MainComponent while this modal is up. Required for a
-    //   body that captures typing itself (e.g. the combo popup's type-to-filter);
-    //   otherwise a typed letter fires the app shortcut behind the modal.
+    // forwardShortcuts=false : no app shortcut acts while this modal is up
+    //   (see shortcutsWithheld), transport hotkeys included. Required for a
+    //   body that captures typing itself (e.g. the combo popup's type-to-filter),
+    //   where a typed letter would fire the app shortcut behind the modal, and
+    //   for a prompt deciding what happens to the session.
     // onDismissOutside : invoked instead of onDismiss on a click-outside
     //   dismissal (falls back to onDismiss when empty). Lets a caller close
     //   WITHOUT restoring focus so a control clicked outside keeps it (see
@@ -654,6 +655,19 @@ public:
         stack.back()->dismissOnEscape();
         return true;
     }
+
+    // True while any open modal was shown with forwardShortcuts=false. The
+    // app's shortcut handler asks this instead of relying on the forwarder: a
+    // key the body declines still travels up to the host, and a click on the
+    // dim gives the host the keyboard outright, so neither passes through here.
+    static bool shortcutsWithheld()
+    {
+        for (const auto* modal : activeModalStack())
+            if (! modal->forwardShortcuts_)
+                return true;
+        return false;
+    }
+
     unsigned long long showGeneration() const noexcept { return showGeneration_; }
 
     juce::Component* getBody() const noexcept

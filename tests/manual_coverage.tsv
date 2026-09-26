@@ -430,6 +430,7 @@ Keyboard reference > Piano roll	arrows, Shift+arrows, Q, S, V, G, D, Shift+G, L,
 Keyboard reference > Notepad	the notepad's own keys, including word motion on Ctrl or Option	auto	test:Notepad editor word jumps stop at word and line boundaries;test:Notepad editor accepts AltGr text without turning command chords into text;test:Notepad Markdown inline commands toggle matching wrappers
 Keyboard reference > Window	F11 fullscreen, Cmd+\ timeline, Esc closes a modal	auto	scenario:gui.window_keys		actual fullscreen state, timeline visibility and focused modal Escape through the window peer
 Keyboard reference > Notes on shortcut design	a focused text field keeps its keys	auto	test:the shortcut rule withholds keys from a view that is taking text
+Keyboard reference > Notes on shortcut design	a prompt deciding the session's fate takes no shortcuts; other dialogs pass transport keys on	auto	scenario:gui.prompts_withhold_transport_keys		R and Space one at a time under the quit prompt, the session-switch prompt and Recover from autosave?, and again after a click beside the first two hands the window the keyboard, leave the transport stopped; Space under Keyboard Shortcuts still plays, and R records once the prompts are answered
 
 Tips and recipes > A clean vocal chain	recipe	n/a			advice
 Tips and recipes > Glued drums on a bus	recipe	n/a			advice
