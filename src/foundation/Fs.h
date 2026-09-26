@@ -19,7 +19,9 @@
  #include <windows.h>
  #include <shlobj.h>
 #else
+ #include <cerrno>
  #include <pwd.h>
+ #include <sys/stat.h>
  #include <unistd.h>
 #endif
 #if defined(__APPLE__)
@@ -352,9 +354,15 @@ inline std::filesystem::path createUniqueTempDirectory (std::string_view prefix)
         const auto ticket = sequence.fetch_add (1, std::memory_order_relaxed);
         const auto candidate = base / (std::string (prefix) + process + "-" + std::to_string (tick)
                                         + "-" + std::to_string (ticket));
+#if defined(_WIN32)
         std::error_code error;
         if (std::filesystem::create_directory (candidate, error)) return candidate;
         if (error && error != std::errc::file_exists) return {};
+#else
+        // Owner-only from the start: the directory sits in a shared temp root.
+        if (::mkdir (candidate.c_str(), 0700) == 0) return candidate;
+        if (errno != EEXIST) return {};
+#endif
     }
     return {};
 }
