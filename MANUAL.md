@@ -2119,6 +2119,8 @@ The output is **stereo 24-bit WAV at the session sample rate** by default (or a 
 
 Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. When the bounce completes, the audio device is automatically re-attached.
 
+Quitting while a bounce, mixdown, master export or freeze is rendering cancels the render, just as **Cancel** does, so no file is written. Dusk Studio waits for the render to stop and the audio device to come back, then quits, asking first if the session has unsaved changes. Cancelling that question leaves Dusk Studio open, but the render stays cancelled.
+
 The File menu has three bounce commands:
 
 - **Bounce…** — render the full master mix to a WAV you choose.
@@ -2513,7 +2515,7 @@ The format for each entry:
 
 ### Save changes before quitting?
 
-- **When**: You quit with unsaved changes. Quitting stops the transport before it checks, so a take still recording is committed and counts as unsaved even if you saved just before it started. A bounce or mixdown in progress is left running behind the prompt. Logging out, shutting the machine down, or stopping the app from a terminal counts as quitting: the prompt appears then too, and the session waits on your answer.
+- **When**: You quit with unsaved changes. Quitting stops the transport before it checks, so a take still recording is committed and counts as unsaved even if you saved just before it started. A bounce, mixdown, master export or freeze still rendering is cancelled first, as its **Cancel** button would, and the prompt waits until it has stopped. Logging out, shutting the machine down, or stopping the app from a terminal counts as quitting: the prompt appears then too, and the session waits on your answer.
 - **Text**: "Your session has unsaved changes since the last manual save. If you don't save, those changes are discarded."
 - **Buttons**: **Save** / **Don't Save** / **Cancel**.
 - **Action**: Save unless you specifically want to discard. If the save does not complete, because you cancel the Save As browser that a never-saved session opens, pick a folder that already holds another session, or the write fails, Dusk Studio stays open as it was, with audio running and autosave on, and you can carry on or quit again. **Cancel** keeps Dusk Studio open with the transport stopped and any take the quit committed in place, so save it if you want to keep it.

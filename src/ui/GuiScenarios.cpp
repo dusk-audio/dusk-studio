@@ -1837,7 +1837,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool mixdownRunning() const override
     {
         const auto* panel = dynamic_cast<BounceDialog*> (owner.mixdownModal.getBody());
-        return panel != nullptr && panel->isRenderingForScenario();
+        return panel != nullptr && panel->isRenderRunning();
     }
     std::string statusMessage() const override { return owner.statusLabel.getText().toStdString(); }
 

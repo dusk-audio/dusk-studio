@@ -4,6 +4,7 @@
 #include "../foundation/MessageThread.h"
 #include <memory>
 #include "../engine/BounceEngine.h"
+#include "RenderInProgress.h"
 
 namespace duskstudio
 {
@@ -22,6 +23,7 @@ class Session;
 // teardown re-attaches the audio device and needs the loop to keep turning).
 // The host wires onRequestClose to dismiss the embedded modal.
 class BounceDialog final : public juce::Component,
+                            public RenderInProgress,
                             private dusk::Timer
 {
 public:
@@ -39,7 +41,8 @@ public:
                    int wavBitDepth = 24,
                    bool realtime = false);
     ~BounceDialog() override;
-    bool isRenderingForScenario() const { return bounceEngine != nullptr && bounceEngine->isRendering(); }
+    bool isRenderRunning() const override { return bounceEngine != nullptr && bounceEngine->isRendering(); }
+    void cancelRender() override;
 
     void resized() override;
     void paint (juce::Graphics&) override;

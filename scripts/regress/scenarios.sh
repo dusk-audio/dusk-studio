@@ -38,6 +38,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-clean-quit
     bb-keyboard-quit
     bb-quit-twice
+    bb-quit-during-mixdown
     bb-startup-scan
     bb-oop-child-kill
     bb-oop-quit-during-load
@@ -593,6 +594,31 @@ bb_quit_twice_body() {
     return 0
 }
 
+leg_bb_quit_during_mixdown() {
+    bb_begin bb-quit-during-mixdown 240 || return 1
+    local rc=0
+    bb_quit_during_mixdown_body || rc=$?
+    bb_end "$rc"
+}
+
+# Cmd+Q while a mixdown renders: the quit cancels the render and waits for its
+# worker to hand the transport and the audio callback back before the shutdown
+# stops or detaches either, then the app exits cleanly.
+bb_quit_during_mixdown_body() {
+    bb_spawn A "DUSKSTUDIO_RUN_SCENARIOS=gui:gui.quit_during_mixdown" -- || return 1
+    local rc=0
+    bb_wait_exit A 120 || rc=$?
+    if ((rc != 0)); then
+        bb_fail "the quit during a mixdown exited with status $rc"
+        return 1
+    fi
+    bb_assert_order A \
+        "phase 0: cancel the running render before quitting" \
+        "phase 0b: render stopped, quit continues" \
+        "${BB_SHUTDOWN_ORDER[@]}" || return 1
+    return 0
+}
+
 leg_bb_startup_scan() {
     bb_begin bb-startup-scan 300 || return 1
     local rc=0
@@ -782,6 +808,12 @@ regress_scenarios_run() {
     else
         regress_skip "bb-clean-quit" "needs DUSKSTUDIO_QUIT_AFTER_MS"
         regress_skip "bb-quit-twice" "needs DUSKSTUDIO_QUIT_AFTER_MS"
+    fi
+
+    if scenarios_has_case "gui.quit_during_mixdown"; then
+        regress_leg "bb-quit-during-mixdown" leg_bb_quit_during_mixdown
+    else
+        regress_skip "bb-quit-during-mixdown" "needs the gui.quit_during_mixdown scenario"
     fi
 
     if scenarios_has_quit_timer && scenarios_binary_has "startup plugin scan: toggle"; then

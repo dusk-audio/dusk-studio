@@ -5255,8 +5255,7 @@ const ScenarioRegistrar sessionSwitch { Scenario {
 
 // A take, Cmd+S, then a second take quit partway through. The second take is
 // not in the session until the transport stops, so a quit that decided first
-// would read the session as saved and quit without asking. A quit under a
-// mixdown leaves the transport to the render.
+// would read the session as saved and quit without asking.
 std::optional<ScenarioResult> runQuitMidTake (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
@@ -5377,60 +5376,9 @@ std::optional<ScenarioResult> runQuitMidTake (GuiHost& host, ScenarioContext& ct
                     "Cancel did not leave the session stopped with the committed take");
         ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
     } });
-    steps->push_back ({ 400, [&host, &ctx, &session, takesOnDisk, sampleRate]
-    {
-        ctx.expect (takesOnDisk() == 2, "the take the quit committed did not save");
-        MidiRegion region;
-        region.lengthInSamples = static_cast<std::int64_t> (sampleRate * 600.0);
-        region.lengthInTicks = 576000;
-        session.track (0).midiRegions.publish (
-            std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
-        host.startMixdown();
-        ctx.expect (host.mixdownRunning(), "the mixdown did not start");
-    } });
-    steps->push_back ({ 300, [&host, &ctx, &transport]
-    {
-        // The offline render rolls the transport from its worker thread.
-        if (! ctx.expect (host.mixdownRunning() && transport.isPlaying(),
-                          "the mixdown was not rolling the transport when the quit came"))
-        {
-            ctx.complete (ctx.verdict());
-            return;
-        }
-        if (! ctx.expect (host.requestQuit(), "quitting the edited session under a mixdown did not ask"))
-        {
-            ctx.complete (ctx.verdict());
-            return;
-        }
-        ctx.expect (transport.isPlaying(), "the quit stopped the transport under the mixdown");
-        ctx.expect (host.mixdownRunning(), "the quit stopped the mixdown");
-    } });
-    steps->push_back ({ 300, [&host, &ctx, isQuitPrompt]
-    {
-        if (isQuitPrompt ("Quitting under a mixdown"))
-            ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt did not offer Cancel");
-    } });
-    steps->push_back ({ 200, [&host, &ctx]
-    {
-        ctx.expect (host.mixdownRunning(), "Cancel in the quit prompt stopped the mixdown");
-        ctx.expect (host.clickModalButton ("Cancel"), "the mixdown did not offer Cancel");
-    } });
-    runSteps (ctx, steps, [&host, &ctx]
-    {
-        ctx.waitUntil ([&host] { return ! host.mixdownRunning(); }, 5000, [&host, &ctx]
-        {
-            ctx.later (200, [&host, &ctx]
-            {
-                if (! host.modalStackEmpty())
-                    ctx.expect (host.clickModalButton ("Close"), "the cancelled mixdown did not offer Close");
-                ctx.later (200, [&host, &ctx]
-                {
-                    ctx.expect (host.modalStackEmpty(), "the cancelled mixdown left its modal open");
-                    ctx.complete (ctx.verdict());
-                });
-            });
-        }, "the mixdown did not cancel");
-    });
+    steps->push_back ({ 400, [&ctx, takesOnDisk]
+    { ctx.expect (takesOnDisk() == 2, "the take the quit committed did not save"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
 
@@ -5438,6 +5386,141 @@ const ScenarioRegistrar quitMidTake { Scenario {
     "gui.quit_mid_take_asks_to_save", { "gui", "session", "recording" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runQuitMidTake (host, ctx); }
+} };
+
+// Opens a saved session whose track 1 holds a ten-minute MIDI region, so it
+// reads clean and a mixdown of it is still rendering when a quit comes.
+bool openLongSession (GuiHost& host, ScenarioContext& ctx, const std::filesystem::path& sessionJson)
+{
+    auto& session = ctx.session();
+    MidiRegion region;
+    region.lengthInSamples = static_cast<std::int64_t> (ctx.engine().getCurrentSampleRate() * 600.0);
+    region.lengthInTicks = 576000;
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    std::filesystem::create_directories (sessionJson.parent_path());
+    return SessionSerializer::save (session, sessionJson) && host.openSession (sessionJson)
+        && currentSessionDirectory (session) == sessionJson.parent_path();
+}
+
+// A quit while a mixdown renders cancels the render the way its Cancel does,
+// and asks about the unsaved changes only once the worker has stopped: every
+// step of a quit stops the transport or detaches audio, which the worker owns
+// until then.
+std::optional<ScenarioResult> runQuitCancelsMixdown (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto mix = ctx.tempDir() / "Mix" / "session.json";
+    if (! openLongSession (host, ctx, mix))
+        return ScenarioResult::fail ("could not open the session to mix down");
+    auto& fader = session.track (0).strip.faderDb;
+    fader.store (fader.load() - 3.0f);
+    const auto isQuitPrompt = [&host] { return host.modalText().rfind ("Save changes before quitting?", 0) == 0; };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        host.startMixdown();
+        ctx.expect (host.mixdownRunning(), "the mixdown did not start");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &transport, isQuitPrompt]
+    {
+        // The offline render rolls the transport from its worker thread.
+        if (! ctx.expect (host.mixdownRunning() && transport.isPlaying(),
+                          "the mixdown was not rolling the transport when the quit came")
+            || ! ctx.expect (host.requestQuit(), "quitting the edited session during a mixdown did not go ahead"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        ctx.expect (! isQuitPrompt(), "the quit asked while the mixdown was still rendering");
+    } });
+    runSteps (ctx, steps, [&host, &ctx, &engine, isQuitPrompt, mix]
+    {
+        ctx.waitUntil (isQuitPrompt, 5000, [&host, &ctx, &engine, mix]
+        {
+            ctx.expect (! host.mixdownRunning(), "the quit asked before the mixdown had stopped");
+            ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached(),
+                        "the cancelled mixdown did not hand the audio callback back");
+            ctx.expect (! std::filesystem::exists (mix.parent_path() / "mixdown.wav"),
+                        "the cancelled mixdown left a file behind");
+            ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt did not offer Cancel");
+            ctx.later (300, [&host, &ctx]
+            {
+                ctx.expect (host.clickModalButton ("Close"), "the cancelled mixdown did not offer Close");
+                ctx.later (200, [&host, &ctx]
+                {
+                    ctx.expect (host.modalStackEmpty(), "the cancelled mixdown left '" + host.modalText() + "' up");
+                    ctx.expect (host.autosaveRunning(), "cancelling the quit left autosave stopped");
+                    ctx.complete (ctx.verdict());
+                });
+            });
+        }, "the quit never asked after cancelling the mixdown");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar quitCancelsMixdown { Scenario {
+    "gui.quit_cancels_running_mixdown", { "gui", "session", "bounce" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runQuitCancelsMixdown (host, ctx); }
+} };
+
+// For the bb-quit-during-mixdown leg only: Cmd+Q on a saved session while a
+// mixdown renders, which ends the process, so it never reports and the leg
+// reads the shutdown markers and the exit status instead. It registers no
+// cleanup, because the context outlives the window any cleanup would touch.
+std::optional<ScenarioResult> runQuitDuringMixdown (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& transport = ctx.engine().getTransport();
+    if (ctx.engine().getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
+    if (! openLongSession (host, ctx, ctx.tempDir() / "Mix" / "session.json"))
+        return ScenarioResult::fail ("could not open the session to mix down");
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        host.startMixdown();
+        ctx.expect (host.mixdownRunning(), "the mixdown did not start");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &transport]
+    {
+        if (! ctx.expect (host.mixdownRunning() && transport.isPlaying(),
+                          "the mixdown was not rolling the transport when the quit came"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        ctx.expect (host.pressPeerKey (commandChord ('q'), 'q'), "the window did not handle Cmd+Q");
+    } });
+    runSteps (ctx, steps, [] {});
+    return std::nullopt;
+}
+
+const ScenarioRegistrar quitDuringMixdown { Scenario {
+    "gui.quit_during_mixdown", { "helper" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runQuitDuringMixdown (host, ctx); }
 } };
 
 // The heartbeat writes session.json.autosave only when the session changed

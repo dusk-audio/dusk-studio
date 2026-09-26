@@ -16,6 +16,7 @@
 #include "SaveTargetChecks.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
+#include "RenderInProgress.h"
 #include "PluginScanModal.h"
 #include "ShortcutsPanel.h"
 #include "SupportersPanel.h"
@@ -3647,6 +3648,40 @@ bool MainComponent::currentSessionDirty()
     return divergedFromBaseline || autosaveIsNewerThan (sessionJson);
 }
 
+namespace
+{
+// Every render still running from a modal, whichever view opened it.
+std::vector<RenderInProgress*> runningRenders()
+{
+    std::vector<RenderInProgress*> running;
+    for (auto* modal : EmbeddedModal::activeModalStack())
+        if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody());
+            render != nullptr && render->isRenderRunning())
+            running.push_back (render);
+    return running;
+}
+} // namespace
+
+void MainComponent::resumeQuitAfterRender()
+{
+    // Polled rather than waited on: the worker hands the engine back through
+    // this thread, so blocking it here would never finish.
+    SafePointer<MainComponent> safe (this);
+    dusk::Timer::callAfterDelay (50, [safe]
+    {
+        auto* self = safe.getComponent();
+        if (self == nullptr) return;
+        if (! runningRenders().empty())
+        {
+            self->resumeQuitAfterRender();
+            return;
+        }
+        shutdown::emitPhase ("phase 0b: render stopped, quit continues");
+        self->quitWaitsForRender = false;
+        self->requestQuit();
+    });
+}
+
 bool MainComponent::quitWouldLoseChanges()
 {
     // Take the window back before the dirty check, and WITHOUT saving: the
@@ -3660,9 +3695,9 @@ bool MainComponent::quitWouldLoseChanges()
     // so a check run first reads a saved session as clean and the shutdown then
     // commits the take after the last chance to save it. After the notepad
     // yield, because a take stopped with errors raises an alert, and that
-    // alert's modal hook would save the notepad. Not under a bounce: it owns the
-    // transport, an offline one from its worker thread, and fails if stopped.
-    if (! bounceModal.isOpen() && ! mixdownModal.isOpen())
+    // alert's modal hook would save the notepad. Not while a render runs: its
+    // worker owns the transport until requestQuit has cancelled it.
+    if (runningRenders().empty())
         stopTransportForSessionSwitch();
 
     // Industry-standard dirty-only prompt. Compare the live serialized
@@ -3679,6 +3714,21 @@ bool MainComponent::quitWouldLoseChanges()
 
 void MainComponent::requestQuit()
 {
+    // A render's worker owns the transport and the audio callback until it
+    // stops, and every path from here stops or detaches them. Cancel it the way
+    // its own Cancel does and take the quit up again once it has stopped; a
+    // quit asked for meanwhile is the same quit.
+    if (quitWaitsForRender) return;
+    if (const auto renders = runningRenders(); ! renders.empty())
+    {
+        shutdown::emitPhase ("phase 0: cancel the running render before quitting");
+        for (auto* render : renders)
+            render->cancelRender();
+        quitWaitsForRender = true;
+        resumeQuitAfterRender();
+        return;
+    }
+
     const bool dirty = quitWouldLoseChanges();
 
     if (! dirty)

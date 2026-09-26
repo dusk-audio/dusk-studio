@@ -213,6 +213,8 @@ private:
     // commits any take still recording, then answers whether quitting would
     // discard anything.
     bool quitWouldLoseChanges();
+    // Polls until no modal render is running, then takes the quit up again.
+    void resumeQuitAfterRender();
     // Reset to a clean default session in `dir` (NOT the current session saved
     // under a new name) and open it through the normal load path. True only
     // once the new session has loaded.
@@ -452,6 +454,8 @@ private:
     // callback, systemRequestedQuit); re-running the phases over a tree that
     // is already half torn down is a crash, not a second shutdown.
     bool shutdownInProgress = false;
+    // Set while a quit waits for the render it cancelled to stop.
+    bool quitWaitsForRender = false;
 
     // One-shot latch so the session-vs-device sample-rate warning fires once
     // per mismatch, not on every autosave tick. Reset on load and when the
