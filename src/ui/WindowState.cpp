@@ -1,11 +1,14 @@
 #include "WindowState.h"
 
+#include "../foundation/AppConfigDir.h"
+
 namespace duskstudio
 {
 juce::File WindowState::getStorePath()
 {
-    auto cfgDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                      .getChildFile ("Dusk Studio");
+    const auto dir = dusk::fs::appConfigDir();
+    if (dir.empty()) return {};
+    const juce::File cfgDir (dir.u8string());
     if (! cfgDir.exists()) cfgDir.createDirectory();
     return cfgDir.getChildFile ("window-state.txt");
 }
@@ -19,8 +22,9 @@ juce::String WindowState::load()
 
 void WindowState::save (const juce::String& stateString)
 {
-    if (stateString.isEmpty()) return;
-    getStorePath().replaceWithText (stateString);
+    const auto file = getStorePath();
+    if (stateString.isEmpty() || file == juce::File()) return;
+    file.replaceWithText (stateString);
 }
 
 bool WindowState::rectIsUsable (juce::Rectangle<int> rect)

@@ -5,7 +5,7 @@
 #include "NotepadEditorCore.h"
 #include "NotepadGraphicsCompatibility.h"
 #include "NotepadTheme.h"
-#include "../foundation/Fs.h"
+#include "../foundation/AppConfigDir.h"
 #include "imgui/DuskImGuiHost.h"
 
 #include <DearImGui.hpp>
@@ -81,10 +81,10 @@ std::string clockLabel()
 
 std::filesystem::path firstFrameMarkerPath()
 {
-    const auto cfg = dusk::fs::userConfigDir();
+    const auto cfg = dusk::fs::appConfigDir();
     if (cfg.empty())
         return {};
-    return cfg / "Dusk Studio" / "notepad-first-frame";
+    return cfg / "notepad-first-frame";
 }
 
 ImVec4 colour (unsigned int hex)

@@ -5,7 +5,7 @@
 namespace duskstudio
 {
 // Window position / size persistence. Stored at
-//   <userApplicationDataDirectory>/Dusk Studio/window-state.txt
+//   <appConfigDir>/window-state.txt
 // - separate from session.json (session-portable) and recent.txt (per-user
 // session list) because window geometry is per-machine state.
 //

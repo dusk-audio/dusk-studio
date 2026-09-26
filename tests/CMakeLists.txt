@@ -253,6 +253,7 @@ target_sources(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src/util/HostInfo.cpp
     foundation_special_locations.cpp
     ${CMAKE_SOURCE_DIR}/src/session/RecentSessions.cpp
+    foundation_app_config_dir.cpp
     foundation_json.cpp
     foundation_audio_math.cpp
     foundation_int_delay_line.cpp

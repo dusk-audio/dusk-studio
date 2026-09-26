@@ -1,6 +1,6 @@
 #include "DafEditorHost.h"
 #include "DuskImGuiScale.h"
-#include "../../foundation/Fs.h"
+#include "../../foundation/AppConfigDir.h"
 #include "../../foundation/MessageThread.h"
 
 #include <cmath>
@@ -22,10 +22,10 @@ bool differs (const DafEditorHost::Geometry& a, const DafEditorHost::Geometry& b
 
 std::filesystem::path firstFrameMarkerPath (const std::string& logTag)
 {
-    const auto config = dusk::fs::userConfigDir();
+    const auto config = dusk::fs::appConfigDir();
     if (config.empty())
         return {};
-    return config / "Dusk Studio" / (logTag + "-first-frame");
+    return config / (logTag + "-first-frame");
 }
 
 struct DafEditorHost::Impl final : private dusk::Timer

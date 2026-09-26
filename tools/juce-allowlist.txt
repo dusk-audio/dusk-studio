@@ -5,7 +5,7 @@ src/dsp/AuxLaneStrip.h	23
 src/dsp/ChannelStrip.cpp	22
 src/dsp/ChannelStrip.h	29
 src/dsp/MasteringChain.h	4
-src/engine/AudioEngine.cpp	84
+src/engine/AudioEngine.cpp	83
 src/engine/AudioEngine.h	14
 src/engine/AudioPipelineSelfTest.cpp	22
 src/engine/BounceEngine.cpp	44
@@ -22,7 +22,7 @@ src/engine/MasteringPlayer.cpp	2
 src/engine/MasteringPlayer.h	4
 src/engine/PlaybackEngine.cpp	3
 src/engine/PlaybackEngine.h	2
-src/engine/PluginManager.cpp	106
+src/engine/PluginManager.cpp	105
 src/engine/PluginManager.h	29
 src/engine/PluginSlot.cpp	70
 src/engine/PluginSlot.h	40
@@ -160,4 +160,4 @@ src/ui/multisample/DuskMultisampleEditor.cpp	67
 src/ui/multisample/DuskMultisampleEditor.h	21
 src/ui/multisample/SfzLibraryPanel.cpp	65
 src/ui/multisample/SfzLibraryPanel.h	15
-src/util/CrashHandler.cpp	25
+src/util/CrashHandler.cpp	24

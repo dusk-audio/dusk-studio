@@ -11,11 +11,13 @@
 # DISPLAY, so a per-leg runtime dir can never hand a session to (or steal one
 # from) the maintainer's own running copy. HOME is private for the same reason
 # one level up: dusk::fs::userConfigDir() resolves $HOME/.config and ignores
-# XDG_CONFIG_HOME, so only a private HOME keeps Recent Sessions, app config and
-# crash logs out of the maintainer's profile. The other XDG base directories
-# move with it: a desktop session exports them as absolute paths into the real
-# home, and the libraries under the app (GL shader caches, fontconfig) write
-# there.
+# XDG_CONFIG_HOME. DUSKSTUDIO_CONFIG_DIR names the same directory outright, so
+# Recent Sessions, app config and crash logs stay out of the maintainer's
+# profile, and a scenario run (which would otherwise get a throwaway config
+# directory of its own) reads what a leg seeds there. The other XDG base
+# directories move with it: a desktop session exports them as absolute paths
+# into the real home, and the libraries under the app (GL shader caches,
+# fontconfig) write there.
 #
 # Every wait takes an explicit budget in seconds. Each process gets its own
 # stdout and stderr file - merging them would make marker order meaningless.
@@ -63,6 +65,7 @@ sandbox_env() {
         "XDG_CACHE_HOME=$dir/home/.cache"
         "XDG_STATE_HOME=$dir/home/.local/state"
         "XDG_RUNTIME_DIR=$dir/runtime"
+        "DUSKSTUDIO_CONFIG_DIR=$dir/home/.config/Dusk Studio"
     )
     if [[ -n "$pipewire_dir" ]]; then
         SANDBOX_ENV+=("PIPEWIRE_RUNTIME_DIR=$pipewire_dir")
@@ -608,8 +611,8 @@ bb_startup_scan_body() {
     bb_wait_exit off 90 || return 1
     bb_assert_absent off "[Dusk Studio] startup plugin scan: showing progress modal" || return 1
 
-    # userConfigDir() resolves $HOME/.config and never reads XDG_CONFIG_HOME
-    # (see the top of this file), so this is the one root the app consults.
+    # The directory sandbox_env names in DUSKSTUDIO_CONFIG_DIR (see the top of
+    # this file), so this is the one root the app consults.
     dir="$BB_SDIR/home/.config/Dusk Studio"
     mkdir -p "$dir" || return 1
     printf 'scan_plugins_on_startup=1\n' > "$dir/app-config.properties" || return 1

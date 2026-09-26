@@ -5,6 +5,7 @@
 #include "NativePluginCache.h"
 #include "PluginBackingCheck.h"
 #include "hosting/NativePluginId.h"
+#include "../foundation/AppConfigDir.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
  #include "NativeScanRows.h"
 #endif
@@ -481,8 +482,9 @@ PluginManager::~PluginManager() = default;
 
 juce::File PluginManager::getCacheFile() const
 {
-    auto cfgDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                      .getChildFile ("Dusk Studio");
+    const auto dir = dusk::fs::appConfigDir();
+    if (dir.empty()) return {};
+    const juce::File cfgDir (dir.u8string());
     if (! cfgDir.isDirectory() && cfgDir.createDirectory().failed())
         return {};   // fall back to empty File - load/saveCache become no-ops
     return cfgDir.getChildFile ("plugin-cache.xml");
