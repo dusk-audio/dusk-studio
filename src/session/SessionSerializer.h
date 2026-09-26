@@ -52,8 +52,19 @@ public:
         juce::String errorMessage;
         int filesCopied = 0;
         std::vector<juce::String> missingSources;
+
+        std::vector<std::filesystem::path> pathsBefore;
+        std::vector<std::filesystem::path> copiedFiles;
+        // Absent before consolidation: the new folder, its audio/ and state/,
+        // the notepad and the temporaries the rest of the save writes there.
+        std::vector<std::filesystem::path> createdPaths;
     };
     static ConsolidationResult consolidateInto (Session& session,
                                                 const juce::File& newSessionDir);
+
+    // For a Save As that fails after a successful consolidateInto: every
+    // repointed path goes back to its old value, and the copies and anything
+    // else created in the new folder since are removed.
+    static void revertConsolidation (Session& session, const ConsolidationResult& done);
 };
 } // namespace duskstudio

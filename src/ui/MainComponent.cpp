@@ -3284,9 +3284,10 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     // (same dir) is a no-op here. Copying precedes the audio-callback detach
     // - it touches no plugin state, so a long copy adds no dropout.
     const bool isSaveAs = oldDir != juce::File() && dir != oldDir;
+    SessionSerializer::ConsolidationResult consolidated;
     if (isSaveAs)
     {
-        const auto consolidated = SessionSerializer::consolidateInto (session, dir);
+        consolidated = SessionSerializer::consolidateInto (session, dir);
         if (! consolidated.ok)
         {
             setStatusForPath ("Save failed", dir);
@@ -3303,6 +3304,13 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
             setStatusForPath (juce::String (consolidated.missingSources.size())
                                 + " missing audio file(s) were not copied to", dir);
     }
+    // Both failure alerts below promise the session is as it was.
+    const auto undoSaveAs = [this, isSaveAs, &consolidated, &oldDir]
+    {
+        if (! isSaveAs) return;
+        SessionSerializer::revertConsolidation (session, consolidated);
+        session.setSessionDirectory (oldDir);
+    };
 
     // Sidecar before the JSON: the notepad and session.json are one user-visible
     // save, so a sidecar failure has to abort while the session still points at
@@ -3311,6 +3319,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     const auto notepadTarget = dir.getChildFile ("notepad.md");
     if (! SessionSerializer::saveNotepad (dir, notepadText))
     {
+        undoSaveAs();
         notepadDirty = true;
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (notepadWindow != nullptr)
@@ -3403,6 +3412,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
         setStatusForPath ("Saved", target);
         return true;
     }
+    undoSaveAs();
     setStatusForPath ("Save failed", target);
     // Status-label-only feedback is too easy to miss on a critical
     // operation. Pop a modal so the user knows the session WASN'T

@@ -5,8 +5,11 @@
 
 #include <juce_core/juce_core.h>
 
+#include <algorithm>
 #include <filesystem>
+#include <string>
 #include <system_error>
+#include <vector>
 
 using namespace duskstudio;
 
@@ -269,5 +272,118 @@ TEST_CASE ("consolidateInto edge cases", "[session][serializer][consolidate]")
         REQUIRE (! res.ok);
         REQUIRE (res.errorMessage.isNotEmpty());
         REQUIRE (s.track (0).regions[0].file == take);
+    }
+}
+
+namespace
+{
+std::vector<std::string> listing (const juce::File& dir)
+{
+    namespace fs = std::filesystem;
+    const auto root = fs::u8path (dir.getFullPathName().toStdString());
+    std::vector<std::string> names;
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it (root, ec), end; ! ec && it != end; it.increment (ec))
+        names.push_back (it->path().lexically_relative (root).generic_string());
+    std::sort (names.begin(), names.end());
+    return names;
+}
+} // namespace
+
+// A Save As that fails after consolidation (the notepad or session.json write)
+// must leave the session exactly where it was: the Save failed alert says so.
+TEST_CASE ("revertConsolidation restores every path and removes what the Save As made",
+           "[session][serializer][consolidate]")
+{
+    const auto dirA   = makeTempDir ("dusk-revert-a-");
+    const auto parent = makeTempDir ("dusk-revert-b-");
+    const auto extDir = makeTempDir ("dusk-revert-x-");
+    const struct Cleanup
+    {
+        juce::File a, b, x;
+        ~Cleanup() { a.deleteRecursively(); b.deleteRecursively(); x.deleteRecursively(); }
+    } cleanup { dirA, parent, extDir };
+
+    Session s;
+    s.setSessionDirectory (dirA);
+    const auto take1   = makeFakeWav (dirA.getChildFile ("audio/take1.wav"));
+    const auto take0   = makeFakeWav (dirA.getChildFile ("audio/take0.wav"));
+    const auto freeze  = makeFakeWav (dirA.getChildFile ("audio/freeze/freeze_track02.wav"));
+    const auto mixdown = makeFakeWav (dirA.getChildFile ("mixdown.wav"));
+    const auto ext     = makeFakeWav (extDir.getChildFile ("loop.wav"));
+    const auto gone    = dirA.getChildFile ("audio/deleted.wav");
+    makeFakeWav (dirA.getChildFile ("state/lv2/track01/cur/bank.bin"));
+    {
+        AudioRegion r;
+        r.file = take1;
+        r.lengthInSamples = 1000;
+        TakeRef prior;
+        prior.file = take0;
+        prior.lengthInSamples = 500;
+        r.previousTakes.push_back (prior);
+        s.track (0).regions.push_back (r);
+        AudioRegion e;
+        e.file = ext;
+        e.lengthInSamples = 100;
+        s.track (0).regions.push_back (e);
+        AudioRegion m;
+        m.file = gone;
+        m.lengthInSamples = 100;
+        s.track (2).regions.push_back (m);
+        s.track (1).frozen.store (true);
+        s.track (1).frozenAudioPath = freeze.getFullPathName();
+        s.track (1).frozenRegion.file = freeze;
+        s.track (1).frozenRegion.lengthInSamples = 1000;
+        s.mastering().sourceFile = mixdown;
+    }
+    const auto listingA = listing (dirA);
+
+    const auto failedSaveAs = [&s, dirA] (const juce::File& dirB)
+    {
+        const auto res = SessionSerializer::consolidateInto (s, dirB);
+        REQUIRE (res.ok);
+        REQUIRE (res.filesCopied == 5);
+        REQUIRE (s.track (0).regions[0].file.isAChildOf (dirB));
+        // The rest of a Save As up to a failed session.json write.
+        REQUIRE (SessionSerializer::saveNotepad (dirB, "notes"));
+        s.setSessionDirectory (dirB);
+        makeFakeWav (dirB.getChildFile ("state/lv2/track01/next/state.ttl"));
+        dirB.getChildFile ("session.json.tmp").replaceWithText ("{}");
+
+        SessionSerializer::revertConsolidation (s, res);
+        s.setSessionDirectory (dirA);
+    };
+    const auto restored = [&]
+    {
+        CHECK (s.getSessionDirectory() == dirA);
+        CHECK (s.track (0).regions[0].file == take1);
+        CHECK (s.track (0).regions[0].previousTakes[0].file == take0);
+        CHECK (s.track (0).regions[1].file == ext);
+        CHECK (s.track (2).regions[0].file == gone);
+        CHECK (s.track (1).frozenAudioPath == freeze.getFullPathName());
+        CHECK (s.track (1).frozenRegion.file == freeze);
+        CHECK (s.mastering().sourceFile == mixdown);
+        CHECK (listing (dirA) == listingA);
+    };
+
+    SECTION ("into a folder that did not exist, which is removed")
+    {
+        const auto dirB = parent.getChildFile ("New Session");
+        failedSaveAs (dirB);
+        restored();
+        CHECK_FALSE (dirB.exists());
+    }
+
+    SECTION ("into a folder of someone else's files, which are all that is left")
+    {
+        const auto dirB = parent.getChildFile ("Shared");
+        dirB.getChildFile ("audio").createDirectory();
+        dirB.getChildFile ("audio/take1.wav").replaceWithText ("theirs");
+        dirB.getChildFile ("readme.txt").replaceWithText ("theirs");
+        const auto listingB = listing (dirB);
+        failedSaveAs (dirB);
+        restored();
+        CHECK (listing (dirB) == listingB);
+        CHECK (dirB.getChildFile ("audio/take1.wav").loadFileAsString() == "theirs");
     }
 }

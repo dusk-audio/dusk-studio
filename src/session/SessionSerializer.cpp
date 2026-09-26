@@ -2984,6 +2984,49 @@ bool SessionSerializer::load (Session& s, const std::filesystem::path& source)
     return load (s, fileFromPath (source));
 }
 
+namespace
+{
+std::filesystem::path fsPathOf (const String& p) { return std::filesystem::u8path (p.toStdString()); }
+std::filesystem::path fsPathOf (const File& f)   { return fsPathOf (f.getFullPathName()); }
+void assignPath (File& dst, const File& f)   { dst = f; }
+void assignPath (String& dst, const File& f) { dst = f.getFullPathName(); }
+void restorePath (File& dst, const std::filesystem::path& p)   { dst = fileFromPath (p); }
+void restorePath (String& dst, const std::filesystem::path& p) { dst = String::fromUTF8 (p.u8string().c_str()); }
+
+// Every model path consolidation repoints, in one order, so a revert hands
+// each back exactly the value it had.
+template <typename Visit>
+void forEachConsolidatedPath (Session& s, Visit&& visit)
+{
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& track = s.track (t);
+        for (auto& r : track.regions)
+        {
+            visit (r.file);
+            for (auto& take : r.previousTakes)
+                visit (take.file);
+        }
+        if (track.frozenAudioPath.isNotEmpty())
+        {
+            visit (track.frozenAudioPath);
+            visit (track.frozenRegion.file);
+        }
+    }
+    visit (s.mastering().sourceFile);
+}
+
+void discardConsolidatedFiles (const SessionSerializer::ConsolidationResult& done)
+{
+    std::error_code ignored;
+    for (const auto& f : done.copiedFiles)
+        std::filesystem::remove (f, ignored);
+    // Each was absent before the Save As began, so all it holds is the save's.
+    for (auto it = done.createdPaths.rbegin(); it != done.createdPaths.rend(); ++it)
+        std::filesystem::remove_all (*it, ignored);
+}
+} // namespace
+
 SessionSerializer::ConsolidationResult
 SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
 {
@@ -2998,6 +3041,24 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
     std::error_code sameDirError;
     if (! oldPath.empty() && std::filesystem::equivalent (newPath, oldPath, sameDirError))
         return res;
+
+    auto noteIfAbsent = [&res] (const std::filesystem::path& p)
+    {
+        std::error_code ec;
+        if (! std::filesystem::exists (std::filesystem::symlink_status (p, ec))
+            && std::find (res.createdPaths.begin(), res.createdPaths.end(), p) == res.createdPaths.end())
+            res.createdPaths.push_back (p);
+    };
+    auto noteMissingDirs = [&noteIfAbsent] (const File& dir)
+    {
+        std::vector<std::filesystem::path> missing;
+        for (auto d = dir; ! d.exists() && d != d.getParentDirectory(); d = d.getParentDirectory())
+            missing.push_back (fsPathOf (d));
+        std::for_each (missing.rbegin(), missing.rend(), noteIfAbsent);
+    };
+    noteMissingDirs (newSessionDir);
+    for (const char* name : { "audio", "state", "notepad.md", "notepad.md.tmp", "session.json.tmp" })
+        noteIfAbsent (newPath / name);
 
     // Phase A - plan. Map each unique source to its destination without
     // touching the model. Files under the old session dir keep their relative
@@ -3060,7 +3121,6 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
     // cur/-relative abstract paths, so no model repoint is needed - the copy
     // just has to exist under the new root before the post-swap re-save
     // refreshes it.
-    juce::File copiedStateDir;
     if (oldDir != juce::File())
     {
         const auto oldStateDir = oldDir.getChildFile ("state");
@@ -3076,61 +3136,53 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
             }
             if (! oldStateDir.copyDirectoryTo (newStateDir))
             {
-                newStateDir.deleteRecursively();
+                discardConsolidatedFiles (res);
                 res.ok = false;
                 res.errorMessage = "Could not copy the plugin state folder to \""
                                  + newStateDir.getFullPathName() + "\"";
                 return res;
             }
-            copiedStateDir = newStateDir;
         }
     }
 
     // Phase B - copy. Any failure rolls back the files copied so far (including
     // the state tree above) and returns with the model untouched.
-    std::vector<juce::File> copied;
     for (const auto& [srcPath, target] : remap)
     {
         const juce::File src (srcPath);
+        noteMissingDirs (target.getParentDirectory());
         if (! target.getParentDirectory().createDirectory().wasOk()
             || ! src.copyFileTo (target))
         {
-            for (auto& c : copied) c.deleteFile();
-            if (copiedStateDir != juce::File()) copiedStateDir.deleteRecursively();
+            discardConsolidatedFiles (res);
             res.ok = false;
             res.errorMessage = "Could not copy \"" + src.getFileName() + "\" to \""
                              + target.getParentDirectory().getFullPathName() + "\"";
             return res;
         }
-        copied.push_back (target);
+        res.copiedFiles.push_back (fsPathOf (target));
     }
-    res.filesCopied = (int) copied.size();
+    res.filesCopied = (int) res.copiedFiles.size();
 
     // Phase C - repoint the model.
-    auto repoint = [&remap] (juce::File& f)
+    forEachConsolidatedPath (s, [&] (auto& p)
     {
-        auto it = remap.find (f.getFullPathName());
-        if (it != remap.end()) f = it->second;
-    };
-    for (int t = 0; t < Session::kNumTracks; ++t)
-    {
-        auto& track = s.track (t);
-        for (auto& r : track.regions)
-        {
-            repoint (r.file);
-            for (auto& take : r.previousTakes)
-                repoint (take.file);
-        }
-        if (track.frozenAudioPath.isNotEmpty())
-        {
-            juce::File fz (track.frozenAudioPath);
-            repoint (fz);
-            track.frozenAudioPath = fz.getFullPathName();
-            repoint (track.frozenRegion.file);
-        }
-    }
-    repoint (s.mastering().sourceFile);
+        res.pathsBefore.push_back (fsPathOf (p));
+        if (const auto it = remap.find (File (p).getFullPathName()); it != remap.end())
+            assignPath (p, it->second);
+    });
 
     return res;
+}
+
+void SessionSerializer::revertConsolidation (Session& s, const ConsolidationResult& done)
+{
+    size_t next = 0;
+    forEachConsolidatedPath (s, [&] (auto& p)
+    {
+        if (next < done.pathsBefore.size())
+            restorePath (p, done.pathsBefore[next++]);
+    });
+    discardConsolidatedFiles (done);
 }
 } // namespace duskstudio

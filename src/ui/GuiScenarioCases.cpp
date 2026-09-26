@@ -10682,6 +10682,140 @@ const ScenarioRegistrar saveFailedAlert { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runSaveFailedAlert (host, ctx); }
 } };
 
+// Save As that fails after the audio was copied, at session.json and at the
+// notepad sidecar: the alert says the session is unchanged, so it must still
+// live in its old folder with its region there, the new folder must hold only
+// what it held before, and a following Save writes the old folder's files.
+std::optional<ScenarioResult> runSaveAsFailureKeepsSession (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto mine = ctx.tempDir() / "Mine";
+    const auto take = mine / "audio" / "take.wav";
+    fs::create_directories (take.parent_path());
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 1;
+        auto writer = dusk::audio::FileWriter::create (take, spec);
+        std::vector<float> silence (4800, 0.0f);
+        const float* channels[] = { silence.data() };
+        if (! writer || ! writer->write (channels, 1, 4800) || ! writer->flush())
+            return ScenarioResult::fail ("could not write the take");
+    }
+    {
+        std::ofstream notes (mine / "notepad.md", std::ios::binary);
+        notes << "notes";
+    }
+    AudioRegion region;
+    using File = std::decay_t<decltype (region.file)>;
+    region.file = File (take.u8string().c_str());
+    region.lengthInSamples = 4800;
+    region.numChannels = 1;
+    session.track (0).regions = { region };
+    if (! SessionSerializer::save (session, mine / "session.json")) return ScenarioResult::fail ("could not save the session");
+    reopenSavedSession (host, mine / "session.json");
+    const auto regionFile = [&session]
+    {
+        const auto& regions = session.track (0).regions;
+        return regions.empty() ? fs::path() : fs::u8path (regions[0].file.getFullPathName().toStdString());
+    };
+    if (currentSessionDirectory (session) != mine || regionFile() != take)
+        return ScenarioResult::fail ("could not open the session with its take");
+
+    // A folder that is not empty where the save writes a file makes that
+    // write fail for any user, root included; an empty one would be replaced.
+    const auto blockedJson = ctx.tempDir() / "Blocked json";
+    const auto blockedNotes = ctx.tempDir() / "Blocked notes";
+    for (const auto& blocker : { blockedJson / "session.json", blockedNotes / "notepad.md" })
+    {
+        fs::create_directories (blocker);
+        std::ofstream (blocker / "keep") << "theirs";
+    }
+    const auto jsonListing = folderListing (blockedJson);
+    const auto notesListing = folderListing (blockedNotes);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto saveAs = [&host, &ctx, steps] (const fs::path& target)
+    {
+        steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+        steps->push_back ({ 700, [&host, &ctx, target]
+        {
+            if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                              "File > Save as... showed '" + host.modalText() + "' rather than Save As")
+                || ! ctx.expect (host.focusFileName(), "the Save As browser has no name field"))
+                return;
+            typeReplacing (host, target.string());
+            ctx.expect (host.clickModalButton ("Save"), "the Save As browser has no Save button");
+        } });
+    };
+    const auto kept = [&host, &ctx, &session, regionFile, mine, take] (const std::string& how,
+                                                                        const fs::path& target,
+                                                                        const std::vector<std::string>& before)
+    {
+        ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+        ctx.expect (currentSessionDirectory (session) == mine,
+                    how + " moved the session to '" + currentSessionDirectory (session).string() + "'");
+        ctx.expect (regionFile() == take, how + " left the region at '" + regionFile().string() + "'");
+        ctx.expect (folderListing (target) == before, how + " left files in the new folder");
+        ctx.expect (fs::is_regular_file (take), how + " removed the original take");
+    };
+
+    saveAs (blockedJson);
+    steps->push_back ({ 800, [&host, &ctx, kept, blockedJson, jsonListing]
+    {
+        const auto text = host.modalText();
+        ctx.expect (text.rfind ("Save failed\nDusk Studio could not write the session file:", 0) == 0
+                        && text.find ("Blocked json") != std::string::npos,
+                    "a failed session.json write showed '" + text + "' rather than Save failed");
+        kept ("a failed session.json write", blockedJson, jsonListing);
+        ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
+    } });
+    steps->push_back ({ 800, [&host, &ctx, mine, take]
+    {
+        const auto saved = fileBytes (mine / "session.json");
+        ctx.expect (host.statusMessage() == "Saved: Mine" && saved.find ("Blocked json") == std::string::npos,
+                    "Cmd+S after the failed Save As did not save the session where it lives; status '"
+                        + host.statusMessage() + "'");
+        auto reloaded = std::make_unique<Session>();
+        applySessionDirectory (*reloaded, mine);
+        ctx.expect (SessionSerializer::load (*reloaded, mine / "session.json") && ! reloaded->track (0).regions.empty()
+                        && fs::u8path (reloaded->track (0).regions[0].file.getFullPathName().toStdString()) == take,
+                    "the session saved after the failed Save As does not point at its take");
+    } });
+    saveAs (blockedNotes);
+    steps->push_back ({ 800, [&host, &ctx, kept, blockedNotes, notesListing]
+    {
+        const auto text = host.modalText();
+        ctx.expect (text.rfind ("Notepad save failed\nDusk Studio could not write:", 0) == 0
+                        && text.find ("The session was not saved.") != std::string::npos,
+                    "a failed notepad write showed '" + text + "' rather than Notepad save failed");
+        kept ("a failed notepad write", blockedNotes, notesListing);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar saveAsFailureKeepsSession { Scenario {
+    "gui.save_as_failure_keeps_session", { "gui", "session", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSaveAsFailureKeepsSession (host, ctx); }
+} };
+
 // The launch session's folder can already hold a real session someone saved
 // under that name. The launch session has still never been saved, so File >
 // Save, Cmd+S and the quit prompt's Save each ask where to save and leave that
