@@ -1288,6 +1288,7 @@ elseif(APPLE)
         src/engine/ipc/platform/IpcShm_Mac.cpp
         src/engine/ipc/platform/IpcSync_Mac.cpp)
     set(_duskstudio_ipc_child_platform_sources
+        src/engine/ipc/platform/ChildAppKit_Mac.mm
         src/engine/ipc/platform/IpcChannel_Mac.cpp
         src/engine/ipc/platform/IpcShm_Mac.cpp
         src/engine/ipc/platform/IpcSync_Mac.cpp)

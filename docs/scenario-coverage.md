@@ -32,7 +32,7 @@ platform's runner), **manual** (with the reason). Run everything with
 | 14 | VST3 bus activation | unit | `vst3_instance_process.cpp`, `vst3_native_slot.cpp` |
 | 15 | Cancel stops an LV2 scan | scenario | `scan.cancel_lv2` |
 | 16 | Cancel stops an AU scan | scenario | `scan.cancel_au` (runs on the mac leg, skips elsewhere) |
-| 17 | LV2 editor shows the plug-in's current settings | manual | `gui.lv2_editor_reflects_state` exists but skips: no fixture ships an LV2 UI. Check with a real LV2 plug-in that has one |
+| 17 | LV2 editor shows the plug-in's current settings | scenario (gui) + manual | `gui.lv2_editor_reflects_state` on Linux: the fixture's X11 UI reads back the Gain the host sends it when it opens, while it is open and when it reopens. The fixture has no Cocoa UI, so on macOS check with a real LV2 plug-in that has one |
 | 18 | LV2 parameter numbering is stable across reloads | scenario | `lv2.params_numbering_stable` |
 | 19 | LV2 file state lives inside the session folder | scenario + unit | `lv2.file_state_inside_session`; `lv2_file_state.cpp`, `lv2_state_paths.cpp` |
 | 20 | A large LV2 file store saves quickly | scenario | `lv2.large_store_timing_bound` (tag `slow`) |
@@ -76,7 +76,7 @@ platform's runner), **manual** (with the reason). Run everything with
 | 43 | The DMG carries the sandbox helper | unit | `release.yml` asset check, `scripts/verify-release-assets.sh` |
 | 44 | Donor and sfizz audio unchanged | unit | the `*_ab.cpp` null tests |
 
-Manual items: 7, 10, 17, 34, 35, 36, 38, 40. Every other row runs through
+Manual items: 7, 10, 17 (macOS), 34, 35, 36, 38, 40. Every other row runs through
 the runner of the platform that owns it, so `scripts/regress.sh all
 --release-checks --gui-scenarios --msi <installer>` covers them all; the headless scenarios
 also run in CI.

@@ -81,6 +81,9 @@ regress_scenario_leg() {
     if ((rc != 0)); then
         verdict=FAIL
         note="exit $rc"
+        if grep -q '^\[FAIL\]' "$log"; then
+            note="${note}: $(grep -c '^\[FAIL\]' "$log") failed, first $(grep -m1 '^\[FAIL\]' "$log")"
+        fi
     elif grep -q '^\[FAIL\]' "$log"; then
         verdict=FAIL
         note="$(grep -m1 '^\[FAIL\]' "$log")"
@@ -96,6 +99,15 @@ regress_scenario_leg() {
         fi
     fi
     regress_record "$name" "$verdict" "$secs" "$note"
+
+    # A case that could not find its fixture proved nothing, so it gets a row
+    # of its own rather than riding in the note of a leg that reads PASS.
+    local unfixtured
+    unfixtured="$(sed -n 's/^\[SKIP\] \([^:]*\): missing fixture: \(.*\)$/\1 (\2)/p' "$log" \
+        | tr '\n' '|' | sed 's/|$//; s/|/; /g')"
+    if [[ -n "$unfixtured" ]]; then
+        regress_skip "${name}:fixtures" "missing fixture: ${unfixtured}"
+    fi
 }
 
 regress_failed() {
@@ -122,6 +134,23 @@ regress_summary() {
         return 1
     fi
     printf '\n%s: OK\n' "$title"
+    return 0
+}
+
+# Run from the EXIT trap, whoever owns it at the time. The scenario legs set and
+# clear a trap of their own, so a cleanup that has to happen on every exit
+# registers here rather than setting one.
+REGRESS_EXIT_HOOKS=()
+
+regress_at_exit() {
+    REGRESS_EXIT_HOOKS+=("$1")
+}
+
+regress_run_exit_hooks() {
+    local hook
+    for hook in ${REGRESS_EXIT_HOOKS[@]+"${REGRESS_EXIT_HOOKS[@]}"}; do
+        eval "$hook" || true
+    done
     return 0
 }
 

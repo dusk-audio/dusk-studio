@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -42,6 +43,10 @@
 
 #if DUSKSTUDIO_HAS_ALSA
  #include <alsa/asoundlib.h>
+#endif
+
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+ #include <unistd.h>
 #endif
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (_WIN32)
@@ -389,6 +394,10 @@ std::optional<ScenarioResult> runClapNoWindowMessage (GuiHost& host, ScenarioCon
     (void) host;
     (void) ctx;
     return ScenarioResult::skip ("built without native CLAP hosting");
+   #elif ! defined (__linux__)
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("only the Linux host looks for a plug-in window in the container");
    #else
     static constexpr int kBlankNoticeTimeoutMs = 20000;
 
@@ -404,6 +413,14 @@ std::optional<ScenarioResult> runClapNoWindowMessage (GuiHost& host, ScenarioCon
     if (! strip->loadNativeClap (*fixture, "studio.dusk.test.no-window", error))
         return ScenarioResult::fail ("the fixture did not load: " + error);
     strip->refreshInsertButton();
+    // A wait that times out ends the case without finish below.
+    ctx.cleanup ([&host, strip]
+    {
+        strip->closeEditor();
+        dismissAlert (host);
+        strip->unloadNativePlugins();
+        strip->refreshInsertButton();
+    });
 
     const auto finish = [&ctx, &host, strip]
     {
@@ -438,6 +455,26 @@ std::optional<ScenarioResult> runClapNoWindowMessage (GuiHost& host, ScenarioCon
 
 // ------------------------------------------------ LV2 editor reflects state
 
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+// The file the fixture UI (tests/fixtures/file_state_ui.cpp) rewrites with each
+// Gain value the host sends it, once this process has created it.
+std::filesystem::path lv2UiProbePath()
+{
+    std::error_code error;
+    auto dir = std::filesystem::temp_directory_path (error);
+    if (error) dir = "/tmp";
+    return dir / ("dusk-lv2-ui-probe-" + std::to_string ((long) ::getpid()));
+}
+
+std::optional<double> readLv2UiProbe (const std::filesystem::path& path)
+{
+    std::ifstream in (path);
+    double value = 0.0;
+    if (in >> value) return value;
+    return std::nullopt;
+}
+#endif
+
 std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_LV2
@@ -445,8 +482,11 @@ std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, Scenario
     (void) ctx;
     return ScenarioResult::skip ("built without native LV2 hosting");
    #else
-    static constexpr double kGain = 0.75;
+    static constexpr double kOpenGain = 0.75;
+    static constexpr double kLiveGain = 0.5;
+    static constexpr double kReopenGain = 0.375;
     static constexpr double kTolerance = 1.0e-4;
+    static constexpr int kSeedTimeoutMs = 3000;
 
     const auto fixture = ctx.fixture ("file_state.lv2");
     if (! fixture)
@@ -456,53 +496,97 @@ std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, Scenario
     if (strip == nullptr)
         return ScenarioResult::skip ("the console has no strip to drive");
 
+    const auto probe = lv2UiProbePath();
+    ctx.cleanup ([strip, probe]
+    {
+        strip->closeEditor();
+        strip->unloadNativePlugins();
+        strip->refreshInsertButton();
+        std::error_code ignored;
+        std::filesystem::remove (probe, ignored);
+    });
+
+    // The file-state plug-in is the one the fixture bundle gives a UI.
     std::string error;
-    if (! strip->loadNativeLv2 (*fixture, "urn:duskstudio:test:control-state", error))
+    if (! strip->loadNativeLv2 (*fixture, "urn:duskstudio:test:file-state", error))
         return ScenarioResult::fail ("the fixture did not load: " + error);
     strip->refreshInsertButton();
 
     auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeLv2Slot();
-    bool moved = false;
+    std::optional<std::uint32_t> gainPort;
     for (int i = 0; i < slot.paramCount(); ++i)
         if (const auto* info = slot.paramInfo (i); info != nullptr && info->name == "Gain")
-        {
-            slot.setParamValue (info->id, kGain);
-            moved = true;
-        }
-    if (! moved)
-    {
-        strip->unloadNativePlugins();
+            gainPort = info->id;
+    if (! gainPort)
         return ScenarioResult::fail ("the fixture exposes no Gain control");
+    const auto gain = *gainPort;
+    slot.setParamValue (gain, kOpenGain);
+
+    {
+        std::ofstream create (probe, std::ios::trunc);
+        if (! create)
+            return ScenarioResult::fail ("could not create the editor probe file");
     }
-    ctx.later (200, [&ctx, &host, strip]
+
+    const auto seeded = [probe] (double expected)
+    {
+        return [probe, expected]
+        {
+            const auto shown = readLv2UiProbe (probe);
+            return shown && std::abs (*shown - expected) < kTolerance;
+        };
+    };
+
+    ctx.later (200, [&ctx, &host, &slot, strip, gain, seeded]
     {
         if (! strip->openEditor())
         {
             dismissAlert (host);
-            strip->unloadNativePlugins();
-            strip->refreshInsertButton();
-            // The fixture declares no ui:ui, so lilv finds nothing to embed and
-            // the host says so instead of showing an empty panel.
-            ctx.complete (ScenarioResult::skip (
-                "the control-state fixture ships no plug-in UI to open"));
+            if (host.canEmbedPluginEditors())
+            {
+               #if defined (__linux__)
+                ctx.complete (ScenarioResult::fail (
+                    "the fixture's X11 UI did not open on a display that embeds editors"));
+               #else
+                ctx.complete (ScenarioResult::skip (
+                    "the fixture's only UI is an X11 widget, built on Linux alone"));
+               #endif
+            }
+            else
+            {
+                ctx.complete (ScenarioResult::skip (
+                    "this display cannot embed a plug-in editor"));
+            }
             return;
         }
 
-        ctx.later (400, [&ctx, &host, strip]
-        {
-            double shown = 0.0;
-            if (ctx.expect (strip->readEditorControl ("Gain", shown),
-                            "the open editor reported no Gain control"))
-                ctx.expect (std::abs (shown - kGain) < kTolerance,
-                            "the editor shows " + std::to_string (shown)
-                                + " where the plug-in holds " + std::to_string (kGain));
+        ctx.waitUntil (seeded (kOpenGain), kSeedTimeoutMs,
+            [&ctx, &slot, strip, gain, seeded]
+            {
+                double held = 0.0;
+                if (ctx.expect (strip->readEditorControl ("Gain", held),
+                                "the open editor reported no Gain control"))
+                    ctx.expect (std::abs (held - kOpenGain) < kTolerance,
+                                "opening the editor moved the plug-in's Gain to "
+                                    + std::to_string (held));
 
-            strip->closeEditor();
-            strip->unloadNativePlugins();
-            strip->refreshInsertButton();
-            ctx.expect (host.modalStackEmpty(), "the run left a modal up");
-            ctx.complete (ctx.verdict());
-        });
+                slot.setParamValue (gain, kLiveGain);
+                ctx.waitUntil (seeded (kLiveGain), kSeedTimeoutMs,
+                    [&ctx, &slot, strip, gain, seeded]
+                    {
+                        strip->closeEditor();
+                        ctx.expect (! strip->hasOpenEditor(), "the editor did not close");
+                        slot.setParamValue (gain, kReopenGain);
+                        ctx.later (200, [&ctx, strip, seeded]
+                        {
+                            if (! ctx.expect (strip->openEditor(), "the editor did not reopen"))
+                            { ctx.complete (ctx.verdict()); return; }
+                            ctx.waitUntil (seeded (kReopenGain), kSeedTimeoutMs,
+                                [&ctx] { ctx.complete (ctx.verdict()); },
+                                "the reopened editor was not seeded with the Gain set while it was closed");
+                        });
+                    }, "a Gain change made while the editor was open did not reach it");
+            }, "the editor did not open showing the plug-in's live Gain");
     });
     return std::nullopt;
    #endif
@@ -1227,6 +1311,10 @@ std::optional<ScenarioResult> runTimelineKeys (GuiHost& host, ScenarioContext& c
         session.track (i).midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
         session.setTrackArmed (i, false);
     }
+    // Arming every track to overflow the rows needs an input for each: track N
+    // follows input N, and Session refuses to arm one the device does not offer.
+    ctx.keep (session.deviceCaptureChannels);
+    session.deviceCaptureChannels.store (Session::kNumTracks);
     AudioRegion region;
     region.lengthInSamples = (std::int64_t) engine.getCurrentSampleRate() * 30;
     session.track (0).regions.push_back (region);
@@ -1277,8 +1365,15 @@ std::optional<ScenarioResult> runTimelineKeys (GuiHost& host, ScenarioContext& c
     { ctx.expect (view()[3] < 0.5, "T did not hide timeline"); key ("T", 't'); } });
     steps->push_back ({ 100, [&ctx, view]
     { ctx.expect (view()[3] > 0.5, "T did not restore timeline"); } });
-    steps->push_back ({ 100, [&session]
-    { for (int i = 0; i < Session::kNumTracks; ++i) session.setTrackArmed (i, true); } });
+    steps->push_back ({ 100, [&session, &ctx]
+    {
+        for (int i = 0; i < Session::kNumTracks; ++i)
+        {
+            session.setTrackArmed (i, true);
+            ctx.expect (session.track (i).recordArmed.load(),
+                        "track " + std::to_string (i + 1) + " would not arm");
+        }
+    } });
     steps->push_back ({ 300, [&host, &ctx, view, beforeWheel]
     {
         for (int i = 0; i < 8; ++i) host.tapeWheel (0.6f, 1.0f, true, true);
@@ -4092,6 +4187,17 @@ const ScenarioRegistrar auxSources { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAuxSources (host, ctx); }
 } };
 
+// A run's HOME is its sandbox. A browser that starts outside it lists the
+// user's own folders, and on macOS a privacy prompt for them stalls the run.
+bool expectBrowserInHome (GuiHost& host, ScenarioContext& ctx, const std::string& what)
+{
+    const auto folder = host.fileBrowserFolder().lexically_normal();
+    const auto home = dusk::fs::userHomeDir().lexically_normal();
+    const auto relative = folder.lexically_relative (home);
+    const bool inside = ! folder.empty() && ! relative.empty() && *relative.begin() != "..";
+    return ctx.expect (inside, what + " opened at '" + folder.string() + "', outside HOME " + home.string());
+}
+
 std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_MULTISAMPLE
@@ -4130,6 +4236,7 @@ std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioCon
     { ctx.expect (host.clickModalButton ("Soundfont (.sfz / .sf2 / .bank.xml)"), "soundfont chooser did not open"); } });
     steps->push_back ({ 150, [&host, &ctx, soundfont]
     {
+        expectBrowserInHome (host, ctx, "the soundfont browser");
         ctx.expect (host.focusFileName(), "soundfont filename entry was not available");
        #if defined (__APPLE__)
         host.pressPeerKey ("command + A", 'a');
@@ -4442,6 +4549,36 @@ std::optional<ScenarioResult> runSettingsUiScale (GuiHost& host, ScenarioContext
         if (hadConfig) dusk::fs::writeStringToFile (config, configText);
         else { std::error_code error; std::filesystem::remove (config, error); }
     });
+    const auto launchWindow = host.mainWindowSize();
+    if (launchWindow.size() < 4) return ScenarioResult::fail ("the main window reported no size");
+    const auto windowHeld = [&host, &ctx, launchWindow, originalScale] (const std::string& when)
+    {
+        const auto now = host.mainWindowSize();
+        if (! ctx.expect (now.size() >= 4, "the main window reported no size " + when)) return;
+       #if defined (__APPLE__)
+        const auto onScreen = [] (int size, double scale) { return (int) std::lround (size * scale); };
+        const int width = onScreen (now[0], host.uiScale()), height = onScreen (now[1], host.uiScale());
+        const int launchWidth = onScreen (launchWindow[0], originalScale);
+        const int launchHeight = onScreen (launchWindow[1], originalScale);
+        ctx.expect (std::abs (width - launchWidth) <= 2 && std::abs (height - launchHeight) <= 2,
+                    "the window went from " + std::to_string (launchWidth) + "x" + std::to_string (launchHeight)
+                        + " to " + std::to_string (width) + "x" + std::to_string (height) + " on screen " + when);
+        // AppKit applies the minimum whenever it places the window, which this
+        // case does not provoke, so the floor is held to its on-screen width
+        // too. The height also carries the title bar, which the scale grows.
+        const int minimum = onScreen (now[2], host.uiScale());
+        const int launchMinimum = onScreen (launchWindow[2], originalScale);
+        ctx.expect (std::abs (minimum - launchMinimum) <= 2,
+                    "the window's minimum width went from " + std::to_string (launchMinimum) + " to "
+                        + std::to_string (minimum) + " on screen " + when);
+       #else
+        (void) originalScale;
+        ctx.expect (now[2] == launchWindow[2] && now[3] == launchWindow[3],
+                    "the window's minimum went from the console's " + std::to_string (launchWindow[2]) + "x"
+                        + std::to_string (launchWindow[3]) + " to " + std::to_string (now[2]) + "x"
+                        + std::to_string (now[3]) + " " + when);
+       #endif
+    };
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
@@ -4450,28 +4587,31 @@ std::optional<ScenarioResult> runSettingsUiScale (GuiHost& host, ScenarioContext
         steps->push_back ({ 200, [&host, &ctx, position]
         { ctx.expect (host.pointerAudioSettings ("ui-scale", position, true),
                       "the UI scale slider was not visible"); } });
-    steps->push_back ({ 300, [&host, &ctx, originalSaved]
+    steps->push_back ({ 300, [&host, &ctx, originalSaved, windowHeld]
     {
         ctx.expect (host.uiScale() > 1.3 && host.uiScale() < 1.6,
                     "dragging did not preview the global UI scale");
+        windowHeld ("while the scale previewed");
         ctx.expect (nearly (appconfig::getUiScaleOverride(), originalSaved),
                     "the UI scale was persisted before release");
         ctx.expect (host.pointerAudioSettings ("ui-scale", 0.7f, false),
                     "the scale slider could not receive release");
     } });
-    steps->push_back ({ 300, [&host, &ctx]
+    steps->push_back ({ 300, [&host, &ctx, windowHeld]
     {
         const auto saved = appconfig::getUiScaleOverride();
         ctx.expect (saved > 1.5f && saved < 1.6f, "release did not persist the slider value");
         ctx.expect (std::abs (host.uiScale() - saved) < 0.001,
                     "the persisted scale differs from the displayed interface");
+        windowHeld ("after the slider was released");
         host.closeAudioSettings();
     } });
-    steps->push_back ({ 200, [&host, &ctx]
+    steps->push_back ({ 200, [&host, &ctx, windowHeld]
     {
         ctx.expect (! host.audioSettingsOpen(), "settings did not close");
         ctx.expect (std::abs (host.uiScale() - appconfig::getUiScaleOverride()) < 0.001,
                     "closing Settings discarded the scale");
+        windowHeld ("after Settings closed");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -5060,7 +5200,7 @@ std::optional<ScenarioResult> runStageAudioFlow (GuiHost& host, ScenarioContext&
     ctx.keep (track.strip.mute);
     engine.stop();
     const auto rate = engine.getCurrentSampleRate();
-    const auto frames = static_cast<std::int64_t> (rate * 5.0);
+    const auto frames = static_cast<std::int64_t> (rate * 15.0);
     std::vector<float> samples ((size_t) frames);
     for (std::int64_t i = 0; i < frames; ++i)
         samples[(size_t) i] = 0.125f * static_cast<float> (std::sin (6.283185307179586 * 440.0 * static_cast<double> (i) / rate));
@@ -5086,37 +5226,67 @@ std::optional<ScenarioResult> runStageAudioFlow (GuiHost& host, ScenarioContext&
     host.switchToStage (GuiHost::Stage::Recording);
     engine.getTransport().setPlayhead (0);
     engine.play();
-    auto previousPosition = std::make_shared<std::int64_t> (0);
-    auto overruns = std::make_shared<int> (0);
-    auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 300, [&engine, overruns] { *overruns = engine.getXRunCount(); } });
-    for (auto stage : { GuiHost::Stage::Mixing, GuiHost::Stage::Aux, GuiHost::Stage::Recording,
-                        GuiHost::Stage::Aux, GuiHost::Stage::Mixing, GuiHost::Stage::Recording })
+    struct Flow
     {
-        steps->push_back ({ 100, [&host, &ctx, stage]
-        { ctx.expect (host.clickStage (stage), "the stage button was not visible"); } });
-        steps->push_back ({ 150, [&ctx, &engine, previousPosition, overruns, stage]
+        std::int64_t position = 0;
+        int overruns = 0;
+    };
+    auto flow = std::make_shared<Flow>();
+    // The strip resets its output meter to -100 dB when it starts a block and
+    // publishes the peak when it finishes, so a read from this thread that
+    // lands inside a block sees silence while the tone plays on. The tone
+    // still has to show within the deadline, with the transport rolling,
+    // after every switch.
+    static constexpr int kSettleMs = 150;
+    static constexpr int kToneDeadlineMs = 1500;
+    auto run = std::make_shared<std::function<void (std::size_t)>>();
+    std::weak_ptr<std::function<void (std::size_t)>> weakRun = run;
+    *run = [&host, &ctx, &engine, flow, weakRun] (std::size_t index)
+    {
+        constexpr std::array<GuiHost::Stage, 6> stages { GuiHost::Stage::Mixing, GuiHost::Stage::Aux,
+                                                        GuiHost::Stage::Recording, GuiHost::Stage::Aux,
+                                                        GuiHost::Stage::Mixing, GuiHost::Stage::Recording };
+        if (index == stages.size()) { ctx.complete (ctx.verdict()); return; }
+        const auto stage = stages[index];
+        if (! ctx.expect (host.clickStage (stage), "the stage button was not visible"))
+        { ctx.complete (ctx.verdict()); return; }
+        ctx.later (kSettleMs, [&ctx, &engine, flow, stage, index, next = weakRun.lock()]
         {
-            const auto expected = stage == GuiHost::Stage::Recording ? AudioEngine::Stage::Recording
-                                : stage == GuiHost::Stage::Mixing ? AudioEngine::Stage::Mixing
-                                : AudioEngine::Stage::Aux;
-            ctx.expect (engine.getStage() == expected, "the stage button did not switch stages");
-            ctx.expect (engine.getTransport().isPlaying(), "switching stages stopped playback");
-            const auto at = engine.getTransport().getPlayhead();
-            ctx.expect (at > *previousPosition, "playback did not advance across a stage switch");
-            *previousPosition = at;
-            ctx.expect (engine.getChannelStrip (0).getOutLDb() > -30.0f,
-                        "the playback tone fell silent across a stage switch");
-            ctx.expect (engine.getXRunCount() == *overruns, "a stage switch caused an engine overrun");
-        } });
-    }
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+            ctx.waitUntil ([&engine]
+                           {
+                               return ! engine.getTransport().isPlaying()
+                                   || engine.getChannelStrip (0).getOutLDb() > -30.0f;
+                           },
+                           kToneDeadlineMs,
+                [&ctx, &engine, flow, stage, index, next]
+                {
+                    auto& transport = engine.getTransport();
+                    const auto expected = stage == GuiHost::Stage::Recording ? AudioEngine::Stage::Recording
+                                        : stage == GuiHost::Stage::Mixing ? AudioEngine::Stage::Mixing
+                                        : AudioEngine::Stage::Aux;
+                    ctx.expect (engine.getStage() == expected, "the stage button did not switch stages");
+                    if (! ctx.expect (transport.isPlaying(), "switching stages stopped playback"))
+                    { ctx.complete (ctx.verdict()); return; }
+                    const auto at = transport.getPlayhead();
+                    ctx.expect (at > flow->position, "playback did not advance across a stage switch");
+                    flow->position = at;
+                    ctx.expect (engine.getXRunCount() == flow->overruns,
+                                "a stage switch caused an engine overrun");
+                    ctx.later (100, [next, index] { (*next) (index + 1); });
+                }, "the playback tone fell silent across a stage switch");
+        });
+    };
+    ctx.later (300, [&engine, flow, run]
+    {
+        flow->overruns = engine.getXRunCount();
+        (*run) (0);
+    });
     return std::nullopt;
 }
 
 const ScenarioRegistrar stageAudioFlow { Scenario {
     "gui.stage_audio_flow", { "gui", "transport" }, Needs::Engine | Needs::Gui,
-    {}, {}, 10000,
+    {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runStageAudioFlow (host, ctx); }
 } };
 
@@ -6223,30 +6393,119 @@ const ScenarioRegistrar aboutDetails { Scenario {
 std::optional<ScenarioResult> runTimelineDrawer (GuiHost& host, ScenarioContext& ctx)
 {
     const bool expanded = host.timelineViewMatches (true);
-    ctx.cleanup ([&host, expanded]
+    const auto launchScale = static_cast<float> (host.uiScale());
+    ctx.cleanup ([&host, expanded, launchScale]
     {
         if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+        host.restoreUiScale (launchScale);
     });
     ctx.expect (host.timelineViewMatches (false), "the timeline is not collapsed at launch");
-    auto steps = std::make_shared<std::vector<Step>>();
-    for (const bool show : { true, false, true, false })
+    const auto anyCompact = [&host]
     {
-        steps->push_back ({ 0, [&host, &ctx, show]
+        for (int track = 0; track < Session::kNumTracks; ++track)
+            if (host.stripCompact (track)) return true;
+        return false;
+    };
+    const auto toggle = [&host, &ctx]
+    {
+        auto steps = std::make_shared<std::vector<Step>>();
+        for (const bool show : { true, false, true, false })
         {
-            ctx.expect (show ? host.pressKey ("T", 't') : host.pressKey ("command + \\", '\\'),
-                        "the timeline shortcut was not handled");
-        } });
-        steps->push_back ({ 100, [&host, &ctx, show]
-        {
-            ctx.expect (host.timelineViewMatches (show), "the timeline visibility did not follow its toggle");
-            for (int track = 0; track < Session::kNumTracks; ++track)
-                ctx.expect (host.stripCompact (track) == show,
-                            "timeline expansion left the wrong layout on strip " + std::to_string (track + 1));
-        } });
+            steps->push_back ({ 0, [&host, &ctx, show]
+            {
+                ctx.expect (show ? host.pressKey ("T", 't') : host.pressKey ("command + \\", '\\'),
+                            "the timeline shortcut was not handled");
+            } });
+            steps->push_back ({ 100, [&host, &ctx, show]
+            {
+                ctx.expect (host.timelineViewMatches (show), "the timeline visibility did not follow its toggle");
+                for (int track = 0; track < Session::kNumTracks; ++track)
+                    ctx.expect (host.stripCompact (track) == show,
+                                "timeline expansion left the wrong layout on strip " + std::to_string (track + 1));
+            } });
+        }
+        runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    };
+    if (! anyCompact())
+    {
+        toggle();
+        return std::nullopt;
     }
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    // A window too short for full-height strips compacts them on its own, which
+    // would hide the timeline doing it. At the smallest UI scale the same window
+    // is twice as tall in interface units.
+    host.restoreUiScale (appconfig::kUiScaleMin);
+    ctx.later (1000, [&ctx, anyCompact, toggle]
+    {
+        if (anyCompact())
+        {
+            ctx.complete (ScenarioResult::skip ("the window is too short for full-height strips even at the "
+                                                "smallest UI scale, so the timeline cannot be seen compacting them"));
+            return;
+        }
+        toggle();
+    });
     return std::nullopt;
 }
+
+// Opens the import browser on a folder of `files` empty WAVs, which takes it a
+// while to list, and runs `then` once it is listing.
+void browseCrowdedFolder (GuiHost& host, ScenarioContext& ctx, int files, std::function<void()> then)
+{
+    const auto crowded = ctx.tempDir() / "Crowded";
+    std::filesystem::create_directory (crowded);
+    for (int index = 0; index < files; ++index)
+        std::ofstream (crowded / ("take " + std::to_string (index) + ".wav"));
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (commandChord ('i'), 'i'), "the import shortcut was not handled"); } });
+    steps->push_back ({ 300, [&host, &ctx, crowded]
+    {
+        if (! ctx.expect (host.clickFileBrowserControl (true), "the import browser did not open")) return;
+        typeReplacing (host, crowded.string());
+        host.pressPeerKey ("Return", 0);
+    } });
+    steps->push_back ({ 200, [&host, &ctx, crowded]
+    {
+        ctx.expect (host.fileBrowserFolder().lexically_normal() == crowded.lexically_normal(),
+                    "the browser did not move to the crowded folder");
+    } });
+    runSteps (ctx, steps, std::move (then));
+}
+
+std::optional<ScenarioResult> runFileBrowserCancelScan (GuiHost& host, ScenarioContext& ctx)
+{
+    // Enough files that listing them takes the browser several seconds.
+    static constexpr int kFiles = 30000;
+    static constexpr int kStopMs = 1500;
+    ctx.cleanup ([&host] { drainModals (host); });
+    browseCrowdedFolder (host, ctx, kFiles, [&host, &ctx]
+    {
+        if (! host.fileBrowserScanning())
+        {
+            ctx.complete (ctx.verdict().status == ScenarioStatus::Pass
+                              ? ScenarioResult::skip ("the folder was listed before the browser could be cancelled")
+                              : ctx.verdict());
+            return;
+        }
+        ctx.expect (host.clickModalButton ("Cancel"), "the browser has no Cancel button");
+        ctx.later (100, [&host, &ctx]
+        {
+            ctx.expect (host.retiredFileBrowserScans() == 1, "the browser cancelled mid-scan was not kept for its scan");
+            ctx.waitUntil ([&host] { return host.retiredFileBrowserScans() == 0; }, kStopMs,
+                           [&ctx] { ctx.complete (ctx.verdict()); },
+                           "a browser cancelled mid-scan was still listing its folder "
+                               + std::to_string (kStopMs) + " ms later");
+        });
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar fileBrowserCancelScan { Scenario {
+    "gui.file_browser_cancel_scan", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserCancelScan (host, ctx); }
+} };
 
 const ScenarioRegistrar timelineDrawer { Scenario {
     "gui.timeline_drawer", { "gui", "timeline" }, Needs::Engine | Needs::Gui,
@@ -7361,39 +7620,48 @@ std::optional<ScenarioResult> runBusHpfKnob (GuiHost& host, ScenarioContext& ctx
         } });
     }
 
+    // Second pass with the timeline open: the strips compact and the EQ header
+    // becomes the pill, which carries the same menu.
+    const bool expanded = host.timelineViewMatches (true);
+    ctx.cleanup ([&host, expanded] { host.setTimelineShown (expanded); });
     const std::string lfTitle = "Bus 1 EQ low shelf gain";
-    steps->push_back ({ 100, [&bus]
+    for (const bool compact : { false, true })
     {
-        bus.hpfFreq.store (150.0f);
-        bus.hpfEnabled.store (true);
-        bus.eqLfGainDb.store (4.5f);
-    } });
-    steps->push_back ({ 100, [&host, &ctx, title, lfTitle]
-    {
-        std::string hpf, lf, help;
-        const bool hpfFound = host.accessibleControl (title, hpf, help);
-        const bool lfFound = host.accessibleControl (lfTitle, lf, help);
-        ctx.expect (hpfFound && hpf == "150",
-                    "a 150 Hz highpass set in the session shows " + hpf + " on the strip knob");
-        ctx.expect (lfFound && lf == "4.5", "a +4.5 dB LF set in the session shows " + lf + " on the strip knob");
-        ctx.expect (host.clickStripControl (GuiHost::StripKind::Bus, 0, "eq", 1, true),
-                    "the bus EQ header did not take a right-click");
-    } });
-    steps->push_back ({ 100, [&host, &ctx]
-    { ctx.expect (host.clickContextMenuItem ("Reset EQ"), "the bus EQ menu has no Reset EQ"); } });
-    steps->push_back ({ 100, [&host, &ctx, &bus, title, lfTitle]
-    {
-        ctx.expect (! bus.hpfEnabled.load() && std::abs (bus.hpfFreq.load() - BusParams::kHpfOffHz) < 0.5f,
-                    "Reset EQ left the bus highpass at " + std::to_string (bus.hpfFreq.load()) + " Hz, "
-                        + (bus.hpfEnabled.load() ? "on" : "off"));
-        ctx.expect (std::abs (bus.eqLfGainDb.load()) < 1.0e-6f, "Reset EQ left the LF gain up");
-        ctx.expect (bus.eqEnabled.load(), "Reset EQ bypassed the bus EQ");
-        std::string hpf, lf, help;
-        const bool hpfFound = host.accessibleControl (title, hpf, help);
-        const bool lfFound = host.accessibleControl (lfTitle, lf, help);
-        ctx.expect (hpfFound && hpf == "OFF", "after Reset EQ the strip's highpass knob shows " + hpf);
-        ctx.expect (lfFound && lf == "0.0", "after Reset EQ the strip's LF knob shows " + lf);
-    } });
+        const std::string layout = compact ? " with the timeline open" : "";
+        steps->push_back ({ 100, [&host, &bus, compact]
+        {
+            if (compact) host.setTimelineShown (true);
+            bus.hpfFreq.store (150.0f);
+            bus.hpfEnabled.store (true);
+            bus.eqLfGainDb.store (4.5f);
+        } });
+        steps->push_back ({ 100, [&host, &ctx, title, lfTitle, layout]
+        {
+            std::string hpf, lf, help;
+            const bool hpfFound = host.accessibleControl (title, hpf, help);
+            const bool lfFound = host.accessibleControl (lfTitle, lf, help);
+            ctx.expect (hpfFound && hpf == "150",
+                        "a 150 Hz highpass set in the session shows " + hpf + " on the strip knob" + layout);
+            ctx.expect (lfFound && lf == "4.5", "a +4.5 dB LF set in the session shows " + lf + " on the strip knob" + layout);
+            ctx.expect (host.clickStripControl (GuiHost::StripKind::Bus, 0, "eq", 1, true),
+                        "the bus EQ header did not take a right-click" + layout);
+        } });
+        steps->push_back ({ 100, [&host, &ctx, layout]
+        { ctx.expect (host.clickContextMenuItem ("Reset EQ"), "the bus EQ menu has no Reset EQ" + layout); } });
+        steps->push_back ({ 100, [&host, &ctx, &bus, title, lfTitle, layout]
+        {
+            ctx.expect (! bus.hpfEnabled.load() && std::abs (bus.hpfFreq.load() - BusParams::kHpfOffHz) < 0.5f,
+                        "Reset EQ" + layout + " left the bus highpass at " + std::to_string (bus.hpfFreq.load()) + " Hz, "
+                            + (bus.hpfEnabled.load() ? "on" : "off"));
+            ctx.expect (std::abs (bus.eqLfGainDb.load()) < 1.0e-6f, "Reset EQ" + layout + " left the LF gain up");
+            ctx.expect (bus.eqEnabled.load(), "Reset EQ" + layout + " bypassed the bus EQ");
+            std::string hpf, lf, help;
+            const bool hpfFound = host.accessibleControl (title, hpf, help);
+            const bool lfFound = host.accessibleControl (lfTitle, lf, help);
+            ctx.expect (hpfFound && hpf == "OFF", "after Reset EQ" + layout + " the strip's highpass knob shows " + hpf);
+            ctx.expect (lfFound && lf == "0.0", "after Reset EQ" + layout + " the strip's LF knob shows " + lf);
+        } });
+    }
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -7414,28 +7682,45 @@ std::optional<ScenarioResult> runWindowKeys (GuiHost& host, ScenarioContext& ctx
         if (host.fullScreen() != fullscreen) host.pressKey ("F11");
         if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
     });
-    auto steps = std::make_shared<std::vector<Step>>();
-    for (const bool restore : { false, true })
+    // macOS animates into and out of full screen: the state flips when the
+    // animation starts, and a toggle made before it ends is dropped. So each
+    // F11 waits for the state and then for the animation.
+    static constexpr int kFullScreenAnimationMs = 1500;
+    const auto round = [&host, &ctx, fullscreen, expanded] (bool restore, std::function<void()> next)
     {
-        steps->push_back ({ 100, [&host, &ctx]
-        { ctx.expect (host.pressKey ("F11"), "F11 was not handled"); } });
-        steps->push_back ({ 300, [&host, &ctx, fullscreen, restore]
-        { ctx.expect (host.fullScreen() == (restore ? fullscreen : ! fullscreen), "F11 did not toggle the native window state"); } });
-        steps->push_back ({ 100, [&host, &ctx]
-        { ctx.expect (host.pressKey ("command + " + keyCodeDescription ('\\'), (char) 0x1c),
-          "the timeline window shortcut was not handled"); } });
-        steps->push_back ({ 100, [&host, &ctx, expanded, restore]
-        { ctx.expect (host.timelineViewMatches (restore ? expanded : ! expanded), "the timeline shortcut did not toggle visibility"); } });
-    }
-    steps->push_back ({ 100, [&host] { host.openAbout(); } });
-    steps->push_back ({ 200, [&host, &ctx]
+        ctx.expect (host.pressKey ("F11"), "F11 was not handled");
+        const bool wanted = restore ? fullscreen : ! fullscreen;
+        ctx.waitUntil ([&host, wanted] { return host.fullScreen() == wanted; }, 5000,
+                       [&host, &ctx, expanded, restore, next]
+                       {
+                           ctx.later (kFullScreenAnimationMs, [&host, &ctx, expanded, restore, next]
+                           {
+                               ctx.expect (host.pressKey ("command + " + keyCodeDescription ('\\'), (char) 0x1c),
+                                           "the timeline window shortcut was not handled");
+                               ctx.later (100, [&host, &ctx, expanded, restore, next]
+                               {
+                                   ctx.expect (host.timelineViewMatches (restore ? expanded : ! expanded),
+                                               "the timeline shortcut did not toggle visibility");
+                                   next();
+                               });
+                           });
+                       },
+                       "F11 did not toggle the native window state");
+    };
+    const auto escapeCheck = [&host, &ctx]
     {
-        ctx.expect (! host.modalStackEmpty(), "About did not open for the Escape check");
-        ctx.expect (host.pressPeerKey ("escape"), "the focused modal did not handle Escape");
-    } });
-    steps->push_back ({ 300, [&host, &ctx]
-    { ctx.expect (host.modalStackEmpty(), "Escape left the modal open"); } });
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+        auto steps = std::make_shared<std::vector<Step>>();
+        steps->push_back ({ 100, [&host] { host.openAbout(); } });
+        steps->push_back ({ 200, [&host, &ctx]
+        {
+            ctx.expect (! host.modalStackEmpty(), "About did not open for the Escape check");
+            ctx.expect (host.pressPeerKey ("escape"), "the focused modal did not handle Escape");
+        } });
+        steps->push_back ({ 300, [&host, &ctx]
+        { ctx.expect (host.modalStackEmpty(), "Escape left the modal open"); } });
+        runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    };
+    ctx.later (100, [round, escapeCheck] { round (false, [round, escapeCheck] { round (true, escapeCheck); }); });
     return std::nullopt;
 }
 
@@ -8669,6 +8954,7 @@ std::optional<ScenarioResult> runMidiBindingsPanel (GuiHost& host, ScenarioConte
     std::ofstream (broken) << "not a bindings preset";
     const auto browse = [&host, &ctx] (const std::filesystem::path& path, const std::string& accept)
     {
+        expectBrowserInHome (host, ctx, "the " + accept + " browser");
         if (! ctx.expect (host.focusFileName(), "the file browser has no name field")) return;
         host.pressPeerKey ("command + A");
         for (const char character : path.string())
@@ -10145,8 +10431,10 @@ std::optional<ScenarioResult> runPianoEditKeys (GuiHost& host, ScenarioContext& 
     });
     track.mode.store ((int) Track::Mode::Midi);
     track.frozen.store (false);
+    // Long enough that a quarter-view pan stops well short of the end on any
+    // window, so Cmd+Right, End and Cmd+Left each land somewhere different.
     MidiRegion region;
-    region.lengthInTicks = kMidiTicksPerQuarter * 64;
+    region.lengthInTicks = kMidiTicksPerQuarter * 512;
     region.lengthInSamples = session.ticksToSamples (region.lengthInTicks, engine.getCurrentSampleRate());
     region.notes = { { 1, 60, 100, 240, 120 }, { 1, 60, 100, 360, 120 }, { 1, 67, 85, 600, 240 } };
     const auto original = region.notes;
@@ -10265,7 +10553,10 @@ std::optional<ScenarioResult> runPianoEditKeys (GuiHost& host, ScenarioContext& 
         ctx.expect (host.focusPiano() && host.pressPeerKey ("home"), "Home was not handled");
         ctx.expect (host.pianoViewport()[1] < 0.5, "Home did not jump the view to the region start");
         ctx.expect (host.focusPiano() && host.pressPeerKey ("end"), "End was not handled");
-        ctx.expect (host.pianoViewport()[1] > *scroll, "End did not jump the view to the region end");
+        ctx.expect (host.pianoViewport()[1] > *scroll,
+                    "End did not jump the view to the region end: it scrolled to "
+                        + std::to_string ((int) host.pianoViewport()[1]) + " px, Cmd+Right to "
+                        + std::to_string ((int) *scroll));
         ctx.expect (host.focusPiano() && host.pressPeerKey ("command + cursor left"),
                     "the pan-left key was not handled");
     } });

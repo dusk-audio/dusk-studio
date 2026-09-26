@@ -6,10 +6,15 @@
 #include <lv2/urid/urid.h>
 
 #include <X11/Xlib.h>
+#include <unistd.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <new>
+#include <string>
+#include <system_error>
 
 namespace
 {
@@ -19,6 +24,28 @@ constexpr const char* kUiUri = "urn:duskstudio:test:file-state#ui";
 constexpr const char* kTouchedProperty = "urn:duskstudio:test:file-state#mu";
 constexpr float kTouchedValue = 0.625f;
 constexpr uint32_t kControlInPort = 5;
+constexpr uint32_t kGainPort = 4;
+
+// What the host sent this UI is otherwise invisible from outside it. A scenario
+// that wants to check it creates this file before opening the editor; the UI
+// then empties it on open and rewrites it with every Gain value the host sends.
+// The GUI scenario gui.lv2_editor_reflects_state builds the same name. When the
+// file does not exist the UI writes nothing.
+std::string probePath()
+{
+    std::error_code error;
+    auto dir = std::filesystem::temp_directory_path (error);
+    if (error) dir = "/tmp";
+    return (dir / ("dusk-lv2-ui-probe-" + std::to_string ((long) ::getpid()))).string();
+}
+
+bool writeProbe (const std::string& path, const char* text)
+{
+    auto* file = std::fopen (path.c_str(), "w");
+    if (file == nullptr) return false;
+    std::fputs (text, file);
+    return std::fclose (file) == 0;
+}
 
 template <typename T>
 T* feature (const LV2_Feature* const* features, const char* uri)
@@ -34,6 +61,7 @@ struct Ui
 {
     Display* display = nullptr;
     Window window = 0;
+    std::string probe;
 };
 
 // What a JUCE-built LV2 UI does the moment it comes up: push its parameters to
@@ -77,6 +105,9 @@ LV2UI_Handle instantiate (const LV2UI_Descriptor*, const char*, const char*,
     auto* self = new (std::nothrow) Ui;
     if (self == nullptr) { XCloseDisplay (display); return nullptr; }
     self->display = display;
+    std::error_code error;
+    if (auto path = probePath(); std::filesystem::exists (path, error) && writeProbe (path, ""))
+        self->probe = std::move (path);
     self->window = XCreateSimpleWindow (display, (Window) (uintptr_t) parent, 0, 0, 160, 80, 0,
                                         BlackPixel (display, DefaultScreen (display)),
                                         BlackPixel (display, DefaultScreen (display)));
@@ -99,7 +130,18 @@ void cleanup (LV2UI_Handle handle)
     delete self;
 }
 
-void portEvent (LV2UI_Handle, uint32_t, uint32_t, uint32_t, const void*) {}
+void portEvent (LV2UI_Handle handle, uint32_t port, uint32_t size, uint32_t format,
+                const void* buffer)
+{
+    auto* self = static_cast<Ui*> (handle);
+    if (self == nullptr || self->probe.empty() || buffer == nullptr) return;
+    if (port != kGainPort || format != 0 || size != sizeof (float)) return;
+    float value = 0.0f;
+    std::memcpy (&value, buffer, sizeof (value));
+    char text[32];
+    std::snprintf (text, sizeof (text), "%.9g\n", (double) value);
+    writeProbe (self->probe, text);
+}
 
 const void* extensionData (const char*) { return nullptr; }
 

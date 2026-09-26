@@ -126,6 +126,27 @@ TEST_CASE ("dusk::fs special locations match juce::File", "[foundation][fs]")
         REQUIRE (fs::userMusicDir() == jucePath (juce::File::userMusicDirectory));
     }
 
+    SECTION ("userDocumentsDir")
+    {
+        REQUIRE (fs::userDocumentsDir() == jucePath (juce::File::userDocumentsDirectory));
+    }
+
+#if ! defined(_WIN32)
+    SECTION ("home and Documents follow $HOME")
+    {
+        const char* previous = std::getenv ("HOME");
+        const std::string saved = previous != nullptr ? previous : "";
+        const auto home = stdfs::temp_directory_path() / ("dusk-fs-home-" + std::to_string ((long) ::getpid()));
+        REQUIRE (::setenv ("HOME", home.c_str(), 1) == 0);
+        const auto homeDir = fs::userHomeDir();
+        const auto documents = fs::userDocumentsDir();
+        if (previous != nullptr) ::setenv ("HOME", saved.c_str(), 1);
+        else                     ::unsetenv ("HOME");
+        REQUIRE (homeDir == home);
+        REQUIRE (documents == home / "Documents");
+    }
+#endif
+
     SECTION ("tempDir")
     {
 #if defined(__linux__) || defined(_WIN32)
@@ -193,7 +214,7 @@ TEST_CASE ("Special locations preserve Unicode paths end to end",
     std::error_code ec;
     stdfs::remove_all (root, ec);
     ec.clear();
-    for (const auto* child : { "Home", "Config", "Music", "Temp" })
+    for (const auto* child : { "Home", "Config", "Music", "Documents", "Temp" })
     {
         REQUIRE (stdfs::create_directories (root / child, ec));
         REQUIRE_FALSE (ec);
@@ -214,6 +235,7 @@ TEST_CASE ("Special locations preserve Unicode paths end to end",
         REQUIRE (fs::userHomeDir() == root / "Home");
         REQUIRE (fs::userConfigDir() == root / "Config");
         REQUIRE (fs::userMusicDir() == root / "Music");
+        REQUIRE (fs::userDocumentsDir() == root / "Documents");
         REQUIRE (fs::tempDir() == root / "Temp");
 
         const auto session = root / "Home" / stdfs::u8path (u8"session-\u66f8\u304d\u51fa\u3057");

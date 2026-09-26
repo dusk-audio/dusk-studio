@@ -60,6 +60,7 @@
 #include "../../foundation/AutoResetEvent.h"
 #include "../../foundation/MessageThread.h"
 #include "../JuceCompat.h"
+#include "platform/ChildAppKit.h"
 #include "platform/IpcChannel.h"
 #include "platform/IpcShm.h"
 #include "platform/IpcSync.h"
@@ -1624,6 +1625,9 @@ int runIpcHost (int argc, const char* const* argv) noexcept
         return 1;
     }
 
+   #if JUCE_MAC
+    ipcp::prepareChildAppKit();
+   #endif
     juce::ScopedJuceInitialiser_GUI juceInit;
 
     duskstudio::juce_compat::addDefaultFormats (host.formatManager);

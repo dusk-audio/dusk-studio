@@ -18,6 +18,7 @@
 #include "EmbeddedModal.h"
 #include "MidiBindingsPanel.h"
 #include "DuskContextMenu.h"
+#include "DuskFileBrowser.h"
 #include "DpImportDialog.h"
 #include "MultiImportTargetPicker.h"
 #include "DuskAlerts.h"
@@ -1181,6 +1182,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::string startupChoice() const override { return startupChoiceMade; }
     double uiScale() const override { return embedscale::globalScale(); }
     void restoreUiScale (float scale) override { owner.restoreUiScaleForScenario (scale); }
+    std::vector<int> mainWindowSize() const override
+    {
+        auto* window = owner.getTopLevelComponent();
+        auto* peer = window != nullptr ? window->getPeer() : nullptr;
+        auto* limits = peer != nullptr ? peer->getConstrainer() : nullptr;
+        if (limits == nullptr) return {};
+        return { window->getWidth(), window->getHeight(), limits->getMinimumWidth(), limits->getMinimumHeight() };
+    }
     int tapeExpansionState() const override
     {
         const bool displayed = owner.tapeStrip->isVisible() && ! owner.tapeStrip->getBounds().isEmpty();
@@ -1346,6 +1355,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                 }
         return false;
     }
+    std::filesystem::path fileBrowserFolder() const override { return filebrowser::shownFolderForScenario(); }
+    bool fileBrowserScanning() const override { return filebrowser::shownFolderScanningForScenario(); }
+    int retiredFileBrowserScans() const override { return filebrowser::retiredScansForScenario(); }
     bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 
     bool openMidiIo (int index) override

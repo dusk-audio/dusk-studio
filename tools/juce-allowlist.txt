@@ -90,7 +90,7 @@ src/ui/DuskComboBox.cpp	190
 src/ui/DuskComboBox.h	5
 src/ui/DuskContextMenu.cpp	51
 src/ui/DuskContextMenu.h	8
-src/ui/DuskFileBrowser.cpp	70
+src/ui/DuskFileBrowser.cpp	69
 src/ui/DuskFileBrowser.h	12
 src/ui/DuskLabelEditor.h	3
 src/ui/DuskMenuBar.h	29
@@ -115,7 +115,7 @@ src/ui/MasterStripComponent.cpp	328
 src/ui/MasterStripComponent.h	55
 src/ui/MasteringView.cpp	149
 src/ui/MasteringView.h	27
-src/ui/MidiBindingsPanel.cpp	48
+src/ui/MidiBindingsPanel.cpp	46
 src/ui/MidiBindingsPanel.h	15
 src/ui/MiniTimelineStrip.cpp	19
 src/ui/MiniTimelineStrip.h	10
@@ -128,7 +128,7 @@ src/ui/PlatformWindowing.h	14
 src/ui/PlatformWindowing_Linux.cpp	15
 src/ui/PlatformWindowing_Mac.mm	19
 src/ui/PlatformWindowing_Windows.cpp	7
-src/ui/PluginPickerHelpers.cpp	135
+src/ui/PluginPickerHelpers.cpp	130
 src/ui/PluginPickerHelpers.h	23
 src/ui/PluginPickerPanel.cpp	70
 src/ui/PluginPickerPanel.h	13
@@ -156,7 +156,7 @@ src/ui/WindowState.cpp	7
 src/ui/WindowState.h	5
 src/ui/multisample/AriaGuiComponent.cpp	90
 src/ui/multisample/AriaGuiComponent.h	17
-src/ui/multisample/DuskMultisampleEditor.cpp	67
+src/ui/multisample/DuskMultisampleEditor.cpp	65
 src/ui/multisample/DuskMultisampleEditor.h	21
 src/ui/multisample/SfzLibraryPanel.cpp	65
 src/ui/multisample/SfzLibraryPanel.h	15

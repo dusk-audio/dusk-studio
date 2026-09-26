@@ -5,6 +5,7 @@
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 #include "../session/MidiBindings.h"
+#include "../foundation/Fs.h"
 #include <algorithm>
 
 namespace duskstudio
@@ -181,8 +182,7 @@ void MidiBindingsPanel::exportPreset()
 {
     // Default to ~/Documents/<dusk-studio-bindings>.json. The user picks the
     // final path; we just seed the dialog with something sensible.
-    const auto defaultDir = juce::File::getSpecialLocation (
-        juce::File::userDocumentsDirectory);
+    const juce::File defaultDir (dusk::fs::userDocumentsDir().u8string());
     auto safe = safePointer (this);
     filebrowser::open (*this, {
         /*title*/                  "Save MIDI bindings preset",
@@ -223,8 +223,7 @@ void MidiBindingsPanel::exportPreset()
 
 void MidiBindingsPanel::importPreset()
 {
-    const auto defaultDir = juce::File::getSpecialLocation (
-        juce::File::userDocumentsDirectory);
+    const juce::File defaultDir (dusk::fs::userDocumentsDir().u8string());
     auto safe = safePointer (this);
     filebrowser::open (*this, {
         /*title*/                  "Load MIDI bindings preset",

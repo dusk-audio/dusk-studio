@@ -442,15 +442,22 @@ scripts/regress.sh                       # linux (the default target)
 scripts/regress.sh linux --perf          # plus the headless engine perf suite
 scripts/regress.sh linux --vst3 ~/.vst3/Multi-Q.vst3
 scripts/regress.sh linux --scenarios-only
+scripts/regress.sh linux --tarball /path/to/dusk-studio-X.Y.Z-Linux-x86_64.tar.xz
+scripts/regress.sh linux --release-run 1234567890
 scripts/regress.sh mac
 scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
 scripts/regress.sh windows --release-run 1234567890
 scripts/regress.sh all --perf --msi /path/to/installer.msi
+scripts/regress.sh all --release-run 1234567890
 ```
 
 `all` routes each option to the platform that owns it, so one command line can
 carry Linux, macOS and Windows options at once. An option no platform claims is
-a usage error rather than a silently ignored word.
+a usage error rather than a silently ignored word. `--release-run` has two
+owners, Linux and Windows, and goes to both: `all --release-run <id>` tests the
+Linux tarball and the Windows MSI of the same `release.yml` run. With
+`--tarball` on the same line, Linux tests that tarball and the release run goes
+to Windows alone.
 
 Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
 `scripts/regress/{linux,mac,windows}.sh` over the shared leg bookkeeping in
@@ -470,13 +477,15 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 | `build-app` / `build-tests` | both targets compile at `-j6`. |
 | `ctest` | the Catch2 suite in `build-tests/`. |
 | `juce-gate` | `tools/juce-gate.sh`: no file gained JUCE and no listed file gained occurrences. |
-| `selftest-xvfb` | `scripts/run-selftest-xvfb.sh` - the headless audio self-test on a private X display. |
+| `selftest-xvfb` | `scripts/run-selftest-xvfb.sh` - the headless audio self-test on a private X display, with `DUSKSTUDIO_CLAP_STATE_FIXTURE` pointing at the multi-bus CLAP fixture when `build-tests/` has it, so the clone-track leg runs instead of skipping. |
 | `ipc-selftest` | `DUSKSTUDIO_RUN_IPC_SELFTEST=1`: the shm + futex round-trip against the `dusk-studio-plugin-host` stub. |
 | `ipc-host-test` | `DUSKSTUDIO_IPC_HOST_TEST=<plugin>`: a real plugin loaded out-of-process, 1000 stereo blocks, signal asserted modified. Uses `--vst3`, else the first `~/.vst3/*.vst3`; `SKIP` when there is none. |
 | `perf-suite` | `DUSKSTUDIO_RUN_PERF_TEST=1` across the (rate, buffer, load) matrix. Off unless `--perf`. |
+| `scenario-fixtures` | every logical fixture the scenarios name resolves under `DUSKSTUDIO_FIXTURE_DIR`; `SKIP` naming the ones that do not. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
 | `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui`: the plugin-editor scenarios that need a window. Off unless `--gui-scenarios` - it is the slowest leg and the most sensitive to GLX under Xvfb. |
+| `gui-plugin-picker`, `gui-settings-defaults` | `tests/gui_plugin_picker.sh` and `tests/gui_settings_defaults.sh` against the same binary: the two GUI cases that need a seeded config, which the suite runs without (the picker case skips there). With `--gui-scenarios` only. |
 | `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
 | `github-ruleset` | the `main` ruleset requires the six CI checks a merge has to pass (Linux amd64 and arm64, macOS, Windows, TSan, ASan+UBSan); `WARN` names the missing ones. Needs an authenticated `gh`. Off unless `--release-checks`. |
 | `patreon-freshness` | Part 10 step 2: no local name overrides, the supporter header at the donor pin, the Patreon dry run. `WARN` when the dry run refreshed tokens, which means the Actions secrets need updating before the tag. Off unless `--release-checks`. |
@@ -496,6 +505,46 @@ no leg may ever launch it on the desktop.
 
 `DUSK_REGRESS_BUILD_LOCK=/path/to/lockfile` wraps the two compile legs in
 `flock` when something else may be building the same tree.
+
+A fixture that does not resolve is reported, never passed over.
+`scenario-fixtures` reads the logical fixture table from
+`src/engine/scenario/ScenarioFixtures.cpp` and checks each name against
+`DUSKSTUDIO_FIXTURE_DIR`; any that is missing turns the row into `SKIP` and
+names it, because some cases treat a fixture as optional and pass with that
+part left out. A case the suite skipped with `missing fixture:` also gets a
+`SKIP` row of its own, `scenarios-headless:fixtures` or
+`scenarios-gui:fixtures`, under the leg that ran it.
+
+#### Package mode
+
+`--tarball <path>` or `--release-run <id>` points the Linux legs at a release
+tarball instead of `build/`, installed the way a user installs it.
+`--release-run` downloads the `release-linux-<arch>` artifact of that
+`release.yml` run with `gh run download`; the artifact is kept for one day, so
+run the gate the day the candidate is built. Everything is unpacked and
+installed under one scratch directory, `/tmp/duskstudio-regress-package.*`,
+which is removed on exit, Ctrl-C included.
+
+The source legs (`configure-check`, `build-app`, `build-tests`, `ctest`,
+`juce-gate`) are reported as `SKIP`: they build and test the checkout, which
+says nothing about the package. `--gui-scenarios` is implied. In their place:
+
+| Leg | What it proves |
+|---|---|
+| `package-fetch` | `--release-run` only: the run's Linux tarball downloaded. Prints the run's workflow, branch, commit, status and conclusion. |
+| `package-extract` | the file name is `dusk-studio-X.Y.Z-Linux-<arch>.tar.xz` for this machine's architecture, and it unpacks to both executables and `install.sh`. Notes when the package version differs from the checkout's `VERSION`, since fixtures and black-box expectations come from the checkout. |
+| `package-smoke` | `scripts/release-smoke-test.sh linux` against the tarball, in a private `HOME`: version, `packaging/contents.txt`, and the bounded headless self-test. |
+| `package-libs` | `ldd` on this machine, which did not build the package: every library of both executables resolves, none from the checkout, and neither carries an `RPATH` or `RUNPATH`. |
+| `package-install` | the tarball's own `install.sh` into a scratch `HOME` with every XDG directory under it: program directory, `~/.local/bin/DuskStudio` launcher, desktop entry with its `Exec=` rewritten, icon, MIME type and AppStream file, the installed binary identical to the tarball's, and the launcher reporting the package version. |
+| `package-fixtures` | the fixture plug-ins the scenarios load. A package ships none, so every `dusk-studio-*-fixture` target in `build-tests/` is built from this checkout at `-j6`; `build-tests/` is configured first when it is not yet. The test binary is not built. |
+| `package-uninstall` | `install.sh --uninstall` in the same `HOME` takes every installed path back out. Runs after the scenarios. |
+
+The self-test, IPC and scenario legs then run unchanged against the installed
+launcher, `~/.local/bin/DuskStudio` in the scratch `HOME`, as a user starts it
+from `PATH`. If the install fails they run the extracted binary instead and say
+so, and the run still fails on `package-install`. Each launch keeps its own
+private `HOME`, XDG directories, runtime directory, `DUSKSTUDIO_CONFIG_DIR` and
+`DUSKSTUDIO_MUSIC_DIR`, as in a source run.
 
 #### Scenario legs
 
@@ -575,7 +624,7 @@ APP=build/DuskStudio_artefacts/Release/DuskStudio
 xvfb_run 60  env DUSKSTUDIO_RUN_SCENARIOS=list "$APP"
 xvfb_run 600 env DUSKSTUDIO_RUN_SCENARIOS=all DUSKSTUDIO_FIXTURE_DIR="$FIX" "$APP"
 xvfb_run 300 env DUSKSTUDIO_RUN_SCENARIOS=midi.panic_all_paths,tag:lv2 DUSKSTUDIO_FIXTURE_DIR="$FIX" "$APP"
-xvfb_run 300 env DUSKSTUDIO_RUN_SCENARIOS=gui DUSKSTUDIO_FIXTURE_DIR="$FIX" "$APP"
+xvfb_run 900 env DUSKSTUDIO_RUN_SCENARIOS=gui DUSKSTUDIO_FIXTURE_DIR="$FIX" "$APP"
 ```
 
 `all` runs every headless scenario except the ones tagged `helper` (set-up
@@ -605,10 +654,12 @@ Your Music folder is kept out the same way. The launch session starts under
 fresh temp directory the app removes at exit, so a run's autosaves, takes and
 bounces never land among your sessions; the Save As, New Session, bounce and
 import browsers start there too. `scripts/run-selftest-xvfb.sh` makes a per-run
-one, and the regression legs point it at `Music` in their private `HOME`.
-`gui.first_launch` fails when the launch session is inside your own Music
-folder. The private `HOME` still matters for everything else the app and its
-libraries write under it. A desktop session exports the `XDG_*_HOME`
+one, and the regression legs point it at a `music` directory beside their
+private `HOME`, not inside it. `gui.first_launch` fails when the launch session
+is inside your own Music folder, and the private `HOME`'s `Music` is exactly
+that as far as the app can tell. The private `HOME` still matters for
+everything else the app and its libraries write under it. A desktop session
+exports the `XDG_*_HOME`
 variables as absolute paths into the real home, so they move with it.
 `PIPEWIRE_RUNTIME_DIR` keeps the real runtime directory for PipeWire alone:
 without it the engine cannot find the PipeWire socket, falls back to ALSA and

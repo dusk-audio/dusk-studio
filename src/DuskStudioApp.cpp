@@ -14,6 +14,7 @@
 #endif
 #include "ui/ConsoleView.h"
 #include "ui/MainComponent.h"
+#include "ui/NativeEditorEmbedScale.h"
 #include "ui/WindowState.h"
 #include "engine/AudioEngine.h"
 #include "engine/AudioPipelineSelfTest.h"
@@ -109,6 +110,13 @@ public:
         // Min height keeps the console usable; the tape strip is collapsible
         // so we don't need to budget for it in the floor.
         refreshResizeLimits();
+       #if defined(__APPLE__)
+        // AppKit keeps the title bar clear of the menu bar by itself. The
+        // framework's own on-screen margins compare the frame in zoomed units
+        // with the display's area in unzoomed ones, so at any UI scale but 1
+        // they push the window down each time macOS places it.
+        getConstrainer()->setMinimumOnscreenAmounts (0, 0, 0, 0);
+       #endif
 
         // Restore the prior window position and size, but deliberately do not
         // restore fullscreen. Fullscreen is a temporary viewing mode exposed
@@ -208,9 +216,19 @@ public:
             contentInsetHeight = std::max (0, getHeight() - content->getHeight());
         }
 
-        const int minimumWidth = consolelayout::responsiveMinimumMainComponentWidth()
+       #if defined(__APPLE__)
+        // On macOS the floor holds its size on screen when the UI is zoomed in.
+        // Kept in zoomed units it would outgrow the display, and macOS applies
+        // it each time it places the window, which then stays that big after
+        // the zoom comes back down.
+        configuredZoom = embedscale::globalScale();
+        const double zoom = std::max (1.0, configuredZoom);
+       #else
+        const double zoom = 1.0;
+       #endif
+        const int minimumWidth = (int) std::ceil (consolelayout::responsiveMinimumMainComponentWidth() / zoom)
                                + contentInsetWidth + frameWidth;
-        const int minimumHeight = 750 + contentInsetHeight + frameHeight;
+        const int minimumHeight = (int) std::ceil (750.0 / zoom) + contentInsetHeight + frameHeight;
         if (minimumWidth == configuredMinimumWidth
             && minimumHeight == configuredMinimumHeight)
             return;
@@ -219,6 +237,15 @@ public:
         configuredMinimumHeight = minimumHeight;
         setResizeLimits (minimumWidth, minimumHeight, 32768, 32768);
     }
+
+   #if defined(__APPLE__)
+    void resized() override
+    {
+        DocumentWindow::resized();
+        if (std::abs (embedscale::globalScale() - configuredZoom) > 1.0e-6)
+            refreshResizeLimits();
+    }
+   #endif
 
     void closeButtonPressed() override
     {
@@ -260,6 +287,9 @@ public:
 private:
     int configuredMinimumWidth = 0;
     int configuredMinimumHeight = 0;
+   #if defined(__APPLE__)
+    double configuredZoom = 1.0;
+   #endif
 };
 
 DuskStudioApp::DuskStudioApp() = default;

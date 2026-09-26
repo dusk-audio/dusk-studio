@@ -158,6 +158,12 @@ public:
     virtual std::filesystem::path executableDirectory() const = 0;
     virtual void refreshMasteringSource() = 0;
     virtual bool focusFileName() = 0;
+    // The folder the topmost file browser lists; empty when none is on top.
+    virtual std::filesystem::path fileBrowserFolder() const = 0;
+    // True while the topmost file browser is still listing its folder.
+    virtual bool fileBrowserScanning() const = 0;
+    // File browsers closed while listing a folder whose scan has not stopped yet.
+    virtual int retiredFileBrowserScans() const = 0;
     virtual bool clickFileBrowserControl (bool path) = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
     virtual bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) = 0;
@@ -241,6 +247,10 @@ public:
     virtual std::string startupChoice() const = 0;
     virtual double uiScale() const = 0;
     virtual void restoreUiScale (float scale) = 0;
+    // The main window's width and height, then the smallest width and height it
+    // may be sized to, all in interface units before the UI scale. Empty
+    // without a window.
+    virtual std::vector<int> mainWindowSize() const = 0;
     virtual int tapeExpansionState() const = 0;
     virtual int timelineChaseState() const = 0;
     virtual bool openRegionEditor (int track, int region, bool midi) = 0;

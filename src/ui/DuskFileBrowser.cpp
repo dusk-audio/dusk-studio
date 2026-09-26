@@ -1,6 +1,10 @@
 #include "DuskFileBrowser.h"
 #include "DuskAlerts.h"
 #include "EmbeddedModal.h"
+#include "../foundation/Fs.h"
+#include <algorithm>
+#include <memory>
+#include <vector>
 
 namespace duskstudio::filebrowser
 {
@@ -11,6 +15,33 @@ EmbeddedModal& sharedFileBrowserModal()
     static EmbeddedModal m;
     return m;
 }
+
+bool shuttingDown = false;
+
+class ScanBrowser final : public juce::FileBrowserComponent
+{
+public:
+    using FileBrowserComponent::FileBrowserComponent;
+
+    // Private to this browser: the list and any folders it opens scan on it.
+    auto& scanThread() { return getDisplayComponent()->directoryContentsList.getTimeSliceThread(); }
+    bool scanning() const { return getDisplayComponent()->directoryContentsList.isStillLoading(); }
+
+private:
+    // The framework's browser relists its folder whenever the app comes back to
+    // the front, and a relist waits for the scan in progress. A scan macOS holds
+    // on a privacy prompt would then freeze the window until the prompt is
+    // answered, so a folder still being listed is left to finish.
+    void timerCallback() override
+    {
+        const bool active = juce::Process::isForegroundProcess();
+        if (active == wasActive) return;
+        wasActive = active;
+        if (active && ! scanning()) refresh();
+    }
+
+    bool wasActive = true;
+};
 
 class DuskFileBrowserPanel final : public juce::Component,
                                        private juce::FileBrowserListener
@@ -44,7 +75,9 @@ public:
                         opts.filePatternsAllowed, juce::String(),
                         opts.filePatternsAllowed);
 
-        const auto home = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+        // From $HOME, which a sandboxed run points at its own folder. JUCE asks
+        // macOS for the home folder and would start in the real one.
+        const juce::File home (dusk::fs::userHomeDir().u8string());
         auto initial = opts.initialFileOrDirectory.getFullPathName().isNotEmpty()
                            ? opts.initialFileOrDirectory
                            : home;
@@ -58,8 +91,7 @@ public:
             if (! initial.exists())
                 initial = home;
         }
-        browser = std::make_unique<juce::FileBrowserComponent> (
-            browserFlags, initial, filter.get(), /*previewComp*/ nullptr);
+        browser = std::make_unique<ScanBrowser> (browserFlags, initial, filter.get(), /*previewComp*/ nullptr);
         browser->addListener (this);
         addAndMakeVisible (*browser);
 
@@ -126,7 +158,36 @@ public:
 
     ~DuskFileBrowserPanel() override
     {
-        if (browser != nullptr) browser->removeListener (this);
+        if (browser == nullptr) return;
+        browser->removeListener (this);
+        // A folder scan that macOS holds on a privacy prompt keeps the list locked
+        // until the prompt is answered, and destroying the browser waits for that
+        // lock with the window frozen half repainted. So a browser still scanning
+        // is told to stop and kept off screen, with the filter its scan reads,
+        // until its scan thread has finished.
+        if (! browser->scanning())
+            return;
+        removeChildComponent (browser.get());
+        auto& scan = browser->scanThread();
+        scan.signalThreadShouldExit();
+        scan.notify();
+        auto& retired = retiredScans();
+        retired.push_back (std::make_unique<Retired> (Retired { std::move (filter), std::move (browser) }));
+        if (retired.size() == 1 && ! shuttingDown)
+            dusk::Timer::callAfterDelay (kRetiredPollMs, sweepRetired);
+    }
+
+    static int retiredCount() { return (int) retiredScans().size(); }
+
+    // No timers once the app is going down. A scan that stops in time is
+    // destroyed; one the OS still holds is left to the process exit.
+    static void letGoOfRetiredScans()
+    {
+        static constexpr int kShutdownWaitMs = 250;
+        for (auto& retired : retiredScans())
+            if (! retired->scanningBrowser->scanThread().waitForThreadToExit (kShutdownWaitMs))
+                (void) retired.release();
+        retiredScans().clear();
     }
 
     void paint (juce::Graphics& g) override
@@ -167,6 +228,14 @@ public:
         if (k == juce::KeyPress::escapeKey)  { dismissCancelled(); return true; }
         if (k == juce::KeyPress::returnKey)  { commit();           return true; }
         return false;
+    }
+
+    bool shownFolderScanning() const { return browser != nullptr && browser->scanning(); }
+
+    std::filesystem::path shownFolder() const
+    {
+        return browser != nullptr ? std::filesystem::u8path (browser->getRoot().getFullPathName().toStdString())
+                                  : std::filesystem::path {};
     }
 
     void dismissCancelled()
@@ -281,14 +350,69 @@ private:
     std::function<void (juce::File)> resultFn;
     std::function<void (juce::Array<juce::File>)> multiResultFn;
     std::unique_ptr<juce::WildcardFileFilter> filter;
-    std::unique_ptr<juce::FileBrowserComponent> browser;
+    std::unique_ptr<ScanBrowser> browser;
     juce::Label titleLabel;
     juce::TextButton okBtn, cancelBtn;
     juce::TextButton newFolderBtn { "New folder..." }, createFolderBtn { "Create" };
     juce::TextEditor newFolderName;
     juce::File chosen;
+
+    // Members are destroyed in reverse, so the browser goes before the filter it reads.
+    struct Retired
+    {
+        decltype (filter)  scanFilter;
+        decltype (browser) scanningBrowser;
+    };
+
+    static constexpr int kRetiredPollMs = 250;
+
+    // Never freed: a browser still held here at exit is one whose scan could
+    // not be stopped, and destroying it would wait on that scan.
+    static std::vector<std::unique_ptr<Retired>>& retiredScans()
+    {
+        static auto* scans = new std::vector<std::unique_ptr<Retired>>();
+        return *scans;
+    }
+
+    static void sweepRetired()
+    {
+        auto& retired = retiredScans();
+        retired.erase (std::remove_if (retired.begin(), retired.end(),
+                                       [] (const auto& r) { return ! r->scanningBrowser->scanThread().isThreadRunning(); }),
+                       retired.end());
+        if (! retired.empty() && ! shuttingDown)
+            dusk::Timer::callAfterDelay (kRetiredPollMs, sweepRetired);
+    }
 };
 } // namespace
+
+void closeForShutdown()
+{
+    shuttingDown = true;
+    sharedFileBrowserModal().closeAndDeleteBodyNow();
+    DuskFileBrowserPanel::letGoOfRetiredScans();
+}
+
+bool shownFolderScanningForScenario()
+{
+    const auto& stack = EmbeddedModal::activeModalStack();
+    const auto* panel = stack.empty() ? nullptr
+                                      : dynamic_cast<const DuskFileBrowserPanel*> (stack.back()->getBody());
+    return panel != nullptr && panel->shownFolderScanning();
+}
+
+int retiredScansForScenario()
+{
+    return DuskFileBrowserPanel::retiredCount();
+}
+
+std::filesystem::path shownFolderForScenario()
+{
+    const auto& stack = EmbeddedModal::activeModalStack();
+    const auto* panel = stack.empty() ? nullptr
+                                      : dynamic_cast<const DuskFileBrowserPanel*> (stack.back()->getBody());
+    return panel != nullptr ? panel->shownFolder() : std::filesystem::path {};
+}
 
 void open (juce::Component& host, Options opts,
             std::function<void (juce::File)> onResult)

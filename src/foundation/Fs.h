@@ -321,6 +321,25 @@ inline std::filesystem::path userMusicDir()
 #endif
 }
 
+// JUCE File::userDocumentsDirectory, except that on macOS it follows $HOME:
+// JUCE asks the OS for the home folder there and ignores the environment.
+inline std::filesystem::path userDocumentsDir()
+{
+    if (const auto testPath = detail::testSpecialLocation ("Documents"); ! testPath.empty())
+        return testPath;
+#if defined(_WIN32)
+    return detail::knownFolderPath (FOLDERID_Documents);
+#else
+    const auto home = userHomeDir();
+    if (home.empty()) return {};
+ #if defined(__APPLE__)
+    return home / "Documents";
+ #else
+    return resolveXdgFolder ("XDG_DOCUMENTS_DIR", home / "Documents");
+ #endif
+#endif
+}
+
 // JUCE File::tempDirectory.
 inline std::filesystem::path tempDir()
 {

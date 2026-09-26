@@ -335,7 +335,7 @@ void DuskMultisampleEditor::openFileChooser()
     juce::Component::SafePointer<DuskMultisampleEditor> safe (this);
     filebrowser::open (*this, {
         /*title*/                  "Load soundfont (.sfz / .sf2 / .bank.xml)",
-        /*initialFileOrDirectory*/ juce::File::getSpecialLocation (juce::File::userHomeDirectory),
+        /*initialFileOrDirectory*/ {},
         /*filePatternsAllowed*/    "*.sfz;*.sf2;*.bank.xml",
         /*mode*/                   filebrowser::Mode::Open,
         /*selectDirectories*/      false,

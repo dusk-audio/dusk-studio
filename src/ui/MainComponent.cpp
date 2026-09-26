@@ -27,9 +27,9 @@
  #include "imgui/StartupView.h"
  #include "imgui/VirtualKeyboardView.h"
  #include "NativeNotepadWindow.h"
- #include "NativeEditorEmbedScale.h"
  #include "imgui/DuskPanelWindow.h"
 #endif
+#include "NativeEditorEmbedScale.h"
 #include "DuskContextMenu.h"
 #include "../session/MidiBindings.h"
 #include "ConsoleView.h"
@@ -887,8 +887,15 @@ MainComponent::MainComponent()
         h = std::min (kPreferredH, userArea.getHeight() - 24);
     }
 
-    const int minContentW = consolelayout::responsiveMinimumMainComponentWidth();
-    const int minContentH = 480 + kTopBarH;
+    int minContentW = consolelayout::responsiveMinimumMainComponentWidth();
+    int minContentH = 480 + kTopBarH;
+   #if defined(__APPLE__)
+    // The same on-screen floor as the window's resize limits, so a first launch
+    // at a large UI scale still fits the display.
+    const double zoom = std::max (1.0, embedscale::globalScale());
+    minContentW = (int) std::ceil (minContentW / zoom);
+    minContentH = (int) std::ceil (minContentH / zoom);
+   #endif
     w = std::max (w, minContentW);
     h = std::max (h, minContentH);
 
@@ -1244,6 +1251,7 @@ MainComponent::~MainComponent()
     shortcutsModal       .closeAndDeleteBodyNow();
     supportersModal      .closeAndDeleteBodyNow();
     dpImportProgressModal.closeAndDeleteBodyNow();
+    filebrowser::closeForShutdown();
 
     // Intentionally NO auto-save here. Standard DAW behavior is to require
     // an explicit Save before exit. The previous auto-save on destruct
@@ -6619,7 +6627,17 @@ void MainComponent::reclaimFocusFromNotepad()
     // transport / edit shortcuts work without a stray click first (same reason
     // as dismissStartupDialog).
     if (auto* window = getTopLevelComponent())
+    {
+       #if defined(__APPLE__)
+        // The window is already in front. Ordering it there again makes AppKit
+        // re-place it, which at a UI scale other than 1 rounds the frame through
+        // whole zoomed units and leaves it a point off.
+        if (auto* peer = window->getPeer())
+            peer->grabFocus();
+       #else
         window->toFront (true);
+       #endif
+    }
     focusCanvasOrTopModal();
 }
 

@@ -5,8 +5,10 @@
 #   scripts/regress.sh                       linux legs only (default)
 #   scripts/regress.sh linux --perf
 #   scripts/regress.sh mac
+#   scripts/regress.sh linux --tarball <dusk-studio-X.Y.Z-Linux-x86_64.tar.xz>
 #   scripts/regress.sh windows --msi <path>
 #   scripts/regress.sh all --msi <path>
+#   scripts/regress.sh all --release-run <id>
 #
 # Per-platform prerequisites and what each leg proves: docs/MAINTAINER-GUIDE.md,
 # "Part 9b - Regression run across platforms".
@@ -32,6 +34,13 @@ usage: scripts/regress.sh [linux|mac|windows|all] [options]
                                  already in build/
              --release-checks    also the pre-tag legs: release metadata,
                                  the main ruleset, Patreon freshness
+             --tarball <path>    package mode: extract, smoke-test and
+                                 install this release tarball in a scratch
+                                 HOME, then run the self-test, IPC and
+                                 scenario legs (GUI included) against the
+                                 installed launcher instead of build/
+             --release-run <id>  package mode with the release-linux-<arch>
+                                 tarball of that release.yml run
   mac      drive the M3 Air over ssh: push HEAD, configure, build, ctest,
            headless self-test
              --host <user@host>  default marc@macbook-air.local
@@ -40,7 +49,9 @@ usage: scripts/regress.sh [linux|mac|windows|all] [options]
              --release-run <id>    download the release-windows artifact instead
   all      linux, then mac, then windows (windows needs --msi/--release-run).
            Options are routed to the platform that owns them, so
-           `all --perf --msi <path>` is one run with both.
+           `all --perf --msi <path>` is one run with both. --release-run goes
+           to linux and windows alike, so `all --release-run <id>` tests one
+           release run's packages on both.
 
   -h, --help   this text
 EOF
@@ -74,6 +85,8 @@ fi
 # `all` runs three scripts that each reject options they do not know, so the
 # shared command line has to be split by owner first. An option nobody claims is
 # a typo: routing it nowhere would run the whole matrix and silently ignore it.
+# An option with several owners goes to each of them: one release run feeds
+# every platform that tests its packages.
 declare -A OPTION_OWNER=(
     [--perf]=linux
     [--vst3]=linux
@@ -82,12 +95,14 @@ declare -A OPTION_OWNER=(
     [--gui-scenarios]=linux
     [--scenarios-only]=linux
     [--release-checks]=linux
+    [--tarball]=linux
     [--host]=mac
     [--msi]=windows
-    [--release-run]=windows
+    [--release-run]="linux windows"
 )
 declare -A OPTION_TAKES_VALUE=(
     [--vst3]=1
+    [--tarball]=1
     [--host]=1
     [--msi]=1
     [--release-run]=1
@@ -113,8 +128,18 @@ route_option() {
     return 0
 }
 
+# A local tarball already names the Linux package, so a release run alongside it
+# is for the platforms that have no local package.
+LINUX_HAS_TARBALL=0
+for arg in "$@"; do
+    [[ "$arg" == --tarball ]] && LINUX_HAS_TARBALL=1
+done
+
 while [[ $# -gt 0 ]]; do
     owner="${OPTION_OWNER[$1]:-}"
+    if [[ "$1" == --release-run ]] && ((LINUX_HAS_TARBALL)); then
+        owner="windows"
+    fi
     if [[ -z "$owner" ]]; then
         usage >&2
         echo >&2
@@ -123,10 +148,10 @@ while [[ $# -gt 0 ]]; do
     fi
     if [[ -n "${OPTION_TAKES_VALUE[$1]:-}" ]]; then
         [[ $# -ge 2 ]] || { echo "error: $1 needs a value" >&2; exit 2; }
-        route_option "$owner" "$1" "$2"
+        for platform in $owner; do route_option "$platform" "$1" "$2"; done
         shift 2
     else
-        route_option "$owner" "$1"
+        for platform in $owner; do route_option "$platform" "$1"; done
         shift
     fi
 done
