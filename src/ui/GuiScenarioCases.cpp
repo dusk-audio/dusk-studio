@@ -8086,6 +8086,87 @@ const ScenarioRegistrar trackNameAndColour { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runTrackNameAndColour (host, ctx); }
 } };
 
+// Clone to track says why it refuses, while the transport runs or with a frozen
+// track on either side, and clones once both are clear.
+std::optional<ScenarioResult> runCloneRefusals (GuiHost& host, ScenarioContext& ctx)
+{
+    ctx.cleanup (host.preserveKeyboardFocus());
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto& dest = session.track (1);
+    ctx.keep (dest.frozen);
+    ctx.cleanup ([&engine, &transport]
+    {
+        transport.setState (Transport::State::Stopped);
+        transport.setPlayhead (0);
+        engine.getUndoManager().clearUndoHistory();
+    });
+    const auto destName = dest.name.toStdString();
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto clone = [&host, &ctx, steps, destName] (const std::string& how)
+    {
+        steps->push_back ({ 300, [&host, &ctx, how]
+        {
+            ctx.expect (host.modalStackEmpty(), how + ": a modal was still open");
+            ctx.expect (host.clickStripControl (GuiHost::StripKind::Channel, 0, "name", 1, true),
+                        how + ": the strip name did not take a right-click");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, how]
+        {
+            ctx.expect (host.clickContextMenuItem ("Clone to track..."),
+                        how + ": the strip menu has no Clone to track...");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, how, destName]
+        {
+            ctx.expect (host.clickContextMenuItem ("2: " + destName),
+                        how + ": the Clone to track... submenu has no track 2");
+        } });
+    };
+    const auto alerted = [&host, &ctx, &dest, steps, destName] (const std::string& how,
+                                                                const std::string& expected)
+    {
+        steps->push_back ({ 300, [&host, &ctx, &dest, how, expected, destName]
+        {
+            ctx.expect (host.modalText() == expected, how + ": the alert read '" + host.modalText() + "'");
+            ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+            ctx.expect (dest.name.toStdString() == destName, how + ": the clone ran anyway");
+        } });
+    };
+
+    steps->push_back ({ 100, [&transport] { transport.setState (Transport::State::Playing); } });
+    clone ("while playing");
+    alerted ("while playing", "Can't clone track\nStop playback, then clone the track again.");
+    steps->push_back ({ 100, [&transport, &dest]
+    {
+        transport.setState (Transport::State::Stopped);
+        transport.setPlayhead (0);
+        dest.frozen.store (true);
+    } });
+    clone ("onto a frozen track");
+    alerted ("onto a frozen track", "Can't clone track\nUnfreeze the track, then clone it again. "
+                                    "A frozen track can't be cloned or cloned onto.");
+    steps->push_back ({ 100, [&dest] { dest.frozen.store (false); } });
+    clone ("with both clear");
+    steps->push_back ({ 300, [&host, &ctx, &engine, &session, &dest, destName]
+    {
+        ctx.expect (host.modalStackEmpty(), "a clone with both clear still raised an alert");
+        ctx.expect (dest.name == session.track (0).name + " (copy)", "a clone with both clear did not run");
+        ctx.expect (engine.getUndoManager().undo() && dest.name.toStdString() == destName,
+                    "undo did not put the destination back");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar cloneRefusals { Scenario {
+    "gui.clone_track_refusals", { "gui", "clone" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runCloneRefusals (host, ctx); }
+} };
+
 // The aux lane's return strip: double-click the title to rename, the mute
 // button, and a return fader running from off to +12 dB that sets the return
 // level. The drawn meter is not checked here.

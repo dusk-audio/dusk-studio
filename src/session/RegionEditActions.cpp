@@ -413,6 +413,8 @@ struct CloneTrackAction::Impl
     // ChannelStripParams.
     float faderDb = 0.0f, pan = 0.0f;
     bool  mute = false, solo = false, phaseInvert = false;
+    bool  insertBypassed = false;
+    int   faderGroupId = 0;
     std::array<bool, ChannelStripParams::kNumBuses> busAssign {};
     bool auxSendsBypassed = false;
     std::array<float, ChannelStripParams::kNumAuxSends> auxSendDb {};
@@ -432,6 +434,7 @@ struct CloneTrackAction::Impl
 
     bool  compEnabled = false;
     int   compMode = 2;
+    bool  compModePicked = false;
     float compOptoPeakRed = 30.0f, compOptoGain = 50.0f;
     bool  compOptoLimit = false;
     float compFetInput = 0.0f, compFetOutput = 0.0f, compFetAttack = 0.2f, compFetRelease = 400.0f;
@@ -447,6 +450,21 @@ struct CloneTrackAction::Impl
     bool  printEffects = false;
     int   inputSource = -2, inputSourceR = -2;
     int   midiInputIndex = -1, midiChannel = 0;
+    std::string midiInputIdentifier;
+    int   midiOutputIndex = -1;
+    std::string midiOutputIdentifier;
+
+    // Held on the engine's strip, not the Track: a track can carry a plugin
+    // and a hardware insert's settings at once, and the mode picks which runs.
+    int   insertMode = ChannelStrip::kInsertPlugin;
+    bool  hardwareInsertEnabled = false;
+    HardwareInsertRouting hardwareInsertRouting;
+    float hardwareInsertOutputGainDb = 0.0f;
+    float hardwareInsertInputGainDb = 0.0f;
+    float hardwareInsertDryWet = 1.0f;
+
+    int automationMode = 0;
+    std::array<std::vector<AutomationPoint>, kNumAutomationParams> automationLanes;
 
     // Plugin slot - descriptor, raw legacy fallback, and state captured live.
     ClonePluginSnapshot plugin;
@@ -583,6 +601,8 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     s.mute        = t.strip.mute.load    (std::memory_order_relaxed);
     s.solo        = t.strip.solo.load    (std::memory_order_relaxed);
     s.phaseInvert = t.strip.phaseInvert.load (std::memory_order_relaxed);
+    s.insertBypassed = t.strip.insertBypassed.load (std::memory_order_relaxed);
+    s.faderGroupId   = t.strip.faderGroupId.load   (std::memory_order_relaxed);
     for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
         s.busAssign[(size_t) i] = t.strip.busAssign[(size_t) i].load (std::memory_order_relaxed);
     s.auxSendsBypassed = t.strip.auxSendsBypassed.load (std::memory_order_relaxed);
@@ -613,6 +633,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 
     s.compEnabled    = t.strip.compEnabled.load    (std::memory_order_relaxed);
     s.compMode       = t.strip.compMode.load       (std::memory_order_relaxed);
+    s.compModePicked = t.strip.compModePicked.load (std::memory_order_relaxed);
     s.compOptoPeakRed = t.strip.compOptoPeakRed.load (std::memory_order_relaxed);
     s.compOptoGain    = t.strip.compOptoGain.load    (std::memory_order_relaxed);
     s.compOptoLimit   = t.strip.compOptoLimit.load   (std::memory_order_relaxed);
@@ -637,6 +658,20 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     s.inputSourceR   = t.inputSourceR.load   (std::memory_order_relaxed);
     s.midiInputIndex = t.midiInputIndex.load (std::memory_order_relaxed);
     s.midiChannel    = t.midiChannel.load    (std::memory_order_relaxed);
+    s.midiInputIdentifier  = t.midiInputIdentifier.toStdString();
+    s.midiOutputIndex      = t.midiOutputIndex.load (std::memory_order_relaxed);
+    s.midiOutputIdentifier = t.midiOutputIdentifier.toStdString();
+
+    s.insertMode = engine.getStrip (idx).insertMode.load (std::memory_order_acquire);
+    s.hardwareInsertEnabled      = t.hardwareInsert.enabled.load      (std::memory_order_relaxed);
+    s.hardwareInsertRouting      = t.hardwareInsert.routing.current();
+    s.hardwareInsertOutputGainDb = t.hardwareInsert.outputGainDb.load (std::memory_order_relaxed);
+    s.hardwareInsertInputGainDb  = t.hardwareInsert.inputGainDb.load  (std::memory_order_relaxed);
+    s.hardwareInsertDryWet       = t.hardwareInsert.dryWet.load       (std::memory_order_relaxed);
+
+    s.automationMode = t.automationMode.load (std::memory_order_relaxed);
+    for (size_t p = 0; p < s.automationLanes.size(); ++p)
+        s.automationLanes[p] = t.automationLanes[p].pointsConst();
 
     // Plugin: pull from the live slot, not the (potentially stale)
     // session.json fields. Those are only kept fresh during save.
@@ -811,6 +846,8 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     t.strip.mute.store        (s.mute,        std::memory_order_relaxed);
     t.strip.solo.store        (s.solo,        std::memory_order_relaxed);
     t.strip.phaseInvert.store (s.phaseInvert, std::memory_order_relaxed);
+    t.strip.insertBypassed.store (s.insertBypassed, std::memory_order_relaxed);
+    t.strip.faderGroupId.store   (s.faderGroupId,   std::memory_order_relaxed);
     for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
         t.strip.busAssign[(size_t) i].store (s.busAssign[(size_t) i], std::memory_order_relaxed);
     t.strip.auxSendsBypassed.store (s.auxSendsBypassed, std::memory_order_relaxed);
@@ -842,6 +879,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
 
     t.strip.compEnabled.store    (s.compEnabled,    std::memory_order_relaxed);
     t.strip.compMode.store       (s.compMode,       std::memory_order_relaxed);
+    t.strip.compModePicked.store (s.compModePicked, std::memory_order_relaxed);
     t.strip.compOptoPeakRed.store (s.compOptoPeakRed, std::memory_order_relaxed);
     t.strip.compOptoGain.store    (s.compOptoGain,    std::memory_order_relaxed);
     t.strip.compOptoLimit.store   (s.compOptoLimit,   std::memory_order_relaxed);
@@ -866,6 +904,23 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     t.inputSourceR.store   (s.inputSourceR,   std::memory_order_relaxed);
     t.midiInputIndex.store (s.midiInputIndex, std::memory_order_relaxed);
     t.midiChannel.store    (s.midiChannel,    std::memory_order_relaxed);
+    t.midiInputIdentifier  = s.midiInputIdentifier;
+    t.midiOutputIdentifier = s.midiOutputIdentifier;
+    t.midiOutputIndex.store (s.midiOutputIndex, std::memory_order_relaxed);
+    if (s.midiOutputIndex >= 0)
+        engine.ensureMidiOutputOpen (s.midiOutputIndex);
+
+    t.hardwareInsert.enabled.store      (s.hardwareInsertEnabled,      std::memory_order_relaxed);
+    t.hardwareInsert.routing.publish (std::make_unique<HardwareInsertRouting> (s.hardwareInsertRouting));
+    t.hardwareInsert.outputGainDb.store (s.hardwareInsertOutputGainDb, std::memory_order_relaxed);
+    t.hardwareInsert.inputGainDb.store  (s.hardwareInsertInputGainDb,  std::memory_order_relaxed);
+    t.hardwareInsert.dryWet.store       (s.hardwareInsertDryWet,       std::memory_order_relaxed);
+
+    // Lanes before the mode, as in session restore: a Read or Touch mode seen
+    // first would play the lanes this clone is about to replace.
+    for (size_t p = 0; p < s.automationLanes.size(); ++p)
+        t.automationLanes[p].publishPoints (s.automationLanes[p]);
+    t.automationMode.store (s.automationMode, std::memory_order_release);
 
     // recordArmed was written directly above (bypassing setTrackArmed),
     // which means the armedTrackCount counter Session uses for the
@@ -1109,6 +1164,9 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
             : juce::Base64::toBase64 (s.multisampleState.data(), s.multisampleState.size());
     }
 #endif
+
+    // Last: the replays above load and unload without touching the mode.
+    engine.getStrip (idx).insertMode.store (s.insertMode, std::memory_order_release);
 }
 } // namespace
 
@@ -1119,16 +1177,33 @@ CloneTrackAction::CloneTrackAction (Session& s, AudioEngine& e,
 
 CloneTrackAction::~CloneTrackAction() = default;
 
+CloneTrackAction::Refusal CloneTrackAction::refusalFor (const Session& session, AudioEngine& engine,
+                                                        int src, int dst)
+{
+    // The clone snapshot doesn't carry the frozen flag / frozenRegion, so
+    // cloning to or from a frozen track would desync.
+    if (session.track (src).frozen.load (std::memory_order_relaxed)
+        || session.track (dst).frozen.load (std::memory_order_relaxed))
+        return Refusal::Frozen;
+    if (! engine.getTransport().isStopped())
+        return Refusal::Playing;
+    for (const int t : { src, dst })
+        for (const auto& lane : session.track (t).automationLanes)
+            if (lane.passOpen.load (std::memory_order_acquire))
+                return Refusal::Playing;
+    return Refusal::None;
+}
+
 bool CloneTrackAction::perform()
 {
     if (srcIdx < 0 || srcIdx >= Session::kNumTracks) return false;
     if (dstIdx < 0 || dstIdx >= Session::kNumTracks) return false;
     if (srcIdx == dstIdx) return false;
     if (engine.getTransport().isRecording()) return false;
-    // The clone snapshot doesn't carry the frozen flag / frozenRegion, so
-    // cloning to or from a frozen track would desync. Refuse - unfreeze first.
     if (session.track (srcIdx).frozen.load (std::memory_order_relaxed)
         || session.track (dstIdx).frozen.load (std::memory_order_relaxed)) return false;
+    if (beforeState == nullptr && refusalFor (session, engine, srcIdx, dstIdx) != Refusal::None)
+        return false;
 
     // First perform: capture both before-state of the destination
     // (for undo) and after-state from the source (for redo). Subsequent

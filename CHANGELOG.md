@@ -160,6 +160,15 @@ publishes.
 - **Clone Track copies the channel LPF and the EQ's on/off switch.** A clone
   took the source's EQ bands and HPF but kept its own LPF and EQ switch, so it
   could sound unlike the source; undoing the clone now puts both back too.
+- **Clone Track copies everything the session saves for a track** (#716). A
+  clone left behind the insert bypass, the fader group, the compressor type,
+  the hardware insert, the MIDI port and MIDI out, and the automation, so it
+  played unbypassed, outside the group and with its own old automation. It
+  now carries all of them, its insert runs as a plugin or hardware insert the
+  way the source's does, and the undo puts every one back. A clone now waits
+  for the transport to stop, and a refused clone says why instead of doing
+  nothing. The manual has a new **Clone to track** section listing what a
+  clone carries.
 - **The channel EQ no longer cramps near Nyquist.** At the default 1x Effect
   oversampling a high HM boost used to fall 5 to 7 dB short at 20 kHz. Every
   band now holds its shape up to 20 kHz at 1x, 2x and 4x.

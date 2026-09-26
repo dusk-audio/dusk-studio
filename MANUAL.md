@@ -710,6 +710,22 @@ Every editor a strip opens — EQ, COMP, or AUX — carries that strip's name ce
 
 Double-click the name label at the top of the strip to rename the track. Right-click the name, or any empty part of the strip, to pick one of eight track colours. The colour appears as the strip's accent and on every region that track owns in the tape strip.
 
+## Clone to track
+
+Right-click the name, or any empty part of the strip, and choose **Clone to track...** and then a destination track. The destination becomes a copy of this track, and one undo puts back everything it held before.
+
+The copy carries everything the session saves for the track, so it sounds and behaves like the source and still does after a save and reopen:
+
+- The mode and colour, and the name with **(copy)** after it.
+- The fader, pan, mute, solo, phase, fader group, bus assigns, and aux sends with their pre/post taps and bypass. The copy joins the source's fader group.
+- The HPF, LPF, EQ and compressor, including the compressor type.
+- The insert: the plugin or built-in unit with its settings, the insert bypass, or a hardware insert with its settings. A hardware insert keeps the same interface outputs and inputs, so both tracks feed the same outboard gear and each hears what comes back. Give the copy its own pair in **Edit hardware insert...** if you have one to spare.
+- The inputs, ARM, IN and PRINT, and on a MIDI track the MIDI port, channel and MIDI out.
+- The regions, MIDI regions and their take history.
+- The automation mode and every automation lane. The copy's lanes are its own, so editing them leaves the source's alone.
+
+A clone waits for the transport to stop, and a frozen track cannot be cloned or cloned onto. Either way **Can't clone track** says what to do (see *Messages*). Undo and redo of a clone still work during playback.
+
 ## Input block (RECORDING stage)
 
 This block is visible in the RECORDING stage, alongside a small **I/O** button that opens the same controls as a popup titled with the track name. In the MIXING stage the block and the button give way to the four AUX send knobs — switch back to RECORDING to change a track's inputs. Each row carries an on-screen caption (**Mode**, **Input**, **MIDI port**, **Channel**, **MIDI out**).
@@ -1628,7 +1644,7 @@ The insert chooser and the bottom of the picker also provide these actions where
 
 Dusk Studio ships its own insert units. They load into a channel insert slot or an aux lane slot exactly like a scanned plugin: the same picker, the same Replace and Remove actions, the same bypass, and the same delay compensation. Only one insert host runs per slot, so loading a built-in unit replaces whatever the slot held, and loading a plugin replaces the built-in unit.
 
-Settings are saved with the session and restored when you reopen it, and they travel with **Clone Track** and its undo. A built-in unit needs nothing installed and cannot go offline the way a missing plugin does.
+Settings are saved with the session and restored when you reopen it, and they travel with **Clone to track...** and its undo. A built-in unit needs nothing installed and cannot go offline the way a missing plugin does.
 
 ### Utility
 
@@ -2632,6 +2648,15 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 - **Text**: "Change tempo from [old] to [new] BPM? [impact summary]. Audio regions and markers are NOT retimed."
 - **Buttons**: **Apply** / **Cancel**.
 - **Action**: Confirm only after reviewing what will be retimed. Audio regions stay put at their sample positions, so a tempo change can break time alignment between audio and MIDI; redo the audio takes if necessary.
+
+## Channel strip
+
+### Can't clone track
+
+- **When**: You choose **Clone to track...** while the transport is playing or recording, or when the source or destination track is frozen.
+- **Text**: "Stop playback, then clone the track again." (Or "Unfreeze the track, then clone it again. A frozen track can't be cloned or cloned onto." when a track is frozen.)
+- **Buttons**: OK.
+- **Action**: Stop the transport, or unfreeze the track, then clone again. Nothing was copied.
 
 ## Startup
 

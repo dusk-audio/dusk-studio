@@ -268,10 +268,10 @@ private:
 };
 
 // Clones a source track's full per-strip state onto a destination slot:
-// name, colour, mode, channel-strip params (fader/pan/EQ/comp/sends),
-// recording surface settings, regions, MIDI regions, plugin instance
-// (description + state). Undo restores the destination's previous state
-// captured at first perform().
+// everything SessionSerializer writes for a track (the scenario
+// session.clone_track_carries_every_saved_field holds the two in step) plus
+// the strip's live insert mode and the live plugin state. Undo restores the
+// destination's previous state captured at first perform().
 //
 // Plugin replay: copying the descriptor / legacy fallback / state onto
 // the destination Track isn't enough on its own - the live PluginSlot
@@ -289,6 +289,16 @@ public:
     // .cpp where Impl is complete, not at every user-site that includes
     // this header with Impl forward-declared.
     ~CloneTrackAction() override;
+
+    // Why a fresh clone would refuse, so the menu can say so. A clone waits
+    // for a stopped transport with no automation pass open on either track: a
+    // pass records its ride on the side, so the source's lanes lack it and the
+    // destination's pass would be dropped when the clone replaces its lanes.
+    // Undo and redo do not wait - a refused one makes the undo manager discard
+    // the whole history - and republish mid-playback like any lane undo.
+    enum class Refusal { None, Frozen, Playing };
+    static Refusal refusalFor (const Session& session, AudioEngine& engine,
+                               int sourceTrackIdx, int destTrackIdx);
 
     bool perform() override;
     bool undo()    override;

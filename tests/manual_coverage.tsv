@@ -138,6 +138,17 @@ The channel strip	split buttons: status light bypasses, label opens the editor, 
 The channel strip	every strip editor is titled with the strip's name and follows a rename	auto	scenario:gui.editor_title_names_strip		the channel EQ popup's title is asserted on open and after a rename; the bus, master and native comp titles are read from the same source and checked by hand
 The channel strip	compact AUX bypass mutes all four sends and restores their levels	auto	scenario:strip.sends_pre_post_and_bypass;scenario:gui.aux_send_knobs;scenario:gui.split_module_buttons		the compact strip's AUX light bypasses and restores the sends with all four levels kept; the bypass silences each of the four sends and brings each back at its level
 The channel strip > Track name and colour	double-click renames; right-click for the eight track colours, which regions take too	auto	test:track context-menu rename opens after modal focus restoration;scenario:gui.track_name_and_colour
+The channel strip > Clone to track	a clone makes the destination a copy of the source and one undo puts back everything it held	auto	scenario:session.clone_track_carries_every_saved_field
+The channel strip > Clone to track	mode, colour and the name tagged (copy)	auto	scenario:session.clone_track_carries_every_saved_field
+The channel strip > Clone to track	fader, pan, mute, solo, phase, fader group, bus assigns and aux sends with taps and bypass	auto	scenario:session.clone_track_carries_every_saved_field
+The channel strip > Clone to track	HPF, LPF, EQ and compressor with its type	auto	scenario:session.clone_track_carries_every_saved_field;scenario:session.clone_track_keeps_converted_eq_dials
+The channel strip > Clone to track	insert plugin or built-in unit with its settings	auto	scenario:session.clone_track_keeps_native_state
+The channel strip > Clone to track	insert bypass, insert mode, and a hardware insert with its settings sharing the source's outputs and inputs	auto	scenario:session.clone_track_carries_every_saved_field
+The channel strip > Clone to track	inputs, ARM, IN, PRINT, MIDI port, channel and MIDI out	auto	scenario:session.clone_track_carries_every_saved_field
+The channel strip > Clone to track	regions, MIDI regions and their take history	auto	scenario:session.clone_track_carries_every_saved_field
+The channel strip > Clone to track	automation mode and every lane, copied so the clone's lanes are its own	auto	scenario:session.clone_track_carries_every_saved_field
+The channel strip > Clone to track	a frozen track cannot be cloned or cloned onto	auto	scenario:session.clone_track_carries_every_saved_field;scenario:gui.clone_track_refusals
+The channel strip > Clone to track	a clone waits for the transport to stop and for any automation pass on either track to close	auto	scenario:session.clone_track_carries_every_saved_field;scenario:gui.clone_track_refusals
 The channel strip > Input block (RECORDING stage)	Mono, Stereo and MIDI modes; In N (follow) default	auto	test:A stereo track's right input follows wherever the left one resolves;test:A stereo track needs both of its inputs on the device
 The channel strip > Input block (RECORDING stage)	MIDI port, channel filter and MIDI out	auto	scenario:gui.midi_io_selectors
 The channel strip > Input block (RECORDING stage)	activity LED blinks when MIDI arrives	auto	scenario:gui.midi_activity_led		virtual keyboard traffic lights the actual LED only on the selected channel; it goes dark after traffic stops
@@ -475,6 +486,8 @@ Messages > Plugins > Plugin slot labels (inline, not a dialog)	crashed and stall
 Messages > Hardware insert	ping results: no input, failed, detected	auto	test:HardwareInsertSlot: ping with invalid input routing reports -2;test:HardwareInsertSlot: ping with silent return reports -1;test:HardwareInsertSlot: ping measures loopback round-trip exactly
 Messages > Tempo	tempo alerts	n/a			index; entries are held below
 Messages > Tempo > Confirm tempo change	changing BPM with tempo-locked MIDI asks first; audio and markers stay put	auto	test:applyTempoChange halving BPM doubles locked region positions, leaves float regions;test:applyTempoChange round-trip 120-96-120 returns near-original positions;scenario:gui.tempo_change_confirmation		typing 100 into the BPM readout over a tempo-locked MIDI region, an audio region and a marker raises the confirmation as quoted; Cancel keeps the tempo and every position, Apply retimes the MIDI region while the audio region and the marker stay put
+Messages > Channel strip	channel strip alerts	n/a			index; entries are held below
+Messages > Channel strip > Can't clone track	Clone to track... while playing or with a frozen track alerts with the quoted text and copies nothing	auto	scenario:gui.clone_track_refusals		the strip menu's Clone to track... onto track 2 while playing and onto a frozen track each raise the alert as quoted and leave the destination unchanged; with both clear the clone runs and undo puts it back
 Messages > Startup	startup messages	n/a			index; entries are held below
 Messages > Startup > Empty recents	No recent sessions yet	auto	test:empty startup recents paints its message and offers New or Open
 
