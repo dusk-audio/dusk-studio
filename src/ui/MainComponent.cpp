@@ -65,6 +65,7 @@
 #include "../engine/audiofile/FileWriter.h"
 #include "../engine/midi/MidiFileReader.h"
 #include "../foundation/AppConfigDir.h"
+#include "../foundation/AppMusicDir.h"
 #include "../foundation/PlanarBuffer.h"
 #include "../foundation/Text.h"
 #include <algorithm>
@@ -650,9 +651,7 @@ MainComponent::MainComponent()
     // progress modal once the window is on screen, so a full plugin folder
     // doesn't make the app look frozen on launch.
 
-    auto musicDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
-    if (! musicDir.exists()) musicDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
-    startUnsavedSessionIn (toPath (musicDir.getChildFile ("Dusk Studio")));
+    startUnsavedSessionIn (defaultSessionsFolder());
 
     // Top-of-window menu bar drives File / View / Settings actions. Replaces the
     // old row of TextButtons (Audio settings... / Save / Save As... / etc).
@@ -3205,8 +3204,7 @@ void MainComponent::promptNewSessionLocation (SessionTemplate tmpl,
     // Single-dialog "Save As" UX: filename text field + folder browser in
     // one step. The typed name becomes the session folder; the navigated
     // directory becomes its parent.
-    auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                        .getChildFile ("Dusk Studio");
+    auto startDir = toFile (defaultSessionsFolder());
     if (! startDir.exists()) startDir.createDirectory();
 
     filebrowser::open (*this, {
@@ -3283,6 +3281,16 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
         showDuskAlert (*this, savecheck::kOtherSessionTitle,
                        savecheck::otherSessionMessage (dir.getFullPathName().toStdString()));
         return false;
+    }
+
+    // A take still recording would otherwise end at the detach below, after
+    // a Save As has copied the session's audio, and its file would stay in the
+    // old folder. A control surface or MIDI binding can start one under a save
+    // prompt, and R still works in the Save As browser.
+    if (engine.getTransport().isRecording() || engine.getRecordManager().isActive())
+    {
+        engine.stop();
+        if (transportBar != nullptr) transportBar->notifyRecordStopped();
     }
 
     // Save As to a different folder must take the audio along: copy every
@@ -3495,13 +3503,19 @@ static std::filesystem::path privateUnsavedFolder()
     return config.empty() ? config : config / "unsaved-session";
 }
 
+std::filesystem::path MainComponent::defaultSessionsFolder()
+{
+    const auto music = dusk::fs::appMusicDir();
+    return music.empty() ? music : music / "Dusk Studio";
+}
+
 // A session saved as Untitled must never receive this session's takes,
 // autosave or notes, so the launch session starts in a folder holding none.
 void MainComponent::startUnsavedSessionIn (const std::filesystem::path& parent)
 {
-    auto dir = savecheck::unsavedSessionFolder (parent);
+    auto dir = parent.empty() ? parent : savecheck::unsavedSessionFolder (parent);
     if (dir.empty()) dir = privateUnsavedFolder();
-    if (dir.empty()) dir = parent / "Untitled";
+    if (dir.empty() && ! parent.empty()) dir = parent / "Untitled";
     session.setSessionDirectory (toFile (dir));
 }
 
@@ -3985,8 +3999,7 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
     // create (saveSessionTo already creates the directory if missing).
     auto startDir = session.getSessionDirectory().getParentDirectory();
     if (! startDir.isDirectory())
-        startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                       .getChildFile ("Dusk Studio");
+        startDir = toFile (defaultSessionsFolder());
     if (! startDir.exists()) startDir.createDirectory();
 
     juce::String defaultName = session.getSessionDirectory().getFileName();
@@ -4020,8 +4033,7 @@ void MainComponent::saveAsPrompt()
     // chooser flow which only let the user browse, never type.
     auto startDir = session.getSessionDirectory().getParentDirectory();
     if (! startDir.isDirectory())
-        startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                       .getChildFile ("Dusk Studio");
+        startDir = toFile (defaultSessionsFolder());
     if (! startDir.exists()) startDir.createDirectory();
 
     juce::String defaultName = session.getSessionDirectory().getFileName();
@@ -4496,7 +4508,7 @@ void MainComponent::openFromFilePrompt (std::function<void (bool opened)> onReso
     {
         auto startDir = session.getSessionDirectory();
         if (! startDir.isDirectory())
-            startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+            startDir = toFile (dusk::fs::appMusicDir());
 
         filebrowser::open (*this, {
             /*title*/                  "Open session.json",
@@ -4519,7 +4531,7 @@ void MainComponent::openBounceDialog()
 {
     auto defaultDir = session.getSessionDirectory();
     if (! defaultDir.isDirectory())
-        defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+        defaultDir = toFile (dusk::fs::appMusicDir());
     const auto defaultFile = defaultDir.getChildFile ("bounce.wav");
 
    #if DUSKSTUDIO_HAS_LAME
@@ -4594,7 +4606,7 @@ void MainComponent::openBounceStemsDialog()
     // still navigate anywhere.
     auto defaultDir = session.getSessionDirectory();
     if (! defaultDir.isDirectory())
-        defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+        defaultDir = toFile (dusk::fs::appMusicDir());
     else
         defaultDir = defaultDir.getChildFile ("stems");
     defaultDir.createDirectory();
@@ -4871,7 +4883,7 @@ void MainComponent::importPrompt()
     // each chosen file by extension (audio -> reader peek, MIDI -> file
     // peek) and the target picker flips a track's mode to match the dropped
     // file, so a mixed audio+MIDI selection is handled in a single batch.
-    const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    const auto startDir = toFile (dusk::fs::appMusicDir());
     filebrowser::openMulti (*this, {
         /*title*/                  "Import audio or MIDI file(s)",
         /*initialFileOrDirectory*/ startDir,
@@ -4958,7 +4970,7 @@ void MainComponent::importDpSongPrompt()
     // browser only lists subfolders, so a song folder looks empty when you open
     // it). Instead let the user pick ANY file inside the song folder and import
     // its parent - they navigate in, see the ZZ/.sys files, pick one.
-    const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    const auto startDir = toFile (dusk::fs::appMusicDir());
     filebrowser::open (*this, {
         /*title*/                  "Open any file inside the DP song folder",
         /*initialFileOrDirectory*/ startDir,
@@ -5795,15 +5807,34 @@ constexpr const char* kCleanOutWhileRecording =
     "Stop recording before cleaning out. The take being recorded has no region "
     "pointing at its file until you stop, so Clean out would count it as "
     "unreferenced and delete it.";
+constexpr const char* kCleanOutFolderNotOwned =
+    "Save this session before cleaning out. Another session has since been saved "
+    "in the folder this one records into, and Clean out would count that "
+    "session's recordings as unreferenced and delete them.";
 } // namespace
+
+bool MainComponent::refuseCleanOut()
+{
+    // A take a bailed stop left behind is dropped rather than reported as
+    // recording: nothing records, and its file was never going to be kept.
+    auto& recorder = engine.getRecordManager();
+    recorder.reclaimBailedTake();
+    if (recorder.hasOpenTake())
+    {
+        showDuskAlert (*this, "Clean out", kCleanOutWhileRecording);
+        return true;
+    }
+    if (toFile (sidecarFolder()) != session.getSessionDirectory())
+    {
+        showDuskAlert (*this, "Clean out", kCleanOutFolderNotOwned);
+        return true;
+    }
+    return false;
+}
 
 void MainComponent::cleanOutUnreferencedFiles()
 {
-    if (engine.getRecordManager().hasOpenTake())
-    {
-        showDuskAlert (*this, "Clean out", kCleanOutWhileRecording);
-        return;
-    }
+    if (refuseCleanOut()) return;
 
     const auto unreferenced = findUnreferencedAudio (session);
     if (unreferenced.scanFailed)
@@ -5852,11 +5883,7 @@ void MainComponent::cleanOutUnreferencedFiles()
                            // MIDI binding from recording, so both checks run
                            // again: nothing goes that a take now holds or a
                            // region now points at.
-                           if (self->engine.getRecordManager().hasOpenTake())
-                           {
-                               showDuskAlert (*self, "Clean out", kCleanOutWhileRecording);
-                               return;
-                           }
+                           if (self->refuseCleanOut()) return;
                            const auto current = findUnreferencedAudio (self->session).files;
                            int deleted = 0;
                            for (const auto& path : listed)

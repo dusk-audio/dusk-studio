@@ -29,8 +29,10 @@
 #include "NativeEditorEmbedScale.h"
 #include "SystemStatusBar.h"
 #include "TransportBar.h"
+#include "SaveTargetChecks.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/SuiteRunner.h"
+#include "../foundation/Fs.h"
 
 #include <algorithm>
 #include <array>
@@ -420,8 +422,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         {
             if (! passed) startupErrors.emplace_back (error);
         };
-        check (owner.session.getSessionDirectory().getFileName().toStdString() == "Untitled",
-               "first launch did not create an Untitled session");
+        // Launch picks the first free Untitled folder under the sessions
+        // folder, which a harness run keeps out of the user's Music folder.
+        const auto parent = MainComponent::defaultSessionsFolder().lexically_normal();
+        const auto launchDir = scenario::currentSessionDirectory (owner.session).lexically_normal();
+        check (! parent.empty() && launchDir == savecheck::unsavedSessionFolder (parent),
+               "first launch did not start in the first free Untitled folder of its sessions folder");
+        const auto userMusic = dusk::fs::userMusicDir().lexically_normal();
+        const auto underUserMusic = userMusic.empty() ? std::filesystem::path() : parent.lexically_relative (userMusic);
+        check (underUserMusic.empty() || *underUserMusic.begin() == "..",
+               "first launch put its session in the user's own Music folder");
         check (timelineViewMatches (false), "the first-launch tape strip was not collapsed");
         check (stageViewMatches (Stage::Recording), "first launch did not show Recording");
         check (owner.engine.getTransport().isStopped(), "first launch started the transport");

@@ -2313,7 +2313,7 @@ An open chord slot takes the keys instead:
 - Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback.
 - **M** drops a marker at the playhead, not mute; per-track mute is **X** to avoid the clash with the marker action.
 - Plain **B** taps tempo; **Cmd+B** triggers Bounce (Logic convention).
-- While a prompt that decides what happens to your session is up, no shortcut works: the unsaved-changes prompt when you quit, open or start another session, and **Recover from autosave?**. **Space** and **R** do nothing until you answer it, so nothing can start recording behind it. **Escape** still does whatever that prompt allows. Other dialogs and editors pass the transport keys through as usual.
+- While a prompt that decides what happens to your session is up, no shortcut works: the unsaved-changes prompt when you quit, open or start another session, and **Recover from autosave?**. **Space** and **R** do nothing until you answer it. A control surface or a MIDI binding can still start a take behind it, and so can **R** in the Save As browser that **Save** opens for a session you have never saved; **Save** stops that take first and saves it with the session. **Escape** still does whatever that prompt allows. Other dialogs and editors pass the transport keys through as usual.
 
 \newpage
 
@@ -2518,7 +2518,7 @@ The format for each entry:
 - **When**: You quit with unsaved changes. Quitting stops the transport before it checks, so a take still recording is committed and counts as unsaved even if you saved just before it started. A bounce, mixdown, master export or freeze still rendering is cancelled first, as its **Cancel** button would, and the prompt waits until it has stopped. Logging out, shutting the machine down, or stopping the app from a terminal counts as quitting: the prompt appears then too, and the session waits on your answer.
 - **Text**: "Your session has unsaved changes since the last manual save. If you don't save, those changes are discarded."
 - **Buttons**: **Save** / **Don't Save** / **Cancel**.
-- **Action**: Save unless you specifically want to discard. If the save does not complete, because you cancel the Save As browser that a never-saved session opens, pick a folder that already holds another session, or the write fails, Dusk Studio stays open as it was, with audio running and autosave on, and you can carry on or quit again. **Cancel** keeps Dusk Studio open with the transport stopped and any take the quit committed in place, so save it if you want to keep it.
+- **Action**: Save unless you specifically want to discard. **Save** stops a take that a control surface or a MIDI binding started while the prompt was up, or that started in the Save As browser, and saves it with the session. If the save does not complete, because you cancel the Save As browser that a never-saved session opens, pick a folder that already holds another session, or the write fails, Dusk Studio stays open as it was, with audio running and autosave on, and you can carry on or quit again. **Cancel** keeps Dusk Studio open with the transport stopped and any take the quit committed in place, so save it if you want to keep it.
 
 ### Save failed
 
@@ -2543,9 +2543,10 @@ The format for each entry:
 
 ### Clean out
 
-Five variants:
+Six variants:
 
 - **Recording**: "Stop recording before cleaning out. The take being recorded has no region pointing at its file until you stop, so Clean out would count it as unreferenced and delete it." — Buttons: OK. The same alert takes the place of the deletion when a take starts, from a control surface or a MIDI binding, while the confirmation below is open; nothing is deleted.
+- **Folder holds another session**: "Save this session before cleaning out. Another session has since been saved in the folder this one records into, and Clean out would count that session's recordings as unreferenced and delete them." — Buttons: OK. Shown for a session you have never saved when a `session.json` has appeared in its `Untitled` folder since it started. Save it somewhere of its own with **Save As…**, then Clean out works on that folder.
 - **Cannot read the directory**: "Could not read this session's audio directory, so there is no telling what is unreferenced. Check the folder's permissions and that its drive is still connected, then try again." — Buttons: OK.
 - **No audio directory**: "This session has no audio directory yet, so there's nothing to clean." — Buttons: OK.
 - **No unreferenced files**: "No unreferenced files found. The audio directory is already clean." — Buttons: OK.

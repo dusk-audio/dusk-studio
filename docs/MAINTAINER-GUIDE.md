@@ -600,7 +600,14 @@ such as `gui.plugin_picker_filter_and_load` and its cache, gets it from a
 script that writes the files and passes that directory in
 `DUSKSTUDIO_CONFIG_DIR` (`tests/gui_plugin_picker.sh`);
 `scripts/run-selftest-xvfb.sh` makes a per-run one when the caller has not.
-The private `HOME` still matters for everything else the app and its
+Your Music folder is kept out the same way. The launch session starts under
+`DUSKSTUDIO_MUSIC_DIR/Dusk Studio` when that is set, and otherwise under a
+fresh temp directory the app removes at exit, so a run's autosaves, takes and
+bounces never land among your sessions; the Save As, New Session, bounce and
+import browsers start there too. `scripts/run-selftest-xvfb.sh` makes a per-run
+one, and the regression legs point it at `Music` in their private `HOME`.
+`gui.first_launch` fails when the launch session is inside your own Music
+folder. The private `HOME` still matters for everything else the app and its
 libraries write under it. A desktop session exports the `XDG_*_HOME`
 variables as absolute paths into the real home, so they move with it.
 `PIPEWIRE_RUNTIME_DIR` keeps the real runtime directory for PipeWire alone:

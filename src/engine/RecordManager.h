@@ -101,9 +101,15 @@ public:
 
     // Message thread. True from startRecording until stopRecording has
     // committed or discarded every take file, and also after a stopRecording
-    // that bailed its teardown, until a later startRecording reclaims the
-    // writer. A take's WAV has no region pointing at it for all of that time.
+    // that bailed its teardown, until reclaimBailedTake or a later
+    // startRecording discards that take. A take's WAV has no region pointing
+    // at it for all of that time.
     bool hasOpenTake() const noexcept;
+
+    // Message thread. Discards the take a bailed stopRecording left behind,
+    // file and all, once the audio thread has left it. False, with nothing
+    // touched, while a take records or an audio-thread call is still inside.
+    bool reclaimBailedTake();
 
     bool isLoopCaptureActive() const noexcept
     {

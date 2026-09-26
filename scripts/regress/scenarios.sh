@@ -17,7 +17,8 @@
 # directory of its own) reads what a leg seeds there. The other XDG base
 # directories move with it: a desktop session exports them as absolute paths
 # into the real home, and the libraries under the app (GL shader caches,
-# fontconfig) write there.
+# fontconfig) write there. DUSKSTUDIO_MUSIC_DIR puts the launch session and
+# anything else the app would keep in the Music folder under that home too.
 #
 # Every wait takes an explicit budget in seconds. Each process gets its own
 # stdout and stderr file - merging them would make marker order meaningless.
@@ -67,6 +68,7 @@ sandbox_env() {
         "XDG_STATE_HOME=$dir/home/.local/state"
         "XDG_RUNTIME_DIR=$dir/runtime"
         "DUSKSTUDIO_CONFIG_DIR=$dir/home/.config/Dusk Studio"
+        "DUSKSTUDIO_MUSIC_DIR=$dir/home/Music"
     )
     if [[ -n "$pipewire_dir" ]]; then
         SANDBOX_ENV+=("PIPEWIRE_RUNTIME_DIR=$pipewire_dir")

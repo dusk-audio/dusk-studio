@@ -48,12 +48,20 @@ ScenarioResult runFileState (ScenarioContext& ctx)
         return ctx.verdict();
     }
 
+    // The autosave heartbeat and the dirty check publish with the audio live.
+    // Neither may write file state: a never-saved session's folder can hold
+    // another session's state/ tree by then, and only a save knows the folder
+    // the state belongs in.
+    engine.publishPluginStateForSave (false);
+    std::error_code fsError;
+    ctx.expect (! std::filesystem::exists (sessionDir / "state", fsError),
+            "a publish with the audio live wrote plug-in file state");
+
     engine.publishPluginStateForSave (true);
     ctx.expect (session.track (kTrackIndex).nativeLv2StateBase64.isNotEmpty(),
             "the plugin published no state");
 
     const auto stateDir = sessionDir / "state" / "lv2" / "track01";
-    std::error_code fsError;
     if (! ctx.expect (std::filesystem::is_directory (stateDir, fsError),
                   "the plugin's file state did not land in the session's state directory"))
         return ctx.verdict();

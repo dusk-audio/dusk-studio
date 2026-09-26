@@ -36,6 +36,7 @@ DISPLAY_FILE=""
 XVFB_LOG=""
 XVFB_PID=""
 CONFIG_DIR=""
+MUSIC_DIR=""
 
 cleanup() {
     trap - EXIT INT TERM
@@ -46,6 +47,7 @@ cleanup() {
     [[ -n "$DISPLAY_FILE" ]] && rm -f "$DISPLAY_FILE"
     [[ -n "$XVFB_LOG" ]] && rm -f "$XVFB_LOG"
     [[ -n "$CONFIG_DIR" ]] && rm -rf "$CONFIG_DIR"
+    [[ -n "$MUSIC_DIR" ]] && rm -rf "$MUSIC_DIR"
     :
 }
 trap cleanup EXIT
@@ -61,6 +63,12 @@ XVFB_LOG=$(mktemp "${TMPDIR:-/tmp}/duskstudio-xvfb-log.XXXXXX")
 if [[ -z "${DUSKSTUDIO_CONFIG_DIR:-}" ]]; then
     CONFIG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-config.XXXXXX")
     export DUSKSTUDIO_CONFIG_DIR="$CONFIG_DIR"
+fi
+# Likewise the launch session, its autosaves, takes and bounces stay out of the
+# user's Music folder, which is where their sessions live.
+if [[ -z "${DUSKSTUDIO_MUSIC_DIR:-}" ]]; then
+    MUSIC_DIR=$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-music.XXXXXX")
+    export DUSKSTUDIO_MUSIC_DIR="$MUSIC_DIR"
 fi
 
 Xvfb -displayfd 3 -screen 0 1920x1200x24 -nolisten tcp \

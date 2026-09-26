@@ -178,6 +178,10 @@ publishes.
   (#747). R or Space pressed while the prompt was up started the transport
   again, and a take started there was lost with the quit. While a prompt
   about unsaved work is open, the window ignores every key but Escape and Tab.
+  A control surface or MIDI binding can still record under the prompt, and R
+  still works in the Save As browser its Save opens; a save now ends such a
+  take before it copies anything, so a Save As takes its audio into the new
+  folder instead of pointing at a file left in the old one.
 - **A quit during a bounce cancels the render first** (#748). A quit with
   nothing unsaved stopped the transport under a running offline bounce. A
   quit now cancels any running bounce, mixdown, master export or freeze the
@@ -186,7 +190,9 @@ publishes.
   Dusk Studio starts in `~/Music/Dusk Studio/Untitled`. If a real session had
   been saved there, a fresh session's autosave, notes and recorded takes went
   into its folder. A fresh session now starts in the first `Untitled` folder
-  that holds no session (`Untitled 2`, and so on).
+  that holds no session (`Untitled 2`, and so on). Scenario and self-test runs
+  no longer use your Music folder at all (#749): their session starts under
+  `DUSKSTUDIO_MUSIC_DIR`, or a private folder removed when the run ends.
 - **First launch keeps the output when the chosen input will not open with
   it** (#742). Adding the input closed the working output first, so an input
   that refused left no audio device open and no message. The output now
@@ -195,7 +201,10 @@ publishes.
 - **Clean out refuses while a take is recording** (#743). The take's file has
   no region until you stop, so Clean out listed it and deleted it. Clean out
   now asks you to stop recording first, both when you choose it and again when
-  you press Delete.
+  you press Delete. A take dropped by a stalled stop no longer holds that
+  refusal up once nothing records; Clean out removes its file. A session you
+  have never saved is refused too once another session has been saved into
+  its folder, rather than offered that session's takes to delete.
 - **A Save As that fails partway puts the session back** (#744). If the
   notepad or `session.json` could not be written after the audio was copied,
   the session stayed pointed at the new folder while the alert said nothing

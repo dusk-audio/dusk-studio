@@ -133,6 +133,8 @@ private:
     // whether to bounce in realtime instead. launch receives the choice.
     void askBounceRealtime (std::function<void (bool realtime)> launch);
     void cleanOutUnreferencedFiles();
+    // Alerts and answers true when Clean out must not run now.
+    bool refuseCleanOut();
     void launchStartupDialog();
     void switchToStage (AudioEngine::Stage);
 
@@ -287,6 +289,9 @@ private:
     // The folder writeAutosave and saveNotepadNow write into (see
     // savecheck::sidecarFolder). Empty when there is nowhere safe.
     std::filesystem::path sidecarFolder() const;
+    // <Music>/Dusk Studio, the parent a launch session starts in (see
+    // dusk::fs::appMusicDir). Empty when there is no home folder.
+    static std::filesystem::path defaultSessionsFolder();
     void startUnsavedSessionIn (const std::filesystem::path& parent);
 
     // Full JSON kept for quit-prompt diff + recovery; the heavy compare
