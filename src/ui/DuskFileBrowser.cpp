@@ -1,6 +1,7 @@
 #include "DuskFileBrowser.h"
 #include "DuskAlerts.h"
 #include "EmbeddedModal.h"
+#include "../foundation/Fs.h"
 
 namespace duskstudio::filebrowser
 {
@@ -44,7 +45,9 @@ public:
                         opts.filePatternsAllowed, juce::String(),
                         opts.filePatternsAllowed);
 
-        const auto home = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+        // From $HOME, which a sandboxed run points at its own folder. JUCE asks
+        // macOS for the home folder and would start in the real one.
+        const juce::File home (dusk::fs::userHomeDir().u8string());
         auto initial = opts.initialFileOrDirectory.getFullPathName().isNotEmpty()
                            ? opts.initialFileOrDirectory
                            : home;
@@ -169,6 +172,12 @@ public:
         return false;
     }
 
+    std::filesystem::path shownFolder() const
+    {
+        return browser != nullptr ? std::filesystem::u8path (browser->getRoot().getFullPathName().toStdString())
+                                  : std::filesystem::path {};
+    }
+
     void dismissCancelled()
     {
         auto single = resultFn;
@@ -289,6 +298,14 @@ private:
     juce::File chosen;
 };
 } // namespace
+
+std::filesystem::path shownFolderForScenario()
+{
+    const auto& stack = EmbeddedModal::activeModalStack();
+    const auto* panel = stack.empty() ? nullptr
+                                      : dynamic_cast<const DuskFileBrowserPanel*> (stack.back()->getBody());
+    return panel != nullptr ? panel->shownFolder() : std::filesystem::path {};
+}
 
 void open (juce::Component& host, Options opts,
             std::function<void (juce::File)> onResult)

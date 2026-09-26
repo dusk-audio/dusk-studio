@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "FileBrowserChoice.h"
+#include <filesystem>
 #include <functional>
 
 namespace duskstudio::filebrowser
@@ -9,7 +10,7 @@ namespace duskstudio::filebrowser
 struct Options
 {
     juce::String title;                  // shown in the modal header
-    juce::File   initialFileOrDirectory; // path to seed (file selected when Save)
+    juce::File   initialFileOrDirectory; // path to seed (file selected when Save); empty = home
     juce::String filePatternsAllowed;    // "*.wav;*.aiff" - empty = any
     Mode         mode = Mode::Open;
     bool         selectDirectories     = false; // false = files only
@@ -37,4 +38,7 @@ void open (juce::Component& host,
 void openMulti (juce::Component& host,
                   Options opts,
                   std::function<void (juce::Array<juce::File>)> onResult);
+
+// The folder the topmost browser is listing; empty when the top modal is not one.
+std::filesystem::path shownFolderForScenario();
 } // namespace duskstudio::filebrowser

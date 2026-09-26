@@ -158,6 +158,8 @@ public:
     virtual std::filesystem::path executableDirectory() const = 0;
     virtual void refreshMasteringSource() = 0;
     virtual bool focusFileName() = 0;
+    // The folder the topmost file browser lists; empty when none is on top.
+    virtual std::filesystem::path fileBrowserFolder() const = 0;
     virtual bool clickFileBrowserControl (bool path) = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
     virtual bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) = 0;

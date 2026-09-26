@@ -394,6 +394,10 @@ std::optional<ScenarioResult> runClapNoWindowMessage (GuiHost& host, ScenarioCon
     (void) host;
     (void) ctx;
     return ScenarioResult::skip ("built without native CLAP hosting");
+   #elif ! defined (__linux__)
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("only the Linux host looks for a plug-in window in the container");
    #else
     static constexpr int kBlankNoticeTimeoutMs = 20000;
 
@@ -409,6 +413,14 @@ std::optional<ScenarioResult> runClapNoWindowMessage (GuiHost& host, ScenarioCon
     if (! strip->loadNativeClap (*fixture, "studio.dusk.test.no-window", error))
         return ScenarioResult::fail ("the fixture did not load: " + error);
     strip->refreshInsertButton();
+    // A wait that times out ends the case without finish below.
+    ctx.cleanup ([&host, strip]
+    {
+        strip->closeEditor();
+        dismissAlert (host);
+        strip->unloadNativePlugins();
+        strip->refreshInsertButton();
+    });
 
     const auto finish = [&ctx, &host, strip]
     {
@@ -4175,6 +4187,17 @@ const ScenarioRegistrar auxSources { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAuxSources (host, ctx); }
 } };
 
+// A run's HOME is its sandbox. A browser that starts outside it lists the
+// user's own folders, and on macOS a privacy prompt for them stalls the run.
+bool expectBrowserInHome (GuiHost& host, ScenarioContext& ctx, const std::string& what)
+{
+    const auto folder = host.fileBrowserFolder().lexically_normal();
+    const auto home = dusk::fs::userHomeDir().lexically_normal();
+    const auto relative = folder.lexically_relative (home);
+    const bool inside = ! folder.empty() && ! relative.empty() && *relative.begin() != "..";
+    return ctx.expect (inside, what + " opened at '" + folder.string() + "', outside HOME " + home.string());
+}
+
 std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_MULTISAMPLE
@@ -4213,6 +4236,7 @@ std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioCon
     { ctx.expect (host.clickModalButton ("Soundfont (.sfz / .sf2 / .bank.xml)"), "soundfont chooser did not open"); } });
     steps->push_back ({ 150, [&host, &ctx, soundfont]
     {
+        expectBrowserInHome (host, ctx, "the soundfont browser");
         ctx.expect (host.focusFileName(), "soundfont filename entry was not available");
        #if defined (__APPLE__)
         host.pressPeerKey ("command + A", 'a');
@@ -6341,6 +6365,11 @@ std::optional<ScenarioResult> runTimelineDrawer (GuiHost& host, ScenarioContext&
         if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
     });
     ctx.expect (host.timelineViewMatches (false), "the timeline is not collapsed at launch");
+    // A window too short for the full strips compacts them on its own, so with
+    // the timeline closed each strip goes back to how it launched.
+    std::vector<bool> launchCompact;
+    for (int track = 0; track < Session::kNumTracks; ++track)
+        launchCompact.push_back (host.stripCompact (track));
     auto steps = std::make_shared<std::vector<Step>>();
     for (const bool show : { true, false, true, false })
     {
@@ -6349,11 +6378,11 @@ std::optional<ScenarioResult> runTimelineDrawer (GuiHost& host, ScenarioContext&
             ctx.expect (show ? host.pressKey ("T", 't') : host.pressKey ("command + \\", '\\'),
                         "the timeline shortcut was not handled");
         } });
-        steps->push_back ({ 100, [&host, &ctx, show]
+        steps->push_back ({ 100, [&host, &ctx, show, launchCompact]
         {
             ctx.expect (host.timelineViewMatches (show), "the timeline visibility did not follow its toggle");
             for (int track = 0; track < Session::kNumTracks; ++track)
-                ctx.expect (host.stripCompact (track) == show,
+                ctx.expect (host.stripCompact (track) == (show || launchCompact[(size_t) track]),
                             "timeline expansion left the wrong layout on strip " + std::to_string (track + 1));
         } });
     }
@@ -7474,39 +7503,48 @@ std::optional<ScenarioResult> runBusHpfKnob (GuiHost& host, ScenarioContext& ctx
         } });
     }
 
+    // Second pass with the timeline open: the strips compact and the EQ header
+    // becomes the pill, which carries the same menu.
+    const bool expanded = host.timelineViewMatches (true);
+    ctx.cleanup ([&host, expanded] { host.setTimelineShown (expanded); });
     const std::string lfTitle = "Bus 1 EQ low shelf gain";
-    steps->push_back ({ 100, [&bus]
+    for (const bool compact : { false, true })
     {
-        bus.hpfFreq.store (150.0f);
-        bus.hpfEnabled.store (true);
-        bus.eqLfGainDb.store (4.5f);
-    } });
-    steps->push_back ({ 100, [&host, &ctx, title, lfTitle]
-    {
-        std::string hpf, lf, help;
-        const bool hpfFound = host.accessibleControl (title, hpf, help);
-        const bool lfFound = host.accessibleControl (lfTitle, lf, help);
-        ctx.expect (hpfFound && hpf == "150",
-                    "a 150 Hz highpass set in the session shows " + hpf + " on the strip knob");
-        ctx.expect (lfFound && lf == "4.5", "a +4.5 dB LF set in the session shows " + lf + " on the strip knob");
-        ctx.expect (host.clickStripControl (GuiHost::StripKind::Bus, 0, "eq", 1, true),
-                    "the bus EQ header did not take a right-click");
-    } });
-    steps->push_back ({ 100, [&host, &ctx]
-    { ctx.expect (host.clickContextMenuItem ("Reset EQ"), "the bus EQ menu has no Reset EQ"); } });
-    steps->push_back ({ 100, [&host, &ctx, &bus, title, lfTitle]
-    {
-        ctx.expect (! bus.hpfEnabled.load() && std::abs (bus.hpfFreq.load() - BusParams::kHpfOffHz) < 0.5f,
-                    "Reset EQ left the bus highpass at " + std::to_string (bus.hpfFreq.load()) + " Hz, "
-                        + (bus.hpfEnabled.load() ? "on" : "off"));
-        ctx.expect (std::abs (bus.eqLfGainDb.load()) < 1.0e-6f, "Reset EQ left the LF gain up");
-        ctx.expect (bus.eqEnabled.load(), "Reset EQ bypassed the bus EQ");
-        std::string hpf, lf, help;
-        const bool hpfFound = host.accessibleControl (title, hpf, help);
-        const bool lfFound = host.accessibleControl (lfTitle, lf, help);
-        ctx.expect (hpfFound && hpf == "OFF", "after Reset EQ the strip's highpass knob shows " + hpf);
-        ctx.expect (lfFound && lf == "0.0", "after Reset EQ the strip's LF knob shows " + lf);
-    } });
+        const std::string layout = compact ? " with the timeline open" : "";
+        steps->push_back ({ 100, [&host, &bus, compact]
+        {
+            if (compact) host.setTimelineShown (true);
+            bus.hpfFreq.store (150.0f);
+            bus.hpfEnabled.store (true);
+            bus.eqLfGainDb.store (4.5f);
+        } });
+        steps->push_back ({ 100, [&host, &ctx, title, lfTitle, layout]
+        {
+            std::string hpf, lf, help;
+            const bool hpfFound = host.accessibleControl (title, hpf, help);
+            const bool lfFound = host.accessibleControl (lfTitle, lf, help);
+            ctx.expect (hpfFound && hpf == "150",
+                        "a 150 Hz highpass set in the session shows " + hpf + " on the strip knob" + layout);
+            ctx.expect (lfFound && lf == "4.5", "a +4.5 dB LF set in the session shows " + lf + " on the strip knob" + layout);
+            ctx.expect (host.clickStripControl (GuiHost::StripKind::Bus, 0, "eq", 1, true),
+                        "the bus EQ header did not take a right-click" + layout);
+        } });
+        steps->push_back ({ 100, [&host, &ctx, layout]
+        { ctx.expect (host.clickContextMenuItem ("Reset EQ"), "the bus EQ menu has no Reset EQ" + layout); } });
+        steps->push_back ({ 100, [&host, &ctx, &bus, title, lfTitle, layout]
+        {
+            ctx.expect (! bus.hpfEnabled.load() && std::abs (bus.hpfFreq.load() - BusParams::kHpfOffHz) < 0.5f,
+                        "Reset EQ" + layout + " left the bus highpass at " + std::to_string (bus.hpfFreq.load()) + " Hz, "
+                            + (bus.hpfEnabled.load() ? "on" : "off"));
+            ctx.expect (std::abs (bus.eqLfGainDb.load()) < 1.0e-6f, "Reset EQ" + layout + " left the LF gain up");
+            ctx.expect (bus.eqEnabled.load(), "Reset EQ" + layout + " bypassed the bus EQ");
+            std::string hpf, lf, help;
+            const bool hpfFound = host.accessibleControl (title, hpf, help);
+            const bool lfFound = host.accessibleControl (lfTitle, lf, help);
+            ctx.expect (hpfFound && hpf == "OFF", "after Reset EQ" + layout + " the strip's highpass knob shows " + hpf);
+            ctx.expect (lfFound && lf == "0.0", "after Reset EQ" + layout + " the strip's LF knob shows " + lf);
+        } });
+    }
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -7527,28 +7565,45 @@ std::optional<ScenarioResult> runWindowKeys (GuiHost& host, ScenarioContext& ctx
         if (host.fullScreen() != fullscreen) host.pressKey ("F11");
         if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
     });
-    auto steps = std::make_shared<std::vector<Step>>();
-    for (const bool restore : { false, true })
+    // macOS animates into and out of full screen: the state flips when the
+    // animation starts, and a toggle made before it ends is dropped. So each
+    // F11 waits for the state and then for the animation.
+    static constexpr int kFullScreenAnimationMs = 1500;
+    const auto round = [&host, &ctx, fullscreen, expanded] (bool restore, std::function<void()> next)
     {
-        steps->push_back ({ 100, [&host, &ctx]
-        { ctx.expect (host.pressKey ("F11"), "F11 was not handled"); } });
-        steps->push_back ({ 300, [&host, &ctx, fullscreen, restore]
-        { ctx.expect (host.fullScreen() == (restore ? fullscreen : ! fullscreen), "F11 did not toggle the native window state"); } });
-        steps->push_back ({ 100, [&host, &ctx]
-        { ctx.expect (host.pressKey ("command + " + keyCodeDescription ('\\'), (char) 0x1c),
-          "the timeline window shortcut was not handled"); } });
-        steps->push_back ({ 100, [&host, &ctx, expanded, restore]
-        { ctx.expect (host.timelineViewMatches (restore ? expanded : ! expanded), "the timeline shortcut did not toggle visibility"); } });
-    }
-    steps->push_back ({ 100, [&host] { host.openAbout(); } });
-    steps->push_back ({ 200, [&host, &ctx]
+        ctx.expect (host.pressKey ("F11"), "F11 was not handled");
+        const bool wanted = restore ? fullscreen : ! fullscreen;
+        ctx.waitUntil ([&host, wanted] { return host.fullScreen() == wanted; }, 5000,
+                       [&host, &ctx, expanded, restore, next]
+                       {
+                           ctx.later (kFullScreenAnimationMs, [&host, &ctx, expanded, restore, next]
+                           {
+                               ctx.expect (host.pressKey ("command + " + keyCodeDescription ('\\'), (char) 0x1c),
+                                           "the timeline window shortcut was not handled");
+                               ctx.later (100, [&host, &ctx, expanded, restore, next]
+                               {
+                                   ctx.expect (host.timelineViewMatches (restore ? expanded : ! expanded),
+                                               "the timeline shortcut did not toggle visibility");
+                                   next();
+                               });
+                           });
+                       },
+                       "F11 did not toggle the native window state");
+    };
+    const auto escapeCheck = [&host, &ctx]
     {
-        ctx.expect (! host.modalStackEmpty(), "About did not open for the Escape check");
-        ctx.expect (host.pressPeerKey ("escape"), "the focused modal did not handle Escape");
-    } });
-    steps->push_back ({ 300, [&host, &ctx]
-    { ctx.expect (host.modalStackEmpty(), "Escape left the modal open"); } });
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+        auto steps = std::make_shared<std::vector<Step>>();
+        steps->push_back ({ 100, [&host] { host.openAbout(); } });
+        steps->push_back ({ 200, [&host, &ctx]
+        {
+            ctx.expect (! host.modalStackEmpty(), "About did not open for the Escape check");
+            ctx.expect (host.pressPeerKey ("escape"), "the focused modal did not handle Escape");
+        } });
+        steps->push_back ({ 300, [&host, &ctx]
+        { ctx.expect (host.modalStackEmpty(), "Escape left the modal open"); } });
+        runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    };
+    ctx.later (100, [round, escapeCheck] { round (false, [round, escapeCheck] { round (true, escapeCheck); }); });
     return std::nullopt;
 }
 
@@ -8782,6 +8837,7 @@ std::optional<ScenarioResult> runMidiBindingsPanel (GuiHost& host, ScenarioConte
     std::ofstream (broken) << "not a bindings preset";
     const auto browse = [&host, &ctx] (const std::filesystem::path& path, const std::string& accept)
     {
+        expectBrowserInHome (host, ctx, "the " + accept + " browser");
         if (! ctx.expect (host.focusFileName(), "the file browser has no name field")) return;
         host.pressPeerKey ("command + A");
         for (const char character : path.string())
@@ -10258,8 +10314,10 @@ std::optional<ScenarioResult> runPianoEditKeys (GuiHost& host, ScenarioContext& 
     });
     track.mode.store ((int) Track::Mode::Midi);
     track.frozen.store (false);
+    // Long enough that a quarter-view pan stops well short of the end on any
+    // window, so Cmd+Right, End and Cmd+Left each land somewhere different.
     MidiRegion region;
-    region.lengthInTicks = kMidiTicksPerQuarter * 64;
+    region.lengthInTicks = kMidiTicksPerQuarter * 512;
     region.lengthInSamples = session.ticksToSamples (region.lengthInTicks, engine.getCurrentSampleRate());
     region.notes = { { 1, 60, 100, 240, 120 }, { 1, 60, 100, 360, 120 }, { 1, 67, 85, 600, 240 } };
     const auto original = region.notes;
@@ -10378,7 +10436,10 @@ std::optional<ScenarioResult> runPianoEditKeys (GuiHost& host, ScenarioContext& 
         ctx.expect (host.focusPiano() && host.pressPeerKey ("home"), "Home was not handled");
         ctx.expect (host.pianoViewport()[1] < 0.5, "Home did not jump the view to the region start");
         ctx.expect (host.focusPiano() && host.pressPeerKey ("end"), "End was not handled");
-        ctx.expect (host.pianoViewport()[1] > *scroll, "End did not jump the view to the region end");
+        ctx.expect (host.pianoViewport()[1] > *scroll,
+                    "End did not jump the view to the region end: it scrolled to "
+                        + std::to_string ((int) host.pianoViewport()[1]) + " px, Cmd+Right to "
+                        + std::to_string ((int) *scroll));
         ctx.expect (host.focusPiano() && host.pressPeerKey ("command + cursor left"),
                     "the pan-left key was not handled");
     } });

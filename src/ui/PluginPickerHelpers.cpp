@@ -7,6 +7,7 @@
 #include "../engine/PluginScanMessage.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/builtin/BuiltinScanRows.h"
+#include "../foundation/Fs.h"
 #include <algorithm>
 #if DUSKSTUDIO_HAS_MULTISAMPLE
  #include "../engine/multisample/AriaBank.h"
@@ -298,12 +299,11 @@ void openFileChooser (PluginSlot& slot,
     // .vst3 bundle root. Default location is platform-specific - macOS
     // installs to ~/Library/Audio/Plug-Ins/VST3; Linux uses ~/.vst3.
 #if defined(__APPLE__)
-    const auto defaultDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory)
-                                .getChildFile ("Library/Audio/Plug-Ins/VST3");
+    const auto pluginDir = dusk::fs::userHomeDir() / "Library" / "Audio" / "Plug-Ins" / "VST3";
 #else
-    const auto defaultDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory)
-                                .getChildFile (".vst3");
+    const auto pluginDir = dusk::fs::userHomeDir() / ".vst3";
 #endif
+    const juce::File defaultDir (pluginDir.u8string());
     auto* host = parentForLifetime.getComponent();
     if (host == nullptr) return;
 
@@ -352,10 +352,9 @@ static void openSoundfontFileChooser (std::function<void (const juce::File&)> on
 {
     auto* host = parentForLifetime.getComponent();
     if (host == nullptr) return;
-    const auto defaultDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
     filebrowser::open (*host, {
         /*title*/                  "Load soundfont (.sfz / .sf2 / .bank.xml)",
-        /*initialFileOrDirectory*/ defaultDir,
+        /*initialFileOrDirectory*/ {},
         /*filePatternsAllowed*/    "*.sfz;*.sf2;*.bank.xml",
         /*mode*/                   filebrowser::Mode::Open,
         /*selectDirectories*/      false,

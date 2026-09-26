@@ -84,7 +84,7 @@ Getting started > Configuring audio > Audio	a first-launch input the device refu
 Getting started > Configuring audio > Control surface	MCU input and output enable faders and LED mirroring	auto	test:McuController: initial resync emits faders + LED state for 8 banked strips;test:SessionSerializer round-trips MCU input/output identifiers + assign mode
 Getting started > Configuring audio > MIDI bindings	button opens the MIDI Bindings panel	auto	scenario:gui.settings_midi_bindings
 Getting started > Configuring audio > MIDI sync	the seven sync settings are saved with the session	auto	test:SessionSerializer round-trips the MTC sync settings;test:SessionSerializer round-trips the clock sync settings
-Getting started > Configuring audio > General	UI scale previews live and saves per machine	auto	scenario:gui.settings_ui_scale
+Getting started > Configuring audio > General	UI scale previews live, saves per machine and holds the window: its size on screen on macOS, the console's minimum on Linux and Windows	auto	scenario:gui.settings_ui_scale		the case checks the size on screen on macOS and the minimum elsewhere, while previewing, after release and after Settings closes
 Getting started > Configuring audio > General	Expand tape strip and Follow playhead defaults	auto	scenario:gui.settings_defaults;script:tests/gui_settings_defaults.sh
 Getting started > Configuring audio > General	Playhead on Stop choices	auto	test:Stop on a rolling transport follows the Playhead on Stop setting;test:Stop pressed while stopped returns to zero whatever the setting;test:The persisted Playhead on Stop values keep their meaning;test:A saved stop behaviour keeps its meaning
 Getting started > Configuring audio > General	MIDI soft takeover keeps a control dormant until it crosses the value	auto	test:FaderBindingMap: apply and pickup inverse agree (soft-takeover symmetry)
@@ -266,7 +266,7 @@ Recording > Take history	deleting a region removes its stack; undo restores it	a
 Recording > Recording errors	a write failure at record start raises an alert listing the tracks	auto	scenario:gui.recording_setup_alert;scenario:gui.recording_setup_alert_key		both the Record button and R name failed writers after an audio-directory obstruction
 Recording > Recording errors	a mid-take error or MIDI overflow reports at Stop; written audio is kept	auto	test:RecordManager surfaces MIDI FIFO overflow at stopRecording;test:RecordManager clean MIDI take leaves overflow list empty
 
-The tape strip	collapsed by default; strips compact when it opens	auto	scenario:gui.timeline_drawer		checks launch state, T and command-backslash toggles, actual timeline visibility and compact state on all 24 strips
+The tape strip	collapsed by default; strips compact when it opens	auto	scenario:gui.timeline_drawer		checks launch state, T and command-backslash toggles, actual timeline visibility and compact state on all 24 strips, from full-height strips: a launch window too short for them is taken to the smallest UI scale, and the case skips if that is still too short
 The tape strip > Layout	track column with number, colour, ARM, SOLO, MUTE	manual			layout; checked by screenshot review
 The tape strip > The ruler	click seeks; drag opens the loop/punch range menu	auto	scenario:gui.tape_ruler
 The tape strip > Regions	audio regions draw waveforms; MIDI regions draw a glyph	auto	test:Waveform peaks preserve channels, polarity, gain and the final partial bin;test:Waveform range queries match conservative sample extrema at every pyramid level

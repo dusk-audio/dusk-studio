@@ -18,6 +18,7 @@
 #include "EmbeddedModal.h"
 #include "MidiBindingsPanel.h"
 #include "DuskContextMenu.h"
+#include "DuskFileBrowser.h"
 #include "DpImportDialog.h"
 #include "MultiImportTargetPicker.h"
 #include "DuskAlerts.h"
@@ -1346,6 +1347,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                 }
         return false;
     }
+    std::filesystem::path fileBrowserFolder() const override { return filebrowser::shownFolderForScenario(); }
     bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 
     bool openMidiIo (int index) override

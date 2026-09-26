@@ -6619,7 +6619,17 @@ void MainComponent::reclaimFocusFromNotepad()
     // transport / edit shortcuts work without a stray click first (same reason
     // as dismissStartupDialog).
     if (auto* window = getTopLevelComponent())
+    {
+       #if defined(__APPLE__)
+        // The window is already in front. Ordering it there again makes AppKit
+        // re-place it, which at a UI scale other than 1 rounds the frame through
+        // whole zoomed units and leaves it a point off.
+        if (auto* peer = window->getPeer())
+            peer->grabFocus();
+       #else
         window->toFront (true);
+       #endif
+    }
     focusCanvasOrTopModal();
 }
 
