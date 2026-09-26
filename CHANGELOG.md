@@ -169,6 +169,43 @@ publishes.
   for the transport to stop, and a refused clone says why instead of doing
   nothing. The manual has a new **Clone to track** section listing what a
   clone carries.
+- **Quitting mid-take asks before the take is lost** (#740). A take still
+  recording only joins the session when the transport stops, and the quit
+  checked for unsaved changes first, so after a save a quit mid-take read as
+  clean and the take was lost. A quit now stops the transport first, which
+  commits the take, and then asks.
+- **Transport keys do nothing under the quit and session-switch prompts**
+  (#747). R or Space pressed while the prompt was up started the transport
+  again, and a take started there was lost with the quit. While a prompt
+  about unsaved work is open, the window ignores every key but Escape and Tab.
+- **A quit during a bounce cancels the render first** (#748). A quit with
+  nothing unsaved stopped the transport under a running offline bounce. A
+  quit now cancels any running bounce, mixdown, master export or freeze the
+  way its Cancel button does, waits for it to stop, and then carries on.
+- **A new session keeps out of a session you saved as Untitled** (#741).
+  Dusk Studio starts in `~/Music/Dusk Studio/Untitled`. If a real session had
+  been saved there, a fresh session's autosave, notes and recorded takes went
+  into its folder. A fresh session now starts in the first `Untitled` folder
+  that holds no session (`Untitled 2`, and so on).
+- **First launch keeps the output when the chosen input will not open with
+  it** (#742). Adding the input closed the working output first, so an input
+  that refused left no audio device open and no message. The output now
+  reopens on its own, with the "No input device" notice, and the no-device
+  alert shows if even that fails.
+- **Clean out refuses while a take is recording** (#743). The take's file has
+  no region until you stop, so Clean out listed it and deleted it. Clean out
+  now asks you to stop recording first, both when you choose it and again when
+  you press Delete.
+- **A Save As that fails partway puts the session back** (#744). If the
+  notepad or `session.json` could not be written after the audio was copied,
+  the session stayed pointed at the new folder while the alert said nothing
+  had changed. A failed Save As now restores the session and removes what it
+  made in the new folder.
+- **A take dropped by a stalled stop cannot crash the next recording** (#746).
+  When Stop gave up waiting for a stalled audio thread, the next recording
+  freed the dropped take's writer while the disk thread could still use it,
+  and the 24th track lost its take. The dropped take is now cleared properly
+  before the next recording starts.
 - **The channel EQ no longer cramps near Nyquist.** At the default 1x Effect
   oversampling a high HM boost used to fall 5 to 7 dB short at 20 kHz. Every
   band now holds its shape up to 20 kHz at 1x, 2x and 4x.

@@ -52,7 +52,7 @@ src/session/RegionEditActions.cpp	32
 src/session/RegionEditActions.h	16
 src/session/Session.cpp	10
 src/session/Session.h	76
-src/session/SessionSerializer.cpp	82
+src/session/SessionSerializer.cpp	77
 src/session/SessionSerializer.h	13
 src/session/SessionTemplates.cpp	3
 src/ui/AnalogVuMeter.cpp	113
@@ -109,7 +109,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	455
+src/ui/MainComponent.cpp	453
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	328
 src/ui/MasterStripComponent.h	55
