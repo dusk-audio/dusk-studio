@@ -10940,6 +10940,224 @@ const ScenarioRegistrar freshSessionSaveAsks { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runFreshSessionSaveAsks (host, ctx); }
 } };
 
+// A real session can be saved as Untitled. A never-saved session whose folder
+// holds one keeps its autosave and notes in a private folder, where the
+// autosave holds its latest edit; Don't Save and Save As discard that autosave
+// rather than the other session's; Save As into that folder is refused, and
+// Save As elsewhere takes the notes along but not the other session's plug-in
+// state. A new session starts beside it in Untitled 2, so its takes and
+// autosave land there, and Save As takes the take along. The session saved as
+// Untitled never changes.
+std::optional<ScenarioResult> runUnsavedSessionSparesUntitled (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered() || ! host.autosaveRunning() || host.engineDetached())
+        return ScenarioResult::skip ("requires a stopped transport, no modal, and live audio and autosave");
+    if (host.sessionOnDisk()) return ScenarioResult::skip ("requires the launch session never to have been saved");
+    const auto config = dusk::fs::appConfigDir();
+    if (config.empty()) return ScenarioResult::skip ("requires a configuration folder");
+    const auto privateDir = config / "unsaved-session";
+    const auto privateAutosave = privateDir / "session.json.autosave";
+    std::error_code error;
+    fs::remove_all (privateDir, error);
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore, privateDir]
+    {
+        engine.stop();
+        session.setTrackArmed (0, false);
+        drainModals (host);
+        engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        std::error_code ignored;
+        fs::remove_all (privateDir, ignored);
+    });
+
+    const auto untitled = ctx.tempDir() / "Untitled";
+    fs::create_directories (untitled / "audio");
+    fs::create_directories (untitled / "state" / "lv2" / "track01");
+    auto& fader = session.track (0).strip.faderDb;
+    const float launchFader = fader.load();
+    fader.store (launchFader - 6.0f);
+    bool wrote = SessionSerializer::save (session, untitled / "session.json");
+    fader.store (launchFader - 9.0f);
+    wrote = SessionSerializer::save (session, untitled / "session.json.autosave") && wrote;
+    fader.store (launchFader);
+    std::ofstream (untitled / "notepad.md") << "Notes of the session saved as Untitled\n";
+    std::ofstream (untitled / "state" / "lv2" / "track01" / "state.ttl") << "# its plug-in state\n";
+    if (! wrote || ! fs::exists (untitled / "state" / "lv2" / "track01" / "state.ttl"))
+        return ScenarioResult::fail ("could not write the Untitled session");
+    const auto contents = [untitled]
+    {
+        std::vector<std::string> files;
+        std::error_code ignored;
+        for (const auto& name : folderListing (untitled))
+            files.push_back (name + "\n"
+                             + (fs::is_regular_file (untitled / name, ignored) ? fileBytes (untitled / name) : ""));
+        return files;
+    };
+    const auto before = contents();
+    const auto untouched = [&ctx, contents, before] (const std::string& how)
+    { ctx.expect (contents() == before, how + " changed the files of the session saved as Untitled"); };
+
+    applySessionDirectory (session, untitled);
+    const float edited = launchFader - 3.0f;
+    fader.store (edited);
+    host.autosaveTick();
+    untouched ("An autosave tick");
+    ctx.expect (nearly (savedFaderOf (privateAutosave), edited), "the never-saved session's autosave does not hold its edit");
+    const std::string notes = "Notes of the launch session\n";
+    ctx.expect (host.closeNotepadAfterTyping (notes), "closing the notepad did not save the notes");
+    untouched ("Closing the notepad");
+    ctx.expect (fileBytes (privateDir / "notepad.md") == notes, "the never-saved session's notes were not kept");
+
+    const auto saveAs = [&host, &ctx] (const std::string& how, const fs::path& target)
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                          how + " showed '" + host.modalText() + "' rather than Save As")
+            || ! ctx.expect (host.focusFileName(), how + ": the Save As browser has no name field"))
+            return;
+        typeReplacing (host, target.string());
+        ctx.expect (host.clickModalButton ("Save"), how + ": the Save As browser has no Save button");
+    };
+    const float editedAgain = launchFader - 4.0f;
+    const auto saved = ctx.tempDir() / "Saved";
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Open..."), "the File menu has no Open..."); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        ctx.expect (host.modalText().rfind ("Save changes before opening another session?", 0) == 0,
+                    "File > Open over unsaved changes showed '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton ("Don't Save"), "the unsaved-changes prompt did not offer Don't Save");
+    } });
+    steps->push_back ({ 700, [&host, &ctx, untouched, privateAutosave]
+    {
+        ctx.expect (host.modalText().rfind ("Open session.json", 0) == 0,
+                    "Don't Save showed '" + host.modalText() + "' rather than the Open browser");
+        untouched ("Don't Save before File > Open");
+        std::error_code ignored;
+        ctx.expect (! fs::exists (privateAutosave, ignored), "Don't Save kept the never-saved session's autosave");
+        ctx.expect (host.clickModalButton ("Cancel"), "the Open browser has no Cancel");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &session, &fader, untouched, untitled, editedAgain, privateAutosave]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == untitled, "backing out of File > Open moved the session");
+        fader.store (editedAgain);
+        host.autosaveTick();
+        untouched ("A second autosave tick");
+        ctx.expect (nearly (savedFaderOf (privateAutosave), editedAgain),
+                    "the next autosave after Don't Save does not hold the edit");
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+    steps->push_back ({ 700, [saveAs, untitled] { saveAs ("Save As into the launch folder", untitled); } });
+    steps->push_back ({ 700, [&host, &ctx, untouched]
+    {
+        ctx.expect (host.modalText().rfind ("Folder holds another session\n", 0) == 0,
+                    "Save As into the launch folder showed '" + host.modalText() + "' rather than the refusal");
+        untouched ("Save As into the launch folder");
+        ctx.expect (host.clickModalButton ("OK"), "the refusal has no OK button");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &session, untitled]
+    {
+        ctx.expect (host.modalStackEmpty(), "OK left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == untitled, "a refused Save As moved the session");
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+    steps->push_back ({ 700, [saveAs, saved] { saveAs ("Save As from the never-saved session", saved); } });
+    steps->push_back ({ 800, [&host, &ctx, &session, untouched, saved, notes, editedAgain, privateAutosave]
+    {
+        ctx.expect (host.modalStackEmpty(), "Save As showed '" + host.modalText() + "'");
+        ctx.expect (currentSessionDirectory (session) == saved, "Save As did not move the session to its new folder");
+        untouched ("Save As from the never-saved session");
+        ctx.expect (nearly (savedFaderOf (saved / "session.json"), editedAgain), "Save As did not save the session");
+        ctx.expect (fileBytes (saved / "notepad.md") == notes, "Save As did not take the notes along");
+        std::error_code ignored;
+        ctx.expect (! fs::exists (saved / "state", ignored), "Save As carried the other session's plug-in state");
+        ctx.expect (! fs::exists (privateAutosave, ignored), "Save As left the never-saved session's autosave behind");
+    } });
+
+    const auto fresh = ctx.tempDir() / "Untitled 2";
+    const auto taken = ctx.tempDir() / "Taken";
+    const auto takeFile = std::make_shared<fs::path>();
+    const auto regionFile = [&session]
+    {
+        const auto& regions = session.track (0).regions;
+        return regions.size() == 1 ? fs::u8path (regions.front().file.getFullPathName().toStdString())
+                                   : fs::path();
+    };
+    steps->push_back ({ 300, [&host, &ctx, &engine, &session, fresh]
+    {
+        host.startUnsavedSessionIn (ctx.tempDir());
+        ctx.expect (currentSessionDirectory (session) == fresh,
+                    "a new session started in '" + currentSessionDirectory (session).string()
+                        + "' rather than beside the session saved as Untitled");
+        auto& track = session.track (0);
+        track.mode.store ((int) Track::Mode::Mono);
+        track.inputSource.store (-2);
+        session.setTrackArmed (0, true);
+        engine.getTransport().setPlayhead (0);
+        engine.record();
+        ctx.expect (engine.getTransport().isRecording(), "the take did not start");
+    } });
+    steps->push_back ({ 600, [&engine] { engine.stop(); } });
+    steps->push_back ({ 400, [&host, &ctx, &session, untouched, fresh, takeFile, regionFile]
+    {
+        session.setTrackArmed (0, false);
+        *takeFile = regionFile();
+        ctx.expect (! takeFile->empty(), "the take left no region");
+        untouched ("Recording in the new session");
+        ctx.expect (takeFile->parent_path() == fresh / "audio", "the take was written to '" + takeFile->string() + "'");
+        host.autosaveTick();
+        std::error_code ignored;
+        ctx.expect (fs::exists (fresh / "session.json.autosave", ignored), "the new session's autosave is not beside it");
+        untouched ("The new session's autosave");
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+    steps->push_back ({ 700, [saveAs, taken] { saveAs ("Save As of the recorded session", taken); } });
+    steps->push_back ({ 800, [&host, &ctx, &session, untouched, fresh, taken, takeFile, regionFile]
+    {
+        ctx.expect (host.modalStackEmpty(), "Save As of the recorded session showed '" + host.modalText() + "'");
+        ctx.expect (currentSessionDirectory (session) == taken, "Save As did not move the recorded session");
+        untouched ("Save As of the recorded session");
+        const auto moved = regionFile();
+        ctx.expect (! takeFile->empty() && moved == taken / "audio" / takeFile->filename(),
+                    "Save As left the take at '" + moved.string() + "'");
+        const auto reader = dusk::audio::FileReader::open (moved);
+        ctx.expect (reader != nullptr && reader->info().numFrames > 0, "the saved take does not open as audio");
+        Session reopened;
+        applySessionDirectory (reopened, taken);
+        ctx.expect (SessionSerializer::load (reopened, taken / "session.json")
+                        && reopened.track (0).regions.size() == 1
+                        && reopened.missingAudioFilesAfterLoad.empty(),
+                    "the saved session does not find its take");
+        std::error_code ignored;
+        ctx.expect (! fs::exists (fresh / "session.json.autosave", ignored), "Save As left the new session's autosave behind");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar unsavedSessionSparesUntitled { Scenario {
+    "gui.unsaved_session_spares_untitled", { "gui", "session", "autosave", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 40000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runUnsavedSessionSparesUntitled (host, ctx); }
+} };
+
 bool writeBytes (const std::filesystem::path& path, std::size_t size, char fill)
 {
     std::ofstream out (path, std::ios::binary);

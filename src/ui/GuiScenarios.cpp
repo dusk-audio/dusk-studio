@@ -1438,6 +1438,17 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool autosaveRunning() const override { return owner.isTimerRunning(); }
     bool engineDetached() const override { return owner.engineDetached; }
     bool sessionOnDisk() const override { return owner.sessionOnDisk; }
+    bool closeNotepadAfterTyping (const std::string& text) override
+    {
+        owner.notepadText = text.c_str();
+        owner.notepadDirty = true;
+        return owner.saveNotepadNow();
+    }
+    void startUnsavedSessionIn (const std::filesystem::path& parent) override
+    {
+        owner.startUnsavedSessionIn (parent);
+        owner.sessionOnDisk = false;
+    }
     bool requestQuit() override
     {
         if (! owner.currentSessionDirty() && ! owner.notepadDirty) return false;

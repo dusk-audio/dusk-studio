@@ -59,8 +59,11 @@ public:
         // the notepad and the temporaries the rest of the save writes there.
         std::vector<std::filesystem::path> createdPaths;
     };
+    // withPluginState false leaves the old folder's state/ tree behind, for a
+    // session that never owned that folder.
     static ConsolidationResult consolidateInto (Session& session,
-                                                const juce::File& newSessionDir);
+                                                const juce::File& newSessionDir,
+                                                bool withPluginState = true);
 
     // For a Save As that fails after a successful consolidateInto: every
     // repointed path goes back to its old value, and the copies and anything

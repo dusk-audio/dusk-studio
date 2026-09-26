@@ -57,7 +57,7 @@ This chapter walks an empty session all the way to a finished bounce. If you hav
 
 ## Install and first launch
 
-Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New** and it offers the starting points (**Blank**, **Band**, **Beats**, **Singer-Songwriter**), then name your session and click through. If you back out of the file browser, the unsaved-changes prompt or the autosave recovery prompt after picking **New**, the **Open** tab or a recent session, the Startup dialog comes back so you can pick again. It also comes back when **Save** in the unsaved-changes prompt does not complete, and when the session cannot be created or opened. In that last case the status bar says why. To open a recent session, click it and press **Open** (or Enter), or double-click it; the scroll wheel moves through a long list. The same templates are on **File > New from template** once a session is open.
+Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` (`Untitled 2` when a session you saved as `Untitled` already has that folder) and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New** and it offers the starting points (**Blank**, **Band**, **Beats**, **Singer-Songwriter**), then name your session and click through. If you back out of the file browser, the unsaved-changes prompt or the autosave recovery prompt after picking **New**, the **Open** tab or a recent session, the Startup dialog comes back so you can pick again. It also comes back when **Save** in the unsaved-changes prompt does not complete, and when the session cannot be created or opened. In that last case the status bar says why. To open a recent session, click it and press **Open** (or Enter), or double-click it; the scroll wheel moves through a long list. The same templates are on **File > New from template** once a session is open.
 
 You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). On Linux, macOS, and Windows, if Dusk Studio is already running, the session opens in the existing window rather than in a second copy of the app. The window comes forward on Linux and macOS; on Windows it comes forward when the operating system's focus policy permits, and otherwise the existing window is restored and its taskbar button flashes for you to click. Either way playback stops and any take in progress is committed to the session you were working on, and if that session then has unsaved changes you get the same **Save / Don't Save / Cancel** prompt as **File > Open**. **Cancel** leaves the other session unopened and keeps you in the one you were in — with the transport stopped and the finished take in place, so save it if you want to keep it. A switch is refused outright while a bounce is running or another prompt is open; the status bar says which.
 
@@ -439,7 +439,7 @@ Verification protects against a bit-flipped download or a man-in-the-middle atta
 
 ## First launch
 
-On first launch Dusk Studio opens a blank session named `Untitled`. The window is divided, top to bottom, into:
+On first launch Dusk Studio opens a blank session named `Untitled`, or `Untitled 2` when a session you saved as `Untitled` already has that folder. The window is divided, top to bottom, into:
 
 - A thin menu bar (File, View, and Settings).
 - A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys **Cmd/Ctrl+1–4**).
@@ -668,7 +668,8 @@ your Save / Don't Save answer like the rest of the session. The header, toolbar,
 and footer stay fixed; mouse-wheel scrolling moves only the note within its
 writing area. Notes are saved atomically to the compatible `notepad.md` file
 when the notepad closes and on every session save; they follow the session on
-Save As. A failed
+Save As. A never-saved session whose folder holds another session keeps them
+beside its autosave instead (see Autosave). A failed
 sidecar write remains dirty and can be retried by
 saving the session again; it blocks a session switch instead of discarding the
 outgoing notes. Typing in the notepad never triggers transport shortcuts.
@@ -1195,6 +1196,8 @@ MySession/
     ├── track02_20260526-143025.wav
     └── ...
 ```
+
+A session you have not saved yet records into the `audio/` folder of `~/Music/Dusk Studio/Untitled` (or `Untitled 2` and so on, if you saved a session as `Untitled`), and **Save As** copies its takes into the folder you choose.
 
 Every recorded audio file is a **24-bit WAV** at the session's sample rate. Filenames include the track number and a timestamp so re-recording the same track on the same day still produces distinct files.
 
@@ -2050,6 +2053,8 @@ Because the session is a folder, you can copy or back up a session by copying th
 ## Autosave
 
 Every 30 seconds, if anything has changed since the last save, Dusk Studio writes a recovery file, `session.json.autosave`, next to the canonical `session.json` (it does **not** overwrite `session.json` — a manual Save is still what updates the real session file). The autosave is atomic (same temp-file-and-rename pattern) and silent — it never interrupts playback or recording. Idle sessions are skipped via a content hash, so the file isn't rewritten when nothing meaningful changed.
+
+A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, keeps its autosave, notes and takes in its own folder, which never holds another session: if you once saved a session as `Untitled`, the new one starts in `Untitled 2` (or the first `Untitled N` that is free) beside it, and that folder is reused on the next launch. If a `session.json` appears in the new session's folder anyway, its autosave and notes go to the `unsaved-session` folder in Dusk Studio's configuration folder instead, **Don't Save** and **Save As** leave the other session's autosave where it is, Save As does not take its plug-in state along, and Save As into that folder is refused like any folder that holds another session. A never-saved session has no `session.json` to open, so to get its work back after a crash, rename its `session.json.autosave` to `session.json` and open it (see Session won't open).
 
 If Dusk Studio crashes or loses power, the next launch detects the autosave file and offers to recover. Choosing **Recover autosave** immediately writes the recovered state to `session.json` (and only then removes the autosave), so the recovered work is on disk even if you quit right after. A manual Save deletes the autosave, so a leftover autosave that differs from `session.json` is the signal that a recovery point exists.
 

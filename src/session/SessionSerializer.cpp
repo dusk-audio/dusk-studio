@@ -3028,7 +3028,8 @@ void discardConsolidatedFiles (const SessionSerializer::ConsolidationResult& don
 } // namespace
 
 SessionSerializer::ConsolidationResult
-SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
+SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
+                                    bool withPluginState)
 {
     ConsolidationResult res;
     const auto oldDir = s.getSessionDirectory();
@@ -3121,7 +3122,7 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
     // cur/-relative abstract paths, so no model repoint is needed - the copy
     // just has to exist under the new root before the post-swap re-save
     // refreshes it.
-    if (oldDir != juce::File())
+    if (withPluginState && oldDir != juce::File())
     {
         const auto oldStateDir = oldDir.getChildFile ("state");
         if (oldStateDir.isDirectory())

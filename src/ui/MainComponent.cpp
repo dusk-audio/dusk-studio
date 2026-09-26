@@ -63,6 +63,7 @@
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
 #include "../engine/midi/MidiFileReader.h"
+#include "../foundation/AppConfigDir.h"
 #include "../foundation/PlanarBuffer.h"
 #include "../foundation/Text.h"
 #include <algorithm>
@@ -648,12 +649,9 @@ MainComponent::MainComponent()
     // progress modal once the window is on screen, so a full plugin folder
     // doesn't make the app look frozen on launch.
 
-    // Default to a session under ~/Music/Dusk Studio/Untitled. The user can change
-    // this later via a session-management UI; for the recorder MVP this is
-    // enough to get WAVs on disk.
     auto musicDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
     if (! musicDir.exists()) musicDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
-    session.setSessionDirectory (musicDir.getChildFile ("Dusk Studio").getChildFile ("Untitled"));
+    startUnsavedSessionIn (toPath (musicDir.getChildFile ("Dusk Studio")));
 
     // Top-of-window menu bar drives File / View / Settings actions. Replaces the
     // old row of TextButtons (Audio settings... / Save / Save As... / etc).
@@ -3095,7 +3093,7 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
                 // Discarding changes - delete the current session's autosave
                 // (still the OLD dir here) so it doesn't later offer to
                 // "recover" the work just thrown away. Mirrors requestQuit.
-                s->deleteAutosaveFor (s->session.getSessionDirectory());
+                s->deleteAutosaveFor (toFile (s->sidecarFolder()));
                 (*go)();
             }
             if (auto* s = safe.getComponent()) s->maybeStartStartupPluginScan();
@@ -3270,7 +3268,10 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     // before it copies it.
     const auto dir = savecheck::isSameFolder (toPath (requestedDir), toPath (oldDir))
                          ? oldDir : requestedDir;
-    if (dir != oldDir && savecheck::holdsAnotherSession (toPath (dir), toPath (oldDir)))
+    const auto oldSidecar = toFile (sidecarFolder());
+    const bool ownsOldDir = oldSidecar == oldDir;
+    if (dir == oldDir ? ! ownsOldDir
+                      : savecheck::holdsAnotherSession (toPath (dir), toPath (oldDir)))
     {
         setStatusForPath ("A session already exists at", dir.getChildFile ("session.json"));
         showDuskAlert (*this, savecheck::kOtherSessionTitle,
@@ -3287,7 +3288,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     SessionSerializer::ConsolidationResult consolidated;
     if (isSaveAs)
     {
-        consolidated = SessionSerializer::consolidateInto (session, dir);
+        consolidated = SessionSerializer::consolidateInto (session, dir, ownsOldDir);
         if (! consolidated.ok)
         {
             setStatusForPath ("Save failed", dir);
@@ -3398,7 +3399,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
             // The old folder's autosave still holds pre-consolidation paths -
             // without this, re-opening the old session pops a stale recovery
             // prompt.
-            deleteAutosaveFor (oldDir);
+            deleteAutosaveFor (oldSidecar);
         }
         RecentSessions::add (toPath (dir));
         // A successful manual save makes the autosave stale - drop it so the
@@ -3482,9 +3483,31 @@ void MainComponent::deleteAutosaveFor (const juce::File& sessionDir) const
     if (autosave.existsAsFile()) autosave.deleteFile();
 }
 
+static std::filesystem::path privateUnsavedFolder()
+{
+    const auto config = dusk::fs::appConfigDir();
+    return config.empty() ? config : config / "unsaved-session";
+}
+
+// A session saved as Untitled must never receive this session's takes,
+// autosave or notes, so the launch session starts in a folder holding none.
+void MainComponent::startUnsavedSessionIn (const std::filesystem::path& parent)
+{
+    auto dir = savecheck::unsavedSessionFolder (parent);
+    if (dir.empty()) dir = privateUnsavedFolder();
+    if (dir.empty()) dir = parent / "Untitled";
+    session.setSessionDirectory (toFile (dir));
+}
+
+std::filesystem::path MainComponent::sidecarFolder() const
+{
+    return savecheck::sidecarFolder (toPath (session.getSessionDirectory()), sessionOnDisk,
+                                     privateUnsavedFolder());
+}
+
 void MainComponent::writeAutosave()
 {
-    const auto dir = session.getSessionDirectory();
+    const auto dir = toFile (sidecarFolder());
     if (dir == juce::File()) return;
 
     // Ensure the directory exists before serialising. setSessionDirectory's
@@ -3611,7 +3634,7 @@ bool MainComponent::currentSessionDirty()
     // seeded at construction answers the question instead - and if that
     // baseline is ever missing, the old reading stands rather than reporting an
     // hour of unsaved work clean.
-    const auto sessionJson = dir.getChildFile ("session.json");
+    const auto sessionJson = toFile (sidecarFolder()).getChildFile ("session.json");
     if (! sessionJson.existsAsFile())
         return lastSavedSessionJson.isEmpty() ? autosaveIsNewerThan (sessionJson)
                                               : divergedFromBaseline;
@@ -3696,7 +3719,7 @@ void MainComponent::requestQuit()
         {
             if (auto* self = safeThis.getComponent())
             {
-                self->deleteAutosaveFor (self->session.getSessionDirectory());
+                self->deleteAutosaveFor (toFile (self->sidecarFolder()));
                 // The user explicitly chose Don't Save for every dirty part of
                 // the session, including the notepad sidecar. Prevent the
                 // staged shutdown's normal sidecar flush from overriding that
@@ -3895,7 +3918,7 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
     if (! startDir.exists()) startDir.createDirectory();
 
     juce::String defaultName = session.getSessionDirectory().getFileName();
-    if (defaultName.isEmpty() || defaultName == "Untitled") defaultName = "MySong";
+    if (defaultName.isEmpty() || ! sessionOnDisk || defaultName == "Untitled") defaultName = "MySong";
 
     filebrowser::open (*this, {
         /*title*/                  "Save session as...",
@@ -3930,7 +3953,7 @@ void MainComponent::saveAsPrompt()
     if (! startDir.exists()) startDir.createDirectory();
 
     juce::String defaultName = session.getSessionDirectory().getFileName();
-    if (defaultName.isEmpty() || defaultName == "Untitled") defaultName = "MySong";
+    if (defaultName.isEmpty() || ! sessionOnDisk || defaultName == "Untitled") defaultName = "MySong";
 
     filebrowser::open (*this, {
         /*title*/                  "Save session as...",
@@ -6511,7 +6534,7 @@ void MainComponent::yieldNotepadWindow (bool saveChanges)
 bool MainComponent::saveNotepadNow()
 {
     if (! notepadDirty) return true;
-    const auto dir = session.getSessionDirectory();
+    const auto dir = toFile (sidecarFolder());
     if (dir == juce::File())
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI

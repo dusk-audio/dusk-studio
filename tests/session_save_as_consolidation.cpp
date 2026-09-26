@@ -236,6 +236,17 @@ TEST_CASE ("consolidateInto edge cases", "[session][serializer][consolidate]")
         REQUIRE (s.track (0).regions[0].file == take);
     }
 
+    SECTION ("a plugin state folder the session does not own stays behind")
+    {
+        makeFakeWav (dirA.getChildFile ("state/lv2/slot/blob.ttl"));
+
+        const auto res = SessionSerializer::consolidateInto (s, dirB, /*withPluginState*/ false);
+        REQUIRE (res.ok);
+        REQUIRE_FALSE (dirB.getChildFile ("state").exists());
+        REQUIRE (dirA.getChildFile ("state/lv2/slot/blob.ttl").existsAsFile());
+        REQUIRE (s.track (0).regions[0].file == dirB.getChildFile ("audio/take.wav"));
+    }
+
     SECTION ("external mastering source stays absolute and is not copied")
     {
         const auto extMix = makeFakeWav (extDir.getChildFile ("master-source.wav"));

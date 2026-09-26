@@ -278,6 +278,10 @@ private:
     juce::File getAutosaveFileFor (const juce::File& sessionDir) const;
     bool autosaveIsNewerThan (const juce::File& sessionJson) const;
     void deleteAutosaveFor   (const juce::File& sessionDir) const;
+    // The folder writeAutosave and saveNotepadNow write into (see
+    // savecheck::sidecarFolder). Empty when there is nowhere safe.
+    std::filesystem::path sidecarFolder() const;
+    void startUnsavedSessionIn (const std::filesystem::path& parent);
 
     // Full JSON kept for quit-prompt diff + recovery; the heavy compare
     // path uses the hash fields below.

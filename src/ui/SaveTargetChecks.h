@@ -40,4 +40,35 @@ inline bool holdsAnotherSession (const std::filesystem::path& targetDir,
     if (! std::filesystem::is_regular_file (targetDir / "session.json", ec)) return false;
     return ! isSameFolder (targetDir, currentDir);
 }
+
+// Anything short of a clear "no session.json there" counts as holding one.
+inline bool mayHoldSession (const std::filesystem::path& dir)
+{
+    std::error_code ec;
+    return std::filesystem::symlink_status (dir / "session.json", ec).type()
+           != std::filesystem::file_type::not_found;
+}
+
+// The folder a never-saved session starts in: parent/Untitled, or the first
+// "Untitled N" beside it that holds no session. Empty when none qualifies.
+inline std::filesystem::path unsavedSessionFolder (const std::filesystem::path& parent)
+{
+    for (int n = 1; n < 100; ++n)
+    {
+        const auto dir = parent / (n == 1 ? std::string ("Untitled") : "Untitled " + std::to_string (n));
+        if (! mayHoldSession (dir)) return dir;
+    }
+    return {};
+}
+
+// Where a session keeps its autosave and notepad. A never-saved session starts
+// in a folder that holds no session, but a session.json can still appear there
+// later from outside; its files then go to privateDir instead.
+inline std::filesystem::path sidecarFolder (const std::filesystem::path& sessionDir,
+                                            bool savedOrOpened,
+                                            const std::filesystem::path& privateDir)
+{
+    if (savedOrOpened || sessionDir.empty() || ! mayHoldSession (sessionDir)) return sessionDir;
+    return privateDir;
+}
 } // namespace duskstudio::savecheck

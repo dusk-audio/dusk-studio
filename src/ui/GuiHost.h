@@ -346,6 +346,11 @@ public:
     // Whether the session was opened from or saved to its folder, which is
     // what lets Save write in place rather than ask where.
     virtual bool sessionOnDisk() const = 0;
+    // Closing the notepad after typing text into it, without the native editor.
+    // False when the notes could not be saved.
+    virtual bool closeNotepadAfterTyping (const std::string& text) = 0;
+    // A fresh never-saved session in the folder launch would pick under parent.
+    virtual void startUnsavedSessionIn (const std::filesystem::path& parent) = 0;
     // The titlebar X. False, with nothing asked, when there are no unsaved
     // changes: that quit would end the run.
     virtual bool requestQuit() = 0;
