@@ -133,6 +133,8 @@ private:
     // whether to bounce in realtime instead. launch receives the choice.
     void askBounceRealtime (std::function<void (bool realtime)> launch);
     void cleanOutUnreferencedFiles();
+    // Alerts and answers true when Clean out must not run now.
+    bool refuseCleanOut();
     void launchStartupDialog();
     void switchToStage (AudioEngine::Stage);
 
@@ -209,6 +211,12 @@ private:
     // True if the live session diverges from the last manual save / autosave.
     // Drives the unsaved-changes prompt on quit and on New Session.
     bool currentSessionDirty();
+    // The quit's front half: takes the window back from the notepad unsaved,
+    // commits any take still recording, then answers whether quitting would
+    // discard anything.
+    bool quitWouldLoseChanges();
+    // Polls until no modal render is running, then takes the quit up again.
+    void resumeQuitAfterRender();
     // Reset to a clean default session in `dir` (NOT the current session saved
     // under a new name) and open it through the normal load path. True only
     // once the new session has loaded.
@@ -278,6 +286,13 @@ private:
     juce::File getAutosaveFileFor (const juce::File& sessionDir) const;
     bool autosaveIsNewerThan (const juce::File& sessionJson) const;
     void deleteAutosaveFor   (const juce::File& sessionDir) const;
+    // The folder writeAutosave and saveNotepadNow write into (see
+    // savecheck::sidecarFolder). Empty when there is nowhere safe.
+    std::filesystem::path sidecarFolder() const;
+    // <Music>/Dusk Studio, the parent a launch session starts in (see
+    // dusk::fs::appMusicDir). Empty when there is no home folder.
+    static std::filesystem::path defaultSessionsFolder();
+    void startUnsavedSessionIn (const std::filesystem::path& parent);
 
     // Full JSON kept for quit-prompt diff + recovery; the heavy compare
     // path uses the hash fields below.
@@ -444,6 +459,8 @@ private:
     // callback, systemRequestedQuit); re-running the phases over a tree that
     // is already half torn down is a crash, not a second shutdown.
     bool shutdownInProgress = false;
+    // Set while a quit waits for the render it cancelled to stop.
+    bool quitWaitsForRender = false;
 
     // One-shot latch so the session-vs-device sample-rate warning fires once
     // per mismatch, not on every autosave tick. Reset on load and when the

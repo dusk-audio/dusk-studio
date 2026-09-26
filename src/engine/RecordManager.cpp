@@ -150,18 +150,26 @@ RecordManager::~RecordManager()
     //
     // The wait is deliberately unbounded, unlike stopRecording's capped spin.
     // stopRecording can bail past its cap because it leaves writers[] /
-    // midiCaptures[] alive for later reclaim; a destructor cannot - every
-    // member (including the audioInFlight atomic the in-flight thread still
-    // decrements) is destroyed when it returns, so proceeding would trade
-    // the wait for a use-after-free. By this point the engine has detached
-    // the audio callback, so the drain is at most one block.
+    // midiCaptures[] alive for the next startRecording to discard; a
+    // destructor cannot - every member (including the audioInFlight atomic
+    // the in-flight thread still decrements) is destroyed when it returns,
+    // so proceeding would trade the wait for a use-after-free. By this point
+    // the engine has detached the audio callback, so the drain is at most
+    // one block.
     active.store (false, std::memory_order_release);
     while (audioInFlight.load (std::memory_order_acquire) > 0)
         std::this_thread::yield();
 
+    discardUncommittedTake();
+}
+
+void RecordManager::discardUncommittedTake()
+{
     for (auto& cap : midiCaptures)
         cap.reset();
 
+    // The drain pool's disk thread holds a raw pointer to every registered
+    // writer, so each one leaves the pool before it is freed.
     for (auto& slot : writers)
     {
         if (slot == nullptr) continue;
@@ -192,7 +200,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     // [], overwriting those slots here would UAF. Refuse to arm until
     // the audio thread drains. In practice this fires only after a
     // real-time-priority disaster on the prior take.
-    if (audioInFlight.load (std::memory_order_acquire) > 0)
+    if (! reclaimBailedTake())
     {
         std::fprintf (stderr,
                       "[Dusk Studio/RecordManager] startRecording: prior take's audio "
@@ -402,6 +410,27 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     return true;
 }
 
+bool RecordManager::reclaimBailedTake()
+{
+    // A stopRecording that bailed left its writers and captures in place, the
+    // writers still registered with the drain pool. With active false and
+    // audioInFlight at zero no audio-thread call holds a slot (a new one sees
+    // active false and returns first), so that take can go.
+    if (active.load (std::memory_order_acquire)) return false;
+    if (audioInFlight.load (std::memory_order_acquire) > 0) return false;
+    discardUncommittedTake();
+    return true;
+}
+
+bool RecordManager::hasOpenTake() const noexcept
+{
+    // writers[] is only ever reseated on the message thread; the audio thread
+    // just reads the slots.
+    return active.load (std::memory_order_acquire)
+        || std::any_of (writers.begin(), writers.end(),
+                        [] (const auto& slot) { return slot != nullptr; });
+}
+
 RecordManager::LoopCaptureSpan RecordManager::coordinateLoopCaptureSpan (
     int passOrdinal, std::int64_t transportStartSample,
     int callbackBaseOffset, int remainingSamples) const noexcept
@@ -501,12 +530,14 @@ void RecordManager::stopRecording (std::int64_t endSample)
     // / writeMidiBlock with cached pointers into those slots; tearing
     // them down here would UAF.
     //
-    // Recovery: the next startRecording gates itself on audioInFlight
-    // == 0 before overwriting writers[]. If the audio thread eventually
-    // unstuck (transient scheduling glitch), the slot is reclaimed
-    // there. If permanently stuck (real-time priority lost, OS bug),
-    // the slot stays leaked until ~RecordManager - better than a UAF
-    // crash mid-session.
+    // Recovery: startRecording refuses to arm while audioInFlight > 0.
+    // Once the stuck call has left (a transient scheduling glitch), the
+    // next startRecording or reclaimBailedTake discards the bailed take the
+    // way the destructor does: each writer leaves the drain pool before it
+    // is freed, its file is deleted and the MIDI captures are dropped. If
+    // the audio thread never leaves (real-time priority lost, OS bug), the
+    // slots stay until ~RecordManager, which waits it out and discards them
+    // the same way - better than a UAF crash mid-session.
     constexpr int kMaxSpinIterations = 1000;
     int spinIters = 0;
     while (audioInFlight.load (std::memory_order_acquire) > 0)
@@ -516,8 +547,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
             std::fprintf (stderr,
                           "[Dusk Studio/RecordManager] stopRecording: audioInFlight=%d "
                           "after %d yields; BAILING teardown to avoid UAF. Take "
-                          "is dropped; writer slots leak until audio thread "
-                          "drains (next startRecording will reclaim).\n",
+                          "is dropped; the next startRecording discards its "
+                          "writers once the audio thread has left.\n",
                           audioInFlight.load (std::memory_order_relaxed),
                           kMaxSpinIterations);
             return;

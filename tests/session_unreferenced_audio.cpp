@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "engine/RecordManager.h"
 #include "session/Session.h"
 #include "session/UnreferencedAudio.h"
 
@@ -7,6 +8,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <vector>
 
 #if ! defined (_WIN32)
  #include <sys/stat.h>
@@ -109,6 +111,49 @@ TEST_CASE ("Clean out reports nothing for a session with no audio directory",
     const auto found = duskstudio::findUnreferencedAudio (session);
     CHECK (found.files.empty());
     CHECK (found.totalBytes == 0);
+
+    dir.deleteRecursively();
+}
+
+// A take's WAV is in the audio directory from the moment recording starts, but
+// no region names it until Stop commits one, so the scan alone offers it for
+// deletion. Clean out refuses while the recorder reports an open take; that
+// has to cover the whole of that window and let go once the region exists.
+TEST_CASE ("The recorder holds a take open for as long as its file is unreferenced",
+           "[session][cleanout][recordmanager]")
+{
+    using duskstudio::RecordManager;
+    using duskstudio::Session;
+    using duskstudio::Track;
+
+    constexpr int kBlock = 256;
+    constexpr int kBlocks = 8;
+    const auto dir = makeScratch();
+    Session session;
+    session.setSessionDirectory (dir);
+    session.track (0).mode.store ((int) Track::Mode::Mono, std::memory_order_relaxed);
+    session.setTrackArmed (0, true);
+
+    RecordManager recorder (session);
+    CHECK_FALSE (recorder.hasOpenTake());
+    REQUIRE (recorder.startRecording (48000.0, 0));
+    const std::vector<float> block ((size_t) kBlock, 0.1f);
+    for (int i = 0; i < kBlocks; ++i)
+        recorder.writeInputBlock (0, block.data(), nullptr, kBlock);
+
+    const auto midTake = duskstudio::findUnreferencedAudio (session);
+    REQUIRE (midTake.files.size() == 1);
+    const auto take = midTake.files.front();
+    CHECK (recorder.hasOpenTake());
+
+    recorder.stopRecording (kBlock * kBlocks);
+    CHECK_FALSE (recorder.hasOpenTake());
+    const auto& regions = session.track (0).regions;
+    REQUIRE (regions.size() == 1);
+    CHECK (std::filesystem::u8path (regions.front().file.getFullPathName().toStdString())
+               .lexically_normal() == take);
+    CHECK (std::filesystem::exists (take));
+    CHECK (duskstudio::findUnreferencedAudio (session).files.empty());
 
     dir.deleteRecursively();
 }

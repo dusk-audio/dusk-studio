@@ -258,6 +258,14 @@ void BounceDialog::finalizeIfStopped()
     stopTimer();
 }
 
+void BounceDialog::cancelRender()
+{
+    if (! isRenderRunning()) return;
+    statusLabel.setText ("Cancelling...", juce::dontSendNotification);
+    cancelButton.setEnabled (false);
+    bounceEngine->cancel();
+}
+
 void BounceDialog::closeDialog()
 {
     // Still rendering (Cancel pressed before the bounce finished): request a
@@ -266,11 +274,9 @@ void BounceDialog::closeDialog()
     // We must NOT block the message thread waiting here - the worker's
     // teardown re-attaches the audio device and needs the loop to keep
     // turning, so a blocking wait deadlocks it (and freezes the UI).
-    if (bounceEngine != nullptr && bounceEngine->isRendering())
+    if (isRenderRunning())
     {
-        statusLabel.setText ("Cancelling...", juce::dontSendNotification);
-        cancelButton.setEnabled (false);
-        bounceEngine->cancel();
+        cancelRender();
         return;
     }
 

@@ -2886,8 +2886,8 @@ const ScenarioRegistrar dpImportConfirmation { Scenario {
 } };
 
 // Open in an import browser with no file picked closes it like Cancel. Both
-// browsers ask to start in ~/Music, which the scenario HOME lacks, and a
-// missing start path must not come back from Open as the user's choice.
+// browsers start in the Music folder, and the folder shown must not come back
+// from Open as the user's choice.
 std::optional<ScenarioResult> runImportOpenNothingPicked (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
@@ -5253,6 +5253,439 @@ const ScenarioRegistrar sessionSwitch { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runSessionSwitch (host, ctx); }
 } };
 
+// A take, Cmd+S, then a second take quit partway through. The second take is
+// not in the session until the transport stops, so a quit that decided first
+// would read the session as saved and quit without asking.
+std::optional<ScenarioResult> runQuitMidTake (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto sampleRate = engine.getCurrentSampleRate();
+    if (sampleRate <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        session.setTrackArmed (0, false);
+    });
+    const auto takes = ctx.tempDir() / "Takes" / "session.json";
+    std::filesystem::create_directories (takes.parent_path());
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+    if (! SessionSerializer::save (session, takes))
+        return ScenarioResult::fail ("could not save the session to record into");
+
+    // A take recorded over an earlier one stacks on its region and pushes the
+    // earlier one into that region's previous takes.
+    const auto countTakes = [] (const std::vector<MidiRegion>& regions)
+    {
+        int count = 0;
+        for (const auto& region : regions)
+        {
+            count += region.notes.empty() ? 0 : 1;
+            for (const auto& take : region.previousTakes)
+                count += take.notes.empty() ? 0 : 1;
+        }
+        return count;
+    };
+    const auto takesInMemory = [&session, countTakes] { return countTakes (session.track (0).midiRegions.current()); };
+    const auto takesOnDisk = [takes, countTakes]
+    {
+        Session saved;
+        return SessionSerializer::load (saved, takes) ? countTakes (saved.track (0).midiRegions.current()) : -1;
+    };
+    const auto note = [&engine] (bool on)
+    {
+        const std::uint8_t message[] { (std::uint8_t) (on ? 0x90 : 0x80), 64, (std::uint8_t) (on ? 100 : 0) };
+        engine.postVirtualKeyboardMidi (message, 3);
+    };
+    const auto isQuitPrompt = [&host, &ctx] (const std::string& how)
+    {
+        return ctx.expect (host.modalText().rfind ("Save changes before quitting?", 0) == 0,
+                           how + " showed '" + host.modalText() + "' rather than the quit prompt");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx, &session, &engine, &transport, takes]
+    {
+        ctx.expect (host.openSession (takes), "could not open the session to record into");
+        ctx.expect (currentSessionDirectory (session) == takes.parent_path(), "the session to record into did not open");
+        session.setTrackArmed (0, true);
+        engine.record();
+        ctx.expect (transport.isRecording(), "the first take did not start");
+    } });
+    steps->push_back ({ 200, [note] { note (true); } });
+    steps->push_back ({ 150, [note] { note (false); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("spacebar", ' '), "the window did not handle Space"); } });
+    steps->push_back ({ 300, [&host, &ctx, &transport, takesInMemory]
+    {
+        ctx.expect (transport.isStopped(), "Space did not stop the first take");
+        ctx.expect (takesInMemory() == 1, "the first take was not committed");
+        ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &engine, &transport, takesOnDisk]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cmd+S showed '" + host.modalText() + "'");
+        ctx.expect (takesOnDisk() == 1, "Cmd+S did not save the first take in place");
+        engine.record();
+        ctx.expect (transport.isRecording(), "the second take did not start");
+    } });
+    steps->push_back ({ 200, [note] { note (true); } });
+    steps->push_back ({ 150, [note] { note (false); } });
+    steps->push_back ({ 200, [&host, &ctx, &transport]
+    {
+        ctx.expect (transport.isRecording(), "the second take stopped before the quit");
+        // A quit that finds nothing to ask about ends the run, and every step
+        // after this one assumes the prompt is up.
+        if (! ctx.expect (host.requestQuit(), "quitting mid-take in a saved session did not ask before quitting"))
+            ctx.complete (ctx.verdict());
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &transport, takesInMemory, takesOnDisk, isQuitPrompt]
+    {
+        if (! isQuitPrompt ("Quitting mid-take"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        ctx.expect (transport.isStopped(), "the quit prompt came up with the take still recording");
+        ctx.expect (takesInMemory() == 2, "the quit did not commit the take before asking; "
+                                              + std::to_string (takesInMemory()) + " takes in memory");
+        ctx.expect (takesOnDisk() == 1, "the quit saved the session before it was answered");
+        ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt did not offer Cancel");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &engine, &session, &transport, takes, takesInMemory]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached() && host.autosaveRunning(),
+                    "Cancel in the quit prompt left audio or autosave parked");
+        ctx.expect (transport.isStopped() && takesInMemory() == 2
+                        && currentSessionDirectory (session) == takes.parent_path(),
+                    "Cancel did not leave the session stopped with the committed take");
+        ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
+    } });
+    steps->push_back ({ 400, [&ctx, takesOnDisk]
+    { ctx.expect (takesOnDisk() == 2, "the take the quit committed did not save"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar quitMidTake { Scenario {
+    "gui.quit_mid_take_asks_to_save", { "gui", "session", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runQuitMidTake (host, ctx); }
+} };
+
+// A control surface or a MIDI binding queues its Record for the engine to pick
+// up whatever modal is up, so a take can start under a save prompt or under the
+// Save As browser. Save has to write that take with the session: the quit's
+// Save ends it before anything is written, and a Save As has to end it before
+// it copies the session's audio, or the saved session points at a file left
+// behind in the never-saved session's folder.
+std::optional<ScenarioResult> runPromptSaveKeepsBoundTake (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered() || ! host.autosaveRunning() || host.engineDetached())
+        return ScenarioResult::skip ("requires a stopped transport, no modal, and live audio and autosave");
+    if (session.deviceCaptureChannels.load() <= 0)
+        return ScenarioResult::skip ("requires a running audio device with an input to record from");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Recording);
+    ctx.keep (session.pendingTransportAction);
+    ctx.keep (session.countInEnabled);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        engine.reattachAudioCallback();
+        session.setTrackArmed (0, false);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    auto& track = session.track (0);
+    track.mode.store ((int) Track::Mode::Mono);
+    track.inputSource.store (0);
+    track.regions.clear();
+    session.countInEnabled.store (false);
+    const auto other = ctx.tempDir() / "Other" / "session.json";
+    fs::create_directories (other.parent_path());
+    if (! SessionSerializer::save (session, other))
+        return ScenarioResult::fail ("could not save the session to switch to");
+    const auto kept = ctx.tempDir() / "Kept";
+    // No space in the name: typed into the browser, a space the field did not
+    // take would reach the window as Space and stop the take itself.
+    const auto keptAgain = ctx.tempDir() / "KeptAgain";
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    // What an MCU REC button or a MIDI binding on Record does.
+    const auto recordsUnder = [&ctx, &session, &transport, steps] (const std::string& where)
+    {
+        steps->push_back ({ 100, [&session]
+        {
+            session.pendingTransportAction.store ((int) PendingTransportAction::Record, std::memory_order_release);
+        } });
+        steps->push_back ({ 400, [&ctx, &transport, where]
+        { ctx.expect (transport.isRecording(), "a bound Record under " + where + " did not start a take"); } });
+    };
+    const auto promptUp = [&host, &ctx] (const std::string& title, const std::string& where)
+    {
+        return ctx.expect (host.modalText().rfind (title, 0) == 0,
+                           where + ": '" + host.modalText() + "' is up rather than " + title);
+    };
+    const auto saveAs = [&host, &ctx] (const std::string& how, const fs::path& target)
+    {
+        if (! ctx.expect (host.focusFileName(), how + ": the Save As browser has no name field")) return;
+        typeReplacing (host, target.string());
+        ctx.expect (host.clickModalButton ("Save"), how + ": the Save As browser has no Save button");
+    };
+    // Every region of the saved session on a file of its own audio folder.
+    const auto keptTakes = [&ctx] (const std::string& how, const fs::path& dir, std::size_t takes)
+    {
+        Session saved;
+        applySessionDirectory (saved, dir);
+        if (! ctx.expect (SessionSerializer::load (saved, dir / "session.json"), how + ": the saved session does not load"))
+            return;
+        const auto& regions = saved.track (0).regions;
+        ctx.expect (regions.size() == takes, how + ": the saved session holds " + std::to_string (regions.size())
+                                                 + " takes rather than " + std::to_string (takes));
+        for (const auto& region : regions)
+        {
+            const auto file = fs::u8path (region.file.getFullPathName().toStdString());
+            std::error_code ignored;
+            ctx.expect (file.parent_path() == dir / "audio" && fs::is_regular_file (file, ignored),
+                        how + ": the saved session's take is at '" + file.string() + "', outside its folder");
+        }
+        ctx.expect (saved.missingAudioFilesAfterLoad.empty(), how + ": the saved session misses audio");
+    };
+
+    steps->push_back ({ 200, [&host, &ctx, &session, &transport]
+    {
+        host.startUnsavedSessionIn (ctx.tempDir());
+        ctx.expect (! host.sessionOnDisk(), "the new session reads as saved");
+        transport.setPlayhead (0);
+        session.setTrackArmed (0, true);
+        ctx.expect (session.track (0).recordArmed.load(), "track 1 would not arm on input 1");
+        session.track (0).strip.faderDb.store (-7.0f);
+        ctx.expect (host.requestQuit(), "the edited never-saved session did not ask before quitting");
+    } });
+    steps->push_back ({ 400, [promptUp] { promptUp ("Save changes before quitting?", "Quit"); } });
+    recordsUnder ("the quit prompt");
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Save"), "the quit prompt did not offer Save"); } });
+    steps->push_back ({ 700, [&host, &ctx, &session, &transport, promptUp]
+    {
+        if (! promptUp ("Save session as...", "Save in the quit prompt")) return;
+        ctx.expect (transport.isStopped() && session.track (0).regions.size() == 1,
+                    "Save in the quit prompt did not end and keep the take before saving");
+        ctx.expect (host.clickModalButton ("Cancel"), "the Save As browser has no Cancel");
+    } });
+    steps->push_back ({ 500, [&host, &ctx, &engine, other]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached() && host.autosaveRunning(),
+                    "cancelling the quit's Save As left audio or autosave parked");
+        host.requestSessionSwitch (other);
+    } });
+    steps->push_back ({ 400, [promptUp]
+    { promptUp ("Save changes before opening another session?", "The session switch"); } });
+    recordsUnder ("the session-switch prompt");
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Save"), "the session-switch prompt did not offer Save"); } });
+    steps->push_back ({ 700, [promptUp, saveAs, kept]
+    {
+        if (promptUp ("Save session as...", "Save in the session-switch prompt"))
+            saveAs ("Save in the session-switch prompt", kept);
+    } });
+    steps->push_back ({ 1000, [&host, &ctx, &session, other, kept, keptTakes]
+    {
+        ctx.expect (host.modalStackEmpty(), "the switch after Save showed '" + host.modalText() + "'");
+        ctx.expect (currentSessionDirectory (session) == other.parent_path(),
+                    "the switch did not go on after Save; the session is in '"
+                        + currentSessionDirectory (session).string() + "'");
+        keptTakes ("Save in the session-switch prompt", kept, 2);
+
+        host.startUnsavedSessionIn (ctx.tempDir());
+        session.setTrackArmed (0, true);
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+    steps->push_back ({ 700, [promptUp] { promptUp ("Save session as...", "File > Save as..."); } });
+    recordsUnder ("the Save As browser");
+    steps->push_back ({ 200, [saveAs, keptAgain] { saveAs ("Save As", keptAgain); } });
+    steps->push_back ({ 1000, [&host, &ctx, &session, &transport, keptAgain, keptTakes]
+    {
+        ctx.expect (host.modalStackEmpty(), "Save As showed '" + host.modalText() + "'");
+        ctx.expect (transport.isStopped(), "Save As left the take recording");
+        ctx.expect (currentSessionDirectory (session) == keptAgain, "Save As did not move the session");
+        keptTakes ("Save As", keptAgain, 1);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar promptSaveKeepsBoundTake { Scenario {
+    "gui.prompt_save_keeps_bound_take", { "gui", "session", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 25000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPromptSaveKeepsBoundTake (host, ctx); }
+} };
+
+// Opens a saved session whose track 1 holds a ten-minute MIDI region, so it
+// reads clean and a mixdown of it is still rendering when a quit comes.
+bool openLongSession (GuiHost& host, ScenarioContext& ctx, const std::filesystem::path& sessionJson)
+{
+    auto& session = ctx.session();
+    MidiRegion region;
+    region.lengthInSamples = static_cast<std::int64_t> (ctx.engine().getCurrentSampleRate() * 600.0);
+    region.lengthInTicks = 576000;
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    std::filesystem::create_directories (sessionJson.parent_path());
+    return SessionSerializer::save (session, sessionJson) && host.openSession (sessionJson)
+        && currentSessionDirectory (session) == sessionJson.parent_path();
+}
+
+// A quit while a mixdown renders cancels the render the way its Cancel does,
+// and asks about the unsaved changes only once the worker has stopped: every
+// step of a quit stops the transport or detaches audio, which the worker owns
+// until then.
+std::optional<ScenarioResult> runQuitCancelsMixdown (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto mix = ctx.tempDir() / "Mix" / "session.json";
+    if (! openLongSession (host, ctx, mix))
+        return ScenarioResult::fail ("could not open the session to mix down");
+    auto& fader = session.track (0).strip.faderDb;
+    fader.store (fader.load() - 3.0f);
+    const auto isQuitPrompt = [&host] { return host.modalText().rfind ("Save changes before quitting?", 0) == 0; };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        host.startMixdown();
+        ctx.expect (host.mixdownRunning(), "the mixdown did not start");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &transport, isQuitPrompt]
+    {
+        // The offline render rolls the transport from its worker thread.
+        if (! ctx.expect (host.mixdownRunning() && transport.isPlaying(),
+                          "the mixdown was not rolling the transport when the quit came")
+            || ! ctx.expect (host.requestQuit(), "quitting the edited session during a mixdown did not go ahead"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        ctx.expect (! isQuitPrompt(), "the quit asked while the mixdown was still rendering");
+    } });
+    runSteps (ctx, steps, [&host, &ctx, &engine, isQuitPrompt, mix]
+    {
+        ctx.waitUntil (isQuitPrompt, 5000, [&host, &ctx, &engine, mix]
+        {
+            ctx.expect (! host.mixdownRunning(), "the quit asked before the mixdown had stopped");
+            ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached(),
+                        "the cancelled mixdown did not hand the audio callback back");
+            ctx.expect (! std::filesystem::exists (mix.parent_path() / "mixdown.wav"),
+                        "the cancelled mixdown left a file behind");
+            ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt did not offer Cancel");
+            ctx.later (300, [&host, &ctx]
+            {
+                ctx.expect (host.clickModalButton ("Close"), "the cancelled mixdown did not offer Close");
+                ctx.later (200, [&host, &ctx]
+                {
+                    ctx.expect (host.modalStackEmpty(), "the cancelled mixdown left '" + host.modalText() + "' up");
+                    ctx.expect (host.autosaveRunning(), "cancelling the quit left autosave stopped");
+                    ctx.complete (ctx.verdict());
+                });
+            });
+        }, "the quit never asked after cancelling the mixdown");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar quitCancelsMixdown { Scenario {
+    "gui.quit_cancels_running_mixdown", { "gui", "session", "bounce" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runQuitCancelsMixdown (host, ctx); }
+} };
+
+// For the bb-quit-during-mixdown leg only: Cmd+Q on a saved session while a
+// mixdown renders, which ends the process, so it never reports and the leg
+// reads the shutdown markers and the exit status instead. It registers no
+// cleanup, because the context outlives the window any cleanup would touch.
+std::optional<ScenarioResult> runQuitDuringMixdown (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& transport = ctx.engine().getTransport();
+    if (ctx.engine().getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
+    if (! openLongSession (host, ctx, ctx.tempDir() / "Mix" / "session.json"))
+        return ScenarioResult::fail ("could not open the session to mix down");
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        host.startMixdown();
+        ctx.expect (host.mixdownRunning(), "the mixdown did not start");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &transport]
+    {
+        if (! ctx.expect (host.mixdownRunning() && transport.isPlaying(),
+                          "the mixdown was not rolling the transport when the quit came"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        ctx.expect (host.pressPeerKey (commandChord ('q'), 'q'), "the window did not handle Cmd+Q");
+    } });
+    runSteps (ctx, steps, [] {});
+    return std::nullopt;
+}
+
+const ScenarioRegistrar quitDuringMixdown { Scenario {
+    "gui.quit_during_mixdown", { "helper" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runQuitDuringMixdown (host, ctx); }
+} };
+
 // The heartbeat writes session.json.autosave only when the session changed
 // since the last save or autosave, never touches session.json and leaves no
 // temp file behind. Opening a session whose autosave says something else
@@ -7012,6 +7445,151 @@ const ScenarioRegistrar windowKeys { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runWindowKeys (host, ctx); }
 } };
 
+// A prompt deciding what happens to the session takes no shortcuts. R and Space
+// under the quit prompt, a session-switch prompt and the autosave recovery
+// prompt leave the transport stopped, also once a click beside the prompt has
+// handed the window the keyboard. A dialog that passes the transport keys on
+// still does, and the keys work again once the prompts are answered.
+std::optional<ScenarioResult> runPromptsWithholdKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        session.setTrackArmed (0, false);
+    });
+
+    const auto home = ctx.tempDir() / "Home" / "session.json";
+    const auto other = ctx.tempDir() / "Other" / "session.json";
+    std::filesystem::create_directories (home.parent_path());
+    std::filesystem::create_directories (other.parent_path());
+    auto& fader = session.track (0).strip.faderDb;
+    const float savedFader = fader.load();
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+    if (! SessionSerializer::save (session, home) || ! SessionSerializer::save (session, other))
+        return ScenarioResult::fail ("could not save the sessions");
+    // An autosave that differs from Other's session.json, so opening Other asks.
+    fader.store (savedFader - 6.0f);
+    const bool autosaved = SessionSerializer::save (session, other.parent_path() / "session.json.autosave");
+    fader.store (savedFader);
+    if (! autosaved) return ScenarioResult::fail ("could not write Other's autosave");
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    // One key per step: R then Space in a row would start a take and stop it
+    // again, and the transport would read stopped either way.
+    const auto triesKeys = [&host, &ctx, &engine, &transport, steps] (const std::string& where)
+    {
+        steps->push_back ({ 200, [&host] { host.pressPeerKey (keyCodeDescription ('r'), 'r'); } });
+        steps->push_back ({ 200, [&host, &ctx, &engine, &transport, where]
+        {
+            if (! ctx.expect (transport.isStopped(), "R " + where + " started recording"))
+                engine.stop();
+            host.pressPeerKey ("spacebar", ' ');
+        } });
+        steps->push_back ({ 200, [&ctx, &engine, &transport, where]
+        {
+            if (! ctx.expect (transport.isStopped(), "Space " + where + " started the transport"))
+                engine.stop();
+        } });
+    };
+    const auto promptUp = [&host, &ctx] (const std::string& title, const std::string& where)
+    {
+        return ctx.expect (host.modalText().rfind (title, 0) == 0,
+                           where + ": '" + host.modalText() + "' is up rather than " + title);
+    };
+
+    steps->push_back ({ 200, [&host, &ctx, &session, &fader, home, savedFader]
+    {
+        ctx.expect (host.openSession (home), "could not open the session");
+        session.setTrackArmed (0, true);
+        fader.store (savedFader - 3.0f);
+        ctx.expect (host.requestQuit(), "the edited session did not ask before quitting");
+    } });
+    steps->push_back ({ 400, [promptUp] { promptUp ("Save changes before quitting?", "Quit"); } });
+    triesKeys ("under the quit prompt");
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickModalBackdrop(), "could not click beside the quit prompt"); } });
+    triesKeys ("after a click beside the quit prompt");
+    steps->push_back ({ 100, [&host, &ctx, promptUp]
+    {
+        if (promptUp ("Save changes before quitting?", "After the keys"))
+            ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt did not offer Cancel");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, other]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        host.requestSessionSwitch (other);
+    } });
+    steps->push_back ({ 400, [promptUp]
+    { promptUp ("Save changes before opening another session?", "The session switch"); } });
+    triesKeys ("under the session-switch prompt");
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickModalBackdrop(), "could not click beside the session-switch prompt"); } });
+    triesKeys ("after a click beside the session-switch prompt");
+    steps->push_back ({ 100, [&host, &ctx, promptUp]
+    {
+        if (promptUp ("Save changes before opening another session?", "After the keys"))
+            ctx.expect (host.clickModalButton ("Cancel"), "the session-switch prompt did not offer Cancel");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, promptUp, other]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        host.openSession (other);
+        promptUp ("Recover from autosave?", "Opening a session with a newer autosave");
+    } });
+    triesKeys ("under the recovery prompt");
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.answerRecovery (GuiHost::Recovery::Cancel), "the recovery prompt was not up for Cancel"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (host.pressKey ("shift + /", '?'), "the shortcuts key was not handled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.shortcutsOpen(), "? did not open Keyboard Shortcuts");
+        host.pressPeerKey ("spacebar", ' ');
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, &transport]
+    {
+        ctx.expect (transport.isPlaying(), "Space under Keyboard Shortcuts did not start playback");
+        engine.stop();
+        host.closeTopModal();
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty(), "Keyboard Shortcuts did not close");
+        host.pressPeerKey (keyCodeDescription ('r'), 'r');
+    } });
+    steps->push_back ({ 300, [&ctx, &engine, &transport]
+    {
+        ctx.expect (transport.isRecording(), "R did not record once the prompts were answered");
+        engine.stop();
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar promptsWithholdKeys { Scenario {
+    "gui.prompts_withhold_transport_keys", { "gui", "keyboard", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPromptsWithholdKeys (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runAudioEditorKeys (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
@@ -7897,6 +8475,87 @@ const ScenarioRegistrar trackNameAndColour { Scenario {
     "gui.track_name_and_colour", { "gui", "region" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runTrackNameAndColour (host, ctx); }
+} };
+
+// Clone to track says why it refuses, while the transport runs or with a frozen
+// track on either side, and clones once both are clear.
+std::optional<ScenarioResult> runCloneRefusals (GuiHost& host, ScenarioContext& ctx)
+{
+    ctx.cleanup (host.preserveKeyboardFocus());
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto& dest = session.track (1);
+    ctx.keep (dest.frozen);
+    ctx.cleanup ([&engine, &transport]
+    {
+        transport.setState (Transport::State::Stopped);
+        transport.setPlayhead (0);
+        engine.getUndoManager().clearUndoHistory();
+    });
+    const auto destName = dest.name.toStdString();
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto clone = [&host, &ctx, steps, destName] (const std::string& how)
+    {
+        steps->push_back ({ 300, [&host, &ctx, how]
+        {
+            ctx.expect (host.modalStackEmpty(), how + ": a modal was still open");
+            ctx.expect (host.clickStripControl (GuiHost::StripKind::Channel, 0, "name", 1, true),
+                        how + ": the strip name did not take a right-click");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, how]
+        {
+            ctx.expect (host.clickContextMenuItem ("Clone to track..."),
+                        how + ": the strip menu has no Clone to track...");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, how, destName]
+        {
+            ctx.expect (host.clickContextMenuItem ("2: " + destName),
+                        how + ": the Clone to track... submenu has no track 2");
+        } });
+    };
+    const auto alerted = [&host, &ctx, &dest, steps, destName] (const std::string& how,
+                                                                const std::string& expected)
+    {
+        steps->push_back ({ 300, [&host, &ctx, &dest, how, expected, destName]
+        {
+            ctx.expect (host.modalText() == expected, how + ": the alert read '" + host.modalText() + "'");
+            ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+            ctx.expect (dest.name.toStdString() == destName, how + ": the clone ran anyway");
+        } });
+    };
+
+    steps->push_back ({ 100, [&transport] { transport.setState (Transport::State::Playing); } });
+    clone ("while playing");
+    alerted ("while playing", "Can't clone track\nStop playback, then clone the track again.");
+    steps->push_back ({ 100, [&transport, &dest]
+    {
+        transport.setState (Transport::State::Stopped);
+        transport.setPlayhead (0);
+        dest.frozen.store (true);
+    } });
+    clone ("onto a frozen track");
+    alerted ("onto a frozen track", "Can't clone track\nUnfreeze the track, then clone it again. "
+                                    "A frozen track can't be cloned or cloned onto.");
+    steps->push_back ({ 100, [&dest] { dest.frozen.store (false); } });
+    clone ("with both clear");
+    steps->push_back ({ 300, [&host, &ctx, &engine, &session, &dest, destName]
+    {
+        ctx.expect (host.modalStackEmpty(), "a clone with both clear still raised an alert");
+        ctx.expect (dest.name == session.track (0).name + " (copy)", "a clone with both clear did not run");
+        ctx.expect (engine.getUndoManager().undo() && dest.name.toStdString() == destName,
+                    "undo did not put the destination back");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar cloneRefusals { Scenario {
+    "gui.clone_track_refusals", { "gui", "clone" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runCloneRefusals (host, ctx); }
 } };
 
 // The aux lane's return strip: double-click the title to rename, the mute
@@ -10682,6 +11341,140 @@ const ScenarioRegistrar saveFailedAlert { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runSaveFailedAlert (host, ctx); }
 } };
 
+// Save As that fails after the audio was copied, at session.json and at the
+// notepad sidecar: the alert says the session is unchanged, so it must still
+// live in its old folder with its region there, the new folder must hold only
+// what it held before, and a following Save writes the old folder's files.
+std::optional<ScenarioResult> runSaveAsFailureKeepsSession (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto mine = ctx.tempDir() / "Mine";
+    const auto take = mine / "audio" / "take.wav";
+    fs::create_directories (take.parent_path());
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 1;
+        auto writer = dusk::audio::FileWriter::create (take, spec);
+        std::vector<float> silence (4800, 0.0f);
+        const float* channels[] = { silence.data() };
+        if (! writer || ! writer->write (channels, 1, 4800) || ! writer->flush())
+            return ScenarioResult::fail ("could not write the take");
+    }
+    {
+        std::ofstream notes (mine / "notepad.md", std::ios::binary);
+        notes << "notes";
+    }
+    AudioRegion region;
+    using File = std::decay_t<decltype (region.file)>;
+    region.file = File (take.u8string().c_str());
+    region.lengthInSamples = 4800;
+    region.numChannels = 1;
+    session.track (0).regions = { region };
+    if (! SessionSerializer::save (session, mine / "session.json")) return ScenarioResult::fail ("could not save the session");
+    reopenSavedSession (host, mine / "session.json");
+    const auto regionFile = [&session]
+    {
+        const auto& regions = session.track (0).regions;
+        return regions.empty() ? fs::path() : fs::u8path (regions[0].file.getFullPathName().toStdString());
+    };
+    if (currentSessionDirectory (session) != mine || regionFile() != take)
+        return ScenarioResult::fail ("could not open the session with its take");
+
+    // A folder that is not empty where the save writes a file makes that
+    // write fail for any user, root included; an empty one would be replaced.
+    const auto blockedJson = ctx.tempDir() / "Blocked json";
+    const auto blockedNotes = ctx.tempDir() / "Blocked notes";
+    for (const auto& blocker : { blockedJson / "session.json", blockedNotes / "notepad.md" })
+    {
+        fs::create_directories (blocker);
+        std::ofstream (blocker / "keep") << "theirs";
+    }
+    const auto jsonListing = folderListing (blockedJson);
+    const auto notesListing = folderListing (blockedNotes);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto saveAs = [&host, &ctx, steps] (const fs::path& target)
+    {
+        steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+        steps->push_back ({ 700, [&host, &ctx, target]
+        {
+            if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                              "File > Save as... showed '" + host.modalText() + "' rather than Save As")
+                || ! ctx.expect (host.focusFileName(), "the Save As browser has no name field"))
+                return;
+            typeReplacing (host, target.string());
+            ctx.expect (host.clickModalButton ("Save"), "the Save As browser has no Save button");
+        } });
+    };
+    const auto kept = [&host, &ctx, &session, regionFile, mine, take] (const std::string& how,
+                                                                        const fs::path& target,
+                                                                        const std::vector<std::string>& before)
+    {
+        ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+        ctx.expect (currentSessionDirectory (session) == mine,
+                    how + " moved the session to '" + currentSessionDirectory (session).string() + "'");
+        ctx.expect (regionFile() == take, how + " left the region at '" + regionFile().string() + "'");
+        ctx.expect (folderListing (target) == before, how + " left files in the new folder");
+        ctx.expect (fs::is_regular_file (take), how + " removed the original take");
+    };
+
+    saveAs (blockedJson);
+    steps->push_back ({ 800, [&host, &ctx, kept, blockedJson, jsonListing]
+    {
+        const auto text = host.modalText();
+        ctx.expect (text.rfind ("Save failed\nDusk Studio could not write the session file:", 0) == 0
+                        && text.find ("Blocked json") != std::string::npos,
+                    "a failed session.json write showed '" + text + "' rather than Save failed");
+        kept ("a failed session.json write", blockedJson, jsonListing);
+        ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
+    } });
+    steps->push_back ({ 800, [&host, &ctx, mine, take]
+    {
+        const auto saved = fileBytes (mine / "session.json");
+        ctx.expect (host.statusMessage() == "Saved: Mine" && saved.find ("Blocked json") == std::string::npos,
+                    "Cmd+S after the failed Save As did not save the session where it lives; status '"
+                        + host.statusMessage() + "'");
+        auto reloaded = std::make_unique<Session>();
+        applySessionDirectory (*reloaded, mine);
+        ctx.expect (SessionSerializer::load (*reloaded, mine / "session.json") && ! reloaded->track (0).regions.empty()
+                        && fs::u8path (reloaded->track (0).regions[0].file.getFullPathName().toStdString()) == take,
+                    "the session saved after the failed Save As does not point at its take");
+    } });
+    saveAs (blockedNotes);
+    steps->push_back ({ 800, [&host, &ctx, kept, blockedNotes, notesListing]
+    {
+        const auto text = host.modalText();
+        ctx.expect (text.rfind ("Notepad save failed\nDusk Studio could not write:", 0) == 0
+                        && text.find ("The session was not saved.") != std::string::npos,
+                    "a failed notepad write showed '" + text + "' rather than Notepad save failed");
+        kept ("a failed notepad write", blockedNotes, notesListing);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar saveAsFailureKeepsSession { Scenario {
+    "gui.save_as_failure_keeps_session", { "gui", "session", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSaveAsFailureKeepsSession (host, ctx); }
+} };
+
 // The launch session's folder can already hold a real session someone saved
 // under that name. The launch session has still never been saved, so File >
 // Save, Cmd+S and the quit prompt's Save each ask where to save and leave that
@@ -10804,6 +11597,260 @@ const ScenarioRegistrar freshSessionSaveAsks { Scenario {
     "gui.fresh_session_save_asks_where", { "gui", "session" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runFreshSessionSaveAsks (host, ctx); }
+} };
+
+// A real session can be saved as Untitled. A never-saved session whose folder
+// holds one keeps its autosave and notes in a private folder, where the
+// autosave holds its latest edit; Don't Save and Save As discard that autosave
+// rather than the other session's; Save As into that folder is refused, and
+// Save As elsewhere takes the notes along but not the other session's plug-in
+// state. A new session starts beside it in Untitled 2, so its takes and
+// autosave land there, and Save As takes the take along. The session saved as
+// Untitled never changes.
+std::optional<ScenarioResult> runUnsavedSessionSparesUntitled (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered() || ! host.autosaveRunning() || host.engineDetached())
+        return ScenarioResult::skip ("requires a stopped transport, no modal, and live audio and autosave");
+    if (host.sessionOnDisk()) return ScenarioResult::skip ("requires the launch session never to have been saved");
+    if (session.deviceCaptureChannels.load() <= 0)
+        return ScenarioResult::skip ("requires an input device with capture channels");
+    const auto config = dusk::fs::appConfigDir();
+    if (config.empty()) return ScenarioResult::skip ("requires a configuration folder");
+    const auto privateDir = config / "unsaved-session";
+    const auto privateAutosave = privateDir / "session.json.autosave";
+    std::error_code error;
+    fs::remove_all (privateDir, error);
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore, privateDir]
+    {
+        engine.stop();
+        session.setTrackArmed (0, false);
+        drainModals (host);
+        engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        std::error_code ignored;
+        fs::remove_all (privateDir, ignored);
+    });
+
+    const auto untitled = ctx.tempDir() / "Untitled";
+    fs::create_directories (untitled / "audio");
+    fs::create_directories (untitled / "state" / "lv2" / "track01");
+    auto& fader = session.track (0).strip.faderDb;
+    const float launchFader = fader.load();
+    fader.store (launchFader - 6.0f);
+    bool wrote = SessionSerializer::save (session, untitled / "session.json");
+    fader.store (launchFader - 9.0f);
+    wrote = SessionSerializer::save (session, untitled / "session.json.autosave") && wrote;
+    fader.store (launchFader);
+    std::ofstream (untitled / "notepad.md") << "Notes of the session saved as Untitled\n";
+    std::ofstream (untitled / "state" / "lv2" / "track01" / "state.ttl") << "# its plug-in state\n";
+    const auto theirTake = untitled / "audio" / "Their take.wav";
+    std::ofstream (theirTake, std::ios::binary) << std::string (4096, 't');
+    if (! wrote || ! fs::exists (untitled / "state" / "lv2" / "track01" / "state.ttl") || ! fs::exists (theirTake))
+        return ScenarioResult::fail ("could not write the Untitled session");
+    const auto contents = [untitled]
+    {
+        std::vector<std::string> files;
+        std::error_code ignored;
+        for (const auto& name : folderListing (untitled))
+            files.push_back (name + "\n"
+                             + (fs::is_regular_file (untitled / name, ignored) ? fileBytes (untitled / name) : ""));
+        return files;
+    };
+    const auto before = contents();
+    const auto untouched = [&ctx, contents, before] (const std::string& how)
+    { ctx.expect (contents() == before, how + " changed the files of the session saved as Untitled"); };
+
+    applySessionDirectory (session, untitled);
+    const float edited = launchFader - 3.0f;
+    fader.store (edited);
+    host.autosaveTick();
+    untouched ("An autosave tick");
+    ctx.expect (nearly (savedFaderOf (privateAutosave), edited), "the never-saved session's autosave does not hold its edit");
+    const std::string notes = "Notes of the launch session\n";
+    ctx.expect (host.closeNotepadAfterTyping (notes), "closing the notepad did not save the notes");
+    untouched ("Closing the notepad");
+    ctx.expect (fileBytes (privateDir / "notepad.md") == notes, "the never-saved session's notes were not kept");
+
+    const auto saveAs = [&host, &ctx] (const std::string& how, const fs::path& target)
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                          how + " showed '" + host.modalText() + "' rather than Save As")
+            || ! ctx.expect (host.focusFileName(), how + ": the Save As browser has no name field"))
+            return;
+        typeReplacing (host, target.string());
+        ctx.expect (host.clickModalButton ("Save"), how + ": the Save As browser has no Save button");
+    };
+    const float editedAgain = launchFader - 4.0f;
+    const auto saved = ctx.tempDir() / "Saved";
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    // Every take in the folder belongs to the other session, so Clean out
+    // would offer to delete them all.
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (host.clickContextMenuItem ("Clean out unreferenced files..."),
+                    "the File menu has no Clean out unreferenced files...");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, untouched, theirTake]
+    {
+        const auto text = host.modalText();
+        if (! host.confirmationText().empty())
+        {
+            ctx.expect (false, "Clean out offered to delete the other session's audio: '" + text + "'");
+            host.clickModalButton ("Cancel");
+        }
+        else
+        {
+            ctx.expect (text == "Clean out\nSave this session before cleaning out. Another session has since been "
+                                "saved in the folder this one records into, and Clean out would count that "
+                                "session's recordings as unreferenced and delete them.",
+                        "Clean out in the other session's folder showed '" + text + "'");
+            ctx.expect (host.clickModalButton ("OK"), "the Clean out refusal has no OK button");
+        }
+        std::error_code ignored;
+        ctx.expect (fs::exists (theirTake, ignored), "Clean out deleted the other session's take");
+        untouched ("Clean out");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty(), "Clean out left '" + host.modalText() + "' up");
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Open..."), "the File menu has no Open..."); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        ctx.expect (host.modalText().rfind ("Save changes before opening another session?", 0) == 0,
+                    "File > Open over unsaved changes showed '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton ("Don't Save"), "the unsaved-changes prompt did not offer Don't Save");
+    } });
+    steps->push_back ({ 700, [&host, &ctx, untouched, privateAutosave]
+    {
+        ctx.expect (host.modalText().rfind ("Open session.json", 0) == 0,
+                    "Don't Save showed '" + host.modalText() + "' rather than the Open browser");
+        untouched ("Don't Save before File > Open");
+        std::error_code ignored;
+        ctx.expect (! fs::exists (privateAutosave, ignored), "Don't Save kept the never-saved session's autosave");
+        ctx.expect (host.clickModalButton ("Cancel"), "the Open browser has no Cancel");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &session, &fader, untouched, untitled, editedAgain, privateAutosave]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == untitled, "backing out of File > Open moved the session");
+        fader.store (editedAgain);
+        host.autosaveTick();
+        untouched ("A second autosave tick");
+        ctx.expect (nearly (savedFaderOf (privateAutosave), editedAgain),
+                    "the next autosave after Don't Save does not hold the edit");
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+    steps->push_back ({ 700, [saveAs, untitled] { saveAs ("Save As into the launch folder", untitled); } });
+    steps->push_back ({ 700, [&host, &ctx, untouched]
+    {
+        ctx.expect (host.modalText().rfind ("Folder holds another session\n", 0) == 0,
+                    "Save As into the launch folder showed '" + host.modalText() + "' rather than the refusal");
+        untouched ("Save As into the launch folder");
+        ctx.expect (host.clickModalButton ("OK"), "the refusal has no OK button");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &session, untitled]
+    {
+        ctx.expect (host.modalStackEmpty(), "OK left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == untitled, "a refused Save As moved the session");
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+    steps->push_back ({ 700, [saveAs, saved] { saveAs ("Save As from the never-saved session", saved); } });
+    steps->push_back ({ 800, [&host, &ctx, &session, untouched, saved, notes, editedAgain, privateAutosave]
+    {
+        ctx.expect (host.modalStackEmpty(), "Save As showed '" + host.modalText() + "'");
+        ctx.expect (currentSessionDirectory (session) == saved, "Save As did not move the session to its new folder");
+        untouched ("Save As from the never-saved session");
+        ctx.expect (nearly (savedFaderOf (saved / "session.json"), editedAgain), "Save As did not save the session");
+        ctx.expect (fileBytes (saved / "notepad.md") == notes, "Save As did not take the notes along");
+        std::error_code ignored;
+        ctx.expect (! fs::exists (saved / "state", ignored), "Save As carried the other session's plug-in state");
+        ctx.expect (! fs::exists (privateAutosave, ignored), "Save As left the never-saved session's autosave behind");
+    } });
+
+    const auto fresh = ctx.tempDir() / "Untitled 2";
+    const auto taken = ctx.tempDir() / "Taken";
+    const auto takeFile = std::make_shared<fs::path>();
+    const auto regionFile = [&session]
+    {
+        const auto& regions = session.track (0).regions;
+        return regions.size() == 1 ? fs::u8path (regions.front().file.getFullPathName().toStdString())
+                                   : fs::path();
+    };
+    steps->push_back ({ 300, [&host, &ctx, &engine, &session, fresh]
+    {
+        host.startUnsavedSessionIn (ctx.tempDir());
+        ctx.expect (currentSessionDirectory (session) == fresh,
+                    "a new session started in '" + currentSessionDirectory (session).string()
+                        + "' rather than beside the session saved as Untitled");
+        auto& track = session.track (0);
+        track.mode.store ((int) Track::Mode::Mono);
+        track.inputSource.store (-2);
+        session.setTrackArmed (0, true);
+        engine.getTransport().setPlayhead (0);
+        engine.record();
+        ctx.expect (engine.getTransport().isRecording(), "the take did not start");
+    } });
+    steps->push_back ({ 600, [&engine] { engine.stop(); } });
+    steps->push_back ({ 400, [&host, &ctx, &session, untouched, fresh, takeFile, regionFile]
+    {
+        session.setTrackArmed (0, false);
+        *takeFile = regionFile();
+        ctx.expect (! takeFile->empty(), "the take left no region");
+        untouched ("Recording in the new session");
+        ctx.expect (takeFile->parent_path() == fresh / "audio", "the take was written to '" + takeFile->string() + "'");
+        host.autosaveTick();
+        std::error_code ignored;
+        ctx.expect (fs::exists (fresh / "session.json.autosave", ignored), "the new session's autosave is not beside it");
+        untouched ("The new session's autosave");
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+    steps->push_back ({ 700, [saveAs, taken] { saveAs ("Save As of the recorded session", taken); } });
+    steps->push_back ({ 800, [&host, &ctx, &session, untouched, fresh, taken, takeFile, regionFile]
+    {
+        ctx.expect (host.modalStackEmpty(), "Save As of the recorded session showed '" + host.modalText() + "'");
+        ctx.expect (currentSessionDirectory (session) == taken, "Save As did not move the recorded session");
+        untouched ("Save As of the recorded session");
+        const auto moved = regionFile();
+        ctx.expect (! takeFile->empty() && moved == taken / "audio" / takeFile->filename(),
+                    "Save As left the take at '" + moved.string() + "'");
+        const auto reader = dusk::audio::FileReader::open (moved);
+        ctx.expect (reader != nullptr && reader->info().numFrames > 0, "the saved take does not open as audio");
+        Session reopened;
+        applySessionDirectory (reopened, taken);
+        ctx.expect (SessionSerializer::load (reopened, taken / "session.json")
+                        && reopened.track (0).regions.size() == 1
+                        && reopened.missingAudioFilesAfterLoad.empty(),
+                    "the saved session does not find its take");
+        std::error_code ignored;
+        ctx.expect (! fs::exists (fresh / "session.json.autosave", ignored), "Save As left the new session's autosave behind");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar unsavedSessionSparesUntitled { Scenario {
+    "gui.unsaved_session_spares_untitled", { "gui", "session", "autosave", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 40000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runUnsavedSessionSparesUntitled (host, ctx); }
 } };
 
 bool writeBytes (const std::filesystem::path& path, std::size_t size, char fill)
@@ -10994,6 +12041,240 @@ const ScenarioRegistrar cleanOutAlerts { Scenario {
     "gui.clean_out_alerts", { "gui", "session", "messages" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runCleanOutAlerts (host, ctx); }
+} };
+
+// A take's WAV has no region pointing at it until Stop, so Clean out must not
+// run while one is open: not when chosen mid-take, and not when a control
+// surface starts a take while the confirmation is up and Delete comes after.
+// Each take still commits with its file in place, and once the transport is
+// stopped Clean out removes only the stray.
+std::optional<ScenarioResult> runCleanOutWhileRecording (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (! engine.isAudioCallbackRegistered() || session.deviceCaptureChannels.load() <= 0)
+        return ScenarioResult::skip ("requires a running audio device with an input to record from");
+    auto& track = session.track (0);
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Recording);
+    ctx.keep (track.mode);
+    ctx.keep (track.inputSource);
+    ctx.keep (session.countInEnabled);
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        const bool armed = session.track (index).recordArmed.load();
+        ctx.cleanup ([&session, index, armed] { session.setTrackArmed (index, armed); });
+        session.setTrackArmed (index, false);
+    }
+    ctx.cleanup ([&host, &engine, &session, &transport, &track, regions = track.regions,
+                  originalDir = currentSessionDirectory (session), loop = transport.isLoopEnabled(),
+                  punch = transport.isPunchEnabled(), at = transport.getPlayhead()]
+    {
+        drainModals (host);
+        engine.stop();
+        track.regions = regions;
+        engine.getPlaybackEngine().preparePlayback();
+        transport.setLoopEnabled (loop);
+        transport.setPunchEnabled (punch);
+        transport.setPlayhead (at);
+        engine.getUndoManager().clearUndoHistory();
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto audio = ctx.tempDir() / "Clean out take session" / "audio";
+    applySessionDirectory (session, audio.parent_path());
+    engine.stop();
+    track.regions.clear();
+    engine.getPlaybackEngine().preparePlayback();
+    engine.getUndoManager().clearUndoHistory();
+    transport.setPlayhead (0);
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    session.countInEnabled.store (false);
+    track.mode.store ((int) Track::Mode::Mono);
+    track.inputSource.store (0);
+    session.setTrackArmed (0, true);
+    if (! track.recordArmed.load())
+        return ScenarioResult::fail ("track 1 would not arm on input 1");
+    std::error_code created;
+    fs::create_directories (audio, created);
+    const auto stray = audio / "Stray.wav";
+    if (created || ! writeBytes (stray, 1048576, 's'))
+        return ScenarioResult::fail ("could not write the stray take");
+
+    const auto takes = [audio]
+    {
+        std::vector<fs::path> found;
+        std::error_code error;
+        for (fs::directory_iterator it (audio, error), end; ! error && it != end; it.increment (error))
+            if (it->path().filename().u8string().rfind ("track01_", 0) == 0)
+                found.push_back (it->path().lexically_normal());
+        std::sort (found.begin(), found.end());
+        return found;
+    };
+    const auto regionFiles = [&track]
+    {
+        std::vector<fs::path> files;
+        const auto add = [&files] (const auto& file)
+        { files.push_back (fs::u8path (file.getFullPathName().toStdString()).lexically_normal()); };
+        for (const auto& region : track.regions)
+        {
+            add (region.file);
+            for (const auto& take : region.previousTakes) add (take.file);
+        }
+        std::sort (files.begin(), files.end());
+        files.erase (std::unique (files.begin(), files.end()), files.end());
+        return files;
+    };
+    const std::string refusal =
+        "Clean out\nStop recording before cleaning out. The take being recorded has no region pointing at its "
+        "file until you stop, so Clean out would count it as unreferenced and delete it.";
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto choose = [&host, &ctx, steps] (const std::string& how)
+    {
+        steps->push_back ({ 300, [&host, &ctx, how]
+        {
+            ctx.expect (host.modalStackEmpty(), how + ": a modal was still open");
+            ctx.expect (host.clickFileMenu(), how + ": the File menu is unavailable");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, how]
+        {
+            ctx.expect (host.clickContextMenuItem ("Clean out unreferenced files..."),
+                        how + ": the File menu has no Clean out unreferenced files...");
+        } });
+    };
+    // Without the guard the confirmation lists the take; pressing Delete on it,
+    // as a user would, is what loses the take.
+    const auto refused = [&host, &ctx, steps, refusal] (const std::string& how)
+    {
+        steps->push_back ({ 400, [&host, &ctx, how, refusal]
+        {
+            if (! host.confirmationText().empty())
+            {
+                ctx.expect (false, how + ": Clean out offered '" + joinedLines (host.confirmationText()) + "'");
+                host.clickModalButton ("Delete");
+                return;
+            }
+            ctx.expect (host.modalText() == refusal, how + ": the alert read '" + host.modalText() + "'");
+            ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+        } });
+    };
+
+    steps->push_back ({ 100, [&engine, &ctx, &transport]
+    {
+        engine.record();
+        ctx.expect (transport.isRecording(), "the armed track did not start recording");
+    } });
+    choose ("mid-take");
+    refused ("mid-take");
+    steps->push_back ({ 300, [&host, &ctx, &engine, &transport, takes, stray]
+    {
+        ctx.expect (host.modalStackEmpty(), "mid-take: '" + host.modalText() + "' is still up");
+        ctx.expect (transport.isRecording(), "mid-take: Clean out stopped the take");
+        ctx.expect (takes().size() == 1, "mid-take: the take's file is gone from the audio folder");
+        ctx.expect (fs::exists (stray), "mid-take: Clean out deleted the stray");
+        engine.stop();
+    } });
+    steps->push_back ({ 100, [&ctx, &transport, &track, takes, regionFiles]
+    {
+        ctx.expect (transport.isStopped(), "the first take did not stop");
+        ctx.expect (track.regions.size() == 1 && regionFiles() == takes(),
+                    "the first take did not commit a region on its own file");
+    } });
+
+    choose ("recording under the confirmation");
+    steps->push_back ({ 400, [&host, &ctx, &engine, &transport]
+    {
+        const auto text = host.confirmationText();
+        ctx.expect (text.size() == 2 && text[0] == "Clean out unreferenced files"
+                        && text[1].rfind ("Found 1 unreferenced .wav file(s) totalling 1.0 MB.", 0) == 0,
+                    "stopped: the confirmation read '" + joinedLines (text) + "'");
+        engine.record();
+        ctx.expect (transport.isRecording(), "a take would not start under the confirmation");
+        ctx.expect (host.clickModalButton ("Delete"), "the confirmation has no Delete button");
+    } });
+    refused ("recording under the confirmation");
+    steps->push_back ({ 300, [&host, &ctx, &engine, &transport, takes, stray]
+    {
+        ctx.expect (host.modalStackEmpty(), "under the confirmation: '" + host.modalText() + "' is still up");
+        ctx.expect (transport.isRecording(), "under the confirmation: Delete stopped the take");
+        ctx.expect (takes().size() == 2, "under the confirmation: a take's file is gone from the audio folder");
+        ctx.expect (fs::exists (stray), "under the confirmation: Delete went ahead while recording");
+        ctx.expect (engine.getUndoManager().canUndo(), "under the confirmation: Delete cleared the undo history");
+        engine.stop();
+    } });
+    steps->push_back ({ 100, [&ctx, &transport, takes, regionFiles]
+    {
+        ctx.expect (transport.isStopped(), "the second take did not stop");
+        ctx.expect (regionFiles() == takes(), "the takes' regions do not point at their two files");
+    } });
+
+    choose ("stopped");
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (host.clickModalButton ("Delete"), "stopped: the confirmation has no Delete button");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, takes, regionFiles, stray]
+    {
+        ctx.expect (host.modalStackEmpty(), "stopped: '" + host.modalText() + "' is still up");
+        ctx.expect (! fs::exists (stray), "stopped: Delete kept the stray");
+        ctx.expect (takes().size() == 2 && regionFiles() == takes(), "stopped: Delete removed a take");
+        ctx.expect (host.statusMessage() == "Deleted 1 unreferenced file(s).",
+                    "stopped: the status bar says '" + host.statusMessage() + "'");
+    } });
+
+    // A stop that gives up waiting for the audio thread drops its take but
+    // leaves the take's file and writer behind. Once the audio thread has
+    // left, nothing records, so Clean out must neither say a take is being
+    // recorded nor keep the dropped file.
+    steps->push_back ({ 100, [&ctx, &engine, &transport]
+    {
+        engine.record();
+        ctx.expect (transport.isRecording(), "the third take did not start");
+    } });
+    steps->push_back ({ 300, [&ctx, &engine, &transport, &track, takes]
+    {
+        auto& recorder = engine.getRecordManager();
+        recorder.holdAudioInFlightForTest (true);
+        engine.stop();
+        recorder.holdAudioInFlightForTest (false);
+        ctx.expect (transport.isStopped(), "the bailed stop left the transport rolling");
+        ctx.expect (track.regions.size() == 2 && takes().size() == 3,
+                    "the bailed stop did not leave its take's file without a region");
+    } });
+    choose ("after a bailed stop");
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        if (! host.confirmationText().empty())
+        {
+            ctx.expect (false, "after a bailed stop: Clean out offered '" + joinedLines (host.confirmationText()) + "'");
+            host.clickModalButton ("Cancel");
+            return;
+        }
+        ctx.expect (host.modalText() == "Clean out\nNo unreferenced files found. The audio directory is already clean.",
+                    "after a bailed stop: the alert read '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton ("OK"), "after a bailed stop: the alert has no OK button");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, takes, regionFiles]
+    {
+        ctx.expect (host.modalStackEmpty(), "after a bailed stop: '" + host.modalText() + "' is still up");
+        ctx.expect (takes().size() == 2 && regionFiles() == takes(),
+                    "after a bailed stop: the dropped take's file is still in the audio folder");
+        ctx.expect (! engine.getRecordManager().hasOpenTake(), "after a bailed stop: the dropped take is still open");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar cleanOutWhileRecording { Scenario {
+    "gui.clean_out_while_recording", { "gui", "session", "recording", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runCleanOutWhileRecording (host, ctx); }
 } };
 
 // File > Import Audio or MIDI... refuses while playback runs, and names each

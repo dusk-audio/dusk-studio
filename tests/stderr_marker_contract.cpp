@@ -109,6 +109,8 @@ TEST_CASE ("Staged shutdown prints every phase marker the quit legs assert on",
     const auto source = joinAdjacentLiterals (readSource ("src/ui/MainComponent.cpp"));
 
     for (const char* phase : { "re-entry ignored: shutdown already in progress",
+                               "phase 0: cancel the running render before quitting",
+                               "phase 0b: render stopped, quit continues",
                                "phase 1: stop autosave timer",
                                "phase 1b: close native session notepad",
                                "phase 2: stop transport (commits in-flight recording)",

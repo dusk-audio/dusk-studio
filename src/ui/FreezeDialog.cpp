@@ -161,17 +161,23 @@ void FreezeDialog::finalizeIfStopped()
     stopTimer();
 }
 
+void FreezeDialog::cancelRender()
+{
+    if (! isRenderRunning()) return;
+    statusLabel.setText ("Cancelling...", juce::dontSendNotification);
+    cancelButton.setEnabled (false);
+    bounceEngine->cancel();
+}
+
 void FreezeDialog::closeDialog()
 {
     // Cancel pressed mid-render: request a cancel and return without blocking -
     // the worker's teardown re-attaches the audio device and needs the message
     // loop to keep turning. The timer flips us to the finished state once it
     // actually stops, then the Close button appears.
-    if (bounceEngine != nullptr && bounceEngine->isRendering())
+    if (isRenderRunning())
     {
-        statusLabel.setText ("Cancelling...", juce::dontSendNotification);
-        cancelButton.setEnabled (false);
-        bounceEngine->cancel();
+        cancelRender();
         return;
     }
 

@@ -57,7 +57,7 @@ This chapter walks an empty session all the way to a finished bounce. If you hav
 
 ## Install and first launch
 
-Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New** and it offers the starting points (**Blank**, **Band**, **Beats**, **Singer-Songwriter**), then name your session and click through. If you back out of the file browser, the unsaved-changes prompt or the autosave recovery prompt after picking **New**, the **Open** tab or a recent session, the Startup dialog comes back so you can pick again. It also comes back when **Save** in the unsaved-changes prompt does not complete, and when the session cannot be created or opened. In that last case the status bar says why. To open a recent session, click it and press **Open** (or Enter), or double-click it; the scroll wheel moves through a long list. The same templates are on **File > New from template** once a session is open.
+Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` (`Untitled 2` when a session you saved as `Untitled` already has that folder) and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New** and it offers the starting points (**Blank**, **Band**, **Beats**, **Singer-Songwriter**), then name your session and click through. If you back out of the file browser, the unsaved-changes prompt or the autosave recovery prompt after picking **New**, the **Open** tab or a recent session, the Startup dialog comes back so you can pick again. It also comes back when **Save** in the unsaved-changes prompt does not complete, and when the session cannot be created or opened. In that last case the status bar says why. To open a recent session, click it and press **Open** (or Enter), or double-click it; the scroll wheel moves through a long list. The same templates are on **File > New from template** once a session is open.
 
 You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). On Linux, macOS, and Windows, if Dusk Studio is already running, the session opens in the existing window rather than in a second copy of the app. The window comes forward on Linux and macOS; on Windows it comes forward when the operating system's focus policy permits, and otherwise the existing window is restored and its taskbar button flashes for you to click. Either way playback stops and any take in progress is committed to the session you were working on, and if that session then has unsaved changes you get the same **Save / Don't Save / Cancel** prompt as **File > Open**. **Cancel** leaves the other session unopened and keeps you in the one you were in — with the transport stopped and the finished take in place, so save it if you want to keep it. A switch is refused outright while a bounce is running or another prompt is open; the status bar says which.
 
@@ -439,7 +439,7 @@ Verification protects against a bit-flipped download or a man-in-the-middle atta
 
 ## First launch
 
-On first launch Dusk Studio opens a blank session named `Untitled`. The window is divided, top to bottom, into:
+On first launch Dusk Studio opens a blank session named `Untitled`, or `Untitled 2` when a session you saved as `Untitled` already has that folder. The window is divided, top to bottom, into:
 
 - A thin menu bar (File, View, and Settings).
 - A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys **Cmd/Ctrl+1–4**).
@@ -463,7 +463,7 @@ Open **Settings → Audio…** to choose your audio device. The panel is divided
 - **Active output channels**: the master mix uses outputs 1-2. If your interface has more outputs, tick the extra pairs here to open them — each pair then becomes selectable as an aux lane's **Output** (a headphone / cue feed). Off by default; the master stays stereo until you enable more.
 - **Main output**: which physical pair the master mix goes to. **1-2 (default)** in most rigs; move it to another pair (e.g. when you want outputs 1-2 free for a control-room or cue feed). Only pairs the device currently has open are listed. If an aux lane is routed to the same pair as the master, the two sum on that pair.
 - **Rescan devices**: re-enumerates every backend and every MIDI port, useful if you plugged in a USB interface after launch. MIDI controllers on Linux do not need it — see [MIDI hot-plug](#midi-hot-plug).
-- **First launch only**: with nothing saved yet, Dusk Studio picks an input device alongside the output when the backend offers one, so recording works without a trip to this panel first. It never touches a configuration you have already made: if you chose no input on purpose, it stays that way.
+- **First launch only**: with nothing saved yet, Dusk Studio picks an input device alongside the output when the backend offers one, so recording works without a trip to this panel first. It never touches a configuration you have already made: if you chose no input on purpose, it stays that way. If the device will not open with that input (a capture device on another card can refuse the output's sample rate, or be busy), Dusk Studio reopens the output on its own so playback keeps working, and when that output has no inputs of its own the transport bar says **No input device. Choose one in Settings > Audio.** until you pick one here. If even the output will not reopen, you get the same warning as when [no audio device opens at startup](#audio-device-in-use-or-wont-open-at-startup).
 
 ### Control surface
 
@@ -668,7 +668,8 @@ your Save / Don't Save answer like the rest of the session. The header, toolbar,
 and footer stay fixed; mouse-wheel scrolling moves only the note within its
 writing area. Notes are saved atomically to the compatible `notepad.md` file
 when the notepad closes and on every session save; they follow the session on
-Save As. A failed
+Save As. A never-saved session whose folder holds another session keeps them
+beside its autosave instead (see Autosave). A failed
 sidecar write remains dirty and can be retried by
 saving the session again; it blocks a session switch instead of discarding the
 outgoing notes. Typing in the notepad never triggers transport shortcuts.
@@ -708,6 +709,22 @@ Every editor a strip opens — EQ, COMP, or AUX — carries that strip's name ce
 ## Track name and colour
 
 Double-click the name label at the top of the strip to rename the track. Right-click the name, or any empty part of the strip, to pick one of eight track colours. The colour appears as the strip's accent and on every region that track owns in the tape strip.
+
+## Clone to track
+
+Right-click the name, or any empty part of the strip, and choose **Clone to track...** and then a destination track. The destination becomes a copy of this track, and one undo puts back everything it held before.
+
+The copy carries everything the session saves for the track, so it sounds and behaves like the source and still does after a save and reopen:
+
+- The mode and colour, and the name with **(copy)** after it.
+- The fader, pan, mute, solo, phase, fader group, bus assigns, and aux sends with their pre/post taps and bypass. The copy joins the source's fader group.
+- The HPF, LPF, EQ and compressor, including the compressor type.
+- The insert: the plugin or built-in unit with its settings, the insert bypass, or a hardware insert with its settings. A hardware insert keeps the same interface outputs and inputs, so both tracks feed the same outboard gear and each hears what comes back. Give the copy its own pair in **Edit hardware insert...** if you have one to spare.
+- The inputs, ARM, IN and PRINT, and on a MIDI track the MIDI port, channel and MIDI out.
+- The regions, MIDI regions and their take history.
+- The automation mode and every automation lane. The copy's lanes are its own, so editing them leaves the source's alone.
+
+A clone waits for the transport to stop, and a frozen track cannot be cloned or cloned onto. Either way **Can't clone track** says what to do (see *Messages*). Undo and redo of a clone still work during playback.
 
 ## Input block (RECORDING stage)
 
@@ -1196,6 +1213,8 @@ MySession/
     └── ...
 ```
 
+A session you have not saved yet records into the `audio/` folder of `~/Music/Dusk Studio/Untitled` (or `Untitled 2` and so on, if you saved a session as `Untitled`), and **Save As** copies its takes into the folder you choose.
+
 Every recorded audio file is a **24-bit WAV** at the session's sample rate. Filenames include the track number and a timestamp so re-recording the same track on the same day still produces distinct files.
 
 MIDI tracks do not produce separate files; their note and CC data is embedded in `session.json`.
@@ -1625,7 +1644,7 @@ The insert chooser and the bottom of the picker also provide these actions where
 
 Dusk Studio ships its own insert units. They load into a channel insert slot or an aux lane slot exactly like a scanned plugin: the same picker, the same Replace and Remove actions, the same bypass, and the same delay compensation. Only one insert host runs per slot, so loading a built-in unit replaces whatever the slot held, and loading a plugin replaces the built-in unit.
 
-Settings are saved with the session and restored when you reopen it, and they travel with **Clone Track** and its undo. A built-in unit needs nothing installed and cannot go offline the way a missing plugin does.
+Settings are saved with the session and restored when you reopen it, and they travel with **Clone to track...** and its undo. A built-in unit needs nothing installed and cannot go offline the way a missing plugin does.
 
 ### Utility
 
@@ -2043,13 +2062,15 @@ Because the session is a folder, you can copy or back up a session by copying th
 ## Save commands
 
 - **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file. A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, has no `session.json` of its own yet, so Save opens the Save As browser instead, even when a session you once saved as `Untitled` already sits in that folder.
-- **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder.
+- **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder. If the Save As fails partway, for example when the notes or `session.json` cannot be written, the session stays in its old folder exactly as it was, and the copies already made in the new folder are removed again.
 - **File → Open…** (or **Cmd+O**): load a session by choosing its `session.json` file.
 - **File → New from template**: start a fresh session with tracks pre-named and colour-coded for a common workflow. The built-in templates are **Blank** (numbered tracks), **Band** (Kick / Snare / Drums OH / Bass / Gtr 1 / Gtr 2 / Keys / Lead Vox / BG Vox), **Beats** (Kick / Snare / Hat / Perc / 808 / Pad / Lead / Vox), and **Singer-Songwriter** (Vocal / Ac Gtr L / Ac Gtr R / Bass / Synth / Drums). Templates set each track's name, colour and type (mono, stereo or MIDI); they don't add plugins or audio.
 
 ## Autosave
 
 Every 30 seconds, if anything has changed since the last save, Dusk Studio writes a recovery file, `session.json.autosave`, next to the canonical `session.json` (it does **not** overwrite `session.json` — a manual Save is still what updates the real session file). The autosave is atomic (same temp-file-and-rename pattern) and silent — it never interrupts playback or recording. Idle sessions are skipped via a content hash, so the file isn't rewritten when nothing meaningful changed.
+
+A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, keeps its autosave, notes and takes in its own folder, which never holds another session: if you once saved a session as `Untitled`, the new one starts in `Untitled 2` (or the first `Untitled N` that is free) beside it, and that folder is reused on the next launch. If a `session.json` appears in the new session's folder anyway, its autosave and notes go to the `unsaved-session` folder in Dusk Studio's configuration folder instead, **Don't Save** and **Save As** leave the other session's autosave where it is, Save As does not take its plug-in state along, and Save As into that folder is refused like any folder that holds another session. A never-saved session has no `session.json` to open, so to get its work back after a crash, rename its `session.json.autosave` to `session.json` and open it (see Session won't open).
 
 If Dusk Studio crashes or loses power, the next launch detects the autosave file and offers to recover. Choosing **Recover autosave** immediately writes the recovered state to `session.json` (and only then removes the autosave), so the recovered work is on disk even if you quit right after. A manual Save deletes the autosave, so a leftover autosave that differs from `session.json` is the signal that a recovery point exists.
 
@@ -2097,6 +2118,8 @@ To export your finished mix as a stereo audio file:
 The output is **stereo 24-bit WAV at the session sample rate** by default (or a 320 kbps MP3 if you name the file `.mp3`), with a fixed 5-second tail so reverb and compression ringouts decay naturally.
 
 Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. When the bounce completes, the audio device is automatically re-attached.
+
+Quitting while a bounce, mixdown, master export or freeze is rendering cancels the render, just as **Cancel** does, so no file is written. Dusk Studio waits for the render to stop and the audio device to come back, then quits, asking first if the session has unsaved changes. Cancelling that question leaves Dusk Studio open, but the render stays cancelled.
 
 The File menu has three bounce commands:
 
@@ -2290,6 +2313,7 @@ An open chord slot takes the keys instead:
 - Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback.
 - **M** drops a marker at the playhead, not mute; per-track mute is **X** to avoid the clash with the marker action.
 - Plain **B** taps tempo; **Cmd+B** triggers Bounce (Logic convention).
+- While a prompt that decides what happens to your session is up, no shortcut works: the unsaved-changes prompt when you quit, open or start another session, and **Recover from autosave?**. **Space** and **R** do nothing until you answer it. A control surface or a MIDI binding can still start a take behind it, and so can **R** in the Save As browser that **Save** opens for a session you have never saved; **Save** stops that take first and saves it with the session. **Escape** still does whatever that prompt allows. Other dialogs and editors pass the transport keys through as usual.
 
 \newpage
 
@@ -2491,10 +2515,10 @@ The format for each entry:
 
 ### Save changes before quitting?
 
-- **When**: You quit with unsaved changes. Logging out, shutting the machine down, or stopping the app from a terminal counts as quitting: the prompt appears then too, and the session waits on your answer.
+- **When**: You quit with unsaved changes. Quitting stops the transport before it checks, so a take still recording is committed and counts as unsaved even if you saved just before it started. A bounce, mixdown, master export or freeze still rendering is cancelled first, as its **Cancel** button would, and the prompt waits until it has stopped. Logging out, shutting the machine down, or stopping the app from a terminal counts as quitting: the prompt appears then too, and the session waits on your answer.
 - **Text**: "Your session has unsaved changes since the last manual save. If you don't save, those changes are discarded."
 - **Buttons**: **Save** / **Don't Save** / **Cancel**.
-- **Action**: Save unless you specifically want to discard. If the save does not complete, because you cancel the Save As browser that a never-saved session opens, pick a folder that already holds another session, or the write fails, Dusk Studio stays open as it was, with audio running and autosave on, and you can carry on or quit again.
+- **Action**: Save unless you specifically want to discard. **Save** stops a take that a control surface or a MIDI binding started while the prompt was up, or that started in the Save As browser, and saves it with the session. If the save does not complete, because you cancel the Save As browser that a never-saved session opens, pick a folder that already holds another session, or the write fails, Dusk Studio stays open as it was, with audio running and autosave on, and you can carry on or quit again. **Cancel** keeps Dusk Studio open with the transport stopped and any take the quit committed in place, so save it if you want to keep it.
 
 ### Save failed
 
@@ -2519,8 +2543,10 @@ The format for each entry:
 
 ### Clean out
 
-Four variants:
+Six variants:
 
+- **Recording**: "Stop recording before cleaning out. The take being recorded has no region pointing at its file until you stop, so Clean out would count it as unreferenced and delete it." — Buttons: OK. The same alert takes the place of the deletion when a take starts, from a control surface or a MIDI binding, while the confirmation below is open; nothing is deleted.
+- **Folder holds another session**: "Save this session before cleaning out. Another session has since been saved in the folder this one records into, and Clean out would count that session's recordings as unreferenced and delete them." — Buttons: OK. Shown for a session you have never saved when a `session.json` has appeared in its `Untitled` folder since it started. Save it somewhere of its own with **Save As…**, then Clean out works on that folder.
 - **Cannot read the directory**: "Could not read this session's audio directory, so there is no telling what is unreferenced. Check the folder's permissions and that its drive is still connected, then try again." — Buttons: OK.
 - **No audio directory**: "This session has no audio directory yet, so there's nothing to clean." — Buttons: OK.
 - **No unreferenced files**: "No unreferenced files found. The audio directory is already clean." — Buttons: OK.
@@ -2626,6 +2652,15 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 - **Text**: "Change tempo from [old] to [new] BPM? [impact summary]. Audio regions and markers are NOT retimed."
 - **Buttons**: **Apply** / **Cancel**.
 - **Action**: Confirm only after reviewing what will be retimed. Audio regions stay put at their sample positions, so a tempo change can break time alignment between audio and MIDI; redo the audio takes if necessary.
+
+## Channel strip
+
+### Can't clone track
+
+- **When**: You choose **Clone to track...** while the transport is playing or recording, or when the source or destination track is frozen.
+- **Text**: "Stop playback, then clone the track again." (Or "Unfreeze the track, then clone it again. A frozen track can't be cloned or cloned onto." when a track is frozen.)
+- **Buttons**: OK.
+- **Action**: Stop the transport, or unfreeze the track, then clone again. Nothing was copied.
 
 ## Startup
 

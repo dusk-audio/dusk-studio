@@ -93,3 +93,46 @@ TEST_CASE ("Save As treats another spelling of the session's own folder as the s
     if (! ec)
         CHECK (isSameFolder (s.root / "Link", s.mine));
 }
+
+TEST_CASE ("a never-saved session keeps its autosave and notes out of a folder holding a session")
+{
+    using duskstudio::savecheck::sidecarFolder;
+    const ScratchSessions s;
+    REQUIRE_FALSE (s.root.empty());
+    const auto privateDir = s.root / "private";
+
+    CHECK (sidecarFolder (s.other, false, privateDir) == privateDir);
+    CHECK (sidecarFolder (s.other, false, {}).empty());
+    CHECK (sidecarFolder (s.empty, false, privateDir) == s.empty);
+    CHECK (sidecarFolder (s.root / "New", false, privateDir) == s.root / "New");
+    CHECK (sidecarFolder (s.mine, true, privateDir) == s.mine);
+    CHECK (sidecarFolder ({}, false, privateDir).empty());
+
+    stdfs::create_directories (s.empty / "session.json");
+    CHECK (sidecarFolder (s.empty, false, privateDir) == privateDir);
+
+    std::error_code ec;
+    stdfs::create_directories (s.root / "Linked");
+    stdfs::create_symlink (s.root / "Gone" / "session.json", s.root / "Linked" / "session.json", ec);
+    if (! ec)
+        CHECK (sidecarFolder (s.root / "Linked", false, privateDir) == privateDir);
+}
+
+TEST_CASE ("a never-saved session starts in the first Untitled folder that holds no session")
+{
+    using duskstudio::savecheck::unsavedSessionFolder;
+    const ScratchSessions s;
+    REQUIRE_FALSE (s.root.empty());
+
+    CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled");
+
+    stdfs::create_directories (s.root / "Untitled");
+    std::ofstream (s.root / "Untitled" / "notepad.md") << "notes";
+    CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled");
+
+    std::ofstream (s.root / "Untitled" / "session.json") << "{}";
+    CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+
+    stdfs::create_directories (s.root / "Untitled 2" / "session.json");
+    CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+}

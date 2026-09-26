@@ -29,8 +29,10 @@
 #include "NativeEditorEmbedScale.h"
 #include "SystemStatusBar.h"
 #include "TransportBar.h"
+#include "SaveTargetChecks.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/SuiteRunner.h"
+#include "../foundation/Fs.h"
 
 #include <algorithm>
 #include <array>
@@ -420,8 +422,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         {
             if (! passed) startupErrors.emplace_back (error);
         };
-        check (owner.session.getSessionDirectory().getFileName().toStdString() == "Untitled",
-               "first launch did not create an Untitled session");
+        // Launch picks the first free Untitled folder under the sessions
+        // folder, which a harness run keeps out of the user's Music folder.
+        const auto parent = MainComponent::defaultSessionsFolder().lexically_normal();
+        const auto launchDir = scenario::currentSessionDirectory (owner.session).lexically_normal();
+        check (! parent.empty() && launchDir == savecheck::unsavedSessionFolder (parent),
+               "first launch did not start in the first free Untitled folder of its sessions folder");
+        const auto userMusic = dusk::fs::userMusicDir().lexically_normal();
+        const auto underUserMusic = userMusic.empty() ? std::filesystem::path() : parent.lexically_relative (userMusic);
+        check (underUserMusic.empty() || *underUserMusic.begin() == "..",
+               "first launch put its session in the user's own Music folder");
         check (timelineViewMatches (false), "the first-launch tape strip was not collapsed");
         check (stageViewMatches (Stage::Recording), "first launch did not show Recording");
         check (owner.engine.getTransport().isStopped(), "first launch started the transport");
@@ -1438,9 +1448,20 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool autosaveRunning() const override { return owner.isTimerRunning(); }
     bool engineDetached() const override { return owner.engineDetached; }
     bool sessionOnDisk() const override { return owner.sessionOnDisk; }
+    bool closeNotepadAfterTyping (const std::string& text) override
+    {
+        owner.notepadText = text.c_str();
+        owner.notepadDirty = true;
+        return owner.saveNotepadNow();
+    }
+    void startUnsavedSessionIn (const std::filesystem::path& parent) override
+    {
+        owner.startUnsavedSessionIn (parent);
+        owner.sessionOnDisk = false;
+    }
     bool requestQuit() override
     {
-        if (! owner.currentSessionDirty() && ! owner.notepadDirty) return false;
+        if (! owner.quitWouldLoseChanges()) return false;
         owner.requestQuit();
         return true;
     }
@@ -1495,8 +1516,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         auto* handler = control != nullptr ? control->getAccessibilityHandler() : nullptr;
         if (handler == nullptr || handler->getTitle().toStdString() != title) return false;
         help = handler->getHelp().toStdString();
-        auto* interface = handler->getValueInterface();
-        value = interface != nullptr ? interface->getCurrentValueAsString().toStdString() : std::string {};
+        auto* valueInterface = handler->getValueInterface();
+        value = valueInterface != nullptr ? valueInterface->getCurrentValueAsString().toStdString() : std::string {};
         return true;
     }
 
@@ -1506,9 +1527,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         // hang off it rather than off the main component.
         auto* control = findTitledControl (*owner.getTopLevelComponent(), title);
         auto* handler = control != nullptr ? control->getAccessibilityHandler() : nullptr;
-        auto* interface = handler != nullptr ? handler->getValueInterface() : nullptr;
-        if (interface == nullptr || interface->isReadOnly()) return false;
-        interface->setValueAsString (HostString (value.c_str()));
+        auto* valueInterface = handler != nullptr ? handler->getValueInterface() : nullptr;
+        if (valueInterface == nullptr || valueInterface->isReadOnly()) return false;
+        valueInterface->setValueAsString (HostString (value.c_str()));
         return true;
     }
 
@@ -1826,7 +1847,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool mixdownRunning() const override
     {
         const auto* panel = dynamic_cast<BounceDialog*> (owner.mixdownModal.getBody());
-        return panel != nullptr && panel->isRenderingForScenario();
+        return panel != nullptr && panel->isRenderRunning();
     }
     std::string statusMessage() const override { return owner.statusLabel.getText().toStdString(); }
 

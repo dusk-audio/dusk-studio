@@ -16,6 +16,7 @@
 #include "SaveTargetChecks.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
+#include "RenderInProgress.h"
 #include "PluginScanModal.h"
 #include "ShortcutsPanel.h"
 #include "SupportersPanel.h"
@@ -63,6 +64,8 @@
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
 #include "../engine/midi/MidiFileReader.h"
+#include "../foundation/AppConfigDir.h"
+#include "../foundation/AppMusicDir.h"
 #include "../foundation/PlanarBuffer.h"
 #include "../foundation/Text.h"
 #include <algorithm>
@@ -648,12 +651,7 @@ MainComponent::MainComponent()
     // progress modal once the window is on screen, so a full plugin folder
     // doesn't make the app look frozen on launch.
 
-    // Default to a session under ~/Music/Dusk Studio/Untitled. The user can change
-    // this later via a session-management UI; for the recorder MVP this is
-    // enough to get WAVs on disk.
-    auto musicDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
-    if (! musicDir.exists()) musicDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
-    session.setSessionDirectory (musicDir.getChildFile ("Dusk Studio").getChildFile ("Untitled"));
+    startUnsavedSessionIn (defaultSessionsFolder());
 
     // Top-of-window menu bar drives File / View / Settings actions. Replaces the
     // old row of TextButtons (Audio settings... / Save / Save As... / etc).
@@ -1280,6 +1278,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // still closes it, taken bare as the modal's own handler takes it.
     if (escape && ! mods.isAnyModifierKeyDown() && EmbeddedModal::escapeTopModal())
         return true;
+
+    // A prompt deciding what happens to the session is up. Unhandled rather
+    // than consumed, so Tab still moves between its buttons.
+    if (EmbeddedModal::shortcutsWithheld())
+        return false;
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
     // The audio settings panel is a native child window with its own Escape
@@ -3095,7 +3098,7 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
                 // Discarding changes - delete the current session's autosave
                 // (still the OLD dir here) so it doesn't later offer to
                 // "recover" the work just thrown away. Mirrors requestQuit.
-                s->deleteAutosaveFor (s->session.getSessionDirectory());
+                s->deleteAutosaveFor (toFile (s->sidecarFolder()));
                 (*go)();
             }
             if (auto* s = safe.getComponent()) s->maybeStartStartupPluginScan();
@@ -3201,8 +3204,7 @@ void MainComponent::promptNewSessionLocation (SessionTemplate tmpl,
     // Single-dialog "Save As" UX: filename text field + folder browser in
     // one step. The typed name becomes the session folder; the navigated
     // directory becomes its parent.
-    auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                        .getChildFile ("Dusk Studio");
+    auto startDir = toFile (defaultSessionsFolder());
     if (! startDir.exists()) startDir.createDirectory();
 
     filebrowser::open (*this, {
@@ -3270,12 +3272,25 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     // before it copies it.
     const auto dir = savecheck::isSameFolder (toPath (requestedDir), toPath (oldDir))
                          ? oldDir : requestedDir;
-    if (dir != oldDir && savecheck::holdsAnotherSession (toPath (dir), toPath (oldDir)))
+    const auto oldSidecar = toFile (sidecarFolder());
+    const bool ownsOldDir = oldSidecar == oldDir;
+    if (dir == oldDir ? ! ownsOldDir
+                      : savecheck::holdsAnotherSession (toPath (dir), toPath (oldDir)))
     {
         setStatusForPath ("A session already exists at", dir.getChildFile ("session.json"));
         showDuskAlert (*this, savecheck::kOtherSessionTitle,
                        savecheck::otherSessionMessage (dir.getFullPathName().toStdString()));
         return false;
+    }
+
+    // A take still recording would otherwise end at the detach below, after
+    // a Save As has copied the session's audio, and its file would stay in the
+    // old folder. A control surface or MIDI binding can start one under a save
+    // prompt, and R still works in the Save As browser.
+    if (engine.getTransport().isRecording() || engine.getRecordManager().isActive())
+    {
+        engine.stop();
+        if (transportBar != nullptr) transportBar->notifyRecordStopped();
     }
 
     // Save As to a different folder must take the audio along: copy every
@@ -3284,9 +3299,10 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     // (same dir) is a no-op here. Copying precedes the audio-callback detach
     // - it touches no plugin state, so a long copy adds no dropout.
     const bool isSaveAs = oldDir != juce::File() && dir != oldDir;
+    SessionSerializer::ConsolidationResult consolidated;
     if (isSaveAs)
     {
-        const auto consolidated = SessionSerializer::consolidateInto (session, dir);
+        consolidated = SessionSerializer::consolidateInto (session, dir, ownsOldDir);
         if (! consolidated.ok)
         {
             setStatusForPath ("Save failed", dir);
@@ -3303,6 +3319,13 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
             setStatusForPath (juce::String (consolidated.missingSources.size())
                                 + " missing audio file(s) were not copied to", dir);
     }
+    // Both failure alerts below promise the session is as it was.
+    const auto undoSaveAs = [this, isSaveAs, &consolidated, &oldDir]
+    {
+        if (! isSaveAs) return;
+        SessionSerializer::revertConsolidation (session, consolidated);
+        session.setSessionDirectory (oldDir);
+    };
 
     // Sidecar before the JSON: the notepad and session.json are one user-visible
     // save, so a sidecar failure has to abort while the session still points at
@@ -3311,6 +3334,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     const auto notepadTarget = dir.getChildFile ("notepad.md");
     if (! SessionSerializer::saveNotepad (dir, notepadText))
     {
+        undoSaveAs();
         notepadDirty = true;
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (notepadWindow != nullptr)
@@ -3389,7 +3413,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
             // The old folder's autosave still holds pre-consolidation paths -
             // without this, re-opening the old session pops a stale recovery
             // prompt.
-            deleteAutosaveFor (oldDir);
+            deleteAutosaveFor (oldSidecar);
         }
         RecentSessions::add (toPath (dir));
         // A successful manual save makes the autosave stale - drop it so the
@@ -3403,6 +3427,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
         setStatusForPath ("Saved", target);
         return true;
     }
+    undoSaveAs();
     setStatusForPath ("Save failed", target);
     // Status-label-only feedback is too easy to miss on a critical
     // operation. Pop a modal so the user knows the session WASN'T
@@ -3472,9 +3497,37 @@ void MainComponent::deleteAutosaveFor (const juce::File& sessionDir) const
     if (autosave.existsAsFile()) autosave.deleteFile();
 }
 
+static std::filesystem::path privateUnsavedFolder()
+{
+    const auto config = dusk::fs::appConfigDir();
+    return config.empty() ? config : config / "unsaved-session";
+}
+
+std::filesystem::path MainComponent::defaultSessionsFolder()
+{
+    const auto music = dusk::fs::appMusicDir();
+    return music.empty() ? music : music / "Dusk Studio";
+}
+
+// A session saved as Untitled must never receive this session's takes,
+// autosave or notes, so the launch session starts in a folder holding none.
+void MainComponent::startUnsavedSessionIn (const std::filesystem::path& parent)
+{
+    auto dir = parent.empty() ? parent : savecheck::unsavedSessionFolder (parent);
+    if (dir.empty()) dir = privateUnsavedFolder();
+    if (dir.empty() && ! parent.empty()) dir = parent / "Untitled";
+    session.setSessionDirectory (toFile (dir));
+}
+
+std::filesystem::path MainComponent::sidecarFolder() const
+{
+    return savecheck::sidecarFolder (toPath (session.getSessionDirectory()), sessionOnDisk,
+                                     privateUnsavedFolder());
+}
+
 void MainComponent::writeAutosave()
 {
-    const auto dir = session.getSessionDirectory();
+    const auto dir = toFile (sidecarFolder());
     if (dir == juce::File()) return;
 
     // Ensure the directory exists before serialising. setSessionDirectory's
@@ -3601,7 +3654,7 @@ bool MainComponent::currentSessionDirty()
     // seeded at construction answers the question instead - and if that
     // baseline is ever missing, the old reading stands rather than reporting an
     // hour of unsaved work clean.
-    const auto sessionJson = dir.getChildFile ("session.json");
+    const auto sessionJson = toFile (sidecarFolder()).getChildFile ("session.json");
     if (! sessionJson.existsAsFile())
         return lastSavedSessionJson.isEmpty() ? autosaveIsNewerThan (sessionJson)
                                               : divergedFromBaseline;
@@ -3609,7 +3662,41 @@ bool MainComponent::currentSessionDirty()
     return divergedFromBaseline || autosaveIsNewerThan (sessionJson);
 }
 
-void MainComponent::requestQuit()
+namespace
+{
+// Every render still running from a modal, whichever view opened it.
+std::vector<RenderInProgress*> runningRenders()
+{
+    std::vector<RenderInProgress*> running;
+    for (auto* modal : EmbeddedModal::activeModalStack())
+        if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody());
+            render != nullptr && render->hasUnfinishedRender())
+            running.push_back (render);
+    return running;
+}
+} // namespace
+
+void MainComponent::resumeQuitAfterRender()
+{
+    // Polled rather than waited on: the worker hands the engine back through
+    // this thread, so blocking it here would never finish.
+    SafePointer<MainComponent> safe (this);
+    dusk::Timer::callAfterDelay (50, [safe]
+    {
+        auto* self = safe.getComponent();
+        if (self == nullptr) return;
+        if (! runningRenders().empty())
+        {
+            self->resumeQuitAfterRender();
+            return;
+        }
+        shutdown::emitPhase ("phase 0b: render stopped, quit continues");
+        self->quitWaitsForRender = false;
+        self->requestQuit();
+    });
+}
+
+bool MainComponent::quitWouldLoseChanges()
 {
     // Take the window back before the dirty check, and WITHOUT saving: the
     // titlebar X reaches here past both the dim and the native child, and the
@@ -3617,6 +3704,15 @@ void MainComponent::requestQuit()
     // would each commit the notepad behind their backs. notepadDirty survives
     // into the check below, and the modal hook then finds nothing left to close.
     yieldNotepadWindow (/*saveChanges*/ false);
+
+    // A take still recording is not in the session until the stop commits it,
+    // so a check run first reads a saved session as clean and the shutdown then
+    // commits the take after the last chance to save it. After the notepad
+    // yield, because a take stopped with errors raises an alert, and that
+    // alert's modal hook would save the notepad. Not while a render runs: its
+    // worker owns the transport until requestQuit has cancelled it.
+    if (runningRenders().empty())
+        stopTransportForSessionSwitch();
 
     // Industry-standard dirty-only prompt. Compare the live serialized
     // session JSON against the snapshot we took at the last successful
@@ -3627,7 +3723,27 @@ void MainComponent::requestQuit()
     // the prompt and silently lose the change). autosaveIsNewerThan
     // stays as a belt-and-braces fallback for sessions where we somehow
     // didn't seed lastSavedSessionJson.
-    const bool dirty = currentSessionDirty() || notepadDirty;
+    return currentSessionDirty() || notepadDirty;
+}
+
+void MainComponent::requestQuit()
+{
+    // A render's worker owns the transport and the audio callback until it
+    // stops, and every path from here stops or detaches them. Cancel it the way
+    // its own Cancel does and take the quit up again once it has stopped; a
+    // quit asked for meanwhile is the same quit.
+    if (quitWaitsForRender) return;
+    if (const auto renders = runningRenders(); ! renders.empty())
+    {
+        shutdown::emitPhase ("phase 0: cancel the running render before quitting");
+        for (auto* render : renders)
+            render->cancelRender();
+        quitWaitsForRender = true;
+        resumeQuitAfterRender();
+        return;
+    }
+
+    const bool dirty = quitWouldLoseChanges();
 
     if (! dirty)
     {
@@ -3686,7 +3802,7 @@ void MainComponent::requestQuit()
         {
             if (auto* self = safeThis.getComponent())
             {
-                self->deleteAutosaveFor (self->session.getSessionDirectory());
+                self->deleteAutosaveFor (toFile (self->sidecarFolder()));
                 // The user explicitly chose Don't Save for every dirty part of
                 // the session, including the notepad sidecar. Prevent the
                 // staged shutdown's normal sidecar flush from overriding that
@@ -3740,10 +3856,13 @@ void MainComponent::requestQuit()
     // Focus-locked: save-before-quit MUST go through Save / Don't Save /
     // Cancel. Esc and click-outside would let the user dismiss with no
     // decision, leaving the dirty state ambiguous and the X-button quit
-    // request silently swallowed.
+    // request silently swallowed. Shortcuts stay off too: a take started under
+    // the prompt would begin after the check and end in the shutdown.
     quitModal.show (*this, std::move (dialog), /*onDismiss*/ {},
                        /*dismissOnClickOutside*/ false,
-                       /*dismissOnEscape*/        false);
+                       /*dismissOnEscape*/        false,
+                       /*dimAlpha*/ 0.55f, /*hidePluginEditors*/ true,
+                       /*useOverlay*/ true, /*forwardShortcuts*/ false);
 }
 
 void MainComponent::leakAllPluginInstancesForShutdown()
@@ -3880,12 +3999,11 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
     // create (saveSessionTo already creates the directory if missing).
     auto startDir = session.getSessionDirectory().getParentDirectory();
     if (! startDir.isDirectory())
-        startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                       .getChildFile ("Dusk Studio");
+        startDir = toFile (defaultSessionsFolder());
     if (! startDir.exists()) startDir.createDirectory();
 
     juce::String defaultName = session.getSessionDirectory().getFileName();
-    if (defaultName.isEmpty() || defaultName == "Untitled") defaultName = "MySong";
+    if (defaultName.isEmpty() || ! sessionOnDisk || defaultName == "Untitled") defaultName = "MySong";
 
     filebrowser::open (*this, {
         /*title*/                  "Save session as...",
@@ -3915,12 +4033,11 @@ void MainComponent::saveAsPrompt()
     // chooser flow which only let the user browse, never type.
     auto startDir = session.getSessionDirectory().getParentDirectory();
     if (! startDir.isDirectory())
-        startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                       .getChildFile ("Dusk Studio");
+        startDir = toFile (defaultSessionsFolder());
     if (! startDir.exists()) startDir.createDirectory();
 
     juce::String defaultName = session.getSessionDirectory().getFileName();
-    if (defaultName.isEmpty() || defaultName == "Untitled") defaultName = "MySong";
+    if (defaultName.isEmpty() || ! sessionOnDisk || defaultName == "Untitled") defaultName = "MySong";
 
     filebrowser::open (*this, {
         /*title*/                  "Save session as...",
@@ -4049,6 +4166,8 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
             }
         };
 
+        // Shortcuts stay off: a take started under the prompt would be recorded
+        // into the session the load is about to replace.
         recoveryModal.show (*this, std::move (body),
                               [safe, onComplete]
                               {
@@ -4058,7 +4177,10 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
                                       self->maybeStartStartupPluginScan();
                                       if (onComplete) onComplete (false);
                                   }
-                              });
+                              },
+                              /*dismissOnClickOutside*/ true, /*dismissOnEscape*/ true,
+                              /*dimAlpha*/ 0.55f, /*hidePluginEditors*/ true,
+                              /*useOverlay*/ true, /*forwardShortcuts*/ false);
         return true;
     }
 
@@ -4386,7 +4508,7 @@ void MainComponent::openFromFilePrompt (std::function<void (bool opened)> onReso
     {
         auto startDir = session.getSessionDirectory();
         if (! startDir.isDirectory())
-            startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+            startDir = toFile (dusk::fs::appMusicDir());
 
         filebrowser::open (*this, {
             /*title*/                  "Open session.json",
@@ -4409,7 +4531,7 @@ void MainComponent::openBounceDialog()
 {
     auto defaultDir = session.getSessionDirectory();
     if (! defaultDir.isDirectory())
-        defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+        defaultDir = toFile (dusk::fs::appMusicDir());
     const auto defaultFile = defaultDir.getChildFile ("bounce.wav");
 
    #if DUSKSTUDIO_HAS_LAME
@@ -4484,7 +4606,7 @@ void MainComponent::openBounceStemsDialog()
     // still navigate anywhere.
     auto defaultDir = session.getSessionDirectory();
     if (! defaultDir.isDirectory())
-        defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+        defaultDir = toFile (dusk::fs::appMusicDir());
     else
         defaultDir = defaultDir.getChildFile ("stems");
     defaultDir.createDirectory();
@@ -4761,7 +4883,7 @@ void MainComponent::importPrompt()
     // each chosen file by extension (audio -> reader peek, MIDI -> file
     // peek) and the target picker flips a track's mode to match the dropped
     // file, so a mixed audio+MIDI selection is handled in a single batch.
-    const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    const auto startDir = toFile (dusk::fs::appMusicDir());
     filebrowser::openMulti (*this, {
         /*title*/                  "Import audio or MIDI file(s)",
         /*initialFileOrDirectory*/ startDir,
@@ -4848,7 +4970,7 @@ void MainComponent::importDpSongPrompt()
     // browser only lists subfolders, so a song folder looks empty when you open
     // it). Instead let the user pick ANY file inside the song folder and import
     // its parent - they navigate in, see the ZZ/.sys files, pick one.
-    const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    const auto startDir = toFile (dusk::fs::appMusicDir());
     filebrowser::open (*this, {
         /*title*/                  "Open any file inside the DP song folder",
         /*initialFileOrDirectory*/ startDir,
@@ -5679,8 +5801,41 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
     }
 }
 
+namespace
+{
+constexpr const char* kCleanOutWhileRecording =
+    "Stop recording before cleaning out. The take being recorded has no region "
+    "pointing at its file until you stop, so Clean out would count it as "
+    "unreferenced and delete it.";
+constexpr const char* kCleanOutFolderNotOwned =
+    "Save this session before cleaning out. Another session has since been saved "
+    "in the folder this one records into, and Clean out would count that "
+    "session's recordings as unreferenced and delete them.";
+} // namespace
+
+bool MainComponent::refuseCleanOut()
+{
+    // A take a bailed stop left behind is dropped rather than reported as
+    // recording: nothing records, and its file was never going to be kept.
+    auto& recorder = engine.getRecordManager();
+    recorder.reclaimBailedTake();
+    if (recorder.hasOpenTake())
+    {
+        showDuskAlert (*this, "Clean out", kCleanOutWhileRecording);
+        return true;
+    }
+    if (toFile (sidecarFolder()) != session.getSessionDirectory())
+    {
+        showDuskAlert (*this, "Clean out", kCleanOutFolderNotOwned);
+        return true;
+    }
+    return false;
+}
+
 void MainComponent::cleanOutUnreferencedFiles()
 {
+    if (refuseCleanOut()) return;
+
     const auto unreferenced = findUnreferencedAudio (session);
     if (unreferenced.scanFailed)
     {
@@ -5707,11 +5862,8 @@ void MainComponent::cleanOutUnreferencedFiles()
         return;
     }
 
-    juce::Array<juce::File> candidates;
-    for (const auto& path : unreferenced.files)
-        candidates.add (juce::File (juce::String (path.u8string())));
     const auto sizeMB = (double) unreferenced.totalBytes / (1024.0 * 1024.0);
-    const auto msg = "Found " + juce::String (candidates.size())
+    const auto msg = "Found " + juce::String ((int) unreferenced.files.size())
                    + " unreferenced .wav file(s) totalling "
                    + juce::String (sizeMB, 1) + " MB.\n\n"
                    + "These were created by past record passes that no "
@@ -5723,24 +5875,31 @@ void MainComponent::cleanOutUnreferencedFiles()
     juce::Component::SafePointer<MainComponent> safeThis (this);
     showDuskConfirm (*this, "Clean out unreferenced files", msg,
                        /*primary*/   "Delete",
-                       /*onPrimary*/ [safeThis, candidates]
+                       /*onPrimary*/ [safeThis, listed = unreferenced.files]
                        {
+                           auto* self = safeThis.getComponent();
+                           if (self == nullptr) return;
+                           // The prompt does not stop a control surface or a
+                           // MIDI binding from recording, so both checks run
+                           // again: nothing goes that a take now holds or a
+                           // region now points at.
+                           if (self->refuseCleanOut()) return;
+                           const auto current = findUnreferencedAudio (self->session).files;
                            int deleted = 0;
-                           for (const auto& f : candidates)
-                               if (f.deleteFile()) ++deleted;
-                           if (auto* self = safeThis.getComponent())
-                           {
-                               // The undo stack holds full before-states of
-                               // deleted regions; Ctrl+Z after this would
-                               // restore a region whose WAV is gone. Nothing
-                               // deleted = nothing dangling, keep the history.
-                               if (deleted > 0)
-                                   self->engine.getUndoManager().clearUndoHistory();
-                               self->statusLabel.setText (
-                                   "Deleted " + juce::String (deleted)
-                                       + " unreferenced file(s).",
-                                   juce::dontSendNotification);
-                           }
+                           for (const auto& path : listed)
+                               if (std::find (current.begin(), current.end(), path) != current.end()
+                                   && juce::File (juce::String (path.u8string())).deleteFile())
+                                   ++deleted;
+                           // The undo stack holds full before-states of
+                           // deleted regions; Ctrl+Z after this would
+                           // restore a region whose WAV is gone. Nothing
+                           // deleted = nothing dangling, keep the history.
+                           if (deleted > 0)
+                               self->engine.getUndoManager().clearUndoHistory();
+                           self->statusLabel.setText (
+                               "Deleted " + juce::String (deleted)
+                                   + " unreferenced file(s).",
+                               juce::dontSendNotification);
                        },
                        /*secondary*/   "Cancel",
                        /*onSecondary*/ {},
@@ -6479,7 +6638,7 @@ void MainComponent::yieldNotepadWindow (bool saveChanges)
 bool MainComponent::saveNotepadNow()
 {
     if (! notepadDirty) return true;
-    const auto dir = session.getSessionDirectory();
+    const auto dir = toFile (sidecarFolder());
     if (dir == juce::File())
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI

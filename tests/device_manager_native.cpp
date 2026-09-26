@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "engine/device/DefaultInputChoice.h"
 #include "engine/device/DeviceManager.h"
 #include "engine/device/DeviceStateBlob.h"
 #include "engine/device/IODevice.h"
@@ -154,7 +155,9 @@ public:
     {
         const std::string devName = ! outputName.empty() ? outputName : inputName;
         log->add (typeName + ":create:" + devName);
-        std::string err = busy.count (devName) ? std::string ("device busy") : std::string();
+        std::string err = busy.count (devName) ? std::string ("device busy")
+                        : rejectedInputs.count (inputName) ? std::string ("sample rate not supported")
+                        : std::string();
         auto d = std::make_unique<MockDevice> (log, devName, inChans, outChans, rates, defBuf, err);
         created.push_back (d.get());
         return d;
@@ -164,6 +167,7 @@ public:
     std::string typeName;
     int defOut = 0, defIn = 0;
     std::set<std::string> busy;          // device names whose open() fails
+    std::set<std::string> rejectedInputs; // input names that fail any open pairing them
     std::vector<MockDevice*> created;    // back-pointers; the manager owns them
 
 private:
@@ -366,6 +370,54 @@ TEST_CASE ("DeviceManager initialise: busy saved device falls back but keeps sav
     const auto identity = dm.deviceIdentityFromState (saved.toJson());
     REQUIRE (identity.backendName == "ALSA");
     REQUIRE (identity.outputName == "busyDev");
+}
+
+TEST_CASE ("First-launch input: a refused pairing reopens the output alone", "[audio][device]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h;
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+    REQUIRE (dm.initialise (16, 2, "", /*selectDefaultOnFailure*/ true).empty());
+
+    auto outputOnly = dm.getSetup();
+    outputOnly.inputDeviceName.clear();
+    REQUIRE (dm.setSetup (outputOnly, /*treatAsChosen*/ false).empty());
+    REQUIRE (dm.getCurrentDevice() != nullptr);
+
+    SECTION ("an input the device accepts opens alongside the output")
+    {
+        const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-alt");
+        REQUIRE (result.error.empty());
+        REQUIRE (dm.getCurrentDevice() != nullptr);
+        REQUIRE (dm.getSetup().inputDeviceName == "pw-alt");
+    }
+
+    SECTION ("a refused input leaves the output open as it was")
+    {
+        h.pw->rejectedInputs.insert ("pw-alt");
+        const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-alt");
+
+        auto* device = dm.getCurrentDevice();
+        REQUIRE (device != nullptr);
+        REQUIRE (device->getName() == "pw-default");
+        REQUIRE (device->getCurrentSampleRate() > 0.0);
+        REQUIRE (device->getActiveOutputChannels().count() > 0);
+        REQUIRE (dm.getSetup().inputDeviceName.empty());
+        REQUIRE (dm.getStateBlob().empty());
+        REQUIRE (result.error == "sample rate not supported");
+        REQUIRE (result.outputRestored);
+    }
+
+    SECTION ("an output that will not reopen is reported, not assumed")
+    {
+        h.pw->rejectedInputs.insert ("pw-alt");
+        h.pw->busy.insert ("pw-default");
+        const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-alt");
+        REQUIRE_FALSE (result.error.empty());
+        REQUIRE_FALSE (result.outputRestored);
+        REQUIRE (dm.getCurrentDevice() == nullptr);
+    }
 }
 
 TEST_CASE ("DeviceManager reads backend identity from saved device state", "[audio][device]")

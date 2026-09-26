@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "foundation/AppConfigDir.h"
+#include "foundation/AppMusicDir.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -112,6 +113,47 @@ TEST_CASE ("DUSKSTUDIO_CONFIG_DIR names the config directory", "[appconfigdir]")
     const ScopedEnv override (dusk::fs::kConfigDirEnv, chosen.u8string());
     const ScopedEnv scenarios ("DUSKSTUDIO_RUN_SCENARIOS", "all");
     REQUIRE (dusk::fs::appConfigDir() == chosen);
+}
+
+TEST_CASE ("A normal launch keeps its sessions under the user's Music folder", "[appconfigdir]")
+{
+    const auto userMusic = stdfs::temp_directory_path() / "dusk-app-music-user";
+    bool madeHarnessDir = false;
+    const auto dir = dusk::fs::resolveAppMusicDir ({}, false, [&] { return userMusic; },
+                                                   [&] { madeHarnessDir = true; return kHarnessDir; });
+    REQUIRE (dir == userMusic);
+    REQUIRE_FALSE (madeHarnessDir);
+}
+
+TEST_CASE ("A harness run never so much as asks for the user's Music folder", "[appconfigdir]")
+{
+    bool askedUser = false;
+    const auto userMusic = [&] { askedUser = true; return stdfs::path ("/nowhere/Music"); };
+    REQUIRE (dusk::fs::resolveAppMusicDir ({}, true, userMusic, harnessDir) == kHarnessDir);
+    REQUIRE_FALSE (askedUser);
+
+    const auto chosen = stdfs::temp_directory_path() / "dusk-app-music-chosen";
+    REQUIRE (dusk::fs::resolveAppMusicDir (chosen, true, userMusic, harnessDir) == chosen);
+    REQUIRE (dusk::fs::resolveAppMusicDir (chosen, false, userMusic, harnessDir) == chosen);
+    REQUIRE_FALSE (askedUser);
+    REQUIRE (dusk::fs::resolveAppMusicDir ("relative-music", false, userMusic, harnessDir).is_absolute());
+}
+
+TEST_CASE ("A scenario run gets one private Music folder for the whole process", "[appconfigdir]")
+{
+    const ScopedEnv noOverride (dusk::fs::kMusicDirEnv, "");
+    const ScopedEnv scenarios ("DUSKSTUDIO_RUN_SCENARIOS", "gui");
+
+    const auto dir = dusk::fs::appMusicDir();
+    REQUIRE_FALSE (dir.empty());
+    REQUIRE (dir != dusk::fs::userMusicDir());
+    REQUIRE (dir != dusk::fs::userHomeDir());
+    REQUIRE (stdfs::is_directory (dir));
+    REQUIRE (dusk::fs::appMusicDir() == dir);
+
+    const auto chosen = stdfs::temp_directory_path() / "dusk-app-music-env";
+    const ScopedEnv override (dusk::fs::kMusicDirEnv, chosen.u8string());
+    REQUIRE (dusk::fs::appMusicDir() == chosen);
 }
 
 #if ! defined(_WIN32)

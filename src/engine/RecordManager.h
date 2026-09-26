@@ -98,6 +98,19 @@ public:
                           const LoopCaptureSpan* explicitLoopSpan = nullptr) noexcept;
 
     bool isActive() const noexcept { return active.load (std::memory_order_acquire); }
+
+    // Message thread. True from startRecording until stopRecording has
+    // committed or discarded every take file, and also after a stopRecording
+    // that bailed its teardown, until reclaimBailedTake or a later
+    // startRecording discards that take. A take's WAV has no region pointing
+    // at it for all of that time.
+    bool hasOpenTake() const noexcept;
+
+    // Message thread. Discards the take a bailed stopRecording left behind,
+    // file and all, once the audio thread has left it. False, with nothing
+    // touched, while a take records or an audio-thread call is still inside.
+    bool reclaimBailedTake();
+
     bool isLoopCaptureActive() const noexcept
     {
         // startRecording writes loopPlan before its release-store to active.
@@ -145,12 +158,24 @@ public:
     }
     void clearLastCommitDiff() noexcept { lastCommitDiff.clear(); }
 
+    // Tests only. Holds audioInFlight up the way an audio-thread call stuck
+    // inside writeInputBlock would, which is what makes stopRecording bail.
+    void holdAudioInFlightForTest (bool held) noexcept
+    {
+        if (held) audioInFlight.fetch_add (1, std::memory_order_acq_rel);
+        else      audioInFlight.fetch_sub (1, std::memory_order_release);
+    }
+
 private:
     template <typename MidiEvents>
     void writeMidiBlockImpl (int trackIndex,
                              const MidiEvents& events,
                              std::int64_t blockStartFromRecord,
                              const LoopCaptureSpan* explicitLoopSpan) noexcept;
+
+    // Message thread, with active false and audioInFlight at zero. Drops
+    // whatever capture is still held without committing it.
+    void discardUncommittedTake();
 
     Session& session;
 

@@ -5673,6 +5673,17 @@ void ChannelStripComponent::showColourMenu()
             if (result >= 2000 && result < 2000 + Session::kNumTracks)
             {
                 const int dest = result - 2000;
+                const auto refusal = CloneTrackAction::refusalFor (self->session, self->engine,
+                                                                   self->trackIndex, dest);
+                if (refusal != CloneTrackAction::Refusal::None)
+                {
+                    auto* topLevel = self->getTopLevelComponent();
+                    showDuskAlert (topLevel != nullptr ? *topLevel : *self, "Can't clone track",
+                                   refusal == CloneTrackAction::Refusal::Frozen
+                                       ? "Unfreeze the track, then clone it again. A frozen track can't be cloned or cloned onto."
+                                       : "Stop playback, then clone the track again.");
+                    return;
+                }
                 auto& um = self->engine.getUndoManager();
                 um.beginNewTransaction ("Clone track");
                 um.perform (new CloneTrackAction (self->session, self->engine,

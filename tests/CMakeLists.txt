@@ -185,6 +185,7 @@ add_executable(dusk-studio-tests
     record_loop_take_stacking.cpp
     record_midi_overdub_diff.cpp
     record_offset_placement.cpp
+    record_bailed_stop.cpp
     playback_loop_read.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PlaybackEngine.cpp
     mastering_player_resample.cpp

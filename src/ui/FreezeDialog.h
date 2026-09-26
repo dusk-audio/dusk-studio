@@ -4,6 +4,7 @@
 #include <memory>
 #include "../engine/BounceEngine.h"
 #include "../foundation/MessageThread.h"
+#include "RenderInProgress.h"
 
 namespace duskstudio
 {
@@ -17,11 +18,16 @@ class Session;
 // success it commits the freeze on the message thread (AudioEngine::commitFreeze)
 // before the user dismisses it; Cancel aborts the render and writes nothing.
 class FreezeDialog final : public juce::Component,
+                            public RenderInProgress,
                             private dusk::Timer
 {
 public:
     FreezeDialog (AudioEngine& engine, Session& session, int trackIndex);
     ~FreezeDialog() override;
+
+    bool isRenderRunning() const override { return bounceEngine != nullptr && bounceEngine->isRendering(); }
+    bool hasUnfinishedRender() const override { return bounceEngine != nullptr && ! finished; }
+    void cancelRender() override;
 
     void resized() override;
     void paint (juce::Graphics&) override;
