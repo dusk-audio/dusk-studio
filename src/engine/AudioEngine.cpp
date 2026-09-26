@@ -823,7 +823,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // who chose no input keeps it.
     if (savedDeviceState.empty())
     {
-        auto setup = deviceManager.getSetup();
+        const auto setup = deviceManager.getSetup();
         if (setup.inputDeviceName.empty())
         {
             if (auto* type = deviceManager.getCurrentDeviceType())
@@ -832,13 +832,32 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                     setup.outputDeviceName, type->getDeviceNames (/*wantInputNames*/ true));
                 if (! chosen.empty())
                 {
-                    setup.inputDeviceName = chosen;
-                    setup.useDefaultInputChannels = true;
-                    deviceManager.setSetup (setup, /*treatAsChosen*/ false);
-                    std::fprintf (stderr,
-                                  "[Dusk Studio/AudioEngine] first launch: selected input "
-                                  "device \"%s\" alongside output \"%s\".\n",
-                                  chosen.c_str(), setup.outputDeviceName.c_str());
+                    const auto result = device::openWithFirstLaunchInput (deviceManager, chosen);
+                    if (result.error.empty())
+                    {
+                        std::fprintf (stderr,
+                                      "[Dusk Studio/AudioEngine] first launch: selected input "
+                                      "device \"%s\" alongside output \"%s\".\n",
+                                      chosen.c_str(), setup.outputDeviceName.c_str());
+                    }
+                    else
+                    {
+                        std::fprintf (stderr,
+                                      "[Dusk Studio/AudioEngine] first launch: input device "
+                                      "\"%s\" would not open alongside output \"%s\" (%s); "
+                                      "%s.\n",
+                                      chosen.c_str(), setup.outputDeviceName.c_str(),
+                                      result.error.c_str(),
+                                      result.outputRestored ? "reopened the output on its own"
+                                                            : "the output did not reopen either");
+                        // The alert and notice computed above still describe the
+                        // device that was open before this reopen closed it.
+                        if (! result.outputRestored)
+                        {
+                            startupDeviceMessage_ = duskstudio::startupDeviceMessage (false, {}, {});
+                            backendFallbackNotice_.clear();
+                        }
+                    }
                 }
                 else
                 {
