@@ -113,3 +113,15 @@ TEST_CASE ("DUSKSTUDIO_CONFIG_DIR names the config directory", "[appconfigdir]")
     const ScopedEnv scenarios ("DUSKSTUDIO_RUN_SCENARIOS", "all");
     REQUIRE (dusk::fs::appConfigDir() == chosen);
 }
+
+#if ! defined(_WIN32)
+TEST_CASE ("A private temp directory is created owner-only", "[appconfigdir]")
+{
+    const auto dir = dusk::fs::createUniqueTempDirectory ("dusk-owner-only-");
+    REQUIRE_FALSE (dir.empty());
+    const auto perms = stdfs::status (dir).permissions();
+    std::error_code error;
+    stdfs::remove_all (dir, error);
+    CHECK ((perms & stdfs::perms::all) == stdfs::perms::owner_all);
+}
+#endif

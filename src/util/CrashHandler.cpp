@@ -131,6 +131,10 @@ void install (const std::string& appVersion)
     // though the logger + signal handler stay registered as-is.
     cachedAppVersion = appVersion;
 
+    // With nowhere to keep them, the log and crash reports would land in the
+    // working directory.
+    if (dusk::fs::appConfigDir().empty()) return;
+
     bool expected = false;
     if (! installed.compare_exchange_strong (expected, true)) return;
 
