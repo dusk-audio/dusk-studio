@@ -351,8 +351,9 @@ public:
     virtual bool closeNotepadAfterTyping (const std::string& text) = 0;
     // A fresh never-saved session in the folder launch would pick under parent.
     virtual void startUnsavedSessionIn (const std::filesystem::path& parent) = 0;
-    // The titlebar X. False, with nothing asked, when there are no unsaved
-    // changes: that quit would end the run.
+    // The titlebar X, which commits a take still recording before it decides.
+    // False, with nothing asked, when there are no unsaved changes: that quit
+    // would end the run.
     virtual bool requestQuit() = 0;
     virtual bool mixdownRunning() const = 0;
     virtual std::string statusMessage() const = 0;

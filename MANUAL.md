@@ -2496,10 +2496,10 @@ The format for each entry:
 
 ### Save changes before quitting?
 
-- **When**: You quit with unsaved changes. Logging out, shutting the machine down, or stopping the app from a terminal counts as quitting: the prompt appears then too, and the session waits on your answer.
+- **When**: You quit with unsaved changes. Quitting stops the transport before it checks, so a take still recording is committed and counts as unsaved even if you saved just before it started. A bounce or mixdown in progress is left running behind the prompt. Logging out, shutting the machine down, or stopping the app from a terminal counts as quitting: the prompt appears then too, and the session waits on your answer.
 - **Text**: "Your session has unsaved changes since the last manual save. If you don't save, those changes are discarded."
 - **Buttons**: **Save** / **Don't Save** / **Cancel**.
-- **Action**: Save unless you specifically want to discard. If the save does not complete, because you cancel the Save As browser that a never-saved session opens, pick a folder that already holds another session, or the write fails, Dusk Studio stays open as it was, with audio running and autosave on, and you can carry on or quit again.
+- **Action**: Save unless you specifically want to discard. If the save does not complete, because you cancel the Save As browser that a never-saved session opens, pick a folder that already holds another session, or the write fails, Dusk Studio stays open as it was, with audio running and autosave on, and you can carry on or quit again. **Cancel** keeps Dusk Studio open with the transport stopped and any take the quit committed in place, so save it if you want to keep it.
 
 ### Save failed
 

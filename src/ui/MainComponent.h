@@ -209,6 +209,10 @@ private:
     // True if the live session diverges from the last manual save / autosave.
     // Drives the unsaved-changes prompt on quit and on New Session.
     bool currentSessionDirty();
+    // The quit's front half: takes the window back from the notepad unsaved,
+    // commits any take still recording, then answers whether quitting would
+    // discard anything.
+    bool quitWouldLoseChanges();
     // Reset to a clean default session in `dir` (NOT the current session saved
     // under a new name) and open it through the normal load path. True only
     // once the new session has loaded.

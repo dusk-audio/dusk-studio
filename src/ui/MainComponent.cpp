@@ -3642,7 +3642,7 @@ bool MainComponent::currentSessionDirty()
     return divergedFromBaseline || autosaveIsNewerThan (sessionJson);
 }
 
-void MainComponent::requestQuit()
+bool MainComponent::quitWouldLoseChanges()
 {
     // Take the window back before the dirty check, and WITHOUT saving: the
     // titlebar X reaches here past both the dim and the native child, and the
@@ -3650,6 +3650,15 @@ void MainComponent::requestQuit()
     // would each commit the notepad behind their backs. notepadDirty survives
     // into the check below, and the modal hook then finds nothing left to close.
     yieldNotepadWindow (/*saveChanges*/ false);
+
+    // A take still recording is not in the session until the stop commits it,
+    // so a check run first reads a saved session as clean and the shutdown then
+    // commits the take after the last chance to save it. After the notepad
+    // yield, because a take stopped with errors raises an alert, and that
+    // alert's modal hook would save the notepad. Not under a bounce: it owns the
+    // transport, an offline one from its worker thread, and fails if stopped.
+    if (! bounceModal.isOpen() && ! mixdownModal.isOpen())
+        stopTransportForSessionSwitch();
 
     // Industry-standard dirty-only prompt. Compare the live serialized
     // session JSON against the snapshot we took at the last successful
@@ -3660,7 +3669,12 @@ void MainComponent::requestQuit()
     // the prompt and silently lose the change). autosaveIsNewerThan
     // stays as a belt-and-braces fallback for sessions where we somehow
     // didn't seed lastSavedSessionJson.
-    const bool dirty = currentSessionDirty() || notepadDirty;
+    return currentSessionDirty() || notepadDirty;
+}
+
+void MainComponent::requestQuit()
+{
+    const bool dirty = quitWouldLoseChanges();
 
     if (! dirty)
     {

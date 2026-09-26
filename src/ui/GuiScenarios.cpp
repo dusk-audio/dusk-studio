@@ -1451,7 +1451,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool requestQuit() override
     {
-        if (! owner.currentSessionDirty() && ! owner.notepadDirty) return false;
+        if (! owner.quitWouldLoseChanges()) return false;
         owner.requestQuit();
         return true;
     }

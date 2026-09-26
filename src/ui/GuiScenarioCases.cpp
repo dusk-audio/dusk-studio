@@ -5253,6 +5253,193 @@ const ScenarioRegistrar sessionSwitch { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runSessionSwitch (host, ctx); }
 } };
 
+// A take, Cmd+S, then a second take quit partway through. The second take is
+// not in the session until the transport stops, so a quit that decided first
+// would read the session as saved and quit without asking. A quit under a
+// mixdown leaves the transport to the render.
+std::optional<ScenarioResult> runQuitMidTake (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto sampleRate = engine.getCurrentSampleRate();
+    if (sampleRate <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        session.setTrackArmed (0, false);
+    });
+    const auto takes = ctx.tempDir() / "Takes" / "session.json";
+    std::filesystem::create_directories (takes.parent_path());
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+    if (! SessionSerializer::save (session, takes))
+        return ScenarioResult::fail ("could not save the session to record into");
+
+    // A take recorded over an earlier one stacks on its region and pushes the
+    // earlier one into that region's previous takes.
+    const auto countTakes = [] (const std::vector<MidiRegion>& regions)
+    {
+        int count = 0;
+        for (const auto& region : regions)
+        {
+            count += region.notes.empty() ? 0 : 1;
+            for (const auto& take : region.previousTakes)
+                count += take.notes.empty() ? 0 : 1;
+        }
+        return count;
+    };
+    const auto takesInMemory = [&session, countTakes] { return countTakes (session.track (0).midiRegions.current()); };
+    const auto takesOnDisk = [takes, countTakes]
+    {
+        Session saved;
+        return SessionSerializer::load (saved, takes) ? countTakes (saved.track (0).midiRegions.current()) : -1;
+    };
+    const auto note = [&engine] (bool on)
+    {
+        const std::uint8_t message[] { (std::uint8_t) (on ? 0x90 : 0x80), 64, (std::uint8_t) (on ? 100 : 0) };
+        engine.postVirtualKeyboardMidi (message, 3);
+    };
+    const auto isQuitPrompt = [&host, &ctx] (const std::string& how)
+    {
+        return ctx.expect (host.modalText().rfind ("Save changes before quitting?", 0) == 0,
+                           how + " showed '" + host.modalText() + "' rather than the quit prompt");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx, &session, &engine, &transport, takes]
+    {
+        ctx.expect (host.openSession (takes), "could not open the session to record into");
+        ctx.expect (currentSessionDirectory (session) == takes.parent_path(), "the session to record into did not open");
+        session.setTrackArmed (0, true);
+        engine.record();
+        ctx.expect (transport.isRecording(), "the first take did not start");
+    } });
+    steps->push_back ({ 200, [note] { note (true); } });
+    steps->push_back ({ 150, [note] { note (false); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("spacebar", ' '), "the window did not handle Space"); } });
+    steps->push_back ({ 300, [&host, &ctx, &transport, takesInMemory]
+    {
+        ctx.expect (transport.isStopped(), "Space did not stop the first take");
+        ctx.expect (takesInMemory() == 1, "the first take was not committed");
+        ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &engine, &transport, takesOnDisk]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cmd+S showed '" + host.modalText() + "'");
+        ctx.expect (takesOnDisk() == 1, "Cmd+S did not save the first take in place");
+        engine.record();
+        ctx.expect (transport.isRecording(), "the second take did not start");
+    } });
+    steps->push_back ({ 200, [note] { note (true); } });
+    steps->push_back ({ 150, [note] { note (false); } });
+    steps->push_back ({ 200, [&host, &ctx, &transport]
+    {
+        ctx.expect (transport.isRecording(), "the second take stopped before the quit");
+        // A quit that finds nothing to ask about ends the run, and every step
+        // after this one assumes the prompt is up.
+        if (! ctx.expect (host.requestQuit(), "quitting mid-take in a saved session did not ask before quitting"))
+            ctx.complete (ctx.verdict());
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &transport, takesInMemory, takesOnDisk, isQuitPrompt]
+    {
+        if (! isQuitPrompt ("Quitting mid-take"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        ctx.expect (transport.isStopped(), "the quit prompt came up with the take still recording");
+        ctx.expect (takesInMemory() == 2, "the quit did not commit the take before asking; "
+                                              + std::to_string (takesInMemory()) + " takes in memory");
+        ctx.expect (takesOnDisk() == 1, "the quit saved the session before it was answered");
+        ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt did not offer Cancel");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &engine, &session, &transport, takes, takesInMemory]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached() && host.autosaveRunning(),
+                    "Cancel in the quit prompt left audio or autosave parked");
+        ctx.expect (transport.isStopped() && takesInMemory() == 2
+                        && currentSessionDirectory (session) == takes.parent_path(),
+                    "Cancel did not leave the session stopped with the committed take");
+        ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &session, takesOnDisk, sampleRate]
+    {
+        ctx.expect (takesOnDisk() == 2, "the take the quit committed did not save");
+        MidiRegion region;
+        region.lengthInSamples = static_cast<std::int64_t> (sampleRate * 600.0);
+        region.lengthInTicks = 576000;
+        session.track (0).midiRegions.publish (
+            std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+        host.startMixdown();
+        ctx.expect (host.mixdownRunning(), "the mixdown did not start");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &transport]
+    {
+        // The offline render rolls the transport from its worker thread.
+        if (! ctx.expect (host.mixdownRunning() && transport.isPlaying(),
+                          "the mixdown was not rolling the transport when the quit came"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        if (! ctx.expect (host.requestQuit(), "quitting the edited session under a mixdown did not ask"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        ctx.expect (transport.isPlaying(), "the quit stopped the transport under the mixdown");
+        ctx.expect (host.mixdownRunning(), "the quit stopped the mixdown");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, isQuitPrompt]
+    {
+        if (isQuitPrompt ("Quitting under a mixdown"))
+            ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt did not offer Cancel");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (host.mixdownRunning(), "Cancel in the quit prompt stopped the mixdown");
+        ctx.expect (host.clickModalButton ("Cancel"), "the mixdown did not offer Cancel");
+    } });
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.mixdownRunning(); }, 5000, [&host, &ctx]
+        {
+            ctx.later (200, [&host, &ctx]
+            {
+                if (! host.modalStackEmpty())
+                    ctx.expect (host.clickModalButton ("Close"), "the cancelled mixdown did not offer Close");
+                ctx.later (200, [&host, &ctx]
+                {
+                    ctx.expect (host.modalStackEmpty(), "the cancelled mixdown left its modal open");
+                    ctx.complete (ctx.verdict());
+                });
+            });
+        }, "the mixdown did not cancel");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar quitMidTake { Scenario {
+    "gui.quit_mid_take_asks_to_save", { "gui", "session", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runQuitMidTake (host, ctx); }
+} };
+
 // The heartbeat writes session.json.autosave only when the session changed
 // since the last save or autosave, never touches session.json and leaves no
 // temp file behind. Opening a session whose autosave says something else
