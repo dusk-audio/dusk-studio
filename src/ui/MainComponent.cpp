@@ -5679,8 +5679,22 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
     }
 }
 
+namespace
+{
+constexpr const char* kCleanOutWhileRecording =
+    "Stop recording before cleaning out. The take being recorded has no region "
+    "pointing at its file until you stop, so Clean out would count it as "
+    "unreferenced and delete it.";
+} // namespace
+
 void MainComponent::cleanOutUnreferencedFiles()
 {
+    if (engine.getRecordManager().hasOpenTake())
+    {
+        showDuskAlert (*this, "Clean out", kCleanOutWhileRecording);
+        return;
+    }
+
     const auto unreferenced = findUnreferencedAudio (session);
     if (unreferenced.scanFailed)
     {
@@ -5707,11 +5721,8 @@ void MainComponent::cleanOutUnreferencedFiles()
         return;
     }
 
-    juce::Array<juce::File> candidates;
-    for (const auto& path : unreferenced.files)
-        candidates.add (juce::File (juce::String (path.u8string())));
     const auto sizeMB = (double) unreferenced.totalBytes / (1024.0 * 1024.0);
-    const auto msg = "Found " + juce::String (candidates.size())
+    const auto msg = "Found " + juce::String ((int) unreferenced.files.size())
                    + " unreferenced .wav file(s) totalling "
                    + juce::String (sizeMB, 1) + " MB.\n\n"
                    + "These were created by past record passes that no "
@@ -5723,24 +5734,35 @@ void MainComponent::cleanOutUnreferencedFiles()
     juce::Component::SafePointer<MainComponent> safeThis (this);
     showDuskConfirm (*this, "Clean out unreferenced files", msg,
                        /*primary*/   "Delete",
-                       /*onPrimary*/ [safeThis, candidates]
+                       /*onPrimary*/ [safeThis, listed = unreferenced.files]
                        {
-                           int deleted = 0;
-                           for (const auto& f : candidates)
-                               if (f.deleteFile()) ++deleted;
-                           if (auto* self = safeThis.getComponent())
+                           auto* self = safeThis.getComponent();
+                           if (self == nullptr) return;
+                           // The prompt does not stop a control surface or a
+                           // MIDI binding from recording, so both checks run
+                           // again: nothing goes that a take now holds or a
+                           // region now points at.
+                           if (self->engine.getRecordManager().hasOpenTake())
                            {
-                               // The undo stack holds full before-states of
-                               // deleted regions; Ctrl+Z after this would
-                               // restore a region whose WAV is gone. Nothing
-                               // deleted = nothing dangling, keep the history.
-                               if (deleted > 0)
-                                   self->engine.getUndoManager().clearUndoHistory();
-                               self->statusLabel.setText (
-                                   "Deleted " + juce::String (deleted)
-                                       + " unreferenced file(s).",
-                                   juce::dontSendNotification);
+                               showDuskAlert (*self, "Clean out", kCleanOutWhileRecording);
+                               return;
                            }
+                           const auto current = findUnreferencedAudio (self->session).files;
+                           int deleted = 0;
+                           for (const auto& path : listed)
+                               if (std::find (current.begin(), current.end(), path) != current.end()
+                                   && juce::File (juce::String (path.u8string())).deleteFile())
+                                   ++deleted;
+                           // The undo stack holds full before-states of
+                           // deleted regions; Ctrl+Z after this would
+                           // restore a region whose WAV is gone. Nothing
+                           // deleted = nothing dangling, keep the history.
+                           if (deleted > 0)
+                               self->engine.getUndoManager().clearUndoHistory();
+                           self->statusLabel.setText (
+                               "Deleted " + juce::String (deleted)
+                                   + " unreferenced file(s).",
+                               juce::dontSendNotification);
                        },
                        /*secondary*/   "Cancel",
                        /*onSecondary*/ {},

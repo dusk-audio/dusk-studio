@@ -2519,8 +2519,9 @@ The format for each entry:
 
 ### Clean out
 
-Four variants:
+Five variants:
 
+- **Recording**: "Stop recording before cleaning out. The take being recorded has no region pointing at its file until you stop, so Clean out would count it as unreferenced and delete it." — Buttons: OK. The same alert takes the place of the deletion when a take starts, from a control surface or a MIDI binding, while the confirmation below is open; nothing is deleted.
 - **Cannot read the directory**: "Could not read this session's audio directory, so there is no telling what is unreferenced. Check the folder's permissions and that its drive is still connected, then try again." — Buttons: OK.
 - **No audio directory**: "This session has no audio directory yet, so there's nothing to clean." — Buttons: OK.
 - **No unreferenced files**: "No unreferenced files found. The audio directory is already clean." — Buttons: OK.

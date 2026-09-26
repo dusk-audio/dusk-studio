@@ -10996,6 +10996,200 @@ const ScenarioRegistrar cleanOutAlerts { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runCleanOutAlerts (host, ctx); }
 } };
 
+// A take's WAV has no region pointing at it until Stop, so Clean out must not
+// run while one is open: not when chosen mid-take, and not when a control
+// surface starts a take while the confirmation is up and Delete comes after.
+// Each take still commits with its file in place, and once the transport is
+// stopped Clean out removes only the stray.
+std::optional<ScenarioResult> runCleanOutWhileRecording (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (! engine.isAudioCallbackRegistered() || session.deviceCaptureChannels.load() <= 0)
+        return ScenarioResult::skip ("requires a running audio device with an input to record from");
+    auto& track = session.track (0);
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Recording);
+    ctx.keep (track.mode);
+    ctx.keep (track.inputSource);
+    ctx.keep (session.countInEnabled);
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        const bool armed = session.track (index).recordArmed.load();
+        ctx.cleanup ([&session, index, armed] { session.setTrackArmed (index, armed); });
+        session.setTrackArmed (index, false);
+    }
+    ctx.cleanup ([&host, &engine, &session, &transport, &track, regions = track.regions,
+                  originalDir = currentSessionDirectory (session), loop = transport.isLoopEnabled(),
+                  punch = transport.isPunchEnabled(), at = transport.getPlayhead()]
+    {
+        drainModals (host);
+        engine.stop();
+        track.regions = regions;
+        engine.getPlaybackEngine().preparePlayback();
+        transport.setLoopEnabled (loop);
+        transport.setPunchEnabled (punch);
+        transport.setPlayhead (at);
+        engine.getUndoManager().clearUndoHistory();
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto audio = ctx.tempDir() / "Clean out take session" / "audio";
+    applySessionDirectory (session, audio.parent_path());
+    engine.stop();
+    track.regions.clear();
+    engine.getPlaybackEngine().preparePlayback();
+    engine.getUndoManager().clearUndoHistory();
+    transport.setPlayhead (0);
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    session.countInEnabled.store (false);
+    track.mode.store ((int) Track::Mode::Mono);
+    track.inputSource.store (0);
+    session.setTrackArmed (0, true);
+    if (! track.recordArmed.load())
+        return ScenarioResult::fail ("track 1 would not arm on input 1");
+    std::error_code created;
+    fs::create_directories (audio, created);
+    const auto stray = audio / "Stray.wav";
+    if (created || ! writeBytes (stray, 1048576, 's'))
+        return ScenarioResult::fail ("could not write the stray take");
+
+    const auto takes = [audio]
+    {
+        std::vector<fs::path> found;
+        std::error_code error;
+        for (fs::directory_iterator it (audio, error), end; ! error && it != end; it.increment (error))
+            if (it->path().filename().u8string().rfind ("track01_", 0) == 0)
+                found.push_back (it->path().lexically_normal());
+        std::sort (found.begin(), found.end());
+        return found;
+    };
+    const auto regionFiles = [&track]
+    {
+        std::vector<fs::path> files;
+        const auto add = [&files] (const auto& file)
+        { files.push_back (fs::u8path (file.getFullPathName().toStdString()).lexically_normal()); };
+        for (const auto& region : track.regions)
+        {
+            add (region.file);
+            for (const auto& take : region.previousTakes) add (take.file);
+        }
+        std::sort (files.begin(), files.end());
+        files.erase (std::unique (files.begin(), files.end()), files.end());
+        return files;
+    };
+    const std::string refusal =
+        "Clean out\nStop recording before cleaning out. The take being recorded has no region pointing at its "
+        "file until you stop, so Clean out would count it as unreferenced and delete it.";
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto choose = [&host, &ctx, steps] (const std::string& how)
+    {
+        steps->push_back ({ 300, [&host, &ctx, how]
+        {
+            ctx.expect (host.modalStackEmpty(), how + ": a modal was still open");
+            ctx.expect (host.clickFileMenu(), how + ": the File menu is unavailable");
+        } });
+        steps->push_back ({ 200, [&host, &ctx, how]
+        {
+            ctx.expect (host.clickContextMenuItem ("Clean out unreferenced files..."),
+                        how + ": the File menu has no Clean out unreferenced files...");
+        } });
+    };
+    // Without the guard the confirmation lists the take; pressing Delete on it,
+    // as a user would, is what loses the take.
+    const auto refused = [&host, &ctx, steps, refusal] (const std::string& how)
+    {
+        steps->push_back ({ 400, [&host, &ctx, how, refusal]
+        {
+            if (! host.confirmationText().empty())
+            {
+                ctx.expect (false, how + ": Clean out offered '" + joinedLines (host.confirmationText()) + "'");
+                host.clickModalButton ("Delete");
+                return;
+            }
+            ctx.expect (host.modalText() == refusal, how + ": the alert read '" + host.modalText() + "'");
+            ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+        } });
+    };
+
+    steps->push_back ({ 100, [&engine, &ctx, &transport]
+    {
+        engine.record();
+        ctx.expect (transport.isRecording(), "the armed track did not start recording");
+    } });
+    choose ("mid-take");
+    refused ("mid-take");
+    steps->push_back ({ 300, [&host, &ctx, &engine, &transport, takes, stray]
+    {
+        ctx.expect (host.modalStackEmpty(), "mid-take: '" + host.modalText() + "' is still up");
+        ctx.expect (transport.isRecording(), "mid-take: Clean out stopped the take");
+        ctx.expect (takes().size() == 1, "mid-take: the take's file is gone from the audio folder");
+        ctx.expect (fs::exists (stray), "mid-take: Clean out deleted the stray");
+        engine.stop();
+    } });
+    steps->push_back ({ 100, [&ctx, &transport, &track, takes, regionFiles]
+    {
+        ctx.expect (transport.isStopped(), "the first take did not stop");
+        ctx.expect (track.regions.size() == 1 && regionFiles() == takes(),
+                    "the first take did not commit a region on its own file");
+    } });
+
+    choose ("recording under the confirmation");
+    steps->push_back ({ 400, [&host, &ctx, &engine, &transport]
+    {
+        const auto text = host.confirmationText();
+        ctx.expect (text.size() == 2 && text[0] == "Clean out unreferenced files"
+                        && text[1].rfind ("Found 1 unreferenced .wav file(s) totalling 1.0 MB.", 0) == 0,
+                    "stopped: the confirmation read '" + joinedLines (text) + "'");
+        engine.record();
+        ctx.expect (transport.isRecording(), "a take would not start under the confirmation");
+        ctx.expect (host.clickModalButton ("Delete"), "the confirmation has no Delete button");
+    } });
+    refused ("recording under the confirmation");
+    steps->push_back ({ 300, [&host, &ctx, &engine, &transport, takes, stray]
+    {
+        ctx.expect (host.modalStackEmpty(), "under the confirmation: '" + host.modalText() + "' is still up");
+        ctx.expect (transport.isRecording(), "under the confirmation: Delete stopped the take");
+        ctx.expect (takes().size() == 2, "under the confirmation: a take's file is gone from the audio folder");
+        ctx.expect (fs::exists (stray), "under the confirmation: Delete went ahead while recording");
+        ctx.expect (engine.getUndoManager().canUndo(), "under the confirmation: Delete cleared the undo history");
+        engine.stop();
+    } });
+    steps->push_back ({ 100, [&ctx, &transport, takes, regionFiles]
+    {
+        ctx.expect (transport.isStopped(), "the second take did not stop");
+        ctx.expect (regionFiles() == takes(), "the takes' regions do not point at their two files");
+    } });
+
+    choose ("stopped");
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (host.clickModalButton ("Delete"), "stopped: the confirmation has no Delete button");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, takes, regionFiles, stray]
+    {
+        ctx.expect (host.modalStackEmpty(), "stopped: '" + host.modalText() + "' is still up");
+        ctx.expect (! fs::exists (stray), "stopped: Delete kept the stray");
+        ctx.expect (takes().size() == 2 && regionFiles() == takes(), "stopped: Delete removed a take");
+        ctx.expect (host.statusMessage() == "Deleted 1 unreferenced file(s).",
+                    "stopped: the status bar says '" + host.statusMessage() + "'");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar cleanOutWhileRecording { Scenario {
+    "gui.clean_out_while_recording", { "gui", "session", "recording", "messages" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runCleanOutWhileRecording (host, ctx); }
+} };
+
 // File > Import Audio or MIDI... refuses while playback runs, and names each
 // file it cannot use: bytes that are not audio, a file it may not read, and a
 // WAV that opens but holds no audio.

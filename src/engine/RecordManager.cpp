@@ -402,6 +402,15 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     return true;
 }
 
+bool RecordManager::hasOpenTake() const noexcept
+{
+    // writers[] is only ever reseated on the message thread; the audio thread
+    // just reads the slots.
+    return active.load (std::memory_order_acquire)
+        || std::any_of (writers.begin(), writers.end(),
+                        [] (const auto& slot) { return slot != nullptr; });
+}
+
 RecordManager::LoopCaptureSpan RecordManager::coordinateLoopCaptureSpan (
     int passOrdinal, std::int64_t transportStartSample,
     int callbackBaseOffset, int remainingSamples) const noexcept

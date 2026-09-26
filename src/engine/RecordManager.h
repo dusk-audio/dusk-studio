@@ -98,6 +98,13 @@ public:
                           const LoopCaptureSpan* explicitLoopSpan = nullptr) noexcept;
 
     bool isActive() const noexcept { return active.load (std::memory_order_acquire); }
+
+    // Message thread. True from startRecording until stopRecording has
+    // committed or discarded every take file, and also after a stopRecording
+    // that bailed its teardown, until a later startRecording reclaims the
+    // writer. A take's WAV has no region pointing at it for all of that time.
+    bool hasOpenTake() const noexcept;
+
     bool isLoopCaptureActive() const noexcept
     {
         // startRecording writes loopPlan before its release-store to active.
