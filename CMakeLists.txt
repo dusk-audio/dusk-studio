@@ -1233,14 +1233,40 @@ endif()
 
 # Optional MP3 bounce via libmp3lame (LAME). Detected at configure time on every
 # OS; when absent the MP3 export option is hidden and bounces stay WAV-only.
-# Install: libmp3lame-devel (openSUSE) / libmp3lame-dev (Debian) / `brew install lame`.
-find_path(LAME_INCLUDE_DIR NAMES lame/lame.h)
-find_library(LAME_LIBRARY NAMES mp3lame lame)
-if(LAME_INCLUDE_DIR AND LAME_LIBRARY)
-    message(STATUS "MP3 bounce: libmp3lame found (${LAME_LIBRARY})")
-    target_include_directories(DuskStudio PRIVATE "${LAME_INCLUDE_DIR}")
-    target_link_libraries(DuskStudio PRIVATE "${LAME_LIBRARY}")
-    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_LAME=1)
+# Install: libmp3lame-devel (openSUSE) / libmp3lame-dev (Debian) / `brew install lame`
+# / vcpkg on Windows (vcpkg.json declares it).
+# The config package comes first because vcpkg's x64-windows-static build names
+# its archive libmp3lame-static.lib, which the plain name search never matches,
+# and that archive also needs libmpghip-static.lib, which only the config
+# target carries. Release and CI builds pass -DDUSKSTUDIO_REQUIRE_LAME=ON, so a
+# runner without the encoder fails the configure instead of shipping WAV only.
+# Both app and test targets link the resulting dusk_lame interface.
+option(DUSKSTUDIO_REQUIRE_LAME "Fail the configure when libmp3lame is missing" OFF)
+add_library(dusk_lame INTERFACE)
+set(DUSKSTUDIO_HAS_LAME OFF)
+find_package(mp3lame CONFIG QUIET)
+if(mp3lame_FOUND AND TARGET mp3lame::mp3lame)
+    target_link_libraries(dusk_lame INTERFACE mp3lame::mp3lame)
+    set(DUSKSTUDIO_HAS_LAME ON)
+    message(STATUS "MP3 bounce: libmp3lame config package (${mp3lame_DIR})")
+else()
+    find_path(LAME_INCLUDE_DIR NAMES lame/lame.h)
+    find_library(LAME_LIBRARY NAMES mp3lame lame)
+    if(LAME_INCLUDE_DIR AND LAME_LIBRARY)
+        target_include_directories(dusk_lame INTERFACE "${LAME_INCLUDE_DIR}")
+        target_link_libraries(dusk_lame INTERFACE "${LAME_LIBRARY}")
+        set(DUSKSTUDIO_HAS_LAME ON)
+        message(STATUS "MP3 bounce: libmp3lame found (${LAME_LIBRARY})")
+    endif()
+endif()
+if(DUSKSTUDIO_HAS_LAME)
+    target_compile_definitions(dusk_lame INTERFACE DUSKSTUDIO_HAS_LAME=1)
+    target_link_libraries(DuskStudio PRIVATE dusk_lame)
+elseif(DUSKSTUDIO_REQUIRE_LAME)
+    message(FATAL_ERROR
+        "MP3 bounce required (DUSKSTUDIO_REQUIRE_LAME=ON) but libmp3lame was not found. "
+        "Linux: libmp3lame-dev. macOS: brew install lame. Windows: vcpkg install "
+        "--triplet x64-windows-static from the repo root (vcpkg.json declares it).")
 else()
     message(STATUS "MP3 bounce: libmp3lame NOT found - MP3 export disabled (WAV only)")
 endif()

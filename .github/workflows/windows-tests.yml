@@ -146,6 +146,7 @@ jobs:
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
           for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {

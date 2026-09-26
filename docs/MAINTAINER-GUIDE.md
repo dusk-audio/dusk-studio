@@ -545,7 +545,11 @@ launcher, `~/.local/bin/DuskStudio` in the scratch `HOME`, as a user starts it
 from `PATH`. If the install fails they run the extracted binary instead and say
 so, and the run still fails on `package-install`. Each launch keeps its own
 private `HOME`, XDG directories, runtime directory, `DUSKSTUDIO_CONFIG_DIR` and
-`DUSKSTUDIO_MUSIC_DIR`, as in a source run.
+`DUSKSTUDIO_MUSIC_DIR`, as in a source run. Package mode also exports
+`DUSKSTUDIO_EXPECT_MP3=1`: every release build carries the MP3 encoder, so
+`bounce.mp3_by_format` and `bounce.export_master_mp3_320` fail on a package
+without it instead of skipping. The Windows leg sets it for every launch too;
+set it by hand when running the scenarios against a macOS package.
 
 #### Scenario legs
 

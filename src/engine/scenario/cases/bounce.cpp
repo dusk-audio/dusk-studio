@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -50,6 +51,18 @@ bool writeMono (const std::filesystem::path& path, const std::vector<float>& sam
     return writer != nullptr && writer->write (channels, 1, (std::int64_t) samples.size())
         && writer->flush();
 }
+
+#if ! DUSKSTUDIO_HAS_LAME
+// Every release build ships the encoder, so a packaged run sets
+// DUSKSTUDIO_EXPECT_MP3=1 and a build that lost it fails instead of skipping.
+ScenarioResult noMp3Encoder()
+{
+    const char* expect = std::getenv ("DUSKSTUDIO_EXPECT_MP3");
+    if (expect != nullptr && std::string (expect) == "1")
+        return ScenarioResult::fail ("built without the MP3 encoder, and DUSKSTUDIO_EXPECT_MP3=1 requires it");
+    return ScenarioResult::skip ("built without the MP3 encoder");
+}
+#endif
 
 std::vector<float> sine (float hz, float amplitude, int frames)
 {
@@ -266,7 +279,7 @@ std::optional<ScenarioResult> mp3Bounce (ScenarioContext& ctx)
     return std::nullopt;
    #else
     (void) ctx;
-    return ScenarioResult::skip ("built without the MP3 encoder");
+    return noMp3Encoder();
    #endif
 }
 
@@ -862,7 +875,7 @@ std::optional<ScenarioResult> exportMasterMp3 (ScenarioContext& ctx)
     });
    #else
     (void) ctx;
-    return ScenarioResult::skip ("built without the MP3 encoder");
+    return noMp3Encoder();
    #endif
 }
 

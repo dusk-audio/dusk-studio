@@ -46,7 +46,10 @@ libsndfile, and the signed SFZ catalog groundwork uses libsodium. Configure
 fails when either development package is missing. The PipeWire, LV2-host and
 MP3-bounce packages are probed at configure time and quietly drop their feature
 when absent; each miss costs you one easy-to-miss line in the configure log, so
-read it. On Fedora, take the `pipewire-jack-*` JACK headers rather than
+read it, or pass `-DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON`,
+`-DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON` and `-DDUSKSTUDIO_REQUIRE_LAME=ON`, as CI
+and the release builds do, to make each miss a configure error. On Fedora,
+take the `pipewire-jack-*` JACK headers rather than
 `jack-audio-connection-kit-devel`: the two conflict, and dnf will refuse the
 transaction on a PipeWire box.
 

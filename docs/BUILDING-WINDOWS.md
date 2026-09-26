@@ -10,7 +10,7 @@ This document is aimed at a developer with a Windows machine who has been handed
    - During install, check the **"Desktop development with C++"** workload.
    - This brings MSVC, the Windows 10/11 SDK, and CMake. No separate CMake install needed.
 2. **Git for Windows**: https://git-scm.com/download/win
-3. **vcpkg**, for libsndfile, libsodium and LAME. libsndfile is not optional on any platform: all audio file I/O goes through it and configure hard-fails without it ([CMakeLists.txt:603-628](../CMakeLists.txt#L603-L628)). libsodium provides the signed SFZ catalog verification layer and is also required. LAME enables MP3 bounce. All three are declared in [vcpkg.json](../vcpkg.json) at the repo root, with a `builtin-baseline` that pins the exact codec versions, so run vcpkg in manifest mode from the checkout root and it installs what CI installs:
+3. **vcpkg**, for libsndfile, libsodium and LAME. libsndfile is not optional on any platform: all audio file I/O goes through it and configure hard-fails without it ([CMakeLists.txt:603-628](../CMakeLists.txt#L603-L628)). libsodium provides the signed SFZ catalog verification layer and is also required. LAME enables MP3 bounce; without it the build quietly stays WAV-only, so pass `-DDUSKSTUDIO_REQUIRE_LAME=ON` (as CI and the release build do) to make that a configure error. All three are declared in [vcpkg.json](../vcpkg.json) at the repo root, with a `builtin-baseline` that pins the exact codec versions, so run vcpkg in manifest mode from the checkout root and it installs what CI installs:
 
    ```cmd
    vcpkg install --triplet x64-windows-static

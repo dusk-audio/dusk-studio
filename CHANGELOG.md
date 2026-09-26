@@ -135,6 +135,11 @@ publishes.
 
 ### Fixed
 
+- **Windows builds can export MP3** (#757). Every Windows release since
+  0.11 shipped WAV-only: the build looked for the LAME library under a name
+  the Windows package does not use, and quietly left MP3 bounce and MP3 master
+  export out. Release and CI builds on every platform now refuse to build
+  without the encoder.
 - **The channel EQ plays the frequency its knobs show** (#704). Each band's
   frequency went to the EQ as a position on the console's dial, so the readout
   was wrong and parts of every knob did nothing: the HF shelf at 16 kHz had

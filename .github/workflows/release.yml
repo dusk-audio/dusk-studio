@@ -266,6 +266,7 @@ jobs:
             -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON \
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
@@ -328,6 +329,7 @@ jobs:
             -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
@@ -517,7 +519,7 @@ jobs:
         # (sfizz forces /MT). The -md triplet (/MD) would LNK2038 against the
         # /MT objects. These vcpkg libraries link into the binary, so they add
         # no runtime DLLs to the MSI.
-        # CMake's find_library/find_path pick them up via CMAKE_PREFIX_PATH
+        # CMake finds both through their config packages on CMAKE_PREFIX_PATH
         # (forward-slashed so cmake parses the path cleanly).
         # Manifest mode: versions come from vcpkg.json's builtin-baseline and
         # install under <manifest-root>/vcpkg_installed, not the image's vcpkg
@@ -552,6 +554,7 @@ jobs:
             -DDUSKSTUDIO_ENABLE_LTO=ON \
             -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
           for option in DUSKSTUDIO_ENABLE_NATIVE_UI DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build/CMakeCache.txt || {
@@ -593,6 +596,7 @@ jobs:
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
           for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {
@@ -849,7 +853,7 @@ jobs:
           persist-credentials: false
 
       - name: Install build dependencies
-        # lame: libmp3lame for MP3 bounce/export (CMake auto-detects it).
+        # lame: libmp3lame for MP3 bounce/export (required by the configure).
         run: brew install ninja ccache lame libsndfile lilv suil lv2
 
       - name: Build static libsodium (pinned)
@@ -950,6 +954,7 @@ jobs:
             -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
           for option in DUSKSTUDIO_ENABLE_NATIVE_UI DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build/CMakeCache.txt || {
@@ -996,6 +1001,7 @@ jobs:
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
           for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {

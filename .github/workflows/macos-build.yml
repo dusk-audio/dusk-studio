@@ -51,7 +51,7 @@ jobs:
         # default Makefiles on this many TUs). ccache: object cache that
         # survives across runs via the actions/cache step below, so an
         # unchanged TU isn't recompiled on the next push.
-        # lame: libmp3lame for MP3 bounce/export (CMake auto-detects it).
+        # lame: libmp3lame for MP3 bounce/export (required by the configure).
         run: brew install ninja ccache lame libsndfile lilv suil lv2
 
       - name: Build static libsodium (pinned)
@@ -115,6 +115,7 @@ jobs:
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
           for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build/CMakeCache.txt || {
@@ -165,6 +166,7 @@ jobs:
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
           for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {

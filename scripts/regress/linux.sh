@@ -489,6 +489,9 @@ INSTALLED=0
 if ((PACKAGE_MODE)); then
     PACKAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-regress-package.XXXXXX")"
     regress_at_exit package_cleanup
+    # A release package always carries the MP3 encoder, so the MP3 scenarios
+    # fail on a package without it instead of skipping.
+    export DUSKSTUDIO_EXPECT_MP3=1
     if [[ -n "$RELEASE_RUN" ]]; then
         echo "package release.yml run ${RELEASE_RUN}"
     else

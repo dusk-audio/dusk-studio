@@ -123,6 +123,7 @@ jobs:
             -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
@@ -160,6 +161,7 @@ jobs:
             -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
