@@ -4549,6 +4549,36 @@ std::optional<ScenarioResult> runSettingsUiScale (GuiHost& host, ScenarioContext
         if (hadConfig) dusk::fs::writeStringToFile (config, configText);
         else { std::error_code error; std::filesystem::remove (config, error); }
     });
+    const auto launchWindow = host.mainWindowSize();
+    if (launchWindow.size() < 4) return ScenarioResult::fail ("the main window reported no size");
+    const auto windowHeld = [&host, &ctx, launchWindow, originalScale] (const std::string& when)
+    {
+        const auto now = host.mainWindowSize();
+        if (! ctx.expect (now.size() >= 4, "the main window reported no size " + when)) return;
+       #if defined (__APPLE__)
+        const auto onScreen = [] (int size, double scale) { return (int) std::lround (size * scale); };
+        const int width = onScreen (now[0], host.uiScale()), height = onScreen (now[1], host.uiScale());
+        const int launchWidth = onScreen (launchWindow[0], originalScale);
+        const int launchHeight = onScreen (launchWindow[1], originalScale);
+        ctx.expect (std::abs (width - launchWidth) <= 2 && std::abs (height - launchHeight) <= 2,
+                    "the window went from " + std::to_string (launchWidth) + "x" + std::to_string (launchHeight)
+                        + " to " + std::to_string (width) + "x" + std::to_string (height) + " on screen " + when);
+        // AppKit applies the minimum whenever it places the window, which this
+        // case does not provoke, so the floor is held to its on-screen width
+        // too. The height also carries the title bar, which the scale grows.
+        const int minimum = onScreen (now[2], host.uiScale());
+        const int launchMinimum = onScreen (launchWindow[2], originalScale);
+        ctx.expect (std::abs (minimum - launchMinimum) <= 2,
+                    "the window's minimum width went from " + std::to_string (launchMinimum) + " to "
+                        + std::to_string (minimum) + " on screen " + when);
+       #else
+        (void) originalScale;
+        ctx.expect (now[2] == launchWindow[2] && now[3] == launchWindow[3],
+                    "the window's minimum went from the console's " + std::to_string (launchWindow[2]) + "x"
+                        + std::to_string (launchWindow[3]) + " to " + std::to_string (now[2]) + "x"
+                        + std::to_string (now[3]) + " " + when);
+       #endif
+    };
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
@@ -4557,28 +4587,31 @@ std::optional<ScenarioResult> runSettingsUiScale (GuiHost& host, ScenarioContext
         steps->push_back ({ 200, [&host, &ctx, position]
         { ctx.expect (host.pointerAudioSettings ("ui-scale", position, true),
                       "the UI scale slider was not visible"); } });
-    steps->push_back ({ 300, [&host, &ctx, originalSaved]
+    steps->push_back ({ 300, [&host, &ctx, originalSaved, windowHeld]
     {
         ctx.expect (host.uiScale() > 1.3 && host.uiScale() < 1.6,
                     "dragging did not preview the global UI scale");
+        windowHeld ("while the scale previewed");
         ctx.expect (nearly (appconfig::getUiScaleOverride(), originalSaved),
                     "the UI scale was persisted before release");
         ctx.expect (host.pointerAudioSettings ("ui-scale", 0.7f, false),
                     "the scale slider could not receive release");
     } });
-    steps->push_back ({ 300, [&host, &ctx]
+    steps->push_back ({ 300, [&host, &ctx, windowHeld]
     {
         const auto saved = appconfig::getUiScaleOverride();
         ctx.expect (saved > 1.5f && saved < 1.6f, "release did not persist the slider value");
         ctx.expect (std::abs (host.uiScale() - saved) < 0.001,
                     "the persisted scale differs from the displayed interface");
+        windowHeld ("after the slider was released");
         host.closeAudioSettings();
     } });
-    steps->push_back ({ 200, [&host, &ctx]
+    steps->push_back ({ 200, [&host, &ctx, windowHeld]
     {
         ctx.expect (! host.audioSettingsOpen(), "settings did not close");
         ctx.expect (std::abs (host.uiScale() - appconfig::getUiScaleOverride()) < 0.001,
                     "closing Settings discarded the scale");
+        windowHeld ("after Settings closed");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -6360,35 +6393,119 @@ const ScenarioRegistrar aboutDetails { Scenario {
 std::optional<ScenarioResult> runTimelineDrawer (GuiHost& host, ScenarioContext& ctx)
 {
     const bool expanded = host.timelineViewMatches (true);
-    ctx.cleanup ([&host, expanded]
+    const auto launchScale = static_cast<float> (host.uiScale());
+    ctx.cleanup ([&host, expanded, launchScale]
     {
         if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+        host.restoreUiScale (launchScale);
     });
     ctx.expect (host.timelineViewMatches (false), "the timeline is not collapsed at launch");
-    // A window too short for the full strips compacts them on its own, so with
-    // the timeline closed each strip goes back to how it launched.
-    std::vector<bool> launchCompact;
-    for (int track = 0; track < Session::kNumTracks; ++track)
-        launchCompact.push_back (host.stripCompact (track));
-    auto steps = std::make_shared<std::vector<Step>>();
-    for (const bool show : { true, false, true, false })
+    const auto anyCompact = [&host]
     {
-        steps->push_back ({ 0, [&host, &ctx, show]
+        for (int track = 0; track < Session::kNumTracks; ++track)
+            if (host.stripCompact (track)) return true;
+        return false;
+    };
+    const auto toggle = [&host, &ctx]
+    {
+        auto steps = std::make_shared<std::vector<Step>>();
+        for (const bool show : { true, false, true, false })
         {
-            ctx.expect (show ? host.pressKey ("T", 't') : host.pressKey ("command + \\", '\\'),
-                        "the timeline shortcut was not handled");
-        } });
-        steps->push_back ({ 100, [&host, &ctx, show, launchCompact]
-        {
-            ctx.expect (host.timelineViewMatches (show), "the timeline visibility did not follow its toggle");
-            for (int track = 0; track < Session::kNumTracks; ++track)
-                ctx.expect (host.stripCompact (track) == (show || launchCompact[(size_t) track]),
-                            "timeline expansion left the wrong layout on strip " + std::to_string (track + 1));
-        } });
+            steps->push_back ({ 0, [&host, &ctx, show]
+            {
+                ctx.expect (show ? host.pressKey ("T", 't') : host.pressKey ("command + \\", '\\'),
+                            "the timeline shortcut was not handled");
+            } });
+            steps->push_back ({ 100, [&host, &ctx, show]
+            {
+                ctx.expect (host.timelineViewMatches (show), "the timeline visibility did not follow its toggle");
+                for (int track = 0; track < Session::kNumTracks; ++track)
+                    ctx.expect (host.stripCompact (track) == show,
+                                "timeline expansion left the wrong layout on strip " + std::to_string (track + 1));
+            } });
+        }
+        runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    };
+    if (! anyCompact())
+    {
+        toggle();
+        return std::nullopt;
     }
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    // A window too short for full-height strips compacts them on its own, which
+    // would hide the timeline doing it. At the smallest UI scale the same window
+    // is twice as tall in interface units.
+    host.restoreUiScale (appconfig::kUiScaleMin);
+    ctx.later (1000, [&ctx, anyCompact, toggle]
+    {
+        if (anyCompact())
+        {
+            ctx.complete (ScenarioResult::skip ("the window is too short for full-height strips even at the "
+                                                "smallest UI scale, so the timeline cannot be seen compacting them"));
+            return;
+        }
+        toggle();
+    });
     return std::nullopt;
 }
+
+// Opens the import browser on a folder of `files` empty WAVs, which takes it a
+// while to list, and runs `then` once it is listing.
+void browseCrowdedFolder (GuiHost& host, ScenarioContext& ctx, int files, std::function<void()> then)
+{
+    const auto crowded = ctx.tempDir() / "Crowded";
+    std::filesystem::create_directory (crowded);
+    for (int index = 0; index < files; ++index)
+        std::ofstream (crowded / ("take " + std::to_string (index) + ".wav"));
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (commandChord ('i'), 'i'), "the import shortcut was not handled"); } });
+    steps->push_back ({ 300, [&host, &ctx, crowded]
+    {
+        if (! ctx.expect (host.clickFileBrowserControl (true), "the import browser did not open")) return;
+        typeReplacing (host, crowded.string());
+        host.pressPeerKey ("Return", 0);
+    } });
+    steps->push_back ({ 200, [&host, &ctx, crowded]
+    {
+        ctx.expect (host.fileBrowserFolder().lexically_normal() == crowded.lexically_normal(),
+                    "the browser did not move to the crowded folder");
+    } });
+    runSteps (ctx, steps, std::move (then));
+}
+
+std::optional<ScenarioResult> runFileBrowserCancelScan (GuiHost& host, ScenarioContext& ctx)
+{
+    // Enough files that listing them takes the browser several seconds.
+    static constexpr int kFiles = 30000;
+    static constexpr int kStopMs = 1500;
+    ctx.cleanup ([&host] { drainModals (host); });
+    browseCrowdedFolder (host, ctx, kFiles, [&host, &ctx]
+    {
+        if (! host.fileBrowserScanning())
+        {
+            ctx.complete (ctx.verdict().status == ScenarioStatus::Pass
+                              ? ScenarioResult::skip ("the folder was listed before the browser could be cancelled")
+                              : ctx.verdict());
+            return;
+        }
+        ctx.expect (host.clickModalButton ("Cancel"), "the browser has no Cancel button");
+        ctx.later (100, [&host, &ctx]
+        {
+            ctx.expect (host.retiredFileBrowserScans() == 1, "the browser cancelled mid-scan was not kept for its scan");
+            ctx.waitUntil ([&host] { return host.retiredFileBrowserScans() == 0; }, kStopMs,
+                           [&ctx] { ctx.complete (ctx.verdict()); },
+                           "a browser cancelled mid-scan was still listing its folder "
+                               + std::to_string (kStopMs) + " ms later");
+        });
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar fileBrowserCancelScan { Scenario {
+    "gui.file_browser_cancel_scan", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserCancelScan (host, ctx); }
+} };
 
 const ScenarioRegistrar timelineDrawer { Scenario {
     "gui.timeline_drawer", { "gui", "timeline" }, Needs::Engine | Needs::Gui,

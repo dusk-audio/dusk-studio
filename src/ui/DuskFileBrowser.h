@@ -39,6 +39,15 @@ void openMulti (juce::Component& host,
                   Options opts,
                   std::function<void (juce::Array<juce::File>)> onResult);
 
-// The folder the topmost browser is listing; empty when the top modal is not one.
+// Closes the shared browser while the message loop still exists. Call once, as
+// the app shuts down; browsers closed after it get no timers.
+void closeForShutdown();
+
+// The folder the topmost browser is listing, and whether it is still listing
+// it; empty and false when the top modal is not a browser.
 std::filesystem::path shownFolderForScenario();
+bool shownFolderScanningForScenario();
+
+// Browsers closed mid-scan that are still waiting for their scan to stop.
+int retiredScansForScenario();
 } // namespace duskstudio::filebrowser
