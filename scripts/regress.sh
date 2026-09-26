@@ -7,6 +7,7 @@
 #   scripts/regress.sh mac
 #   scripts/regress.sh linux --tarball <dusk-studio-X.Y.Z-Linux-x86_64.tar.xz>
 #   scripts/regress.sh windows --msi <path>
+#   scripts/regress.sh windows --release-run <id> --fixtures-run <id>
 #   scripts/regress.sh all --msi <path>
 #   scripts/regress.sh all --release-run <id>
 #
@@ -44,9 +45,21 @@ usage: scripts/regress.sh [linux|mac|windows|all] [options]
   mac      drive the M3 Air over ssh: push HEAD, configure, build, ctest,
            headless self-test
              --host <user@host>  default marc@macbook-air.local
-  windows  drive the libvirt win11 guest from this box
+  windows  drive the libvirt win11 guest from this box: install the MSI into
+           Program Files (a person answers the UAC prompt at the VM console),
+           then the self-test, handoff, session-close, scenario and isolation
+           legs against the installed app
              --msi <path>          installer to test
              --release-run <id>    download the release-windows artifact instead
+             --fixtures <dir>      Windows builds of the fixture plug-ins, laid
+                                   out as build-tests/ lays them out
+             --fixtures-run <id>   the duskstudio-windows-fixtures artifact of
+                                   that windows-tests.yml run instead
+             --reinstall           uninstall this package, and any per-user
+                                   install, first
+             --extract-only        unpack with msiexec /a instead of installing:
+                                   no UAC, for runner development only
+             --no-scenarios        leave the scenario legs out
   all      linux, then mac, then windows (windows needs --msi/--release-run).
            Options are routed to the platform that owns them, so
            `all --perf --msi <path>` is one run with both. --release-run goes
@@ -91,13 +104,17 @@ declare -A OPTION_OWNER=(
     [--perf]=linux
     [--vst3]=linux
     [--scenarios]=linux
-    [--no-scenarios]=linux
+    [--no-scenarios]="linux windows"
     [--gui-scenarios]=linux
     [--scenarios-only]=linux
     [--release-checks]=linux
     [--tarball]=linux
     [--host]=mac
     [--msi]=windows
+    [--fixtures]=windows
+    [--fixtures-run]=windows
+    [--reinstall]=windows
+    [--extract-only]=windows
     [--release-run]="linux windows"
 )
 declare -A OPTION_TAKES_VALUE=(
@@ -105,6 +122,8 @@ declare -A OPTION_TAKES_VALUE=(
     [--tarball]=1
     [--host]=1
     [--msi]=1
+    [--fixtures]=1
+    [--fixtures-run]=1
     [--release-run]=1
 )
 

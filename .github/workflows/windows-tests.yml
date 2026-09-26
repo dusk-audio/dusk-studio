@@ -177,6 +177,18 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+      - name: Upload the fixture plug-ins
+        # scripts/regress.sh windows --fixtures-run <run id> feeds these to the
+        # scenario suite in the win11 guest through DUSKSTUDIO_FIXTURE_DIR.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: duskstudio-windows-fixtures
+          path: |
+            build-tests/dusk-studio-*-fixture.clap
+            build-tests/VST3/
+          retention-days: 3
+          if-no-files-found: error
+
       - name: Run tests
         # Full Catch2 suite on MSVC. FileImporter fixtures close their writers
         # before import/readback, while a deterministic unit covers the bounded

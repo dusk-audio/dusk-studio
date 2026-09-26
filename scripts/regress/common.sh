@@ -71,6 +71,18 @@ regress_skip() {
     regress_record "$name" "SKIP" "0" "$reason"
 }
 
+# The case a killed run was inside: the last one the suite announced with [RUN]
+# (stderr) that has no result line (stdout). Empty when the last one finished.
+regress_scenario_unfinished() {
+    local log="$1" name
+    name="$(sed -n 's/^\[RUN\] //p' "$log" | tail -1)"
+    [[ -n "$name" ]] || return 0
+    if grep -qF -e "[PASS] ${name} " -e "[FAIL] ${name}:" -e "[SKIP] ${name}:" "$log"; then
+        return 0
+    fi
+    printf '%s' "$name"
+}
+
 # regress_scenario_leg <name> <secs> <log> <rc>: records one run of the in-app
 # scenario suite. PASS needs the exit status, the absence of any [FAIL] line and
 # the terminal summary line: a crash after the last case would otherwise pass on
@@ -81,6 +93,11 @@ regress_scenario_leg() {
     if ((rc != 0)); then
         verdict=FAIL
         note="exit $rc"
+        if ((rc == 124)); then
+            local stalled
+            stalled="$(regress_scenario_unfinished "$log")"
+            note="timed out${stalled:+ in ${stalled}}"
+        fi
         if grep -q '^\[FAIL\]' "$log"; then
             note="${note}: $(grep -c '^\[FAIL\]' "$log") failed, first $(grep -m1 '^\[FAIL\]' "$log")"
         fi

@@ -447,6 +447,7 @@ scripts/regress.sh linux --release-run 1234567890
 scripts/regress.sh mac
 scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
 scripts/regress.sh windows --release-run 1234567890
+scripts/regress.sh windows --release-run 1234567890 --fixtures-run 2345678901
 scripts/regress.sh all --perf --msi /path/to/installer.msi
 scripts/regress.sh all --release-run 1234567890
 ```
@@ -457,7 +458,7 @@ a usage error rather than a silently ignored word. `--release-run` has two
 owners, Linux and Windows, and goes to both: `all --release-run <id>` tests the
 Linux tarball and the Windows MSI of the same `release.yml` run. With
 `--tarball` on the same line, Linux tests that tarball and the release run goes
-to Windows alone.
+to Windows alone. `--no-scenarios` also goes to both.
 
 Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
 `scripts/regress/{linux,mac,windows}.sh` over the shared leg bookkeeping in
@@ -749,61 +750,160 @@ The IPC self-test is Linux-only code and is skipped for that reason, not this on
 The libvirt domain `win11` on this box has no qemu-guest-agent and no SSH. The
 channel is: `virsh send-key` types into a guest PowerShell console, an HTTP
 server on `192.168.122.1:8000` serves the phase scripts and the payload, a
-collector on `:9000` receives each phase's POSTed report, and `virsh screenshot`
-shows what the guest is actually doing. Both servers are stopped on exit with
-self-excluding `pkill` patterns.
+collector on `:9000` receives each phase's POSTed report (and, under
+`posts/` in the run directory, the whole output of each scenario run), and
+`virsh screenshot` shows what the guest is actually doing. Both servers are
+stopped on exit with self-excluding `pkill` patterns.
+
+```bash
+scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
+scripts/regress.sh windows --release-run 1234567890
+scripts/regress.sh windows --release-run 1234567890 --fixtures-run 2345678901
+scripts/regress.sh windows --msi /path/to/installer.msi --extract-only
+```
+
+| Option | Effect |
+|---|---|
+| `--msi <path>` / `--release-run <id>` | the installer under test: a local file, or the `release-windows` artifact of that `release.yml` run. |
+| `--fixtures <dir>` | a directory holding the Windows builds of the test fixture plug-ins, laid out as `build-tests/` lays them out (`dusk-studio-*-fixture.clap` at the top, `VST3/...` below). |
+| `--fixtures-run <id>` | the same, from the `duskstudio-windows-fixtures` artifact of that `windows-tests.yml` run. |
+| `--reinstall` | uninstall this very package first when it is already installed, and any per-user install of Dusk Studio (0.13 and earlier, and the early 0.14.0 candidates), then install it again: one UAC prompt per uninstall plus one for the install. |
+| `--extract-only` | no install and no UAC: `msiexec /a` unpacks the package into the run folder and the legs run that. For development of the runner, never for the gate. |
+| `--no-scenarios` | leave out the scenario rows. |
 
 Prerequisites: libvirt access to `win11` without sudo (`qemu:///system`), the
-guest running, `7z`, `zip`, `python3` (Pillow for the PNG screenshots), `gh`
-authenticated for `--release-run`. Nothing has to be set up inside the guest:
-the phases bring their own session, and none of them clicks anything.
+guest running and unlocked, `7z`, `zip`, `sha256sum`, `python3` (Pillow for
+the PNG screenshots), `gh` authenticated for `--release-run` and
+`--fixtures-run`, and a person at the VM console (virt-manager) for the UAC
+prompt. Nothing has to be set up inside the guest: the phases bring their own
+session and fixtures, and none of them clicks anything.
 
-The payload is built on the host: the MSI is unpacked with `7z`, the flattened
-`CM_FP_bin.*` names are put back into `bin/`, the plugin host is renamed to
-`dusk-studio-plugin-host.exe` (the app looks for it beside itself under that
-name), `scripts/regress/sessions/minimal/session.json` is copied in as
-`regress-session/session.json` for phase 3 to load, and the result is zipped.
-The guest unpacks it to `%LOCALAPPDATA%\DuskStudio-regress`, which needs no
-elevation - installing into `C:\Program Files` would need UAC, which must not
-be auto-accepted.
+**The install and UAC.** The package goes into `C:\Program Files\Dusk Studio`
+through `msiexec /i ... /passive`, as a user installs it. That needs
+elevation, and the UAC prompt is **never** answered by the runner, by a key, a
+click, a policy change or any other route. When the guest sees `consent.exe`
+come up it posts a line, and the runner prints
+
+```
+UAC prompt up in win11 for the X.Y.Z MSI install
+```
+
+with a screenshot, then waits, screenshotting every 30 s, for someone to
+answer it at the VM console. Windows withdraws an unanswered prompt after about
+two minutes and `msiexec` reports that as a cancel (1602), the same as No, so a
+prompt that stayed up 100 s or more counts as expired and the install is asked
+for again, with a new numbered prompt line; one closed sooner was answered.
+`DUSK_REGRESS_UAC_WAIT` (seconds, default 1800) bounds the whole wait; when it
+runs out the guest withdraws its own `msiexec` and the leg fails. A package whose ProductCode is already installed is reused
+without an installer run (the note says so), so re-running the gate on one
+candidate costs one prompt, not one per run. The package's major upgrade
+replaces any older or same-version build in place; a newer build installed
+has to be uninstalled first, which is a prompt of its own. The package stays
+installed afterwards: `package-uninstall` is a `SKIP`, because taking it out is
+another prompt.
+
+**Per machine.** The package installs for every account (`ALLUSERS=1`), and
+the leg proves it: the installed product's `AssignmentType` is 1, its
+uninstall entry is under `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`,
+and the Start menu and desktop shortcuts are in the all-users folders
+(`CommonPrograms`, `CommonDesktopDirectory`); a per-user shortcut does not
+count. Windows Installer never upgrades a per-user install to a per-machine
+one, and the package refuses to install beside one, so a per-user Dusk Studio
+in the guest (0.13 and earlier, and the early 0.14.0 candidates) fails the leg
+before any prompt, with a note to pass `--reinstall`, which uninstalls it
+first. A reused install that turns out to be per user fails the same way: pass
+`--reinstall` with a per-machine MSI. A package whose own `ALLUSERS` is not 1
+is refused before anything is installed or removed.
+
+**Isolation.** Every launch of the app gets a private profile under the run
+folder, `%LOCALAPPDATA%\dusk-regress-<timestamp>\launch\<leg>\`: `USERPROFILE`,
+`HOME`, `HOMEDRIVE`/`HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `TEMP` and `TMP`
+point into it, with `Documents`, `Music` and `Desktop` created there, and
+`DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR` name the app's own folders
+beside that home. `SHGetKnownFolderPath`, which `dusk::fs` uses on Windows,
+expands the AppData, Documents and Music folders from `USERPROFILE` as long as
+they exist, so those follow the sandbox. The Profile known folder does not: it
+comes from the account and stays the real `C:\Users\<name>` whatever the
+environment says. That is why `dusk::fs::userHomeDir()` takes the home from
+`USERPROFILE` when it holds an absolute path and falls back to the Profile
+folder only when it does not, and why the GUI scenarios' "the browser opened
+inside HOME" check reads `USERPROFILE` itself: both follow the private profile.
+`isolation-audit` asks a child process with a launch's environment where the
+home, the AppData, Documents and Music known folders, the temp folder and the
+two named Dusk Studio folders resolve, and fails if any of them lands outside
+that launch's folder; it logs the Profile known folder for the record only.
+Each run folder carries a
+`.dusk-regress-run` marker; the next run removes run folders with the marker
+and nothing else.
+
+**Fixtures.** The scenarios load the test fixture plug-ins through
+`DUSKSTUDIO_FIXTURE_DIR`, which the guest points at two roots under the run
+folder: `fixtures\build-tests` (from `--fixtures` or `--fixtures-run`) and
+`fixtures\tests-fixtures`, the checkout's `tests/fixtures/midi` data. This box
+cannot build the plug-ins for Windows and the guest has no checkout, so
+without either option every plug-in fixture is unresolved: `scenario-fixtures`
+names them and each case that needed one gets its `:fixtures` row. The LV2
+ones stay unresolved on Windows in any case, since Windows builds no LV2 host.
 
 | Leg | What it proves |
 |---|---|
-| `payload` | the installer unpacks to a runnable `bin/` tree with both executables. |
+| `payload` | `--release-run`: the run's workflow, branch, commit and conclusion, and its `release-windows` MSI downloaded. The file name is `dusk-studio-X.Y.Z-Windows-x64.msi`; it unpacks with `7z` to a `bin/DuskStudio.exe`, and every file's SHA-256 goes into the manifest the guest checks against. Notes when the package version differs from the checkout's `VERSION`. |
+| `fixtures` | the fixture roots staged and zipped for the guest. |
 | `host-servers` | the script and report channels are listening on `192.168.122.1`. |
 | `guest-wake` | the domain is running and its display is not blanked. Screenshot in the run directory. |
 | `console-probe` | a fresh PowerShell console is up and accepting typed input, before any phase is typed into it. |
+| `msi-install` | the package installs (or is already installed) through `msiexec`: the Windows Installer then lists exactly this ProductCode for the upgrade code, at this version, under `Program Files`, installed per machine with its uninstall entry under HKLM (see Per machine); every file of the package's File table is at the path its Directory table names and matches the manifest byte for byte; nothing else is in the install folder; `dusk-studio-plugin-host.exe` sits beside `DuskStudio.exe`; the all-users Start menu and desktop shortcuts exist and point at the installed executable; its FileVersion and its `--version` (run in a private profile) report the package version. It also snapshots the real user's Documents, Music, Desktop and Dusk Studio config folders and the entries at the top of the real home folder for `isolation-audit`. |
 | `phase1-selftest` | headless `DUSKSTUDIO_RUN_SELFTEST=1` with stdout and stderr captured through `ProcessStartInfo` redirection: exit code 0, at least one `[PASS]`, no `[FAIL]`. |
-| `phase2-handoff` | the first instance opens the shipped session through `DUSKSTUDIO_LOAD_SESSION` and the phase waits for its `[Dusk Studio/Load] session.json` line, then a second launch carrying `handoff.json` hands over and exits 0 within 30 s while the first instance stays alive, `GetForegroundWindow()` is its window afterwards, and its stderr shows `[Dusk Studio/Load] handoff.json` after the first load - the handoff is supposed to raise the window and load the path, which the exit code alone cannot see. |
+| `phase2-handoff` | the first instance opens the shipped session through `DUSKSTUDIO_LOAD_SESSION` and the phase waits for its `[Dusk Studio/Load] session.json` line, then a second launch carrying `handoff.json` hands over and exits 0 within 30 s while the first instance stays alive, `GetForegroundWindow()` is its window afterwards, and its stderr shows `[Dusk Studio/Load] handoff.json` after the first load - the handoff is supposed to raise the window and load the path, which the exit code alone cannot see. Both launches share one private profile. |
 | `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
 | `ipc-selftest` | `SKIP`. `DUSKSTUDIO_RUN_IPC_SELFTEST` never returns on Windows (issue #504), so the out-of-process transport is only compile- and contract-verified there. Remove the skip when #504 closes. |
+| `scenario-fixtures` | as on Linux, against the two staged roots. |
+| `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed app, 900 s budget in the guest. The whole output comes back and is judged by the same rules as the Linux leg: exit 0, no `[FAIL]`, the terminal `=== scenarios: ` line; skips in the note, missing fixtures in a `:fixtures` row. A run that hits its budget is announced before it is killed, screenshotted as `<leg>-stall.png`, and reported as `timed out in <case>`, the last case the suite started without finishing. |
+| `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui` on the guest desktop, 1800 s budget, judged the same way. `[DIRTY]` lines are listed. |
+| `gui-settings-defaults` | `tests/gui_settings_defaults.sh` for the guest: `gui.settings_defaults` with a seeded `app-config.properties`, both values, three launches each. |
+| `gui-plugin-picker` | `SKIP`: its seeded cache names the LV2 fixture, and Windows builds no LV2 host. It runs on Linux. |
+| `isolation-audit` | nothing in the real user's Documents, Music, Desktop, `%APPDATA%\Dusk Studio` or `%LOCALAPPDATA%\Dusk Studio`, no entry at the top of the real home folder (by name; the `NTUSER*` hive files are left out), and no `dusk-studio-*` entry in the real temp folder appeared, changed or went away since `msi-install`; and every folder a launch resolves (home, AppData, Documents, Music, temp, config, the Music folder) sits inside its private profile. Either an escape or a folder that does not resolve is a `FAIL`. The Profile known folder is logged, never judged (see Isolation). |
+| `package-uninstall` | `SKIP`: the package is left installed. |
 
 Every phase opens its own console from the Start menu: a phase that calls
 `SetForegroundWindow` steals focus, so the next `send-key` would land in the
-wrong window. Constraints the guest-side scripts have to respect, all of them
-things that have already gone wrong here:
+wrong window. `scripts/regress/windows/lib.ps1` is served in front of every
+phase script and holds what they share: the report POST, the private profile,
+the redirected launch with its bounded reads, and the snapshot. Constraints the
+guest-side scripts have to respect, all of them things that have already gone
+wrong here:
 
-- `$host` is a read-only PowerShell automatic variable; a script assigning it
-  dies before its POST.
+- `$host` and `$HOME` are read-only PowerShell automatic variables; a script
+  assigning either dies before its POST.
+- `"$name:"` inside a string is read as a drive-qualified variable. Write
+  `"${name}:"`.
 - `iex` runs in the console's session scope, so variables survive between
   phases. Every script assigns its own before reading them.
 - A P/Invoke with a PowerShell scriptblock delegate (`EnumWindows`) throws under
   `iex`. The P/Invoke surface stays limited to direct calls.
+- PowerShell 5.1 sends a string body as ISO-8859-1 and reads redirected output
+  in the OEM code page; the scripts POST UTF-8 bytes and read the app as UTF-8.
+- The app writes `\r\n` on Windows; the runner strips the `\r` before judging.
 - `WM_CLOSE` on a fresh launch is swallowed while the startup picker is open:
   `requestQuit` returns with a modal up. That is why phase 3 passes the session
   in through `DUSKSTUDIO_LOAD_SESSION`, which skips the picker entirely. No
   phase depends on a screen coordinate or on synthesized mouse input.
 - Redirected stderr cannot be read with `ReadToEndAsync` while the app is still
-  running: that task only completes when the pipe closes. Phase 3 drains it one
-  bounded `ReadLineAsync` at a time, which is how it can wait for a marker mid
-  run.
+  running: that task only completes when the pipe closes. The phases drain it
+  one bounded `ReadLineAsync` at a time, which is how they wait for a marker
+  mid run and how a hung app is noticed.
+- The single-instance slot is keyed on the Windows user, not on the profile,
+  so every phase first stops any running `DuskStudio.exe`: a leftover instance
+  would take the next launch's handoff.
 
-Screenshots, the raw report and the served payload all stay in the run
-directory printed at the end (`/tmp/dusk-regress-windows-<timestamp>/`). If a
-phase times out, read its screenshot before re-running: something else driving
-the VM has been the cause before.
+Screenshots, the raw report, the suite logs and the served payload all stay in
+the run directory printed at the end (`$TMPDIR/dusk-regress-windows-<timestamp>/`).
+A phase that runs past its deadline leaves `<leg>-timeout.png`, and long phases
+leave a `<leg>-progress.png` every two minutes; read them before re-running:
+something else driving the VM has been the cause before.
 
-Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`.
+Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`,
+`DUSK_REGRESS_UAC_WAIT`.
 
 ### Adding a leg
 
@@ -816,16 +916,28 @@ Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`
    by hand instead.
 3. For a Windows leg, add a `.ps1` under `scripts/regress/windows/`, map it to a
    short served name in `install_scripts` (the name is typed one keystroke at a
-   time), and end it with the two contract lines the runner waits for:
+   time), register it with `guest_leg "<name>" <served name> <deadline>`, and
+   end it with the two contract lines the runner waits for, `<name>` being the
+   leg's name:
 
    ```
    REGRESS-PHASE <name> RESULT PASS|FAIL
    REGRESS-PHASE <name> END
    ```
 
-   The host substitutes `@@HOSTIP@@`, `@@ROOT@@` and `@@ZIP@@` when serving, so
-   those values are not duplicated per script.
-4. `bash -n` and `shellcheck` every script you touched.
+   `lib.ps1` is served in front of it, so its helpers (`Get-RegressExe`,
+   `New-RegressSandbox`, `Invoke-RegressApp`, `Invoke-RegressPost`) are there
+   to use, and every launch of the app goes through a private profile. The host
+   substitutes `@@HOSTIP@@`, `@@ROOT@@`, `@@VERSION@@`, `@@MSI@@`,
+   `@@INSTALLMODE@@` and `@@UACWAIT@@` when serving, plus any `NAME=value` pairs
+   the `serve_script` line passes, and refuses to serve a script with a
+   placeholder left over. `REGRESS-NOTE` and `REGRESS-WARN` lines go into the
+   leg's note, the second making it a `WARN`.
+4. `bash -n` and `shellcheck` every script you touched. There is no PowerShell
+   on this box: parse a changed `.ps1` in the guest with
+   `[System.Management.Automation.Language.Parser]::ParseInput` before a full
+   run, since a script that does not parse never posts and the leg only fails
+   at its deadline.
 5. If the leg greps a string out of the app's output, pin that string in
    [tests/stderr_marker_contract.cpp](../tests/stderr_marker_contract.cpp). A
    reworded marker still compiles and still runs; without the contract case the
