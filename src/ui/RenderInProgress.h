@@ -10,6 +10,9 @@ struct RenderInProgress
 {
     virtual ~RenderInProgress() = default;
     virtual bool isRenderRunning() const = 0;
+    // Running, or stopped with its result not yet taken in on the message
+    // thread (a freeze commits on the dialog's next tick). What a quit waits on.
+    virtual bool hasUnfinishedRender() const = 0;
     // What the dialog's Cancel does mid-render. Returns at once: the worker
     // stops at its next block and hands the engine back on the message thread,
     // so the caller must not block that thread waiting for it.

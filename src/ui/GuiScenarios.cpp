@@ -1516,8 +1516,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         auto* handler = control != nullptr ? control->getAccessibilityHandler() : nullptr;
         if (handler == nullptr || handler->getTitle().toStdString() != title) return false;
         help = handler->getHelp().toStdString();
-        auto* interface = handler->getValueInterface();
-        value = interface != nullptr ? interface->getCurrentValueAsString().toStdString() : std::string {};
+        auto* valueInterface = handler->getValueInterface();
+        value = valueInterface != nullptr ? valueInterface->getCurrentValueAsString().toStdString() : std::string {};
         return true;
     }
 
@@ -1527,9 +1527,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         // hang off it rather than off the main component.
         auto* control = findTitledControl (*owner.getTopLevelComponent(), title);
         auto* handler = control != nullptr ? control->getAccessibilityHandler() : nullptr;
-        auto* interface = handler != nullptr ? handler->getValueInterface() : nullptr;
-        if (interface == nullptr || interface->isReadOnly()) return false;
-        interface->setValueAsString (HostString (value.c_str()));
+        auto* valueInterface = handler != nullptr ? handler->getValueInterface() : nullptr;
+        if (valueInterface == nullptr || valueInterface->isReadOnly()) return false;
+        valueInterface->setValueAsString (HostString (value.c_str()));
         return true;
     }
 

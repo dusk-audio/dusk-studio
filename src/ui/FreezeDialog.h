@@ -26,6 +26,7 @@ public:
     ~FreezeDialog() override;
 
     bool isRenderRunning() const override { return bounceEngine != nullptr && bounceEngine->isRendering(); }
+    bool hasUnfinishedRender() const override { return bounceEngine != nullptr && ! finished; }
     void cancelRender() override;
 
     void resized() override;

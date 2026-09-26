@@ -3670,7 +3670,7 @@ std::vector<RenderInProgress*> runningRenders()
     std::vector<RenderInProgress*> running;
     for (auto* modal : EmbeddedModal::activeModalStack())
         if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody());
-            render != nullptr && render->isRenderRunning())
+            render != nullptr && render->hasUnfinishedRender())
             running.push_back (render);
     return running;
 }

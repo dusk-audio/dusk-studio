@@ -11616,6 +11616,8 @@ std::optional<ScenarioResult> runUnsavedSessionSparesUntitled (GuiHost& host, Sc
         || ! engine.isAudioCallbackRegistered() || ! host.autosaveRunning() || host.engineDetached())
         return ScenarioResult::skip ("requires a stopped transport, no modal, and live audio and autosave");
     if (host.sessionOnDisk()) return ScenarioResult::skip ("requires the launch session never to have been saved");
+    if (session.deviceCaptureChannels.load() <= 0)
+        return ScenarioResult::skip ("requires an input device with capture channels");
     const auto config = dusk::fs::appConfigDir();
     if (config.empty()) return ScenarioResult::skip ("requires a configuration folder");
     const auto privateDir = config / "unsaved-session";
