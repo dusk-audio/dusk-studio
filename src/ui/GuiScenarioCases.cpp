@@ -4189,13 +4189,31 @@ const ScenarioRegistrar auxSources { Scenario {
 
 // A run's HOME is its sandbox. A browser that starts outside it lists the
 // user's own folders, and on macOS a privacy prompt for them stalls the run.
+// The home is read from the environment rather than from dusk::fs, so a lookup
+// that ignores the environment shows up as an escape instead of moving the
+// yardstick with it.
 bool expectBrowserInHome (GuiHost& host, ScenarioContext& ctx, const std::string& what)
 {
+    const auto isInside = [] (const std::filesystem::path& folder, const std::filesystem::path& root)
+    {
+        const auto relative = folder.lexically_relative (root);
+        return ! root.empty() && ! relative.empty() && *relative.begin() != "..";
+    };
+   #if defined (_WIN32)
+    const wchar_t* variable = ::_wgetenv (L"USERPROFILE");
+    const auto home = std::filesystem::path (variable != nullptr ? variable : L"").lexically_normal();
+   #else
+    const char* variable = std::getenv ("HOME");
+    const auto home = std::filesystem::u8path (variable != nullptr ? variable : "").lexically_normal();
+   #endif
     const auto folder = host.fileBrowserFolder().lexically_normal();
-    const auto home = dusk::fs::userHomeDir().lexically_normal();
-    const auto relative = folder.lexically_relative (home);
-    const bool inside = ! folder.empty() && ! relative.empty() && *relative.begin() != "..";
-    return ctx.expect (inside, what + " opened at '" + folder.string() + "', outside HOME " + home.string());
+    // A redirected Documents folder (another drive on Windows) is the user's
+    // real one, and the browsers that start there are right to.
+    const auto documents = dusk::fs::userDocumentsDir().lexically_normal();
+    const bool inside = ! folder.empty()
+                        && (isInside (folder, home)
+                            || (! isInside (documents, home) && isInside (folder, documents)));
+    return ctx.expect (inside, what + " opened at '" + folder.u8string() + "', outside HOME " + home.u8string());
 }
 
 std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioContext& ctx)
@@ -11538,7 +11556,7 @@ const ScenarioRegistrar openSessionFolder { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runOpenSessionFolder (host, ctx); }
 } };
 
-// A session folder that cannot be written: Save, from the File menu and by
+// A session.json that cannot be written: Save, from the File menu and by
 // Cmd+S, raises "Save failed" as the manual quotes it, and the edited session
 // stays in memory while session.json on disk stays as it was.
 std::optional<ScenarioResult> runSaveFailedAlert (GuiHost& host, ScenarioContext& ctx)
@@ -11567,6 +11585,8 @@ std::optional<ScenarioResult> runSaveFailedAlert (GuiHost& host, ScenarioContext
     const float edited = onDisk - 4.0f;
     fader.store (edited);
 
+    bool unwritable = false;
+   #if ! defined (_WIN32)
     std::error_code error;
     fs::permissions (locked, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace, error);
     ctx.cleanup ([locked]
@@ -11578,13 +11598,22 @@ std::optional<ScenarioResult> runSaveFailedAlert (GuiHost& host, ScenarioContext
     {
         const auto probe = locked / "probe";
         std::ofstream out (probe);
-        if (error || out.is_open())
-        {
-            out.close();
-            std::error_code ignored;
-            fs::remove (probe, ignored);
-            return ScenarioResult::skip ("the session folder stays writable without write permission, as it does for root");
-        }
+        unwritable = ! error && ! out.is_open();
+        out.close();
+        std::error_code ignored;
+        if (! unwritable) fs::remove (probe, ignored);
+    }
+   #endif
+    // Root writes regardless of the permission bits, and on Windows they only
+    // set a read-only attribute that a folder ignores. There, a folder that is
+    // not empty where the save writes its temporary copy fails the same write.
+    if (! unwritable)
+    {
+        const auto blocker = locked / "session.json.tmp";
+        fs::create_directories (blocker);
+        std::ofstream (blocker / "keep") << "theirs";
+        if (! fs::is_regular_file (blocker / "keep"))
+            return ScenarioResult::fail ("could not block the session's temporary copy");
     }
 
     const auto alerted = [&host, &ctx] (const std::string& how)

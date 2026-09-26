@@ -75,8 +75,9 @@ public:
                         opts.filePatternsAllowed, juce::String(),
                         opts.filePatternsAllowed);
 
-        // From $HOME, which a sandboxed run points at its own folder. JUCE asks
-        // macOS for the home folder and would start in the real one.
+        // From $HOME (USERPROFILE on Windows), which a sandboxed run points at
+        // its own folder. JUCE asks the OS for the home folder and would start
+        // in the real one.
         const juce::File home (dusk::fs::userHomeDir().u8string());
         auto initial = opts.initialFileOrDirectory.getFullPathName().isNotEmpty()
                            ? opts.initialFileOrDirectory

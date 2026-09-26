@@ -244,6 +244,13 @@ inline std::filesystem::path userHomeDir()
     if (const auto testPath = detail::testSpecialLocation ("Home"); ! testPath.empty())
         return testPath;
 #if defined(_WIN32)
+    // The Profile known folder comes from the account, not the environment, so
+    // it would take a run with a private USERPROFILE back to the real one.
+    if (const wchar_t* profile = ::_wgetenv (L"USERPROFILE"))
+    {
+        const std::filesystem::path path (profile);
+        if (path.is_absolute()) return path;
+    }
     return detail::knownFolderPath (FOLDERID_Profile);
 #else
     if (const char* home = std::getenv ("HOME"))

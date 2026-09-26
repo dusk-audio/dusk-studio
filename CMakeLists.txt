@@ -2166,6 +2166,15 @@ if(WIN32)
     # the desktop icon for the same executable.
     set(CPACK_PACKAGE_EXECUTABLES "DuskStudio" "Dusk Studio")
     set(CPACK_CREATE_DESKTOP_LINKS "DuskStudio")
+
+    # The files go to Program Files, so the product, its shortcuts and its
+    # uninstall entry belong to every account. Left unset, CPack writes no
+    # install scope (policy CMP0172 is not NEW under our minimum version) and
+    # Windows registers the product for the installing account only.
+    set(CPACK_WIX_INSTALL_SCOPE "perMachine")
+    # Stops the install while a per-user copy from 0.13 or earlier holds the
+    # same folder; Windows Installer never upgrades across the two scopes.
+    set(CPACK_WIX_PATCH_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/wix-patch.xml")
 endif()
 
 # macOS DMG: cpack -G DragNDrop. scripts/package-macos.sh wraps it with

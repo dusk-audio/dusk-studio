@@ -129,6 +129,13 @@ publishes.
   stage, and Escape, a second click on **TAPE** or a click outside closes it.
   Sessions saved with the older Tape unit load into Tape Machine 2 with their
   settings.
+- **The Windows installer installs for every account on the PC** (#758). It
+  always put the program in Program Files, but registered it for the account
+  that ran it only, so other accounts had no shortcuts and no uninstall entry.
+  Windows cannot upgrade that kind of install to this one: uninstall the
+  earlier **dusk-studio** from **Settings > Apps** first. Sessions and settings
+  are kept. An earlier copy in the default folder stops the installer with a
+  message saying so.
 - **The DP import is named after the machines it reads.** **File > Import DP
   Song (experimental)...** is now **File > Import DP-24/32 Session
   (experimental)...**, and its confirmation and alerts use the same name.

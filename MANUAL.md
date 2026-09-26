@@ -400,8 +400,10 @@ Windows SmartScreen blocks unsigned MSIs by default. The bypass is one click but
 2. SmartScreen shows: *"Windows protected your PC"* with a **Don't run** button.
 3. Click the small **More info** link near the top of the dialog. SmartScreen expands to show *"App: dusk-studio-<version>-Windows-x64.msi / Publisher: Unknown publisher"*.
 4. A new **Run anyway** button appears at the bottom — click it.
-5. The MSI installer runs normally. Accept the install location (`C:\Program Files\Dusk Studio` by default) and finish.
-6. Launch Dusk Studio from the **Start menu** (under *Dusk Studio*) or the **desktop shortcut** the installer creates.
+5. The MSI installer runs normally. Accept the install location (`C:\Program Files\Dusk Studio` by default) and finish. Windows asks for administrator permission, because Dusk Studio is installed for every account on the PC.
+6. Launch Dusk Studio from the **Start menu** (under *Dusk Studio*) or the **desktop shortcut** the installer creates. Every account on the PC gets both, and the uninstall entry (listed as *dusk-studio* in **Settings > Apps**) is there for every account too.
+
+**Upgrading from 0.13 or earlier.** Those installers registered Dusk Studio for the account that installed it only, and Windows cannot upgrade that install to one for every account. Uninstall *dusk-studio* from **Settings > Apps**, signed in as the account that installed it, then run the new installer. Your sessions and settings are kept. If the earlier copy is in the default folder and you skip this step, the installer stops and says the same.
 
 Windows SmartScreen treats every new MSI hash as untrusted on first download; reputation builds up across installations over time but reset on every new release. The MORE INFO → RUN ANYWAY two-click bypass is consistent across builds.
 
