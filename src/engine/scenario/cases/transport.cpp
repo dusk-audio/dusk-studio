@@ -21,6 +21,13 @@ constexpr std::int64_t kPunchFade = 64;
 
 void armTrack (ScenarioContext& ctx)
 {
+    // The track follows its own index for input, so it records from input
+    // kTrack + 1. The arm is stored directly, past Session's input check, so
+    // pin a capture width that offers that input: the armed state stays one
+    // the session would accept whatever the default device's width is.
+    auto& captureWidth = ctx.session().deviceCaptureChannels;
+    ctx.keep (captureWidth);
+    captureWidth.store (kTrack + 1);
     auto& track = ctx.session().track (kTrack);
     track.mode.store ((int) Track::Mode::Mono, std::memory_order_relaxed);
     track.inputSource.store (-2, std::memory_order_relaxed);

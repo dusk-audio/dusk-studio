@@ -42,6 +42,13 @@ auto& regionsOf (ScenarioContext& ctx) { return ctx.session().track (kTrack).reg
 
 void armTrack (ScenarioContext& ctx)
 {
+    // The track follows its own index for input, so it records from input
+    // kTrack + 1. The arm is stored directly, past Session's input check, so
+    // pin a capture width that offers that input: the armed state stays one
+    // the session would accept whatever the default device's width is.
+    auto& captureWidth = ctx.session().deviceCaptureChannels;
+    ctx.keep (captureWidth);
+    captureWidth.store (kTrack + 1);
     auto& track = ctx.session().track (kTrack);
     track.mode.store ((int) Track::Mode::Mono, std::memory_order_relaxed);
     track.inputSource.store (-2, std::memory_order_relaxed);
@@ -428,6 +435,10 @@ ScenarioResult secondTrackOverdub (ScenarioContext& ctx)
     auto& session = ctx.session();
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
+    // Track 2 records from input 2, which a one-input default device does not
+    // offer, and Session refuses to arm a track past the capture width.
+    ctx.keep (session.deviceCaptureChannels);
+    session.deviceCaptureChannels.store (2);
     session.countInEnabled.store (false);
     session.master().eqEnabled.store (false);
     session.master().compEnabled.store (false);

@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -42,6 +43,10 @@
 
 #if DUSKSTUDIO_HAS_ALSA
  #include <alsa/asoundlib.h>
+#endif
+
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+ #include <unistd.h>
 #endif
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (_WIN32)
@@ -438,6 +443,26 @@ std::optional<ScenarioResult> runClapNoWindowMessage (GuiHost& host, ScenarioCon
 
 // ------------------------------------------------ LV2 editor reflects state
 
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+// The file the fixture UI (tests/fixtures/file_state_ui.cpp) rewrites with each
+// Gain value the host sends it, once this process has created it.
+std::filesystem::path lv2UiProbePath()
+{
+    std::error_code error;
+    auto dir = std::filesystem::temp_directory_path (error);
+    if (error) dir = "/tmp";
+    return dir / ("dusk-lv2-ui-probe-" + std::to_string ((long) ::getpid()));
+}
+
+std::optional<double> readLv2UiProbe (const std::filesystem::path& path)
+{
+    std::ifstream in (path);
+    double value = 0.0;
+    if (in >> value) return value;
+    return std::nullopt;
+}
+#endif
+
 std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_LV2
@@ -445,8 +470,11 @@ std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, Scenario
     (void) ctx;
     return ScenarioResult::skip ("built without native LV2 hosting");
    #else
-    static constexpr double kGain = 0.75;
+    static constexpr double kOpenGain = 0.75;
+    static constexpr double kLiveGain = 0.5;
+    static constexpr double kReopenGain = 0.375;
     static constexpr double kTolerance = 1.0e-4;
+    static constexpr int kSeedTimeoutMs = 3000;
 
     const auto fixture = ctx.fixture ("file_state.lv2");
     if (! fixture)
@@ -456,53 +484,97 @@ std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, Scenario
     if (strip == nullptr)
         return ScenarioResult::skip ("the console has no strip to drive");
 
+    const auto probe = lv2UiProbePath();
+    ctx.cleanup ([strip, probe]
+    {
+        strip->closeEditor();
+        strip->unloadNativePlugins();
+        strip->refreshInsertButton();
+        std::error_code ignored;
+        std::filesystem::remove (probe, ignored);
+    });
+
+    // The file-state plug-in is the one the fixture bundle gives a UI.
     std::string error;
-    if (! strip->loadNativeLv2 (*fixture, "urn:duskstudio:test:control-state", error))
+    if (! strip->loadNativeLv2 (*fixture, "urn:duskstudio:test:file-state", error))
         return ScenarioResult::fail ("the fixture did not load: " + error);
     strip->refreshInsertButton();
 
     auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeLv2Slot();
-    bool moved = false;
+    std::optional<std::uint32_t> gainPort;
     for (int i = 0; i < slot.paramCount(); ++i)
         if (const auto* info = slot.paramInfo (i); info != nullptr && info->name == "Gain")
-        {
-            slot.setParamValue (info->id, kGain);
-            moved = true;
-        }
-    if (! moved)
-    {
-        strip->unloadNativePlugins();
+            gainPort = info->id;
+    if (! gainPort)
         return ScenarioResult::fail ("the fixture exposes no Gain control");
+    const auto gain = *gainPort;
+    slot.setParamValue (gain, kOpenGain);
+
+    {
+        std::ofstream create (probe, std::ios::trunc);
+        if (! create)
+            return ScenarioResult::fail ("could not create the editor probe file");
     }
-    ctx.later (200, [&ctx, &host, strip]
+
+    const auto seeded = [probe] (double expected)
+    {
+        return [probe, expected]
+        {
+            const auto shown = readLv2UiProbe (probe);
+            return shown && std::abs (*shown - expected) < kTolerance;
+        };
+    };
+
+    ctx.later (200, [&ctx, &host, &slot, strip, gain, seeded]
     {
         if (! strip->openEditor())
         {
             dismissAlert (host);
-            strip->unloadNativePlugins();
-            strip->refreshInsertButton();
-            // The fixture declares no ui:ui, so lilv finds nothing to embed and
-            // the host says so instead of showing an empty panel.
-            ctx.complete (ScenarioResult::skip (
-                "the control-state fixture ships no plug-in UI to open"));
+            if (host.canEmbedPluginEditors())
+            {
+               #if defined (__linux__)
+                ctx.complete (ScenarioResult::fail (
+                    "the fixture's X11 UI did not open on a display that embeds editors"));
+               #else
+                ctx.complete (ScenarioResult::skip (
+                    "the fixture's only UI is an X11 widget, built on Linux alone"));
+               #endif
+            }
+            else
+            {
+                ctx.complete (ScenarioResult::skip (
+                    "this display cannot embed a plug-in editor"));
+            }
             return;
         }
 
-        ctx.later (400, [&ctx, &host, strip]
-        {
-            double shown = 0.0;
-            if (ctx.expect (strip->readEditorControl ("Gain", shown),
-                            "the open editor reported no Gain control"))
-                ctx.expect (std::abs (shown - kGain) < kTolerance,
-                            "the editor shows " + std::to_string (shown)
-                                + " where the plug-in holds " + std::to_string (kGain));
+        ctx.waitUntil (seeded (kOpenGain), kSeedTimeoutMs,
+            [&ctx, &slot, strip, gain, seeded]
+            {
+                double held = 0.0;
+                if (ctx.expect (strip->readEditorControl ("Gain", held),
+                                "the open editor reported no Gain control"))
+                    ctx.expect (std::abs (held - kOpenGain) < kTolerance,
+                                "opening the editor moved the plug-in's Gain to "
+                                    + std::to_string (held));
 
-            strip->closeEditor();
-            strip->unloadNativePlugins();
-            strip->refreshInsertButton();
-            ctx.expect (host.modalStackEmpty(), "the run left a modal up");
-            ctx.complete (ctx.verdict());
-        });
+                slot.setParamValue (gain, kLiveGain);
+                ctx.waitUntil (seeded (kLiveGain), kSeedTimeoutMs,
+                    [&ctx, &slot, strip, gain, seeded]
+                    {
+                        strip->closeEditor();
+                        ctx.expect (! strip->hasOpenEditor(), "the editor did not close");
+                        slot.setParamValue (gain, kReopenGain);
+                        ctx.later (200, [&ctx, strip, seeded]
+                        {
+                            if (! ctx.expect (strip->openEditor(), "the editor did not reopen"))
+                            { ctx.complete (ctx.verdict()); return; }
+                            ctx.waitUntil (seeded (kReopenGain), kSeedTimeoutMs,
+                                [&ctx] { ctx.complete (ctx.verdict()); },
+                                "the reopened editor was not seeded with the Gain set while it was closed");
+                        });
+                    }, "a Gain change made while the editor was open did not reach it");
+            }, "the editor did not open showing the plug-in's live Gain");
     });
     return std::nullopt;
    #endif
@@ -1227,6 +1299,10 @@ std::optional<ScenarioResult> runTimelineKeys (GuiHost& host, ScenarioContext& c
         session.track (i).midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
         session.setTrackArmed (i, false);
     }
+    // Arming every track to overflow the rows needs an input for each: track N
+    // follows input N, and Session refuses to arm one the device does not offer.
+    ctx.keep (session.deviceCaptureChannels);
+    session.deviceCaptureChannels.store (Session::kNumTracks);
     AudioRegion region;
     region.lengthInSamples = (std::int64_t) engine.getCurrentSampleRate() * 30;
     session.track (0).regions.push_back (region);
@@ -1277,8 +1353,15 @@ std::optional<ScenarioResult> runTimelineKeys (GuiHost& host, ScenarioContext& c
     { ctx.expect (view()[3] < 0.5, "T did not hide timeline"); key ("T", 't'); } });
     steps->push_back ({ 100, [&ctx, view]
     { ctx.expect (view()[3] > 0.5, "T did not restore timeline"); } });
-    steps->push_back ({ 100, [&session]
-    { for (int i = 0; i < Session::kNumTracks; ++i) session.setTrackArmed (i, true); } });
+    steps->push_back ({ 100, [&session, &ctx]
+    {
+        for (int i = 0; i < Session::kNumTracks; ++i)
+        {
+            session.setTrackArmed (i, true);
+            ctx.expect (session.track (i).recordArmed.load(),
+                        "track " + std::to_string (i + 1) + " would not arm");
+        }
+    } });
     steps->push_back ({ 300, [&host, &ctx, view, beforeWheel]
     {
         for (int i = 0; i < 8; ++i) host.tapeWheel (0.6f, 1.0f, true, true);
@@ -5060,7 +5143,7 @@ std::optional<ScenarioResult> runStageAudioFlow (GuiHost& host, ScenarioContext&
     ctx.keep (track.strip.mute);
     engine.stop();
     const auto rate = engine.getCurrentSampleRate();
-    const auto frames = static_cast<std::int64_t> (rate * 5.0);
+    const auto frames = static_cast<std::int64_t> (rate * 15.0);
     std::vector<float> samples ((size_t) frames);
     for (std::int64_t i = 0; i < frames; ++i)
         samples[(size_t) i] = 0.125f * static_cast<float> (std::sin (6.283185307179586 * 440.0 * static_cast<double> (i) / rate));
@@ -5086,37 +5169,67 @@ std::optional<ScenarioResult> runStageAudioFlow (GuiHost& host, ScenarioContext&
     host.switchToStage (GuiHost::Stage::Recording);
     engine.getTransport().setPlayhead (0);
     engine.play();
-    auto previousPosition = std::make_shared<std::int64_t> (0);
-    auto overruns = std::make_shared<int> (0);
-    auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 300, [&engine, overruns] { *overruns = engine.getXRunCount(); } });
-    for (auto stage : { GuiHost::Stage::Mixing, GuiHost::Stage::Aux, GuiHost::Stage::Recording,
-                        GuiHost::Stage::Aux, GuiHost::Stage::Mixing, GuiHost::Stage::Recording })
+    struct Flow
     {
-        steps->push_back ({ 100, [&host, &ctx, stage]
-        { ctx.expect (host.clickStage (stage), "the stage button was not visible"); } });
-        steps->push_back ({ 150, [&ctx, &engine, previousPosition, overruns, stage]
+        std::int64_t position = 0;
+        int overruns = 0;
+    };
+    auto flow = std::make_shared<Flow>();
+    // The strip resets its output meter to -100 dB when it starts a block and
+    // publishes the peak when it finishes, so a read from this thread that
+    // lands inside a block sees silence while the tone plays on. The tone
+    // still has to show within the deadline, with the transport rolling,
+    // after every switch.
+    static constexpr int kSettleMs = 150;
+    static constexpr int kToneDeadlineMs = 1500;
+    auto run = std::make_shared<std::function<void (std::size_t)>>();
+    std::weak_ptr<std::function<void (std::size_t)>> weakRun = run;
+    *run = [&host, &ctx, &engine, flow, weakRun] (std::size_t index)
+    {
+        constexpr std::array<GuiHost::Stage, 6> stages { GuiHost::Stage::Mixing, GuiHost::Stage::Aux,
+                                                        GuiHost::Stage::Recording, GuiHost::Stage::Aux,
+                                                        GuiHost::Stage::Mixing, GuiHost::Stage::Recording };
+        if (index == stages.size()) { ctx.complete (ctx.verdict()); return; }
+        const auto stage = stages[index];
+        if (! ctx.expect (host.clickStage (stage), "the stage button was not visible"))
+        { ctx.complete (ctx.verdict()); return; }
+        ctx.later (kSettleMs, [&ctx, &engine, flow, stage, index, next = weakRun.lock()]
         {
-            const auto expected = stage == GuiHost::Stage::Recording ? AudioEngine::Stage::Recording
-                                : stage == GuiHost::Stage::Mixing ? AudioEngine::Stage::Mixing
-                                : AudioEngine::Stage::Aux;
-            ctx.expect (engine.getStage() == expected, "the stage button did not switch stages");
-            ctx.expect (engine.getTransport().isPlaying(), "switching stages stopped playback");
-            const auto at = engine.getTransport().getPlayhead();
-            ctx.expect (at > *previousPosition, "playback did not advance across a stage switch");
-            *previousPosition = at;
-            ctx.expect (engine.getChannelStrip (0).getOutLDb() > -30.0f,
-                        "the playback tone fell silent across a stage switch");
-            ctx.expect (engine.getXRunCount() == *overruns, "a stage switch caused an engine overrun");
-        } });
-    }
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+            ctx.waitUntil ([&engine]
+                           {
+                               return ! engine.getTransport().isPlaying()
+                                   || engine.getChannelStrip (0).getOutLDb() > -30.0f;
+                           },
+                           kToneDeadlineMs,
+                [&ctx, &engine, flow, stage, index, next]
+                {
+                    auto& transport = engine.getTransport();
+                    const auto expected = stage == GuiHost::Stage::Recording ? AudioEngine::Stage::Recording
+                                        : stage == GuiHost::Stage::Mixing ? AudioEngine::Stage::Mixing
+                                        : AudioEngine::Stage::Aux;
+                    ctx.expect (engine.getStage() == expected, "the stage button did not switch stages");
+                    if (! ctx.expect (transport.isPlaying(), "switching stages stopped playback"))
+                    { ctx.complete (ctx.verdict()); return; }
+                    const auto at = transport.getPlayhead();
+                    ctx.expect (at > flow->position, "playback did not advance across a stage switch");
+                    flow->position = at;
+                    ctx.expect (engine.getXRunCount() == flow->overruns,
+                                "a stage switch caused an engine overrun");
+                    ctx.later (100, [next, index] { (*next) (index + 1); });
+                }, "the playback tone fell silent across a stage switch");
+        });
+    };
+    ctx.later (300, [&engine, flow, run]
+    {
+        flow->overruns = engine.getXRunCount();
+        (*run) (0);
+    });
     return std::nullopt;
 }
 
 const ScenarioRegistrar stageAudioFlow { Scenario {
     "gui.stage_audio_flow", { "gui", "transport" }, Needs::Engine | Needs::Gui,
-    {}, {}, 10000,
+    {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runStageAudioFlow (host, ctx); }
 } };
 
