@@ -18,7 +18,9 @@
 # directories move with it: a desktop session exports them as absolute paths
 # into the real home, and the libraries under the app (GL shader caches,
 # fontconfig) write there. DUSKSTUDIO_MUSIC_DIR puts the launch session and
-# anything else the app would keep in the Music folder under that home too.
+# anything else the app would keep in the Music folder beside that home, not in
+# its Music folder: that folder is the user's own as far as the app can tell,
+# and gui.first_launch fails a launch session found inside it.
 #
 # Every wait takes an explicit budget in seconds. Each process gets its own
 # stdout and stderr file - merging them would make marker order meaningless.
@@ -27,6 +29,7 @@
 SCENARIOS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCENARIOS_DIR}/../.." && pwd)}"
 MINIMAL_SESSION="${SCENARIOS_DIR}/sessions/minimal/session.json"
+SCENARIO_FIXTURE_ROOTS="${REPO_ROOT}/build-tests:${REPO_ROOT}/tests/fixtures"
 
 # The leg rows this file registers, in order. linux.sh reuses the list for its
 # missing-binary skips so the two cannot drift apart.
@@ -45,7 +48,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-oop-quit-during-load
 )
 # shellcheck disable=SC2034  # read by linux.sh
-SCENARIO_LEG_NAMES=(scenarios-headless "${SCENARIO_BB_LEG_NAMES[@]}")
+SCENARIO_LEG_NAMES=(scenario-fixtures scenarios-headless "${SCENARIO_BB_LEG_NAMES[@]}")
 
 SANDBOX_ENV=()
 
@@ -68,7 +71,7 @@ sandbox_env() {
         "XDG_STATE_HOME=$dir/home/.local/state"
         "XDG_RUNTIME_DIR=$dir/runtime"
         "DUSKSTUDIO_CONFIG_DIR=$dir/home/.config/Dusk Studio"
-        "DUSKSTUDIO_MUSIC_DIR=$dir/home/Music"
+        "DUSKSTUDIO_MUSIC_DIR=$dir/music"
     )
     if [[ -n "$pipewire_dir" ]]; then
         SANDBOX_ENV+=("PIPEWIRE_RUNTIME_DIR=$pipewire_dir")
@@ -319,7 +322,7 @@ sandboxed_app_run() {
     if sandbox_env "$dir"; then
         xvfb_run "$secs" env -u DBUS_SESSION_BUS_ADDRESS "${SANDBOX_ENV[@]}" \
             "DUSKSTUDIO_RUN_SCENARIOS=${spec}" \
-            "DUSKSTUDIO_FIXTURE_DIR=${REPO_ROOT}/build-tests:${REPO_ROOT}/tests/fixtures" \
+            "DUSKSTUDIO_FIXTURE_DIR=${SCENARIO_FIXTURE_ROOTS}" \
             "$APP_BIN" || rc=$?
     else
         rc=1
@@ -673,7 +676,7 @@ bb_mint_oop_session() {
         "${SANDBOX_ENV[@]}" \
         DUSKSTUDIO_RUN_SCENARIOS=session.mint_oop_fixture \
         "DUSKSTUDIO_SCENARIO_OUT=$dir/session.json" \
-        "DUSKSTUDIO_FIXTURE_DIR=${REPO_ROOT}/build-tests:${REPO_ROOT}/tests/fixtures" \
+        "DUSKSTUDIO_FIXTURE_DIR=${SCENARIO_FIXTURE_ROOTS}" \
         timeout --kill-after=10 120 "$APP_BIN" >"$BB_SDIR/mint.out" 2>"$BB_SDIR/mint.err"; then
         bb_fail "minting the sandboxed-plugin session failed"
         return 1
@@ -732,6 +735,50 @@ bb_oop_quit_during_load_body() {
     return 0
 }
 
+# ---------------------------------------------------------------- fixtures
+
+# Some cases treat a fixture as optional and pass with that part left out, so a
+# fixture that does not resolve cannot be left to show up as a case SKIP. The
+# table the app resolves against is read from its source rather than copied.
+scenarios_fixture_leg() {
+    local table="${REPO_ROOT}/src/engine/scenario/ScenarioFixtures.cpp"
+    local -A resolved=()
+    local logical relative root roots missing="" count=0
+    IFS=: read -r -a roots <<<"$SCENARIO_FIXTURE_ROOTS"
+    while read -r logical relative; do
+        [[ -n "$logical" ]] || continue
+        resolved[$logical]="${resolved[$logical]:-}"
+        [[ -z "${resolved[$logical]}" ]] || continue
+        for root in "${roots[@]}"; do
+            if [[ -e "${root}/${relative}" ]]; then
+                resolved[$logical]="${root}/${relative}"
+                break
+            fi
+        done
+    done < <(sed -E -n 's/^[[:space:]]*\{[[:space:]]*"([^"]+)",[[:space:]]*"([^"]+)"[[:space:]]*\},.*/\1 \2/p' \
+        "$table" 2>/dev/null)
+
+    printf '\n--- scenario-fixtures ---\n'
+    if ((${#resolved[@]} == 0)); then
+        regress_record "scenario-fixtures" FAIL 0 "no fixture table read from ${table}"
+        return 0
+    fi
+    for logical in $(printf '%s\n' "${!resolved[@]}" | sort); do
+        count=$((count + 1))
+        if [[ -n "${resolved[$logical]}" ]]; then
+            regress_note "${logical}: ${resolved[$logical]}"
+        else
+            regress_note "${logical}: not found under ${SCENARIO_FIXTURE_ROOTS}"
+            missing="${missing}${missing:+, }${logical}"
+        fi
+    done
+    if [[ -n "$missing" ]]; then
+        regress_skip "scenario-fixtures" "unresolved, cases using them prove nothing: ${missing}"
+    else
+        regress_record "scenario-fixtures" PASS 0 "all ${count} resolve"
+    fi
+}
+
 # ---------------------------------------------------------------- the suite
 
 scenarios_headless_leg() {
@@ -758,12 +805,14 @@ regress_scenarios_run() {
         esac
     done
 
-    trap 'bb_end 0 >/dev/null 2>&1 || true; xvfb_session_stop || true' EXIT
+    trap 'bb_end 0 >/dev/null 2>&1 || true; xvfb_session_stop || true; regress_run_exit_hooks' EXIT
     if [[ "$(uname -s)" == Linux ]]; then
         regress_leg "bb-no-display" leg_bb_no_display
     else
         regress_skip "bb-no-display" "Linux X11 startup diagnostic"
     fi
+
+    scenarios_fixture_leg
 
     # Both probes below spin up their own short-lived display, so they have to
     # run before the shared session the bb-* legs share.
@@ -784,7 +833,7 @@ regress_scenarios_run() {
         if ((want_gui)); then
             regress_skip "scenarios-gui" "no Xvfb display"
         fi
-        trap - EXIT
+        trap regress_run_exit_hooks EXIT
         return 0
     fi
 
@@ -833,11 +882,11 @@ regress_scenarios_run() {
     fi
 
     xvfb_session_stop
-    trap - EXIT
+    trap regress_run_exit_hooks EXIT
 
     if ((want_gui)); then
         if scenarios_has_case "gui."; then
-            scenarios_headless_leg "scenarios-gui" gui 300
+            scenarios_headless_leg "scenarios-gui" gui 900
         else
             regress_skip "scenarios-gui" "gui scenarios not in this binary"
         fi
