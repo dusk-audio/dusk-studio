@@ -5511,9 +5511,11 @@ std::optional<ScenarioResult> runMeterClip (GuiHost& host, ScenarioContext& ctx)
     engine.getTransport().setPlayhead (0);
     engine.play();
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 300, [&host, &engine, &ctx]
+    steps->push_back ({ 300, [&host, &engine, &ctx, &track]
     {
-        ctx.expect (engine.getChannelStrip (0).getOutLDb() > 0.0f, "fixture did not cross 0 dBFS");
+        // The session copy, published after each block like the meters read
+        // it: the strip's own value reads silence while a block is running.
+        ctx.expect (track.meterOutLDb.load (std::memory_order_relaxed) > 0.0f, "fixture did not cross 0 dBFS");
         ctx.expect (host.meterClip (0), "overload did not light the red clip bar");
         engine.stop();
     } });
