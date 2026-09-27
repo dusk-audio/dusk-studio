@@ -12,7 +12,11 @@ constexpr const char* kPluginId = "studio.dusk.test.latency";
 constexpr const char* kFeatures[] = { CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
                                       CLAP_PLUGIN_FEATURE_STEREO, nullptr };
 
-constexpr clap_id kLookAheadId = 7;
+constexpr clap_id kLookAheadId       = 7;
+constexpr clap_id kAskInActivateId   = 8;
+constexpr clap_id kAskEveryBlockId   = 9;
+constexpr clap_id kRefuseActivateId  = 10;
+constexpr clap_id kActivationsId     = 11;
 
 const clap_plugin_descriptor_t kDescriptor {
     CLAP_VERSION_INIT,
@@ -30,6 +34,10 @@ const clap_plugin_descriptor_t kDescriptor {
 // A look-ahead limiter in miniature. Its latency may only change inside
 // activate(), so a new look-ahead set while it runs is held until the host
 // restarts it, and process() asks for that restart.
+//
+// Three switches make it misbehave the ways a host has to survive: asking for
+// a restart from inside activate(), asking on every block, and refusing to
+// activate again. A read-only counter reports how often activate() ran.
 struct Instance
 {
     clap_plugin_t plugin {};
@@ -37,7 +45,28 @@ struct Instance
     double lookAhead = 0.0;
     uint32_t activeLatency = 0;
     bool restartWanted = false;
+    bool askInActivate = false;
+    bool askEveryBlock = false;
+    bool refuseActivate = false;
+    uint32_t activations = 0;
 };
+
+struct ParamRow
+{
+    clap_id id;
+    const char* name;
+    double maxValue;
+    bool readOnly;
+};
+
+constexpr ParamRow kParamRows[] = {
+    { kLookAheadId,      "Look-ahead",        4096.0,     false },
+    { kAskInActivateId,  "Ask in activate",   1.0,        false },
+    { kAskEveryBlockId,  "Ask every block",   1.0,        false },
+    { kRefuseActivateId, "Refuse activation", 1.0,        false },
+    { kActivationsId,    "Activations",       1000000.0,  true  },
+};
+constexpr uint32_t kNumParams = sizeof (kParamRows) / sizeof (kParamRows[0]);
 
 Instance& self (const clap_plugin_t* plugin)
 {
@@ -69,27 +98,37 @@ uint32_t CLAP_ABI latencyGet (const clap_plugin_t* plugin)
 
 const clap_plugin_latency_t kLatency { latencyGet };
 
-uint32_t CLAP_ABI paramCount (const clap_plugin_t*) { return 1; }
+uint32_t CLAP_ABI paramCount (const clap_plugin_t*) { return kNumParams; }
 
 bool CLAP_ABI paramGetInfo (const clap_plugin_t*, uint32_t index, clap_param_info_t* info)
 {
-    if (index != 0 || info == nullptr) return false;
+    if (index >= kNumParams || info == nullptr) return false;
+    const auto& row = kParamRows[index];
     *info = {};
-    info->id = kLookAheadId;
-    info->flags = CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_STEPPED;
-    std::snprintf (info->name, sizeof (info->name), "%s", "Look-ahead");
+    info->id = row.id;
+    info->flags = CLAP_PARAM_IS_STEPPED
+                | (row.readOnly ? CLAP_PARAM_IS_READONLY : CLAP_PARAM_IS_AUTOMATABLE);
+    std::snprintf (info->name, sizeof (info->name), "%s", row.name);
     std::snprintf (info->module, sizeof (info->module), "%s", "");
     info->min_value = 0.0;
-    info->max_value = 4096.0;
+    info->max_value = row.maxValue;
     info->default_value = 0.0;
     return true;
 }
 
 bool CLAP_ABI paramGetValue (const clap_plugin_t* plugin, clap_id id, double* out)
 {
-    if (id != kLookAheadId || out == nullptr) return false;
-    *out = self (plugin).lookAhead;
-    return true;
+    if (out == nullptr) return false;
+    const auto& instance = self (plugin);
+    switch (id)
+    {
+        case kLookAheadId:      *out = instance.lookAhead; return true;
+        case kAskInActivateId:  *out = instance.askInActivate ? 1.0 : 0.0; return true;
+        case kAskEveryBlockId:  *out = instance.askEveryBlock ? 1.0 : 0.0; return true;
+        case kRefuseActivateId: *out = instance.refuseActivate ? 1.0 : 0.0; return true;
+        case kActivationsId:    *out = (double) instance.activations; return true;
+        default:                return false;
+    }
 }
 
 bool CLAP_ABI paramValueToText (const clap_plugin_t*, clap_id, double value,
@@ -118,19 +157,33 @@ void readInputEvents (Instance& instance, const clap_input_events_t* events)
             || header->type != CLAP_EVENT_PARAM_VALUE)
             continue;
         const auto* event = reinterpret_cast<const clap_event_param_value_t*> (header);
-        if (event->param_id != kLookAheadId) continue;
-        instance.lookAhead = event->value;
-        if ((uint32_t) event->value != instance.activeLatency)
-            instance.restartWanted = true;
+        const bool on = event->value >= 0.5;
+        switch (event->param_id)
+        {
+            case kLookAheadId:
+                instance.lookAhead = event->value;
+                if ((uint32_t) event->value != instance.activeLatency)
+                    instance.restartWanted = true;
+                break;
+            case kAskInActivateId:  instance.askInActivate  = on; break;
+            case kAskEveryBlockId:  instance.askEveryBlock  = on; break;
+            case kRefuseActivateId: instance.refuseActivate = on; break;
+            default: break;
+        }
     }
+}
+
+void requestRestart (const Instance& instance)
+{
+    if (instance.host != nullptr && instance.host->request_restart != nullptr)
+        instance.host->request_restart (instance.host);
 }
 
 void askForRestart (Instance& instance)
 {
-    if (! instance.restartWanted) return;
+    if (! instance.restartWanted && ! instance.askEveryBlock) return;
     instance.restartWanted = false;
-    if (instance.host != nullptr && instance.host->request_restart != nullptr)
-        instance.host->request_restart (instance.host);
+    requestRestart (instance);
 }
 
 void CLAP_ABI paramFlush (const clap_plugin_t* plugin, const clap_input_events_t* in,
@@ -151,6 +204,11 @@ void CLAP_ABI pluginDestroy (const clap_plugin_t* plugin) { delete static_cast<I
 bool CLAP_ABI pluginActivate (const clap_plugin_t* plugin, double, uint32_t, uint32_t)
 {
     auto& instance = self (plugin);
+    ++instance.activations;
+    if (instance.askInActivate)
+        requestRestart (instance);
+    if (instance.refuseActivate)
+        return false;
     const auto latency = (uint32_t) instance.lookAhead;
     if (latency == instance.activeLatency) return true;
     instance.activeLatency = latency;

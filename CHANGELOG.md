@@ -216,10 +216,18 @@ publishes.
   minutes, the open failed with CoreAudio error 10004003 and the app came up
   with no audio device at all. A first launch now opens the output alone and
   asks for microphone access separately, so playback works at once. **Allow**
-  adds the input. **Don't Allow** leaves the input out instead of recording
-  silence, and the transport bar says microphone access is off and where to
-  turn it on. Whenever an output fails only because of the input it was
-  paired with, it now opens on its own.
+  adds the input straight away when nothing is playing, recording or
+  bouncing and no device was picked in Settings > Audio while the prompt was
+  up; otherwise the input is chosen there. **Don't Allow** leaves the input
+  out instead of recording silence, and the transport bar says microphone
+  access is off and where to turn it on. At startup, an output that fails
+  only because of the input it was paired with now opens on its own.
+- **A PipeWire device reports only the inputs it has.** It reported as many
+  input channels as it was asked for, and two when it opened with no capture
+  device at all, so ARM accepted tracks on inputs that were not there, they
+  recorded silence, and the "No input device" notice stayed away. It now
+  reports the capture device's own channels, and none without one, as ALSA
+  already did.
 - **Clean out refuses while a take is recording** (#743). The take's file has
   no region until you stop, so Clean out listed it and deleted it. Clean out
   now asks you to stop recording first, both when you choose it and again when
@@ -631,10 +639,14 @@ publishes.
   when the device changed, at a save and at Re-enable, so raising a look-ahead
   limiter's look-ahead mid-session left its track out of line with the rest
   until one of those came round. The slot now listens for the plug-in's own
-  announcement, on whichever thread it makes it, and compensation follows
-  within a thirtieth of a second. A native CLAP plug-in that asks to be
-  restarted for a new latency is now restarted, where the request used to be
-  ignored. A plug-in in the out-of-process sandbox still keeps the latency it
+  announcement, on whichever thread it makes it, and re-reads the latency
+  within a thirtieth of a second; each track's compensation then moves to the
+  new value at that track's next silence. A native CLAP plug-in that asks to
+  be restarted for a new latency is now restarted, where the request used to
+  be ignored. A native VST3 or CLAP restart waits for the end of a take
+  rather than cut a gap into it, and a plug-in that keeps asking is restarted
+  at most twice a second, then held back until it stops, with one line in
+  the log. A plug-in in the out-of-process sandbox still keeps the latency it
   reported when it loaded.
 - **A render that cannot open its file leaves it alone** (#763). A Mixdown,
   Bounce..., Bounce stems..., Export master... or freeze whose file already

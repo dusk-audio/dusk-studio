@@ -73,4 +73,20 @@ public:
 private:
     std::uint64_t bits = 0;
 };
+
+// The channels of `requested` that a device with `deviceChannels` channels
+// has. A request naming only channels past the end (a saved mask from a wider
+// device) falls back to the first pair, so a direction that was asked for
+// still opens; a device with no channels in that direction gets none.
+inline ChannelSet clampToChannelCount (const ChannelSet& requested, int deviceChannels) noexcept
+{
+    const int width = deviceChannels < ChannelSet::kMaxChannels ? deviceChannels
+                                                                : ChannelSet::kMaxChannels;
+    ChannelSet clamped;
+    for (int i = 0; i < width; ++i)
+        if (requested[i]) clamped.setBit (i);
+    if (clamped.isZero() && ! requested.isZero())
+        clamped.setRange (0, width < 2 ? width : 2, true);
+    return clamped;
+}
 } // namespace duskstudio::device

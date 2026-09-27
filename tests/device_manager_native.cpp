@@ -476,6 +476,39 @@ TEST_CASE ("First launch: an input added after outputs alone gets its channels",
     CHECK (dm.getStateBlob().empty());
 }
 
+// The engine asks for 16 inputs and arms tracks against the width the device
+// reports back. PipeWire, like this mock, reports the mask it was handed, so
+// the manager itself must not hand a two-input device sixteen: ARM on In 3
+// has to stay refused.
+TEST_CASE ("First launch: the input opens at the device's own width",
+           "[audio][device]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h;
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+    REQUIRE (dm.initialise (0, 2, "", /*selectDefaultOnFailure*/ true).empty());
+
+    const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-default", 16);
+    REQUIRE (result.error.empty());
+    auto* device = dm.getCurrentDevice();
+    REQUIRE (device != nullptr);
+    CHECK (device->getActiveInputChannels().count() == 2);
+    CHECK (dm.getSetup().inputChannels.count() == 2);
+
+    SECTION ("a named output mask is held to the device's outputs too")
+    {
+        auto setup = dm.getSetup();
+        setup.useDefaultOutputChannels = false;
+        setup.outputChannels.clear();
+        setup.outputChannels.setRange (0, 8, true);
+        REQUIRE (dm.setSetup (setup, /*treatAsChosen*/ false).empty());
+        REQUIRE (dm.getCurrentDevice() != nullptr);
+        CHECK (dm.getCurrentDevice()->getActiveOutputChannels().count() == 2);
+        CHECK (dm.getCurrentDevice()->getActiveInputChannels().count() == 2);
+    }
+}
+
 TEST_CASE ("DeviceManager reads backend identity from saved device state", "[audio][device]")
 {
     DeviceManager dm;

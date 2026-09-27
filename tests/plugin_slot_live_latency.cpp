@@ -3,12 +3,16 @@
 #include "engine/PdcMath.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
+#include "foundation/MessageThread.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <thread>
+#include <utility>
+#include <vector>
 
 using namespace duskstudio;
 
@@ -82,10 +86,10 @@ struct Harness
     PluginSlot slot;
     LookAheadPluginInstance* plugin = nullptr;
 
-    explicit Harness (int latency)
+    explicit Harness (int latency, int blockSize = kBlock)
     {
         slot.setManager (manager);
-        slot.prepareToPlay (kRate, kBlock);
+        slot.prepareToPlay (kRate, blockSize);
         auto instance = std::make_unique<LookAheadPluginInstance>();
         plugin = instance.get();
         plugin->latencyOnPrepare = latency;
@@ -111,7 +115,52 @@ struct Harness
         return compensation[1];
     }
 };
+
+#if ! defined (__APPLE__)
+// Runs the dispatch loop until `done` holds or the deadline passes. This JUCE
+// build has no runDispatchLoopUntil, and stopDispatchLoop latches the quit flag
+// for the life of the MessageManager, so a test gets exactly one pump.
+struct LoopStopper final : dusk::Timer
+{
+    std::function<bool()> done;
+    std::chrono::steady_clock::time_point deadline;
+
+    void timerCallback() override
+    {
+        if (! done() && std::chrono::steady_clock::now() < deadline) return;
+        stopTimer();
+        juce::MessageManager::getInstance()->stopDispatchLoop();
+    }
+};
+
+void pumpUntil (std::function<bool()> done, std::chrono::milliseconds timeout)
+{
+    LoopStopper stopper;
+    stopper.done = std::move (done);
+    stopper.deadline = std::chrono::steady_clock::now() + timeout;
+    stopper.startTimer (10);
+    juce::MessageManager::getInstance()->runDispatchLoop();
+}
+#endif
 } // namespace
+
+#if ! defined (__APPLE__)
+// In the running app nothing calls refreshLatencyIfChanged but the slot's own
+// 30 Hz timer, so that timer is what carries a plug-in's announcement to PDC.
+TEST_CASE ("the slot's own timer re-reads a latency the plugin announces",
+           "[plugin][latency][pdc][issue-764]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h (64);
+    h.plugin->setLatencySamples (320);
+    REQUIRE (h.slot.getLatencySamples() == 64);
+
+    pumpUntil ([&h] { return h.slot.getLatencySamples() == 320; }, std::chrono::seconds (5));
+
+    CHECK (h.slot.getLatencySamples() == 320);
+    CHECK (h.otherTrackDelay() == 320);
+}
+#endif
 
 // Raising a look-ahead in the plug-in's editor changes its latency on the
 // message thread. Delay compensation has to follow while the plug-in runs,
@@ -190,24 +239,30 @@ TEST_CASE ("an unloaded plugin's latency changes do not reach the slot",
 // message thread follows it. Under ThreadSanitizer this shows the message
 // thread's read of the plug-in's latency is ordered against the blocks that
 // write it.
+//
+// The blocks are large because the slot's time-budget watchdog measures each
+// block against its own length: at 64 samples a few preempted blocks (under
+// ThreadSanitizer or a parallel ctest) read as a plug-in overrunning, and the
+// slot bypasses it before the latency has finished moving.
 TEST_CASE ("the slot follows a latency the plugin keeps changing on the audio thread",
            "[plugin][latency][pdc][issue-764]")
 {
     using namespace std::chrono_literals;
     constexpr int kSteps = 200;
+    constexpr int kLargeBlock = 4096;
 
-    Harness h (64);
+    Harness h (64, kLargeBlock);
     h.plugin->latencySteps = kSteps;
 
     std::atomic<bool> stop { false };
     std::thread audioThread ([&h, &stop]
     {
-        float left[kBlock] {};
-        float right[kBlock] {};
+        std::vector<float> left ((size_t) kLargeBlock, 0.0f);
+        std::vector<float> right ((size_t) kLargeBlock, 0.0f);
         juce::MidiBuffer midi;
         while (! stop.load (std::memory_order_relaxed))
         {
-            h.slot.processStereoBlock (left, right, kBlock, midi);
+            h.slot.processStereoBlock (left.data(), right.data(), kLargeBlock, midi);
             std::this_thread::yield();
         }
     });

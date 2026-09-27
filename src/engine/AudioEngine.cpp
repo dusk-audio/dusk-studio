@@ -10,6 +10,7 @@
 #include "TransportSnapshot.h"
 #include "device/DefaultInputChoice.h"
 #include "hosting/NativeStateIdentity.h"
+#include "hosting/RestartPacer.h"
 #include "../dsp/OutputPairRouting.h"
 #include "McuReceiver.h"
 #include "McuController.h"
@@ -534,10 +535,13 @@ public:
         // an active CLAP plug-in announces a new latency), all need a
         // deactivate / activate cycle. Keep every flagged instance under one
         // engine fence while it rebuilds its process arrays and the slot
-        // rebuilds its adapter.
+        // rebuilds its adapter. Each slot's RestartPacer decides when: held
+        // through a take, and spaced out for a plug-in that keeps asking.
         bool anyReactivated = false;
         const double sr    = engine.getCurrentSampleRate();
         const int    block = engine.getCurrentBlockSize();
+        const bool holdForTake = engine.transport.isRecording()
+                                 || engine.recordManager.isActive();
         // Deferred while an offline bounce drives the callback: the
         // suspendProcessing below would gate the render into silent blocks.
         // The flags stay set, so the cycle runs on the first tick after the
@@ -545,44 +549,74 @@ public:
         if (sr > 0.0 && block > 0
             && ! engine.offlineRenderActive.load (std::memory_order_acquire))
         {
-            auto fenceAndReactivate = [&] (auto& slot, auto&& underFence)
+            // discardRaisedMeanwhile runs under the same fence, right after the
+            // cycle: a request the plug-in made from inside its own activation
+            // (or while it was being brought back) describes the state that
+            // activation has just read, and honouring it would restart the
+            // plug-in again on every tick.
+            auto service = [&] (auto& slot, hosting::RestartPacer& pacer, bool requested,
+                                const char* where, int index,
+                                auto&& underFence, auto&& discardRaisedMeanwhile)
             {
+                switch (pacer.tick (requested, holdForTake, slot.generation()))
+                {
+                    case hosting::RestartPacer::Action::None:
+                        return;
+                    case hosting::RestartPacer::Action::GaveUp:
+                        std::fprintf (stderr,
+                                      "[Dusk Studio/AudioEngine] %s %d: plug-in \"%s\" keeps "
+                                      "asking to be restarted; holding its restarts until "
+                                      "it stops asking.\n",
+                                      where, index + 1, slot.getPath().c_str());
+                        return;
+                    case hosting::RestartPacer::Action::Restart:
+                        break;
+                }
                 if (! anyReactivated) engine.suspendProcessing();
                 anyReactivated = true;
                 underFence();
                 std::string err;
                 if (! slot.reactivate (sr, block, err))
                     slot.quarantineAfterFailedReactivation();
+                discardRaisedMeanwhile();
             };
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-            auto cycleVst3 = [&] (auto& slot)
+            auto cycleVst3 = [&] (auto& slot, hosting::RestartPacer& pacer,
+                                  const char* where, int index)
             {
                 auto* inst = slot.getInstance();
                 if (inst == nullptr) return;
                 inst->refreshParamInfoIfChanged();
                 const bool latencyChanged = slot.consumeLatencyChanged();
-                if (! latencyChanged && ! inst->ioChangePending()) return;
                 // The pending I/O change holds processBlock off, so it is only
-                // cleared once the fence is up.
-                fenceAndReactivate (slot, [inst] { inst->consumeIoChanged(); });
+                // cleared once the fence is up. One raised during the cycle is
+                // kept: the buses it describes were not the ones just read.
+                service (slot, pacer, latencyChanged || inst->ioChangePending(), where, index,
+                         [inst] { inst->consumeIoChanged(); },
+                         [&slot] { (void) slot.consumeLatencyChanged(); });
             };
             for (int t = 0; t < Session::kNumTracks; ++t)
-                cycleVst3 (engine.getChannelStrip (t).getNativeVst3Slot());
+                cycleVst3 (engine.getChannelStrip (t).getNativeVst3Slot(),
+                           vst3TrackPacers[(size_t) t], "track", t);
             for (int a = 0; a < Session::kNumAuxLanes; ++a)
                 for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
-                    cycleVst3 (engine.getAuxLaneStrip (a).getNativeVst3Slot (s));
+                    cycleVst3 (engine.getAuxLaneStrip (a).getNativeVst3Slot (s),
+                               vst3AuxPacers[(size_t) a][(size_t) s], "aux lane", a);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-            auto cycleClap = [&] (auto& slot)
+            auto cycleClap = [&] (auto& slot, hosting::RestartPacer& pacer,
+                                  const char* where, int index)
             {
-                if (slot.consumeRestartRequest())
-                    fenceAndReactivate (slot, [] {});
+                service (slot, pacer, slot.consumeRestartRequest(), where, index,
+                         [] {}, [&slot] { (void) slot.consumeRestartRequest(); });
             };
             for (int t = 0; t < Session::kNumTracks; ++t)
-                cycleClap (engine.getChannelStrip (t).getNativeClapSlot());
+                cycleClap (engine.getChannelStrip (t).getNativeClapSlot(),
+                           clapTrackPacers[(size_t) t], "track", t);
             for (int a = 0; a < Session::kNumAuxLanes; ++a)
                 for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
-                    cycleClap (engine.getAuxLaneStrip (a).getNativeClapSlot (s));
+                    cycleClap (engine.getAuxLaneStrip (a).getNativeClapSlot (s),
+                               clapAuxPacers[(size_t) a][(size_t) s], "aux lane", a);
 #endif
             if (anyReactivated)
             {
@@ -607,6 +641,17 @@ public:
     }
 private:
     AudioEngine& engine;
+
+    using AuxPacers = std::array<std::array<hosting::RestartPacer, AuxLaneParams::kMaxLanePlugins>,
+                                 Session::kNumAuxLanes>;
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    std::array<hosting::RestartPacer, Session::kNumTracks> vst3TrackPacers;
+    AuxPacers vst3AuxPacers;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    std::array<hosting::RestartPacer, Session::kNumTracks> clapTrackPacers;
+    AuxPacers clapAuxPacers;
+#endif
 };
 
 AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
@@ -1792,10 +1837,17 @@ void AudioEngine::applyMicrophoneAnswer (bool granted, bool addFirstLaunchInput)
                   granted ? "allowed" : "refused");
     if (! granted || ! addFirstLaunchInput) return;
 
-    // Reopening the device mid-take, mid-playback or under a render would cut
-    // it off; the user can still pick the input in Settings > Audio then.
-    if (! transport.isStopped() || recordManager.isActive() || ! isAudioCallbackRegistered()
-        || ! device::hasWorkingOutput (deviceManager))
+    // A device the user chose while the prompt was up is theirs, input or no
+    // input; the startup fallback's own pick does not count as one.
+    if (! deviceFallbackHold_ && ! deviceManager.getStateBlob().empty())
+        return;
+
+    // Reopening the device mid-take, mid-playback (the mixer's or the
+    // mastering player's) or under a render would cut it off; the user can
+    // still pick the input in Settings > Audio then.
+    if (! transport.isStopped() || recordManager.isActive() || masteringPlayer.isPlaying()
+        || offlineRenderActive.load (std::memory_order_acquire)
+        || ! isAudioCallbackRegistered() || ! device::hasWorkingOutput (deviceManager))
         return;
     openFirstLaunchInput();
 }

@@ -89,6 +89,34 @@ TEST_CASE ("ChannelSet ignores out-of-range bits and round-trips raw()", "[devic
     REQUIRE (ChannelSet::fromRaw (cs.raw()) == cs);
 }
 
+// What the device manager and the PipeWire backend open: the engine asks for
+// 16 inputs, and a stereo device must report two, or tracks 3-16 can arm and
+// record silence.
+TEST_CASE ("clampToChannelCount keeps only the channels a device has", "[device][channelset]")
+{
+    ChannelSet sixteen;
+    sixteen.setRange (0, 16, true);
+    CHECK (clampToChannelCount (sixteen, 2).count() == 2);
+    CHECK (clampToChannelCount (sixteen, 2).highestSetBit() == 1);
+    CHECK (clampToChannelCount (sixteen, 24) == sixteen);
+
+    SECTION ("a request past the device's end falls back to its first pair")
+    {
+        ChannelSet upper;
+        upper.setRange (8, 2, true);
+        ChannelSet firstPair;
+        firstPair.setRange (0, 2, true);
+        CHECK (clampToChannelCount (upper, 4) == firstPair);
+        CHECK (clampToChannelCount (upper, 1).count() == 1);
+    }
+
+    SECTION ("a device with no channels in a direction opens none")
+    {
+        CHECK (clampToChannelCount (sixteen, 0).isZero());
+        CHECK (clampToChannelCount (ChannelSet {}, 8).isZero());
+    }
+}
+
 // Minimal implementations proving the three interfaces are complete +
 // implementable, standing in for the PipeWire / ALSA backends and the engine
 // callback that arrive in later phases.

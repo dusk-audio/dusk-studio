@@ -107,6 +107,7 @@ add_executable(dusk-studio-tests
     imgui_gl_loader_win32.cpp
     device_interfaces.cpp
     device_state_blob.cpp
+    restart_pacer.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/device/DeviceStateBlob.cpp
     # Native DeviceManager orchestrator (mock-backend suite). Compiled with
     # neither DUSKSTUDIO_HAS_PIPEWIRE nor DUSKSTUDIO_HAS_ALSA, so the owning
