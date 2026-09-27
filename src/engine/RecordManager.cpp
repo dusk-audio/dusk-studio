@@ -179,7 +179,7 @@ void RecordManager::waitForAudioThreadToLeave() const
     // waiting would lose the take. AudioEngine::stop raises the process gate
     // first, which drains the whole callback, so on that path this is zero at
     // once; the other stop paths wait out the rest of one call.
-    constexpr int kYieldPasses = 1000;
+    static constexpr int kYieldPasses = 1000;
     using Clock = std::chrono::steady_clock;
     auto nextReport = Clock::now() + std::chrono::seconds (1);
     int waitedSeconds = 0;

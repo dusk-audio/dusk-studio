@@ -263,8 +263,8 @@ Render renderTone (float amplitude, const std::vector<std::pair<const char*, flo
     for (const auto& [id, value] : settings)
         set (slot, id, value);
 
-    constexpr int warmBlocks = 60;
-    constexpr int measureBlocks = 20;
+    static constexpr int warmBlocks = 60;
+    static constexpr int measureBlocks = 20;
     Render render;
     double sum = 0.0;
     std::vector<float> l ((size_t) kBlock), r ((size_t) kBlock);
@@ -309,7 +309,7 @@ TEST_CASE ("tape unit Auto cal sets the bias itself and ignores the Bias knob", 
 
 TEST_CASE ("tape unit Auto comp holds the output level against the drive and overrides Output", "[builtin][tape]")
 {
-    constexpr float amplitude = 0.1f;
+    static constexpr float amplitude = 0.1f;
     const double dry = amplitude / std::sqrt (2.0);
 
     const auto flat   = renderTone (amplitude, { { "autoComp", 1.0f }, { "inputGain", 0.0f },

@@ -248,8 +248,8 @@ TEST_CASE ("the slot follows a latency the plugin keeps changing on the audio th
            "[plugin][latency][pdc][issue-764]")
 {
     using namespace std::chrono_literals;
-    constexpr int kSteps = 200;
-    constexpr int kLargeBlock = 4096;
+    static constexpr int kSteps = 200;
+    static constexpr int kLargeBlock = 4096;
 
     Harness h (64, kLargeBlock);
     h.plugin->latencySteps = kSteps;

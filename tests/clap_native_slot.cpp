@@ -341,8 +341,8 @@ TEST_CASE ("Linux track clone keeps native CLAP identity and state",
 TEST_CASE ("NativeClapSlot follows a latency the plug-in changes while it runs",
            "[clap][slot][latency][pdc][issue-764]")
 {
-    constexpr int kBlock = 64;
-    constexpr double kLookAhead = 256.0;
+    static constexpr int kBlock = 64;
+    static constexpr double kLookAhead = 256.0;
     duskstudio::clap::NativeClapSlot slot;
     std::string err;
     REQUIRE (slot.load (std::filesystem::u8path (DUSKSTUDIO_LATENCY_CLAP_FIXTURE_PATH),

@@ -105,7 +105,7 @@ bool loadOnTrack (ScenarioContext& ctx, bool armForTake)
 // pass cannot be what moves the compensation.
 std::optional<ScenarioResult> latencyFollowsRestart (ScenarioContext& ctx)
 {
-    constexpr int kLookAhead = 256;
+    static constexpr int kLookAhead = 256;
     if (! loadOnTrack (ctx, /*armForTake*/ false)) return ctx.verdict();
     if (! setParam (ctx, "Look-ahead", kLookAhead)) return ctx.verdict();
     ctx.pump (1);
@@ -131,7 +131,7 @@ std::optional<ScenarioResult> latencyFollowsRestart (ScenarioContext& ctx)
 // process() keeps asking, then runs `then`.
 void keepPumping (ScenarioContext& ctx, int ms, std::function<void()> then)
 {
-    constexpr int kStepMs = 33;
+    static constexpr int kStepMs = 33;
     if (ms <= 0) { then(); return; }
     ctx.later (kStepMs, [&ctx, ms, then = std::move (then)]() mutable
     {
@@ -210,7 +210,7 @@ std::optional<ScenarioResult> failedRestartIsNotRetried (ScenarioContext& ctx)
 // it waits for Stop.
 std::optional<ScenarioResult> restartWaitsForTheTake (ScenarioContext& ctx)
 {
-    constexpr int kLookAhead = 256;
+    static constexpr int kLookAhead = 256;
     if (! loadOnTrack (ctx, /*armForTake*/ true)) return ctx.verdict();
 
     auto& engine = ctx.engine();

@@ -69,9 +69,9 @@ struct HeldCall
 TEST_CASE ("A stop waits for an audio-thread call still inside the recorder and commits its take",
            "[recording][recordmanager]")
 {
-    constexpr double kSampleRate = 48000.0;
-    constexpr int    kBlockSize  = 256;
-    constexpr int    kBlocks     = 4;
+    static constexpr double kSampleRate = 48000.0;
+    static constexpr int    kBlockSize  = 256;
+    static constexpr int    kBlocks     = 4;
 
     const ScopedDir scoped { dusk::fs::createUniqueTempDirectory ("dusk-stop-waits-") };
     const auto dir = makeTempDir (scoped);
@@ -119,13 +119,13 @@ TEST_CASE ("A stop waits for an audio-thread call still inside the recorder and 
 TEST_CASE ("Every take commits while a live audio thread keeps writing into it",
            "[recording][recordmanager]")
 {
-    constexpr double       kSampleRate      = 48000.0;
-    constexpr int          kBlockSize       = 256;
-    constexpr int          kBlocksPerTake   = 8;
-    constexpr int          kTakes           = 40;
-    constexpr std::int64_t kTakeSpacing     = 1 << 20;
-    constexpr int          kAudioTracks     = 2;
-    constexpr int          kMidiTrack       = 2;
+    static constexpr double       kSampleRate      = 48000.0;
+    static constexpr int          kBlockSize       = 256;
+    static constexpr int          kBlocksPerTake   = 8;
+    static constexpr int          kTakes           = 40;
+    static constexpr std::int64_t kTakeSpacing     = 1 << 20;
+    static constexpr int          kAudioTracks     = 2;
+    static constexpr int          kMidiTrack       = 2;
 
     const ScopedDir scoped { dusk::fs::createUniqueTempDirectory ("dusk-live-stop-") };
     const auto dir = makeTempDir (scoped);
@@ -147,7 +147,7 @@ TEST_CASE ("Every take commits while a live audio thread keeps writing into it",
     // step. Grants are published after startRecording returns, so a claimed
     // block begins after its take was armed; the stop waits for two of them to
     // finish and then lands while the rest may still be going in.
-    constexpr std::int64_t kBlocksField = 16;
+    static constexpr std::int64_t kBlocksField = 16;
     std::atomic<std::int64_t> grant { 0 };
     std::array<std::atomic<int>, kTakes + 1> blocksDone {};
     std::atomic<bool> quit { false };
