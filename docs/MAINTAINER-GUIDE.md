@@ -484,7 +484,7 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 | `perf-suite` | `DUSKSTUDIO_RUN_PERF_TEST=1` across the (rate, buffer, load) matrix. Off unless `--perf`. |
 | `scenario-fixtures` | every logical fixture the scenarios name resolves under `DUSKSTUDIO_FIXTURE_DIR`; `SKIP` naming the ones that do not. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
-| `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
+| `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-window-close`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui`: the plugin-editor scenarios that need a window. Off unless `--gui-scenarios` - it is the slowest leg and the most sensitive to GLX under Xvfb. |
 | `gui-plugin-picker`, `gui-settings-defaults` | `tests/gui_plugin_picker.sh` and `tests/gui_settings_defaults.sh` against the same binary: the two GUI cases that need a seeded config, which the suite runs without (the picker case skips there). With `--gui-scenarios` only. |
 | `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
@@ -585,6 +585,17 @@ display, so each leg gets a throwaway directory and a private environment:
 acknowledgement, so two instances racing for a slot a killed instance left
 behind is the leg most likely to flake. It fails with both processes' stderr and
 is not retried; re-run it ten times before trusting a change to that path.
+
+`bb-window-close` opens the minimal session through `DUSKSTUDIO_LOAD_SESSION`
+and, once its `[Dusk Studio/Load]` line is out, sends two `WM_DELETE_WINDOW`
+messages to the window titled Dusk Studio, the message a window manager's close
+button sends. The unchanged session has to exit within 30 s with no prompt,
+print the shutdown phases in order, and print the re-entry line for the second
+close. Xvfb has no window manager, and the app only asks for
+`WM_DELETE_WINDOW` when the atom already exists as it starts, so
+`scripts/regress/x11_close.py hold` interns the atom and keeps the display
+open for the length of the leg: Xvfb forgets every atom when its last client
+disconnects.
 
 `bb-damaged-recent` needs the startup picker, and GLX under Xvfb is not
 guaranteed on every host (the same caveat that keeps DAF/DGL windows in the
@@ -859,7 +870,7 @@ ones stay unresolved on Windows in any case, since Windows builds no LV2 host.
 | `msi-install` | the package installs (or is already installed) through `msiexec`: the Windows Installer then lists exactly this ProductCode for the upgrade code, at this version, under `Program Files`, installed per machine with its uninstall entry under HKLM (see Per machine); every file of the package's File table is at the path its Directory table names and matches the manifest byte for byte; nothing else is in the install folder; `dusk-studio-plugin-host.exe` sits beside `DuskStudio.exe`; the all-users Start menu and desktop shortcuts exist and point at the installed executable; its FileVersion and its `--version` (run in a private profile) report the package version. It also snapshots the real user's Documents, Music, Desktop and Dusk Studio config folders and the entries at the top of the real home folder for `isolation-audit`. |
 | `phase1-selftest` | headless `DUSKSTUDIO_RUN_SELFTEST=1` with stdout and stderr captured through `ProcessStartInfo` redirection: exit code 0, at least one `[PASS]`, no `[FAIL]`. |
 | `phase2-handoff` | the first instance opens the shipped session through `DUSKSTUDIO_LOAD_SESSION` and the phase waits for its `[Dusk Studio/Load] session.json` line, then a second launch carrying `handoff.json` hands over and exits 0 within 30 s while the first instance stays alive, `GetForegroundWindow()` is its window afterwards, and its stderr shows `[Dusk Studio/Load] handoff.json` after the first load - the handoff is supposed to raise the window and load the path, which the exit code alone cannot see. Both launches share one private profile. |
-| `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
+| `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back to the process's visible window titled Dusk Studio. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
 | `ipc-selftest` | `SKIP`. `DUSKSTUDIO_RUN_IPC_SELFTEST` never returns on Windows (issue #504), so the out-of-process transport is only compile- and contract-verified there. Remove the skip when #504 closes. |
 | `scenario-fixtures` | as on Linux, against the two staged roots. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed app, 900 s budget in the guest. The whole output comes back and is judged by the same rules as the Linux leg: exit 0, no `[FAIL]`, the terminal `=== scenarios: ` line; skips in the note, missing fixtures in a `:fixtures` row. A run that hits its budget is announced before it is killed, screenshotted as `<leg>-stall.png`, and reported as `timed out in <case>`, the last case the suite started without finishing. |
@@ -885,6 +896,12 @@ wrong here:
   phases. Every script assigns its own before reading them.
 - A P/Invoke with a PowerShell scriptblock delegate (`EnumWindows`) throws under
   `iex`. The P/Invoke surface stays limited to direct calls.
+- `Process.MainWindowHandle` is not the app's window. It is the first visible
+  unowned window .NET enumerates, and the four drop-shadow windows JUCE puts
+  around the main window qualify. A `WM_CLOSE` posted to one of them is dropped,
+  so phase 3 closed nothing about one launch in four and read it as a quit that
+  never started. Find the window by its title and owning process with
+  `FindWindowEx` instead.
 - PowerShell 5.1 sends a string body as ISO-8859-1 and reads redirected output
   in the OEM code page; the scripts POST UTF-8 bytes and read the app as UTF-8.
 - The app writes `\r\n` on Windows; the runner strips the `\r` before judging.
