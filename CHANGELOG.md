@@ -222,12 +222,16 @@ publishes.
   out instead of recording silence, and the transport bar says microphone
   access is off and where to turn it on. At startup, an output that fails
   only because of the input it was paired with now opens on its own.
-- **A PipeWire device reports only the inputs it has.** It reported as many
+- **A PipeWire device opens only the channels it has.** It reported as many
   input channels as it was asked for, and two when it opened with no capture
   device at all, so ARM accepted tracks on inputs that were not there, they
   recorded silence, and the "No input device" notice stayed away. It now
   reports the capture device's own channels, and none without one, as ALSA
-  already did.
+  already did. Outputs are limited the same way: a stereo sink no longer gets
+  `playback_3` and higher ports that nothing was connected to. If you patched
+  an aux lane's Out 3-4, or the Main output moved off 1-2, through those ports
+  by hand, in qpwgraph for example, choose an output device that has those
+  channels instead, such as your interface in its Pro Audio profile.
 - **Clean out refuses while a take is recording** (#743). The take's file has
   no region until you stop, so Clean out listed it and deleted it. Clean out
   now asks you to stop recording first, both when you choose it and again when
