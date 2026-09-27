@@ -119,6 +119,9 @@ public:
     // editor/loader, so a seconds-long editor build can block processBlock -
     // and with it the whole audio callback. Holding the slot's process lock
     // makes the audio thread dry-pass THIS strip for the duration instead.
+    // An editor can run a nested message loop from its constructor, in which
+    // the slot's timer still fires, so nothing that timer reaches may block on
+    // this lock.
     juce::SpinLock& getProcessLock() noexcept { return processLock; }
 
     bool wasAutoBypassed() const noexcept { return autoBypassed.load (std::memory_order_relaxed); }
@@ -184,7 +187,8 @@ public:
     // whichever thread it did so. True when the cached latency moved. The
     // engine's per-block PDC pass picks the new value up from
     // getLatencySamples. A sandboxed plug-in keeps the latency its load
-    // reported.
+    // reported. Never waits for the process lock: while anything holds it the
+    // change stays pending for the next call.
     bool refreshLatencyIfChanged() noexcept;
 
     // -1 = no parameter touched since load. Driven by a parameter

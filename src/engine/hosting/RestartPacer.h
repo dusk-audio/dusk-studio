@@ -5,8 +5,8 @@
 namespace duskstudio::hosting
 {
 // Decides, one message-thread tick at a time, when a native plug-in's request
-// for a deactivate / activate cycle (a CLAP request_restart, a VST3 latency or
-// I/O restart) is carried out. Every cycle suspends the whole engine for a
+// for a deactivate / activate cycle (a CLAP request_restart, a VST3 latency
+// change) is carried out. Every cycle suspends the whole engine for a
 // moment, so a plug-in that asks on every tick would otherwise cut the output
 // out continuously.
 //
@@ -35,12 +35,7 @@ public:
     // recording. generation: the slot's load generation.
     Action tick (bool requested, bool holdForTake, std::uint64_t generation) noexcept
     {
-        if (generation != loadedGeneration)
-        {
-            *this = RestartPacer {};
-            loadedGeneration = generation;
-        }
-
+        follow (generation);
         ticksSinceRestart = saturatingIncrement (ticksSinceRestart);
         ticksSinceRequest = requested ? 0 : saturatingIncrement (ticksSinceRequest);
         pending = pending || requested;
@@ -72,10 +67,27 @@ public:
         return Action::Restart;
     }
 
+    // The caller restarted the plug-in for another reason, and that restart
+    // read the latency too: a request waiting here has been served, and the
+    // interval to the next restart starts again.
+    void restartedAnyway (std::uint64_t generation) noexcept
+    {
+        follow (generation);
+        pending = false;
+        ticksSinceRestart = 0;
+    }
+
     bool isHoldingBack() const noexcept { return gaveUp; }
 
 private:
     static constexpr int kLongAgo = 1 << 20;
+
+    void follow (std::uint64_t generation) noexcept
+    {
+        if (generation == loadedGeneration) return;
+        *this = RestartPacer {};
+        loadedGeneration = generation;
+    }
 
     static int saturatingIncrement (int ticks) noexcept
     {

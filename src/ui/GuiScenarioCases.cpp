@@ -3759,7 +3759,13 @@ std::optional<ScenarioResult> runMasterTapeEditor (GuiHost& host, ScenarioContex
         ctx.expect (session.master().tapeEnabled.load(), "BYPASS off in the editor did not engage the tape");
         host.closeMasterTape();
     } });
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    // The editor goes over the next two ticks, not on the close call.
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.masterTapeEditorOpen(); }, 3000,
+                       [&ctx] { ctx.complete (ctx.verdict()); },
+                       "closing left the tape editor open");
+    });
     return std::nullopt;
    #endif
 }
@@ -11242,16 +11248,125 @@ const ScenarioRegistrar markerKeysPlayback { Scenario {
     }
 } };
 
-// Held past 400 ms, Rewind and Forward scrub the stopped playhead at ten times
-// real time, and the release that ends a scrub is not also read as a tap.
+struct HoldSample
+{
+    double heldMs;
+    std::int64_t playhead;
+};
+
+std::string wholeText (double value) { return std::to_string (std::llround (value)); }
+
 // The scrub runs on a 20 Hz timer whose first tick past the threshold only
-// starts the clock, so with a 400 ms threshold nothing moves before 450 ms, and
-// with 300 ms the playhead has moved by 400 ms.
+// starts the clock; every later tick moves the playhead ten times the time
+// since the tick before, so a late tick moves it further instead of losing
+// time. The samples pin each move between two reads, and every judgement below
+// is drawn from those bounds rather than from when a step happened to run.
+void judgeHoldScrub (ScenarioContext& ctx, const std::string& title, int direction,
+                     double samplesPerMs, const std::vector<HoldSample>& samples,
+                     std::string& undecided)
+{
+    static constexpr double kThresholdMs = 400.0;
+    static constexpr double kTickMs = 50.0;
+    // Both the app and the samples read millisecond clocks.
+    static constexpr double kClockSlackMs = 3.0;
+    // A longer stall around the threshold lets a late tick make a 300 or
+    // 600 ms threshold look like 400.
+    static constexpr double kMaxStallMs = 60.0;
+    static constexpr double kMaxRateSpread = 1.1;
+    static constexpr double kRateTolerance = 0.02;
+
+    const auto decide = [&undecided] (std::string reason)
+    {
+        if (undecided.empty()) undecided = std::move (reason);
+    };
+    const auto from = samples.front().playhead;
+    const auto end = samples.back().playhead;
+    const auto travelled = [from, direction] (const HoldSample& s)
+    { return (double) direction * (double) (s.playhead - from); };
+
+    for (std::size_t i = 1; i < samples.size(); ++i)
+    {
+        if (! ctx.expect (travelled (samples[i]) >= travelled (samples[i - 1]),
+                          title + " moved the playhead the wrong way "
+                              + wholeText (samples[i].heldMs) + " ms into the hold"))
+            return;
+    }
+    const auto moved = std::find_if (samples.begin(), samples.end(),
+                                     [from] (const HoldSample& s) { return s.playhead != from; });
+    if (! ctx.expect (moved != samples.end(),
+                      title + " held " + wholeText (samples.back().heldMs) + " ms did not scrub"))
+        return;
+    const auto& still = *(moved - 1);
+    const auto settled = std::find_if (moved, samples.end(),
+                                       [end] (const HoldSample& s) { return s.playhead == end; });
+
+    // A move is only possible once a tick has seen the threshold pass.
+    ctx.expect (moved->heldMs >= kThresholdMs - kClockSlackMs,
+                title + " moved the playhead " + wholeText (moved->heldMs)
+                    + " ms into the hold, before a 400 ms threshold could");
+
+    // The distance of the first move dates the tick that started the scrub
+    // clock. That tick comes at most one period after the threshold, plus a
+    // stall of the message thread between the threshold and the first move,
+    // which holds up the samples too and shows as a gap between them.
+    double stallMs = 0.0;
+    double stallAtMs = moved->heldMs;
+    for (auto s = moved; s != samples.begin(); --s)
+    {
+        const double gap = s->heldMs - (s - 1)->heldMs;
+        if (gap > stallMs)
+        {
+            stallMs = gap;
+            stallAtMs = s->heldMs;
+        }
+        if ((s - 1)->heldMs < kThresholdMs) break;
+    }
+    const double coveredMs = travelled (*moved) / samplesPerMs;
+    const double startedLo = still.heldMs - coveredMs;
+    const double startedHi = moved->heldMs - coveredMs;
+    const double latestMs = kThresholdMs + kTickMs + stallMs + kClockSlackMs;
+    ctx.note (title + ": " + std::to_string (samples.size()) + " samples, longest gap near the threshold "
+              + wholeText (stallMs) + " ms at " + wholeText (stallAtMs) + " ms, first move at "
+              + wholeText (moved->heldMs) + " ms, scrub clock started " + wholeText (startedLo)
+              + " to " + wholeText (startedHi) + " ms into the hold");
+    ctx.expect (startedHi >= kThresholdMs - kClockSlackMs,
+                title + " started scrubbing by " + wholeText (startedHi)
+                    + " ms into the hold, before the 400 ms threshold");
+    ctx.expect (startedLo <= latestMs,
+                title + " started scrubbing no sooner than " + wholeText (startedLo)
+                    + " ms into the hold, later than the first tick past a 400 ms threshold can come ("
+                    + wholeText (latestMs) + " ms)");
+    if (stallMs > kMaxStallMs)
+        decide (title + " went " + wholeText (stallMs) + " ms without a sample, "
+                + wholeText (stallAtMs) + " ms into the hold, too long to pin the threshold");
+
+    const double shortestMs = settled == moved ? 0.0 : (settled - 1)->heldMs - moved->heldMs;
+    if (shortestMs <= 0.0)
+    {
+        decide (title + " made its whole scrub between two samples, too few to time it");
+        return;
+    }
+    // As a multiple of 10x, over the span from the first move to the last.
+    const double distance = travelled (*settled) - travelled (*moved);
+    const double slowest = distance / ((settled->heldMs - still.heldMs) * samplesPerMs);
+    const double fastest = distance / (shortestMs * samplesPerMs);
+    ctx.note (title + " scrubbed at " + std::to_string (10.0 * slowest) + " to "
+              + std::to_string (10.0 * fastest) + " times real time");
+    ctx.expect (slowest <= 1.0 + kRateTolerance && fastest >= 1.0 - kRateTolerance,
+                title + " scrubbed at " + std::to_string (10.0 * slowest) + " to "
+                    + std::to_string (10.0 * fastest) + " times real time, not 10x");
+    if (fastest / slowest > kMaxRateSpread)
+        decide (title + " could only pin its scrub rate between " + std::to_string (10.0 * slowest)
+                + " and " + std::to_string (10.0 * fastest) + " times real time");
+}
+
+// Held past 400 ms, Rewind and Forward scrub the stopped playhead at ten times
+// real time, and the release that ends a scrub is not also read as a tap. A
+// stall too long to judge the threshold or the rate skips instead of failing.
 std::optional<ScenarioResult> runTransportHoldScrubs (GuiHost& host, ScenarioContext& ctx)
 {
     using Clock = std::chrono::steady_clock;
-    static constexpr double kThresholdMs = 400.0;
-    static constexpr double kFirstMoveMs = kThresholdMs + 50.0;
+    static constexpr int kSampleMs = 10;
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
     const double rate = engine.getCurrentSampleRate();
@@ -11271,61 +11386,59 @@ std::optional<ScenarioResult> runTransportHoldScrubs (GuiHost& host, ScenarioCon
     struct Hold
     {
         Clock::time_point pressed;
-        std::int64_t from = 0;
-        std::int64_t released = 0;
-        double heldMs = 0.0;
+        bool released = false;
+        std::vector<HoldSample> samples;
     };
+    auto undecided = std::make_shared<std::string>();
     auto steps = std::make_shared<std::vector<Step>>();
-    const auto hold = [&host, &ctx, &transport, rate, steps] (const std::string& title, int direction)
+    const auto hold = [&host, &ctx, &transport, rate, steps, undecided] (const std::string& title, int direction)
     {
         auto state = std::make_shared<Hold>();
-        steps->push_back ({ 200, [&host, &ctx, &transport, title, state]
+        const auto sample = [&transport, state]
         {
-            state->from = transport.getPlayhead();
+            const double heldMs = std::chrono::duration<double, std::milli> (Clock::now() - state->pressed).count();
+            state->samples.push_back ({ heldMs, transport.getPlayhead() });
+        };
+        auto poll = std::make_shared<std::function<void()>>();
+        std::weak_ptr<std::function<void()>> weakPoll = poll;
+        *poll = [&ctx, state, sample, weakPoll]
+        {
+            if (state->released) return;
+            sample();
+            if (auto self = weakPoll.lock())
+                ctx.later (kSampleMs, [self] { (*self)(); });
+        };
+        steps->push_back ({ 200, [&host, &ctx, title, state, poll]
+        {
             state->pressed = Clock::now();
+            (*poll)();
             ctx.expect (host.pressTitledControl (title, true), title + " did not take a press");
         } });
-        steps->push_back ({ 250, [&ctx, &transport, title, state]
+        steps->push_back ({ 1400, [&host, &ctx, &transport, title, state, sample]
         {
-            ctx.expect (transport.getPlayhead() == state->from,
-                        title + " moved the playhead before the hold threshold");
-        } });
-        steps->push_back ({ 170, [&ctx, &transport, title, state]
-        {
-            const auto heldMs = std::chrono::duration<double, std::milli> (Clock::now() - state->pressed).count();
-            if (heldMs >= kFirstMoveMs)
-                ctx.note (title + " threshold check came " + std::to_string (heldMs) + " ms into the hold, too late to judge");
-            else
-                ctx.expect (transport.getPlayhead() == state->from,
-                            title + " moved the playhead " + std::to_string (heldMs)
-                                + " ms into the hold, before a 400 ms threshold could");
-        } });
-        steps->push_back ({ 980, [&host, &ctx, &transport, title, state]
-        {
+            sample();
+            state->released = true;
             ctx.expect (host.pressTitledControl (title, false), title + " did not take a release");
-            state->heldMs = std::chrono::duration<double, std::milli> (Clock::now() - state->pressed).count();
-            state->released = transport.getPlayhead();
+            ctx.expect (transport.getPlayhead() == state->samples.back().playhead,
+                        title + " jumped on the release that ended the scrub");
         } });
-        steps->push_back ({ 300, [&ctx, &transport, title, direction, rate, state]
+        steps->push_back ({ 300, [&ctx, &transport, title, direction, rate, state, undecided]
         {
-            const auto moved = (double) direction * (double) (state->released - state->from);
-            const double expected = 10.0 * rate * (state->heldMs - kThresholdMs) / 1000.0;
-            ctx.note (title + " held " + std::to_string (state->heldMs) + " ms moved "
-                      + std::to_string (moved) + " samples, 10x of the time past 400 ms is "
-                      + std::to_string (expected));
-            // A tick at each end of the hold can go unscrubbed, 100 ms of the
-            // 1000, while a 600 ms threshold would leave at most 80 %.
-            ctx.expect (moved > 0.83 * expected && moved < 1.1 * expected,
-                        title + " held did not scrub at 10x: moved " + std::to_string (moved)
-                            + " samples against " + std::to_string (expected));
-            ctx.expect (transport.getPlayhead() == state->released,
-                        title + " jumped again on the release that ended the scrub");
+            ctx.expect (transport.getPlayhead() == state->samples.back().playhead,
+                        title + " moved the playhead after the release that ended the scrub");
             ctx.expect (transport.isStopped(), title + " scrubbing started the transport");
+            judgeHoldScrub (ctx, title, direction, 10.0 * rate / 1000.0, state->samples, *undecided);
         } });
     };
     hold ("Rewind", -1);
     hold ("Fast forward", 1);
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    runSteps (ctx, steps, [&ctx, undecided]
+    {
+        auto result = ctx.verdict();
+        if (result.status == ScenarioStatus::Pass && ! undecided->empty())
+            result = ScenarioResult::skip (*undecided);
+        ctx.complete (std::move (result));
+    });
     return std::nullopt;
 }
 

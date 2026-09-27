@@ -49,6 +49,25 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     int  mainInBus = -1, mainOutBus = -1, sidechainBus = -1;
     bool hasEventIn = false;
 
+    // One audio bus as discoverBuses() read it.
+    struct ReadBus
+    {
+        bool  valid = false;
+        int32 busType = 0;
+        int32 channelCount = 0;
+        uint32 flags = 0;
+
+        bool operator== (const ReadBus& other) const noexcept
+        {
+            return valid == other.valid && busType == other.busType
+                && channelCount == other.channelCount && flags == other.flags;
+        }
+    };
+    // What the last discovery read, so a bus-layout change announced after it
+    // can be told apart from one that leaves the buses as they were.
+    std::vector<ReadBus> discoveredInputs, discoveredOutputs;
+    int32 discoveredEventInputs = 0;
+
     bool   created = false, active = false, processing = false;
     double sampleRate = 0.0;
     int    maxFrames = 0;
@@ -137,59 +156,71 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
         }
     }
 
-    bool discoverBuses (std::string& errorOut)
+    std::vector<ReadBus> readAudioBuses (Vst::BusDirection direction) const
     {
-        struct BusSnapshot
+        std::vector<ReadBus> buses ((size_t) std::max<int32> (
+            0, component->getBusCount (Vst::kAudio, direction)));
+        for (size_t i = 0; i < buses.size(); ++i)
         {
             Vst::BusInfo info {};
-            bool valid = false;
-        };
+            auto& bus = buses[i];
+            bus.valid = component->getBusInfo (Vst::kAudio, direction, (int32) i, info) == kResultOk;
+            if (! bus.valid) continue;
+            bus.busType = info.busType;
+            bus.channelCount = info.channelCount;
+            bus.flags = info.flags;
+        }
+        return buses;
+    }
 
+    bool busesAsDiscovered() const
+    {
+        return readAudioBuses (Vst::kInput) == discoveredInputs
+            && readAudioBuses (Vst::kOutput) == discoveredOutputs
+            && component->getBusCount (Vst::kEvent, Vst::kInput) == discoveredEventInputs;
+    }
+
+    bool discoverBuses (std::string& errorOut)
+    {
         layout = {};
         mainInBus = mainOutBus = sidechainBus = -1;
 
-        const int numIn = std::max<int32> (
-            0, component->getBusCount (Vst::kAudio, Vst::kInput));
-        const int numOut = std::max<int32> (
-            0, component->getBusCount (Vst::kAudio, Vst::kOutput));
-        std::vector<BusSnapshot> inputs ((size_t) numIn);
-        std::vector<BusSnapshot> outputs ((size_t) numOut);
-        for (int i = 0; i < numIn; ++i)
-            inputs[(size_t) i].valid = component->getBusInfo (
-                Vst::kAudio, Vst::kInput, i, inputs[(size_t) i].info) == kResultOk;
-        for (int i = 0; i < numOut; ++i)
-            outputs[(size_t) i].valid = component->getBusInfo (
-                Vst::kAudio, Vst::kOutput, i, outputs[(size_t) i].info) == kResultOk;
+        discoveredInputs  = readAudioBuses (Vst::kInput);
+        discoveredOutputs = readAudioBuses (Vst::kOutput);
+        const auto& inputs  = discoveredInputs;
+        const auto& outputs = discoveredOutputs;
+        const int numIn  = (int) inputs.size();
+        const int numOut = (int) outputs.size();
 
         audioBuses = detail::AudioBusPlan (numIn, numOut);
         for (int i = 0; i < numIn; ++i)
         {
-            if (! inputs[(size_t) i].valid) continue;
-            const auto& info = inputs[(size_t) i].info;
+            const auto& bus = inputs[(size_t) i];
+            if (! bus.valid) continue;
             bool hostConnected = false;
-            if (info.busType == Vst::kMain && mainInBus < 0)
+            if (bus.busType == Vst::kMain && mainInBus < 0)
             {
                 mainInBus = i;
                 hostConnected = true;
             }
-            else if (info.busType == Vst::kAux && sidechainBus < 0)
+            else if (bus.busType == Vst::kAux && sidechainBus < 0)
             {
                 sidechainBus = i;
                 hostConnected = true;
             }
             audioBuses.setBus (
-                detail::AudioBusDirection::Input, i, (int) info.channelCount,
-                hostConnected || (info.flags & Vst::BusInfo::kDefaultActive) != 0);
+                detail::AudioBusDirection::Input, i, (int) bus.channelCount,
+                hostConnected || (bus.flags & Vst::BusInfo::kDefaultActive) != 0);
         }
         for (int i = 0; i < numOut; ++i)
         {
-            if (! outputs[(size_t) i].valid) continue;
-            const auto& info = outputs[(size_t) i].info;
-            const bool hostConnected = info.busType == Vst::kMain && mainOutBus < 0;
+            const auto& bus = outputs[(size_t) i];
+            if (! bus.valid) continue;
+            const bool hostConnected = bus.busType == Vst::kMain && mainOutBus < 0;
             if (hostConnected) mainOutBus = i;
             audioBuses.setBus (
-                detail::AudioBusDirection::Output, i, (int) info.channelCount,
-                hostConnected || (info.flags & Vst::BusInfo::kDefaultActive) != 0);
+                detail::AudioBusDirection::Output, i, (int) bus.channelCount,
+                hostConnected || (bus.flags & Vst::BusInfo::kDefaultActive) != 0);
         }
 
         if (mainOutBus < 0)
@@ -245,7 +276,8 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
             layout.outputs.push_back (bus);
         }
 
-        hasEventIn = component->getBusCount (Vst::kEvent, Vst::kInput) > 0;
+        discoveredEventInputs = component->getBusCount (Vst::kEvent, Vst::kInput);
+        hasEventIn = discoveredEventInputs > 0;
         if (hasEventIn)
         {
             hosting::BusInfo eventBus;
@@ -577,6 +609,16 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     impl->processor->setProcessing (true);
     impl->processing = true;
     impl->active = true;
+
+    // A pending bus-layout change stands only if the component now reports
+    // buses other than the ones the process arrays were just built from. One
+    // announced from setActive or setProcessing comes after that read; if it
+    // changed nothing, keeping it would hold processBlock silent for a restart
+    // that would read the same buses again. Taken, then put back, so one a
+    // plug-in thread raises meanwhile is kept; the flag may read clear for that
+    // moment because no block runs here (unpublished, or under the engine fence).
+    if (impl->ioChanged.exchange (false, std::memory_order_acq_rel) && ! impl->busesAsDiscovered())
+        impl->ioChanged.store (true, std::memory_order_release);
     return true;
 }
 

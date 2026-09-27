@@ -525,7 +525,18 @@ bool PluginSlot::refreshLatencyIfChanged() noexcept
         return false;
     if (ownedInstance == nullptr)
         return false;
-    const juce::SpinLock::ScopedLockType processGuard (processLock);
+    // Tried, never waited for. The timer can fire inside a nested message loop
+    // while this thread holds the lock further down the stack, around an editor
+    // build or a plug-in's prepare, where a spin never ends; nor should it sit
+    // out a long block. A held lock puts the flag back for the next tick, with
+    // release like the listener's store, so that tick's acquire still orders
+    // the read after the plug-in's write.
+    const juce::SpinLock::ScopedTryLockType processGuard (processLock);
+    if (! processGuard.isLocked())
+    {
+        latencyChangePending.store (true, std::memory_order_release);
+        return false;
+    }
     const int latency = ownedInstance->getLatencySamples();
     return cachedLatencySamples.exchange (latency, std::memory_order_relaxed) != latency;
 }

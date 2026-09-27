@@ -9,6 +9,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <thread>
 #include <utility>
@@ -116,6 +118,44 @@ struct Harness
     }
 };
 
+// Ends the process when the scope is still open at the deadline. A call that
+// spins on a lock its own thread holds never returns, and a hung case would
+// otherwise only fail when something outside the run gives up on it. It polls
+// rather than making a timed condition-variable wait: GCC 11's TSan does not
+// intercept the pthread_cond_clockwait that wait_for uses, misses the unlock
+// inside it, and reports the next lock of that mutex as a double lock.
+class HangWatchdog
+{
+public:
+    HangWatchdog (std::chrono::seconds limit, const char* what)
+        : watcher ([this, limit, what]
+          {
+              const auto deadline = std::chrono::steady_clock::now() + limit;
+              while (! done.load (std::memory_order_acquire))
+              {
+                  if (std::chrono::steady_clock::now() >= deadline)
+                  {
+                      std::fprintf (stderr, "FAIL: %s did not return within %lld s\n",
+                                    what, (long long) limit.count());
+                      std::_Exit (EXIT_FAILURE);
+                  }
+                  std::this_thread::sleep_for (std::chrono::milliseconds (5));
+              }
+          })
+    {
+    }
+
+    ~HangWatchdog()
+    {
+        done.store (true, std::memory_order_release);
+        watcher.join();
+    }
+
+private:
+    std::atomic<bool> done { false };
+    std::thread watcher;
+};
+
 #if ! defined (__APPLE__)
 // Runs the dispatch loop until `done` holds or the deadline passes. This JUCE
 // build has no runDispatchLoopUntil, and stopDispatchLoop latches the quit flag
@@ -185,6 +225,34 @@ TEST_CASE ("a latency a plugin changes on the message thread reaches the slot an
     CHECK (h.slot.refreshLatencyIfChanged());
     CHECK (h.slot.getLatencySamples() == 32);
     CHECK (h.otherTrackDelay() == 32);
+}
+
+// The message thread holds the slot's process lock while a plug-in builds its
+// editor, and an editor that opens a licence dialog from its constructor runs a
+// nested message loop in which the slot's timer still fires. The re-read has
+// to come back without the lock, keep the change for a later tick, and apply
+// it once the lock is free.
+TEST_CASE ("a latency re-read under a process lock its own thread holds stays pending",
+           "[plugin][latency][pdc][issue-768]")
+{
+    Harness h (64);
+    h.pump (4);
+    h.plugin->setLatencySamples (192);
+
+    {
+        const HangWatchdog watchdog (std::chrono::seconds (10),
+                                     "refreshLatencyIfChanged under a held process lock");
+        const juce::SpinLock::ScopedLockType heldByThisThread (h.slot.getProcessLock());
+        CHECK_FALSE (h.slot.refreshLatencyIfChanged());
+        CHECK_FALSE (h.slot.refreshLatencyIfChanged());
+        CHECK (h.slot.getLatencySamples() == 64);
+        CHECK (h.otherTrackDelay() == 64);
+    }
+
+    CHECK (h.slot.refreshLatencyIfChanged());
+    CHECK (h.slot.getLatencySamples() == 192);
+    CHECK (h.otherTrackDelay() == 192);
+    CHECK_FALSE (h.slot.refreshLatencyIfChanged());
 }
 
 // JUCE's LV2 host sets the latency from inside processBlock, so the

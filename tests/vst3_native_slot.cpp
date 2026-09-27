@@ -247,10 +247,86 @@ TEST_CASE ("NativeVst3Slot refreshes latency after restoring state",
     slot.setParamValue (latencyMode->id, 0.0);
     REQUIRE_FALSE (slot.consumeLatencyChanged());
     REQUIRE (slot.loadState (highLatencyState));
+
+    // Waiting for the restart that reads it, the plug-in plays on at its old latency.
+    std::vector<float> L ((size_t) kBlock, 0.5f), R ((size_t) kBlock, -0.5f);
+    slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
+    REQUIRE (std::abs (L.front() - 0.5f) < 1.0e-6f);
+    REQUIRE (std::abs (R.front() + 0.5f) < 1.0e-6f);
+    REQUIRE (slot.getLatencySamples() == 0);
     REQUIRE (slot.consumeLatencyChanged());
 
     REQUIRE (slot.reactivate (48000.0, kBlock, err));
     REQUIRE (slot.getLatencySamples() == 64);
+}
+
+TEST_CASE ("NativeVst3Slot keeps a bus-layout change from the plug-in's own activation only if it moved the buses",
+           "[vst3][slot][regression][issue-769]")
+{
+    using Catch::Matchers::WithinAbs;
+    duskstudio::vst3::NativeVst3Slot slot;
+    std::string err;
+    static constexpr int kBlock = 64;
+
+    const bool loaded = slot.load (
+        std::filesystem::u8path (DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH),
+        48000.0, kBlock, err);
+    INFO ("fixture load error: " << err);
+    REQUIRE (loaded);
+    auto* instance = slot.getInstance();
+    REQUIRE (instance != nullptr);
+
+    const auto setParam = [&slot] (const char* name, double value)
+    {
+        for (int i = 0; i < slot.paramCount(); ++i)
+            if (slot.paramInfo (i)->name == name)
+            {
+                slot.setParamValue (slot.paramInfo (i)->id, value);
+                return true;
+            }
+        return false;
+    };
+    std::vector<float> L ((size_t) kBlock), R ((size_t) kBlock);
+    const auto passes = [&]
+    {
+        std::fill (L.begin(), L.end(), 0.75f);
+        std::fill (R.begin(), R.end(), -0.75f);
+        slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
+        return std::abs (L.front() - 0.75f) < 1.0e-6f && std::abs (R.front() + 0.75f) < 1.0e-6f;
+    };
+
+    SECTION ("a repeat that leaves the buses as they were is dropped")
+    {
+        REQUIRE (setParam ("Repeat IO On Activate", 1.0));
+        REQUIRE (setParam ("Expand Outputs", 1.0));
+        REQUIRE (instance->consumeIoChanged());
+        REQUIRE (slot.reactivate (48000.0, kBlock, err));
+        CHECK (instance->portLayout().outputs.size() == 3);
+        CHECK_FALSE (instance->ioChangePending());
+        CHECK (passes());
+    }
+
+    SECTION ("a change the activation makes after the buses were read is kept")
+    {
+        REQUIRE (setParam ("Flip Outputs On Activate", 1.0));
+        REQUIRE (slot.reactivate (48000.0, kBlock, err));
+        CHECK (instance->ioChangePending());
+        std::fill (L.begin(), L.end(), 0.75f);
+        std::fill (R.begin(), R.end(), -0.75f);
+        slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
+        CHECK_THAT (L.front(), WithinAbs (0.0, 1.0e-9));
+        CHECK_THAT (R.front(), WithinAbs (0.0, 1.0e-9));
+    }
+
+    SECTION ("any reactivation answers a change announced before it")
+    {
+        REQUIRE (setParam ("Expand Outputs", 1.0));
+        REQUIRE (instance->ioChangePending());
+        REQUIRE (slot.reactivate (48000.0, kBlock, err));
+        CHECK (instance->portLayout().outputs.size() == 3);
+        CHECK_FALSE (instance->ioChangePending());
+        CHECK (passes());
+    }
 }
 
 TEST_CASE ("Vst3Instance detaches host interfaces before plugin termination",

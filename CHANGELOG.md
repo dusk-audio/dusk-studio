@@ -222,12 +222,16 @@ publishes.
   out instead of recording silence, and the transport bar says microphone
   access is off and where to turn it on. At startup, an output that fails
   only because of the input it was paired with now opens on its own.
-- **A PipeWire device reports only the inputs it has.** It reported as many
+- **A PipeWire device opens only the channels it has.** It reported as many
   input channels as it was asked for, and two when it opened with no capture
   device at all, so ARM accepted tracks on inputs that were not there, they
   recorded silence, and the "No input device" notice stayed away. It now
   reports the capture device's own channels, and none without one, as ALSA
-  already did.
+  already did. Outputs are limited the same way: a stereo sink no longer gets
+  `playback_3` and higher ports that nothing was connected to. If you patched
+  an aux lane's Out 3-4, or the Main output moved off 1-2, through those ports
+  by hand, in qpwgraph for example, choose an output device that has those
+  channels instead, such as your interface in its Pro Audio profile.
 - **Clean out refuses while a take is recording** (#743). The take's file has
   no region until you stop, so Clean out listed it and deleted it. Clean out
   now asks you to stop recording first, both when you choose it and again when
@@ -643,11 +647,18 @@ publishes.
   within a thirtieth of a second; each track's compensation then moves to the
   new value at that track's next silence. A native CLAP plug-in that asks to
   be restarted for a new latency is now restarted, where the request used to
-  be ignored. A native VST3 or CLAP restart waits for the end of a take
-  rather than cut a gap into it, and a plug-in that keeps asking is restarted
-  at most twice a second, then held back until it stops, with one line in
-  the log. A plug-in in the out-of-process sandbox still keeps the latency it
-  reported when it loaded.
+  be ignored. A native VST3 or CLAP restart for a new latency waits for the
+  end of a take rather than cut a gap into it, and a plug-in that keeps asking
+  is restarted at most twice a second, then held back until it stops, with one
+  line in the log. A native VST3 plug-in that changes its inputs or outputs is
+  silent until it is restarted, so that restart still runs at once, take or
+  no take: it puts a gap of a moment in every take being recorded, where
+  waiting would leave the insert silent in what you hear, and in a PRINT take,
+  until Stop. One that changes them again as soon as it has been restarted,
+  six times running, is taken offline and passes the dry signal (an
+  instrument falls silent), and the Plug-in unavailable alert names it; it is
+  tried again after a quiet second, or once the take ends. A plug-in in the
+  out-of-process sandbox still keeps the latency it reported when it loaded.
 - **A render that cannot open its file leaves it alone** (#763). A Mixdown,
   Bounce..., Bounce stems..., Export master... or freeze whose file already
   existed but could not be opened for writing, such as a read-only
