@@ -445,27 +445,38 @@ scripts/regress.sh linux --scenarios-only
 scripts/regress.sh linux --tarball /path/to/dusk-studio-X.Y.Z-Linux-x86_64.tar.xz
 scripts/regress.sh linux --release-run 1234567890
 scripts/regress.sh mac
+scripts/regress.sh mac --dmg /path/to/dusk-studio-X.Y.Z-macOS-arm64.dmg
+scripts/regress.sh mac --release-run 1234567890
 scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
 scripts/regress.sh windows --release-run 1234567890
 scripts/regress.sh windows --release-run 1234567890 --fixtures-run 2345678901
 scripts/regress.sh all --perf --msi /path/to/installer.msi
-scripts/regress.sh all --release-run 1234567890
+scripts/regress.sh all --release-run 1234567890 --fixtures-run 2345678901
 ```
 
 `all` routes each option to the platform that owns it, so one command line can
 carry Linux, macOS and Windows options at once. An option no platform claims is
-a usage error rather than a silently ignored word. `--release-run` has two
-owners, Linux and Windows, and goes to both: `all --release-run <id>` tests the
-Linux tarball and the Windows MSI of the same `release.yml` run. With
-`--tarball` on the same line, Linux tests that tarball and the release run goes
-to Windows alone. `--no-scenarios` also goes to both.
+a usage error rather than a silently ignored word. `--release-run` goes to all
+three: `all --release-run <id>` tests the Linux tarball, the macOS disk image
+and the Windows MSI of the same `release.yml` run, which is the 0.14 release
+gate. A platform given a local package on the same line (`--tarball`, `--dmg`,
+`--msi`) tests that one, and the release run goes to the others.
+`--no-scenarios` goes to Linux and Windows; `--fixtures-run` to Windows.
+`DUSK_REGRESS_DRY_RUN=1` prints what each platform would get and stops.
+
+Each platform prints its own table as it finishes, and `all` ends with one
+table of every platform's legs, named `<platform>/<leg>`. A platform whose
+runner exits non-zero without a failed leg (a usage error, a missing tool) gets
+a `<platform>/runner` row, so it cannot drop out of the table unseen.
 
 Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
-`scripts/regress/{linux,mac,windows}.sh` over the shared leg bookkeeping in
+`scripts/regress/{linux,mac,windows}.sh` (and `mac-package.sh`, which `mac.sh`
+hands a package run to) over the shared leg bookkeeping in
 `scripts/regress/common.sh`, the private-display plumbing in
 `scripts/regress/xvfb.sh` and the scenario legs in
 `scripts/regress/scenarios.sh`, plus the guest-side helpers in
-`scripts/regress/windows/`.
+`scripts/regress/windows/` and the Screen Sharing helper in
+`scripts/regress/mac/`.
 
 ### Linux
 
@@ -548,8 +559,8 @@ private `HOME`, XDG directories, runtime directory, `DUSKSTUDIO_CONFIG_DIR` and
 `DUSKSTUDIO_MUSIC_DIR`, as in a source run. Package mode also exports
 `DUSKSTUDIO_EXPECT_MP3=1`: every release build carries the MP3 encoder, so
 `bounce.mp3_by_format` and `bounce.export_master_mp3_320` fail on a package
-without it instead of skipping. The Windows leg sets it for every launch too;
-set it by hand when running the scenarios against a macOS package.
+without it instead of skipping. The Windows and macOS package legs set it for
+every launch too.
 
 #### Scenario legs
 
@@ -746,8 +757,9 @@ What it cannot prove: **anything with a window**. Launching the GUI from an ssh
 session aborts in the main window constructor on that node, and it does so on
 `main` too, so it is the environment and not the build. That covers both
 `gui-launch` and `scenarios-gui`, the GUI half of the scenario suite. Those legs
-report `SKIP` rather than a false failure; run them by hand from a console
-session on the Air:
+report `SKIP` rather than a false failure. Package mode, below, starts the app
+through `open` into the desktop session and runs the GUI suite there; for a
+source build, run them by hand from a console session on the Air:
 
 ```bash
 cd ~/src/dusk-studio
@@ -759,6 +771,66 @@ DUSKSTUDIO_RUN_SCENARIOS=gui \
 ```
 
 The IPC self-test is Linux-only code and is skipped for that reason, not this one.
+
+#### Package mode
+
+`--dmg <path>` or `--release-run <id>` tests a release disk image instead of a
+source build: installed into `/Applications` the way a user installs it, with
+the GUI suite in the logged-in desktop session. `--release-run` downloads the
+`release-macos` artifact of that `release.yml` run, and the fixtures are built
+from the commit the run built; with `--dmg` they come from this checkout's
+`HEAD`.
+
+```bash
+scripts/regress.sh mac --host marc@macbook-air.local --release-run 1234567890
+scripts/regress.sh mac --host marc@macbook-air.local --dmg /path/to/dusk-studio-X.Y.Z-macOS-arm64.dmg
+```
+
+Prerequisites, on top of the source leg's: a user logged in at the Air's
+desktop, Screen Sharing on, its password in `~/.config/dusk-mac-vnc/login` on
+this box (it is also the login password, which the unlock step types), and a
+Python with `vncdotool` at `~/.local/share/dusk-regress/vnc/bin/python`
+(`python3 -m venv ~/.local/share/dusk-regress/vnc && ~/.local/share/dusk-regress/vnc/bin/pip install vncdotool`,
+or point `DUSK_REGRESS_VNC_PYTHON` at another one). The node's own checkout is
+never touched, so it may be dirty or on any branch: the fixtures build in a
+worktree of it, `~/src/dusk-studio-regress`, which is kept between runs so the
+next build is incremental.
+
+| Leg | What it proves |
+|---|---|
+| `mac-preflight` | node reachable, review model unloaded, no `/Applications/DuskStudio.app` already running. Starts `caffeinate -d -i -u -s` for the whole leg (bounded to four hours): without it the screen locks after about 20 minutes and the GUI suite stalls. |
+| `screen-unlocked` | the desktop session is unlocked, unlocking it over Screen Sharing when it is not. |
+| `package-fetch` | `--release-run` only: the run's disk image downloaded, and its head commit taken as the source commit. |
+| `dmg-install` | the file name is `dusk-studio-X.Y.Z-macOS-arm64.dmg`, the app inside reports that version, it replaces `/Applications/DuskStudio.app` (quarantine attribute cleared), the installed binary is identical to the image's, and `codesign --verify --deep --strict` passes. The app stays installed afterwards; the next run replaces it. |
+| `fixture-source` | the source commit pushed over ssh to a scratch branch in the node's checkout, checked out detached in the worktree with its submodules, and the scratch branch deleted again whether or not the checkout worked. Only the worktree's own registration is taken over when its directory has gone; the checkout's other worktrees are never pruned. |
+| `configure-fixtures` / `donor-check` / `build-fixtures` | `build-tests/` in the worktree configured through `~/mac-configure.sh` (with its `cd` retargeted at the worktree), building the donor from `DONOR_REV`, and every `dusk-studio-*-fixture` target built at `-j5`. The test binary is not built. |
+| `scenario-fixtures` | as on Linux, against the worktree's fixture table and roots. The node builds no LV2 host, so the LV2 fixtures are unresolved there. |
+| `mic-permission` | every new build is a new ad-hoc identity, so its first launch asks for the microphone, and an app started while that prompt is up comes up with no audio device. One throwaway launch through `open` gets the prompt answered Allow before any suite runs, confirmed from tccd's log. A build already denied fails with the `tccutil reset Microphone audio.dusk.studio` to run. |
+| `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed binary over ssh, in a private `HOME`, XDG directories, `DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR`, with `DUSKSTUDIO_FIXTURE_DIR` pointed at the worktree and `DUSKSTUDIO_EXPECT_MP3=1`. Judged as on Linux; a `BAILING` teardown line anywhere in the log adds a failed `scenarios-headless:bailing` row. |
+| `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui` in the desktop session, started with `open -n --env ...` (a GUI launched over plain ssh aborts), with the same environment. `open` hands back no exit status, so a crash shows as a missing terminal line or in `crash-reports`. `[DIRTY]` lines are printed; `BAILING` fails as above. |
+| `privacy-prompts` | a watcher reads tccd's log over ssh from the first launch to the last, and answers the microphone prompt Allow over Screen Sharing. It never clicks any other prompt. Fails on a microphone prompt left unanswered while the process that asked still ran, or answered the other way, and on any folder prompt or prompt of another kind, however it was answered: the suites run in a private `HOME` and should raise none. |
+| `crash-reports` | no `DuskStudio*` report in `~/Library/Logs/DiagnosticReports` since the leg started. |
+
+The microphone prompt's Allow button is clicked at a fixed point on the Air's
+1920x1080 desktop, `DUSK_REGRESS_MAC_MIC_ALLOW` (default `1019,408`), and only
+when a screenshot taken over the same connection just before the click shows
+it there: a light two-button row whose right-hand label is the width of
+"Allow" and whose left-hand one the width of "Don't Allow". Anything else, the
+Dusk Studio window where a dismissed prompt was for one, is not clicked; the
+watcher logs `not-on-screen` and `vnc.err` says what it found instead. Each
+screenshot is kept as `prompt-<msgID>-<n>.png`, and the watcher tries each
+prompt three times, 20 s apart, stopping once tccd records an answer or the
+process that asked (the msgID's pid) has exited. If the default stops matching,
+those screenshots show where the button moved to. The watcher reads the log
+from 15 minutes before the leg started, so a prompt an interrupted run left on
+screen (which blocks this run's launches without being raised again) is
+answered too, as long as the process that raised it is still running. Screen
+Sharing logs in as the ssh user. The suite logs, `prompts.log` and the screenshots
+stay in `$TMPDIR/dusk-regress-mac-<timestamp>/`; everything on the node lives
+under `~/dusk-regress-pkg/<timestamp>/` and is removed on exit, Ctrl-C
+included, along with any app the leg started and its `caffeinate`. Other
+overrides: `DUSK_REGRESS_MAC_HOST`, `DUSK_REGRESS_MAC_VNC_HOST` (default: the
+ssh host), `DUSK_REGRESS_MAC_VNC_LOGIN`, `DUSK_JOBS`.
 
 ### Windows
 

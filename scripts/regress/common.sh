@@ -11,6 +11,10 @@ REGRESS_LEG_STATUS=()
 REGRESS_LEG_SECONDS=()
 REGRESS_LEG_NOTE=()
 
+# `regress.sh all` sets DUSK_REGRESS_RECORD_FILE and prints one table from
+# what every platform appends there, labelled with each runner's platform.
+REGRESS_PLATFORM=""
+
 regress_note() {
     printf '    %s\n' "$*"
 }
@@ -21,6 +25,11 @@ regress_record() {
     REGRESS_LEG_STATUS+=("$status")
     REGRESS_LEG_SECONDS+=("$secs")
     REGRESS_LEG_NOTE+=("$note")
+    if [[ -n "${DUSK_REGRESS_RECORD_FILE:-}" ]]; then
+        local flat="${note//$'\t'/ }"
+        printf '%s\t%s\t%s\t%s\t%s\n' "${REGRESS_PLATFORM:-?}" "$status" "$name" "$secs" \
+            "${flat//$'\n'/ }" >>"$DUSK_REGRESS_RECORD_FILE"
+    fi
     if [[ -n "$note" ]]; then
         printf '[%s] %-28s %4ss  %s\n' "$status" "$name" "$secs" "$note"
     else

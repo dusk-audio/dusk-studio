@@ -15,6 +15,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/regress/common.sh
 source "${REPO_ROOT}/scripts/regress/common.sh"
+REGRESS_PLATFORM=windows
 # shellcheck source=scripts/regress/scenarios.sh
 source "${REPO_ROOT}/scripts/regress/scenarios.sh"
 WIN_DIR="${REPO_ROOT}/scripts/regress/windows"

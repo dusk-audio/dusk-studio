@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # macOS leg of the regression runner: drives the M3 Air build node over ssh.
+# With --dmg or --release-run it hands over to mac-package.sh, which tests a
+# release disk image instead of a source build.
 #
 # The node is key-auth only and never uses sudo. Its toolchain lives in ~/bin
 # and ~/tools, which is why every remote step goes through ~/mac-configure.sh
@@ -9,8 +11,16 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+for arg in "$@"; do
+    if [[ "$arg" == --dmg || "$arg" == --release-run ]]; then
+        exec bash "${REPO_ROOT}/scripts/regress/mac-package.sh" "$@"
+    fi
+done
+
 # shellcheck source=scripts/regress/common.sh
 source "${REPO_ROOT}/scripts/regress/common.sh"
+REGRESS_PLATFORM=mac
 
 MAC_HOST="${DUSK_REGRESS_MAC_HOST:-marc@macbook-air.local}"
 MAC_REPO="src/dusk-studio"
