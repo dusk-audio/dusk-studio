@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.14.0] - 2026-09-25
+## [0.14.0] - 2026-09-27
 
 The first five minutes of using Dusk Studio, offline instrument browsing,
 quitting cleanly by any route, and a release pipeline that signs what it
