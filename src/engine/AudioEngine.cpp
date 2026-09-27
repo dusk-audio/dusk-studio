@@ -9,8 +9,10 @@
 #include "StopBehavior.h"
 #include "TransportSnapshot.h"
 #include "device/DefaultInputChoice.h"
+#include "hosting/NativeRestorePolicy.h"
 #include "hosting/NativeStateIdentity.h"
 #include "hosting/RestartPacer.h"
+#include "vst3/Vst3RestartPolicy.h"
 #include "../dsp/OutputPairRouting.h"
 #include "McuReceiver.h"
 #include "McuController.h"
@@ -535,13 +537,15 @@ public:
         // an active CLAP plug-in announces a new latency), all need a
         // deactivate / activate cycle. Keep every flagged instance under one
         // engine fence while it rebuilds its process arrays and the slot
-        // rebuilds its adapter. Each slot's RestartPacer decides when: held
-        // through a take, and spaced out for a plug-in that keeps asking.
-        bool anyReactivated = false;
+        // rebuilds its adapter. Each slot's pacer decides when: a latency
+        // change is held through a take and spaced out for a plug-in that
+        // keeps asking, and a VST3 bus-layout change runs at once.
+        bool fenced = false;
         const double sr    = engine.getCurrentSampleRate();
         const int    block = engine.getCurrentBlockSize();
         const bool holdForTake = engine.transport.isRecording()
                                  || engine.recordManager.isActive();
+        std::vector<PluginLoadFailure> takenOffline;
         // Deferred while an offline bounce drives the callback: the
         // suspendProcessing below would gate the render into silent blocks.
         // The flags stay set, so the cycle runs on the first tick after the
@@ -549,66 +553,108 @@ public:
         if (sr > 0.0 && block > 0
             && ! engine.offlineRenderActive.load (std::memory_order_acquire))
         {
+            auto fence = [&]
+            {
+                if (! fenced) engine.suspendProcessing();
+                fenced = true;
+            };
             // discardRaisedMeanwhile runs under the same fence, right after the
-            // cycle: a request the plug-in made from inside its own activation
-            // (or while it was being brought back) describes the state that
+            // cycle: a latency the plug-in announced from inside its own
+            // activation (or while it was being brought back) is the one that
             // activation has just read, and honouring it would restart the
             // plug-in again on every tick.
-            auto service = [&] (auto& slot, hosting::RestartPacer& pacer, bool requested,
-                                const char* where, int index,
-                                auto&& underFence, auto&& discardRaisedMeanwhile)
+            auto restart = [&] (auto& slot, auto&& discardRaisedMeanwhile)
             {
-                switch (pacer.tick (requested, holdForTake, slot.generation()))
-                {
-                    case hosting::RestartPacer::Action::None:
-                        return;
-                    case hosting::RestartPacer::Action::GaveUp:
-                        std::fprintf (stderr,
-                                      "[Dusk Studio/AudioEngine] %s %d: plug-in \"%s\" keeps "
-                                      "asking to be restarted; holding its restarts until "
-                                      "it stops asking.\n",
-                                      where, index + 1, slot.getPath().c_str());
-                        return;
-                    case hosting::RestartPacer::Action::Restart:
-                        break;
-                }
-                if (! anyReactivated) engine.suspendProcessing();
-                anyReactivated = true;
-                underFence();
+                fence();
                 std::string err;
                 if (! slot.reactivate (sr, block, err))
                     slot.quarantineAfterFailedReactivation();
                 discardRaisedMeanwhile();
             };
+            auto logHoldingBack = [] (const char* where, int index, const std::string& path)
+            {
+                std::fprintf (stderr,
+                              "[Dusk Studio/AudioEngine] %s %d: plug-in \"%s\" keeps "
+                              "asking to be restarted; holding its restarts until "
+                              "it stops asking.\n",
+                              where, index + 1, path.c_str());
+            };
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-            auto cycleVst3 = [&] (auto& slot, hosting::RestartPacer& pacer,
-                                  const char* where, int index)
+            using Vst3Action = vst3::Vst3RestartPolicy::Action;
+            auto cycleVst3 = [&] (auto& slot, vst3::Vst3RestartPolicy& policy,
+                                  const char* where, int index, int slotIndex)
             {
                 auto* inst = slot.getInstance();
                 if (inst == nullptr) return;
                 inst->refreshParamInfoIfChanged();
                 const bool latencyChanged = slot.consumeLatencyChanged();
-                // The pending I/O change holds processBlock off, so it is only
-                // cleared once the fence is up. One raised during the cycle is
-                // kept: the buses it describes were not the ones just read.
-                service (slot, pacer, latencyChanged || inst->ioChangePending(), where, index,
-                         [inst] { inst->consumeIoChanged(); },
-                         [&slot] { (void) slot.consumeLatencyChanged(); });
+                switch (policy.tick (latencyChanged, inst->ioChangePending(),
+                                     slot.isProcessingOnline(), holdForTake, slot.generation()))
+                {
+                    case Vst3Action::None:
+                        return;
+                    case Vst3Action::LatencyGaveUp:
+                        logHoldingBack (where, index, slot.getPath());
+                        return;
+                    case Vst3Action::Restart:
+                        // The pending I/O change holds processBlock off, so it is
+                        // only cleared once the fence is up. One the plug-in raises
+                        // during the cycle outlives it only if its buses then differ
+                        // from the ones the cycle read (Vst3Instance::activate).
+                        fence();
+                        (void) inst->consumeIoChanged();
+                        restart (slot, [&slot] { (void) slot.consumeLatencyChanged(); });
+                        return;
+                    case Vst3Action::DropIoChange:
+                        // The slot was quarantined behind a fence that has since
+                        // been passed, so no block reaches processBlock to read it.
+                        (void) inst->consumeIoChanged();
+                        return;
+                    case Vst3Action::TakeOffline:
+                        break;
+                }
+                fence();
+                slot.quarantineAfterFailedReactivation();
+                (void) inst->consumeIoChanged();
+                std::fprintf (stderr,
+                              "[Dusk Studio/AudioEngine] %s %d: plug-in \"%s\" keeps "
+                              "changing its inputs and outputs as soon as it is "
+                              "restarted; taken offline.\n",
+                              where, index + 1, slot.getPath().c_str());
+                if (policy.timesTakenOffline() != 1) return;
+                std::string location = slotIndex < 0 ? "Track " + std::to_string (index + 1)
+                                                     : "Aux " + std::to_string (index + 1)
+                                                           + " slot " + std::to_string (slotIndex + 1);
+                takenOffline.push_back ({
+                    std::move (location),
+                    hosting::nativePluginName (slot.getPath(), slot.getPluginId()),
+                    "VST3",
+                    "plug-in kept changing its inputs and outputs as soon as it was "
+                    "restarted, so it was taken offline" });
             };
             for (int t = 0; t < Session::kNumTracks; ++t)
                 cycleVst3 (engine.getChannelStrip (t).getNativeVst3Slot(),
-                           vst3TrackPacers[(size_t) t], "track", t);
+                           vst3TrackPolicies[(size_t) t], "track", t, -1);
             for (int a = 0; a < Session::kNumAuxLanes; ++a)
                 for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
                     cycleVst3 (engine.getAuxLaneStrip (a).getNativeVst3Slot (s),
-                               vst3AuxPacers[(size_t) a][(size_t) s], "aux lane", a);
+                               vst3AuxPolicies[(size_t) a][(size_t) s], "aux lane", a, s);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             auto cycleClap = [&] (auto& slot, hosting::RestartPacer& pacer,
                                   const char* where, int index)
             {
-                service (slot, pacer, slot.consumeRestartRequest(), where, index,
-                         [] {}, [&slot] { (void) slot.consumeRestartRequest(); });
+                switch (pacer.tick (slot.consumeRestartRequest(), holdForTake, slot.generation()))
+                {
+                    case hosting::RestartPacer::Action::None:
+                        return;
+                    case hosting::RestartPacer::Action::GaveUp:
+                        logHoldingBack (where, index, slot.getPath());
+                        return;
+                    case hosting::RestartPacer::Action::Restart:
+                        restart (slot, [&slot] { (void) slot.consumeRestartRequest(); });
+                        return;
+                }
             };
             for (int t = 0; t < Session::kNumTracks; ++t)
                 cycleClap (engine.getChannelStrip (t).getNativeClapSlot(),
@@ -618,12 +664,14 @@ public:
                     cycleClap (engine.getAuxLaneStrip (a).getNativeClapSlot (s),
                                clapAuxPacers[(size_t) a][(size_t) s], "aux lane", a);
 #endif
-            if (anyReactivated)
+            if (fenced)
             {
                 engine.resumeProcessing();
                 engine.recomputePdc();
             }
         }
+        if (! takenOffline.empty() && engine.onPluginRestoreAlert_)
+            engine.onPluginRestoreAlert_ (std::move (takenOffline));
 #endif
 
 #if DUSKSTUDIO_HAS_NATIVE_AU
@@ -642,15 +690,16 @@ public:
 private:
     AudioEngine& engine;
 
-    using AuxPacers = std::array<std::array<hosting::RestartPacer, AuxLaneParams::kMaxLanePlugins>,
+    template <typename Pacer>
+    using AuxPacers = std::array<std::array<Pacer, AuxLaneParams::kMaxLanePlugins>,
                                  Session::kNumAuxLanes>;
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    std::array<hosting::RestartPacer, Session::kNumTracks> vst3TrackPacers;
-    AuxPacers vst3AuxPacers;
+    std::array<vst3::Vst3RestartPolicy, Session::kNumTracks> vst3TrackPolicies;
+    AuxPacers<vst3::Vst3RestartPolicy> vst3AuxPolicies;
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     std::array<hosting::RestartPacer, Session::kNumTracks> clapTrackPacers;
-    AuxPacers clapAuxPacers;
+    AuxPacers<hosting::RestartPacer> clapAuxPacers;
 #endif
 };
 

@@ -91,7 +91,8 @@ public:
     bool consumeLatencyChanged() noexcept;
 
     // kIoChanged blocks processBlock until the engine has fenced the audio
-    // thread, consumed the flag, and rebuilt the component's bus arrays.
+    // thread and rebuilt the bus arrays. activate() drops one that leaves the
+    // buses it read as they were.
     bool ioChangePending() const noexcept;
     bool consumeIoChanged() noexcept;
 

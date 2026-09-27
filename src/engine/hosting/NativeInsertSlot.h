@@ -127,9 +127,9 @@ public:
     }
 
     // Keep an instance available to its native editor and state serializer,
-    // while making its audio path an offline (silent) slot. Used only after a
-    // failed reactivation; unloading here can destroy a plug-in under live GUI
-    // handles. A later successful reactivate() clears the quarantine.
+    // while making its audio path an offline slot, after a failed reactivation
+    // or for a plug-in that keeps asking to be restarted; unloading here can
+    // destroy it under live GUI handles. A later successful reactivate() clears it.
     void quarantineAfterFailedReactivation() noexcept
     {
         processingOnline.store (false, std::memory_order_release);

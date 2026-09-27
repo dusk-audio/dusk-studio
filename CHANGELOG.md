@@ -647,11 +647,18 @@ publishes.
   within a thirtieth of a second; each track's compensation then moves to the
   new value at that track's next silence. A native CLAP plug-in that asks to
   be restarted for a new latency is now restarted, where the request used to
-  be ignored. A native VST3 or CLAP restart waits for the end of a take
-  rather than cut a gap into it, and a plug-in that keeps asking is restarted
-  at most twice a second, then held back until it stops, with one line in
-  the log. A plug-in in the out-of-process sandbox still keeps the latency it
-  reported when it loaded.
+  be ignored. A native VST3 or CLAP restart for a new latency waits for the
+  end of a take rather than cut a gap into it, and a plug-in that keeps asking
+  is restarted at most twice a second, then held back until it stops, with one
+  line in the log. A native VST3 plug-in that changes its inputs or outputs is
+  silent until it is restarted, so that restart still runs at once, take or
+  no take: it puts a gap of a moment in every take being recorded, where
+  waiting would leave the insert silent in what you hear, and in a PRINT take,
+  until Stop. One that changes them again as soon as it has been restarted,
+  six times running, is taken offline and passes the dry signal (an
+  instrument falls silent), and the Plug-in unavailable alert names it; it is
+  tried again after a quiet second, or once the take ends. A plug-in in the
+  out-of-process sandbox still keeps the latency it reported when it loaded.
 - **A render that cannot open its file leaves it alone** (#763). A Mixdown,
   Bounce..., Bounce stems..., Export master... or freeze whose file already
   existed but could not be opened for writing, such as a read-only

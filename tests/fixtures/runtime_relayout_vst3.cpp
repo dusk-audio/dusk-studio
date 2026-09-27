@@ -12,6 +12,8 @@ namespace
 constexpr ParamID kExpandOutputs = 100;
 constexpr ParamID kLatencyMode = 101;
 constexpr ParamID kTouchReport = 102;
+constexpr ParamID kRepeatIoOnActivate = 103;
+constexpr ParamID kFlipOutputsOnActivate = 104;
 bool handlerDetachedBeforeTerminate = false;
 
 class LifecycleProbeView final : public CPluginView
@@ -57,6 +59,10 @@ public:
                                  ParameterInfo::kCanAutomate, kLatencyMode);
         parameters.addParameter (STR16 ("Touch Report"), nullptr, 0, 0.0,
                                  ParameterInfo::kCanAutomate, kTouchReport);
+        parameters.addParameter (STR16 ("Repeat IO On Activate"), nullptr, 1, 0.0,
+                                 ParameterInfo::kNoFlags, kRepeatIoOnActivate);
+        parameters.addParameter (STR16 ("Flip Outputs On Activate"), nullptr, 1, 0.0,
+                                 ParameterInfo::kNoFlags, kFlipOutputsOnActivate);
         handlerDetachedBeforeTerminate = false;
         rebuildBusses();
         return kResultOk;
@@ -93,6 +99,16 @@ public:
         if (id == kLatencyMode)
         {
             highLatency = value >= 0.5;
+            return result;
+        }
+        if (id == kRepeatIoOnActivate)
+        {
+            repeatIoOnActivate = value >= 0.5;
+            return result;
+        }
+        if (id == kFlipOutputsOnActivate)
+        {
+            flipOutputsOnActivate = value >= 0.5;
             return result;
         }
         if (id != kExpandOutputs)
@@ -151,6 +167,24 @@ public:
         return SingleComponentEffect::activateBus (type, direction, index, state);
     }
 
+    // A plug-in may announce a bus-layout change from inside its own
+    // activation: one that changes nothing, or one that really moves its
+    // outputs after the host has read them.
+    tresult PLUGIN_API setActive (TBool state) override
+    {
+        const auto result = SingleComponentEffect::setActive (state);
+        if (result != kResultOk || ! state || ! componentHandler)
+            return result;
+        if (flipOutputsOnActivate)
+        {
+            expanded = ! expanded;
+            rebuildBusses();
+        }
+        if (repeatIoOnActivate || flipOutputsOnActivate)
+            componentHandler->restartComponent (RestartFlags::kIoChanged);
+        return result;
+    }
+
     tresult PLUGIN_API setProcessing (TBool) override { return kResultOk; }
 
     tresult PLUGIN_API process (ProcessData& data) override
@@ -200,6 +234,8 @@ private:
 
     bool expanded = false;
     bool highLatency = false;
+    bool repeatIoOnActivate = false;
+    bool flipOutputsOnActivate = false;
 };
 } // namespace
 } // namespace Steinberg::Vst
