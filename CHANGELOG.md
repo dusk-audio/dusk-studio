@@ -557,6 +557,14 @@ publishes.
   file stayed behind. The player now lets go of the mix before the render and
   loads the new file when the finished render is closed. A cancelled or failed
   render leaves the stage reading "Failed to load" with the file's path.
+- **Export master will not write over the mix it renders from** (#760).
+  Picking the loaded mix as the export's file, and answering Replace, read the
+  mix while the export truncated and rewrote it, so the export came out wrong
+  and the mix was gone. A destination that is the loaded mix, by its name,
+  without its extension, through a link, or in another case where the
+  filesystem ignores case, is now refused before anything asks, with "File is
+  the loaded mix", and nothing is written. Mixdown and Bounce... also let go
+  of the mix when their file reaches it through a link.
 - **Save no longer cuts a master export short.** The Export master progress
   dialog covers only the MASTERING page, so the File menu stayed live under it,
   and Save or Save As during the export silenced the rest of the file. Save and

@@ -2662,6 +2662,131 @@ const ScenarioRegistrar masteringExportWorkflow { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringExportWorkflow (host, ctx); }
 } };
 
+// Export master reads the loaded mix while it writes the master, so a target
+// that reaches the mix - by its name, without its extension, through a link,
+// or in another case where the filesystem ignores case - is refused before the
+// replace prompt and before any render starts. The mix keeps every byte and
+// still plays.
+std::optional<ScenarioResult> runMasterExportOntoMixRefused (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& player = engine.getMasteringPlayer();
+    if (! engine.getTransport().isStopped() || player.isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and mastering player and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, &player, originalDir, restore]
+    {
+        engine.observeAudioRegistrationForScenario ({});
+        drainModals (host);
+        player.stop();
+        engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        host.refreshMasteringSource();
+    });
+
+    const auto folder = ctx.tempDir() / "Mix session";
+    const auto mix = folder / "mixdown.wav";
+    fs::create_directories (folder);
+    {
+        auto writer = dusk::audio::FileWriter::create (mix, { 48000.0, 2, 24 });
+        std::vector<float> tone (48000);
+        for (size_t i = 0; i < tone.size(); ++i)
+            tone[i] = 0.1f * (float) std::sin (6.283185307179586 * 440.0 * (double) i / 48000.0);
+        const float* channels[] = { tone.data(), tone.data() };
+        if (! writer || ! writer->write (channels, 2, (std::int64_t) tone.size()) || ! writer->flush())
+            return ScenarioResult::fail ("could not write the mix");
+    }
+    std::error_code ec;
+    const auto mixBytes = fileBytes (mix);
+    const auto mixStamp = fs::last_write_time (mix, ec);
+
+    struct Attempt { std::string typed, shownName; };
+    std::vector<Attempt> attempts { { mix.string(), "mixdown.wav" },
+                                    { (folder / "mixdown").string(), "mixdown.wav" } };
+    const auto link = ctx.tempDir() / "link.wav";
+    fs::create_symlink (mix, link, ec);
+    if (! ec) attempts.push_back ({ link.string(), "link.wav" });
+    if (fs::exists (folder / "MIXDOWN.wav", ec))
+        attempts.push_back ({ (folder / "MIXDOWN.wav").string(), "MIXDOWN.wav" });
+
+    applySessionDirectory (session, folder);
+    host.switchToStage (GuiHost::Stage::Mastering);
+    const auto onMix = [&player, mix]
+    { return player.isLoaded() && player.getLoadedFile().getFullPathName().toStdString() == mix.string(); };
+    auto registration = std::make_shared<std::vector<bool>>();
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&host, &ctx]
+    { ctx.expect (host.clickMasteringButton ("Load latest mixdown"), "latest mixdown button unavailable"); } });
+    steps->push_back ({ 600, [&ctx, &engine, onMix, registration]
+    {
+        ctx.expect (onMix(), "latest mixdown did not load the session mix");
+        ctx.expect (engine.isAudioCallbackRegistered(), "audio callback was not registered before the export");
+        engine.observeAudioRegistrationForScenario ([registration] (bool attached) { registration->push_back (attached); });
+    } });
+    for (const auto& attempt : attempts)
+    {
+        steps->push_back ({ 300, [&host, &ctx]
+        { ctx.expect (host.clickMasteringButton ("Export master..."), "export button unavailable"); } });
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickContextMenuItem ("WAV 24-bit \xe2\x80\x94 session rate"), "archive preset unavailable"); } });
+        steps->push_back ({ 200, [&host, &ctx, typed = attempt.typed]
+        {
+            ctx.expect (host.focusFileName(), "export file browser unavailable");
+            typeReplacing (host, typed);
+        } });
+        steps->push_back ({ 150, [&host, &ctx]
+        { ctx.expect (host.clickModalButton ("Save"), "export destination was not accepted"); } });
+        steps->push_back ({ 300, [&host, &ctx, onMix, registration, mix, mixBytes, attempt]
+        {
+            const auto what = "Export master onto '" + attempt.typed + "'";
+            const auto expected = "File is the loaded mix\nThis file is the mix the master is rendered from:\n\n    "
+                                + attempt.shownName + "\n\nExporting over it would destroy the mix, so nothing was "
+                                  "exported and nothing was changed. Choose another name for the master.";
+            ctx.expect (host.modalText() == expected, what + " was not refused; top modal '" + host.modalText() + "'");
+            ctx.expect (host.confirmationText().empty(), what + " asked to replace the mix");
+            ctx.expect (! host.renderRunning() && registration->empty(), what + " started a render");
+            ctx.expect (fileBytes (mix) == mixBytes, what + " changed the mix");
+            ctx.expect (onMix(), what + " moved the mastering player off the mix");
+            ctx.expect (host.clickModalButton (host.confirmationText().empty() ? "OK" : "Cancel"),
+                        what + ": the top modal has no way out");
+        } });
+        steps->push_back ({ 150, [&host, &ctx, attempt]
+        { ctx.expect (host.modalStackEmpty(), "OK after refusing '" + attempt.typed + "' left '" + host.modalText() + "' up"); } });
+    }
+    steps->push_back ({ 100, [&host, &ctx, mix, mixStamp]
+    {
+        std::error_code error;
+        ctx.expect (fs::last_write_time (mix, error) == mixStamp, "the refused exports touched the mix");
+        ctx.expect (host.clickMasteringButton ("Play"), "Play is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &player, onMix]
+    {
+        ctx.expect (onMix() && player.isPlaying() && player.getPlayhead() > 0, "the mix does not play after the refusals");
+        ctx.expect (host.clickMasteringButton ("Stop"), "Stop is unavailable");
+    } });
+    runSteps (ctx, steps, [&ctx, &player, registration]
+    {
+        ctx.expect (! player.isPlaying(), "Stop did not stop the mix");
+        ctx.expect (registration->empty(), "a refused export detached the audio callback");
+        ctx.complete (ctx.verdict());
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masterExportOntoMixRefused { Scenario {
+    "gui.master_export_onto_mix_refused", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasterExportOntoMixRefused (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
@@ -6449,18 +6574,23 @@ std::optional<ScenarioResult> runSaveRefusedDuringExport (GuiHost& host, Scenari
         host.refreshMasteringSource();
     });
 
-    // Two minutes, so the export is still rendering through every refusal.
-    constexpr int kFrames = 48000 * 120;
+    // An hour, so the export is still rendering through every refusal on the
+    // fastest host; mono at 4 kHz keeps the file near 29 MB.
+    constexpr int kRate = 4000;
+    constexpr std::int64_t kFrames = (std::int64_t) kRate * 3600;
     const auto folder = ctx.tempDir() / "Export session";
     const auto mix = folder / "mixdown.wav";
     const auto other = ctx.tempDir() / "Other session" / "session.json";
     fs::create_directories (folder);
     fs::create_directories (other.parent_path());
     {
-        auto writer = dusk::audio::FileWriter::create (mix, { 48000.0, 2, 16 });
-        std::vector<float> silence (kFrames);
-        const float* channels[] = { silence.data(), silence.data() };
-        if (! writer || ! writer->write (channels, 2, kFrames) || ! writer->flush())
+        auto writer = dusk::audio::FileWriter::create (mix, { (double) kRate, 1, 16 });
+        std::vector<float> silence (kRate);
+        const float* channels[] = { silence.data() };
+        bool written = writer != nullptr;
+        for (std::int64_t frame = 0; written && frame < kFrames; frame += kRate)
+            written = writer->write (channels, 1, kRate);
+        if (! written || ! writer->flush())
             return ScenarioResult::fail ("could not write the mix");
     }
     {

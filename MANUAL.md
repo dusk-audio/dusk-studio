@@ -1125,7 +1125,7 @@ The integrated reading measures up to an hour of material loud enough to count. 
 
 ## Exporting the master
 
-**Export master…** renders the mastering chain offline. Pick a delivery preset first — **WAV 24-bit at the session rate** (archive/streaming), **WAV 16-bit 44.1 kHz with TPDF dither** (CD spec), or **MP3 320 kbps** — then a destination (defaults to `master.wav` / `master.mp3` in the session folder), which asks before replacing a file that is already there. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render.
+**Export master…** renders the mastering chain offline. Pick a delivery preset first — **WAV 24-bit at the session rate** (archive/streaming), **WAV 16-bit 44.1 kHz with TPDF dither** (CD spec), or **MP3 320 kbps** — then a destination (defaults to `master.wav` / `master.mp3` in the session folder), which asks before replacing a file that is already there. The one file it will not replace is the mix it is rendering from, since the export reads the mix while it writes: a destination that is the loaded mix, by its name, without its extension, through a link, or in another case where the filesystem ignores case, is refused before anything asks, with the alert "File is the loaded mix": "This file is the mix the master is rendered from: [file name]. Exporting over it would destroy the mix, so nothing was exported and nothing was changed. Choose another name for the master." The mix stays loaded, untouched. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render.
 
 \newpage
 
@@ -2598,10 +2598,17 @@ Two variants:
 
 ### Replace file?
 
-- **When**: Bounce, Export master or Save MIDI bindings preset would write a file that is already there.
+- **When**: Bounce, Export master or Save MIDI bindings preset would write a file that is already there. Export master onto the loaded mix gets **File is the loaded mix** instead.
 - **Text**: "This file already exists and will be replaced: [file name]. Continue?" A realtime bounce named `.mp3` adds "Realtime bounces are always written as WAV." before the question.
 - **Buttons**: **Replace** (destructive, red) / **Cancel**.
 - **Action**: Replace writes over the file. Cancel writes nothing and leaves the file as it was; pick again under another name.
+
+### File is the loaded mix
+
+- **When**: Export master would write over the mix the **MASTERING** stage has loaded: its own name, the name without its extension, a link to it, or another case of it where the filesystem ignores case.
+- **Text**: "This file is the mix the master is rendered from: [file name]. Exporting over it would destroy the mix, so nothing was exported and nothing was changed. Choose another name for the master."
+- **Buttons**: OK.
+- **Action**: Export again under another name. The mix stays loaded and plays as before.
 
 ### Switch track to [mode]?
 

@@ -1033,6 +1033,18 @@ void MasteringView::openExportBrowser (int preset)
         if (! target.hasFileExtension (extension))
             target = target.withFileExtension (extension);
 
+        // The render reads the mix while it writes the master, so replacing
+        // the mix would destroy it; it is refused before anything asks.
+        const auto mix = engine.getMasteringPlayer().getLoadedFile().getFullPathName().toStdString();
+        auto* window = getTopLevelComponent();
+        if (savecheck::isSameLocation (std::filesystem::u8path (target.getFullPathName().toStdString()),
+                                       std::filesystem::u8path (mix)))
+        {
+            showDuskAlert (window != nullptr ? *window : *this, savecheck::kLoadedMixTitle,
+                           savecheck::loadedMixMessage (target.getFileName().toStdString()));
+            return;
+        }
+
         juce::Component::SafePointer<MasteringView> safeThis (this);
         auto launch = [safeThis, spec, target]
         {
@@ -1051,7 +1063,6 @@ void MasteringView::openExportBrowser (int preset)
             launch();
             return;
         }
-        auto* window = getTopLevelComponent();
         showDuskConfirm (window != nullptr ? *window : *this, savecheck::kReplaceFileTitle,
                          savecheck::replaceFileMessage (target.getFileName().toStdString()),
                          savecheck::kReplaceFileButton, launch, "Cancel", {}, /*destructive*/ true);

@@ -2662,7 +2662,7 @@ void MainComponent::askBounceRealtime (std::function<void (bool realtime)> launc
 void MainComponent::releaseMasteringMixFor (const std::filesystem::path& target)
 {
     auto& player = engine.getMasteringPlayer();
-    if (player.getLoadedFile() != toFile (target)) return;
+    if (! savecheck::isSameLocation (toPath (player.getLoadedFile()), target)) return;
     player.unloadFile();
     if (masteringView != nullptr) masteringView->followSource();
 }
@@ -2671,8 +2671,8 @@ void MainComponent::releaseMasteringMixFor (const std::filesystem::path& target)
 // or failed leaves the page reporting the mix as failing to load.
 void MainComponent::reloadMasteringMixAfterRender (const std::filesystem::path& target)
 {
-    const auto file = toFile (target);
-    if (file != session.mastering().sourceFile || engine.getMasteringPlayer().getLoadedFile() == file)
+    const auto& source = session.mastering().sourceFile;
+    if (! savecheck::isSameLocation (target, toPath (source)) || engine.getMasteringPlayer().getLoadedFile() == source)
         return;
     MasteringView::loadSessionSource (engine, session);
     if (masteringView != nullptr) masteringView->followSource();
@@ -3333,7 +3333,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     // Another spelling of the session's own folder (a link, a bind mount) is a
     // plain Save: consolidating a folder onto itself deletes each source file
     // before it copies it.
-    const auto dir = savecheck::isSameFolder (toPath (requestedDir), toPath (oldDir))
+    const auto dir = savecheck::isSameLocation (toPath (requestedDir), toPath (oldDir))
                          ? oldDir : requestedDir;
     const auto oldSidecar = toFile (sidecarFolder());
     const bool ownsOldDir = oldSidecar == oldDir;

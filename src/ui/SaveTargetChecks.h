@@ -9,6 +9,7 @@ namespace duskstudio::savecheck
 inline constexpr const char* kReplaceFileTitle   = "Replace file?";
 inline constexpr const char* kReplaceFileButton  = "Replace";
 inline constexpr const char* kOtherSessionTitle  = "Folder holds another session";
+inline constexpr const char* kLoadedMixTitle     = "File is the loaded mix";
 
 inline std::string replaceFileMessage (const std::string& fileName, const std::string& note = {})
 {
@@ -23,9 +24,17 @@ inline std::string otherSessionMessage (const std::string& folder)
            "Choose a new name, or a folder without a session.";
 }
 
-// A folder reached through a link, or spelled differently, is still the
-// session's own folder, so the comparison is by identity, not by text.
-inline bool isSameFolder (const std::filesystem::path& a, const std::filesystem::path& b)
+inline std::string loadedMixMessage (const std::string& fileName)
+{
+    return "This file is the mix the master is rendered from:\n\n    " + fileName + "\n\n"
+           "Exporting over it would destroy the mix, so nothing was exported and nothing was changed. "
+           "Choose another name for the master.";
+}
+
+// A file or folder reached through a link, spelled differently, or named in
+// another case on a filesystem that ignores case is still the same one, so
+// the comparison is by identity, not by text.
+inline bool isSameLocation (const std::filesystem::path& a, const std::filesystem::path& b)
 {
     if (a.empty() || b.empty()) return false;
     if (a == b) return true;
@@ -38,7 +47,7 @@ inline bool holdsAnotherSession (const std::filesystem::path& targetDir,
 {
     std::error_code ec;
     if (! std::filesystem::is_regular_file (targetDir / "session.json", ec)) return false;
-    return ! isSameFolder (targetDir, currentDir);
+    return ! isSameLocation (targetDir, currentDir);
 }
 
 // Anything short of a clear "no session.json there" counts as holding one.
