@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <utility>
 
 using namespace duskstudio;
 
@@ -43,6 +44,37 @@ void setEnv (const char* name, const char* value)
     else                  ::unsetenv (name);
    #endif
 }
+
+// Points the config directory at `dir` and, on every exit path including a
+// failed REQUIRE, restores the previous value and removes `dir`.
+class ScopedConfigDir
+{
+public:
+    explicit ScopedConfigDir (std::filesystem::path dirIn) : dir (std::move (dirIn))
+    {
+        if (const char* existing = std::getenv (dusk::fs::kConfigDirEnv))
+        {
+            hadPrevious = true;
+            previous = existing;
+        }
+        setEnv (dusk::fs::kConfigDirEnv, dir.u8string().c_str());
+    }
+
+    ~ScopedConfigDir()
+    {
+        setEnv (dusk::fs::kConfigDirEnv, hadPrevious ? previous.c_str() : nullptr);
+        std::error_code ignored;
+        std::filesystem::remove_all (dir, ignored);
+    }
+
+    ScopedConfigDir (const ScopedConfigDir&) = delete;
+    ScopedConfigDir& operator= (const ScopedConfigDir&) = delete;
+
+private:
+    std::filesystem::path dir;
+    std::string previous;
+    bool hadPrevious = false;
+};
 } // namespace
 
 TEST_CASE ("PluginManager JUCE adapter round-trips every representable field")
@@ -165,10 +197,7 @@ TEST_CASE ("PluginManager keeps its scan list and quarantine in plugin-cache.xml
     namespace stdfs = std::filesystem;
     const auto dir = dusk::fs::createUniqueTempDirectory ("dusk-plugin-cache-");
     REQUIRE_FALSE (dir.empty());
-    const char* previous = std::getenv (dusk::fs::kConfigDirEnv);
-    const std::string restore = previous != nullptr ? previous : "";
-    const bool hadPrevious = previous != nullptr;
-    setEnv (dusk::fs::kConfigDirEnv, dir.u8string().c_str());
+    const ScopedConfigDir configDir (dir);
 
     const auto cacheFile = dir / "plugin-cache.xml";
     auto scanned = PluginManager::descriptorToJuceForTest (completeDescriptor());
@@ -204,10 +233,6 @@ TEST_CASE ("PluginManager keeps its scan list and quarantine in plugin-cache.xml
     REQUIRE (reread.getNumTypes() == 1);
     CHECK (reread.getTypes().getFirst().name == "Adapter");
     CHECK (reread.getBlacklistedFiles().contains ("/plugins/Hangs.vst3"));
-
-    setEnv (dusk::fs::kConfigDirEnv, hadPrevious ? restore.c_str() : nullptr);
-    std::error_code ignored;
-    stdfs::remove_all (dir, ignored);
 }
 
 TEST_CASE ("the out-of-process host child name carries the platform suffix", "[plugins][ipc]")
