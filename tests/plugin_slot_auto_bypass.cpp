@@ -44,6 +44,16 @@ public:
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override
     {
         ++processCalls;
+        // Some hosts pick a latency change up inside the block the plug-in runs
+        // (JUCE's LV2 host reads the latency port after each run), so the
+        // latency can be written on the audio thread. Once armed, every block
+        // reports one sample more than the last, so the plug-in's final access
+        // before a bypass is a write.
+        if (const int latency = nextLatencyInProcess.load (std::memory_order_relaxed); latency >= 0)
+        {
+            setLatencySamples (latency);
+            nextLatencyInProcess.store (latency + 1, std::memory_order_relaxed);
+        }
         const int ms = blockMs.load (std::memory_order_relaxed);
         if (ms > 0)
             std::this_thread::sleep_for (std::chrono::milliseconds (ms));
@@ -72,7 +82,8 @@ public:
     }
 
     std::atomic<int> blockMs { 0 };
-    int processCalls = 0;
+    std::atomic<int> processCalls { 0 };
+    std::atomic<int> nextLatencyInProcess { -1 };
     int latencyOnPrepare = 0;
 };
 
@@ -255,6 +266,81 @@ TEST_CASE ("re-enabling an auto-bypassed plugin brings its latency back", "[plug
 
     h.slot.clearAutoBypass();
     CHECK (h.slot.getLatencySamples() == 64);
+}
+
+// A look-ahead limiter whose look-ahead is raised in its editor while it sits
+// out reports a longer latency. Re-enable has to put it back in the path with
+// that latency, not the one it had when it was bypassed.
+TEST_CASE ("a latency a plugin changes while it is auto-bypassed is reported after Re-enable",
+           "[plugin][autobypass]")
+{
+    Harness h (64);
+    h.warmUp();
+    h.pump (kOverrunsToTrip, 3);
+    REQUIRE (h.slot.wasAutoBypassed());
+
+    h.plugin->setLatencySamples (192);
+    CHECK (h.slot.getLatencySamples() == 0);
+
+    h.slot.clearAutoBypass();
+    CHECK (h.slot.getLatencySamples() == 192);
+}
+
+// The same with a real audio thread, and a plug-in that reports its latency from
+// inside the blocks it runs, as JUCE's LV2 host does: the blocks that carry the
+// longer look-ahead are the ones that overrun. Re-enable reads the latency on the
+// message thread after the audio thread wrote it in the plug-in's last block, so
+// under ThreadSanitizer this case shows the read is ordered after that block.
+// The grace is used up first, so exactly kOverrunsToTrip blocks run on the audio
+// thread before the bypass, and the last of them reports kLatencyFrom + 3.
+TEST_CASE ("Re-enable reads a latency the plugin reported from its last blocks on the audio thread",
+           "[plugin][autobypass]")
+{
+    using namespace std::chrono_literals;
+    constexpr int kLatencyFrom = 192;
+
+    Harness h (64);
+    h.warmUp();
+    h.plugin->nextLatencyInProcess = kLatencyFrom;
+    h.plugin->blockMs = 3;
+
+    std::atomic<bool> stop { false };
+    std::thread audioThread ([&h, &stop]
+    {
+        float left[kBlock] {};
+        float right[kBlock] {};
+        juce::MidiBuffer midi;
+        while (! stop.load (std::memory_order_relaxed))
+        {
+            h.slot.processStereoBlock (left, right, kBlock, midi);
+            std::this_thread::yield();
+        }
+    });
+    const auto waitFor = [] (auto condition)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + 10s;
+        while (! condition() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for (1ms);
+        return condition();
+    };
+
+    const bool tripped = waitFor ([&h] { return h.slot.wasAutoBypassed(); });
+    int reported = -1;
+    if (tripped)
+    {
+        CHECK (h.slot.getLatencySamples() == 0);
+        h.plugin->blockMs = 0;
+        h.slot.clearAutoBypass();
+        reported = h.slot.getLatencySamples();
+        const int calls = h.plugin->processCalls;
+        CHECK (waitFor ([&h, calls] { return h.plugin->processCalls > calls + 2; }));
+    }
+    stop.store (true, std::memory_order_relaxed);
+    audioThread.join();
+
+    REQUIRE (tripped);
+    CHECK (reported == kLatencyFrom + kOverrunsToTrip - 1);
+    CHECK_FALSE (h.slot.wasAutoBypassed());
 }
 
 // A device change re-prepares a slot that is still bypassed. It still passes

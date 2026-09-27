@@ -604,9 +604,12 @@ publishes.
   round, a device change or a save while a plug-in was still bypassed made
   compensation delay every other track for a latency the dry slot no longer
   had, and so did a sandboxed plug-in whose crash was noticed between blocks.
-  A bypassed plug-in now adds no latency, Re-enable brings back the latency it
-  has at that moment, and a re-enabled plug-in has to run late for four blocks
-  in a row again, not just one, before it is bypassed a second time.
+  A bypassed plug-in now adds no latency. Re-enable asks an in-process plug-in
+  for its latency again, so a look-ahead raised in its editor while it was
+  bypassed counts; a plug-in in the out-of-process sandbox cannot be asked
+  after it loads and comes back with the latency it reported then. A
+  re-enabled plug-in has to run late for four blocks in a row again, not just
+  one, before it is bypassed a second time.
 - **A render that cannot open its file leaves it alone** (#763). A Mixdown,
   Bounce..., Bounce stems..., Export master... or freeze whose file already
   existed but could not be opened for writing, such as a read-only

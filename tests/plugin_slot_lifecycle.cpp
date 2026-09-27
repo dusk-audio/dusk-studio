@@ -288,6 +288,49 @@ TEST_CASE ("PluginSlot completes an out-of-process load off the message thread")
     CHECK (slot.isRemote());
 }
 
+// A sandboxed plug-in has no latency query once it has loaded, so Re-enable
+// after a stall brings back the latency its load reported rather than dropping
+// it. The load stub answers no block command, so the first block stalls into the
+// bypass while the child stays alive.
+TEST_CASE ("PluginSlot keeps a sandboxed plugin's load latency across a stall and Re-enable",
+           "[plugin][ipc]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    PluginManager manager;
+    useSandboxStub (manager, "--ipc-load-reply-stub");
+
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+
+    bool completed = false;
+    bool succeeded = false;
+    slot.loadFromDescriptorAsync (sandboxTestDescriptor(),
+                                  [&] (bool ok, juce::String)
+    {
+        completed = true;
+        succeeded = ok;
+    });
+    pumpUntil ([&] { return completed; }, std::chrono::seconds (15));
+
+    REQUIRE (succeeded);
+    REQUIRE (slot.isRemote());
+    REQUIRE (slot.getLatencySamples() == ipc::kLoadStubLatencySamples);
+
+    float left[64] {};
+    float right[64] {};
+    juce::MidiBuffer midi;
+    slot.processStereoBlock (left, right, 64, midi);
+    REQUIRE (slot.wasAutoBypassed());
+    CHECK_FALSE (slot.wasCrashed());
+    CHECK (slot.getLatencySamples() == 0);
+
+    slot.clearAutoBypass();
+    CHECK (slot.isRemote());
+    CHECK (slot.getLatencySamples() == ipc::kLoadStubLatencySamples);
+}
+
 #if ! defined (_WIN32)
 // A sandboxed plug-in's latency is in delay compensation while its child runs
 // it. A child that dies takes the plug-in out of the signal path, and Re-enable

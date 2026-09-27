@@ -499,8 +499,21 @@ void PluginSlot::clearAutoBypass() noexcept
         remoteCrashed.store (false, std::memory_order_relaxed);
     }
    #endif
+    // An in-process plug-in can settle on another latency while it sits out,
+    // a look-ahead raised in its editor for one, so read it again before it
+    // rejoins the path. Some hosts update it from inside processBlock, so the
+    // read takes processLock to follow the last block the plug-in ran. A
+    // sandboxed plug-in has no latency query and keeps the one its load
+    // reported.
+    if (autoBypassed.load (std::memory_order_relaxed))
+        if (auto* p = currentInstance.load (std::memory_order_acquire))
+        {
+            const juce::SpinLock::ScopedLockType processGuard (processLock);
+            cachedLatencySamples.store (p->getLatencySamples(), std::memory_order_relaxed);
+        }
     // Release pairs with the acquire in getLatencySamples, so a reader that
-    // sees the flag down also sees the latency the retire above cleared.
+    // sees the flag down also sees the latency written above, or the zero the
+    // retire left.
     autoBypassed.store (false, std::memory_order_release);
 }
 
@@ -1201,7 +1214,7 @@ void PluginSlot::beginInProcessLoad (PluginDescriptor descriptor,
             return;
         }
         const bool ok = installInProcessInstance (std::move (inst), descriptor);
-        if (onDone) onDone (ok, ok ? juce::String() : juce::String ("install failed"));
+        if (onDone) onDone (ok, ok ? "" : "install failed");
     });
 }
 
