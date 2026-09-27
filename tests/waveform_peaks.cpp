@@ -3,6 +3,7 @@
 
 #include "engine/audiofile/WaveformPeaks.h"
 #include "engine/audiofile/FileWriter.h"
+#include "TestOpenHandles.h"
 #include "TestTempDirectory.h"
 
 #include <sndfile.h>
@@ -317,4 +318,56 @@ TEST_CASE ("Waveform source publishes failure for unreadable input and then clea
     const auto empty = source.snapshot();
     REQUIRE (empty.state == WaveformSource::State::Empty);
     REQUIRE_FALSE (empty.peaks);
+}
+
+// The Mastering waveform never asks for detail, so once its overview is built
+// the source must not keep the file open: on Windows that open handle is what
+// stopped an unloaded or replaced mastering file from being renamed or deleted.
+TEST_CASE ("An overview-only waveform source closes its file once the overview is built", "[waveform]")
+{
+    using duskstudio::test::eventually;
+    using duskstudio::test::openHandlesTo;
+    using duskstudio::test::renamedAway;
+
+    duskstudio::test::TempDirectory dir ("dusk-waveform-overview-only");
+    writeWave (dir.path() / "first.wav", { std::vector<float> (40000, 0.25f) });
+    writeWave (dir.path() / "second.wav", { std::vector<float> (1000, -0.5f) });
+    const auto first = std::filesystem::canonical (dir.path() / "first.wav");
+    const auto second = std::filesystem::canonical (dir.path() / "second.wav");
+
+    WaveformSource source (WaveformSource::Use::OverviewOnly);
+    source.setFile (first);
+    const auto ready = awaitSnapshot (source);
+    REQUIRE (ready.state == WaveformSource::State::Ready);
+    REQUIRE (ready.peaks != nullptr);
+    CHECK (eventually ([&] { return openHandlesTo (first) == 0; }));
+
+    SECTION ("the overview outlives the file")
+    {
+        CHECK (eventually ([&] { return renamedAway (first); }));
+        const auto after = source.snapshot();
+        CHECK (after.state == WaveformSource::State::Ready);
+        CHECK (after.peaks == ready.peaks);
+        checkPeak (after.peaks->query (0, 0, 40000), 0.25f, 0.25f);
+    }
+
+    SECTION ("detail requests are refused without disturbing the overview")
+    {
+        CHECK_FALSE (source.setDetailWindows ({ { 0, 100, 100, 0, 100 } }));
+        CHECK (source.snapshot().detailState == WaveformSource::State::Failed);
+        CHECK (source.setDetailWindows ({}));
+        CHECK (source.snapshot().detailState == WaveformSource::State::Empty);
+        CHECK (source.snapshot().peaks == ready.peaks);
+        CHECK (openHandlesTo (first) == 0);
+    }
+
+    SECTION ("a replacement closes the new file too")
+    {
+        source.setFile (second);
+        const auto replaced = awaitSnapshot (source);
+        REQUIRE (replaced.state == WaveformSource::State::Ready);
+        CHECK (eventually ([&] { return openHandlesTo (first) + openHandlesTo (second) == 0; }));
+        CHECK (eventually ([&] { return renamedAway (first); }));
+        CHECK (eventually ([&] { return renamedAway (second); }));
+    }
 }

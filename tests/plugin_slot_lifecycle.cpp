@@ -10,6 +10,11 @@
 #include <functional>
 #include <thread>
 
+#if ! defined (_WIN32)
+ #include <csignal>
+ #include <sys/types.h>
+#endif
+
 using namespace duskstudio;
 
 namespace
@@ -28,7 +33,11 @@ public:
 
     const juce::String getName() const override { return "Lifecycle test"; }
 
-    void prepareToPlay (double, int) override { ++prepareCalls; }
+    void prepareToPlay (double, int) override
+    {
+        ++prepareCalls;
+        setLatencySamples (latencyOnPrepare);
+    }
     void releaseResources() override          { ++releaseCalls; }
 
     void processBlock (juce::AudioBuffer<float>&,
@@ -62,6 +71,7 @@ public:
     int prepareCalls = 0;
     int releaseCalls = 0;
     int processCalls = 0;
+    int latencyOnPrepare = 0;
 };
 } // namespace
 
@@ -86,6 +96,37 @@ TEST_CASE ("PluginSlot republishes an in-process instance after release and prep
 
     CHECK (lifecycle->releaseCalls == 2);
     CHECK (lifecycle->prepareCalls == 2);
+    CHECK (lifecycle->processCalls == 1);
+}
+
+// A save reads a plug-in's state between a release and a prepare, and a plug-in
+// can settle on another latency when it is prepared, as a look-ahead limiter
+// does after its look-ahead has been changed. PDC has to follow the latency the
+// plug-in has once the save is done, not the one it had before.
+TEST_CASE ("PluginSlot re-reads a plugin's latency when a save re-prepares it", "[plugin]")
+{
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+
+    auto instance = std::make_unique<LifecyclePluginInstance>();
+    auto* lifecycle = instance.get();
+    lifecycle->latencyOnPrepare = 32;
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    REQUIRE (slot.getLatencySamples() == 32);
+
+    lifecycle->latencyOnPrepare = 128;
+    (void) slot.getStateBase64ForSave (0);
+    CHECK (lifecycle->releaseCalls == 1);
+    CHECK (lifecycle->prepareCalls == 2);
+    CHECK (slot.getLatencySamples() == 128);
+
+    // And the slot is back on the audio path, re-prepared.
+    float left[64] {};
+    float right[64] {};
+    juce::MidiBuffer midi;
+    slot.processStereoBlock (left, right, 64, midi);
     CHECK (lifecycle->processCalls == 1);
 }
 
@@ -246,6 +287,106 @@ TEST_CASE ("PluginSlot completes an out-of-process load off the message thread")
     CHECK (succeeded);
     CHECK (slot.isRemote());
 }
+
+// A sandboxed plug-in has no latency query once it has loaded, so Re-enable
+// after a stall brings back the latency its load reported rather than dropping
+// it. The load stub answers no block command, so the first block stalls into the
+// bypass while the child stays alive.
+TEST_CASE ("PluginSlot keeps a sandboxed plugin's load latency across a stall and Re-enable",
+           "[plugin][ipc]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    PluginManager manager;
+    useSandboxStub (manager, "--ipc-load-reply-stub");
+
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+
+    bool completed = false;
+    bool succeeded = false;
+    slot.loadFromDescriptorAsync (sandboxTestDescriptor(),
+                                  [&] (bool ok, juce::String)
+    {
+        completed = true;
+        succeeded = ok;
+    });
+    pumpUntil ([&] { return completed; }, std::chrono::seconds (15));
+
+    REQUIRE (succeeded);
+    REQUIRE (slot.isRemote());
+    REQUIRE (slot.getLatencySamples() == ipc::kLoadStubLatencySamples);
+
+    float left[64] {};
+    float right[64] {};
+    juce::MidiBuffer midi;
+    slot.processStereoBlock (left, right, 64, midi);
+    REQUIRE (slot.wasAutoBypassed());
+    CHECK_FALSE (slot.wasCrashed());
+    CHECK (slot.getLatencySamples() == 0);
+
+    slot.clearAutoBypass();
+    CHECK (slot.isRemote());
+    CHECK (slot.getLatencySamples() == ipc::kLoadStubLatencySamples);
+}
+
+#if ! defined (_WIN32)
+// A sandboxed plug-in's latency is in delay compensation while its child runs
+// it. A child that dies takes the plug-in out of the signal path, and Re-enable
+// on the crashed slot drops the dead child, so neither leaves a latency behind
+// for the other tracks to be delayed by.
+TEST_CASE ("PluginSlot reports no latency for a crashed sandbox child before or after Re-enable",
+           "[plugin][ipc]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    PluginManager manager;
+    useSandboxStub (manager, "--ipc-load-reply-stub");
+
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+
+    bool completed = false;
+    bool succeeded = false;
+    bool killed = false;
+    int latencyWhileRunning = -1;
+    slot.loadFromDescriptorAsync (sandboxTestDescriptor(),
+                                  [&] (bool ok, juce::String)
+    {
+        completed = true;
+        succeeded = ok;
+    });
+
+    // The crash is noticed by the slot's reaper timer, so the whole case runs
+    // inside the one dispatch loop a test gets.
+    pumpUntil ([&]
+    {
+        if (! completed) return false;
+        if (! succeeded || ! slot.isRemote()) return true;
+        if (! killed)
+        {
+            latencyWhileRunning = slot.getLatencySamples();
+            killed = ::kill ((pid_t) slot.getRemoteChildPid(), SIGKILL) == 0;
+            return ! killed;
+        }
+        return slot.wasCrashed();
+    }, std::chrono::seconds (20));
+
+    REQUIRE (succeeded);
+    REQUIRE (killed);
+    REQUIRE (slot.wasCrashed());
+    CHECK (latencyWhileRunning == ipc::kLoadStubLatencySamples);
+    CHECK (slot.wasAutoBypassed());
+    CHECK (slot.getLatencySamples() == 0);
+
+    slot.clearAutoBypass();
+    CHECK_FALSE (slot.wasCrashed());
+    CHECK_FALSE (slot.isRemote());
+    CHECK (slot.getLatencySamples() == 0);
+}
+#endif
 
 // With no child binary where the loader looks, the sandbox is simply not
 // available: the load must still take the in-process path rather than fail or

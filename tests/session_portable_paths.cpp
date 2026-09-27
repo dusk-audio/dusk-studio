@@ -5,6 +5,8 @@
 
 #include <juce_core/juce_core.h>
 
+#include <vector>
+
 namespace
 {
 juce::File makeTempSessionDir (const char* tag)
@@ -134,6 +136,47 @@ TEST_CASE ("unresolvable region path is reported as missing",
     REQUIRE (SessionSerializer::load (s, target));
     REQUIRE (s.missingAudioFilesAfterLoad.size() == 1);
     REQUIRE (s.missingAudioFilesAfterLoad[0] == "/gone/forever/track03_take.wav");
+
+    dir.deleteRecursively();
+}
+
+// The load alert words a missing mix apart from the regions' files, so the
+// serializer reports it apart: it never joins the regions' list.
+TEST_CASE ("a missing mastering mix is reported apart from missing region files",
+           "[session][serializer][paths]")
+{
+    using namespace duskstudio;
+
+    const auto dir = makeTempSessionDir ("missing-mix");
+    Session s;
+    s.setSessionDirectory (dir);
+
+    const auto target = dir.getChildFile ("session.json");
+    target.replaceWithText (
+        R"({"version":1,"tracks":[{"name":"T","regions":[)"
+        R"({"file":"audio/lost_take.wav",)"
+        R"("timeline_start":0,"length":1000,"source_offset":0}]}],)"
+        R"("mastering":{"source_file":"mixdown.wav"}})");
+
+    REQUIRE (SessionSerializer::load (s, target));
+    CHECK (s.missingAudioFilesAfterLoad == std::vector<juce::String> { "audio/lost_take.wav" });
+    CHECK (s.masteringSourceMissingAfterLoad);
+    CHECK (s.mastering().sourceFile == dir.getChildFile ("mixdown.wav"));
+
+    SECTION ("a later load with the mix present clears the report")
+    {
+        dir.getChildFile ("mixdown.wav").replaceWithText ("not a real wav");
+        REQUIRE (SessionSerializer::load (s, target));
+        CHECK_FALSE (s.masteringSourceMissingAfterLoad);
+        CHECK (s.missingAudioFilesAfterLoad.size() == 1);
+    }
+    SECTION ("a later load without a mix clears the report")
+    {
+        target.replaceWithText (R"({"version":1})");
+        REQUIRE (SessionSerializer::load (s, target));
+        CHECK_FALSE (s.masteringSourceMissingAfterLoad);
+        CHECK (s.missingAudioFilesAfterLoad.empty());
+    }
 
     dir.deleteRecursively();
 }

@@ -59,7 +59,7 @@ This chapter walks an empty session all the way to a finished bounce. If you hav
 
 Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` (`Untitled 2` when a session you saved as `Untitled` already has that folder) and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New** and it offers the starting points (**Blank**, **Band**, **Beats**, **Singer-Songwriter**), then name your session and click through. If you back out of the file browser, the unsaved-changes prompt or the autosave recovery prompt after picking **New**, the **Open** tab or a recent session, the Startup dialog comes back so you can pick again. It also comes back when **Save** in the unsaved-changes prompt does not complete, and when the session cannot be created or opened. In that last case the status bar says why. To open a recent session, click it and press **Open** (or Enter), or double-click it; the scroll wheel moves through a long list. The same templates are on **File > New from template** once a session is open.
 
-You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). On Linux, macOS, and Windows, if Dusk Studio is already running, the session opens in the existing window rather than in a second copy of the app. The window comes forward on Linux and macOS; on Windows it comes forward when the operating system's focus policy permits, and otherwise the existing window is restored and its taskbar button flashes for you to click. Either way playback stops and any take in progress is committed to the session you were working on, and if that session then has unsaved changes you get the same **Save / Don't Save / Cancel** prompt as **File > Open**. **Cancel** leaves the other session unopened and keeps you in the one you were in — with the transport stopped and the finished take in place, so save it if you want to keep it. A switch is refused outright while a bounce is running or another prompt is open; the status bar says which.
+You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). On Linux, macOS, and Windows, if Dusk Studio is already running, the session opens in the existing window rather than in a second copy of the app. The window comes forward on Linux and macOS; on Windows it comes forward when the operating system's focus policy permits, and otherwise the existing window is restored and its taskbar button flashes for you to click. Either way playback stops and any take in progress is committed to the session you were working on, and if that session then has unsaved changes you get the same **Save / Don't Save / Cancel** prompt as **File > Open**. **Cancel** leaves the other session unopened and keeps you in the one you were in — with the transport stopped and the finished take in place, so save it if you want to keep it. A switch is refused outright while a bounce, mixdown, stem bounce, master export or freeze is running, or while another prompt is open; the status bar says which, for example "Session not switched: finish or cancel the mixdown first".
 
 The Startup dialog also performs a quick update check against the public repository: if a release newer than your build exists, a flashing **Update available** banner with the new version number appears above the Recent Sessions list. The check is silent when you're up to date or offline, and nothing is sent beyond the request itself.
 
@@ -400,8 +400,10 @@ Windows SmartScreen blocks unsigned MSIs by default. The bypass is one click but
 2. SmartScreen shows: *"Windows protected your PC"* with a **Don't run** button.
 3. Click the small **More info** link near the top of the dialog. SmartScreen expands to show *"App: dusk-studio-<version>-Windows-x64.msi / Publisher: Unknown publisher"*.
 4. A new **Run anyway** button appears at the bottom — click it.
-5. The MSI installer runs normally. Accept the install location (`C:\Program Files\Dusk Studio` by default) and finish.
-6. Launch Dusk Studio from the **Start menu** (under *Dusk Studio*) or the **desktop shortcut** the installer creates.
+5. The MSI installer runs normally. Accept the install location (`C:\Program Files\Dusk Studio` by default) and finish. Windows asks for administrator permission, because Dusk Studio is installed for every account on the PC.
+6. Launch Dusk Studio from the **Start menu** (under *Dusk Studio*) or the **desktop shortcut** the installer creates. Every account on the PC gets both, and the uninstall entry (listed as *dusk-studio* in **Settings > Apps**) is there for every account too.
+
+**Upgrading from 0.13 or earlier.** Those installers registered Dusk Studio for the account that installed it only, and Windows cannot upgrade that install to one for every account. Uninstall *dusk-studio* from **Settings > Apps**, signed in as the account that installed it, then run the new installer. Your sessions and settings are kept. If the earlier copy is in the default folder and you skip this step, the installer stops and says the same.
 
 Windows SmartScreen treats every new MSI hash as untrusted on first download; reputation builds up across installations over time but reset on every new release. The MORE INFO → RUN ANYWAY two-click bypass is consistent across builds.
 
@@ -1061,7 +1063,7 @@ The **MASTERING** stage is a separate signal path. It does not play your tracks;
 - **Load mix...**: opens a file chooser for WAV, AIFF, or FLAC files.
 - **Load latest mixdown**: loads `mixdown.wav` from the session folder (what **Mixdown** writes), or `bounce.wav`, the bounce dialog's default name, if there is no mixdown.
 
-The source file path is displayed below the buttons.
+The source file path is displayed below the buttons. A file that will not load leaves the mix you had loaded in place, still playing if it was, and the line reads "Failed to load: [path]" with the file you picked until the source changes.
 
 ## Transport
 
@@ -1121,9 +1123,11 @@ The target picker offers Off, Spotify, Apple Music, YouTube, Tidal, and Broadcas
 
 The integrated reading measures up to an hour of material loud enough to count. Silence and anything below −70 LUFS is discarded by the standard's gate and does not use up that hour, so leaving the meter running between takes costs you nothing. Past the hour it holds where it is rather than continuing to absorb material, so for anything longer, reset it and measure the section you actually care about.
 
+Saving the session, with **Save** or **Save As…**, leaves all four readings as they are. They start again when you press **Reset I**, load another mix or open another session, and whenever the audio engine restarts, for instance for a change of audio device, sample rate, block size or **Effect oversampling**, or to render offline. The one exception is a finished **Export master…**: afterwards **Integrated** and **True Peak** show the whole master it rendered.
+
 ## Exporting the master
 
-**Export master…** renders the mastering chain offline. Pick a delivery preset first — **WAV 24-bit at the session rate** (archive/streaming), **WAV 16-bit 44.1 kHz with TPDF dither** (CD spec), or **MP3 320 kbps** — then a destination (defaults to `master.wav` / `master.mp3` in the session folder), which asks before replacing a file that is already there. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render.
+**Export master…** renders the mastering chain offline. Pick a delivery preset first — **WAV 24-bit at the session rate** (archive/streaming), **WAV 16-bit 44.1 kHz with TPDF dither** (CD spec), or **MP3 320 kbps** — then a destination (defaults to `master.wav` / `master.mp3` in the session folder), which asks before replacing a file that is already there. The one file it will not replace is the mix it is rendering from, since the export reads the mix while it writes: a destination that is the loaded mix, by its name, without its extension, through a link, or in another case where the filesystem ignores case, is refused before anything asks, with the alert "File is the loaded mix": "This file is the mix the master is rendered from: [file name]. Exporting over it would destroy the mix, so nothing was exported and nothing was changed. Choose another name for the master." The mix stays loaded, untouched. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render.
 
 \newpage
 
@@ -1802,7 +1806,7 @@ Plugins run **in-process by default** — it gives the most responsive plugin ed
 
 When a plugin crashes in OOP mode:
 
-- The slot auto-bypasses and shows a "Plugin crashed — reload to recover" message.
+- The slot auto-bypasses and shows a "Plugin crashed — reload to recover" message. It passes its track through dry and adds no delay, so delay compensation stops making room for the plugin's latency. **Re-enable plugin (crashed)** drops the dead child without starting a new one, so the latency stays out of compensation until you reload the plugin.
 - The plugin's last-known state (parameters, preset) is preserved in the session and will be re-applied when you reload the plugin.
 - You can load a different plugin to clear the slot.
 
@@ -1810,7 +1814,9 @@ The OOP child process is named `dusk-studio-plugin-host` and lives next to the m
 
 ## Auto-bypass on overrun
 
-Plugins have a CPU time budget: 60% of the buffer time when in-process, 85% when out-of-process. If a plugin exceeds this for four consecutive blocks, it is automatically bypassed and the slot shows a warning. Right-click the slot and choose **Re-enable plugin** to restore. The first sixteen blocks after a plugin loads, or after the audio device changes, are exempt: reverbs, look-ahead limiters and oversamplers all do real work before they settle. Changing the buffer size does not lift a bypass on its own, so a plugin stays bypassed until you re-enable it.
+Plugins have a CPU time budget: 60% of the buffer time when in-process, 85% when out-of-process. If a plugin exceeds this for four consecutive blocks, it is automatically bypassed and the slot shows a warning. Right-click the slot and choose **Re-enable plugin** to restore. The first sixteen blocks after a plugin loads, after the audio device changes, or after a save has read the plugin's settings, are exempt: reverbs, look-ahead limiters and oversamplers all do real work before they settle. Changing the buffer size does not lift a bypass on its own, so a plugin stays bypassed until you re-enable it.
+
+A bypassed plugin passes its track through dry, so it adds no delay, and delay compensation stops holding the other tracks back for it. When you re-enable it, compensation makes room for its latency again. A plugin running in-process is asked for its latency at that moment, so a change made while it was bypassed counts: a look-ahead raised in its editor, a different audio device, or a save. A plugin in the OOP sandbox cannot be asked again after it loads, so it comes back with the latency it reported when it was loaded; reload it after a change that moves its latency. A re-enabled plugin is bypassed again only after another four late blocks in a row.
 
 ## Plugin state in sessions
 
@@ -2061,8 +2067,8 @@ Because the session is a folder, you can copy or back up a session by copying th
 
 ## Save commands
 
-- **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file. A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, has no `session.json` of its own yet, so Save opens the Save As browser instead, even when a session you once saved as `Untitled` already sits in that folder.
-- **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder. If the Save As fails partway, for example when the notes or `session.json` cannot be written, the session stays in its old folder exactly as it was, and the copies already made in the new folder are removed again.
+- **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file. The audio pauses for a moment while Dusk Studio reads each plug-in's settings, then carries on where it was: playback keeps rolling, and the loudness readings on the **MASTERING** stage are left as they were. **Save As…** does the same. A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, has no `session.json` of its own yet, so Save opens the Save As browser instead, even when a session you once saved as `Untitled` already sits in that folder.
+- **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder. A mastering mix kept in the session folder is copied along, and the **MASTERING** stage carries on with the copy from where it was, still playing if it was playing. If the Save As fails partway, for example when the notes or `session.json` cannot be written, the session stays in its old folder exactly as it was, and the copies already made in the new folder are removed again.
 - **File → Open…** (or **Cmd+O**): load a session by choosing its `session.json` file.
 - **File → New from template**: start a fresh session with tracks pre-named and colour-coded for a common workflow. The built-in templates are **Blank** (numbered tracks), **Band** (Kick / Snare / Drums OH / Bass / Gtr 1 / Gtr 2 / Keys / Lead Vox / BG Vox), **Beats** (Kick / Snare / Hat / Perc / 808 / Pad / Lead / Vox), and **Singer-Songwriter** (Vocal / Ac Gtr L / Ac Gtr R / Bass / Synth / Drums). Templates set each track's name, colour and type (mono, stereo or MIDI); they don't add plugins or audio.
 
@@ -2088,7 +2094,7 @@ A session captures everything user-visible:
 - Markers: positions, names, colours.
 - MIDI bindings.
 - MIDI sync source/output, MCU port identifiers.
-- The currently loaded mastering source file (if any).
+- The currently loaded mastering source file (if any), which loads on the **MASTERING** stage again when the session opens. A session without one opens with that stage empty. If the file has gone missing, the stage stays empty, reads "Failed to load: [path]", and the *Missing audio files* alert names the file.
 
 ## Backing up
 
@@ -2118,6 +2124,12 @@ To export your finished mix as a stereo audio file:
 The output is **stereo 24-bit WAV at the session sample rate** by default (or a 320 kbps MP3 if you name the file `.mp3`), with a fixed 5-second tail so reverb and compression ringouts decay naturally.
 
 Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. When the bounce completes, the audio device is automatically re-attached.
+
+A render that cannot open a file it has to write, such as a read-only `mixdown.wav`, stops there, leaves that file exactly as it was, and its dialog reads "Could not write [file]: [reason]". A render that fails deletes only the files it created or overwrote: a stem bounce that stops at a stem it cannot open removes the stems it had already opened and leaves that stem and the ones after it alone. Freeze follows the same rule.
+
+While a bounce, mixdown, stem bounce, master export or freeze is rendering, **Save** and **Save As…** do nothing but put "Session not saved: finish or cancel the render first" in the status bar, since saving pauses the audio engine the render is using.
+
+When **Mixdown**, **Bounce…** or **Bounce stems…** writes over the file loaded as the mix on the **MASTERING** stage, the stage lets go of the mix while the render runs and loads the new file when you close the finished render. A render that is cancelled, or fails after it has started writing, deletes what it had written, so the stage then reads "Failed to load: [path]". A render that cannot start, such as a realtime bounce asked for while the transport is rolling, leaves the mix loaded where it was.
 
 Quitting while a bounce, mixdown, master export or freeze is rendering cancels the render, just as **Cancel** does, so no file is written. Dusk Studio waits for the render to stop and the audio device to come back, then quits, asking first if the session has unsaved changes. Cancelling that question leaves Dusk Studio open, but the render stays cancelled.
 
@@ -2536,10 +2548,10 @@ The format for each entry:
 
 ### Missing audio files
 
-- **When**: A loaded session references audio files that can't be found — even after Dusk Studio tried re-rooting each path against the session's `audio/` folder.
-- **Text**: "These audio files referenced by the session could not be found: [list]. Their regions will play silent. If the session folder was moved, copy the files back into its audio/ subfolder and reload the session."
+- **When**: A loaded session references audio files that can't be found — even after Dusk Studio tried re-rooting each path against the session's `audio/` folder — or the mastering mix it had loaded is missing.
+- **Text**: For regions and takes: "These audio files referenced by the session could not be found: [list]. Their regions will play silent. If the session folder was moved, copy the files back into its audio/ subfolder and reload the session." For the mastering mix, as its own paragraph (the whole alert when nothing else is missing): "The mastering mix this session had loaded could not be found: [path]. The MASTERING stage opens without a mix. Put the file back and reload the session, or load another mix."
 - **Buttons**: OK.
-- **Action**: Put the listed files into the session's `audio/` folder (the file name is what matters) and reload.
+- **Action**: Put the listed files into the session's `audio/` folder (the file name is what matters) and reload. Put a missing mix back at the path shown and reload, or use **Load mix...** on the **MASTERING** stage.
 
 ### Clean out
 
@@ -2592,10 +2604,17 @@ Two variants:
 
 ### Replace file?
 
-- **When**: Bounce, Export master or Save MIDI bindings preset would write a file that is already there.
+- **When**: Bounce, Export master or Save MIDI bindings preset would write a file that is already there. Export master onto the loaded mix gets **File is the loaded mix** instead.
 - **Text**: "This file already exists and will be replaced: [file name]. Continue?" A realtime bounce named `.mp3` adds "Realtime bounces are always written as WAV." before the question.
 - **Buttons**: **Replace** (destructive, red) / **Cancel**.
 - **Action**: Replace writes over the file. Cancel writes nothing and leaves the file as it was; pick again under another name.
+
+### File is the loaded mix
+
+- **When**: Export master would write over the mix the **MASTERING** stage has loaded: its own name, the name without its extension, a link to it, or another case of it where the filesystem ignores case.
+- **Text**: "This file is the mix the master is rendered from: [file name]. Exporting over it would destroy the mix, so nothing was exported and nothing was changed. Choose another name for the master."
+- **Buttons**: OK.
+- **Action**: Export again under another name. The mix stays loaded and plays as before.
 
 ### Switch track to [mode]?
 

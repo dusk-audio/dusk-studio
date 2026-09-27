@@ -14,21 +14,21 @@ MasteringPlayer::~MasteringPlayer()
     // Parks currentReader on null and drains any in-flight process() so the
     // readers can't be destroyed under a callback that latched the pointer.
     parkAndWaitForAudio();
-    previousReader.reset();
+    retiredReader.reset();
     ownedReader.reset();
 }
 
 bool MasteringPlayer::parkAndWaitForAudio()
 {
-    currentReader.store (nullptr, std::memory_order_release);
+    currentReader.store (nullptr, std::memory_order_seq_cst);
     // process() bumps audioInFlight BEFORE loading currentReader, so once
-    // the counter reaches zero no callback can be touching the scratch or
-    // interpolators (new entries see null and bail). Happy path is sub-ms;
-    // the deadline only fires on a stuck/detached audio thread - stale
-    // resample state then beats a data race.
+    // the counter reaches zero no callback can be touching the reader, the
+    // scratch or the interpolators (new entries see null and bail). Happy path
+    // is sub-ms; the deadline only fires on a stuck/detached audio thread -
+    // stale resample state and a still-open file then beat a data race.
     constexpr auto kDrainTimeout = std::chrono::milliseconds (200);
     const auto deadline = std::chrono::steady_clock::now() + kDrainTimeout;
-    while (audioInFlight.load (std::memory_order_acquire) > 0)
+    while (audioInFlight.load (std::memory_order_seq_cst) > 0)
     {
         if (std::chrono::steady_clock::now() > deadline)
         {
@@ -47,6 +47,8 @@ bool MasteringPlayer::parkAndWaitForAudio()
 void MasteringPlayer::prepare (int maxBlockSize, double deviceSampleRate)
 {
     const bool drained = parkAndWaitForAudio();
+    if (drained)
+        retiredReader.reset();
     if (drained && ! readScratch.setSize (2, std::max (1, maxBlockSize)))
         std::fprintf (stderr,
                       "[Dusk Studio/MasteringPlayer] prepare: could not allocate a "
@@ -83,6 +85,8 @@ void MasteringPlayer::updateResampleState()
 
 bool MasteringPlayer::loadFile (const juce::File& file)
 {
+    // Closes the current file first, so a load that fails below doesn't
+    // leave it open either.
     unloadFile();
     if (! file.existsAsFile()) return false;
 
@@ -95,28 +99,17 @@ bool MasteringPlayer::loadFile (const juce::File& file)
     // the prefetch catches up. Same pattern as PlaybackEngine.
     auto r = std::make_unique<dusk::audio::BufferedFileReader> (std::move (raw));
 
-    // Stop playback before swapping the reader. The audio thread reads
-    // `playing` first and bails before touching the reader pointer; this
-    // store, combined with the release-store of currentReader below, gives
-    // the audio thread a consistent view (either old reader + not playing,
-    // or new reader + not playing).
-    playing.store (false, std::memory_order_relaxed);
-
-    // Park the audio thread on null AND drain any in-flight callback: the
-    // scratch resize + interpolator resets below race a block that latched
-    // the old reader before the park. On a drain timeout refuse the load -
-    // stale state beats a data race.
+    // unloadFile left the audio thread stopped and parked on null. Drain
+    // again: if its drain timed out, a block that latched the old reader may
+    // still be using the scratch resized and the interpolators reset below.
+    // On a second timeout refuse the load - stale state beats a data race.
     if (! parkAndWaitForAudio())
-    {
-        currentReader.store (ownedReader.get(), std::memory_order_release);
         return false;
-    }
 
-    // Move the (now-untouched-by-audio) prior owner into previousReader so
-    // its destructor doesn't run until the NEXT loadFile/unloadFile/dtor.
-    previousReader = std::move (ownedReader);
-    ownedReader    = std::move (r);
-    loadedFile     = file;
+    retiredReader.reset();
+    ownedReader = std::move (r);
+    loadedFile  = file;
+    ++sourceGeneration;
     playhead.store (0, std::memory_order_relaxed);
     // Size the resample scratch for this source's rate BEFORE the reader is
     // published - the audio thread is parked on null until the store below.
@@ -128,10 +121,17 @@ bool MasteringPlayer::loadFile (const juce::File& file)
 void MasteringPlayer::unloadFile()
 {
     playing.store (false, std::memory_order_relaxed);
-    currentReader.store (nullptr, std::memory_order_release);
-    previousReader = std::move (ownedReader);  // delays destruction by one publish
     loadedFile = juce::File();
+    ++sourceGeneration;
     playhead.store (0, std::memory_order_relaxed);
+
+    // Destroying the reader, here on the message thread, is what closes the
+    // file - but only once the drain proves no block can still be reading it.
+    const bool drained = parkAndWaitForAudio();
+    if (ownedReader != nullptr)
+        retiredReader = std::move (ownedReader);
+    if (drained)
+        retiredReader.reset();
 }
 
 std::int64_t MasteringPlayer::getLengthSamples() const noexcept
@@ -157,9 +157,10 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     // check is waited on before the scratch/interpolators are mutated.
     AudioInFlightScope guard (audioInFlight);
 
-    // Acquire-load the reader pointer once and use it for the whole block.
-    // Pairs with the release-stores in loadFile/unloadFile.
-    auto* r = currentReader.load (std::memory_order_acquire);
+    // Load the reader pointer once and use it for the whole block. It
+    // acquires the publishing release-stores and is seq_cst for the park's
+    // handshake (see audioInFlight).
+    auto* r = currentReader.load (std::memory_order_seq_cst);
     if (r == nullptr) return;
 
     const std::int64_t start  = playhead.load (std::memory_order_relaxed);

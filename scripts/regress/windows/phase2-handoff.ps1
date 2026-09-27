@@ -2,44 +2,6 @@
 # shipped session; a second launch carrying a different session path must hand
 # it to the running instance and exit at once, leaving the first instance alive,
 # in front, and loading what it was handed.
-$ErrorActionPreference = 'Continue'
-$rgIp = '@@HOSTIP@@'
-$rgRoot = "$env:LOCALAPPDATA\@@ROOT@@"
-$rgLog = ''
-$rgResult = 'FAIL'
-$rgExe = ''
-
-function Invoke-RegressPost($text) {
-    Invoke-RestMethod -Uri "http://${rgIp}:9000/" -Method POST -Body $text | Out-Null
-}
-
-# The plugin host inherits the app's redirected handles, so a pipe can stay
-# open after the app itself has exited; a bounded wait keeps that from hanging
-# the phase. Stop-RegressChildren closes the usual holder first.
-function Stop-RegressChildren {
-    Get-Process dusk-studio-plugin-host -ErrorAction SilentlyContinue |
-        Stop-Process -Force -ErrorAction SilentlyContinue
-}
-function Read-RegressTask($task, $ms) {
-    if ($task.Wait($ms)) { return $task.Result }
-    return "<read timed out after ${ms} ms; output withheld by an open inherited handle>"
-}
-
-# The first instance's load has to be seen while it is still running, and
-# ReadToEndAsync only returns once the pipe closes. One bounded ReadLineAsync at
-# a time instead, no delegates: a scriptblock callback throws under iex. The
-# first wait paces the caller's poll loop; the rest drain whatever else is
-# already buffered.
-function Read-RegressStderr($state, $ms) {
-    while ($null -ne $state.Task -and $state.Task.Wait($ms)) {
-        $line = $state.Task.Result
-        if ($null -eq $line) { $state.Task = $null; break }
-        [void]$state.Text.AppendLine($line)
-        $state.Task = $state.Reader.ReadLineAsync()
-        $ms = 100
-    }
-    return $state.Text.ToString()
-}
 
 # A scriptblock delegate (EnumWindows and friends) throws under iex, so the
 # P/Invoke surface stays limited to this direct call.
@@ -53,31 +15,9 @@ if (-not ('Regress.ForegroundOwner' -as [type])) {
 '@
 }
 
-function Start-RegressApp($appArgs, $envs) {
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $rgExe
-    $psi.Arguments = $appArgs
-    $psi.WorkingDirectory = (Split-Path $rgExe)
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardError = $true
-    $psi.RedirectStandardOutput = $true
-    if ($envs) { foreach ($k in $envs.Keys) { $psi.EnvironmentVariables[$k] = $envs[$k] } }
-    $p = [System.Diagnostics.Process]::Start($psi)
-    $p | Add-Member -NotePropertyName RgOut -NotePropertyValue $p.StandardOutput.ReadToEndAsync()
-    $p | Add-Member -NotePropertyName RgErr -NotePropertyValue @{
-        Reader = $p.StandardError
-        Text   = New-Object System.Text.StringBuilder
-        Task   = $p.StandardError.ReadLineAsync()
-    }
-    return $p
-}
-
 try {
-    Get-Process DuskStudio -ErrorAction SilentlyContinue |
-        Stop-Process -Force -ErrorAction SilentlyContinue
-    $rgExe = (Get-ChildItem $rgRoot -Recurse -Filter DuskStudio.exe |
-        Select-Object -First 1).FullName
-    if (-not $rgExe) { throw "DuskStudio.exe not found under $rgRoot (run phase 1 first)" }
+    Stop-RegressApps
+    $rgExe = Get-RegressExe
 
     $rgSession = "$rgRoot\regress-session\session.json"
     $rgHandoff = "$rgRoot\regress-session\handoff.json"
@@ -88,7 +28,11 @@ try {
     # The session arrives through the environment so no picker is up: a handoff
     # into the picker would be a different test. B is not launched until A has
     # logged that load, so the handoff lands on a window that is showing it.
-    $rgFirst = Start-RegressApp '' @{ DUSKSTUDIO_LOAD_SESSION = $rgSession }
+    # Both launches share one private profile, as two launches by one user do.
+    $rgEnv = New-RegressSandbox 'handoff'
+    $rgFirstEnv = $rgEnv.Clone()
+    $rgFirstEnv['DUSKSTUDIO_LOAD_SESSION'] = $rgSession
+    $rgFirst = Start-RegressApp $rgFirstEnv ''
     $rgSessionLoaded = $false
     $rgHwnd = [IntPtr]::Zero
     $rgFirstErr = ''
@@ -109,7 +53,7 @@ try {
     # A short settle so the load's own window work is done before the handoff.
     Start-Sleep -Seconds 3
 
-    $rgSecond = Start-RegressApp ('"' + $rgHandoff + '"')
+    $rgSecond = Start-RegressApp $rgEnv ('"' + $rgHandoff + '"')
     $rgStart = Get-Date
     $rgHandedOff = $rgSecond.WaitForExit(30000)
     $rgElapsed = [int]((Get-Date) - $rgStart).TotalSeconds
@@ -161,7 +105,7 @@ try {
     $rgLog += "phase2 failed: $_`n"
 }
 
-$rgLog += "REGRESS-PHASE phase2 RESULT $rgResult`nREGRESS-PHASE phase2 END`n"
+$rgLog += "REGRESS-PHASE phase2-handoff RESULT $rgResult`nREGRESS-PHASE phase2-handoff END`n"
 Invoke-RegressPost $rgLog
 
 # iex runs the script in a child scope, so plain "exit" leaves the console

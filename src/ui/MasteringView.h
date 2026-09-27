@@ -3,6 +3,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include <cstdint>
+#include <filesystem>
+#include <string>
 #include <vector>
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
@@ -25,7 +27,10 @@ public:
     explicit WaveformDisplay (MasteringPlayer& player);
     ~WaveformDisplay() override;
 
-    void setSource (const juce::File& file);  // empty file clears
+    // Shows whatever the player has loaded. The timer picks up any load or
+    // unload; a caller that just changed the source calls this to show it now.
+    void followPlayer();
+    const std::filesystem::path& shownFileForScenario() const { return shownFile; }
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
 
@@ -33,8 +38,10 @@ private:
     void timerCallback() override;
 
     MasteringPlayer&            player;
-    dusk::audio::WaveformSource waveformSource;
+    dusk::audio::WaveformSource waveformSource { dusk::audio::WaveformSource::Use::OverviewOnly };
     dusk::audio::WaveformSource::Snapshot waveformSnapshot;
+    std::uint64_t                shownSourceGeneration = 0;
+    std::filesystem::path        shownFile;
     std::int64_t                 lastPlayhead = -1;
 };
 
@@ -53,8 +60,20 @@ public:
     void visibilityChanged() override;
     void parentHierarchyChanged() override;
 
+    // Loads the session's mastering source into the player, or unloads the
+    // player when the session names none; false when the named file would not
+    // load. Needs no view: an open page follows the player on its timer and a
+    // new one starts from it, so session switches call this directly.
+    static bool loadSessionSource (AudioEngine& engine, Session& session);
+
     bool loadFile (const juce::File& file);
-    void refreshSourceForScenario();
+    // Shows what the player holds now rather than on the next timer tick.
+    void followSource();
+    std::string sourceTextForScenario() const { return sourceFileLabel.getText().toStdString(); }
+    std::filesystem::path waveformFileForScenario() const
+    {
+        return waveform != nullptr ? waveform->shownFileForScenario() : std::filesystem::path();
+    }
     auto targetPointForScenario() const { return masteringTargetCombo.getBounds().getCentre(); }
     // The multiband preset picker sits inside the comp panel, so its centre is
     // reported in this view's coordinates like every other scenario point.
@@ -87,7 +106,8 @@ public:
 
 private:
     void timerCallback() override;
-    void updateLabels();
+    void updateLabels (const std::string& rejectedPick = {});
+    std::uint64_t labelSourceGeneration = 0;
 
     // Open or close the two native panels to match the stage. Coalesced onto the next
     // message-loop tick, because the visibility change that asks for one arrives from

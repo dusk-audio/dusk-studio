@@ -146,6 +146,7 @@ jobs:
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
           for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {
@@ -174,6 +175,18 @@ jobs:
         with:
           name: duskstudio-windows-x64
           path: build-tests/DuskStudio_artefacts/Release/
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Upload the fixture plug-ins
+        # scripts/regress.sh windows --fixtures-run <run id> feeds these to the
+        # scenario suite in the win11 guest through DUSKSTUDIO_FIXTURE_DIR.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: duskstudio-windows-fixtures
+          path: |
+            build-tests/dusk-studio-*-fixture.clap
+            build-tests/VST3/
           retention-days: 3
           if-no-files-found: error
 

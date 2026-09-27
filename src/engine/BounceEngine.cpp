@@ -1,7 +1,12 @@
 #include "BounceEngine.h"
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <optional>
+#include <system_error>
 #include <vector>
 #include "AudioEngine.h"
 #include "LameMp3Writer.h"
@@ -31,6 +36,37 @@ struct ScopedOfflineRender
     ~ScopedOfflineRender() { engine.setOfflineRenderActive (false); }
     AudioEngine& engine;
 };
+
+// A writer that fails may already have created or truncated its target, or it
+// may have been refused before touching it (a read-only file in a writable
+// folder). Only the first is ours to delete; when in doubt the file stays.
+struct TargetSnapshot
+{
+    bool existed = false;
+    std::uintmax_t size = 0;
+    std::filesystem::file_time_type modified {};
+};
+
+TargetSnapshot snapshotOf (const std::filesystem::path& path)
+{
+    TargetSnapshot snapshot;
+    std::error_code ec;
+    snapshot.existed = std::filesystem::exists (path, ec);
+    if (snapshot.existed)
+    {
+        snapshot.size = std::filesystem::file_size (path, ec);
+        snapshot.modified = std::filesystem::last_write_time (path, ec);
+    }
+    return snapshot;
+}
+
+bool openedSince (const TargetSnapshot& before, const std::filesystem::path& path)
+{
+    const auto now = snapshotOf (path);
+    if (! now.existed)
+        return false;
+    return ! before.existed || now.size != before.size || now.modified != before.modified;
+}
 } // namespace
 
 BounceEngine::BounceEngine (AudioEngine& e, Session& s) noexcept
@@ -141,33 +177,42 @@ BounceEngine::makeWriter (const juce::File& outFile, std::string& errOut) const
 #else
     const auto path = std::filesystem::u8path (outFile.getFullPathName().toStdString());
 #endif
+    const auto before = snapshotOf (path);
 
+    std::string whyNot, message;
     if (renderFormat == Format::Mp3)
     {
+        errno = 0;
         auto writer = std::make_unique<LameMp3Writer> (path, renderSampleRate,
                                                         kNumChannels, renderBitrateKbps);
-        if (! writer->isOk())
-        {
-            errOut = writer->fileOpened()
-                         ? "MP3 export is not available - this build has no libmp3lame."
-                         : "Could not create the MP3 output file.";
-            return nullptr;
-        }
-        return writer;
+        const int openErrno = errno;
+        if (writer->isOk())
+            return writer;
+        if (writer->fileOpened())
+            message = "MP3 export is not available - this build has no libmp3lame.";
+        else
+            whyNot = openErrno != 0 ? std::generic_category().message (openErrno)
+                                    : std::string ("the file could not be opened");
+    }
+    else
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate    = renderSampleRate;
+        spec.numChannels   = kNumChannels;
+        spec.bitsPerSample = renderWavBitDepth;
+        spec.format        = dusk::audio::WriteSpec::Format::Wav;
+        if (auto writer = dusk::audio::FileWriter::create (path, spec, &whyNot))
+            return writer;
     }
 
-    dusk::audio::WriteSpec spec;
-    spec.sampleRate    = renderSampleRate;
-    spec.numChannels   = kNumChannels;
-    spec.bitsPerSample = renderWavBitDepth;
-    spec.format        = dusk::audio::WriteSpec::Format::Wav;
-    auto writer = dusk::audio::FileWriter::create (path, spec);
-    if (writer == nullptr)
+    errOut = message.empty() ? "Could not write " + outFile.getFileName().toStdString() + ": " + whyNot
+                             : message;
+    if (openedSince (before, path))
     {
-        errOut = "Could not create WAV writer";
-        return nullptr;
+        std::error_code ignored;
+        std::filesystem::remove (path, ignored);
     }
-    return writer;
+    return nullptr;
 }
 
 std::int64_t BounceEngine::computeBounceLength (double sampleRate, double tail) const
@@ -282,6 +327,8 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     }
     totalStemsToRender.store (stems, std::memory_order_relaxed);
 
+    if (onAccepted) onAccepted();
+
     cancelRequested.store (false, std::memory_order_relaxed);
     progress.store (0.0f, std::memory_order_relaxed);
     renderedSamples.store (0, std::memory_order_relaxed);
@@ -347,9 +394,6 @@ void BounceEngine::run()
     auto writer = makeWriter (outputFile, writerErr);
     if (writer == nullptr)
     {
-        // makeWriter may have created + truncated the file before failing - drop
-        // it so we don't leave a 0-byte output behind (mirrors renderOneStem).
-        outputFile.deleteFile();
         {
             const juce::ScopedLock lock (lastErrorLock);
             lastError = writerErr;
@@ -550,11 +594,19 @@ void BounceEngine::run()
     engine.setStage (savedStage);
     // Back to the user's realtime oversampling, then reattach on the message
     // thread - addAudioCallback re-prepares the engine (plugin (de)activate),
-    // which must not run on this worker.
-    runOnMessageThread ([this]
+    // which must not run on this worker. A finished master export keeps the
+    // loudness readings on the master it rendered, which the meter measured
+    // whole; the re-prepare would clear them.
+    const bool keepLoudness = succeeded && renderMode == Mode::MasteringChain;
+    runOnMessageThread ([this, keepLoudness]
     {
+        std::optional<LoudnessMeter::History> measured;
+        if (keepLoudness)
+            measured = engine.getMasteringChain().saveLoudnessHistory();
         engine.setRenderOversamplingOverride (0);
         engine.reattachAudioCallback();
+        if (measured)
+            engine.restoreMasteringLoudness (*measured);
     });
 
     rendering.store (false, std::memory_order_relaxed);
@@ -564,15 +616,6 @@ void BounceEngine::run()
         errSnapshot = lastError;
     }
     if (onFinished) onFinished (succeeded, errSnapshot);
-}
-
-std::unique_ptr<dusk::audio::IFileWriteSink>
-BounceEngine::openWriterFor (const juce::File& outFile, std::string& errOut) const
-{
-    auto writer = makeWriter (outFile, errOut);
-    if (writer == nullptr)
-        errOut += (" (" + outFile.getFileName() + ")").toStdString();
-    return writer;
 }
 
 void BounceEngine::armStemTap (const StemTarget& target, float* l, float* r)
@@ -660,7 +703,7 @@ bool BounceEngine::runStemsMode()
     for (const auto& tgt : targets)
     {
         std::string writerErr;
-        auto writer = openWriterFor (tgt.file, writerErr);
+        auto writer = makeWriter (tgt.file, writerErr);
         if (writer == nullptr)
         {
             {
@@ -794,10 +837,9 @@ bool BounceEngine::runStemsMode()
     {
         // Drop the partial set - half-rendered files are more confusing than
         // no files when the user cancels or a writer fails mid-render. Only
-        // files this run actually opened (truncated): targets past a failed
-        // open still hold the previous bounce's good stems.
-        const size_t touched = std::min (targets.size(), writersOpened + 1);
-        for (size_t i = 0; i < touched; ++i)
+        // the files this run opened: makeWriter already dealt with a target
+        // it failed to open, and the targets after that were never touched.
+        for (size_t i = 0; i < writersOpened; ++i)
             targets[i].file.deleteFile();
     }
 
@@ -871,7 +913,7 @@ bool BounceEngine::runRealtimeMode()
     for (const auto& f : files)
     {
         std::string writerErr;
-        auto writer = openWriterFor (f.file, writerErr);
+        auto writer = makeWriter (f.file, writerErr);
         if (writer == nullptr)
         {
             {
@@ -1043,10 +1085,8 @@ bool BounceEngine::runRealtimeMode()
     }
     if (! succeeded)
     {
-        // Only files this run actually opened (truncated): targets past a
-        // failed open still hold the previous bounce's good stems.
-        const size_t touched = std::min (files.size(), writersOpened + 1);
-        for (size_t i = 0; i < touched; ++i)
+        // Only the files this run opened, as in runStemsMode.
+        for (size_t i = 0; i < writersOpened; ++i)
             files[i].file.deleteFile();
     }
 
@@ -1114,7 +1154,6 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     auto writer = makeWriter (outFile, writerErr);
     if (writer == nullptr)
     {
-        outFile.deleteFile();   // drop any partial file makeWriter truncated
         const juce::ScopedLock lock (lastErrorLock);
         lastError = writerErr;
         return false;

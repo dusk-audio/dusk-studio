@@ -10,9 +10,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -50,6 +52,18 @@ bool writeMono (const std::filesystem::path& path, const std::vector<float>& sam
     return writer != nullptr && writer->write (channels, 1, (std::int64_t) samples.size())
         && writer->flush();
 }
+
+#if ! DUSKSTUDIO_HAS_LAME
+// Every release build ships the encoder, so a packaged run sets
+// DUSKSTUDIO_EXPECT_MP3=1 and a build that lost it fails instead of skipping.
+ScenarioResult noMp3Encoder()
+{
+    const char* expect = std::getenv ("DUSKSTUDIO_EXPECT_MP3");
+    if (expect != nullptr && std::string (expect) == "1")
+        return ScenarioResult::fail ("built without the MP3 encoder, and DUSKSTUDIO_EXPECT_MP3=1 requires it");
+    return ScenarioResult::skip ("built without the MP3 encoder");
+}
+#endif
 
 std::vector<float> sine (float hz, float amplitude, int frames)
 {
@@ -266,7 +280,7 @@ std::optional<ScenarioResult> mp3Bounce (ScenarioContext& ctx)
     return std::nullopt;
    #else
     (void) ctx;
-    return ScenarioResult::skip ("built without the MP3 encoder");
+    return noMp3Encoder();
    #endif
 }
 
@@ -385,6 +399,221 @@ std::optional<ScenarioResult> cancelLeavesNoFile (ScenarioContext& ctx)
     return std::nullopt;
 }
 
+// ------------------------------------------------------ a refused target
+
+std::optional<std::string> fileBytes (const std::filesystem::path& path)
+{
+    std::FILE* file = std::fopen (path.u8string().c_str(), "rb");
+    if (file == nullptr) return std::nullopt;
+    std::string bytes;
+    char chunk[4096];
+    for (std::size_t got; (got = std::fread (chunk, 1, sizeof (chunk), file)) > 0;)
+        bytes.append (chunk, got);
+    std::fclose (file);
+    return bytes;
+}
+
+bool writeBytes (const std::filesystem::path& path, const std::string& bytes)
+{
+    std::FILE* file = std::fopen (path.u8string().c_str(), "wb");
+    if (file == nullptr) return false;
+    const bool wrote = std::fwrite (bytes.data(), 1, bytes.size(), file) == bytes.size();
+    return std::fclose (file) == 0 && wrote;
+}
+
+// An existing file in a writable folder that this user cannot open for
+// writing. False when the file modes are not enforced (root), so there is
+// nothing to refuse.
+bool makeRefusedTarget (ScenarioContext& ctx, const std::filesystem::path& path, const std::string& bytes)
+{
+    if (! writeBytes (path, bytes)) return false;
+    namespace fs = std::filesystem;
+    std::error_code fsError;
+    fs::permissions (path, fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read,
+                     fs::perm_options::replace, fsError);
+    ctx.cleanup ([path]
+    {
+        std::error_code ignored;
+        fs::permissions (path, fs::perms::owner_write, fs::perm_options::add, ignored);
+    });
+    std::FILE* probe = std::fopen (path.u8string().c_str(), "r+b");
+    if (probe == nullptr) return true;
+    std::fclose (probe);
+    return false;
+}
+
+// The reason a refused open reports, as the platform words it.
+bool namesRefusal (const std::string& error, const std::filesystem::path& target)
+{
+    const auto prefix = "Could not write " + target.filename().u8string() + ": ";
+   #ifdef _WIN32
+    return error.rfind (prefix, 0) == 0 && error.size() > prefix.size();
+   #else
+    return error == prefix + std::generic_category().message (EACCES);
+   #endif
+}
+
+// A render whose target exists but cannot be opened leaves it byte for byte,
+// says why, and deletes only the files it created or truncated itself: a
+// Mixdown, an MP3 bounce, a master export, a stem set refused at its third
+// stem, and a freeze.
+std::optional<ScenarioResult> refusedTargetLeftAsItWas (ScenarioContext& ctx)
+{
+    static constexpr int kLength = 4800;
+    const auto source = ctx.tempDir() / "tone.wav";
+    if (! writeMono (source, sine (440.0f, 0.25f, kLength)))
+        return ScenarioResult::fail ("could not write the source take");
+    for (int t = 0; t < 4; ++t)
+        placeRegion (ctx, t, source, 0, kLength);
+
+    const std::string previous = "the previous render, kept byte for byte";
+    const auto mixdown = ctx.sessionDir() / "mixdown.wav";
+    if (! makeRefusedTarget (ctx, mixdown, previous))
+        return ScenarioResult::skip ("file modes are not enforced for this user, so no open is refused");
+
+    const auto stemDir = ctx.sessionDir() / "stems";
+    std::error_code fsError;
+    std::filesystem::create_directories (stemDir, fsError);
+    const auto base = stemDir / "song.wav";
+    std::vector<std::filesystem::path> stems;
+    for (const auto& target : BounceEngine::collectStemTargets (ctx.session(), sessionFile (base)))
+        stems.push_back (pathOf (target.file));
+    if (stems.size() != 4)
+        return ScenarioResult::fail ("expected four track stems, got " + std::to_string (stems.size()));
+    // Stem 1 is new, stem 2 is truncated, stem 3 refuses, stem 4 is never reached.
+    if (! writeBytes (stems[1], previous) || ! makeRefusedTarget (ctx, stems[2], previous)
+        || ! writeBytes (stems[3], previous))
+        return ScenarioResult::fail ("could not lay out the previous stems");
+
+    const auto freezeTarget = ctx.tempDir() / "freeze_track01.wav";
+    if (! makeRefusedTarget (ctx, freezeTarget, previous))
+        return ScenarioResult::fail ("could not lay out the previous freeze file");
+
+    auto keptAsItWas = [&ctx, previous] (const std::filesystem::path& path, const std::string& what)
+    {
+        const auto bytes = fileBytes (path);
+        ctx.expect (bytes.has_value(), what + " was deleted");
+        ctx.expect (! bytes.has_value() || *bytes == previous, what + " was changed");
+    };
+
+    auto freezeLeg = [&ctx, freezeTarget, keptAsItWas]
+    {
+        auto run = std::make_shared<BounceRun>();
+        run->bounce = std::make_unique<BounceEngine> (ctx.engine(), ctx.session());
+        ctx.cleanup ([run] { run->bounce.reset(); });
+        run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+        {
+            raw->ok = ok;
+            raw->error = std::move (error);
+            raw->finished.store (true, std::memory_order_release);
+        };
+        if (! ctx.expect (run->bounce->startFreeze (0, sessionFile (freezeTarget), kLength, kRate),
+                          "the freeze render did not start"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire)
+                                      && ! run->bounce->isRendering(); },
+                       kRenderTimeoutMs,
+                       [&ctx, run, freezeTarget, keptAsItWas]
+                       {
+                           ctx.note ("freeze: " + run->error);
+                           ctx.expect (! run->ok, "a freeze onto a refused file reported success");
+                           ctx.expect (namesRefusal (run->error, freezeTarget),
+                                       "the freeze error does not say why: " + run->error);
+                           keptAsItWas (freezeTarget, "the refused freeze file");
+                           ctx.complete (ctx.verdict());
+                       },
+                       "the freeze render never finished");
+    };
+
+    Render stemRender;
+    stemRender.mode = BounceEngine::Mode::Stems;
+    stemRender.tailSeconds = 0.1;
+    auto stemsLeg = [&ctx, base, stems, stemRender, keptAsItWas, freezeLeg]
+    {
+        renderThen (ctx, base, stemRender, [&ctx, stems, keptAsItWas, freezeLeg] (bool ok, const std::string& error)
+        {
+            ctx.note ("stems: " + error);
+            ctx.expect (! ok, "a stem bounce with a refused stem reported success");
+            ctx.expect (namesRefusal (error, stems[2]), "the stem error does not say why: " + error);
+            std::error_code existsError;
+            ctx.expect (! std::filesystem::exists (stems[0], existsError),
+                        "the stem the bounce created was left behind");
+            ctx.expect (! std::filesystem::exists (stems[1], existsError),
+                        "the stem the bounce truncated was left behind");
+            keptAsItWas (stems[2], "the refused stem");
+            keptAsItWas (stems[3], "the stem after the refused one");
+            freezeLeg();
+        });
+    };
+
+    auto masterLeg = [&ctx, source, previous, keptAsItWas, stemsLeg]
+    {
+        auto& player = ctx.engine().getMasteringPlayer();
+        const auto master = ctx.sessionDir() / "master.wav";
+        if (! player.loadFile (sessionFile (source)) || ! makeRefusedTarget (ctx, master, previous))
+        {
+            ctx.complete (ScenarioResult::fail ("could not load the mix or lay out the previous master"));
+            return;
+        }
+        ctx.cleanup ([&player] { player.unloadFile(); });
+        Render render;
+        render.mode = BounceEngine::Mode::MasteringChain;
+        render.tailSeconds = 0.1;
+        renderThen (ctx, master, render, [&ctx, &player, master, keptAsItWas, stemsLeg] (bool ok, const std::string& error)
+        {
+            ctx.note ("master export: " + error);
+            ctx.expect (! ok, "a master export onto a refused file reported success");
+            ctx.expect (namesRefusal (error, master), "the master export error does not say why: " + error);
+            keptAsItWas (master, "the refused master");
+            player.unloadFile();
+            stemsLeg();
+        });
+    };
+
+    auto mp3Leg = [&ctx, previous, keptAsItWas, masterLeg]
+    {
+       #if DUSKSTUDIO_HAS_LAME
+        const auto mp3 = ctx.sessionDir() / "mix.mp3";
+        if (! makeRefusedTarget (ctx, mp3, previous))
+        {
+            ctx.complete (ScenarioResult::fail ("could not lay out the previous MP3"));
+            return;
+        }
+        Render render;
+        render.format = BounceEngine::Format::Mp3;
+        render.tailSeconds = 0.1;
+        renderThen (ctx, mp3, render, [&ctx, mp3, keptAsItWas, masterLeg] (bool ok, const std::string& error)
+        {
+            ctx.note ("mp3: " + error);
+            ctx.expect (! ok, "an MP3 bounce onto a refused file reported success");
+            ctx.expect (namesRefusal (error, mp3), "the MP3 error does not say why: " + error);
+            keptAsItWas (mp3, "the refused MP3");
+            masterLeg();
+        });
+       #else
+        (void) previous;
+        (void) keptAsItWas;
+        ctx.note ("mp3: built without the MP3 encoder, leg not run");
+        masterLeg();
+       #endif
+    };
+
+    Render mixRender;
+    mixRender.tailSeconds = 0.1;
+    renderThen (ctx, mixdown, mixRender, [&ctx, mixdown, keptAsItWas, mp3Leg] (bool ok, const std::string& error)
+    {
+        ctx.note ("mixdown: " + error);
+        ctx.expect (! ok, "a Mixdown onto a refused file reported success");
+        ctx.expect (namesRefusal (error, mixdown), "the Mixdown error does not say why: " + error);
+        keptAsItWas (mixdown, "the refused mixdown.wav");
+        mp3Leg();
+    });
+    return std::nullopt;
+}
+
 // --------------------------------------------------------------- alignment
 
 // Track 1 plays to the master and sends to aux 1, track 2 plays through bus 1,
@@ -393,7 +622,7 @@ std::optional<ScenarioResult> cancelLeavesNoFile (ScenarioContext& ctx)
 std::optional<ScenarioResult> stemsRebuildTheMix (ScenarioContext& ctx)
 {
     auto& session = ctx.session();
-    constexpr int kLength = 24000;
+    static constexpr int kLength = 24000;
     const auto a = ctx.tempDir() / "a.wav";
     const auto b = ctx.tempDir() / "b.wav";
     if (! writeMono (a, sine (220.0f, 0.2f, kLength)) || ! writeMono (b, sine (330.0f, 0.2f, kLength)))
@@ -862,7 +1091,7 @@ std::optional<ScenarioResult> exportMasterMp3 (ScenarioContext& ctx)
     });
    #else
     (void) ctx;
-    return ScenarioResult::skip ("built without the MP3 encoder");
+    return noMp3Encoder();
    #endif
 }
 
@@ -957,6 +1186,9 @@ const ScenarioRegistrar busAlignRegistrar { Scenario {
 const ScenarioRegistrar cancelRegistrar { Scenario {
     "bounce.cancel_leaves_no_file", { "bounce" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return cancelLeavesNoFile (ctx); }, 120000 } };
+const ScenarioRegistrar refusedRegistrar { Scenario {
+    "bounce.refused_target_left_as_it_was", { "bounce", "stems", "freeze" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return refusedTargetLeftAsItWas (ctx); }, 120000 } };
 const ScenarioRegistrar exportRegistrar { Scenario {
     "bounce.export_master_post_limiter", { "bounce", "mastering" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return exportMasterPostLimiter (ctx); }, 120000 } };

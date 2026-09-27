@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Injected into the CPack WiX (v3) Product by CPACK_WIX_PATCH_FILE.
+
+  0.13 and earlier registered the product for the installing account only while
+  putting its files in Program Files. Windows Installer never upgrades across
+  per-user and per-machine, so this per-machine package would install beside
+  that copy: two uninstall entries, doubled shortcuts, and one shared folder
+  that uninstalling either can break. An executable at the default location
+  with no per-machine product to upgrade is that copy (or its leftovers), so the
+  install stops and says how to remove it. A copy in a folder of its own choice
+  is not found, and then the install proceeds as it did before.
+-->
+<CPackWiXPatch>
+  <CPackWiXFragment Id="#PRODUCT">
+    <Property Id="DUSK_UNREGISTERED_EXE">
+      <DirectorySearch Id="DuskDefaultBinFolder" Path="[ProgramFiles64Folder]Dusk Studio\bin" Depth="0">
+        <FileSearch Id="DuskDefaultExe" Name="DuskStudio.exe"/>
+      </DirectorySearch>
+    </Property>
+    <Condition Message="An earlier Dusk Studio in [ProgramFiles64Folder]Dusk Studio was installed for one account only, and this installer cannot replace it. Uninstall dusk-studio from Settings &gt; Apps, signed in as the account that installed it, then run this installer again. Your sessions and settings are kept. If Apps does not list it, delete that folder instead.">Installed OR WIX_UPGRADE_DETECTED OR WIX_DOWNGRADE_DETECTED OR NOT DUSK_UNREGISTERED_EXE</Condition>
+  </CPackWiXFragment>
+</CPackWiXPatch>

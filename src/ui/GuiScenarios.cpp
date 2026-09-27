@@ -670,7 +670,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     void refreshMasteringSource() override
     {
-        if (owner.masteringView != nullptr) owner.masteringView->refreshSourceForScenario();
+        if (owner.masteringView != nullptr) owner.masteringView->followSource();
     }
     bool clickMasteringButton (const std::string& label) override
     {
@@ -1431,6 +1431,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.masteringView != nullptr ? owner.masteringView->targetTextForScenario() : std::string();
     }
+    std::string masteringSourceText() const override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->sourceTextForScenario() : std::string();
+    }
+    std::filesystem::path masteringWaveformFile() const override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->waveformFileForScenario()
+                                              : std::filesystem::path();
+    }
     std::uint32_t masteringLoudnessColour (bool peak) const override
     {
         return owner.masteringView != nullptr ? owner.masteringView->loudnessColourForScenario (peak) : 0;
@@ -1623,10 +1632,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             const auto at = owner.getTopLevelComponent()->getLocalPoint (component, point).toFloat();
             return clickAt (at.x, at.y, clicks, right);
         };
-        if (kind == StripKind::Channel && control == "name")
+        if (kind == StripKind::Channel && (control == "name" || control == "print"))
         {
             auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index) : nullptr;
-            return strip != nullptr && click (strip, strip->namePointForScenario());
+            return strip != nullptr
+                && click (strip, control == "name" ? strip->namePointForScenario() : strip->printPointForScenario());
         }
         if (kind == StripKind::Aux && (control == "name" || control == "mute" || control == "fader"))
         {
@@ -1860,6 +1870,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         const auto* panel = dynamic_cast<BounceDialog*> (owner.mixdownModal.getBody());
         return panel != nullptr && panel->isRenderRunning();
+    }
+    bool renderRunning() const override
+    {
+        for (auto* modal : EmbeddedModal::activeModalStack())
+            if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody());
+                render != nullptr && render->isRenderRunning())
+                return true;
+        return false;
     }
     std::string statusMessage() const override { return owner.statusLabel.getText().toStdString(); }
 

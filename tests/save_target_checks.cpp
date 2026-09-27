@@ -78,20 +78,63 @@ TEST_CASE ("the replace prompt names the file and adds a note only when given on
 
 TEST_CASE ("Save As treats another spelling of the session's own folder as the same folder")
 {
-    using duskstudio::savecheck::isSameFolder;
+    using duskstudio::savecheck::isSameLocation;
     const ScratchSessions s;
     REQUIRE_FALSE (s.root.empty());
 
-    CHECK (isSameFolder (s.mine, s.mine));
-    CHECK (isSameFolder (s.root / "Other" / ".." / "Mine", s.mine));
-    CHECK_FALSE (isSameFolder (s.other, s.mine));
-    CHECK_FALSE (isSameFolder (s.root / "New", s.mine));
-    CHECK_FALSE (isSameFolder (s.mine, {}));
+    CHECK (isSameLocation (s.mine, s.mine));
+    CHECK (isSameLocation (s.root / "Other" / ".." / "Mine", s.mine));
+    CHECK_FALSE (isSameLocation (s.other, s.mine));
+    CHECK_FALSE (isSameLocation (s.root / "New", s.mine));
+    CHECK_FALSE (isSameLocation (s.mine, {}));
 
     std::error_code ec;
     stdfs::create_directory_symlink (s.mine, s.root / "Link", ec);
     if (! ec)
-        CHECK (isSameFolder (s.root / "Link", s.mine));
+        CHECK (isSameLocation (s.root / "Link", s.mine));
+}
+
+TEST_CASE ("Export master knows the loaded mix under any name that reaches it")
+{
+    using duskstudio::savecheck::isSameLocation;
+    const ScratchSessions s;
+    REQUIRE_FALSE (s.root.empty());
+    const auto mix = s.mine / "mixdown.wav";
+    std::ofstream (mix, std::ios::binary) << "mix";
+    std::ofstream (s.mine / "master.wav", std::ios::binary) << "master";
+
+    CHECK (isSameLocation (mix, mix));
+    CHECK (isSameLocation (s.other / ".." / "Mine" / "mixdown.wav", mix));
+    CHECK_FALSE (isSameLocation (s.mine / "master.wav", mix));
+    CHECK_FALSE (isSameLocation (s.mine / "master2.wav", mix));
+    CHECK_FALSE (isSameLocation (s.mine / "mixdown.wav", {}));
+
+    std::error_code ec;
+    const auto relative = stdfs::relative (mix, ec);
+    if (! ec && ! relative.empty() && relative.is_relative())
+        CHECK (isSameLocation (relative, mix));
+
+    stdfs::create_symlink (mix, s.other / "link.wav", ec);
+    if (! ec)
+        CHECK (isSameLocation (s.other / "link.wav", mix));
+
+    stdfs::create_hard_link (mix, s.other / "hard.wav", ec);
+    if (! ec)
+        CHECK (isSameLocation (s.other / "hard.wav", mix));
+
+    // Where the filesystem ignores case, the other spelling opens the mix.
+    const auto upper = s.mine / "MIXDOWN.wav";
+    CHECK (isSameLocation (upper, mix) == stdfs::exists (upper, ec));
+}
+
+TEST_CASE ("the loaded-mix refusal names the file and says nothing was written")
+{
+    using duskstudio::savecheck::loadedMixMessage;
+
+    CHECK (loadedMixMessage ("mixdown.wav")
+           == "This file is the mix the master is rendered from:\n\n    mixdown.wav\n\n"
+              "Exporting over it would destroy the mix, so nothing was exported and nothing was changed. "
+              "Choose another name for the master.");
 }
 
 TEST_CASE ("a never-saved session keeps its autosave and notes out of a folder holding a session")

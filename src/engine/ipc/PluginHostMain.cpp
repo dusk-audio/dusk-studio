@@ -633,6 +633,7 @@ int runIpcLoadStub (int argc, const char* const* argv, bool ackHandshake,
             LoadPluginReply reply {};
             reply.numInChans  = 2;
             reply.numOutChans = 2;
+            reply.latencySamples = kLoadStubLatencySamples;
             if (! sendControlReply (channel, request, 0, &reply, sizeof (reply)))
                 break;
         }

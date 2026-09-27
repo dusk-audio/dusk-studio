@@ -2278,6 +2278,7 @@ bool SessionSerializer::load (Session& s, const File& source)
     // has to undo a failed load (the session directory moves before this runs)
     // can rely on a false return leaving the model exactly as it was.
     s.missingAudioFilesAfterLoad.clear();
+    s.masteringSourceMissingAfterLoad = false;
 
     // Unconditional (reset-when-absent): a pre-SR-aware file must not inherit
     // the previous session's rate - 0 tells the load UI to adopt the device's.
@@ -2676,9 +2677,12 @@ bool SessionSerializer::load (Session& s, const File& source)
         const auto& mast = json::child (root, "mastering");
         auto& m = s.mastering();
         if (json::has (mast, "source_file"))
+        {
+            decltype (s.missingAudioFilesAfterLoad) missingSource;
             m.sourceFile = resolvePortablePath (json::getString (mast, "source_file"),
-                                                s.getSessionDirectory(),
-                                                s.missingAudioFilesAfterLoad);
+                                                s.getSessionDirectory(), missingSource);
+            s.masteringSourceMissingAfterLoad = ! missingSource.empty();
+        }
         // Ranges match what the mastering editors enforce. The legacy tube-EQ
         // atoms and the comp floats have no editor of their own, so they take
         // the master strip's - the comp floats reach the same donor params.

@@ -29,7 +29,8 @@ BounceDialog::BounceDialog (AudioEngine& e,
                               int mp3BitrateKbps,
                               double sampleRate,
                               int bitDepth,
-                              bool realtime)
+                              bool realtime,
+                              std::function<void()> beforeRender)
     : engine (e), session (s), outputFile (f),
       renderMode (mode), renderFormat (format), mp3Bitrate (mp3BitrateKbps),
       renderSampleRate (sampleRate), wavBitDepth (bitDepth),
@@ -112,6 +113,7 @@ BounceDialog::BounceDialog (AudioEngine& e,
     addChildComponent (closeButton);
 
     bounceEngine = std::make_unique<BounceEngine> (engine, session);
+    bounceEngine->onAccepted = std::move (beforeRender);
 
     // BounceEngine fires its callbacks on the worker thread. We don't touch
     // UI state from there - instead each frame the timer reads the engine's
@@ -124,7 +126,9 @@ BounceDialog::BounceDialog (AudioEngine& e,
     {
         finished = true;
         succeeded = false;
-        statusLabel.setText ("Could not start bounce (already in progress?)",
+        const auto reason = bounceEngine->getLastError();
+        statusLabel.setText (reason.empty() ? std::string ("Could not start bounce (already in progress?)")
+                                            : reason,
                              juce::dontSendNotification);
         cancelButton.setVisible (false);
         closeButton.setVisible (true);
@@ -264,6 +268,13 @@ void BounceDialog::cancelRender()
     statusLabel.setText ("Cancelling...", juce::dontSendNotification);
     cancelButton.setEnabled (false);
     bounceEngine->cancel();
+}
+
+const char* BounceDialog::renderName() const
+{
+    if (renderMode == BounceEngine::Mode::MasteringChain) return "master export";
+    if (renderMode == BounceEngine::Mode::Stems)          return "stem bounce";
+    return "bounce";
 }
 
 void BounceDialog::closeDialog()

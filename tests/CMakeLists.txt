@@ -189,6 +189,7 @@ add_executable(dusk-studio-tests
     playback_loop_read.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PlaybackEngine.cpp
     mastering_player_resample.cpp
+    mastering_player_file_release.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MasteringPlayer.cpp
     session_missing_sections.cpp
     session_save_as_consolidation.cpp
@@ -843,16 +844,12 @@ if(DUSK_PLUGINS_PATH)
 endif()
 
 # The native path-opening regression runs even without LAME; encoding coverage
-# is enabled when libmp3lame is available (mirrors the app build).
+# is enabled when libmp3lame is available (the app build's detection).
 target_sources(dusk-studio-tests PRIVATE
     lame_mp3_writer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/engine/LameMp3Writer.cpp)
-find_path(LAME_INCLUDE_DIR NAMES lame/lame.h)
-find_library(LAME_LIBRARY NAMES mp3lame lame)
-if(LAME_INCLUDE_DIR AND LAME_LIBRARY)
-    target_include_directories(dusk-studio-tests PRIVATE "${LAME_INCLUDE_DIR}")
-    target_link_libraries(dusk-studio-tests PRIVATE "${LAME_LIBRARY}")
-    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_LAME=1)
+if(DUSKSTUDIO_HAS_LAME)
+    target_link_libraries(dusk-studio-tests PRIVATE dusk_lame)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)

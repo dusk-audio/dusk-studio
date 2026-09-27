@@ -1,6 +1,7 @@
 #include "PluginSlot.h"
 #include "AtomicPark.h"
 #include "PluginManager.h"
+#include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -465,6 +466,8 @@ void PluginSlot::retireRemoteConnection()
     {
         const juce::SpinLock::ScopedLockType processGuard (processLock);
         currentRemote.store (nullptr, std::memory_order_release);
+        // The child's latency leaves the signal path with it.
+        cachedLatencySamples.store (0, std::memory_order_relaxed);
         retired = std::move (previousRemotes[1]);
         previousRemotes[1] = std::move (previousRemotes[0]);
         previousRemotes[0] = std::move (ownedRemote);
@@ -485,17 +488,33 @@ void PluginSlot::retireRemoteConnection()
 
 void PluginSlot::clearAutoBypass() noexcept
 {
-    autoBypassed.store (false, std::memory_order_relaxed);
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Clearing crashed state too: if the user explicitly asks to
     // re-enable a crashed slot, drop the dead connection so the next
-    // load (or processBlock attempt) doesn't see a stale carcass.
+    // load (or processBlock attempt) doesn't see a stale carcass. That
+    // leaves nothing in the signal path, and no latency to report.
     if (remoteCrashed.load (std::memory_order_relaxed))
     {
         retireRemoteConnection();
         remoteCrashed.store (false, std::memory_order_relaxed);
     }
    #endif
+    // An in-process plug-in can settle on another latency while it sits out,
+    // a look-ahead raised in its editor for one, so read it again before it
+    // rejoins the path. Some hosts update it from inside processBlock, so the
+    // read takes processLock to follow the last block the plug-in ran. A
+    // sandboxed plug-in has no latency query and keeps the one its load
+    // reported.
+    if (autoBypassed.load (std::memory_order_relaxed))
+        if (auto* p = currentInstance.load (std::memory_order_acquire))
+        {
+            const juce::SpinLock::ScopedLockType processGuard (processLock);
+            cachedLatencySamples.store (p->getLatencySamples(), std::memory_order_relaxed);
+        }
+    // Release pairs with the acquire in getLatencySamples, so a reader that
+    // sees the flag down also sees the latency written above, or the zero the
+    // retire left.
+    autoBypassed.store (false, std::memory_order_release);
 }
 
 int PluginSlot::getRemoteChildPid() const noexcept
@@ -1195,7 +1214,7 @@ void PluginSlot::beginInProcessLoad (PluginDescriptor descriptor,
             return;
         }
         const bool ok = installInProcessInstance (std::move (inst), descriptor);
-        if (onDone) onDone (ok, ok ? juce::String() : juce::String ("install failed"));
+        if (onDone) onDone (ok, ok ? "" : "install failed");
     });
 }
 
@@ -1285,11 +1304,9 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (auto* r = currentRemote.load (std::memory_order_acquire))
     {
-        // OOP path: the parking + setActive(false) bracket is intrinsic
-        // to the IPC - the child runs the plugin on its own audio worker
-        // and serialises getStateInformation under MessageManagerLock.
-        // No parent-side park needed; the parent just blocks on the
-        // control-plane reply.
+        // OOP path: the child parks its own audio worker and reads the
+        // state under MessageManagerLock, so no parent-side park is
+        // needed; the parent just blocks on the control-plane reply.
         std::vector<std::uint8_t> blob;
         std::string err;
         if (! r->getState (blob, err))
@@ -1298,6 +1315,14 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
                           "[Dusk Studio/PluginSlot] OOP getState failed: %s\n",
                           err.c_str());
             return lastKnownStateBase64;
+        }
+        {
+            // The child is not re-prepared, but its worker sat parked through
+            // the read, so the first round trips back get the watchdog's
+            // warm-up grace, as after a load.
+            const juce::SpinLock::ScopedLockType processGuard (processLock);
+            blocksSinceLoad     = 0;
+            consecutiveOverruns = 0;
         }
         lastKnownStateBase64 = blob.empty()
             ? juce::String()
@@ -1354,6 +1379,16 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
                     inst.getTotalNumOutputChannels(),
                     preparedSampleRate, preparedBlockSize);
                 inst.prepareToPlay (preparedSampleRate, preparedBlockSize);
+
+                // The plug-in starts cold again and may report a new latency,
+                // so the watchdog gets its warm-up grace back and the latency
+                // is re-read, as after any other prepare. An auto-bypassed
+                // slot still reports none until it is re-enabled.
+                const juce::SpinLock::ScopedLockType processGuard (processLock);
+                blocksSinceLoad     = 0;
+                consecutiveOverruns = 0;
+                cachedLatencySamples.store (inst.getLatencySamples(),
+                                              std::memory_order_relaxed);
             }
         },
         parkSleepMs);
@@ -1527,7 +1562,7 @@ bool PluginSlot::restoreFromSavedState (
 void PluginSlot::processMonoBlock (float* monoData, int numSamples,
                                    juce::MidiBuffer& midiMessages) noexcept
 {
-    juce::ScopedNoDenormals noDenormals;
+    dusk::audio::ScopedNoDenormals noDenormals;
     if (numSamples == 0) return;
 
     if (bypassed.load (std::memory_order_relaxed)
@@ -1702,7 +1737,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
 void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
                                      juce::MidiBuffer& midiMessages) noexcept
 {
-    juce::ScopedNoDenormals noDenormals;
+    dusk::audio::ScopedNoDenormals noDenormals;
     if (numSamples == 0) return;
 
     if (bypassed.load (std::memory_order_relaxed)

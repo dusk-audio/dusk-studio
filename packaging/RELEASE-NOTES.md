@@ -23,7 +23,11 @@ A built-in plugin suite that works on a fresh install (Utility, DuskVerb 2, Tape
   Remote Desktop sessions and systems whose basic display adapter provides only
   OpenGL 1.1. OpenGL surfaces in Dusk Studio and its plugin-host children use
   CPU rendering; the audio engine is unaffected. A first-frame driver failure
-  remains guarded so it cannot cost the same session twice.
+  remains guarded so it cannot cost the same session twice. The installer
+  sets Dusk Studio up for every account on the PC. If 0.13 or earlier is
+  installed, uninstall
+  dusk-studio from Settings -> Apps first (Windows cannot upgrade it in place);
+  sessions and settings are kept.
 - **Manual** (`MANUAL.pdf`): the Dusk Studio user manual for this release.
 
 Check a download against the `SHA256SUMS` asset before installing. It covers

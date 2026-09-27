@@ -145,6 +145,37 @@ TEST_CASE ("dusk::fs special locations match juce::File", "[foundation][fs]")
         REQUIRE (homeDir == home);
         REQUIRE (documents == home / "Documents");
     }
+#else
+    SECTION ("home follows an absolute USERPROFILE, Documents stays the shell's")
+    {
+        const auto profile = stdfs::temp_directory_path()
+                           / ("dusk-fs-profile-" + std::to_string ((unsigned long) GetCurrentProcessId()));
+        std::error_code ec;
+        stdfs::create_directories (profile / "Documents", ec);
+        REQUIRE_FALSE (ec);
+        stdfs::path homeDir, documents, shellDocuments;
+        {
+            const ScopedWideEnvironment scoped (L"USERPROFILE", profile);
+            homeDir = fs::userHomeDir();
+            documents = fs::userDocumentsDir();
+            shellDocuments = jucePath (juce::File::userDocumentsDirectory);
+        }
+        stdfs::remove_all (profile, ec);
+        REQUIRE (homeDir == profile);
+        // A redirected Documents folder is not under the profile at all.
+        REQUIRE (documents == shellDocuments);
+    }
+
+    SECTION ("home falls back to the Profile known folder without an absolute USERPROFILE")
+    {
+        for (const wchar_t* value : { L"", L"relative\\profile", L"\\no-drive\\profile" })
+        {
+            const ScopedWideEnvironment scoped (L"USERPROFILE", stdfs::path (value));
+            const auto account = fs::detail::knownFolderPath (FOLDERID_Profile);
+            REQUIRE_FALSE (account.empty());
+            REQUIRE (fs::userHomeDir() == account);
+        }
+    }
 #endif
 
     SECTION ("tempDir")

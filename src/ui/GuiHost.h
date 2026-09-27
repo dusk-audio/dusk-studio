@@ -196,6 +196,7 @@ public:
     virtual bool automationView (StripKind kind, int index,
                                  std::string& label, bool& faderEnabled) = 0;
     // A named control on a strip: "name" on a channel strip or an aux lane,
+    // "print" (PRINT / FREEZE, shown outside MIXING) on a channel strip,
     // "mute" or "fader" (its return fader) on an aux lane, "eq" (the EQ
     // header's label) on a bus strip.
     virtual bool clickStripControl (StripKind kind, int index, const std::string& control,
@@ -284,6 +285,10 @@ public:
     // this build has none. Zero while the stage is not up.
     virtual int masteringPanelsOpen() const = 0;
     virtual std::string masteringTargetText() const = 0;
+    // The Mastering page's source line, and the file its waveform was last
+    // pointed at (empty once cleared). Both empty before the page is built.
+    virtual std::string masteringSourceText() const = 0;
+    virtual std::filesystem::path masteringWaveformFile() const = 0;
     virtual std::uint32_t masteringLoudnessColour (bool peak) const = 0;
     virtual void restoreMasteringTarget (int index) = 0;
     virtual bool midiBindingsOpen() const = 0;
@@ -366,6 +371,8 @@ public:
     // would end the run.
     virtual bool requestQuit() = 0;
     virtual bool mixdownRunning() const = 0;
+    // Whether any modal's render is still running: bounce, mixdown, master export or freeze.
+    virtual bool renderRunning() const = 0;
     virtual std::string statusMessage() const = 0;
     virtual void requestSessionSwitch (const std::filesystem::path& sessionJson) = 0;
     // Opens a session the way File > Open does: a newer autosave beside it

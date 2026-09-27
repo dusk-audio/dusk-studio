@@ -1,8 +1,8 @@
 # scripts/package-windows.ps1
 # Build a Windows MSI via CPack WIX. Run from PowerShell on a Windows
 # host with the WIX Toolset on PATH. The CMakeLists.txt CPack block
-# configures the upgrade GUID + install dir; this script invokes
-# cpack -G WIX. The MSI ships UNSIGNED by design (no Authenticode
+# configures the upgrade GUID, install dir and per-machine scope; this
+# script invokes cpack -G WIX and checks the package came out per machine. The MSI ships UNSIGNED by design (no Authenticode
 # certificate) — Windows SmartScreen warns on first launch.
 #
 # Usage:
@@ -98,10 +98,35 @@ if (-not $Msis) {
     Write-Error "No .msi produced — check cpack output above"
 }
 
+function Get-MsiProperty([string]$Path, [string]$Name) {
+    $Installer = New-Object -ComObject WindowsInstaller.Installer
+    $Database = $Installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $Installer, @($Path, 0))
+    $Query = "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = '$Name'"
+    $View = $Database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $Database, @($Query))
+    try {
+        $View.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $View, $null) | Out-Null
+        $Record = $View.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $View, $null)
+        if ($null -eq $Record) { return $null }
+        return $Record.GetType().InvokeMember('StringData', 'GetProperty', $null, $Record, @(1))
+    } finally {
+        $View.GetType().InvokeMember('Close', 'InvokeMethod', $null, $View, $null) | Out-Null
+        foreach ($Com in @($View, $Database, $Installer)) {
+            [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($Com)
+        }
+    }
+}
+
 foreach ($Msi in $Msis) {
     Move-Item $Msi.FullName . -Force
     $LocalMsi = Join-Path (Get-Location) $Msi.Name
     Write-Host "Built (unsigned): $($Msi.Name)"
+
+    # A CMake too old for CPACK_WIX_INSTALL_SCOPE (before 3.29) ignores it and
+    # builds a per-user package into Program Files again.
+    $AllUsers = Get-MsiProperty $LocalMsi 'ALLUSERS'
+    if ($AllUsers -ne '1') {
+        throw "$($Msi.Name) is not a per-machine package (ALLUSERS='$AllUsers'); CPACK_WIX_INSTALL_SCOPE needs CMake 3.29 or later"
+    }
 
     $Hash = (Get-FileHash -Algorithm SHA256 $LocalMsi).Hash
     "$Hash  $($Msi.Name)" | Tee-Object -Append -FilePath "SHA256SUMS.windows" | Out-Host

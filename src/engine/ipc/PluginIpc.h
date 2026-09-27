@@ -144,6 +144,11 @@ struct LoadPluginReply
     std::uint32_t isInstrument;
 };
 
+// The latency the load stubs (--ipc-load-reply-stub, --ipc-load-audio-stub)
+// report for the plug-in they stand in for, so a test can watch a sandboxed
+// slot's latency arrive with the child and leave with it.
+constexpr std::int32_t kLoadStubLatencySamples = 32;
+
 struct PrepareToPlayPayload
 {
     double sampleRate;

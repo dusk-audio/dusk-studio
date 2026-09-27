@@ -2656,6 +2656,30 @@ void MainComponent::askBounceRealtime (std::function<void (bool realtime)> launc
                      "Offline",  [safe, launch] { if (safe != nullptr) launch (false); });
 }
 
+// Mixdown, Bounce and Bounce stems write their files in place and delete them
+// when cancelled or failed. A Mastering player still holding one would play the
+// truncated render, or on Windows keep the delete from happening, while the page
+// named the old mix. Called only once the render has been accepted: a render
+// that never starts leaves the mix, and where it stood, alone.
+void MainComponent::releaseMasteringMixFor (const std::filesystem::path& target)
+{
+    auto& player = engine.getMasteringPlayer();
+    if (! savecheck::isSameLocation (toPath (player.getLoadedFile()), target)) return;
+    player.unloadFile();
+    if (masteringView != nullptr) masteringView->followSource();
+}
+
+// A render that wrote the session's mix brings it back; one that was cancelled
+// or failed leaves the page reporting the mix as failing to load.
+void MainComponent::reloadMasteringMixAfterRender (const std::filesystem::path& target)
+{
+    const auto& source = session.mastering().sourceFile;
+    if (! savecheck::isSameLocation (target, toPath (source)) || engine.getMasteringPlayer().getLoadedFile() == source)
+        return;
+    MasteringView::loadSessionSource (engine, session);
+    if (masteringView != nullptr) masteringView->followSource();
+}
+
 void MainComponent::doMixdown()
 {
     // One-shot bounce of the master mix to <sessionDir>/mixdown.wav, then
@@ -2670,21 +2694,28 @@ void MainComponent::doMixdown()
                                                        target,
                                                        BounceEngine::Mode::MasterMix,
                                                        BounceEngine::Format::Wav, 320, 0.0, 24,
-                                                       realtime);
+                                                       realtime,
+                                                       [this, target] { releaseMasteringMixFor (toPath (target)); });
         panel->setSize (520, 200);
 
         // Close the modal, then hand off to Mastering once the bounce finishes
         // successfully. The handoff is deferred so the heavy stage swap does not
         // run re-entrantly from inside the dialog's close-button callback.
         juce::Component::SafePointer<MainComponent> safeThis (this);
-        panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->mixdownModal.close(); };
+        panel->onRequestClose = [safeThis, target]
+        {
+            if (safeThis == nullptr) return;
+            safeThis->mixdownModal.close();
+            safeThis->reloadMasteringMixAfterRender (toPath (target));
+        };
         panel->onSuccessfulFinish = [safeThis] (juce::File rendered)
         {
             dusk::callAsync ([safeThis, rendered]
             {
                 if (safeThis == nullptr) return;
                 safeThis->switchToStage (AudioEngine::Stage::Mastering);
-                if (safeThis->masteringView != nullptr)
+                if (safeThis->masteringView != nullptr
+                    && safeThis->engine.getMasteringPlayer().getLoadedFile() != rendered)
                     safeThis->masteringView->loadFile (rendered);
             });
         };
@@ -3140,6 +3171,20 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
                       /*useOverlay*/ true, /*forwardShortcuts*/ false);
 }
 
+namespace
+{
+// Every render still running from a modal, whichever view opened it.
+std::vector<RenderInProgress*> runningRenders()
+{
+    std::vector<RenderInProgress*> running;
+    for (auto* modal : EmbeddedModal::activeModalStack())
+        if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody());
+            render != nullptr && render->hasUnfinishedRender())
+            running.push_back (render);
+    return running;
+}
+} // namespace
+
 void MainComponent::stopTransportForSessionSwitch()
 {
     // In the Mastering stage the mixdown player is the audible source and the
@@ -3169,10 +3214,19 @@ void MainComponent::guardSessionSwitchThen (const char* title,
 {
     // A bounce owns the transport and fails outright if anything stops it, and
     // its modal is the only thing standing between the user and these entries.
-    // Mixdown drives the same dialog through mixdownModal.
-    if (bounceModal.isOpen() || mixdownModal.isOpen())
+    // Mixdown drives the same dialog through mixdownModal, and a master export
+    // runs from the Mastering page's own modal, which leaves the menus live.
+    const auto renders = runningRenders();
+    if (bounceModal.isOpen() || mixdownModal.isOpen() || ! renders.empty())
     {
-        setStatusText ("Session not switched: finish or cancel the bounce first");
+        const char* render = "render";
+        if (mixdownModal.isOpen())
+            render = "mixdown";
+        else if (auto* bounce = dynamic_cast<RenderInProgress*> (bounceModal.getBody()))
+            render = bounce->renderName();
+        else if (! renders.empty())
+            render = renders.front()->renderName();
+        setStatusText (("Session not switched: finish or cancel the " + std::string (render) + " first").c_str());
         if (onCancelled) onCancelled();
         return;
     }
@@ -3270,15 +3324,26 @@ bool MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate t
     return true;
 }
 
+// A render owns the transport and the audio callback until it stops, and a
+// master export reads the Mastering player. A save holds the audio thread out
+// and cycles every plug-in to read its state, and Save As moves the player onto
+// the copied mix: the first cuts into the render, the second silences the rest.
+bool MainComponent::saveRefusedForRender()
+{
+    if (runningRenders().empty()) return false;
+    setStatusText ("Session not saved: finish or cancel the render first");
+    return true;
+}
+
 bool MainComponent::saveSessionTo (const juce::File& requestedDir)
 {
-    if (requestedDir == juce::File()) return false;
+    if (requestedDir == juce::File() || saveRefusedForRender()) return false;
 
     const auto oldDir = session.getSessionDirectory();
     // Another spelling of the session's own folder (a link, a bind mount) is a
     // plain Save: consolidating a folder onto itself deletes each source file
     // before it copies it.
-    const auto dir = savecheck::isSameFolder (toPath (requestedDir), toPath (oldDir))
+    const auto dir = savecheck::isSameLocation (toPath (requestedDir), toPath (oldDir))
                          ? oldDir : requestedDir;
     const auto oldSidecar = toFile (sidecarFolder());
     const bool ownsOldDir = oldSidecar == oldDir;
@@ -3291,10 +3356,11 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
         return false;
     }
 
-    // A take still recording would otherwise end at the detach below, after
-    // a Save As has copied the session's audio, and its file would stay in the
-    // old folder. A control surface or MIDI binding can start one under a save
-    // prompt, and R still works in the Save As browser.
+    // A take still recording is not a region until its stop commits it, so the
+    // save would be written without it, and a Save As would copy the session's
+    // audio without it and leave its file in the old folder when it ended. A
+    // control surface or MIDI binding can start one under a save prompt, and R
+    // still works in the Save As browser.
     if (engine.getTransport().isRecording() || engine.getRecordManager().isActive())
     {
         engine.stop();
@@ -3304,8 +3370,9 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     // Save As to a different folder must take the audio along: copy every
     // session-owned file into the new dir and repoint the model BEFORE the
     // directory swap, so serialize below emits relative paths. Plain Ctrl+S
-    // (same dir) is a no-op here. Copying precedes the audio-callback detach
-    // - it touches no plugin state, so a long copy adds no dropout.
+    // (same dir) is a no-op here. The copy runs before the plug-in state
+    // capture and outside its process gate - it touches no plugin state, so a
+    // long copy adds no dropout.
     const bool isSaveAs = oldDir != juce::File() && dir != oldDir;
     SessionSerializer::ConsolidationResult consolidated;
     if (isSaveAs)
@@ -3364,40 +3431,24 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     // Plugin state I/O races the renderer on plugins that don't honour
     // JUCE's "must not overlap" contract (u-he Diva is the smoking-gun
     // example), corrupting the plugin's internal state and leading to
-    // an abort inside ~VST3PluginInstance later. To capture fresh
-    // plugin state safely we briefly remove the audio callback for the
-    // duration of the save, then re-attach. The user hears a short
-    // (~10-50 ms × N loaded plugins) dropout on Ctrl+S, which beats
-    // crashing.
-    //
-    // engineDetached==true means a higher layer (the quit-save path)
-    // has already detached + does NOT want re-attach. We honour that
-    // and skip the re-attach below.
-    const bool reattachAudioAfter = ! engineDetached;
-    if (! engineDetached)
-    {
-        engine.detachAudioCallback();
-        engineDetached = true;   // tell publishPluginStateForSave to skip park sleeps
-    }
-
-    engine.publishPluginStateForSave (/*audioCallbackDetached*/ true);
+    // an abort inside ~VST3PluginInstance later. The engine holds the
+    // audio thread out for the capture without leaving the device, so the
+    // user hears a short (~10-50 ms × N loaded plugins) dropout on Ctrl+S
+    // and the meters, envelopes and transport carry on afterwards.
+    engine.publishPluginStateForSave (/*capturePluginState*/ true);
     engine.publishTransportStateForSave();
 
     const auto target = dir.getChildFile ("session.json");
+    // The quit prompt's Save runs with the callback detached, which zeroes the
+    // running rate, so a stopped device stamps the rate it last ran at.
     if (session.sessionSampleRate <= 0.0)
-        session.sessionSampleRate = engine.getCurrentSampleRate();
+    {
+        const double runningRate = engine.getCurrentSampleRate();
+        session.sessionSampleRate = runningRate > 0.0 ? runningRate
+                                                      : engine.getLastDeviceSampleRate();
+    }
     const juce::String json = SessionSerializer::serialize (session);
     const bool saveOk = SessionSerializer::writeAtomic (target, json);
-
-    if (reattachAudioAfter)
-    {
-        // Re-attach so audio resumes after the save returns. PluginSlot
-        // already called prepareToPlay on each plugin during state
-        // capture (resume side of the suspend bracket), so each plugin
-        // is ready for the next callback.
-        engine.reattachAudioCallback();
-        engineDetached = false;
-    }
 
     if (saveOk)
     {
@@ -3418,6 +3469,24 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
             // until the next stop/play rebuild.
             if (engine.getTransport().isStopped())
                 engine.getPlaybackEngine().preparePlayback();
+            // A session-local mix was copied too. Move the player onto the
+            // copy the session now names, playing on from where it was, so the
+            // old folder's file is no longer held open. Nothing was copied for
+            // an external mix, and the player already holds it. Not through
+            // loadSessionSource: that also clears the loudness history, and the
+            // copy is the same audio.
+            auto& mastering = engine.getMasteringPlayer();
+            if (mastering.getLoadedFile() != session.mastering().sourceFile)
+            {
+                const auto position = mastering.getPlayhead();
+                const bool wasPlaying = mastering.isPlaying();
+                if (mastering.loadFile (session.mastering().sourceFile))
+                {
+                    mastering.setPlayhead (position);
+                    if (wasPlaying) mastering.play();
+                }
+                if (masteringView != nullptr) masteringView->followSource();
+            }
             // The old folder's autosave still holds pre-consolidation paths -
             // without this, re-opening the old session pops a stale recovery
             // prompt.
@@ -3547,9 +3616,9 @@ void MainComponent::writeAutosave()
     // Same publish bookend as the manual save - the serializer reads
     // only from Session, not from the live engine. Audio is running on
     // the autosave path (timer fires from the live message loop), so
-    // the publish keeps its atomic-park sleeps to defend against the
-    // audio-thread re-entry race.
-    engine.publishPluginStateForSave (/*audioCallbackDetached*/ false);
+    // plug-in state stays as the last manual save captured it rather
+    // than cost a dropout every 30 s.
+    engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
 
     // Skip the write entirely when the snapshot matches what's already on
@@ -3643,8 +3712,8 @@ bool MainComponent::currentSessionDirty()
     // Publish live plugin + transport/tape state into the Session model first -
     // the serializer reads only from Session, so without this a just-touched
     // plugin/tape param stays at its last-published value and the compare would
-    // falsely read clean. Audio is live here so no detach.
-    engine.publishPluginStateForSave (/*audioCallbackDetached*/ false);
+    // falsely read clean. Audio is live here, so no plug-in state capture.
+    engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
 
     // Compare with volatile state stripped (playhead / view / timestamps)
@@ -3669,20 +3738,6 @@ bool MainComponent::currentSessionDirty()
 
     return divergedFromBaseline || autosaveIsNewerThan (sessionJson);
 }
-
-namespace
-{
-// Every render still running from a modal, whichever view opened it.
-std::vector<RenderInProgress*> runningRenders()
-{
-    std::vector<RenderInProgress*> running;
-    for (auto* modal : EmbeddedModal::activeModalStack())
-        if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody());
-            render != nullptr && render->hasUnfinishedRender())
-            running.push_back (render);
-    return running;
-}
-} // namespace
 
 void MainComponent::resumeQuitAfterRender()
 {
@@ -3780,16 +3835,9 @@ void MainComponent::requestQuit()
     // its end too (it move-captures the body into a callAsync), but
     // deferring at the call site is the canonical idiom.
     //
-    // Save / Don't Save also detach the audio callback up front. This
-    // does two things on the quit path:
-    //   - the save below can call publishPluginStateForSave with the
-    //     "audio detached" fast path (no atomic-park sleeps), which is
-    //     the difference between a snappy save and several hundred
-    //     milliseconds of message-thread blocking on a session with
-    //     multiple heavy plugins;
-    //   - plugin getStateInformation runs with no concurrent
-    //     processBlock, which side-steps the data race in plugins that
-    //     don't honour JUCE's "must not overlap" contract on Linux.
+    // Save / Don't Save also detach the audio callback up front: the app
+    // is about to shut down, so audio stays off through the save (which
+    // may wait on the Save As browser) and the teardown that follows.
     juce::Component::SafePointer<MainComponent> safeThis (this);
 
     dialog->onCancel = [safeThis]
@@ -3834,10 +3882,8 @@ void MainComponent::requestQuit()
             if (self == nullptr) return;
             self->quitModal.close();
 
-            // Quiesce engine BEFORE saveSessionAndThen so the save's
-            // publishPluginStateForSave skips the atomic-park sleeps
-            // and plugins see no concurrent processBlock during state
-            // I/O. stopTimer prevents the autosave timer from re-
+            // Quiesce engine BEFORE saveSessionAndThen, as shutdown
+            // would. stopTimer prevents the autosave timer from re-
             // entering a save mid-shutdown.
             self->stopTimer();
             self->engine.detachAudioCallback();
@@ -3853,7 +3899,7 @@ void MainComponent::requestQuit()
                     return;
                 }
                 // The quit is abandoned, so hand back what quiescing for it
-                // took. saveSessionTo never re-attaches a detach it did not make.
+                // took. saveSessionTo leaves the callback as it found it.
                 s->engine.reattachAudioCallback();
                 s->engineDetached = false;
                 s->startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
@@ -3991,6 +4037,11 @@ bool MainComponent::saveGoesInPlace() const
 
 void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
 {
+    if (saveRefusedForRender())
+    {
+        if (onComplete) onComplete (false);
+        return;
+    }
     const auto dir = session.getSessionDirectory();
     if (saveGoesInPlace())
     {
@@ -4039,6 +4090,7 @@ void MainComponent::saveAsPrompt()
     // step. The typed name becomes the session folder; the navigated
     // directory becomes its parent. Replaces the old two-step modal-then-
     // chooser flow which only let the user browse, never type.
+    if (saveRefusedForRender()) return;
     auto startDir = session.getSessionDirectory().getParentDirectory();
     if (! startDir.isDirectory())
         startDir = toFile (defaultSessionsFolder());
@@ -4353,15 +4405,28 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // Same surface for unresolved audio files - without it a moved or
     // hand-edited session loads "successfully" and plays silence with no
     // hint why.
-    if (! session.missingAudioFilesAfterLoad.empty())
+    if (! session.missingAudioFilesAfterLoad.empty() || session.masteringSourceMissingAfterLoad)
     {
-        juce::String body =
-            "These audio files referenced by the session could not be found:\n\n";
-        for (const auto& p : session.missingAudioFilesAfterLoad)
-            body += "    " + p + "\n";
-        body += "\nTheir regions will play silent. If the session folder was "
-                "moved, copy the files back into its audio/ subfolder and "
-                "reload the session.";
+        juce::String body;
+        if (! session.missingAudioFilesAfterLoad.empty())
+        {
+            body = "These audio files referenced by the session could not be found:\n\n";
+            for (const auto& p : session.missingAudioFilesAfterLoad)
+                body += "    " + p + "\n";
+            body += "\nTheir regions will play silent. If the session folder was "
+                    "moved, copy the files back into its audio/ subfolder and "
+                    "reload the session.";
+        }
+        // A missing mix is not a region: it usually sits in the session
+        // folder itself, and what it costs is the Mastering stage.
+        if (session.masteringSourceMissingAfterLoad)
+        {
+            if (body.isNotEmpty()) body += "\n\n";
+            body += "The mastering mix this session had loaded could not be found:\n\n    "
+                    + session.mastering().sourceFile.getFullPathName()
+                    + "\n\nThe MASTERING stage opens without a mix. Put the file back "
+                      "and reload the session, or load another mix.";
+        }
         juce::Component::SafePointer<MainComponent> safeThis (this);
         dusk::callAsync (
             [body = std::move (body), safeThis]
@@ -4422,6 +4487,13 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
             engine.setStage (wantStage);
         syncStageUi (wantStage);
     }
+    // A session saves its mastering source, so the mix it had loaded comes
+    // back with it and a session without one leaves the page empty. The
+    // outgoing mix is closed either way. A saved mix that has gone missing
+    // leaves the player empty, the page reports it as failing to load, and
+    // the load above already listed it with the missing audio files.
+    MasteringView::loadSessionSource (engine, session);
+    if (masteringView != nullptr) masteringView->followSource();
     refreshSnapUi();   // snap on/off + resolution are serialized - reflect the loaded values
     resized();
     // resized()'s indirect refresh of the tape strip (setConsoleVisibleRange /
@@ -4581,10 +4653,16 @@ void MainComponent::openBounceDialog()
                 auto panel = std::make_unique<BounceDialog> (engine, session,
                                                                target,
                                                                BounceEngine::Mode::MasterMix, format,
-                                                               320, 0.0, 24, realtime);
+                                                               320, 0.0, 24, realtime,
+                                                               [this, target] { releaseMasteringMixFor (toPath (target)); });
                 panel->setSize (520, 200);
                 juce::Component::SafePointer<MainComponent> safeThis (this);
-                panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
+                panel->onRequestClose = [safeThis, target]
+                {
+                    if (safeThis == nullptr) return;
+                    safeThis->bounceModal.close();
+                    safeThis->reloadMasteringMixAfterRender (toPath (target));
+                };
                 bounceModal.show (*this, std::move (panel), {}, false, false);
             };
 
@@ -4651,10 +4729,21 @@ void MainComponent::openBounceStemsDialog()
                                                            outFile,
                                                            BounceEngine::Mode::Stems,
                                                            BounceEngine::Format::Wav,
-                                                           320, 0.0, 24, realtime);
+                                                           320, 0.0, 24, realtime,
+                                                           [this, outFile]
+                                                           {
+                                                               for (const auto& stem : BounceEngine::collectStemTargets (session, outFile))
+                                                                   releaseMasteringMixFor (toPath (stem.file));
+                                                           });
             panel->setSize (520, 200);
             juce::Component::SafePointer<MainComponent> safeThis (this);
-            panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
+            panel->onRequestClose = [safeThis, outFile]
+            {
+                if (safeThis == nullptr) return;
+                safeThis->bounceModal.close();
+                for (const auto& stem : BounceEngine::collectStemTargets (safeThis->session, outFile))
+                    safeThis->reloadMasteringMixAfterRender (toPath (stem.file));
+            };
             bounceModal.show (*this, std::move (panel), {}, false, false);
         };
 

@@ -160,6 +160,10 @@ public:
     MasterBus&        getMasterBus()       noexcept { return master; }
     Metronome&        getMetronome()       noexcept { return metronome; }
 
+    // Message thread. Puts a loudness measurement taken before a re-prepare
+    // back on the mastering chain, with the process gate held.
+    void restoreMasteringLoudness (const LoudnessMeter::History& history);
+
     // Message thread: replace the session tempo map and republish the lock-free
     // snapshot the audio thread reads. Call setTempoPoints for edits; call
     // publishTempoMap after a session load (or any other mutation of
@@ -510,12 +514,15 @@ public:
     // PluginSlot's description + state into the Track fields; consume
     // restores in reverse.
     //
-    // audioCallbackDetached: pass true only when the caller already
-    // removed this engine from AudioDeviceManager. Skips the atomic-park
-    // sleep that defends against audio-thread re-entry, dropping
-    // message-thread block time from hundreds of ms to roughly the cost
-    // of state I/O alone on heavy sessions.
-    void publishPluginStateForSave (bool audioCallbackDetached = false);
+    // capturePluginState false keeps the plug-in state strings the session
+    // already holds, so a save with audio running costs no dropout. true reads
+    // fresh state from every plug-in with the process gate held: the callback
+    // emits silence and calls no plug-in until the capture ends. A JUCE-hosted
+    // plug-in is released and re-prepared around its state read, so it starts
+    // cold again, and its slot re-arms the overrun watchdog's grace and re-reads
+    // its latency. The engine stays attached to the device, so its own DSP is
+    // not re-prepared and keeps its meters, envelopes and delay lines.
+    void publishPluginStateForSave (bool capturePluginState = false);
     void consumePluginStateAfterLoad();
 
     struct PluginLoadFailure
@@ -551,6 +558,13 @@ public:
 
     double getCurrentSampleRate() const noexcept { return currentSampleRate.load (std::memory_order_relaxed); }
     int    getCurrentBlockSize() const noexcept  { return currentBlockSize.load  (std::memory_order_relaxed); }
+
+    // The rate the audio device last started at, 0 until one has. Unlike
+    // getCurrentSampleRate it is not cleared when the device stops, so a save
+    // made with the callback detached, as the quit prompt's Save is, still
+    // knows the rate the session's audio was made at. An offline render's own
+    // rate never lands here.
+    double getLastDeviceSampleRate() const noexcept { return lastDeviceSampleRate.load (std::memory_order_relaxed); }
 
     // Engine-side xrun: callback wall-clock exceeded the buffer's
     // audio time. Distinct from getBackendXRunCount.
@@ -960,6 +974,7 @@ private:
 
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<int>    currentBlockSize  { 0 };
+    std::atomic<double> lastDeviceSampleRate { 0.0 };
 
     // DUSKSTUDIO_PERF=1: coarse per-section wall-time attribution for the
     // callback. The audio thread adds tick deltas into relaxed atomics at

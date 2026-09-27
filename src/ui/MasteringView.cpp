@@ -8,6 +8,7 @@
 #include "../dsp/MultibandCompPresets.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/MasteringPlayer.h"
+#include "../engine/audiofile/FileReader.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "NativeEditorEmbedScale.h"
  #include "imgui/DuskPanelWindow.h"
@@ -52,15 +53,20 @@ WaveformDisplay::WaveformDisplay (MasteringPlayer& p)
 
 WaveformDisplay::~WaveformDisplay() { stopTimer(); }
 
-void WaveformDisplay::setSource (const juce::File& file)
+void WaveformDisplay::followPlayer()
 {
-    waveformSource.setFile (std::filesystem::u8path (file.getFullPathName().toStdString()));
+    const auto generation = player.getSourceGeneration();
+    if (generation == shownSourceGeneration) return;
+    shownSourceGeneration = generation;
+    shownFile = std::filesystem::u8path (player.getLoadedFile().getFullPathName().toStdString());
+    waveformSource.setFile (shownFile);
     waveformSnapshot = waveformSource.snapshot();
     repaint();
 }
 
 void WaveformDisplay::timerCallback()
 {
+    followPlayer();
     const auto p = player.getPlayhead();
     auto next = waveformSource.snapshot();
     if (p == lastPlayhead && next.state == waveformSnapshot.state
@@ -243,8 +249,6 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     grLabel.setFont (juce::Font (juce::FontOptions (13.0f)));
     addAndMakeVisible (grLabel);
 
-    auto& m = session.mastering();
-
     // Meter + LUFS
     auto styleMeter = [] (juce::Label& l)
     {
@@ -387,10 +391,8 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     compPanelWrapper->addAndMakeVisible (compPresetCombo);
 #endif
 
-    // Reflect the loaded source file from the session, if any.
-    if (m.sourceFile != juce::File())
-        loadFile (m.sourceFile);
-
+    // The session's source is already in the player: every session switch
+    // loads it, whether or not this page exists yet.
     updateLabels();
     startTimerHz (20);
 }
@@ -784,6 +786,9 @@ void MasteringView::timerCallback()
     auto& player = engine.getMasteringPlayer();
     auto& m = session.mastering();
 
+    if (player.getSourceGeneration() != labelSourceGeneration)
+        updateLabels();
+
     // The comp header button only repaints itself on click; pick up external
     // toggles (e.g. session load) here.
     const bool compOn = m.compEnabled.load (std::memory_order_relaxed);
@@ -878,38 +883,65 @@ void MasteringView::timerCallback()
     stopButton.setEnabled (player.isPlaying());
 }
 
-void MasteringView::updateLabels()
+// The line names what the player holds. A source the session names but the
+// player could not load is reported as a failed load, which is also how a
+// reopened session shows a mastering mix that has since gone missing. A picked
+// file that would not open is reported the same way until the source changes,
+// while the mix that was loaded keeps playing.
+void MasteringView::updateLabels (const std::string& rejectedPick)
 {
-    const auto& m = session.mastering();
-    if (m.sourceFile == juce::File())
-        sourceFileLabel.setText ("No mix loaded", juce::dontSendNotification);
-    else
-        sourceFileLabel.setText (m.sourceFile.getFileName()
-                                  + "  (" + m.sourceFile.getParentDirectory().getFileName() + "/)",
-                                  juce::dontSendNotification);
+    const auto& player = engine.getMasteringPlayer();
+    const auto& source = session.mastering().sourceFile;
+    labelSourceGeneration = player.getSourceGeneration();
+    std::string text = "No mix loaded";
+    if (! rejectedPick.empty())
+        text = "Failed to load: " + rejectedPick;
+    else if (player.isLoaded())
+    {
+        const auto file = player.getLoadedFile();
+        text = (file.getFileName() + "  (" + file.getParentDirectory().getFileName() + "/)").toStdString();
+    }
+    else if (source.getFullPathName().isNotEmpty())
+        text = "Failed to load: " + source.getFullPathName().toStdString();
+    sourceFileLabel.setText (text, juce::dontSendNotification);
+}
+
+bool MasteringView::loadSessionSource (AudioEngine& engine, Session& session)
+{
+    auto& player = engine.getMasteringPlayer();
+    const auto source = session.mastering().sourceFile;
+    if (source.getFullPathName().isEmpty())
+    {
+        player.unloadFile();
+        return true;
+    }
+    if (! player.loadFile (source)) return false;
+    // Reset the integrated LUFS history so the reading reflects ONLY the
+    // currently-loaded mix, not a mix-of-mixes from prior auditions.
+    engine.getMasteringChain().resetLoudness();
+    return true;
 }
 
 bool MasteringView::loadFile (const juce::File& file)
 {
-    if (! engine.getMasteringPlayer().loadFile (file))
+    // Loading closes the current mix first, so a file that won't open is
+    // turned away before that. Should the load still fail, the session keeps
+    // naming the file, as it keeps a missing region's, and the page reports it.
+    const auto path = file.getFullPathName().toStdString();
+    if (dusk::audio::FileReader::open (std::filesystem::u8path (path)) == nullptr)
     {
-        sourceFileLabel.setText ("Failed to load: " + file.getFullPathName(),
-                                  juce::dontSendNotification);
-        if (waveform != nullptr) waveform->setSource (juce::File());
+        updateLabels (path);
         return false;
     }
     session.mastering().sourceFile = file;
-    // Reset the integrated LUFS history so the reading reflects ONLY the
-    // currently-loaded mix, not a mix-of-mixes from prior auditions.
-    engine.getMasteringChain().resetLoudness();
-    if (waveform != nullptr) waveform->setSource (file);
-    updateLabels();
-    return true;
+    const bool loaded = loadSessionSource (engine, session);
+    followSource();
+    return loaded;
 }
 
-void MasteringView::refreshSourceForScenario()
+void MasteringView::followSource()
 {
-    if (waveform != nullptr) waveform->setSource (engine.getMasteringPlayer().getLoadedFile());
+    if (waveform != nullptr) waveform->followPlayer();
     updateLabels();
 }
 
@@ -1001,6 +1033,18 @@ void MasteringView::openExportBrowser (int preset)
         if (! target.hasFileExtension (extension))
             target = target.withFileExtension (extension);
 
+        // The render reads the mix while it writes the master, so replacing
+        // the mix would destroy it; it is refused before anything asks.
+        const auto mix = engine.getMasteringPlayer().getLoadedFile().getFullPathName().toStdString();
+        auto* window = getTopLevelComponent();
+        if (savecheck::isSameLocation (std::filesystem::u8path (target.getFullPathName().toStdString()),
+                                       std::filesystem::u8path (mix)))
+        {
+            showDuskAlert (window != nullptr ? *window : *this, savecheck::kLoadedMixTitle,
+                           savecheck::loadedMixMessage (target.getFileName().toStdString()));
+            return;
+        }
+
         juce::Component::SafePointer<MasteringView> safeThis (this);
         auto launch = [safeThis, spec, target]
         {
@@ -1019,7 +1063,6 @@ void MasteringView::openExportBrowser (int preset)
             launch();
             return;
         }
-        auto* window = getTopLevelComponent();
         showDuskConfirm (window != nullptr ? *window : *this, savecheck::kReplaceFileTitle,
                          savecheck::replaceFileMessage (target.getFileName().toStdString()),
                          savecheck::kReplaceFileButton, launch, "Cancel", {}, /*destructive*/ true);

@@ -2,6 +2,9 @@
 
 #include <sndfile.h>
 
+#include <cerrno>
+#include <system_error>
+
 namespace dusk::audio
 {
 namespace
@@ -29,7 +32,8 @@ int subFormat (int bits) noexcept
 }
 } // namespace
 
-std::unique_ptr<FileWriter> FileWriter::create (const std::filesystem::path& path, const WriteSpec& spec)
+std::unique_ptr<FileWriter> FileWriter::create (const std::filesystem::path& path, const WriteSpec& spec,
+                                                std::string* whyNot)
 {
     SF_INFO si {};
     si.samplerate = (int) spec.sampleRate;
@@ -41,17 +45,34 @@ std::unique_ptr<FileWriter> FileWriter::create (const std::filesystem::path& pat
         si.format = SF_FORMAT_FLAC | SF_FORMAT_PCM_24;
 
     if (sf_format_check (&si) == 0)
+    {
+        if (whyNot != nullptr) *whyNot = "unsupported sample format";
         return nullptr;
+    }
 
     // Wide open on Windows for the same reason as FileReader::open: the narrow
     // path loses every character outside the process ANSI code page.
    #ifdef _WIN32
     SNDFILE* h = sf_wchar_open (path.wstring().c_str(), SFM_WRITE, &si);
-   #else
-    SNDFILE* h = sf_open (path.string().c_str(), SFM_WRITE, &si);
-   #endif
     if (h == nullptr)
+    {
+        if (whyNot != nullptr) *whyNot = sf_strerror (nullptr);
         return nullptr;
+    }
+   #else
+    // Read errno first: it is per thread, while libsndfile's own last-error
+    // text is one buffer shared by every thread that opens a file.
+    errno = 0;
+    SNDFILE* h = sf_open (path.string().c_str(), SFM_WRITE, &si);
+    if (h == nullptr)
+    {
+        const int openErrno = errno;
+        if (whyNot != nullptr)
+            *whyNot = openErrno != 0 ? std::generic_category().message (openErrno)
+                                     : std::string (sf_strerror (nullptr));
+        return nullptr;
+    }
+   #endif
 
     return std::unique_ptr<FileWriter> (new FileWriter (h, spec.numChannels));
 }

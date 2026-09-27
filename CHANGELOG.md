@@ -129,12 +129,24 @@ publishes.
   stage, and Escape, a second click on **TAPE** or a click outside closes it.
   Sessions saved with the older Tape unit load into Tape Machine 2 with their
   settings.
+- **The Windows installer installs for every account on the PC** (#758). It
+  always put the program in Program Files, but registered it for the account
+  that ran it only, so other accounts had no shortcuts and no uninstall entry.
+  Windows cannot upgrade that kind of install to this one: uninstall the
+  earlier **dusk-studio** from **Settings > Apps** first. Sessions and settings
+  are kept. An earlier copy in the default folder stops the installer with a
+  message saying so.
 - **The DP import is named after the machines it reads.** **File > Import DP
   Song (experimental)...** is now **File > Import DP-24/32 Session
   (experimental)...**, and its confirmation and alerts use the same name.
 
 ### Fixed
 
+- **Windows builds can export MP3** (#757). Every Windows release since
+  0.11 shipped WAV-only: the build looked for the LAME library under a name
+  the Windows package does not use, and quietly left MP3 bounce and MP3 master
+  export out. Release and CI builds on every platform now refuse to build
+  without the encoder.
 - **The channel EQ plays the frequency its knobs show** (#704). Each band's
   frequency went to the EQ as a position on the console's dial, so the readout
   was wrong and parts of every knob did nothing: the HF shelf at 16 kHz had
@@ -518,6 +530,99 @@ publishes.
 - **The mastering EQ and limiter stay up while a drop-down is open** (#697).
   Opening the multiband compressor's PRESET list made both panels vanish until
   the list closed.
+- **A mastering mix is let go as soon as it is replaced** (#758). The
+  Mastering player kept the last mix it unloaded open until another one loaded,
+  and the waveform kept the file it showed open for as long as it showed it. On
+  Windows that file could not be renamed, moved or deleted in the meantime. The
+  player now closes a mix the moment it is replaced or unloaded, and the
+  waveform closes the file once it has drawn the overview.
+- **Opening a session loads the mastering mix it saved** (#759). Switching
+  sessions stopped the Mastering player but left the previous session's mix
+  loaded, so Play on the MASTERING stage played the old session's mix, and on
+  Windows its file stayed locked. Opening, creating or recovering a session now
+  loads the mix that session saved, stopped at its start. A session without one
+  opens with the stage empty. A saved mix that has gone missing leaves the
+  stage reading "Failed to load" with its path, and the **Missing audio files**
+  alert gives it a paragraph of its own instead of telling you its regions will
+  play silent.
+- **Save As moves the Mastering player to the copied mix.** Save As copies a
+  mix kept in the session folder into the new folder, but the player went on
+  with the old folder's file and held it open. It now switches to the copy and
+  plays on from where it was.
+- **A cancelled Mixdown no longer leaves a broken mix on the MASTERING stage.**
+  Mixdown, and a Bounce... or Bounce stems... saved over the mix the MASTERING
+  stage had loaded, wrote over that file while the Mastering player still held
+  it. A cancel left the player on the half-written render, which played part of
+  the mix and then silence under the old mix's name, and on Windows the partial
+  file stayed behind. The player now lets go of the mix before the render and
+  loads the new file when the finished render is closed. A render that is
+  cancelled, or fails after it starts writing, leaves the stage reading "Failed
+  to load" with the file's path, and a
+  render that cannot start, such as a realtime bounce asked for with the
+  transport rolling, leaves the mix loaded where it was.
+- **Export master will not write over the mix it renders from** (#760).
+  Picking the loaded mix as the export's file, and answering Replace, read the
+  mix while the export truncated and rewrote it, so the export came out wrong
+  and the mix was gone. A destination that is the loaded mix, by its name,
+  without its extension, through a link, or in another case where the
+  filesystem ignores case, is now refused before anything asks, with "File is
+  the loaded mix", and nothing is written. Mixdown and Bounce... also let go
+  of the mix when their file reaches it through a link.
+- **Save no longer cuts a master export short.** The Export master progress
+  dialog covers only the MASTERING page, so the File menu stayed live under it,
+  and Save or Save As during the export silenced the rest of the file. Save and
+  Save As are now refused while any render runs, with "Session not saved:
+  finish or cancel the render first" in the status bar, and opening another
+  session is refused during a master export as it already was during a bounce.
+  The refusal to switch sessions now names the render in the way, such as
+  "Session not switched: finish or cancel the master export first", instead of
+  calling every render a bounce.
+- **Saving no longer resets the mastering loudness readings** (#761). Save
+  and Save As took the engine off the audio device to read each plug-in's
+  settings, and putting it back restarted the whole engine as a device change
+  does. That cleared the MASTERING stage's loudness and true-peak readings,
+  along with every compressor's envelope and the driver xrun count in the DSP
+  readout, and it stopped the transport. Saving now pauses the audio only while
+  it reads the plug-ins and leaves the rest as it was, so playback keeps
+  rolling. A plug-in whose settings the save reads starts again with the same
+  warm-up allowance it gets after a load, so the overrun guard does not bypass
+  a reverb or look-ahead limiter for its first blocks back, and delay
+  compensation follows the latency it reports afterwards. A change of device,
+  rate, block size or Effect oversampling still starts the readings again. A
+  finished **Export master...** now leaves Integrated and True Peak on the
+  master it rendered instead of clearing them.
+- **A new session keeps its sample rate from its first save.** Saving a session
+  that had never been saved took the engine off the audio device before it
+  recorded the device's rate, so the rate was left out, and reopening the
+  session with the device at another rate adopted that rate without a word
+  instead of switching back or warning. File > Save and the quit prompt's Save
+  now record the rate the device ran at.
+- **Delay compensation follows a plug-in in and out of auto-bypass** (#762).
+  Re-enabling an auto-bypassed plug-in put it back in the signal path but left
+  delay compensation treating it as having no latency, so its track played
+  early by that latency until something re-prepared the slot. The other way
+  round, a device change or a save while a plug-in was still bypassed made
+  compensation delay every other track for a latency the dry slot no longer
+  had, and so did a sandboxed plug-in whose crash was noticed between blocks.
+  A bypassed plug-in now adds no latency. Re-enable asks an in-process plug-in
+  for its latency again, so a look-ahead raised in its editor while it was
+  bypassed counts; a plug-in in the out-of-process sandbox cannot be asked
+  after it loads and comes back with the latency it reported then. A
+  re-enabled plug-in has to run late for four blocks in a row again, not just
+  one, before it is bypassed a second time.
+- **A render that cannot open its file leaves it alone** (#763). A Mixdown,
+  Bounce..., Bounce stems..., Export master... or freeze whose file already
+  existed but could not be opened for writing, such as a read-only
+  `mixdown.wav` in a writable folder, deleted that file even though it had
+  written nothing to it, and did not say why it failed. The file is now left
+  exactly as it was, and the render says which file and why, as in
+  "Could not write mixdown.wav: Permission denied". A stem bounce that stops at
+  a stem it cannot open deletes only the stems it had already opened; before,
+  it deleted the refused stem too.
+- **A mix that will not load leaves the loaded one in place.** **Load mix...**
+  on a file that is not audio unloaded the mix that was playing first. It now
+  keeps it, the session still names it, and the source line reads "Failed to
+  load" with the picked file's path.
 - **A stereo track's right input names the input it records** (#645). The R
   selector and the strip header kept the name of the track's default right
   input after the left input changed, so a track recording In 1 and In 2 could
