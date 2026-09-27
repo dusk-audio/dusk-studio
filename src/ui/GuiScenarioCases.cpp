@@ -94,6 +94,27 @@ int openHandlesInProcess (const std::filesystem::path& file)
     return handles;
 }
 
+// Descriptors this process still holds on `file` after it was deleted, which
+// Linux lists under the old path; 0 elsewhere.
+int deletedHandlesInProcess (const std::filesystem::path& file)
+{
+    int handles = 0;
+   #if defined (__linux__)
+    std::error_code ec;
+    const auto target = std::filesystem::weakly_canonical (file, ec).string() + " (deleted)";
+    if (ec) return 0;
+    for (const auto& entry : std::filesystem::directory_iterator ("/proc/self/fd", ec))
+    {
+        std::error_code linkEc;
+        if (std::filesystem::read_symlink (entry.path(), linkEc).string() == target && ! linkEc)
+            ++handles;
+    }
+   #else
+    (void) file;
+   #endif
+    return handles;
+}
+
 // Windows refuses to rename a file this process still has open.
 bool renameSucceeds (const std::filesystem::path& from, const std::filesystem::path& to)
 {
@@ -4160,9 +4181,41 @@ std::optional<ScenarioResult> runMasteringLoad (GuiHost& host, ScenarioContext& 
         ctx.expect (write (mixdown, 14400), "could not write the preferred mixdown");
         ctx.expect (host.clickMasteringButton ("Load latest mixdown"), "second latest-mixdown click failed");
     } });
-    steps->push_back ({ 600, [&ctx, &player, check, chosen, bounce, mixdown]
+    // A pick that won't load turns up as a failed load while the working mix
+    // stays where it was and the session keeps naming it, so nothing is left
+    // to save. The fixture is too short to play through the pick, so the kept
+    // position is what shows it was never reloaded.
+    const auto broken = ctx.tempDir() / "broken-mix.wav";
+    std::ofstream (broken) << "not audio";
+    const auto sessionJson = std::make_shared<std::string>();
+    steps->push_back ({ 600, [&host, &ctx, &session, &player, check, mixdown, sessionJson]
     {
         check (mixdown, 14400);
+        player.setPlayhead (7200);
+        *sessionJson = SessionSerializer::serialize (session).toStdString();
+        ctx.expect (host.clickMasteringButton ("Load mix..."), "Load mix button is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, broken]
+    {
+        ctx.expect (host.focusFileName(), "mastering file browser did not open");
+        typeReplacing (host, broken.string());
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the broken mix path"); } });
+    steps->push_back ({ 600, [&host, &ctx, &session, &player, check, broken, mixdown, sessionJson]
+    {
+        check (mixdown, 14400);
+        ctx.expect (player.getPlayhead() == 7200, "a mix that would not load reloaded the working one");
+        ctx.expect (SessionSerializer::serialize (session).toStdString() == *sessionJson,
+                    "a mix that would not load changed the session");
+        const auto line = "Failed to load: " + broken.string();
+        ctx.expect (host.masteringSourceText() == line,
+                    "a mix that would not load reads '" + host.masteringSourceText() + "', not '" + line + "'");
+        ctx.expect (host.masteringWaveformFile() == mixdown,
+                    "a mix that would not load took the waveform to '" + host.masteringWaveformFile().string() + "'");
+    } });
+    steps->push_back ({ 100, [&ctx, &player, chosen, bounce, mixdown]
+    {
         // The player and the waveform each open the source; neither may keep a
         // replaced or unloaded one open, or Windows can't rename or delete it.
         ctx.expect (openHandlesInProcess (chosen) + openHandlesInProcess (bounce) == 0,
@@ -6208,6 +6261,296 @@ const ScenarioRegistrar quitDuringMixdown { Scenario {
     "gui.quit_during_mixdown", { "helper" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runQuitDuringMixdown (host, ctx); }
+} };
+
+// Mixdown writes mixdown.wav in place and deletes it when cancelled. The
+// Mastering player holding the session's mix lets go of it before the render
+// opens the file, so the cancel leaves nothing playing the truncated render or
+// holding the deleted file open, and the page reports the mix as failing to
+// load with the waveform and the player empty alongside it. A Bounce... that
+// replaces the mix lets go of it the same way and loads the new render once
+// it is closed.
+std::optional<ScenarioResult> runMixdownCancelReleasesMix (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& player = engine.getMasteringPlayer();
+    if (! engine.getTransport().isStopped() || player.isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and mastering player and no modal");
+    if (engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        host.refreshMasteringSource();
+    });
+
+    const auto folder = ctx.tempDir() / "Mix session";
+    const auto mix = folder / "mixdown.wav";
+    fs::create_directories (folder);
+    constexpr int kMixFrames = 48000;
+    const auto writeMix = [mix]
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 2;
+        auto writer = dusk::audio::FileWriter::create (mix, spec);
+        std::vector<float> silence (kMixFrames);
+        const float* channels[] = { silence.data(), silence.data() };
+        return writer && writer->write (channels, 2, kMixFrames) && writer->flush();
+    };
+    if (! writeMix()) return ScenarioResult::fail ("could not write the mix");
+    session.mastering().sourceFile = decltype (session.mastering().sourceFile) (mix.u8string().c_str());
+    session.uiStage.store ((int) AudioEngine::Stage::Mastering);
+    if (! openLongSession (host, ctx, folder / "session.json"))
+        return ScenarioResult::fail ("could not open the session to mix down");
+
+    const auto same = [] (const fs::path& a, const fs::path& b)
+    {
+        std::error_code ignored;
+        return ! a.empty() && fs::weakly_canonical (a, ignored) == fs::weakly_canonical (b, ignored);
+    };
+    const auto held = [&player] { return fs::u8path (player.getLoadedFile().getFullPathName().toStdString()); };
+    if (! same (held(), mix)) return ScenarioResult::fail ("the session did not open with its mix loaded");
+
+    // One second of session, so the bounce finishes on its own.
+    const auto bounceOverMix = [&host, &ctx, &engine, &session, &player, same, held, writeMix, mix]
+    {
+        MidiRegion region;
+        region.lengthInSamples = static_cast<std::int64_t> (engine.getCurrentSampleRate());
+        region.lengthInTicks = 960;
+        session.track (0).midiRegions.publish (
+            std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+        if (! ctx.expect (writeMix() && player.loadFile (session.mastering().sourceFile),
+                          "could not put the mix back for the bounce"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        auto bounce = std::make_shared<std::vector<Step>>();
+        bounce->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.pressPeerKey (commandChord ('b'), 'b'), "the window did not handle Cmd+B"); } });
+        bounce->push_back ({ 700, [&host, &ctx]
+        {
+            if (! ctx.expect (host.focusFileName(), "Cmd+B showed '" + host.modalText() + "', not the bounce browser"))
+                return;
+            typeReplacing (host, "mixdown");
+            ctx.expect (host.clickModalButton ("Save"), "the bounce browser has no Save button");
+        } });
+        bounce->push_back ({ 500, [&host, &ctx]
+        { ctx.expect (host.clickModalButton ("Replace"), "a bounce over mixdown.wav did not ask to replace it"); } });
+        bounce->push_back ({ 100, [&ctx, &player]
+        { ctx.expect (! player.isLoaded(), "the bounce started with the mastering player still holding mixdown.wav"); } });
+        runSteps (ctx, bounce, [&host, &ctx, &player, same, held, mix]
+        {
+            ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000, [&host, &ctx, &player, same, held, mix]
+            {
+                ctx.later (300, [&host, &ctx, &player, same, held, mix]
+                {
+                    ctx.expect (player.isLoaded() && same (held(), mix),
+                                "the finished bounce left the mastering player holding '" + held().string() + "'");
+                    ctx.expect (player.getLengthSamples() > kMixFrames,
+                                "the mastering player holds the old mix, not the bounce");
+                    const auto line = mix.filename().string() + "  (" + mix.parent_path().filename().string() + "/)";
+                    ctx.expect (host.masteringSourceText() == line,
+                                "after the bounce the page reads '" + host.masteringSourceText() + "', not '" + line + "'");
+                    ctx.expect (same (host.masteringWaveformFile(), mix),
+                                "after the bounce the waveform shows '" + host.masteringWaveformFile().string() + "'");
+                    ctx.complete (ctx.verdict());
+                });
+            }, "the bounce over mixdown.wav did not finish with a Close button");
+        });
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx, &player, mix]
+    {
+        host.switchToStage (GuiHost::Stage::Mixing);
+        host.startMixdown();
+        ctx.expect (host.mixdownRunning(), "the mixdown did not start");
+        ctx.expect (! player.isLoaded(), "the mixdown started with the mastering player still holding mixdown.wav");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.mixdownRunning(), "the mixdown stopped before it was cancelled");
+        ctx.expect (host.clickModalButton ("Cancel"), "the mixdown did not offer Cancel");
+    } });
+    runSteps (ctx, steps, [&host, &ctx, &session, &player, same, held, mix, bounceOverMix]
+    {
+        ctx.waitUntil ([&host] { return ! host.mixdownRunning(); }, 5000,
+                       [&host, &ctx, &session, &player, same, held, mix, bounceOverMix]
+        {
+            ctx.later (200, [&host, &ctx, &session, &player, same, held, mix, bounceOverMix]
+            {
+                ctx.expect (host.clickModalButton ("Close"), "the cancelled mixdown did not offer Close");
+                ctx.later (300, [&host, &ctx, &session, &player, same, held, mix, bounceOverMix]
+                {
+                    ctx.expect (host.modalStackEmpty(), "the cancelled mixdown left '" + host.modalText() + "' up");
+                    std::error_code ignored;
+                    ctx.expect (! fs::exists (mix, ignored), "the cancelled mixdown left mixdown.wav behind");
+                    ctx.expect (! player.isLoaded(), "the mastering player holds '" + held().string()
+                                                        + "' after the cancelled mixdown");
+                    ctx.expect (openHandlesInProcess (mix) + deletedHandlesInProcess (mix) == 0,
+                                "the cancelled mixdown's file is still open");
+                    const auto named = fs::u8path (session.mastering().sourceFile.getFullPathName().toStdString());
+                    ctx.expect (same (named, mix), "the session no longer names its mix: '" + named.string() + "'");
+                    const auto line = "Failed to load: " + named.u8string();
+                    ctx.expect (host.masteringSourceText() == line,
+                                "the page reads '" + host.masteringSourceText() + "', not '" + line + "'");
+                    ctx.expect (host.masteringWaveformFile().empty(),
+                                "the waveform still shows '" + host.masteringWaveformFile().string() + "'");
+                    bounceOverMix();
+                });
+            });
+        }, "the mixdown did not cancel");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar mixdownCancelReleasesMix { Scenario {
+    "gui.mixdown_cancel_releases_mastering_mix", { "gui", "bounce", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 40000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMixdownCancelReleasesMix (host, ctx); }
+} };
+
+// A master export reads the Mastering player and owns the audio callback until
+// it stops, and its modal covers only the Mastering page, so the menus stay
+// live under it. Save, Save as... and a session switch are each refused with
+// a status line, leaving the session file, the folder and the mix as they were.
+std::optional<ScenarioResult> runSaveRefusedDuringExport (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& player = engine.getMasteringPlayer();
+    if (! engine.getTransport().isStopped() || player.isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and mastering player and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        drainModals (host);
+        engine.setRenderOversamplingOverride (0);
+        engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        host.refreshMasteringSource();
+    });
+
+    // Two minutes, so the export is still rendering through every refusal.
+    constexpr int kFrames = 48000 * 120;
+    const auto folder = ctx.tempDir() / "Export session";
+    const auto mix = folder / "mixdown.wav";
+    const auto other = ctx.tempDir() / "Other session" / "session.json";
+    fs::create_directories (folder);
+    fs::create_directories (other.parent_path());
+    {
+        auto writer = dusk::audio::FileWriter::create (mix, { 48000.0, 2, 16 });
+        std::vector<float> silence (kFrames);
+        const float* channels[] = { silence.data(), silence.data() };
+        if (! writer || ! writer->write (channels, 2, kFrames) || ! writer->flush())
+            return ScenarioResult::fail ("could not write the mix");
+    }
+    {
+        auto saved = std::make_unique<Session>();
+        applySessionDirectory (*saved, folder);
+        saved->uiStage.store ((int) AudioEngine::Stage::Mastering);
+        saved->mastering().sourceFile = decltype (saved->mastering().sourceFile) (mix.u8string().c_str());
+        if (! SessionSerializer::save (*saved, folder / "session.json"))
+            return ScenarioResult::fail ("could not write the session");
+        saved->mastering().sourceFile = decltype (saved->mastering().sourceFile) ();
+        applySessionDirectory (*saved, other.parent_path());
+        if (! SessionSerializer::save (*saved, other))
+            return ScenarioResult::fail ("could not write the other session");
+    }
+    reopenSavedSession (host, folder / "session.json");
+    if (currentSessionDirectory (session) != folder || ! player.isLoaded())
+        return ScenarioResult::fail ("could not open the session with its mix");
+    auto& fader = session.track (0).strip.faderDb;
+    fader.store (fader.load() - 3.0f);
+    const auto savedJson = fileBytes (folder / "session.json");
+    const auto output = ctx.tempDir() / "Master.wav";
+    const auto held = [&player] { return player.getLoadedFile().getFullPathName().toStdString(); };
+    const auto heldAtStart = held();
+
+    const auto refused = [&host, &ctx, &session, &player, held, heldAtStart, folder, savedJson]
+                         (const std::string& status, const std::string& what)
+    {
+        ctx.expect (host.statusMessage() == status,
+                    what + " during the export read '" + host.statusMessage() + "', not '" + status + "'");
+        ctx.expect (host.renderRunning(), what + " stopped the export");
+        ctx.expect (currentSessionDirectory (session) == folder,
+                    what + " moved the session to '" + currentSessionDirectory (session).string() + "'");
+        ctx.expect (fileBytes (folder / "session.json") == savedJson, what + " during the export wrote session.json");
+        ctx.expect (player.isLoaded() && held() == heldAtStart,
+                    what + " during the export moved the mastering player to '" + held() + "'");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickMasteringButton ("Export master..."), "export button unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("WAV 24-bit \xe2\x80\x94 session rate"), "archive preset unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx, output]
+    {
+        ctx.expect (host.focusFileName(), "export file browser unavailable");
+        typeReplacing (host, output.string());
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Save"), "export destination was not accepted"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        ctx.expect (host.renderRunning(), "the export did not start");
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable during the export");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, refused]
+    {
+        ctx.expect (host.clickContextMenuItem ("Save"), "the File menu has no Save");
+        refused ("Session not saved: finish or cancel the render first", "File > Save");
+    } });
+    steps->push_back ({ 50, [&host, other] { host.requestSessionSwitch (other); } });
+    steps->push_back ({ 100, [&host, &ctx, refused]
+    {
+        refused ("Session not switched: finish or cancel the bounce first", "A session switch");
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable during the export");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, refused]
+    {
+        ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as...");
+        refused ("Session not saved: finish or cancel the render first", "File > Save as...");
+        ctx.expect (host.clickModalButton ("Cancel"), "the export did not offer Cancel");
+    } });
+    runSteps (ctx, steps, [&host, &ctx, &engine]
+    {
+        ctx.waitUntil ([&host] { return ! host.renderRunning(); }, 5000, [&host, &ctx, &engine]
+        {
+            ctx.later (200, [&host, &ctx, &engine]
+            {
+                ctx.expect (host.clickModalButton ("Close"), "the cancelled export did not offer Close");
+                ctx.expect (engine.isAudioCallbackRegistered(), "the cancelled export did not hand the audio callback back");
+                ctx.complete (ctx.verdict());
+            });
+        }, "the export did not cancel");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar saveRefusedDuringExport { Scenario {
+    "gui.save_refused_during_master_export", { "gui", "mastering", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSaveRefusedDuringExport (host, ctx); }
 } };
 
 // The heartbeat writes session.json.autosave only when the session changed

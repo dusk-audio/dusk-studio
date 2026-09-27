@@ -152,8 +152,12 @@ private:
     // a session with aux inserts builds the plugin editors off the first-switch path.
     class AuxView* ensureAuxView();
     void doMixdown();
+    void releaseMasteringMixFor (const std::filesystem::path& target);
+    void reloadMasteringMixAfterRender (const std::filesystem::path& target);
 
     bool saveSessionTo (const juce::File& sessionDir);
+    // True, with a status line, while a render from any modal is unfinished.
+    bool saveRefusedForRender();
     void saveAsPrompt();
     // Whether this session has been opened from or saved to its folder. The
     // launch session's folder can hold a session someone saved under that

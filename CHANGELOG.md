@@ -549,6 +549,24 @@ publishes.
   mix kept in the session folder into the new folder, but the player went on
   with the old folder's file and held it open. It now switches to the copy,
   stopped where it was.
+- **A cancelled Mixdown no longer leaves a broken mix on the MASTERING
+  stage.** Mixdown, and a Bounce... saved over the mix the MASTERING stage had
+  loaded, wrote over that file while the Mastering player still held it. A
+  cancel left the player on the half-written render, which played part of the
+  mix and then silence under the old mix's name, and on Windows the partial
+  file stayed behind. The player now lets go of the mix before the render and
+  loads the new file when the finished render is closed. A cancelled or failed
+  render leaves the stage reading "Failed to load" with the file's path.
+- **Save no longer cuts a master export short.** The Export master progress
+  dialog covers only the MASTERING page, so the File menu stayed live under it,
+  and Save or Save As during the export silenced the rest of the file. Save and
+  Save As are now refused while any render runs, with "Session not saved:
+  finish or cancel the render first" in the status bar, and opening another
+  session is refused during a master export as it already was during a bounce.
+- **A mix that will not load leaves the loaded one in place.** **Load mix...**
+  on a file that is not audio unloaded the mix that was playing first. It now
+  keeps it, the session still names it, and the source line reads "Failed to
+  load" with the picked file's path.
 - **A stereo track's right input names the input it records** (#645). The R
   selector and the strip header kept the name of the track's default right
   input after the left input changed, so a track recording In 1 and In 2 could

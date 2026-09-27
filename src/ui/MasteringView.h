@@ -106,7 +106,7 @@ public:
 
 private:
     void timerCallback() override;
-    void updateLabels();
+    void updateLabels (const std::string& rejectedPick = {});
     std::uint64_t labelSourceGeneration = 0;
 
     // Open or close the two native panels to match the stage. Coalesced onto the next

@@ -113,7 +113,7 @@ src/ui/MainComponent.cpp	433
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	328
 src/ui/MasterStripComponent.h	55
-src/ui/MasteringView.cpp	145
+src/ui/MasteringView.cpp	143
 src/ui/MasteringView.h	26
 src/ui/MidiBindingsPanel.cpp	46
 src/ui/MidiBindingsPanel.h	15

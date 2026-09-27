@@ -1870,6 +1870,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto* panel = dynamic_cast<BounceDialog*> (owner.mixdownModal.getBody());
         return panel != nullptr && panel->isRenderRunning();
     }
+    bool renderRunning() const override
+    {
+        for (auto* modal : EmbeddedModal::activeModalStack())
+            if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody());
+                render != nullptr && render->isRenderRunning())
+                return true;
+        return false;
+    }
     std::string statusMessage() const override { return owner.statusLabel.getText().toStdString(); }
 
     void requestSessionSwitch (const std::filesystem::path& sessionJson) override

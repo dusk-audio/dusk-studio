@@ -2656,6 +2656,28 @@ void MainComponent::askBounceRealtime (std::function<void (bool realtime)> launc
                      "Offline",  [safe, launch] { if (safe != nullptr) launch (false); });
 }
 
+// Mixdown and Bounce write their file in place and delete it when cancelled or
+// failed. A Mastering player still holding it would play the truncated render,
+// or on Windows keep the delete from happening, while the page named the old mix.
+void MainComponent::releaseMasteringMixFor (const std::filesystem::path& target)
+{
+    auto& player = engine.getMasteringPlayer();
+    if (player.getLoadedFile() != toFile (target)) return;
+    player.unloadFile();
+    if (masteringView != nullptr) masteringView->followSource();
+}
+
+// A render that wrote the session's mix brings it back; one that was cancelled
+// or failed leaves the page reporting the mix as failing to load.
+void MainComponent::reloadMasteringMixAfterRender (const std::filesystem::path& target)
+{
+    const auto file = toFile (target);
+    if (file != session.mastering().sourceFile || engine.getMasteringPlayer().getLoadedFile() == file)
+        return;
+    MasteringView::loadSessionSource (engine, session);
+    if (masteringView != nullptr) masteringView->followSource();
+}
+
 void MainComponent::doMixdown()
 {
     // One-shot bounce of the master mix to <sessionDir>/mixdown.wav, then
@@ -2666,6 +2688,7 @@ void MainComponent::doMixdown()
 
     askBounceRealtime ([this, target] (bool realtime)
     {
+        releaseMasteringMixFor (toPath (target));
         auto panel = std::make_unique<BounceDialog> (engine, session,
                                                        target,
                                                        BounceEngine::Mode::MasterMix,
@@ -2677,14 +2700,20 @@ void MainComponent::doMixdown()
         // successfully. The handoff is deferred so the heavy stage swap does not
         // run re-entrantly from inside the dialog's close-button callback.
         juce::Component::SafePointer<MainComponent> safeThis (this);
-        panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->mixdownModal.close(); };
+        panel->onRequestClose = [safeThis, target]
+        {
+            if (safeThis == nullptr) return;
+            safeThis->mixdownModal.close();
+            safeThis->reloadMasteringMixAfterRender (toPath (target));
+        };
         panel->onSuccessfulFinish = [safeThis] (juce::File rendered)
         {
             dusk::callAsync ([safeThis, rendered]
             {
                 if (safeThis == nullptr) return;
                 safeThis->switchToStage (AudioEngine::Stage::Mastering);
-                if (safeThis->masteringView != nullptr)
+                if (safeThis->masteringView != nullptr
+                    && safeThis->engine.getMasteringPlayer().getLoadedFile() != rendered)
                     safeThis->masteringView->loadFile (rendered);
             });
         };
@@ -3140,6 +3169,20 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
                       /*useOverlay*/ true, /*forwardShortcuts*/ false);
 }
 
+namespace
+{
+// Every render still running from a modal, whichever view opened it.
+std::vector<RenderInProgress*> runningRenders()
+{
+    std::vector<RenderInProgress*> running;
+    for (auto* modal : EmbeddedModal::activeModalStack())
+        if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody());
+            render != nullptr && render->hasUnfinishedRender())
+            running.push_back (render);
+    return running;
+}
+} // namespace
+
 void MainComponent::stopTransportForSessionSwitch()
 {
     // In the Mastering stage the mixdown player is the audible source and the
@@ -3169,8 +3212,9 @@ void MainComponent::guardSessionSwitchThen (const char* title,
 {
     // A bounce owns the transport and fails outright if anything stops it, and
     // its modal is the only thing standing between the user and these entries.
-    // Mixdown drives the same dialog through mixdownModal.
-    if (bounceModal.isOpen() || mixdownModal.isOpen())
+    // Mixdown drives the same dialog through mixdownModal, and a master export
+    // runs from the Mastering page's own modal, which leaves the menus live.
+    if (bounceModal.isOpen() || mixdownModal.isOpen() || ! runningRenders().empty())
     {
         setStatusText ("Session not switched: finish or cancel the bounce first");
         if (onCancelled) onCancelled();
@@ -3270,9 +3314,20 @@ bool MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate t
     return true;
 }
 
+// A render owns the transport and the audio callback until it stops, and a
+// master export reads the Mastering player. A save detaches and reattaches the
+// callback, and Save As moves the player onto the copied mix, either of which
+// would silence the rest of the render.
+bool MainComponent::saveRefusedForRender()
+{
+    if (runningRenders().empty()) return false;
+    setStatusText ("Session not saved: finish or cancel the render first");
+    return true;
+}
+
 bool MainComponent::saveSessionTo (const juce::File& requestedDir)
 {
-    if (requestedDir == juce::File()) return false;
+    if (requestedDir == juce::File() || saveRefusedForRender()) return false;
 
     const auto oldDir = session.getSessionDirectory();
     // Another spelling of the session's own folder (a link, a bind mount) is a
@@ -3421,12 +3476,14 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
             // A session-local mix was copied too. Move the player onto the
             // copy the session now names, stopped where it was, so the old
             // folder's file is no longer held open. Nothing was copied for an
-            // external mix, and the player already holds it.
+            // external mix, and the player already holds it. Not through
+            // loadSessionSource: that also clears the loudness history, and the
+            // copy is the same audio.
             auto& mastering = engine.getMasteringPlayer();
             if (mastering.getLoadedFile() != session.mastering().sourceFile)
             {
                 const auto position = mastering.getPlayhead();
-                if (MasteringView::loadSessionSource (engine, session))
+                if (mastering.loadFile (session.mastering().sourceFile))
                     mastering.setPlayhead (position);
                 if (masteringView != nullptr) masteringView->followSource();
             }
@@ -3681,20 +3738,6 @@ bool MainComponent::currentSessionDirty()
 
     return divergedFromBaseline || autosaveIsNewerThan (sessionJson);
 }
-
-namespace
-{
-// Every render still running from a modal, whichever view opened it.
-std::vector<RenderInProgress*> runningRenders()
-{
-    std::vector<RenderInProgress*> running;
-    for (auto* modal : EmbeddedModal::activeModalStack())
-        if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody());
-            render != nullptr && render->hasUnfinishedRender())
-            running.push_back (render);
-    return running;
-}
-} // namespace
 
 void MainComponent::resumeQuitAfterRender()
 {
@@ -4003,6 +4046,11 @@ bool MainComponent::saveGoesInPlace() const
 
 void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
 {
+    if (saveRefusedForRender())
+    {
+        if (onComplete) onComplete (false);
+        return;
+    }
     const auto dir = session.getSessionDirectory();
     if (saveGoesInPlace())
     {
@@ -4051,6 +4099,7 @@ void MainComponent::saveAsPrompt()
     // step. The typed name becomes the session folder; the navigated
     // directory becomes its parent. Replaces the old two-step modal-then-
     // chooser flow which only let the user browse, never type.
+    if (saveRefusedForRender()) return;
     auto startDir = session.getSessionDirectory().getParentDirectory();
     if (! startDir.isDirectory())
         startDir = toFile (defaultSessionsFolder());
@@ -4610,13 +4659,19 @@ void MainComponent::openBounceDialog()
 
             auto launchBounce = [this, target, format, realtime]
             {
+                releaseMasteringMixFor (toPath (target));
                 auto panel = std::make_unique<BounceDialog> (engine, session,
                                                                target,
                                                                BounceEngine::Mode::MasterMix, format,
                                                                320, 0.0, 24, realtime);
                 panel->setSize (520, 200);
                 juce::Component::SafePointer<MainComponent> safeThis (this);
-                panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
+                panel->onRequestClose = [safeThis, target]
+                {
+                    if (safeThis == nullptr) return;
+                    safeThis->bounceModal.close();
+                    safeThis->reloadMasteringMixAfterRender (toPath (target));
+                };
                 bounceModal.show (*this, std::move (panel), {}, false, false);
             };
 

@@ -8,6 +8,7 @@
 #include "../dsp/MultibandCompPresets.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/MasteringPlayer.h"
+#include "../engine/audiofile/FileReader.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "NativeEditorEmbedScale.h"
  #include "imgui/DuskPanelWindow.h"
@@ -884,24 +885,25 @@ void MasteringView::timerCallback()
 
 // The line names what the player holds. A source the session names but the
 // player could not load is reported as a failed load, which is also how a
-// reopened session shows a mastering mix that has since gone missing.
-void MasteringView::updateLabels()
+// reopened session shows a mastering mix that has since gone missing. A picked
+// file that would not open is reported the same way until the source changes,
+// while the mix that was loaded keeps playing.
+void MasteringView::updateLabels (const std::string& rejectedPick)
 {
     const auto& player = engine.getMasteringPlayer();
     const auto& source = session.mastering().sourceFile;
     labelSourceGeneration = player.getSourceGeneration();
-    if (player.isLoaded())
+    std::string text = "No mix loaded";
+    if (! rejectedPick.empty())
+        text = "Failed to load: " + rejectedPick;
+    else if (player.isLoaded())
     {
         const auto file = player.getLoadedFile();
-        sourceFileLabel.setText (file.getFileName()
-                                  + "  (" + file.getParentDirectory().getFileName() + "/)",
-                                  juce::dontSendNotification);
+        text = (file.getFileName() + "  (" + file.getParentDirectory().getFileName() + "/)").toStdString();
     }
     else if (source.getFullPathName().isNotEmpty())
-        sourceFileLabel.setText ("Failed to load: " + source.getFullPathName(),
-                                  juce::dontSendNotification);
-    else
-        sourceFileLabel.setText ("No mix loaded", juce::dontSendNotification);
+        text = "Failed to load: " + source.getFullPathName().toStdString();
+    sourceFileLabel.setText (text, juce::dontSendNotification);
 }
 
 bool MasteringView::loadSessionSource (AudioEngine& engine, Session& session)
@@ -922,8 +924,15 @@ bool MasteringView::loadSessionSource (AudioEngine& engine, Session& session)
 
 bool MasteringView::loadFile (const juce::File& file)
 {
-    // The session keeps naming a file that would not load, as it keeps a
-    // missing region's file, so the page and a later reopen both report it.
+    // Loading closes the current mix first, so a file that won't open is
+    // turned away before that. Should the load still fail, the session keeps
+    // naming the file, as it keeps a missing region's, and the page reports it.
+    const auto path = file.getFullPathName().toStdString();
+    if (dusk::audio::FileReader::open (std::filesystem::u8path (path)) == nullptr)
+    {
+        updateLabels (path);
+        return false;
+    }
     session.mastering().sourceFile = file;
     const bool loaded = loadSessionSource (engine, session);
     followSource();
