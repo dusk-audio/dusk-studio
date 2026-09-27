@@ -4559,7 +4559,7 @@ std::optional<ScenarioResult> runMasteringMixFollowsSaveAs (GuiHost& host, Scena
     });
 
     // Ten seconds, so playback started before the Save As is still running at it.
-    constexpr int kFrames = 480000;
+    static constexpr int kFrames = 480000;
     const auto folder = ctx.tempDir() / "Mix session";
     const auto original = folder / "mixdown.wav";
     fs::create_directories (folder);
@@ -4609,7 +4609,7 @@ std::optional<ScenarioResult> runMasteringMixFollowsSaveAs (GuiHost& host, Scena
     fs::create_directories (blocked / "session.json");
     std::ofstream (blocked / "session.json" / "keep") << "theirs";
     const auto copy = ctx.tempDir() / "Saved copy";
-    constexpr std::int64_t kStart = 48000;
+    static constexpr std::int64_t kStart = 48000;
 
     auto steps = std::make_shared<std::vector<Step>>();
     pushSaveAsSteps (host, ctx, *steps, blocked);
@@ -4698,7 +4698,7 @@ std::optional<ScenarioResult> runMasteringLoudnessSurvivesSave (GuiHost& host, S
     // Twenty seconds of a steady tone, so every pass plays well inside it. It
     // plays through the real device, so it sits near -50 LUFS: well clear of
     // the -70 gate, and barely audible if the machine has speakers.
-    constexpr int kFrames = 960000;
+    static constexpr int kFrames = 960000;
     const auto folder = ctx.tempDir() / "Tone session";
     const auto mix = folder / "mixdown.wav";
     fs::create_directories (folder);
@@ -6945,7 +6945,7 @@ std::optional<ScenarioResult> runMixdownCancelReleasesMix (GuiHost& host, Scenar
     const auto folder = ctx.tempDir() / "Mix session";
     const auto mix = folder / "mixdown.wav";
     fs::create_directories (folder);
-    constexpr int kMixFrames = 48000;
+    static constexpr int kMixFrames = 48000;
     const auto writeMix = [mix]
     {
         dusk::audio::WriteSpec spec;
@@ -7101,7 +7101,7 @@ std::optional<ScenarioResult> runBounceStemsReleasesMix (GuiHost& host, Scenario
     const auto base = folder / "stems" / "stems.wav";
     const auto stem = folder / "stems" / "stems_01_Kick.wav";
     fs::create_directories (stem.parent_path());
-    constexpr int kStemFrames = 48000;
+    static constexpr int kStemFrames = 48000;
     const auto writeStem = [stem]
     {
         dusk::audio::WriteSpec spec;
@@ -7285,7 +7285,7 @@ std::optional<ScenarioResult> runRefusedMixdownKeepsMix (GuiHost& host, Scenario
         return fs::weakly_canonical (held(), ignored) == fs::weakly_canonical (mix, ignored);
     };
     if (! holdsMix()) return ScenarioResult::fail ("the session did not open with its mix loaded");
-    constexpr std::int64_t kStart = 96000;
+    static constexpr std::int64_t kStart = 96000;
 
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 200, [&host, &engine, &player]
@@ -7356,8 +7356,8 @@ std::optional<ScenarioResult> runSaveRefusedDuringExport (GuiHost& host, Scenari
 
     // An hour, so the export is still rendering through every refusal on the
     // fastest host; mono at 4 kHz keeps the file near 29 MB.
-    constexpr int kRate = 4000;
-    constexpr std::int64_t kFrames = (std::int64_t) kRate * 3600;
+    static constexpr int kRate = 4000;
+    static constexpr std::int64_t kFrames = (std::int64_t) kRate * 3600;
     const auto folder = ctx.tempDir() / "Export session";
     const auto mix = folder / "mixdown.wav";
     const auto other = ctx.tempDir() / "Other session" / "session.json";

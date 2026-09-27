@@ -459,7 +459,7 @@ bool namesRefusal (const std::string& error, const std::filesystem::path& target
 // stem, and a freeze.
 std::optional<ScenarioResult> refusedTargetLeftAsItWas (ScenarioContext& ctx)
 {
-    constexpr int kLength = 4800;
+    static constexpr int kLength = 4800;
     const auto source = ctx.tempDir() / "tone.wav";
     if (! writeMono (source, sine (440.0f, 0.25f, kLength)))
         return ScenarioResult::fail ("could not write the source take");
@@ -622,7 +622,7 @@ std::optional<ScenarioResult> refusedTargetLeftAsItWas (ScenarioContext& ctx)
 std::optional<ScenarioResult> stemsRebuildTheMix (ScenarioContext& ctx)
 {
     auto& session = ctx.session();
-    constexpr int kLength = 24000;
+    static constexpr int kLength = 24000;
     const auto a = ctx.tempDir() / "a.wav";
     const auto b = ctx.tempDir() / "b.wav";
     if (! writeMono (a, sine (220.0f, 0.2f, kLength)) || ! writeMono (b, sine (330.0f, 0.2f, kLength)))
