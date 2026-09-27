@@ -716,14 +716,25 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool clickFileBrowserControl (bool path) override
     {
+        return clickFileBrowserChild ([path] (const auto& child)
+        { return path ? child.getName() == "path" : child.getTitle() == "Files"; }, true);
+    }
+    bool clickFileBrowserUp() override
+    {
+        return clickFileBrowserChild ([] (const auto& child) { return child.getName() == "up"; }, false);
+    }
+    template <typename Matches>
+    bool clickFileBrowserChild (Matches matches, bool nearLeftEdge)
+    {
         const auto& stack = EmbeddedModal::activeModalStack();
         if (stack.empty() || stack.back()->getBody() == nullptr) return false;
         for (auto* container : stack.back()->getBody()->getChildren())
             for (auto* child : container->getChildren())
-                if (child->isShowing() && (path ? child->getName() == "path" : child->getTitle() == "Files"))
+                if (child->isShowing() && matches (*child))
                 {
-                    const auto point = owner.getTopLevelComponent()->getLocalPoint (
-                        child, child->getLocalBounds().getCentre().withX (20)).toFloat();
+                    auto centre = child->getLocalBounds().getCentre();
+                    if (nearLeftEdge) centre = centre.withX (20);
+                    const auto point = owner.getTopLevelComponent()->getLocalPoint (child, centre).toFloat();
                     return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
                 }
         return false;
@@ -1363,6 +1374,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::filesystem::path fileBrowserFolder() const override { return filebrowser::shownFolderForScenario(); }
     bool fileBrowserScanning() const override { return filebrowser::shownFolderScanningForScenario(); }
     int retiredFileBrowserScans() const override { return filebrowser::retiredScansForScenario(); }
+    void holdFileBrowserFolderChecks (bool held) override { filebrowser::holdFolderChecksForScenario (held); }
     bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 
     bool openMidiIo (int index) override

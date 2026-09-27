@@ -439,6 +439,12 @@ publishes.
   with the name box empty, or with the name of an existing folder, wrote the
   file beside that folder under its name. A folder name now opens the folder,
   and an empty name does nothing.
+- **Moving to a protected folder no longer freezes the window on macOS**
+  (#755). Typing the path of the Desktop or Documents folder into a file
+  browser's path box, or opening one from the list, the places menu or the up
+  button, froze the whole window until the macOS privacy prompt was answered.
+  The browser now opens the folder in the background and moves there once the
+  prompt is answered, and the window keeps working meanwhile.
 - **A save asks before it replaces a file, and Save As will not replace another
   session** (#732). Bounce master mix, Export master and the MIDI bindings export
   now ask **Replace** or **Cancel** when the file they are about to write already

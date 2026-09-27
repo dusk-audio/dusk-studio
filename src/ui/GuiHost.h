@@ -164,7 +164,10 @@ public:
     virtual bool fileBrowserScanning() const = 0;
     // File browsers closed while listing a folder whose scan has not stopped yet.
     virtual int retiredFileBrowserScans() const = 0;
+    // Holds, or lets go of, the file browsers' checks of a folder they are about to show.
+    virtual void holdFileBrowserFolderChecks (bool held) = 0;
     virtual bool clickFileBrowserControl (bool path) = 0;
+    virtual bool clickFileBrowserUp() = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
     virtual bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) = 0;
     virtual std::vector<std::string> confirmationText() const = 0;

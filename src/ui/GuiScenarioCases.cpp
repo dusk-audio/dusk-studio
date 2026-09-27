@@ -8299,6 +8299,136 @@ const ScenarioRegistrar fileBrowserCancelScan { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserCancelScan (host, ctx); }
 } };
 
+// macOS holds a protected folder such as Desktop until the user answers its
+// privacy prompt. The window has to keep handling events meanwhile, and the
+// browser moves to the folder once the prompt is answered.
+std::optional<ScenarioResult> runFileBrowserHeldFolder (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr int kTickMs = 100;
+    static constexpr int kLateMs = 1000;
+    static constexpr int kMoveMs = 2000;
+    const auto held = ctx.tempDir() / "Held";
+    std::filesystem::create_directory (held);
+    ctx.cleanup ([&host]
+    {
+        host.holdFileBrowserFolderChecks (false);
+        drainModals (host);
+    });
+    auto before = std::make_shared<std::filesystem::path>();
+    auto returnPressed = std::make_shared<std::chrono::steady_clock::time_point>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (commandChord ('i'), 'i'), "the import shortcut was not handled"); } });
+    steps->push_back ({ 300, [&host, &ctx, held, before, returnPressed]
+    {
+        if (! ctx.expect (host.clickFileBrowserControl (true), "the import browser did not open")) return;
+        *before = host.fileBrowserFolder();
+        host.holdFileBrowserFolderChecks (true);
+        typeReplacing (host, held.string());
+        *returnPressed = std::chrono::steady_clock::now();
+        host.pressPeerKey ("Return", 0);
+    } });
+    steps->push_back ({ kTickMs, [&host, &ctx, before, returnPressed]
+    {
+        const auto late = std::chrono::duration_cast<std::chrono::milliseconds> (
+                              std::chrono::steady_clock::now() - *returnPressed).count() - kTickMs;
+        ctx.expect (late < kLateMs, "the window handled nothing for " + std::to_string (late)
+                                        + " ms while the typed folder was being checked");
+        ctx.expect (host.fileBrowserFolder() == *before, "the browser moved before the typed folder was checked");
+        host.holdFileBrowserFolderChecks (false);
+    } });
+    runSteps (ctx, steps, [&host, &ctx, held]
+    {
+        ctx.waitUntil ([&host, held] { return host.fileBrowserFolder().lexically_normal() == held.lexically_normal(); },
+                       kMoveMs, [&ctx] { ctx.complete (ctx.verdict()); },
+                       "the browser did not move to the typed folder once it was checked");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar fileBrowserHeldFolder { Scenario {
+    "gui.file_browser_held_folder", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserHeldFolder (host, ctx); }
+} };
+
+// Up clicks made while a folder check is held each go up a level, and a folder
+// the user creates meanwhile is where the browser stays.
+std::optional<ScenarioResult> runFileBrowserHeldUp (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr int kMoveMs = 2000;
+    static constexpr int kSettleMs = 500;
+    const auto top = (ctx.tempDir() / "Top").lexically_normal();
+    const auto deepest = top / "Middle" / "Bottom";
+    const auto created = top / "New folder";
+    std::filesystem::create_directories (deepest);
+    ctx.cleanup ([&host]
+    {
+        host.holdFileBrowserFolderChecks (false);
+        drainModals (host);
+    });
+    const auto shown = [&host] { return host.fileBrowserFolder().lexically_normal(); };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+    steps->push_back ({ 700, [&host, &ctx, deepest]
+    {
+        if (! ctx.expect (host.clickFileBrowserControl (true), "the Save As browser did not open")) return;
+        typeReplacing (host, deepest.string());
+        host.pressPeerKey ("Return", 0);
+    } });
+    runSteps (ctx, steps, [&host, &ctx, shown, top, deepest, created]
+    {
+        ctx.waitUntil ([shown, deepest] { return shown() == deepest.lexically_normal(); }, kMoveMs, [&host, &ctx, shown, top, created]
+        {
+            auto upSteps = std::make_shared<std::vector<Step>>();
+            upSteps->push_back ({ 0, [&host, &ctx]
+            {
+                host.holdFileBrowserFolderChecks (true);
+                ctx.expect (host.clickFileBrowserUp(), "the browser has no Up button");
+            } });
+            upSteps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickFileBrowserUp(), "the browser has no Up button"); } });
+            upSteps->push_back ({ 100, [&host] { host.holdFileBrowserFolderChecks (false); } });
+            runSteps (ctx, upSteps, [&host, &ctx, shown, top, created]
+            {
+                ctx.waitUntil ([shown, top] { return shown() == top; }, kMoveMs, [&host, &ctx, shown, top, created]
+                {
+                    auto createSteps = std::make_shared<std::vector<Step>>();
+                    createSteps->push_back ({ kSettleMs, [&host, &ctx, shown, top]
+                    {
+                        ctx.expect (shown() == top, "two Up clicks during a held check went past the folder two levels up, to "
+                                                        + shown().string());
+                        host.holdFileBrowserFolderChecks (true);
+                        ctx.expect (host.clickFileBrowserUp(), "the browser has no Up button");
+                        ctx.expect (host.clickModalButton ("New folder..."), "the Save As browser has no New folder button");
+                    } });
+                    createSteps->push_back ({ 100, [&host, &ctx]
+                    { ctx.expect (host.clickModalButton ("Create"), "the new folder row has no Create button"); } });
+                    createSteps->push_back ({ 100, [&host, &ctx, shown, created]
+                    {
+                        ctx.expect (shown() == created, "Create did not open the new folder");
+                        host.holdFileBrowserFolderChecks (false);
+                    } });
+                    createSteps->push_back ({ kSettleMs, [&ctx, shown, created]
+                    {
+                        ctx.expect (shown() == created, "an Up held on its check ran after the new folder opened and moved the browser to "
+                                                            + shown().string());
+                    } });
+                    runSteps (ctx, createSteps, [&ctx] { ctx.complete (ctx.verdict()); });
+                }, "two Up clicks during a held check did not reach the folder two levels up");
+            });
+        }, "the Save As browser did not move to the typed folder");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar fileBrowserHeldUp { Scenario {
+    "gui.file_browser_held_up", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserHeldUp (host, ctx); }
+} };
+
 const ScenarioRegistrar timelineDrawer { Scenario {
     "gui.timeline_drawer", { "gui", "timeline" }, Needs::Engine | Needs::Gui,
     {}, {}, 10000,
