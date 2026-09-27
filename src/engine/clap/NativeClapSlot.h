@@ -45,6 +45,12 @@ public:
     int lastTouchedParamIndex() const noexcept
         { return instance != nullptr ? instance->lastTouchedParamIndex() : -1; }
 
+    // True once after the plug-in called request_restart, which is how an
+    // active CLAP plug-in announces a new latency. The caller reactivates the
+    // slot, and activate() reads the latency again.
+    bool consumeRestartRequest() noexcept
+        { return instance != nullptr && instance->getHost().consumeRestartRequest(); }
+
 protected:
     // MIDI binding: 0..1 fraction -> the parameter's own min..max range.
     void applyParamBinding (uint32_t paramIndex, float frac) override

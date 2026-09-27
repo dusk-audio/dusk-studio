@@ -620,6 +620,16 @@ publishes.
   after it loads and comes back with the latency it reported then. A
   re-enabled plug-in has to run late for four blocks in a row again, not just
   one, before it is bypassed a second time.
+- **Delay compensation follows a plug-in that changes its latency while it
+  runs** (#764). An in-process plug-in's latency was read only when it loaded,
+  when the device changed, at a save and at Re-enable, so raising a look-ahead
+  limiter's look-ahead mid-session left its track out of line with the rest
+  until one of those came round. The slot now listens for the plug-in's own
+  announcement, on whichever thread it makes it, and compensation follows
+  within a thirtieth of a second. A native CLAP plug-in that asks to be
+  restarted for a new latency is now restarted, where the request used to be
+  ignored. A plug-in in the out-of-process sandbox still keeps the latency it
+  reported when it loaded.
 - **A render that cannot open its file leaves it alone** (#763). A Mixdown,
   Bounce..., Bounce stems..., Export master... or freeze whose file already
   existed but could not be opened for writing, such as a read-only

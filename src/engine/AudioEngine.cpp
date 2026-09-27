@@ -529,10 +529,12 @@ public:
             }
         }
 
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-        // Latency and bus-layout changes both require a setActive cycle. Keep
-        // every flagged instance under one engine fence while it rebuilds its
-        // process arrays and the slot rebuilds its adapter.
+#if DUSKSTUDIO_HAS_NATIVE_VST3 || DUSKSTUDIO_HAS_NATIVE_CLAP
+        // A VST3 latency or bus-layout change, and a CLAP restart request (how
+        // an active CLAP plug-in announces a new latency), all need a
+        // deactivate / activate cycle. Keep every flagged instance under one
+        // engine fence while it rebuilds its process arrays and the slot
+        // rebuilds its adapter.
         bool anyReactivated = false;
         const double sr    = engine.getCurrentSampleRate();
         const int    block = engine.getCurrentBlockSize();
@@ -543,25 +545,45 @@ public:
         if (sr > 0.0 && block > 0
             && ! engine.offlineRenderActive.load (std::memory_order_acquire))
         {
-            auto cycle = [&] (auto& slot)
+            auto fenceAndReactivate = [&] (auto& slot, auto&& underFence)
+            {
+                if (! anyReactivated) engine.suspendProcessing();
+                anyReactivated = true;
+                underFence();
+                std::string err;
+                if (! slot.reactivate (sr, block, err))
+                    slot.quarantineAfterFailedReactivation();
+            };
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            auto cycleVst3 = [&] (auto& slot)
             {
                 auto* inst = slot.getInstance();
                 if (inst == nullptr) return;
                 inst->refreshParamInfoIfChanged();
                 const bool latencyChanged = slot.consumeLatencyChanged();
                 if (! latencyChanged && ! inst->ioChangePending()) return;
-                if (! anyReactivated) engine.suspendProcessing();
-                anyReactivated = true;
-                inst->consumeIoChanged();
-                std::string err;
-                if (! slot.reactivate (sr, block, err))
-                    slot.quarantineAfterFailedReactivation();
+                // The pending I/O change holds processBlock off, so it is only
+                // cleared once the fence is up.
+                fenceAndReactivate (slot, [inst] { inst->consumeIoChanged(); });
             };
             for (int t = 0; t < Session::kNumTracks; ++t)
-                cycle (engine.getChannelStrip (t).getNativeVst3Slot());
+                cycleVst3 (engine.getChannelStrip (t).getNativeVst3Slot());
             for (int a = 0; a < Session::kNumAuxLanes; ++a)
                 for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
-                    cycle (engine.getAuxLaneStrip (a).getNativeVst3Slot (s));
+                    cycleVst3 (engine.getAuxLaneStrip (a).getNativeVst3Slot (s));
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            auto cycleClap = [&] (auto& slot)
+            {
+                if (slot.consumeRestartRequest())
+                    fenceAndReactivate (slot, [] {});
+            };
+            for (int t = 0; t < Session::kNumTracks; ++t)
+                cycleClap (engine.getChannelStrip (t).getNativeClapSlot());
+            for (int a = 0; a < Session::kNumAuxLanes; ++a)
+                for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+                    cycleClap (engine.getAuxLaneStrip (a).getNativeClapSlot (s));
+#endif
             if (anyReactivated)
             {
                 engine.resumeProcessing();

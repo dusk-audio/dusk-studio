@@ -12,10 +12,10 @@
 namespace duskstudio::clap
 {
 // Minimal CLAP host: owns a clap_host_t and the host extensions an embedded-GUI
-// audio host needs - log, thread-check, gui, timer-support, and posix-fd-support
-// everywhere but Windows (the extension must not exist there). One per plugin
-// instance. The plugin's embedded editor asks us to pump its fds + timers;
-// pumpGui() does that from the message thread.
+// audio host needs - log, thread-check, latency, gui, timer-support, and
+// posix-fd-support everywhere but Windows (the extension must not exist there).
+// One per plugin instance. The plugin's embedded editor asks us to pump its fds
+// + timers; pumpGui() does that from the message thread.
 // See docs/archive/native-clap-host-plan.md.
 class ClapHost
 {
@@ -64,6 +64,13 @@ public:
     void markGuiLeaked() noexcept    { guiLeaked = true; }
     bool isGuiLeaked() const noexcept { return guiLeaked; }
 
+    // request_restart is [thread-safe], and a plug-in that changes its latency
+    // while active calls it, often from process(). The trampoline only raises
+    // this flag; the engine's message-thread drain consumes it and runs the
+    // deactivate / activate cycle, after which the latency is read again.
+    bool consumeRestartRequest() noexcept
+        { return restartRequested.exchange (false, std::memory_order_acquire); }
+
     // Message thread: poll the plugin's registered fds (level-triggered, POSIX
     // platforms) and fire its registered timers, so the embedded GUI processes
     // its events + repaints.
@@ -97,6 +104,7 @@ private:
     clap_host_t                  host {};
     clap_host_log_t              logExt {};
     clap_host_thread_check_t     threadCheckExt {};
+    clap_host_latency_t          latencyExt {};
     clap_host_gui_t              guiExt {};
 #if ! defined(_WIN32)
     clap_host_posix_fd_support_t fdExt {};
@@ -115,6 +123,7 @@ private:
     std::vector<RegTimer> timers;
     clap_id nextTimerId = 1;
     std::atomic<bool> callbackRequested { false };   // request_callback -> on_main_thread, drained in pumpGui
+    std::atomic<bool> restartRequested  { false };   // request_restart -> engine drain reactivates
 
     const std::thread::id mainThreadId { std::this_thread::get_id() };
     std::atomic<std::size_t> audioThreadHash { 0 };

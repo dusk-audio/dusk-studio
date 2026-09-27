@@ -45,6 +45,7 @@ add_executable(dusk-studio-tests
     plugin_slot_persistence.cpp
     plugin_slot_auto_bypass.cpp
     plugin_slot_lifecycle.cpp
+    plugin_slot_live_latency.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginManager.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginSlot.cpp
     native_plugin_cache.cpp
@@ -395,10 +396,13 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         fixtures/no_window_clap.cpp)
     add_library(dusk-studio-param-touch-clap-fixture MODULE
         fixtures/param_touch_clap.cpp)
+    add_library(dusk-studio-latency-clap-fixture MODULE
+        fixtures/latency_clap.cpp)
     foreach(clapFixture
             dusk-studio-panic-probe-clap-fixture
             dusk-studio-no-window-clap-fixture
-            dusk-studio-param-touch-clap-fixture)
+            dusk-studio-param-touch-clap-fixture
+            dusk-studio-latency-clap-fixture)
         set_target_properties(${clapFixture} PROPERTIES
             PREFIX ""
             SUFFIX ".clap"
@@ -410,7 +414,8 @@ if(DUSKSTUDIO_NATIVE_CLAP)
     endforeach()
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-panic-probe-clap-fixture>"
-        DUSKSTUDIO_NO_WINDOW_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-no-window-clap-fixture>")
+        DUSKSTUDIO_NO_WINDOW_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-no-window-clap-fixture>"
+        DUSKSTUDIO_LATENCY_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-latency-clap-fixture>")
 
     if(APPLE)
         # The directory-bundle resolver test needs a valid Mach-O image that

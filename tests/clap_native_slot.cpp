@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "engine/PdcMath.h"
 #include "engine/clap/NativeClapSlot.h"
 
 #include <algorithm>
@@ -330,4 +331,46 @@ TEST_CASE ("Linux track clone keeps native CLAP identity and state",
     std::vector<uint8_t> replayedState;
     REQUIRE (destination.saveState (replayedState));
     REQUIRE (replayedState == capturedState);
+}
+
+// CLAP lets a plug-in change its latency only inside activate(), so an active
+// plug-in that wants a longer look-ahead asks the host for a restart, here from
+// process() on the audio thread. The engine's drain consumes the request and
+// reactivates the slot, which is when the new latency reaches delay
+// compensation.
+TEST_CASE ("NativeClapSlot follows a latency the plug-in changes while it runs",
+           "[clap][slot][latency][pdc][issue-764]")
+{
+    constexpr int kBlock = 64;
+    constexpr double kLookAhead = 256.0;
+    duskstudio::clap::NativeClapSlot slot;
+    std::string err;
+    REQUIRE (slot.load (std::filesystem::u8path (DUSKSTUDIO_LATENCY_CLAP_FIXTURE_PATH),
+                        48000.0, kBlock, err));
+    REQUIRE (slot.getLatencySamples() == 0);
+    REQUIRE_FALSE (slot.consumeRestartRequest());
+
+    const auto* lookAhead = slot.paramInfo (0);
+    REQUIRE (lookAhead != nullptr);
+    slot.setParamValue (lookAhead->id, kLookAhead);
+
+    std::vector<float> left ((size_t) kBlock, 0.0f), right ((size_t) kBlock, 0.0f);
+    slot.processStereo (left.data(), right.data(), left.data(), right.data(), kBlock);
+
+    // The plug-in keeps its old latency until the restart.
+    CHECK (slot.getLatencySamples() == 0);
+    REQUIRE (slot.consumeRestartRequest());
+    REQUIRE_FALSE (slot.consumeRestartRequest());
+
+    REQUIRE (slot.reactivate (48000.0, kBlock, err));
+    CHECK (slot.getLatencySamples() == (int) kLookAhead);
+
+    const int latency[2] { slot.getLatencySamples(), 0 };
+    int compensation[2] {};
+    duskstudio::pdc::computeCompensations (latency, compensation, 2);
+    CHECK (compensation[1] == (int) kLookAhead);
+
+    // Bypassed, the plug-in is out of the path and its delay with it.
+    slot.setBypassed (true);
+    CHECK (slot.getLatencySamples() == 0);
 }

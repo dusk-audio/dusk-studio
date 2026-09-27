@@ -1,0 +1,230 @@
+#include <catch2/catch_test_macros.hpp>
+
+#include "engine/PdcMath.h"
+#include "engine/PluginManager.h"
+#include "engine/PluginSlot.h"
+
+#include <juce_gui_basics/juce_gui_basics.h>
+
+#include <atomic>
+#include <chrono>
+#include <thread>
+
+using namespace duskstudio;
+
+namespace
+{
+constexpr double kRate  = 48000.0;
+constexpr int    kBlock = 64;
+
+// A look-ahead limiter in miniature: its latency is whatever it was last told,
+// from the editor on the message thread or from inside processBlock, where
+// JUCE's LV2 host sets it after every run.
+class LookAheadPluginInstance final : public juce::AudioPluginInstance
+{
+public:
+    using juce::AudioPluginInstance::processBlock;
+
+    LookAheadPluginInstance()
+        : AudioPluginInstance (BusesProperties()
+            .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+            .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
+    {
+    }
+
+    const juce::String getName() const override { return "Look-ahead test"; }
+
+    void prepareToPlay (double, int) override { setLatencySamples (latencyOnPrepare); }
+    void releaseResources() override          {}
+
+    // Each armed block moves the latency on by one sample until the steps run
+    // out, so the plug-in writes it from the audio thread block after block.
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override
+    {
+        ++processCalls;
+        if (latencySteps.load (std::memory_order_relaxed) > 0)
+        {
+            setLatencySamples (getLatencySamples() + 1);
+            latencySteps.fetch_sub (1, std::memory_order_relaxed);
+        }
+    }
+
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override                      { return false; }
+    bool acceptsMidi() const override                    { return false; }
+    bool producesMidi() const override                   { return false; }
+    double getTailLengthSeconds() const override         { return 0.0; }
+
+    int getNumPrograms() override                        { return 1; }
+    int getCurrentProgram() override                     { return 0; }
+    void setCurrentProgram (int) override                {}
+    const juce::String getProgramName (int) override     { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override    {}
+
+    void fillInPluginDescription (juce::PluginDescription& description) const override
+    {
+        description.name = getName();
+        description.pluginFormatName = "Test";
+        description.fileOrIdentifier = "look-ahead-test";
+    }
+
+    std::atomic<int> latencySteps { 0 };
+    std::atomic<int> processCalls { 0 };
+    int latencyOnPrepare = 0;
+};
+
+struct Harness
+{
+    PluginManager manager;
+    PluginSlot slot;
+    LookAheadPluginInstance* plugin = nullptr;
+
+    explicit Harness (int latency)
+    {
+        slot.setManager (manager);
+        slot.prepareToPlay (kRate, kBlock);
+        auto instance = std::make_unique<LookAheadPluginInstance>();
+        plugin = instance.get();
+        plugin->latencyOnPrepare = latency;
+        REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    }
+
+    void pump (int blocks)
+    {
+        float left[kBlock] {};
+        float right[kBlock] {};
+        juce::MidiBuffer midi;
+        for (int i = 0; i < blocks; ++i)
+            slot.processStereoBlock (left, right, kBlock, midi);
+    }
+
+    // What the engine's per-block PDC pass gives a zero-latency track next to
+    // this one.
+    int otherTrackDelay() const
+    {
+        const int latency[2] { slot.getLatencySamples(), 0 };
+        int compensation[2] {};
+        pdc::computeCompensations (latency, compensation, 2);
+        return compensation[1];
+    }
+};
+} // namespace
+
+// Raising a look-ahead in the plug-in's editor changes its latency on the
+// message thread. Delay compensation has to follow while the plug-in runs,
+// not wait for the next prepare or save.
+TEST_CASE ("a latency a plugin changes on the message thread reaches the slot and PDC",
+           "[plugin][latency][pdc][issue-764]")
+{
+    Harness h (64);
+    h.pump (4);
+    REQUIRE (h.slot.getLatencySamples() == 64);
+    REQUIRE_FALSE (h.slot.refreshLatencyIfChanged());
+
+    h.plugin->setLatencySamples (192);
+    CHECK (h.slot.refreshLatencyIfChanged());
+    CHECK (h.slot.getLatencySamples() == 192);
+    CHECK (h.otherTrackDelay() == 192);
+
+    // Nothing announced since, so nothing to re-read.
+    CHECK_FALSE (h.slot.refreshLatencyIfChanged());
+
+    h.plugin->setLatencySamples (32);
+    CHECK (h.slot.refreshLatencyIfChanged());
+    CHECK (h.slot.getLatencySamples() == 32);
+    CHECK (h.otherTrackDelay() == 32);
+}
+
+// JUCE's LV2 host sets the latency from inside processBlock, so the
+// announcement arrives on the audio thread.
+TEST_CASE ("a latency a plugin changes inside processBlock reaches the slot and PDC",
+           "[plugin][latency][pdc][issue-764]")
+{
+    Harness h (64);
+    h.plugin->latencySteps = 3;
+    h.pump (5);
+    REQUIRE (h.plugin->getLatencySamples() == 67);
+
+    CHECK (h.slot.refreshLatencyIfChanged());
+    CHECK (h.slot.getLatencySamples() == 67);
+    CHECK (h.otherTrackDelay() == 67);
+}
+
+// A bypassed plug-in passes dry, so a latency it changes meanwhile stays out of
+// PDC until it is back in the path, and is the one it has then.
+TEST_CASE ("a latency a bypassed plugin changes reaches PDC when it is back in the path",
+           "[plugin][latency][pdc][issue-764]")
+{
+    Harness h (64);
+    h.slot.setBypassed (true);
+    h.plugin->setLatencySamples (256);
+    (void) h.slot.refreshLatencyIfChanged();
+    CHECK (h.slot.getLatencySamples() == 0);
+    CHECK (h.otherTrackDelay() == 0);
+
+    h.slot.setBypassed (false);
+    CHECK (h.slot.getLatencySamples() == 256);
+    CHECK (h.otherTrackDelay() == 256);
+}
+
+// The slot lets go of an unloaded plug-in's announcements along with the
+// plug-in: nothing it reports afterwards reaches the slot.
+TEST_CASE ("an unloaded plugin's latency changes do not reach the slot",
+           "[plugin][latency][issue-764]")
+{
+    Harness h (64);
+    auto* deposed = h.plugin;
+    h.slot.unload();
+    REQUIRE (h.slot.getLatencySamples() == 0);
+
+    // The unload keeps the instance alive in the slot's keep-alive ring.
+    deposed->setLatencySamples (512);
+    CHECK_FALSE (h.slot.refreshLatencyIfChanged());
+    CHECK (h.slot.getLatencySamples() == 0);
+}
+
+// The same with a real audio thread that keeps moving the latency while the
+// message thread follows it. Under ThreadSanitizer this shows the message
+// thread's read of the plug-in's latency is ordered against the blocks that
+// write it.
+TEST_CASE ("the slot follows a latency the plugin keeps changing on the audio thread",
+           "[plugin][latency][pdc][issue-764]")
+{
+    using namespace std::chrono_literals;
+    constexpr int kSteps = 200;
+
+    Harness h (64);
+    h.plugin->latencySteps = kSteps;
+
+    std::atomic<bool> stop { false };
+    std::thread audioThread ([&h, &stop]
+    {
+        float left[kBlock] {};
+        float right[kBlock] {};
+        juce::MidiBuffer midi;
+        while (! stop.load (std::memory_order_relaxed))
+        {
+            h.slot.processStereoBlock (left, right, kBlock, midi);
+            std::this_thread::yield();
+        }
+    });
+
+    int refreshes = 0;
+    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (h.slot.getLatencySamples() != 64 + kSteps
+           && std::chrono::steady_clock::now() < deadline)
+    {
+        if (h.slot.refreshLatencyIfChanged())
+            ++refreshes;
+        std::this_thread::yield();
+    }
+    stop.store (true, std::memory_order_relaxed);
+    audioThread.join();
+
+    CHECK (h.slot.getLatencySamples() == 64 + kSteps);
+    CHECK (h.otherTrackDelay() == 64 + kSteps);
+    CHECK (refreshes > 0);
+}

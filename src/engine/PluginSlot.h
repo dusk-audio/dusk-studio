@@ -34,7 +34,8 @@ class PluginManager;
 // PluginSlot inherits dusk::Timer so the audio-thread param-write path
 // (setParamNormalised -> SPSC FIFO push) can be drained on the message
 // thread without ever blocking, allocating, or invoking JUCE parameter
-// setters from the render context. See timerCallback() + paramFifo.
+// setters from the render context. See timerCallback() + paramFifo. The same
+// tick re-reads a latency the plug-in announced (refreshLatencyIfChanged).
 class PluginSlot : private dusk::Timer
 {
     using PluginInstancePtr = std::unique_ptr<juce::AudioPluginInstance>;
@@ -163,9 +164,9 @@ public:
     // Plugin's self-report. False when no plugin loaded.
     bool isLoadedPluginInstrument() const;
 
-    // Cached at load. AudioPluginInstance::getLatencySamples isn't
-    // documented as RT-safe (plugins may take locks), so we cache on
-    // the message thread and the audio thread reads the atom.
+    // Cached on the message thread at load and prepare, and again whenever an
+    // in-process plug-in announces a latency change (refreshLatencyIfChanged),
+    // so the audio thread only ever reads the atom.
     // A bypassed or auto-bypassed slot passes dry and adds no delay, so it
     // reports 0 - otherwise recomputePdc() compensates for latency that isn't
     // there, and the MIDI scheduler shifts notes by it. The cache itself keeps
@@ -177,6 +178,14 @@ public:
             return 0;
         return cachedLatencySamples.load (std::memory_order_relaxed);
     }
+
+    // Message thread; the slot's timer calls it on every tick. Re-reads an
+    // in-process plug-in's latency after the plug-in announced a change, from
+    // whichever thread it did so. True when the cached latency moved. The
+    // engine's per-block PDC pass picks the new value up from
+    // getLatencySamples. A sandboxed plug-in keeps the latency its load
+    // reported.
+    bool refreshLatencyIfChanged() noexcept;
 
     // -1 = no parameter touched since load. Driven by a parameter
     // listener; read by MIDI Learn so the user can bind "the knob I
@@ -298,14 +307,14 @@ private:
 
     PluginManager* manager = nullptr;
 
-    std::unique_ptr<juce::AudioPluginInstance> ownedInstance;
+    PluginInstancePtr ownedInstance;
 
     // Two-deep keep-alive: a single slot races itself when two rapid
     // Replace clicks fire within one audio block. With two slots the
     // deposed instance survives two full swaps before destruction, so
     // any pointer the audio thread captured before currentInstance was
     // nulled can complete its block.
-    std::array<std::unique_ptr<juce::AudioPluginInstance>, 2> previousInstances;
+    std::array<PluginInstancePtr, 2> previousInstances;
 
     std::atomic<juce::AudioPluginInstance*> currentInstance { nullptr };
     std::atomic<bool> bypassed { false };
@@ -359,6 +368,34 @@ private:
         std::atomic<int>& indexAtom;
     };
     std::unique_ptr<LastTouchedListener> lastTouchedListener;
+
+    // A plug-in announces a latency change on the thread that makes it: the
+    // message thread for JUCE's VST3 host, the audio thread inside processBlock
+    // for its LV2 host. So the callback only raises a flag (release), and
+    // refreshLatencyIfChanged reads the value on the message thread (acquire).
+    // One listener for the slot's lifetime rather than one per instance, so a
+    // callback still in flight from an instance the slot has let go of lands
+    // on a live object; the worst it causes is one needless re-read.
+    class LatencyListener final : public juce::AudioProcessorListener
+    {
+    public:
+        explicit LatencyListener (std::atomic<bool>& flag) noexcept : changed (flag) {}
+        void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& details) override
+        {
+            if (details.latencyChanged)
+                changed.store (true, std::memory_order_release);
+        }
+        void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
+    private:
+        std::atomic<bool>& changed;
+    };
+    std::atomic<bool> latencyChangePending { false };
+    LatencyListener latencyListener { latencyChangePending };
+
+    // Message thread. Every in-process instance the slot publishes carries
+    // both listeners, and loses them before it leaves ownedInstance.
+    void attachInstanceListeners();
+    void detachInstanceListeners();
 
     // Watchdog state (audio-thread only).
     // blocksSinceLoad skips the budget check while cold caches / lazy
@@ -467,7 +504,7 @@ private:
     // connection). outstandingShellWrapper auto-nulls when the wrapper
     // Component destructs, so PluginSlot can detect the editor-closed
     // state without an explicit notification channel.
-    std::unique_ptr<juce::AudioPluginInstance>    shellInstanceForEditor;
+    PluginInstancePtr shellInstanceForEditor;
     juce::Component::SafePointer<juce::Component> outstandingShellWrapper;
 
     // Loop breaker: set while a remote-originated change is being
