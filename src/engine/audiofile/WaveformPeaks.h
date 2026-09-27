@@ -104,7 +104,14 @@ public:
         std::shared_ptr<const WaveformDetails> details;
     };
 
-    WaveformSource();
+    // OverviewAndDetail keeps the file open for detail requests, which then
+    // read the same data as the overview even if the path is replaced.
+    // OverviewOnly closes it once no overview work is pending, so a view that
+    // never asks for detail doesn't hold the file (Windows won't rename or
+    // delete an open file); its detail requests fail.
+    enum class Use { OverviewAndDetail, OverviewOnly };
+
+    explicit WaveformSource (Use use = Use::OverviewAndDetail);
     ~WaveformSource();
     WaveformSource (const WaveformSource&) = delete;
     WaveformSource& operator= (const WaveformSource&) = delete;
@@ -124,6 +131,7 @@ public:
 private:
     void run();
 
+    const Use use;
     mutable std::mutex mutex;
     std::condition_variable wake;
     std::atomic<uint64_t> generation { 0 };

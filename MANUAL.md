@@ -2064,7 +2064,7 @@ Because the session is a folder, you can copy or back up a session by copying th
 ## Save commands
 
 - **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file. A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, has no `session.json` of its own yet, so Save opens the Save As browser instead, even when a session you once saved as `Untitled` already sits in that folder.
-- **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder. If the Save As fails partway, for example when the notes or `session.json` cannot be written, the session stays in its old folder exactly as it was, and the copies already made in the new folder are removed again.
+- **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder. A mastering mix kept in the session folder is copied along, and the **MASTERING** stage carries on with the copy, stopped where it was. If the Save As fails partway, for example when the notes or `session.json` cannot be written, the session stays in its old folder exactly as it was, and the copies already made in the new folder are removed again.
 - **File → Open…** (or **Cmd+O**): load a session by choosing its `session.json` file.
 - **File → New from template**: start a fresh session with tracks pre-named and colour-coded for a common workflow. The built-in templates are **Blank** (numbered tracks), **Band** (Kick / Snare / Drums OH / Bass / Gtr 1 / Gtr 2 / Keys / Lead Vox / BG Vox), **Beats** (Kick / Snare / Hat / Perc / 808 / Pad / Lead / Vox), and **Singer-Songwriter** (Vocal / Ac Gtr L / Ac Gtr R / Bass / Synth / Drums). Templates set each track's name, colour and type (mono, stereo or MIDI); they don't add plugins or audio.
 
@@ -2090,7 +2090,7 @@ A session captures everything user-visible:
 - Markers: positions, names, colours.
 - MIDI bindings.
 - MIDI sync source/output, MCU port identifiers.
-- The currently loaded mastering source file (if any).
+- The currently loaded mastering source file (if any), which loads on the **MASTERING** stage again when the session opens. A session without one opens with that stage empty. If the file has gone missing, the stage stays empty, reads "Failed to load: [path]", and the *Missing audio files* alert names the file.
 
 ## Backing up
 
@@ -2538,10 +2538,10 @@ The format for each entry:
 
 ### Missing audio files
 
-- **When**: A loaded session references audio files that can't be found — even after Dusk Studio tried re-rooting each path against the session's `audio/` folder.
-- **Text**: "These audio files referenced by the session could not be found: [list]. Their regions will play silent. If the session folder was moved, copy the files back into its audio/ subfolder and reload the session."
+- **When**: A loaded session references audio files that can't be found — even after Dusk Studio tried re-rooting each path against the session's `audio/` folder — or the mastering mix it had loaded is missing.
+- **Text**: For regions and takes: "These audio files referenced by the session could not be found: [list]. Their regions will play silent. If the session folder was moved, copy the files back into its audio/ subfolder and reload the session." For the mastering mix, as its own paragraph (the whole alert when nothing else is missing): "The mastering mix this session had loaded could not be found: [path]. The MASTERING stage opens without a mix. Put the file back and reload the session, or load another mix."
 - **Buttons**: OK.
-- **Action**: Put the listed files into the session's `audio/` folder (the file name is what matters) and reload.
+- **Action**: Put the listed files into the session's `audio/` folder (the file name is what matters) and reload. Put a missing mix back at the path shown and reload, or use **Load mix...** on the **MASTERING** stage.
 
 ### Clean out
 

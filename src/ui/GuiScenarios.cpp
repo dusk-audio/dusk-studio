@@ -670,7 +670,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     void refreshMasteringSource() override
     {
-        if (owner.masteringView != nullptr) owner.masteringView->refreshSourceForScenario();
+        if (owner.masteringView != nullptr) owner.masteringView->followSource();
     }
     bool clickMasteringButton (const std::string& label) override
     {
@@ -1430,6 +1430,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::string masteringTargetText() const override
     {
         return owner.masteringView != nullptr ? owner.masteringView->targetTextForScenario() : std::string();
+    }
+    std::string masteringSourceText() const override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->sourceTextForScenario() : std::string();
+    }
+    std::filesystem::path masteringWaveformFile() const override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->waveformFileForScenario()
+                                              : std::filesystem::path();
     }
     std::uint32_t masteringLoudnessColour (bool peak) const override
     {

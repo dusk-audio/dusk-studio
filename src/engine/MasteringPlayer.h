@@ -2,6 +2,7 @@
 
 #include <juce_core/juce_core.h>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include "audiofile/BufferedFileReader.h"
 #include "../foundation/LagrangeInterpolator.h"
@@ -36,6 +37,9 @@ public:
     juce::File  getLoadedFile() const         { return loadedFile; }
     std::int64_t getLengthSamples() const noexcept;
     double      getSourceSampleRate() const noexcept;
+    // Changes on every load and unload, a reload of the same file included,
+    // so a view can follow the source by polling. Message thread.
+    std::uint64_t getSourceGeneration() const noexcept { return sourceGeneration; }
 
     // Transport.
     void play() noexcept    { playing.store (true, std::memory_order_relaxed); }
@@ -51,20 +55,24 @@ public:
     void process (float* L, float* R, int numSamples) noexcept;
 
 private:
-    // Owning pointer - mutated only on the message thread (loadFile /
-    // unloadFile). The audio thread reads via the `currentReader` atomic
-    // below (PluginSlot pattern). `previousReader` keeps the prior owned
-    // reader alive across one publish so the audio thread can safely finish
-    // its current block with the old pointer; the next publish drops it.
+    // Owning pointers - mutated only on the message thread. The audio thread
+    // reads via the `currentReader` atomic below. An unpublished reader is
+    // destroyed, closing its file, as soon as parkAndWaitForAudio proves no
+    // block can still hold it. `retiredReader` is non-null only when that
+    // drain timed out; the next successful drain or the destructor frees it.
+    // loadFile publishes only after a successful drain has cleared it, so it
+    // never holds more than the one reader that was unpublished last.
     std::unique_ptr<dusk::audio::BufferedFileReader> ownedReader;
-    std::unique_ptr<dusk::audio::BufferedFileReader> previousReader;
+    std::unique_ptr<dusk::audio::BufferedFileReader> retiredReader;
 
-    // Audio-thread-safe view of `ownedReader.get()`. The audio thread
-    // acquire-loads this once per block and uses the resulting pointer for
-    // the rest of the block. Message-thread writes are release-stores.
+    // Audio-thread-safe view of `ownedReader.get()`. The audio thread loads
+    // this once per block and uses the resulting pointer for the rest of the
+    // block. Publishing stores are release; the park that unpublishes is
+    // seq_cst (see audioInFlight).
     std::atomic<dusk::audio::BufferedFileReader*> currentReader { nullptr };
 
     juce::File loadedFile;
+    std::uint64_t sourceGeneration = 0;   // message thread only
 
     dusk::audio::PlanarBuffer readScratch;   // 2 ch x maxBlockSize, pre-allocated
 
@@ -88,12 +96,19 @@ private:
     int    preparedBlockSize   = 0;    // message thread only
     double preparedDeviceRate  = 0.0;  // message thread only
 
+    // Dekker handshake with parkAndWaitForAudio: process() increments this
+    // and then loads currentReader; the park stores null to currentReader and
+    // then loads this. All four are seq_cst, so either the drain sees the
+    // increment and waits for the matching release decrement, or the block's
+    // load sees null. Acquire/release alone lets both loads miss the other
+    // side's write (store buffering): the drain reads 0 while the block
+    // latches the reader that is about to be destroyed.
     std::atomic<int> audioInFlight { 0 };
     struct AudioInFlightScope
     {
         std::atomic<int>& c;
         AudioInFlightScope (std::atomic<int>& a) noexcept : c (a)
-            { c.fetch_add (1, std::memory_order_acq_rel); }
+            { c.fetch_add (1, std::memory_order_seq_cst); }
         ~AudioInFlightScope() noexcept
             { c.fetch_sub (1, std::memory_order_release); }
     };

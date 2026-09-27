@@ -274,7 +274,7 @@ std::optional<WaveformPeaks::Peak> WaveformDetails::column (
                  + (std::size_t) channel];
 }
 
-WaveformSource::WaveformSource() : worker ([this] { run(); }) {}
+WaveformSource::WaveformSource (Use u) : use (u), worker ([this] { run(); }) {}
 
 WaveformSource::~WaveformSource()
 {
@@ -307,6 +307,13 @@ void WaveformSource::setFile (const std::filesystem::path& file)
 bool WaveformSource::setDetailWindows (const std::vector<WaveformDetails::Window>& windows)
 {
     std::lock_guard<std::mutex> lock (mutex);
+    if (use == Use::OverviewOnly)
+    {
+        // Refused without a generation bump, so an overview in progress keeps
+        // going instead of restarting.
+        current.detailState = windows.empty() ? State::Empty : State::Failed;
+        return windows.empty();
+    }
     if (windows == requestedWindows && (! windows.empty() || current.detailState == State::Empty))
         return current.detailState != State::Failed;
     generation.fetch_add (1, std::memory_order_release);
@@ -344,6 +351,16 @@ void WaveformSource::run()
     std::unique_ptr<FileReader> reader;
     while (true)
     {
+        if (use == Use::OverviewOnly && reader != nullptr && ! filePending && ! pending)
+        {
+            // The overview is published and only a new setFile brings more
+            // work, which opens its own reader.
+            auto finished = std::move (reader);
+            lock.unlock();
+            finished.reset();
+            lock.lock();
+            continue;
+        }
         wake.wait (lock, [this] { return stopping || filePending || pending || detailsPending; });
         if (stopping) return;
         if (filePending)

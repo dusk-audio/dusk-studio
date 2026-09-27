@@ -189,6 +189,7 @@ add_executable(dusk-studio-tests
     playback_loop_read.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PlaybackEngine.cpp
     mastering_player_resample.cpp
+    mastering_player_file_release.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MasteringPlayer.cpp
     session_missing_sections.cpp
     session_save_as_consolidation.cpp

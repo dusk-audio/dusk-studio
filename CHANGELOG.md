@@ -530,6 +530,25 @@ publishes.
 - **The mastering EQ and limiter stay up while a drop-down is open** (#697).
   Opening the multiband compressor's PRESET list made both panels vanish until
   the list closed.
+- **A mastering mix is let go as soon as it is replaced** (#758). The
+  Mastering player kept the last mix it unloaded open until another one loaded,
+  and the waveform kept the file it showed open for as long as it showed it. On
+  Windows that file could not be renamed, moved or deleted in the meantime. The
+  player now closes a mix the moment it is replaced or unloaded, and the
+  waveform closes the file once it has drawn the overview.
+- **Opening a session loads the mastering mix it saved** (#759). Switching
+  sessions stopped the Mastering player but left the previous session's mix
+  loaded, so Play on the MASTERING stage played the old session's mix, and on
+  Windows its file stayed locked. Opening, creating or recovering a session now
+  loads the mix that session saved, stopped at its start. A session without one
+  opens with the stage empty. A saved mix that has gone missing leaves the
+  stage reading "Failed to load" with its path, and the **Missing audio files**
+  alert gives it a paragraph of its own instead of telling you its regions will
+  play silent.
+- **Save As moves the Mastering player to the copied mix.** Save As copies a
+  mix kept in the session folder into the new folder, but the player went on
+  with the old folder's file and held it open. It now switches to the copy,
+  stopped where it was.
 - **A stereo track's right input names the input it records** (#645). The R
   selector and the strip header kept the name of the track's default right
   input after the left input changed, so a track recording In 1 and In 2 could

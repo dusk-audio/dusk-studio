@@ -52,15 +52,20 @@ WaveformDisplay::WaveformDisplay (MasteringPlayer& p)
 
 WaveformDisplay::~WaveformDisplay() { stopTimer(); }
 
-void WaveformDisplay::setSource (const juce::File& file)
+void WaveformDisplay::followPlayer()
 {
-    waveformSource.setFile (std::filesystem::u8path (file.getFullPathName().toStdString()));
+    const auto generation = player.getSourceGeneration();
+    if (generation == shownSourceGeneration) return;
+    shownSourceGeneration = generation;
+    shownFile = std::filesystem::u8path (player.getLoadedFile().getFullPathName().toStdString());
+    waveformSource.setFile (shownFile);
     waveformSnapshot = waveformSource.snapshot();
     repaint();
 }
 
 void WaveformDisplay::timerCallback()
 {
+    followPlayer();
     const auto p = player.getPlayhead();
     auto next = waveformSource.snapshot();
     if (p == lastPlayhead && next.state == waveformSnapshot.state
@@ -243,8 +248,6 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     grLabel.setFont (juce::Font (juce::FontOptions (13.0f)));
     addAndMakeVisible (grLabel);
 
-    auto& m = session.mastering();
-
     // Meter + LUFS
     auto styleMeter = [] (juce::Label& l)
     {
@@ -387,10 +390,8 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     compPanelWrapper->addAndMakeVisible (compPresetCombo);
 #endif
 
-    // Reflect the loaded source file from the session, if any.
-    if (m.sourceFile != juce::File())
-        loadFile (m.sourceFile);
-
+    // The session's source is already in the player: every session switch
+    // loads it, whether or not this page exists yet.
     updateLabels();
     startTimerHz (20);
 }
@@ -784,6 +785,9 @@ void MasteringView::timerCallback()
     auto& player = engine.getMasteringPlayer();
     auto& m = session.mastering();
 
+    if (player.getSourceGeneration() != labelSourceGeneration)
+        updateLabels();
+
     // The comp header button only repaints itself on click; pick up external
     // toggles (e.g. session load) here.
     const bool compOn = m.compEnabled.load (std::memory_order_relaxed);
@@ -878,38 +882,57 @@ void MasteringView::timerCallback()
     stopButton.setEnabled (player.isPlaying());
 }
 
+// The line names what the player holds. A source the session names but the
+// player could not load is reported as a failed load, which is also how a
+// reopened session shows a mastering mix that has since gone missing.
 void MasteringView::updateLabels()
 {
-    const auto& m = session.mastering();
-    if (m.sourceFile == juce::File())
-        sourceFileLabel.setText ("No mix loaded", juce::dontSendNotification);
-    else
-        sourceFileLabel.setText (m.sourceFile.getFileName()
-                                  + "  (" + m.sourceFile.getParentDirectory().getFileName() + "/)",
+    const auto& player = engine.getMasteringPlayer();
+    const auto& source = session.mastering().sourceFile;
+    labelSourceGeneration = player.getSourceGeneration();
+    if (player.isLoaded())
+    {
+        const auto file = player.getLoadedFile();
+        sourceFileLabel.setText (file.getFileName()
+                                  + "  (" + file.getParentDirectory().getFileName() + "/)",
                                   juce::dontSendNotification);
+    }
+    else if (source.getFullPathName().isNotEmpty())
+        sourceFileLabel.setText ("Failed to load: " + source.getFullPathName(),
+                                  juce::dontSendNotification);
+    else
+        sourceFileLabel.setText ("No mix loaded", juce::dontSendNotification);
+}
+
+bool MasteringView::loadSessionSource (AudioEngine& engine, Session& session)
+{
+    auto& player = engine.getMasteringPlayer();
+    const auto source = session.mastering().sourceFile;
+    if (source.getFullPathName().isEmpty())
+    {
+        player.unloadFile();
+        return true;
+    }
+    if (! player.loadFile (source)) return false;
+    // Reset the integrated LUFS history so the reading reflects ONLY the
+    // currently-loaded mix, not a mix-of-mixes from prior auditions.
+    engine.getMasteringChain().resetLoudness();
+    return true;
 }
 
 bool MasteringView::loadFile (const juce::File& file)
 {
-    if (! engine.getMasteringPlayer().loadFile (file))
-    {
-        sourceFileLabel.setText ("Failed to load: " + file.getFullPathName(),
-                                  juce::dontSendNotification);
-        if (waveform != nullptr) waveform->setSource (juce::File());
-        return false;
-    }
+    // The session keeps naming a file that would not load, as it keeps a
+    // missing region's file, so the page and a later reopen both report it.
     session.mastering().sourceFile = file;
-    // Reset the integrated LUFS history so the reading reflects ONLY the
-    // currently-loaded mix, not a mix-of-mixes from prior auditions.
-    engine.getMasteringChain().resetLoudness();
-    if (waveform != nullptr) waveform->setSource (file);
-    updateLabels();
-    return true;
+    const bool loaded = loadSessionSource (engine, session);
+    followSource();
+    return loaded;
 }
 
-void MasteringView::refreshSourceForScenario()
+void MasteringView::followSource()
 {
-    if (waveform != nullptr) waveform->setSource (engine.getMasteringPlayer().getLoadedFile());
+    if (waveform != nullptr) waveform->followPlayer();
     updateLabels();
 }
 

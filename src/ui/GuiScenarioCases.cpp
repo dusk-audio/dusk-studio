@@ -73,6 +73,35 @@ struct Step
     std::function<void()> run;
 };
 
+// Descriptors this process holds on `file`; 0 where they can't be counted
+// (only Linux lists them), so callers pair it with a rename check.
+int openHandlesInProcess (const std::filesystem::path& file)
+{
+    int handles = 0;
+   #if defined (__linux__)
+    std::error_code ec;
+    const auto target = std::filesystem::weakly_canonical (file, ec);
+    if (ec) return 0;
+    for (const auto& entry : std::filesystem::directory_iterator ("/proc/self/fd", ec))
+    {
+        std::error_code linkEc;
+        if (std::filesystem::read_symlink (entry.path(), linkEc) == target && ! linkEc)
+            ++handles;
+    }
+   #else
+    (void) file;
+   #endif
+    return handles;
+}
+
+// Windows refuses to rename a file this process still has open.
+bool renameSucceeds (const std::filesystem::path& from, const std::filesystem::path& to)
+{
+    std::error_code ec;
+    std::filesystem::rename (from, to, ec);
+    return ! ec;
+}
+
 void runSteps (ScenarioContext& ctx, std::shared_ptr<std::vector<Step>> steps,
                std::function<void()> onDone)
 {
@@ -167,6 +196,24 @@ void typeReplacing (GuiHost& host, const std::string& text)
     host.pressPeerKey (commandChord ('A'), 'a');
     for (const char ch : text)
         host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
+}
+
+// File > Save as... into target, typed into the browser the way a user would.
+void pushSaveAsSteps (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
+                      const std::filesystem::path& target)
+{
+    steps.push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps.push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+    steps.push_back ({ 700, [&host, &ctx, target]
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                          "File > Save as... showed '" + host.modalText() + "' rather than Save As")
+            || ! ctx.expect (host.focusFileName(), "the Save As browser has no name field"))
+            return;
+        typeReplacing (host, target.string());
+        ctx.expect (host.clickModalButton ("Save"), "the Save As browser has no Save button");
+    } });
 }
 
 // A key press as the display server hands it over. X11 fills JUCE's key code
@@ -4113,7 +4160,22 @@ std::optional<ScenarioResult> runMasteringLoad (GuiHost& host, ScenarioContext& 
         ctx.expect (write (mixdown, 14400), "could not write the preferred mixdown");
         ctx.expect (host.clickMasteringButton ("Load latest mixdown"), "second latest-mixdown click failed");
     } });
-    steps->push_back ({ 600, [check, mixdown] { check (mixdown, 14400); } });
+    steps->push_back ({ 600, [&ctx, &player, check, chosen, bounce, mixdown]
+    {
+        check (mixdown, 14400);
+        // The player and the waveform each open the source; neither may keep a
+        // replaced or unloaded one open, or Windows can't rename or delete it.
+        ctx.expect (openHandlesInProcess (chosen) + openHandlesInProcess (bounce) == 0,
+                    "a replaced mastering source is still open");
+        player.unloadFile();
+        ctx.expect (openHandlesInProcess (mixdown) == 0, "the unloaded mastering source is still open");
+        for (const auto& file : { chosen, bounce, mixdown })
+        {
+            auto moved = file;
+            moved += ".moved";
+            ctx.expect (renameSucceeds (file, moved), "a released mastering source could not be renamed");
+        }
+    } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -4122,6 +4184,278 @@ const ScenarioRegistrar masteringLoad { Scenario {
     "gui.mastering_load", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringLoad (host, ctx); }
+} };
+
+// A session saves its mastering source, so every switch brings the Mastering
+// page in line with the incoming session: its mix loads, stopped; a session
+// without one empties the page; a saved mix that has gone missing is reported
+// as failing to load and listed with the missing audio. The outgoing mix is
+// closed each time, which is what lets Windows rename or delete it.
+std::optional<ScenarioResult> runMasteringFollowsSession (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& player = engine.getMasteringPlayer();
+    if (! engine.getTransport().isStopped() || player.isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and mastering player and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        host.refreshMasteringSource();
+    });
+
+    // Each fixture opens on the Mastering stage, so the page is up for every check.
+    const auto fixture = [&ctx] (const std::string& name, const std::string& mix, bool keepMix)
+    {
+        const auto folder = ctx.tempDir() / name;
+        std::filesystem::create_directories (folder);
+        auto saved = std::make_unique<Session>();
+        applySessionDirectory (*saved, folder);
+        saved->uiStage.store ((int) AudioEngine::Stage::Mastering);
+        if (! keepMix)
+        {
+            // A region whose take is gone too, so the alert has both kinds.
+            AudioRegion region;
+            region.file = decltype (region.file) ((folder / "audio" / "lost take.wav").u8string().c_str());
+            region.lengthInSamples = 4800;
+            saved->track (0).regions = { region };
+        }
+        if (! mix.empty())
+        {
+            dusk::audio::WriteSpec spec;
+            spec.sampleRate = 48000;
+            spec.numChannels = 2;
+            auto writer = dusk::audio::FileWriter::create (folder / mix, spec);
+            std::vector<float> silence (4800);
+            const float* channels[] = { silence.data(), silence.data() };
+            if (! ctx.expect (writer && writer->write (channels, 2, 4800) && writer->flush(),
+                              "could not write the " + name + " mix"))
+                return std::filesystem::path();
+            writer.reset();
+            saved->mastering().sourceFile = decltype (saved->mastering().sourceFile) ((folder / mix).u8string().c_str());
+        }
+        if (! ctx.expect (SessionSerializer::save (*saved, folder / "session.json"),
+                          "could not write the " + name + " session"))
+            return std::filesystem::path();
+        if (! keepMix) std::filesystem::remove (folder / mix);
+        return folder / "session.json";
+    };
+    const auto first = fixture ("Session A", "mixdown.wav", true);
+    const auto second = fixture ("Session B", "master b.wav", true);
+    const auto empty = fixture ("Session C", "", true);
+    const auto missing = fixture ("Session D", "gone.wav", false);
+    if (first.empty() || second.empty() || empty.empty() || missing.empty()) return ctx.verdict();
+    const auto firstMix = first.parent_path() / "mixdown.wav";
+    const auto secondMix = second.parent_path() / "master b.wav";
+
+    const auto same = [] (const std::filesystem::path& a, const std::filesystem::path& b)
+    {
+        std::error_code ignored;
+        return ! a.empty() && std::filesystem::weakly_canonical (a, ignored)
+                                  == std::filesystem::weakly_canonical (b, ignored);
+    };
+    const auto shows = [&host, &ctx, &player, same] (const std::filesystem::path& mix, const std::string& when)
+    {
+        const auto held = std::filesystem::u8path (player.getLoadedFile().getFullPathName().toStdString());
+        ctx.expect (player.isLoaded() && same (held, mix), when + ": the mastering player holds '" + held.string() + "'");
+        ctx.expect (! player.isPlaying(), when + ": the switch left the mastering player playing");
+        ctx.expect (player.getPlayhead() == 0, when + ": the mix did not load from its start");
+        const auto line = mix.filename().string() + "  (" + mix.parent_path().filename().string() + "/)";
+        ctx.expect (host.masteringSourceText() == line,
+                    when + ": the page reads '" + host.masteringSourceText() + "', not '" + line + "'");
+        ctx.expect (same (host.masteringWaveformFile(), mix),
+                    when + ": the waveform shows '" + host.masteringWaveformFile().string() + "'");
+    };
+    const auto showsNothing = [&host, &ctx, &player] (const std::string& line, const std::string& when)
+    {
+        ctx.expect (! player.isLoaded(), when + ": the mastering player still holds a mix");
+        ctx.expect (host.masteringSourceText() == line,
+                    when + ": the page reads '" + host.masteringSourceText() + "', not '" + line + "'");
+        ctx.expect (host.masteringWaveformFile().empty(),
+                    when + ": the waveform still shows '" + host.masteringWaveformFile().string() + "'");
+    };
+    // Linux counts the descriptors; everywhere the rename is refused while
+    // anything in the process holds the file open on Windows.
+    const auto released = [&ctx] (const std::filesystem::path& mix, const std::string& what)
+    {
+        ctx.expect (openHandlesInProcess (mix) == 0, what + " is still open after the switch");
+        auto moved = mix;
+        moved += ".moved";
+        const bool away = renameSucceeds (mix, moved);
+        ctx.expect (away && renameSucceeds (moved, mix), what + " could not be renamed after the switch");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, first] { reopenSavedSession (host, first); } });
+    steps->push_back ({ 300, [&host, &player, shows, firstMix, second]
+    {
+        shows (firstMix, "opening a session with a mix");
+        player.play();
+        reopenSavedSession (host, second);
+    } });
+    steps->push_back ({ 300, [&host, shows, released, firstMix, secondMix, empty]
+    {
+        shows (secondMix, "switching to a session with another mix");
+        released (firstMix, "the first session's mix");
+        reopenSavedSession (host, empty);
+    } });
+    steps->push_back ({ 300, [&host, showsNothing, released, secondMix, missing]
+    {
+        showsNothing ("No mix loaded", "switching to a session without a mix");
+        released (secondMix, "the second session's mix");
+        reopenSavedSession (host, missing);
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &session, same, showsNothing, missing]
+    {
+        const auto saved = std::filesystem::u8path (session.mastering().sourceFile.getFullPathName().toStdString());
+        ctx.expect (same (saved, missing.parent_path() / "gone.wav"),
+                    "the session with a missing mix does not name it: '" + saved.string() + "'");
+        showsNothing ("Failed to load: " + saved.u8string(), "switching to a session whose mix is missing");
+        // The take is listed under the regions' wording, the mix apart from it.
+        const auto text = host.modalText();
+        const auto regions = text.find ("These audio files referenced by the session could not be found:");
+        const auto mix = text.find ("The mastering mix this session had loaded could not be found:\n\n    "
+                                    + saved.u8string() + "\n\nThe MASTERING stage opens without a mix. "
+                                    "Put the file back and reload the session, or load another mix.");
+        ctx.expect (text.rfind ("Missing audio files", 0) == 0 && regions != std::string::npos
+                        && mix != std::string::npos && regions < mix
+                        && text.find ("lost take.wav") < mix && text.find ("gone.wav") > mix,
+                    "the missing-audio alert does not list the take and the mix apart: '" + text + "'");
+        ctx.expect (host.clickModalButton ("OK"), "the missing-audio alert has no OK button");
+    } });
+    steps->push_back ({ 200, [&host, first] { reopenSavedSession (host, first); } });
+    steps->push_back ({ 300, [shows, firstMix] { shows (firstMix, "switching back from an empty page"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringFollowsSession { Scenario {
+    "gui.mastering_follows_session", { "gui", "mastering", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringFollowsSession (host, ctx); }
+} };
+
+// Save As copies a session-local mix into the new folder with the audio and
+// repoints the session at the copy. The player moves onto the copy, stopped
+// where it was, and lets go of the old folder's file; a Save As that fails
+// leaves the player on the original, which the session still names.
+std::optional<ScenarioResult> runMasteringMixFollowsSaveAs (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& player = engine.getMasteringPlayer();
+    if (! engine.getTransport().isStopped() || player.isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and mastering player and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        host.refreshMasteringSource();
+    });
+
+    // Ten seconds, so playback started before the Save As is still running at it.
+    constexpr int kFrames = 480000;
+    const auto folder = ctx.tempDir() / "Mix session";
+    const auto original = folder / "mixdown.wav";
+    fs::create_directories (folder);
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 2;
+        auto writer = dusk::audio::FileWriter::create (original, spec);
+        std::vector<float> silence (kFrames);
+        const float* channels[] = { silence.data(), silence.data() };
+        if (! writer || ! writer->write (channels, 2, kFrames) || ! writer->flush())
+            return ScenarioResult::fail ("could not write the mix");
+    }
+    {
+        auto saved = std::make_unique<Session>();
+        applySessionDirectory (*saved, folder);
+        saved->uiStage.store ((int) AudioEngine::Stage::Mastering);
+        saved->mastering().sourceFile = decltype (saved->mastering().sourceFile) (original.u8string().c_str());
+        if (! SessionSerializer::save (*saved, folder / "session.json"))
+            return ScenarioResult::fail ("could not write the session");
+    }
+    reopenSavedSession (host, folder / "session.json");
+
+    const auto same = [] (const fs::path& a, const fs::path& b)
+    {
+        std::error_code ignored;
+        return ! a.empty() && fs::weakly_canonical (a, ignored) == fs::weakly_canonical (b, ignored);
+    };
+    const auto held = [&player]
+    { return fs::u8path (player.getLoadedFile().getFullPathName().toStdString()); };
+    const auto named = [&session]
+    { return fs::u8path (session.mastering().sourceFile.getFullPathName().toStdString()); };
+    if (! same (held(), original)) return ScenarioResult::fail ("could not open the session with its mix");
+    const auto holds = [&host, &ctx, same, held, named] (const fs::path& mix, const std::string& when)
+    {
+        ctx.expect (same (held(), mix), when + ": the mastering player holds '" + held().string() + "'");
+        ctx.expect (same (named(), mix), when + ": the session names '" + named().string() + "'");
+        const auto line = mix.filename().string() + "  (" + mix.parent_path().filename().string() + "/)";
+        ctx.expect (host.masteringSourceText() == line,
+                    when + ": the page reads '" + host.masteringSourceText() + "', not '" + line + "'");
+        ctx.expect (same (host.masteringWaveformFile(), mix),
+                    when + ": the waveform shows '" + host.masteringWaveformFile().string() + "'");
+    };
+
+    // A folder where session.json would go makes that write fail for any user.
+    const auto blocked = ctx.tempDir() / "Blocked json";
+    fs::create_directories (blocked / "session.json");
+    std::ofstream (blocked / "session.json" / "keep") << "theirs";
+    const auto copy = ctx.tempDir() / "Saved copy";
+    constexpr std::int64_t kStart = 48000;
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushSaveAsSteps (host, ctx, *steps, blocked);
+    steps->push_back ({ 800, [&host, &ctx, &player, holds, original, blocked]
+    {
+        ctx.expect (host.modalText().rfind ("Save failed\nDusk Studio could not write the session file:", 0) == 0,
+                    "the blocked Save As showed '" + host.modalText() + "' rather than Save failed");
+        ctx.expect (host.clickModalButton ("OK"), "the Save failed alert has no OK button");
+        holds (original, "after a failed Save As");
+        std::error_code ignored;
+        ctx.expect (! fs::exists (blocked / "mixdown.wav", ignored), "the failed Save As left its copy of the mix");
+        player.setPlayhead (kStart);
+        player.play();
+    } });
+    pushSaveAsSteps (host, ctx, *steps, copy);
+    steps->push_back ({ 800, [&ctx, &session, &player, holds, original, copy]
+    {
+        ctx.expect (currentSessionDirectory (session) == copy,
+                    "Save As left the session at '" + currentSessionDirectory (session).string() + "'");
+        holds (copy / "mixdown.wav", "after Save As");
+        ctx.expect (! player.isPlaying(), "the mix is still playing after Save As");
+        ctx.expect (player.getPlayhead() > kStart && player.getPlayhead() < kFrames,
+                    "the mix did not stay where it was playing: playhead " + std::to_string (player.getPlayhead()));
+        ctx.expect (openHandlesInProcess (original) == 0, "the old folder's mix is still open after Save As");
+        auto moved = original;
+        moved += ".moved";
+        const bool away = renameSucceeds (original, moved);
+        ctx.expect (away && renameSucceeds (moved, original), "the old folder's mix could not be renamed after Save As");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringMixFollowsSaveAs { Scenario {
+    "gui.mastering_mix_follows_save_as", { "gui", "mastering", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringMixFollowsSaveAs (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runAuxSources (GuiHost& host, ScenarioContext& ctx)
@@ -11727,21 +12061,7 @@ std::optional<ScenarioResult> runSaveAsFailureKeepsSession (GuiHost& host, Scena
     const auto notesListing = folderListing (blockedNotes);
 
     auto steps = std::make_shared<std::vector<Step>>();
-    const auto saveAs = [&host, &ctx, steps] (const fs::path& target)
-    {
-        steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
-        steps->push_back ({ 200, [&host, &ctx]
-        { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
-        steps->push_back ({ 700, [&host, &ctx, target]
-        {
-            if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
-                              "File > Save as... showed '" + host.modalText() + "' rather than Save As")
-                || ! ctx.expect (host.focusFileName(), "the Save As browser has no name field"))
-                return;
-            typeReplacing (host, target.string());
-            ctx.expect (host.clickModalButton ("Save"), "the Save As browser has no Save button");
-        } });
-    };
+    const auto saveAs = [&host, &ctx, steps] (const fs::path& target) { pushSaveAsSteps (host, ctx, *steps, target); };
     const auto kept = [&host, &ctx, &session, regionFile, mine, take] (const std::string& how,
                                                                         const fs::path& target,
                                                                         const std::vector<std::string>& before)

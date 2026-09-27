@@ -3418,6 +3418,18 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
             // until the next stop/play rebuild.
             if (engine.getTransport().isStopped())
                 engine.getPlaybackEngine().preparePlayback();
+            // A session-local mix was copied too. Move the player onto the
+            // copy the session now names, stopped where it was, so the old
+            // folder's file is no longer held open. Nothing was copied for an
+            // external mix, and the player already holds it.
+            auto& mastering = engine.getMasteringPlayer();
+            if (mastering.getLoadedFile() != session.mastering().sourceFile)
+            {
+                const auto position = mastering.getPlayhead();
+                if (MasteringView::loadSessionSource (engine, session))
+                    mastering.setPlayhead (position);
+                if (masteringView != nullptr) masteringView->followSource();
+            }
             // The old folder's autosave still holds pre-consolidation paths -
             // without this, re-opening the old session pops a stale recovery
             // prompt.
@@ -4353,15 +4365,28 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // Same surface for unresolved audio files - without it a moved or
     // hand-edited session loads "successfully" and plays silence with no
     // hint why.
-    if (! session.missingAudioFilesAfterLoad.empty())
+    if (! session.missingAudioFilesAfterLoad.empty() || session.masteringSourceMissingAfterLoad)
     {
-        juce::String body =
-            "These audio files referenced by the session could not be found:\n\n";
-        for (const auto& p : session.missingAudioFilesAfterLoad)
-            body += "    " + p + "\n";
-        body += "\nTheir regions will play silent. If the session folder was "
-                "moved, copy the files back into its audio/ subfolder and "
-                "reload the session.";
+        juce::String body;
+        if (! session.missingAudioFilesAfterLoad.empty())
+        {
+            body = "These audio files referenced by the session could not be found:\n\n";
+            for (const auto& p : session.missingAudioFilesAfterLoad)
+                body += "    " + p + "\n";
+            body += "\nTheir regions will play silent. If the session folder was "
+                    "moved, copy the files back into its audio/ subfolder and "
+                    "reload the session.";
+        }
+        // A missing mix is not a region: it usually sits in the session
+        // folder itself, and what it costs is the Mastering stage.
+        if (session.masteringSourceMissingAfterLoad)
+        {
+            if (body.isNotEmpty()) body += "\n\n";
+            body += "The mastering mix this session had loaded could not be found:\n\n    "
+                    + session.mastering().sourceFile.getFullPathName()
+                    + "\n\nThe MASTERING stage opens without a mix. Put the file back "
+                      "and reload the session, or load another mix.";
+        }
         juce::Component::SafePointer<MainComponent> safeThis (this);
         dusk::callAsync (
             [body = std::move (body), safeThis]
@@ -4422,6 +4447,13 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
             engine.setStage (wantStage);
         syncStageUi (wantStage);
     }
+    // A session saves its mastering source, so the mix it had loaded comes
+    // back with it and a session without one leaves the page empty. The
+    // outgoing mix is closed either way. A saved mix that has gone missing
+    // leaves the player empty, the page reports it as failing to load, and
+    // the load above already listed it with the missing audio files.
+    MasteringView::loadSessionSource (engine, session);
+    if (masteringView != nullptr) masteringView->followSource();
     refreshSnapUi();   // snap on/off + resolution are serialized - reflect the loaded values
     resized();
     // resized()'s indirect refresh of the tape strip (setConsoleVisibleRange /
