@@ -28,6 +28,7 @@ public:
     bool isRenderRunning() const override { return bounceEngine != nullptr && bounceEngine->isRendering(); }
     bool hasUnfinishedRender() const override { return bounceEngine != nullptr && ! finished; }
     void cancelRender() override;
+    const char* renderName() const override { return "freeze"; }
 
     void resized() override;
     void paint (juce::Graphics&) override;

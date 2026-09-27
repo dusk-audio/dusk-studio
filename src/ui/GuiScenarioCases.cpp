@@ -4533,8 +4533,8 @@ const ScenarioRegistrar masteringFollowsSession { Scenario {
 } };
 
 // Save As copies a session-local mix into the new folder with the audio and
-// repoints the session at the copy. The player moves onto the copy, stopped
-// where it was, and lets go of the old folder's file; a Save As that fails
+// repoints the session at the copy. The player moves onto the copy and plays on
+// from where it was, and lets go of the old folder's file; a Save As that fails
 // leaves the player on the original, which the session still names.
 std::optional<ScenarioResult> runMasteringMixFollowsSaveAs (GuiHost& host, ScenarioContext& ctx)
 {
@@ -4629,9 +4629,10 @@ std::optional<ScenarioResult> runMasteringMixFollowsSaveAs (GuiHost& host, Scena
         ctx.expect (currentSessionDirectory (session) == copy,
                     "Save As left the session at '" + currentSessionDirectory (session).string() + "'");
         holds (copy / "mixdown.wav", "after Save As");
-        ctx.expect (! player.isPlaying(), "the mix is still playing after Save As");
+        ctx.expect (player.isPlaying(), "the mix stopped playing at the Save As");
         ctx.expect (player.getPlayhead() > kStart && player.getPlayhead() < kFrames,
-                    "the mix did not stay where it was playing: playhead " + std::to_string (player.getPlayhead()));
+                    "the mix did not carry on from where it was playing: playhead " + std::to_string (player.getPlayhead()));
+        player.stop();
         ctx.expect (openHandlesInProcess (original) == 0, "the old folder's mix is still open after Save As");
         auto moved = original;
         moved += ".moved";
@@ -6134,8 +6135,8 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
     } });
     steps->push_back ({ 100, [&host, &ctx, &session, incoming]
     {
-        ctx.expect (host.statusMessage() == "Session not switched: finish or cancel the bounce first",
-                    "a session switch did not report the running bounce");
+        ctx.expect (host.statusMessage() == "Session not switched: finish or cancel the mixdown first",
+                    "a session switch did not report the running mixdown");
         ctx.expect (currentSessionDirectory (session) == incoming.parent_path(),
                     "the session switched during the bounce");
         ctx.expect (host.mixdownRunning(), "the refused session switch stopped the bounce");
@@ -6758,6 +6759,263 @@ const ScenarioRegistrar mixdownCancelReleasesMix { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runMixdownCancelReleasesMix (host, ctx); }
 } };
 
+// A stem loaded as the mix is one of the files Bounce stems... writes over. The
+// player lets go of it before the render opens it, so a cancel deletes it with
+// nothing holding it, and a finished bounce is loaded back when it is closed.
+std::optional<ScenarioResult> runBounceStemsReleasesMix (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& player = engine.getMasteringPlayer();
+    if (! engine.getTransport().isStopped() || player.isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and mastering player and no modal");
+    if (engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        host.refreshMasteringSource();
+    });
+
+    const auto folder = ctx.tempDir() / "Stems session";
+    const auto base = folder / "stems" / "stems.wav";
+    const auto stem = folder / "stems" / "stems_01_Kick.wav";
+    fs::create_directories (stem.parent_path());
+    constexpr int kStemFrames = 48000;
+    const auto writeStem = [stem]
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 2;
+        auto writer = dusk::audio::FileWriter::create (stem, spec);
+        std::vector<float> silence (kStemFrames);
+        const float* channels[] = { silence.data(), silence.data() };
+        return writer && writer->write (channels, 2, kStemFrames) && writer->flush();
+    };
+    if (! writeStem()) return ScenarioResult::fail ("could not write the stem");
+    session.track (0).name = "Kick";
+    session.mastering().sourceFile = decltype (session.mastering().sourceFile) (stem.u8string().c_str());
+    session.uiStage.store ((int) AudioEngine::Stage::Mastering);
+    if (! openLongSession (host, ctx, folder / "session.json"))
+        return ScenarioResult::fail ("could not open the session to bounce");
+
+    const auto same = [] (const fs::path& a, const fs::path& b)
+    {
+        std::error_code ignored;
+        return ! a.empty() && fs::weakly_canonical (a, ignored) == fs::weakly_canonical (b, ignored);
+    };
+    const auto held = [&player] { return fs::u8path (player.getLoadedFile().getFullPathName().toStdString()); };
+    if (! same (held(), stem)) return ScenarioResult::fail ("the session did not open with the stem loaded");
+
+    const auto bounceStems = [&host, &ctx, &player, base] (std::vector<Step>& into)
+    {
+        into.push_back ({ 200, [&host, &ctx]
+        {
+            host.switchToStage (GuiHost::Stage::Mixing);
+            ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+        } });
+        into.push_back ({ 150, [&host, &ctx]
+        { ctx.expect (host.clickContextMenuItem ("Bounce stems..."), "the File menu has no Bounce stems..."); } });
+        into.push_back ({ 700, [&host, &ctx, base]
+        {
+            if (! ctx.expect (host.focusFileName(), "Bounce stems... showed '" + host.modalText() + "', not its browser"))
+                return;
+            typeReplacing (host, base.string());
+            ctx.expect (host.clickModalButton ("Save"), "the stems browser has no Save button");
+        } });
+        into.push_back ({ 500, [&host, &ctx]
+        { ctx.expect (host.clickModalButton ("Overwrite"), "a stems bounce over the loaded stem did not ask to overwrite it"); } });
+        into.push_back ({ 100, [&host, &ctx, &player]
+        {
+            ctx.expect (host.renderRunning(), "the stems bounce did not start");
+            ctx.expect (! player.isLoaded(), "the stems bounce started with the mastering player still holding the stem");
+        } });
+    };
+
+    const auto bounceOverStem = [&host, &ctx, &engine, &session, &player, same, held, writeStem, stem, bounceStems]
+    {
+        MidiRegion region;
+        region.lengthInSamples = static_cast<std::int64_t> (engine.getCurrentSampleRate());
+        region.lengthInTicks = 960;
+        session.track (0).midiRegions.publish (
+            std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+        if (! ctx.expect (writeStem() && player.loadFile (session.mastering().sourceFile),
+                          "could not put the stem back for the bounce"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        auto bounce = std::make_shared<std::vector<Step>>();
+        bounceStems (*bounce);
+        runSteps (ctx, bounce, [&host, &ctx, &player, same, held, stem]
+        {
+            ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000, [&host, &ctx, &player, same, held, stem]
+            {
+                ctx.later (300, [&host, &ctx, &player, same, held, stem]
+                {
+                    ctx.expect (player.isLoaded() && same (held(), stem),
+                                "the finished stems bounce left the mastering player holding '" + held().string() + "'");
+                    ctx.expect (player.getLengthSamples() > kStemFrames,
+                                "the mastering player holds the old stem, not the bounce");
+                    const auto line = stem.filename().string() + "  (" + stem.parent_path().filename().string() + "/)";
+                    ctx.expect (host.masteringSourceText() == line,
+                                "after the stems bounce the page reads '" + host.masteringSourceText() + "', not '" + line + "'");
+                    ctx.complete (ctx.verdict());
+                });
+            }, "the stems bounce over the loaded stem did not finish with a Close button");
+        });
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    bounceStems (*steps);
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.renderRunning(), "the stems bounce stopped before it was cancelled");
+        ctx.expect (host.clickModalButton ("Cancel"), "the stems bounce did not offer Cancel");
+    } });
+    runSteps (ctx, steps, [&host, &ctx, &session, &player, same, held, stem, bounceOverStem]
+    {
+        ctx.waitUntil ([&host] { return ! host.renderRunning(); }, 5000,
+                       [&host, &ctx, &session, &player, same, held, stem, bounceOverStem]
+        {
+            ctx.later (200, [&host, &ctx, &session, &player, same, held, stem, bounceOverStem]
+            {
+                ctx.expect (host.clickModalButton ("Close"), "the cancelled stems bounce did not offer Close");
+                ctx.later (300, [&host, &ctx, &session, &player, same, held, stem, bounceOverStem]
+                {
+                    ctx.expect (host.modalStackEmpty(), "the cancelled stems bounce left '" + host.modalText() + "' up");
+                    std::error_code ignored;
+                    ctx.expect (! fs::exists (stem, ignored), "the cancelled stems bounce left the stem behind");
+                    ctx.expect (! player.isLoaded(), "the mastering player holds '" + held().string()
+                                                        + "' after the cancelled stems bounce");
+                    ctx.expect (openHandlesInProcess (stem) + deletedHandlesInProcess (stem) == 0,
+                                "the cancelled stems bounce's file is still open");
+                    const auto named = fs::u8path (session.mastering().sourceFile.getFullPathName().toStdString());
+                    ctx.expect (same (named, stem), "the session no longer names its mix: '" + named.string() + "'");
+                    const auto line = "Failed to load: " + named.u8string();
+                    ctx.expect (host.masteringSourceText() == line,
+                                "the page reads '" + host.masteringSourceText() + "', not '" + line + "'");
+                    bounceOverStem();
+                });
+            });
+        }, "the stems bounce did not cancel");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar bounceStemsReleasesMix { Scenario {
+    "gui.bounce_stems_releases_mastering_mix", { "gui", "bounce", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 40000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBounceStemsReleasesMix (host, ctx); }
+} };
+
+// A realtime Mixdown refuses to start while the transport rolls. The render
+// never opens mixdown.wav, so the Mastering player keeps the mix it holds, and
+// where it stood in it, through the refusal and its Close.
+std::optional<ScenarioResult> runRefusedMixdownKeepsMix (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& player = engine.getMasteringPlayer();
+    if (! engine.getTransport().isStopped() || player.isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and mastering player and no modal");
+    if (engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        engine.stop();
+        session.track (0).hardwareInsert.enabled.store (false);
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        host.refreshMasteringSource();
+    });
+
+    const auto folder = ctx.tempDir() / "Rolling session";
+    const auto mix = folder / "mixdown.wav";
+    fs::create_directories (folder);
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 2;
+        auto writer = dusk::audio::FileWriter::create (mix, spec);
+        std::vector<float> silence (480000);
+        const float* channels[] = { silence.data(), silence.data() };
+        if (! writer || ! writer->write (channels, 2, 480000) || ! writer->flush())
+            return ScenarioResult::fail ("could not write the mix");
+    }
+    session.mastering().sourceFile = decltype (session.mastering().sourceFile) (mix.u8string().c_str());
+    session.uiStage.store ((int) AudioEngine::Stage::Mastering);
+    if (! openLongSession (host, ctx, folder / "session.json"))
+        return ScenarioResult::fail ("could not open the session to mix down");
+    // Flagged after the open, so the load does not route the strip through a
+    // hardware loop; the flag alone is what makes Mixdown offer a realtime pass.
+    session.track (0).hardwareInsert.enabled.store (true);
+
+    const auto held = [&player] { return fs::u8path (player.getLoadedFile().getFullPathName().toStdString()); };
+    const auto holdsMix = [held, mix]
+    {
+        std::error_code ignored;
+        return fs::weakly_canonical (held(), ignored) == fs::weakly_canonical (mix, ignored);
+    };
+    if (! holdsMix()) return ScenarioResult::fail ("the session did not open with its mix loaded");
+    constexpr std::int64_t kStart = 96000;
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &engine, &player]
+    {
+        player.setPlayhead (kStart);
+        host.switchToStage (GuiHost::Stage::Mixing);
+        engine.play();
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine]
+    {
+        ctx.expect (engine.getTransport().isPlaying(), "the transport did not start");
+        host.startMixdown();
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Realtime"), "Mixdown with a hardware insert did not offer Realtime"); } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, &player, held, holdsMix]
+    {
+        ctx.expect (! host.renderRunning(), "the realtime mixdown started with the transport rolling");
+        ctx.expect (engine.getTransport().isPlaying(), "the refused mixdown stopped the transport");
+        ctx.expect (player.isLoaded() && holdsMix(), "the refused mixdown let go of the mix: the player holds '"
+                                                         + held().string() + "'");
+        ctx.expect (host.clickModalButton ("Close"), "the refused mixdown did not offer Close");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, &player, held, holdsMix]
+    {
+        engine.stop();
+        ctx.expect (host.modalStackEmpty(), "closing the refused mixdown left '" + host.modalText() + "' up");
+        ctx.expect (player.isLoaded() && holdsMix(), "after the refused mixdown the player holds '" + held().string() + "'");
+        ctx.expect (player.getPlayhead() == kStart,
+                    "the refused mixdown moved the mix's playhead to " + std::to_string (player.getPlayhead()));
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar refusedMixdownKeepsMix { Scenario {
+    "gui.refused_mixdown_keeps_mastering_mix", { "gui", "bounce", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRefusedMixdownKeepsMix (host, ctx); }
+} };
+
 // A master export reads the Mastering player and owns the audio callback until
 // it stops, and its modal covers only the Mastering page, so the menus stay
 // live under it. Save, Save as... and a session switch are each refused with
@@ -6864,7 +7122,7 @@ std::optional<ScenarioResult> runSaveRefusedDuringExport (GuiHost& host, Scenari
     steps->push_back ({ 50, [&host, other] { host.requestSessionSwitch (other); } });
     steps->push_back ({ 100, [&host, &ctx, refused]
     {
-        refused ("Session not switched: finish or cancel the bounce first", "A session switch");
+        refused ("Session not switched: finish or cancel the master export first", "A session switch");
         ctx.expect (host.clickFileMenu(), "the File menu is unavailable during the export");
     } });
     steps->push_back ({ 150, [&host, &ctx, refused]

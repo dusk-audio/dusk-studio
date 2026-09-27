@@ -283,6 +283,8 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     }
     totalStemsToRender.store (stems, std::memory_order_relaxed);
 
+    if (onAccepted) onAccepted();
+
     cancelRequested.store (false, std::memory_order_relaxed);
     progress.store (0.0f, std::memory_order_relaxed);
     renderedSamples.store (0, std::memory_order_relaxed);

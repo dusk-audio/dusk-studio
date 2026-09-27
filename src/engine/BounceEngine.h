@@ -271,6 +271,10 @@ public:
     }
     std::int64_t  getRenderedSamples() const noexcept { return renderedSamples.load (std::memory_order_relaxed); }
 
+    // Called by start() on its own thread once it has taken the request, before
+    // the worker opens any output file. Not called when start() returns false.
+    std::function<void()>                  onAccepted;
+
     // Called on the worker thread. Use dusk::callAsync for UI.
     std::function<void()>                  onStarted;
     std::function<void(float)>             onProgressUpdated;

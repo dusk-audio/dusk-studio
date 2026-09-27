@@ -547,16 +547,19 @@ publishes.
   play silent.
 - **Save As moves the Mastering player to the copied mix.** Save As copies a
   mix kept in the session folder into the new folder, but the player went on
-  with the old folder's file and held it open. It now switches to the copy,
-  stopped where it was.
+  with the old folder's file and held it open. It now switches to the copy and
+  plays on from where it was.
 - **A cancelled Mixdown no longer leaves a broken mix on the MASTERING
-  stage.** Mixdown, and a Bounce... saved over the mix the MASTERING stage had
-  loaded, wrote over that file while the Mastering player still held it. A
+  stage.** Mixdown, and a Bounce... or Bounce stems... saved over the mix the
+  MASTERING stage had loaded, wrote over that file while the Mastering player
+  still held it. A
   cancel left the player on the half-written render, which played part of the
   mix and then silence under the old mix's name, and on Windows the partial
   file stayed behind. The player now lets go of the mix before the render and
   loads the new file when the finished render is closed. A cancelled or failed
-  render leaves the stage reading "Failed to load" with the file's path.
+  render leaves the stage reading "Failed to load" with the file's path, and a
+  render that cannot start, such as a realtime bounce asked for with the
+  transport rolling, leaves the mix loaded where it was.
 - **Export master will not write over the mix it renders from** (#760).
   Picking the loaded mix as the export's file, and answering Replace, read the
   mix while the export truncated and rewrote it, so the export came out wrong
@@ -571,6 +574,9 @@ publishes.
   Save As are now refused while any render runs, with "Session not saved:
   finish or cancel the render first" in the status bar, and opening another
   session is refused during a master export as it already was during a bounce.
+  The refusal to switch sessions now names the render in the way, such as
+  "Session not switched: finish or cancel the master export first", instead of
+  calling every render a bounce.
 - **Saving no longer resets the mastering loudness readings** (#761). Save
   and Save As took the engine off the audio device to read each plug-in's
   settings, and putting it back restarted the whole engine as a device change

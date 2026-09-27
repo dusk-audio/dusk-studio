@@ -30,7 +30,9 @@ public:
     // renderSampleRate 0 = the engine's current rate; wavBitDepth 16 dithers
     // (see BounceEngine::start). The mastering export presets drive both.
     // realtime plays the session live and captures it (hardware inserts
-    // print); MasterMix / Stems only.
+    // print); MasterMix / Stems only. beforeRender runs inside the constructor
+    // once the render is accepted and before it opens any file, and not at all
+    // when it cannot start.
     BounceDialog (AudioEngine& engine,
                    Session& session,
                    const juce::File& outputFile,
@@ -39,11 +41,13 @@ public:
                    int mp3BitrateKbps = 320,
                    double renderSampleRate = 0.0,
                    int wavBitDepth = 24,
-                   bool realtime = false);
+                   bool realtime = false,
+                   std::function<void()> beforeRender = {});
     ~BounceDialog() override;
     bool isRenderRunning() const override { return bounceEngine != nullptr && bounceEngine->isRendering(); }
     bool hasUnfinishedRender() const override { return bounceEngine != nullptr && ! finished; }
     void cancelRender() override;
+    const char* renderName() const override;
 
     void resized() override;
     void paint (juce::Graphics&) override;

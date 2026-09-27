@@ -17,5 +17,7 @@ struct RenderInProgress
     // stops at its next block and hands the engine back on the message thread,
     // so the caller must not block that thread waiting for it.
     virtual void cancelRender() = 0;
+    // Fills "finish or cancel the <name> first" when something is refused.
+    virtual const char* renderName() const = 0;
 };
 } // namespace duskstudio
