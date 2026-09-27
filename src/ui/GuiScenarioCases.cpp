@@ -3759,7 +3759,13 @@ std::optional<ScenarioResult> runMasterTapeEditor (GuiHost& host, ScenarioContex
         ctx.expect (session.master().tapeEnabled.load(), "BYPASS off in the editor did not engage the tape");
         host.closeMasterTape();
     } });
-    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    // The editor goes over the next two ticks, not on the close call.
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.masterTapeEditorOpen(); }, 3000,
+                       [&ctx] { ctx.complete (ctx.verdict()); },
+                       "closing left the tape editor open");
+    });
     return std::nullopt;
    #endif
 }
