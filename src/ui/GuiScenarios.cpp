@@ -1632,10 +1632,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             const auto at = owner.getTopLevelComponent()->getLocalPoint (component, point).toFloat();
             return clickAt (at.x, at.y, clicks, right);
         };
-        if (kind == StripKind::Channel && control == "name")
+        if (kind == StripKind::Channel && (control == "name" || control == "print"))
         {
             auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index) : nullptr;
-            return strip != nullptr && click (strip, strip->namePointForScenario());
+            return strip != nullptr
+                && click (strip, control == "name" ? strip->namePointForScenario() : strip->printPointForScenario());
         }
         if (kind == StripKind::Aux && (control == "name" || control == "mute" || control == "fader"))
         {

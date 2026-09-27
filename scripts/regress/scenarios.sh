@@ -218,6 +218,15 @@ bb_assert_marker() {
     return 1
 }
 
+# bb_case_skipped <tag> <case>: true when the app ran the case and it skipped,
+# leaving the reason in REGRESS_SKIP_REASON for the leg to report as a SKIP.
+bb_case_skipped() {
+    local tag="$1" name="$2" line
+    line="$(grep -m1 -F -- "[SKIP] ${name}: " "$BB_SDIR/$tag.out" 2>/dev/null)" || return 1
+    REGRESS_SKIP_REASON="${name}: ${line#"[SKIP] ${name}: "}"
+    return 0
+}
+
 bb_assert_absent() {
     local tag="$1" literal="$2"
     grep -qF -- "$literal" "$BB_SDIR/$tag.err" 2>/dev/null || return 0
@@ -264,7 +273,7 @@ bb_end() {
         kill -9 "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
     done
-    if ((rc != 0)) && [[ -n "$BB_SDIR" ]]; then
+    if ((rc != 0 && rc != REGRESS_SKIP_RC)) && [[ -n "$BB_SDIR" ]]; then
         for file in "$BB_SDIR"/*.err; do
             [[ -e "$file" ]] || continue
             printf '  --- %s ---\n' "$(basename "$file")"
@@ -618,6 +627,7 @@ bb_quit_during_mixdown_body() {
         bb_fail "the quit during a mixdown exited with status $rc"
         return 1
     fi
+    bb_case_skipped A gui.quit_during_mixdown && return "$REGRESS_SKIP_RC"
     bb_assert_order A \
         "phase 0: cancel the running render before quitting" \
         "phase 0b: render stopped, quit continues" \
@@ -646,6 +656,7 @@ bb_quit_save_rate_body() {
         sed 's/^/  /' "$BB_SDIR/A.out" >&2 || true
         return 1
     fi
+    bb_case_skipped A gui.quit_save_stamps_rate && return "$REGRESS_SKIP_RC"
     bb_assert_marker A "phase 3: audio callback already detached (skipping)" || return 1
 
     local -a saved=("$BB_SDIR/music/Quit save at "*/session.json)

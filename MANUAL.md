@@ -2125,9 +2125,11 @@ The output is **stereo 24-bit WAV at the session sample rate** by default (or a 
 
 Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. When the bounce completes, the audio device is automatically re-attached.
 
+A render that cannot open a file it has to write, such as a read-only `mixdown.wav`, stops there, leaves that file exactly as it was, and its dialog reads "Could not write [file]: [reason]". A render that fails deletes only the files it created or overwrote: a stem bounce that stops at a stem it cannot open removes the stems it had already opened and leaves that stem and the ones after it alone. Freeze follows the same rule.
+
 While a bounce, mixdown, stem bounce, master export or freeze is rendering, **Save** and **Save As…** do nothing but put "Session not saved: finish or cancel the render first" in the status bar, since saving pauses the audio engine the render is using.
 
-When **Mixdown**, **Bounce…** or **Bounce stems…** writes over the file loaded as the mix on the **MASTERING** stage, the stage lets go of the mix while the render runs and loads the new file when you close the finished render. A cancelled or failed render deletes what it had written, so the stage then reads "Failed to load: [path]". A render that cannot start, such as a realtime bounce asked for while the transport is rolling, leaves the mix loaded where it was.
+When **Mixdown**, **Bounce…** or **Bounce stems…** writes over the file loaded as the mix on the **MASTERING** stage, the stage lets go of the mix while the render runs and loads the new file when you close the finished render. A render that is cancelled, or fails after it has started writing, deletes what it had written, so the stage then reads "Failed to load: [path]". A render that cannot start, such as a realtime bounce asked for while the transport is rolling, leaves the mix loaded where it was.
 
 Quitting while a bounce, mixdown, master export or freeze is rendering cancels the render, just as **Cancel** does, so no file is written. Dusk Studio waits for the render to stop and the audio device to come back, then quits, asking first if the session has unsaved changes. Cancelling that question leaves Dusk Studio open, but the render stays cancelled.
 

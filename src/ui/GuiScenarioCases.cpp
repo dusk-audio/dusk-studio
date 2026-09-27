@@ -7463,6 +7463,141 @@ const ScenarioRegistrar saveRefusedDuringExport { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runSaveRefusedDuringExport (host, ctx); }
 } };
 
+// A session switch while a render runs is refused and the status bar names the
+// render. Bounce..., Bounce stems... and a track's FREEZE each run and are
+// cancelled in turn; every refusal leaves the session and the render running.
+std::optional<ScenarioResult> runSwitchRefusedNamesRender (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        host.refreshMasteringSource();
+    });
+
+    const auto folder = ctx.tempDir() / "Render session";
+    const auto other = ctx.tempDir() / "Other session" / "session.json";
+    std::filesystem::create_directories (other.parent_path());
+    {
+        auto blank = std::make_unique<Session>();
+        applySessionDirectory (*blank, other.parent_path());
+        if (! SessionSerializer::save (*blank, other))
+            return ScenarioResult::fail ("could not write the other session");
+    }
+    if (! openLongSession (host, ctx, folder / "session.json"))
+        return ScenarioResult::fail ("could not open the session to render");
+
+    struct Leg
+    {
+        std::string render;
+        std::function<void (std::vector<Step>&)> start;
+    };
+    auto legs = std::make_shared<std::vector<Leg>>();
+    legs->push_back ({ "bounce", [&host, &ctx] (std::vector<Step>& into)
+    {
+        into.push_back ({ 300, [&host, &ctx]
+        {
+            host.switchToStage (GuiHost::Stage::Mixing);
+            ctx.expect (host.pressPeerKey (commandChord ('b'), 'b'), "the window did not handle Cmd+B");
+        } });
+        into.push_back ({ 700, [&host, &ctx]
+        {
+            ctx.expect (host.modalText().rfind ("Bounce master mix", 0) == 0,
+                        "Cmd+B showed '" + host.modalText() + "' rather than the bounce browser");
+            ctx.expect (host.clickModalButton ("Save"), "the bounce browser has no Save button");
+        } });
+    } });
+    legs->push_back ({ "stem bounce", [&host, &ctx, folder] (std::vector<Step>& into)
+    {
+        into.push_back ({ 300, [&host, &ctx]
+        {
+            host.switchToStage (GuiHost::Stage::Mixing);
+            ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+        } });
+        into.push_back ({ 150, [&host, &ctx]
+        { ctx.expect (host.clickContextMenuItem ("Bounce stems..."), "the File menu has no Bounce stems..."); } });
+        into.push_back ({ 700, [&host, &ctx, folder]
+        {
+            if (! ctx.expect (host.focusFileName(), "Bounce stems... showed '" + host.modalText() + "', not its browser"))
+                return;
+            typeReplacing (host, (folder / "stems" / "stems.wav").string());
+            ctx.expect (host.clickModalButton ("Save"), "the stems browser has no Save button");
+        } });
+    } });
+    legs->push_back ({ "freeze", [&host, &ctx] (std::vector<Step>& into)
+    {
+        into.push_back ({ 300, [&host] { host.switchToStage (GuiHost::Stage::Recording); } });
+        into.push_back ({ 300, [&host, &ctx]
+        {
+            ctx.expect (host.clickStripControl (GuiHost::StripKind::Channel, 0, "print", 1, false),
+                        "track 1 has no FREEZE button to click");
+        } });
+    } });
+
+    auto runLeg = std::make_shared<std::function<void (std::size_t)>>();
+    std::weak_ptr<std::function<void (std::size_t)>> weakRun = runLeg;
+    *runLeg = [&host, &ctx, &session, legs, folder, other, weakRun] (std::size_t index)
+    {
+        if (index >= legs->size())
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        const auto render = (*legs)[index].render;
+        auto steps = std::make_shared<std::vector<Step>>();
+        (*legs)[index].start (*steps);
+        steps->push_back ({ 300, [&host, &ctx, render]
+        { ctx.expect (host.renderRunning(), "the " + render + " did not start"); } });
+        steps->push_back ({ 50, [&host, other] { host.requestSessionSwitch (other); } });
+        steps->push_back ({ 100, [&host, &ctx, &session, folder, render]
+        {
+            const auto want = "Session not switched: finish or cancel the " + render + " first";
+            ctx.expect (host.statusMessage() == want,
+                        "a session switch during the " + render + " read '" + host.statusMessage() + "', not '" + want + "'");
+            ctx.expect (currentSessionDirectory (session) == folder, "the session switched during the " + render);
+            ctx.expect (host.renderRunning(), "the refused session switch stopped the " + render);
+            ctx.expect (host.clickModalButton ("Cancel"), "the " + render + " did not offer Cancel");
+        } });
+        auto self = weakRun.lock();
+        runSteps (ctx, steps, [&host, &ctx, render, index, self]
+        {
+            ctx.waitUntil ([&host] { return ! host.renderRunning(); }, 5000, [&host, &ctx, render, index, self]
+            {
+                ctx.later (200, [&host, &ctx, render, index, self]
+                {
+                    ctx.expect (host.clickModalButton ("Close"), "the cancelled " + render + " did not offer Close");
+                    ctx.later (300, [&host, &ctx, render, index, self]
+                    {
+                        ctx.expect (host.modalStackEmpty(), "the cancelled " + render + " left '" + host.modalText() + "' up");
+                        (*self) (index + 1);
+                    });
+                });
+            }, "the " + render + " did not cancel");
+        });
+    };
+    (*runLeg) (0);
+    return std::nullopt;
+}
+
+const ScenarioRegistrar switchRefusedNamesRender { Scenario {
+    "gui.session_switch_names_the_render", { "gui", "session", "bounce" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSwitchRefusedNamesRender (host, ctx); }
+} };
+
 // The heartbeat writes session.json.autosave only when the session changed
 // since the last save or autosave, never touches session.json and leaves no
 // temp file behind. Opening a session whose autosave says something else

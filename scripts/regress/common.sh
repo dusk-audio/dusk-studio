@@ -28,6 +28,12 @@ regress_record() {
     fi
 }
 
+# A leg that found it could not run returns REGRESS_SKIP_RC with its reason in
+# REGRESS_SKIP_REASON, and is recorded as SKIP. That status without a reason is
+# still a FAIL.
+REGRESS_SKIP_RC=77
+REGRESS_SKIP_REASON=""
+
 # regress_leg <name> <command...>
 regress_leg() {
     local name="$1"
@@ -35,11 +41,16 @@ regress_leg() {
     printf '\n--- %s ---\n' "$name"
     local start=$SECONDS
     local rc=0
+    REGRESS_SKIP_REASON=""
     "$@" || rc=$?
-    local status=PASS
-    ((rc == 0)) || status=FAIL
-    local note=""
-    ((rc == 0)) || note="exit $rc"
+    local status=PASS note=""
+    if ((rc == REGRESS_SKIP_RC)) && [[ -n "$REGRESS_SKIP_REASON" ]]; then
+        status=SKIP
+        note="$REGRESS_SKIP_REASON"
+    elif ((rc != 0)); then
+        status=FAIL
+        note="exit $rc"
+    fi
     regress_record "$name" "$status" "$((SECONDS - start))" "$note"
     return 0
 }

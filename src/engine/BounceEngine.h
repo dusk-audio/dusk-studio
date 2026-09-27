@@ -338,16 +338,12 @@ private:
     std::int64_t computeBounceLength (double sampleRate, double tail) const;
 
     // Create the WAV (libsndfile) or MP3 (libmp3lame) write sink for the chosen
-    // format, opening + truncating outFile itself. Null + errOut on failure; the
-    // file may already be truncated by then, so failure paths that must preserve
-    // prior content delete it.
+    // format, opening + truncating outFile itself. On failure returns null,
+    // names the file and the reason in errOut, and deletes the file only if
+    // this call created or truncated it; a target it could not open is left
+    // exactly as it was.
     std::unique_ptr<dusk::audio::IFileWriteSink>
         makeWriter (const juce::File& outFile, std::string& errOut) const;
-
-    // makeWriter with the file name appended to the error, for the stem / realtime
-    // paths that render many files at once.
-    std::unique_ptr<dusk::audio::IFileWriteSink>
-        openWriterFor (const juce::File& outFile, std::string& errOut) const;
 
     // Stem-tap registry plumbing shared by the offline and realtime stem
     // renders. Arm and clear must cover the same tap set or a render leaves

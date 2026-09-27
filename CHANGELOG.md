@@ -555,8 +555,9 @@ publishes.
   it. A cancel left the player on the half-written render, which played part of
   the mix and then silence under the old mix's name, and on Windows the partial
   file stayed behind. The player now lets go of the mix before the render and
-  loads the new file when the finished render is closed. A cancelled or failed
-  render leaves the stage reading "Failed to load" with the file's path, and a
+  loads the new file when the finished render is closed. A render that is
+  cancelled, or fails after it starts writing, leaves the stage reading "Failed
+  to load" with the file's path, and a
   render that cannot start, such as a realtime bounce asked for with the
   transport rolling, leaves the mix loaded where it was.
 - **Export master will not write over the mix it renders from** (#760).
@@ -606,6 +607,15 @@ publishes.
   A bypassed plug-in now adds no latency, Re-enable brings back the latency it
   has at that moment, and a re-enabled plug-in has to run late for four blocks
   in a row again, not just one, before it is bypassed a second time.
+- **A render that cannot open its file leaves it alone** (#763). A Mixdown,
+  Bounce..., Bounce stems..., Export master... or freeze whose file already
+  existed but could not be opened for writing, such as a read-only
+  `mixdown.wav` in a writable folder, deleted that file even though it had
+  written nothing to it, and did not say why it failed. The file is now left
+  exactly as it was, and the render says which file and why, as in
+  "Could not write mixdown.wav: Permission denied". A stem bounce that stops at
+  a stem it cannot open deletes only the stems it had already opened; before,
+  it deleted the refused stem too.
 - **A mix that will not load leaves the loaded one in place.** **Load mix...**
   on a file that is not audio unloaded the mix that was playing first. It now
   keeps it, the session still names it, and the source line reads "Failed to

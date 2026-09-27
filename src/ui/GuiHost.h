@@ -196,6 +196,7 @@ public:
     virtual bool automationView (StripKind kind, int index,
                                  std::string& label, bool& faderEnabled) = 0;
     // A named control on a strip: "name" on a channel strip or an aux lane,
+    // "print" (PRINT / FREEZE, shown outside MIXING) on a channel strip,
     // "mute" or "fader" (its return fader) on an aux lane, "eq" (the EQ
     // header's label) on a bus strip.
     virtual bool clickStripControl (StripKind kind, int index, const std::string& control,

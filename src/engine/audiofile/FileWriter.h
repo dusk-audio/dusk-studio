@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace dusk::audio
@@ -25,7 +26,9 @@ struct WriteSpec
 class FileWriter final : public IFileWriteSink
 {
 public:
-    static std::unique_ptr<FileWriter> create (const std::filesystem::path& path, const WriteSpec& spec);
+    // On failure, whyNot (when given) receives the reason, e.g. "Permission denied".
+    static std::unique_ptr<FileWriter> create (const std::filesystem::path& path, const WriteSpec& spec,
+                                               std::string* whyNot = nullptr);
     ~FileWriter() override;
 
     FileWriter (const FileWriter&)            = delete;
