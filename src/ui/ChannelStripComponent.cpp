@@ -4351,6 +4351,18 @@ void ChannelStripComponent::captureBuiltinPluginEditor (const std::string& captu
 bool ChannelStripComponent::builtinPointerForScenario (const std::string& control, float position, bool pressed)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
+    // A unit with an editor of its own takes the press as one whole gesture on
+    // the named control, through the callbacks that editor was handed.
+    if (builtinPluginEditor != nullptr && builtinPluginEditor->isOpen())
+    {
+        if (! pressed) return true;
+        const auto& slot = engine.getChannelStrip (trackIndex).getBuiltinSlot();
+        for (int i = 0; i < slot.paramCount(); ++i)
+            if (const auto* info = slot.paramInfo (i); info != nullptr && info->id != nullptr && control == info->id)
+                return builtinPluginEditor->editForScenario (
+                    i, info->minValue + std::clamp (position, 0.0f, 1.0f) * (info->maxValue - info->minValue));
+        return false;
+    }
     return builtinEditorWindow != nullptr && builtinEditorWindow->pointerControlForScenario (control, position, pressed);
    #else
     (void) control; (void) position; (void) pressed;

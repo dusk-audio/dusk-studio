@@ -1613,7 +1613,7 @@ Dusk Studio does not automatically scan plugins on first launch. Open any plugin
 Plugin scan results are cached in:
 
 - Linux: `~/.config/Dusk Studio/plugin-cache.xml`
-- macOS: `~/Library/Application Support/Dusk Studio/plugin-cache.xml`
+- macOS: `~/Library/Dusk Studio/plugin-cache.xml`
 - Windows: `%APPDATA%\Dusk Studio\plugin-cache.xml`
 
 The native hosts keep their own sidecar caches next to it (`clap-cache.json` and `vst3-native-cache.json` on every OS, `lv2-native-cache.json` on Linux and macOS, `au-native-cache.json` on macOS), rebuilt by the same **Scan plugins** button. Existing XML sidecars are used as a fallback whenever the matching JSON cache cannot be loaded, including when it is absent, malformed, or unusable; subsequent scans write JSON. The native LV2 scan reads only the bundles' manifests, and the native AU scan reads the macOS Audio Component registry metadata; neither scan instantiates plugin code, so a broken plugin cannot crash that scan and is simply skipped (or reported when you try to load it).
@@ -2384,7 +2384,7 @@ Each aux return lane can be sent to its own physical output pair (see the aux la
 
 A plugin running in the OOP sandbox has exited. The slot is auto-bypassed and the plugin's state is preserved.
 
-- Right-click the slot and choose **Reload** to relaunch the plugin with its saved state.
+- Right-click the slot and choose **Re-enable plugin (crashed)** to clear the crash. It drops the dead child without starting a new one; to relaunch the plugin with its saved state, save the session and open it again.
 - If the plugin keeps crashing on a specific session, try loading it without OOP (launch Dusk Studio without `DUSKSTUDIO_USE_OOP_PLUGINS=1`) to see if the in-process path is more stable.
 - Some plugins are not RT-safe and may misbehave; replace with a different plugin if reloading does not help.
 - On Windows, start Dusk Studio from a console (or redirect its output to a file) to capture the child's own diagnostics — the sandbox child writes to the console it inherits from Dusk Studio.

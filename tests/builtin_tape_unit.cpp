@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 // The built-in tape unit is Tape Machine 2, Dusk's own DAF plug-in, run in
@@ -241,4 +242,89 @@ TEST_CASE ("tape unit restores a session saved with the knob tape unit", "[built
 
     // A control the knob unit never had restores as the plug-in's default.
     REQUIRE_THAT (get (slot, "headWidth"), WithinAbs (1.0, 1e-6));
+}
+
+namespace
+{
+struct Render
+{
+    std::vector<float> left;
+    double rms = 0.0;
+};
+
+// A steady tone through a freshly loaded tape, wow and flutter off so two
+// instances given the same settings render the same samples.
+Render renderTone (float amplitude, const std::vector<std::pair<const char*, float>>& settings)
+{
+    NativeBuiltinSlot slot;
+    loadTape (slot);
+    set (slot, "wowAmount", 0.0f);
+    set (slot, "flutterAmount", 0.0f);
+    for (const auto& [id, value] : settings)
+        set (slot, id, value);
+
+    constexpr int warmBlocks = 60;
+    constexpr int measureBlocks = 20;
+    Render render;
+    double sum = 0.0;
+    std::vector<float> l ((size_t) kBlock), r ((size_t) kBlock);
+    for (int b = 0; b < warmBlocks + measureBlocks; ++b)
+    {
+        fillTone (l, r, b * kBlock);
+        for (auto* channel : { &l, &r })
+            for (auto& s : *channel) s *= amplitude / 0.4f;
+        slot.processStereo (l.data(), r.data(), l.data(), r.data(), kBlock);
+        if (b < warmBlocks) continue;
+        for (float s : l) sum += (double) s * s;
+        render.left.insert (render.left.end(), l.begin(), l.end());
+    }
+    render.rms = std::sqrt (sum / (double) (measureBlocks * kBlock));
+    return render;
+}
+
+double dbOf (double rms, double reference)
+{
+    return 20.0 * std::log10 (std::max (rms, 1.0e-12) / std::max (reference, 1.0e-12));
+}
+
+float largestDifference (const Render& a, const Render& b)
+{
+    float worst = 0.0f;
+    for (size_t i = 0; i < a.left.size(); ++i)
+        worst = std::max (worst, std::abs (a.left[i] - b.left[i]));
+    return worst;
+}
+} // namespace
+
+TEST_CASE ("tape unit Auto cal sets the bias itself and ignores the Bias knob", "[builtin][tape]")
+{
+    const auto calibratedLow  = renderTone (0.4f, { { "autoCal", 1.0f }, { "bias", 10.0f } });
+    const auto calibratedHigh = renderTone (0.4f, { { "autoCal", 1.0f }, { "bias", 90.0f } });
+    CHECK (largestDifference (calibratedLow, calibratedHigh) < 1.0e-6f);
+
+    const auto manualLow  = renderTone (0.4f, { { "autoCal", 0.0f }, { "bias", 10.0f } });
+    const auto manualHigh = renderTone (0.4f, { { "autoCal", 0.0f }, { "bias", 90.0f } });
+    CHECK (largestDifference (manualLow, manualHigh) > 1.0e-3f);
+}
+
+TEST_CASE ("tape unit Auto comp holds the output level against the drive and overrides Output", "[builtin][tape]")
+{
+    constexpr float amplitude = 0.1f;
+    const double dry = amplitude / std::sqrt (2.0);
+
+    const auto flat   = renderTone (amplitude, { { "autoComp", 1.0f }, { "inputGain", 0.0f },
+                                                 { "outputGain", -12.0f } });
+    const auto driven = renderTone (amplitude, { { "autoComp", 1.0f }, { "inputGain", 10.0f },
+                                                 { "outputGain", -12.0f } });
+    INFO ("Auto comp on: " << dbOf (flat.rms, dry) << " dB flat, " << dbOf (driven.rms, dry) << " dB driven");
+    CHECK (std::abs (dbOf (flat.rms, dry)) < 1.5);
+    CHECK (std::abs (dbOf (driven.rms, dry)) < 1.5);
+
+    const auto trimmed = renderTone (amplitude, { { "autoComp", 0.0f }, { "inputGain", 0.0f },
+                                                  { "outputGain", -12.0f } });
+    const auto hot     = renderTone (amplitude, { { "autoComp", 0.0f }, { "inputGain", 6.0f },
+                                                  { "outputGain", 0.0f } });
+    INFO ("Auto comp off: " << dbOf (trimmed.rms, dry) << " dB at -12 out, " << dbOf (hot.rms, dry) << " dB at +6 in");
+    CHECK (dbOf (trimmed.rms, flat.rms) < -9.0);
+    CHECK (dbOf (hot.rms, dry) > 3.0);
 }

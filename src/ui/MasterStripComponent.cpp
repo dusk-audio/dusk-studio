@@ -1915,6 +1915,23 @@ bool MasterStripComponent::tapeEditorDrawnForScenario() const noexcept
    #endif
 }
 
+bool MasterStripComponent::tapeEditForScenario (const std::string& paramSymbol, float value)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (! isTapeEditorOpen())
+        return false;
+    const auto& tapeParams = engine.getMasterBus().getTape().plugin().params();
+    for (std::size_t i = 0; i < tapeParams.size(); ++i)
+        if (tapeParams[i].symbol == paramSymbol)
+            return tapeEditor->editForScenario ((int) i, value);
+    return false;
+   #else
+    (void) paramSymbol;
+    (void) value;
+    return false;
+   #endif
+}
+
 void MasterStripComponent::captureTapeEditor (const std::string& capturePath)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI

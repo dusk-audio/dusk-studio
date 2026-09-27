@@ -105,6 +105,7 @@ public:
         const std::optional<juce::String>& legacyXmlSource,
         const std::function<bool (const juce::File&)>& locationExists,
         std::vector<PluginDescriptor>& into);
+    void saveCacheForTest() const { saveCache(); }
    #endif
 
     juce::File getCacheFile() const;

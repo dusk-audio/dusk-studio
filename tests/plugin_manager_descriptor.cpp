@@ -1,6 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/PluginManager.h"
+#include "foundation/AppConfigDir.h"
+
+#include <cstdlib>
+#include <filesystem>
+#include <string>
 
 using namespace duskstudio;
 
@@ -27,6 +32,16 @@ PluginDescriptor completeDescriptor()
     descriptor.hasSharedContainer = true;
     descriptor.hasAraExtension = true;
     return descriptor;
+}
+
+void setEnv (const char* name, const char* value)
+{
+   #if defined(_WIN32)
+    ::_putenv_s (name, value != nullptr ? value : "");
+   #else
+    if (value != nullptr) ::setenv (name, value, 1);
+    else                  ::unsetenv (name);
+   #endif
 }
 } // namespace
 
@@ -143,6 +158,56 @@ TEST_CASE ("PluginManager falls back from malformed native JSON without erasing 
             legacyXml, locationExists, loaded));
         CHECK (loaded.empty());
     }
+}
+
+TEST_CASE ("PluginManager keeps its scan list and quarantine in plugin-cache.xml in the config directory")
+{
+    namespace stdfs = std::filesystem;
+    const auto dir = dusk::fs::createUniqueTempDirectory ("dusk-plugin-cache-");
+    REQUIRE_FALSE (dir.empty());
+    const char* previous = std::getenv (dusk::fs::kConfigDirEnv);
+    const std::string restore = previous != nullptr ? previous : "";
+    const bool hadPrevious = previous != nullptr;
+    setEnv (dusk::fs::kConfigDirEnv, dir.u8string().c_str());
+
+    const auto cacheFile = dir / "plugin-cache.xml";
+    auto scanned = PluginManager::descriptorToJuceForTest (completeDescriptor());
+    scanned.isInstrument = false;
+    {
+        juce::KnownPluginList seeded;
+        seeded.addType (scanned);
+        seeded.addToBlacklist ("/plugins/Hangs.vst3");
+        auto xml = seeded.createXml();
+        REQUIRE (xml != nullptr);
+        REQUIRE (xml->writeTo (juce::File (cacheFile.u8string())));
+    }
+
+    {
+        PluginManager manager;
+        CHECK (manager.getCacheFile().getFullPathName().toStdString() == cacheFile.u8string());
+        CHECK (manager.getPluginCount() == 1);
+        CHECK (manager.getQuarantinedCount() == 1);
+        const auto effects = manager.getEffectDescriptions();
+        REQUIRE (effects.size() == 1);
+        CHECK (effects.front().name == "Adapter");
+        CHECK (effects.front().location == "/plugins/Adapter.vst3");
+
+        REQUIRE (stdfs::remove (cacheFile));
+        manager.saveCacheForTest();
+    }
+
+    REQUIRE (stdfs::is_regular_file (cacheFile));
+    auto written = juce::XmlDocument::parse (juce::File (cacheFile.u8string()));
+    REQUIRE (written != nullptr);
+    juce::KnownPluginList reread;
+    reread.recreateFromXml (*written);
+    REQUIRE (reread.getNumTypes() == 1);
+    CHECK (reread.getTypes().getFirst().name == "Adapter");
+    CHECK (reread.getBlacklistedFiles().contains ("/plugins/Hangs.vst3"));
+
+    setEnv (dusk::fs::kConfigDirEnv, hadPrevious ? restore.c_str() : nullptr);
+    std::error_code ignored;
+    stdfs::remove_all (dir, ignored);
 }
 
 TEST_CASE ("the out-of-process host child name carries the platform suffix", "[plugins][ipc]")

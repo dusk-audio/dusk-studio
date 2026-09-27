@@ -1303,6 +1303,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         auto* master = owner.consoleView->getMasterStripComponent();
         return master != nullptr && master->tapeEditorDrawnForScenario();
     }
+    bool masterTapeEdit (const std::string& paramSymbol, float value) override
+    {
+        auto* master = owner.consoleView->getMasterStripComponent();
+        return master != nullptr && master->tapeEditForScenario (paramSymbol, value);
+    }
     void closeMasterTape() override
     {
         if (auto* master = owner.consoleView->getMasterStripComponent())
@@ -1571,6 +1576,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (control == nullptr || ! control->isShowing()) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (control, control->getLocalBounds().getCentre()).toFloat();
         return clickAt (point.x, point.y, 1, right);
+    }
+
+    bool pressTitledControl (const std::string& title, bool down) override
+    {
+        auto* control = findTitledControl (*owner.getTopLevelComponent(), title);
+        if (control == nullptr || ! control->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (control, control->getLocalBounds().getCentre()).toFloat();
+        return pointerAt (point.x, point.y, down);
     }
 
     int activeAuxLane() const override

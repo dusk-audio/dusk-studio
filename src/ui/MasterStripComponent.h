@@ -47,6 +47,7 @@ public:
         return compactMode ? &tapeButton : tapeHeaderBtn.get();
     }
     bool tapeEditorDrawnForScenario() const noexcept;
+    bool tapeEditForScenario (const std::string& paramSymbol, float value);
 
 private:
     bool compactVu = false;

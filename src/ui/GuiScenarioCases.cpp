@@ -1614,7 +1614,8 @@ const ScenarioRegistrar fileKeys { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runFileKeys (host, ctx); }
 } };
 
-std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContext& ctx)
+std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContext& ctx, const std::string& unitId,
+                                                   const std::string& control, float position)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
     return ScenarioResult::skip ("requires native UI");
@@ -1653,23 +1654,30 @@ std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContex
     host.switchToStage (GuiHost::Stage::Mixing);
     std::string error;
     engine.suspendProcessing();
-    const bool loaded = strip.loadBuiltin ("dusk.builtin.utility", error);
+    const bool loaded = strip.loadBuiltin (unitId, error);
     if (loaded) strip.insertMode.store (ChannelStrip::kInsertPlugin);
     engine.resumeProcessing();
-    if (! loaded) return ScenarioResult::fail ("could not load Utility: " + error);
+    if (! loaded) return ScenarioResult::fail ("could not load " + unitId + ": " + error);
+    int paramIndex = -1;
+    for (int i = 0; i < strip.getBuiltinSlot().paramCount(); ++i)
+        if (const auto* info = strip.getBuiltinSlot().paramInfo (i);
+            info != nullptr && info->id != nullptr && control == info->id) paramIndex = i;
+    if (paramIndex < 0) return ScenarioResult::fail (unitId + " has no " + control + " parameter");
+    const float before = strip.getBuiltinSlot().getParamValue (paramIndex);
     if (auto* handle = host.strip (0)) handle->refreshInsertButton();
     ctx.expect (strip.insertLastTouchedParamIndex() == -1, "fresh unit already has a touched parameter");
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 250, [&host, &ctx]
     { ctx.expect (host.clickInsert (0, false), "insert button unavailable"); } });
-    steps->push_back ({ 600, [&host, &ctx]
-    { ctx.expect (host.builtinPointer (0, "gain_db", 0.25f, true), "native Gain pointer down failed"); } });
-    steps->push_back ({ 150, [&host, &ctx]
-    { ctx.expect (host.builtinPointer (0, "gain_db", 0.25f, false), "native Gain pointer up failed"); } });
-    steps->push_back ({ 150, [&host, &ctx, &strip]
+    steps->push_back ({ 600, [&host, &ctx, control, position]
+    { ctx.expect (host.builtinPointer (0, control, position, true), "native " + control + " pointer down failed"); } });
+    steps->push_back ({ 150, [&host, &ctx, control, position]
+    { ctx.expect (host.builtinPointer (0, control, position, false), "native " + control + " pointer up failed"); } });
+    steps->push_back ({ 150, [&host, &ctx, &strip, control, paramIndex, before]
     {
-        ctx.expect (std::abs (strip.getBuiltinSlot().getParamValue (0)) > 1.0f, "Gain control did not change parameter");
-        ctx.expect (strip.insertLastTouchedParamIndex() == 0, "Gain was not tracked as last touched");
+        ctx.expect (std::abs (strip.getBuiltinSlot().getParamValue (paramIndex) - before) > 0.05f,
+                    control + " control did not change parameter");
+        ctx.expect (strip.insertLastTouchedParamIndex() == paramIndex, control + " was not tracked as last touched");
         host.closeBuiltin (0);
     } });
     steps->push_back ({ 200, [&host, &ctx]
@@ -1688,17 +1696,18 @@ std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContex
         midi.addEvent (cc, 3, 0);
         engine.stageTestMidiInjection (0, std::move (midi));
     } });
-    runSteps (ctx, steps, [&ctx, &session]
+    runSteps (ctx, steps, [&ctx, &session, control, paramIndex]
     {
         ctx.waitUntil ([&session] { return session.midiLearnPending.load() < 0; }, 3000,
-            [&ctx, &session]
+            [&ctx, &session, control, paramIndex]
             {
                 const auto& bindingsNow = session.midiBindings.current();
-                ctx.expect (std::any_of (bindingsNow.begin(), bindingsNow.end(), [] (const MidiBinding& binding)
+                ctx.expect (std::any_of (bindingsNow.begin(), bindingsNow.end(), [paramIndex] (const MidiBinding& binding)
                 {
                     return binding.channel == 3 && binding.dataNumber == 74 && binding.trigger == MidiBindingTrigger::CC
-                        && binding.target == MidiBindingTarget::TrackPluginParam && binding.targetIndex == 0 && binding.paramIndex == 0;
-                }), "captured CC did not bind the last-touched Gain parameter");
+                        && binding.target == MidiBindingTarget::TrackPluginParam && binding.targetIndex == 0
+                        && binding.paramIndex == paramIndex;
+                }), "captured CC did not bind the last-touched " + control + " parameter");
                 ctx.complete (ctx.verdict());
             }, "MIDI Learn did not consume the injected CC");
     });
@@ -1708,7 +1717,20 @@ std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContex
 const ScenarioRegistrar builtinMidiLearn { Scenario {
     "gui.builtin_midi_learn", { "gui", "midi" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
-    [] (GuiHost& host, ScenarioContext& ctx) { return runBuiltinMidiLearn (host, ctx); }
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBuiltinMidiLearn (host, ctx, "dusk.builtin.utility", "gain_db", 0.25f); }
+} };
+
+// DuskVerb 2 brings an editor of its own, so the touch comes through the
+// callbacks that editor was handed rather than the knob panel's.
+const ScenarioRegistrar duskverbMidiLearn { Scenario {
+    "gui.duskverb_midi_learn", { "gui", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+        if (! host.canEmbedPluginEditors())
+            return ScenarioResult::skip ("requires a window the unit's editor can embed into");
+        return runBuiltinMidiLearn (host, ctx, "dusk.builtin.reverb", "mix", 0.8f);
+    }
 } };
 
 // ------------------------------------------- MIDI Learn on a native host
@@ -3672,6 +3694,8 @@ std::optional<ScenarioResult> runMasterTapeEditor (GuiHost& host, ScenarioContex
     const auto originalStage = engine.getStage();
     const bool originalTape = session.master().tapeEnabled.load();
     if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    ctx.keep (session.master().tape.bias);
+    ctx.keep (session.master().tape.autoComp);
     ctx.cleanup ([&host, &session, originalStage, originalTape]
     {
         host.closeMasterTape();
@@ -3713,6 +3737,27 @@ std::optional<ScenarioResult> runMasterTapeEditor (GuiHost& host, ScenarioContex
     {
         ctx.expect (session.master().tapeEnabled.load(), "the status light did not engage the tape");
         ctx.expect (! host.masterTapeEditorOpen(), "the status light opened the editor");
+        session.master().tapeEnabled.store (false);
+        ctx.expect (host.clickMasterTape (true), "the master TAPE label is unavailable");
+    } });
+    // Working a control in the editor engages the stage; its BYPASS switch is
+    // the status light's switch, and turning it on leaves the stage out.
+    steps->push_back ({ 1500, [&host, &ctx, &session]
+    {
+        auto& tape = session.master().tape;
+        ctx.expect (host.masterTapeEditorOpen(), "TAPE did not open the tape editor again");
+        ctx.expect (host.masterTapeEdit ("bias", 30.0f), "the tape editor took no Bias edit");
+        ctx.expect (std::abs (tape.bias.load() - 30.0f) < 0.01f,
+                    "the Bias edit left the session's bias at " + std::to_string (tape.bias.load()));
+        ctx.expect (session.master().tapeEnabled.load(), "working Bias did not engage the tape");
+        ctx.expect (host.masterTapeEdit ("daf_bypass", 1.0f), "the tape editor took no BYPASS edit");
+        ctx.expect (! session.master().tapeEnabled.load(), "BYPASS in the editor left the tape engaged");
+        ctx.expect (host.masterTapeEdit ("autoComp", 0.0f), "the tape editor took no Auto comp edit");
+        ctx.expect (! tape.autoComp.load(), "the Auto comp edit left the session's Auto comp on");
+        ctx.expect (session.master().tapeEnabled.load(), "working Auto comp did not engage the tape");
+        ctx.expect (host.masterTapeEdit ("daf_bypass", 0.0f), "the tape editor took no second BYPASS edit");
+        ctx.expect (session.master().tapeEnabled.load(), "BYPASS off in the editor did not engage the tape");
+        host.closeMasterTape();
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -11065,6 +11110,99 @@ const ScenarioRegistrar markerKeysPlayback { Scenario {
         ctx.expect (transport.isPlaying(), "marker-key scenario stopped existing playback");
         return ctx.verdict();
     }
+} };
+
+// Held past 400 ms, Rewind and Forward scrub the stopped playhead at ten times
+// real time, and the release that ends a scrub is not also read as a tap.
+// The scrub runs on a 20 Hz timer whose first tick past the threshold only
+// starts the clock, so with a 400 ms threshold nothing moves before 450 ms, and
+// with 300 ms the playhead has moved by 400 ms.
+std::optional<ScenarioResult> runTransportHoldScrubs (GuiHost& host, ScenarioContext& ctx)
+{
+    using Clock = std::chrono::steady_clock;
+    static constexpr double kThresholdMs = 400.0;
+    static constexpr double kFirstMoveMs = kThresholdMs + 50.0;
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const double rate = engine.getCurrentSampleRate();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a running audio device");
+    const auto original = transport.getPlayhead();
+    ctx.cleanup ([&host, &transport, original]
+    {
+        host.pressTitledControl ("Rewind", false);
+        host.pressTitledControl ("Fast forward", false);
+        transport.setPlayhead (original);
+    });
+    const auto start = (std::int64_t) (rate * 120.0);
+    transport.setPlayhead (start);
+
+    struct Hold
+    {
+        Clock::time_point pressed;
+        std::int64_t from = 0;
+        std::int64_t released = 0;
+        double heldMs = 0.0;
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto hold = [&host, &ctx, &transport, rate, steps] (const std::string& title, int direction)
+    {
+        auto state = std::make_shared<Hold>();
+        steps->push_back ({ 200, [&host, &ctx, &transport, title, state]
+        {
+            state->from = transport.getPlayhead();
+            state->pressed = Clock::now();
+            ctx.expect (host.pressTitledControl (title, true), title + " did not take a press");
+        } });
+        steps->push_back ({ 250, [&ctx, &transport, title, state]
+        {
+            ctx.expect (transport.getPlayhead() == state->from,
+                        title + " moved the playhead before the hold threshold");
+        } });
+        steps->push_back ({ 170, [&ctx, &transport, title, state]
+        {
+            const auto heldMs = std::chrono::duration<double, std::milli> (Clock::now() - state->pressed).count();
+            if (heldMs >= kFirstMoveMs)
+                ctx.note (title + " threshold check came " + std::to_string (heldMs) + " ms into the hold, too late to judge");
+            else
+                ctx.expect (transport.getPlayhead() == state->from,
+                            title + " moved the playhead " + std::to_string (heldMs)
+                                + " ms into the hold, before a 400 ms threshold could");
+        } });
+        steps->push_back ({ 980, [&host, &ctx, &transport, title, state]
+        {
+            ctx.expect (host.pressTitledControl (title, false), title + " did not take a release");
+            state->heldMs = std::chrono::duration<double, std::milli> (Clock::now() - state->pressed).count();
+            state->released = transport.getPlayhead();
+        } });
+        steps->push_back ({ 300, [&ctx, &transport, title, direction, rate, state]
+        {
+            const auto moved = (double) direction * (double) (state->released - state->from);
+            const double expected = 10.0 * rate * (state->heldMs - kThresholdMs) / 1000.0;
+            ctx.note (title + " held " + std::to_string (state->heldMs) + " ms moved "
+                      + std::to_string (moved) + " samples, 10x of the time past 400 ms is "
+                      + std::to_string (expected));
+            // A tick at each end of the hold can go unscrubbed, 100 ms of the
+            // 1000, while a 600 ms threshold would leave at most 80 %.
+            ctx.expect (moved > 0.83 * expected && moved < 1.1 * expected,
+                        title + " held did not scrub at 10x: moved " + std::to_string (moved)
+                            + " samples against " + std::to_string (expected));
+            ctx.expect (transport.getPlayhead() == state->released,
+                        title + " jumped again on the release that ended the scrub");
+            ctx.expect (transport.isStopped(), title + " scrubbing started the transport");
+        } });
+    };
+    hold ("Rewind", -1);
+    hold ("Fast forward", 1);
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar transportHoldScrubs { Scenario {
+    "gui.transport_hold_scrubs", { "gui", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTransportHoldScrubs (host, ctx); }
 } };
 
 const ScenarioRegistrar markerKeys { Scenario {
