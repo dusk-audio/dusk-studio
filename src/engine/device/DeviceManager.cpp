@@ -353,15 +353,20 @@ struct DeviceManager::Impl
         auto dev = currentType->createDevice (requested.outputDeviceName, requested.inputDeviceName);
         if (! dev) return "Could not create audio device";
 
+        // Never ask a device for channels it does not list, default or named:
+        // a backend that reports the mask it was handed would otherwise claim
+        // them as active, and the engine arms tracks against that width.
+        const int deviceIns  = (int) dev->getInputChannelNames().size();
+        const int deviceOuts = (int) dev->getOutputChannelNames().size();
         ChannelSet inMask, outMask;
         if (requested.useDefaultInputChannels)
-            inMask.setRange (0, std::min (numInputChannelsNeeded, (int) dev->getInputChannelNames().size()), true);
+            inMask.setRange (0, std::min (numInputChannelsNeeded, deviceIns), true);
         else
-            inMask = requested.inputChannels;
+            inMask = clampToChannelCount (requested.inputChannels, deviceIns);
         if (requested.useDefaultOutputChannels)
-            outMask.setRange (0, std::min (numOutputChannelsNeeded, (int) dev->getOutputChannelNames().size()), true);
+            outMask.setRange (0, std::min (numOutputChannelsNeeded, deviceOuts), true);
         else
-            outMask = requested.outputChannels;
+            outMask = clampToChannelCount (requested.outputChannels, deviceOuts);
 
         double rate = requested.sampleRate;
         if (rate <= 0.0) rate = chooseSampleRate (dev->getAvailableSampleRates());

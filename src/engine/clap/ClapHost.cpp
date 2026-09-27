@@ -20,7 +20,8 @@ ClapHost::ClapHost()
     host.url           = "https://duskaudio.com";
     host.version       = DUSKSTUDIO_VERSION_STRING;
     host.get_extension = &ClapHost::getExtension;
-    host.request_restart  = [] (const clap_host_t*) {};
+    host.request_restart  = [] (const clap_host_t* h)
+        { self (h).restartRequested.store (true, std::memory_order_release); };
     host.request_process  = [] (const clap_host_t*) {};
     // request_callback is [thread-safe]: record the request and drain it on the main
     // thread in pumpGui by calling plugin->on_main_thread().
@@ -30,6 +31,10 @@ ClapHost::ClapHost()
     logExt.log                     = &ClapHost::logMsg;
     threadCheckExt.is_main_thread  = &ClapHost::isMainThread;
     threadCheckExt.is_audio_thread = &ClapHost::isAudioThread;
+    // [main-thread & being-activated]: the plug-in calls this from inside
+    // activate(), and ClapInstance::activate reads the latency right after, so
+    // there is nothing to record here.
+    latencyExt.changed             = [] (const clap_host_t*) {};
 
     guiExt.resize_hints_changed = &ClapHost::resizeHintsChanged;
     guiExt.request_resize       = &ClapHost::requestResize;
@@ -52,6 +57,7 @@ const void* ClapHost::getExtension (const clap_host_t* h, const char* id) noexce
     auto& s = self (h);
     if (std::strcmp (id, CLAP_EXT_LOG)               == 0) return &s.logExt;
     if (std::strcmp (id, CLAP_EXT_THREAD_CHECK)      == 0) return &s.threadCheckExt;
+    if (std::strcmp (id, CLAP_EXT_LATENCY)           == 0) return &s.latencyExt;
     if (std::strcmp (id, CLAP_EXT_GUI)               == 0) return &s.guiExt;
 #if ! defined(_WIN32)
     if (std::strcmp (id, CLAP_EXT_POSIX_FD_SUPPORT)  == 0) return &s.fdExt;

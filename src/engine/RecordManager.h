@@ -79,7 +79,9 @@ public:
         return activeStereoCaptureTrackMask.load (std::memory_order_acquire);
     }
 
-    // Message thread. Closes writers, finalizes WAV, appends regions.
+    // Message thread. Closes writers, finalizes WAV, appends regions. Waits
+    // for any audio-thread call already inside the recorder to leave first,
+    // however long that takes, so a stop always commits its take.
     void stopRecording (std::int64_t endSample);
 
     // Audio thread. R == nullptr for mono. numSamples == 0 early-returns.
@@ -97,19 +99,9 @@ public:
                           std::int64_t blockStartFromRecord,
                           const LoopCaptureSpan* explicitLoopSpan = nullptr) noexcept;
 
+    // True from startRecording until stopRecording, which is also exactly how
+    // long a take's WAV has no region pointing at it.
     bool isActive() const noexcept { return active.load (std::memory_order_acquire); }
-
-    // Message thread. True from startRecording until stopRecording has
-    // committed or discarded every take file, and also after a stopRecording
-    // that bailed its teardown, until reclaimBailedTake or a later
-    // startRecording discards that take. A take's WAV has no region pointing
-    // at it for all of that time.
-    bool hasOpenTake() const noexcept;
-
-    // Message thread. Discards the take a bailed stopRecording left behind,
-    // file and all, once the audio thread has left it. False, with nothing
-    // touched, while a take records or an audio-thread call is still inside.
-    bool reclaimBailedTake();
 
     bool isLoopCaptureActive() const noexcept
     {
@@ -158,12 +150,22 @@ public:
     }
     void clearLastCommitDiff() noexcept { lastCommitDiff.clear(); }
 
-    // Tests only. Holds audioInFlight up the way an audio-thread call stuck
-    // inside writeInputBlock would, which is what makes stopRecording bail.
+    // Tests only. Holds audioInFlight up the way an audio-thread call still
+    // inside writeInputBlock would, which is what a stop has to wait out.
     void holdAudioInFlightForTest (bool held) noexcept
     {
-        if (held) audioInFlight.fetch_add (1, std::memory_order_acq_rel);
+        if (held) audioInFlight.fetch_add (1, std::memory_order_seq_cst);
         else      audioInFlight.fetch_sub (1, std::memory_order_release);
+    }
+
+    // Tests only. While audioInFlight is held, each pass of the wait for the
+    // audio thread calls the observer instead of yielding or sleeping, so a
+    // test can let go of the hold after a chosen number of passes.
+    using AudioWaitObserverForTest = void (*) (void* context);
+    void setAudioWaitObserverForTest (void* context, AudioWaitObserverForTest observer) noexcept
+    {
+        audioWaitContext = context;
+        audioWaitObserver = observer;
     }
 
 private:
@@ -176,6 +178,10 @@ private:
     // Message thread, with active false and audioInFlight at zero. Drops
     // whatever capture is still held without committing it.
     void discardUncommittedTake();
+
+    // Message thread, after active went false. Returns once no audio-thread
+    // call is inside the recorder.
+    void waitForAudioThreadToLeave() const;
 
     Session& session;
 
@@ -245,24 +251,31 @@ private:
     std::atomic<std::uint32_t> activeStereoCaptureTrackMask { 0 };
 
     // Audio thread bumps BEFORE inspecting active / writer / midiCapture
-    // and decrements on exit. stopRecording clears active then spins
-    // here until zero before destroying writers. Closes the UAF window
-    // where the audio thread could be mid-write while the message
-    // thread tears down. Yield (not sleep) keeps wait sub-block.
+    // and decrements on exit. stopRecording clears active then waits here
+    // until zero before destroying writers, so the audio thread is never
+    // mid-write while the message thread tears down.
+    //
+    // The stop's store to active then load of audioInFlight, against the
+    // audio thread's bump then load of active, is Dekker's pattern: all four
+    // are seq_cst, because release/acquire lets each side's load pass its
+    // own store (x86 store buffering), and then the stop reads zero while
+    // the audio thread still reads active true and writes into a writer
+    // being freed. The audio side costs nothing measurable: the bump is the
+    // same locked RMW on x86 and LDADDAL on ARM either way, and the seq_cst
+    // load is a plain load on x86 and LDAR on ARM.
     std::atomic<int> audioInFlight { 0 };
 
     struct AudioInFlightScope
     {
         std::atomic<int>& c;
-        // acq_rel: release publishes the bump to the drain spin; acquire
-        // prevents subsequent reads from reordering before the bump
-        // (without it, those reads could observe a torn / freed object).
-        // Release-only on decrement is sufficient.
         AudioInFlightScope (std::atomic<int>& a) noexcept : c (a)
-            { c.fetch_add (1, std::memory_order_acq_rel); }
+            { c.fetch_add (1, std::memory_order_seq_cst); }
         ~AudioInFlightScope() noexcept
             { c.fetch_sub (1, std::memory_order_release); }
     };
+
+    void* audioWaitContext = nullptr;
+    AudioWaitObserverForTest audioWaitObserver = nullptr;
 
     std::vector<int> lastSetupFailures;
     std::vector<RecordError> lastRecordErrors;

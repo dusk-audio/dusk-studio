@@ -267,7 +267,7 @@ std::vector<std::string> PipeWireAudioIODevice::getOutputChannelNames()
     // so a multichannel interface isn't capped at stereo. Fall back to a stereo
     // pair when the node didn't advertise a count.
     std::vector<std::string> names;
-    const int n = deviceOutChannels > 0 ? deviceOutChannels : 2;
+    const int n = outputWidth();
     for (int i = 1; i <= n; ++i) names.push_back ("Out " + std::to_string (i));
     return names;
 }
@@ -275,7 +275,7 @@ std::vector<std::string> PipeWireAudioIODevice::getOutputChannelNames()
 std::vector<std::string> PipeWireAudioIODevice::getInputChannelNames()
 {
     std::vector<std::string> names;
-    const int n = deviceInChannels > 0 ? deviceInChannels : 2;
+    const int n = inputWidth();
     for (int i = 1; i <= n; ++i) names.push_back ("In " + std::to_string (i));
     return names;
 }
@@ -302,21 +302,25 @@ std::string PipeWireAudioIODevice::open (const device::ChannelSet& inputChannels
     if (isDeviceOpen.load (std::memory_order_acquire))
         close();
 
-    currentInputChannels  = inputChannels;
-    currentOutputChannels = outputChannels;
+    // Only channels the node has, as ALSA does. A request can be wider than the
+    // device (16 inputs asked of a stereo source), and a direction with no node
+    // opens nothing; the engine sizes its capture width, and so which tracks
+    // may arm, from what getActiveInputChannels reports.
+    currentInputChannels  = device::clampToChannelCount (inputChannels,
+                                                         inputId.empty() ? 0 : inputWidth());
+    currentOutputChannels = device::clampToChannelCount (outputChannels,
+                                                         outputId.empty() ? 0 : outputWidth());
 
-    numOutputChannels = countActiveChannels (outputChannels);
-    numInputChannels  = countActiveChannels (inputChannels);
+    numOutputChannels = countActiveChannels (currentOutputChannels);
+    numInputChannels  = countActiveChannels (currentInputChannels);
 
-    const bool wantOutput = numOutputChannels > 0 && ! outputId.empty();
-    const bool wantInput  = numInputChannels  > 0 && ! inputId.empty();
+    const bool wantOutput = numOutputChannels > 0;
+    const bool wantInput  = numInputChannels  > 0;
     if (! wantOutput && ! wantInput)
     {
         lastError = "no input or output channels selected";
         return lastError;
     }
-    if (! wantOutput) numOutputChannels = 0;
-    if (! wantInput)  numInputChannels  = 0;
 
     const int rate    = (int) sampleRate;
     const int quantum = std::max (32, bufferSizeSamples);

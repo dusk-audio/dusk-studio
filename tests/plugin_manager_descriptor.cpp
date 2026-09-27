@@ -1,6 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/PluginManager.h"
+#include "foundation/AppConfigDir.h"
+
+#include <cstdlib>
+#include <filesystem>
+#include <string>
+#include <utility>
 
 using namespace duskstudio;
 
@@ -28,6 +34,47 @@ PluginDescriptor completeDescriptor()
     descriptor.hasAraExtension = true;
     return descriptor;
 }
+
+void setEnv (const char* name, const char* value)
+{
+   #if defined(_WIN32)
+    ::_putenv_s (name, value != nullptr ? value : "");
+   #else
+    if (value != nullptr) ::setenv (name, value, 1);
+    else                  ::unsetenv (name);
+   #endif
+}
+
+// Points the config directory at `dir` and, on every exit path including a
+// failed REQUIRE, restores the previous value and removes `dir`.
+class ScopedConfigDir
+{
+public:
+    explicit ScopedConfigDir (std::filesystem::path dirIn) : dir (std::move (dirIn))
+    {
+        if (const char* existing = std::getenv (dusk::fs::kConfigDirEnv))
+        {
+            hadPrevious = true;
+            previous = existing;
+        }
+        setEnv (dusk::fs::kConfigDirEnv, dir.u8string().c_str());
+    }
+
+    ~ScopedConfigDir()
+    {
+        setEnv (dusk::fs::kConfigDirEnv, hadPrevious ? previous.c_str() : nullptr);
+        std::error_code ignored;
+        std::filesystem::remove_all (dir, ignored);
+    }
+
+    ScopedConfigDir (const ScopedConfigDir&) = delete;
+    ScopedConfigDir& operator= (const ScopedConfigDir&) = delete;
+
+private:
+    std::filesystem::path dir;
+    std::string previous;
+    bool hadPrevious = false;
+};
 } // namespace
 
 TEST_CASE ("PluginManager JUCE adapter round-trips every representable field")
@@ -143,6 +190,49 @@ TEST_CASE ("PluginManager falls back from malformed native JSON without erasing 
             legacyXml, locationExists, loaded));
         CHECK (loaded.empty());
     }
+}
+
+TEST_CASE ("PluginManager keeps its scan list and quarantine in plugin-cache.xml in the config directory")
+{
+    namespace stdfs = std::filesystem;
+    const auto dir = dusk::fs::createUniqueTempDirectory ("dusk-plugin-cache-");
+    REQUIRE_FALSE (dir.empty());
+    const ScopedConfigDir configDir (dir);
+
+    const auto cacheFile = dir / "plugin-cache.xml";
+    auto scanned = PluginManager::descriptorToJuceForTest (completeDescriptor());
+    scanned.isInstrument = false;
+    {
+        juce::KnownPluginList seeded;
+        seeded.addType (scanned);
+        seeded.addToBlacklist ("/plugins/Hangs.vst3");
+        auto xml = seeded.createXml();
+        REQUIRE (xml != nullptr);
+        REQUIRE (xml->writeTo (juce::File (cacheFile.u8string())));
+    }
+
+    {
+        PluginManager manager;
+        CHECK (manager.getCacheFile().getFullPathName().toStdString() == cacheFile.u8string());
+        CHECK (manager.getPluginCount() == 1);
+        CHECK (manager.getQuarantinedCount() == 1);
+        const auto effects = manager.getEffectDescriptions();
+        REQUIRE (effects.size() == 1);
+        CHECK (effects.front().name == "Adapter");
+        CHECK (effects.front().location == "/plugins/Adapter.vst3");
+
+        REQUIRE (stdfs::remove (cacheFile));
+        manager.saveCacheForTest();
+    }
+
+    REQUIRE (stdfs::is_regular_file (cacheFile));
+    auto written = juce::XmlDocument::parse (juce::File (cacheFile.u8string()));
+    REQUIRE (written != nullptr);
+    juce::KnownPluginList reread;
+    reread.recreateFromXml (*written);
+    REQUIRE (reread.getNumTypes() == 1);
+    CHECK (reread.getTypes().getFirst().name == "Adapter");
+    CHECK (reread.getBlacklistedFiles().contains ("/plugins/Hangs.vst3"));
 }
 
 TEST_CASE ("the out-of-process host child name carries the platform suffix", "[plugins][ipc]")

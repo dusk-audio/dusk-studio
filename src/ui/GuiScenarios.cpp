@@ -716,14 +716,25 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool clickFileBrowserControl (bool path) override
     {
+        return clickFileBrowserChild ([path] (const auto& child)
+        { return path ? child.getName() == "path" : child.getTitle() == "Files"; }, true);
+    }
+    bool clickFileBrowserUp() override
+    {
+        return clickFileBrowserChild ([] (const auto& child) { return child.getName() == "up"; }, false);
+    }
+    template <typename Matches>
+    bool clickFileBrowserChild (Matches matches, bool nearLeftEdge)
+    {
         const auto& stack = EmbeddedModal::activeModalStack();
         if (stack.empty() || stack.back()->getBody() == nullptr) return false;
         for (auto* container : stack.back()->getBody()->getChildren())
             for (auto* child : container->getChildren())
-                if (child->isShowing() && (path ? child->getName() == "path" : child->getTitle() == "Files"))
+                if (child->isShowing() && matches (*child))
                 {
-                    const auto point = owner.getTopLevelComponent()->getLocalPoint (
-                        child, child->getLocalBounds().getCentre().withX (20)).toFloat();
+                    auto centre = child->getLocalBounds().getCentre();
+                    if (nearLeftEdge) centre = centre.withX (20);
+                    const auto point = owner.getTopLevelComponent()->getLocalPoint (child, centre).toFloat();
                     return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
                 }
         return false;
@@ -1303,6 +1314,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         auto* master = owner.consoleView->getMasterStripComponent();
         return master != nullptr && master->tapeEditorDrawnForScenario();
     }
+    bool masterTapeEdit (const std::string& paramSymbol, float value) override
+    {
+        auto* master = owner.consoleView->getMasterStripComponent();
+        return master != nullptr && master->tapeEditForScenario (paramSymbol, value);
+    }
     void closeMasterTape() override
     {
         if (auto* master = owner.consoleView->getMasterStripComponent())
@@ -1358,6 +1374,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::filesystem::path fileBrowserFolder() const override { return filebrowser::shownFolderForScenario(); }
     bool fileBrowserScanning() const override { return filebrowser::shownFolderScanningForScenario(); }
     int retiredFileBrowserScans() const override { return filebrowser::retiredScansForScenario(); }
+    void holdFileBrowserFolderChecks (bool held) override { filebrowser::holdFolderChecksForScenario (held); }
     bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 
     bool openMidiIo (int index) override
@@ -1571,6 +1588,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (control == nullptr || ! control->isShowing()) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (control, control->getLocalBounds().getCentre()).toFloat();
         return clickAt (point.x, point.y, 1, right);
+    }
+
+    bool pressTitledControl (const std::string& title, bool down) override
+    {
+        auto* control = findTitledControl (*owner.getTopLevelComponent(), title);
+        if (control == nullptr || ! control->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (control, control->getLocalBounds().getCentre()).toFloat();
+        return pointerAt (point.x, point.y, down);
     }
 
     int activeAuxLane() const override

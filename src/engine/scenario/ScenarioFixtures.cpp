@@ -38,6 +38,8 @@ constexpr FixtureCandidate kCandidates[] = {
     { "no_window.clap",   "tests/dusk-studio-no-window-clap-fixture.clap" },
     { "param_touch.clap", "dusk-studio-param-touch-clap-fixture.clap" },
     { "param_touch.clap", "tests/dusk-studio-param-touch-clap-fixture.clap" },
+    { "latency.clap",     "dusk-studio-latency-clap-fixture.clap" },
+    { "latency.clap",     "tests/dusk-studio-latency-clap-fixture.clap" },
 };
 
 // Same convention as PATH: a Windows root starts with a drive letter, so it

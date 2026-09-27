@@ -164,7 +164,10 @@ public:
     virtual bool fileBrowserScanning() const = 0;
     // File browsers closed while listing a folder whose scan has not stopped yet.
     virtual int retiredFileBrowserScans() const = 0;
+    // Holds, or lets go of, the file browsers' checks of a folder they are about to show.
+    virtual void holdFileBrowserFolderChecks (bool held) = 0;
     virtual bool clickFileBrowserControl (bool path) = 0;
+    virtual bool clickFileBrowserUp() = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
     virtual bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) = 0;
     virtual std::vector<std::string> confirmationText() const = 0;
@@ -273,6 +276,9 @@ public:
     virtual bool clickMasterTape (bool label) = 0;
     virtual bool masterTapeEditorOpen() const = 0;
     virtual bool masterTapeEditorDrawn() const = 0;
+    // Works one control of the open tape editor, by its parameter symbol,
+    // through the callbacks a drag in the editor calls.
+    virtual bool masterTapeEdit (const std::string& paramSymbol, float value) = 0;
     virtual void closeMasterTape() = 0;
     virtual bool clickInsert (int track, bool right = false) = 0;
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
@@ -321,6 +327,8 @@ public:
     // control carries the title, "<no value box>" when it has none.
     virtual std::string valueBoxText (const std::string& title) = 0;
     virtual bool clickTitledControl (const std::string& title, bool right) = 0;
+    // One pointer edge on a titled control, so a scenario can hold it down.
+    virtual bool pressTitledControl (const std::string& title, bool down) = 0;
     virtual bool loadMasteringFile (const std::filesystem::path& path) = 0;
     virtual bool clickMasteringWaveform (float fraction) = 0;
     virtual void openPianoRoll (int track, int region) = 0;

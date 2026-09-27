@@ -125,19 +125,22 @@ private:
     // streams[] and decrements on exit. stopPlayback clears streamsActive
     // then spins until zero before destroying the readers. Closes the UAF
     // window where a callback that latched Playing is still summing
-    // regions while the message thread tears the streams down. Same
-    // pattern as RecordManager::audioInFlight.
+    // regions while the message thread tears the streams down.
+    //
+    // The stop's store to streamsActive then load of audioInFlight, against
+    // readForTrack's bump then load of streamsActive, is Dekker's pattern, as
+    // in RecordManager and MasteringPlayer: all four are seq_cst. With
+    // release/acquire each side's load may pass its own store (store
+    // buffering), so the stop can read zero while a lane still reads
+    // streamsActive true and sums a stream that is being freed.
     std::atomic<bool> streamsActive { false };
     std::atomic<int>  audioInFlight { 0 };
 
     struct AudioInFlightScope
     {
         std::atomic<int>& c;
-        // acq_rel: release publishes the bump to the drain spin; acquire
-        // prevents subsequent reads from reordering before the bump.
-        // Release-only on decrement is sufficient.
         AudioInFlightScope (std::atomic<int>& a) noexcept : c (a)
-            { c.fetch_add (1, std::memory_order_acq_rel); }
+            { c.fetch_add (1, std::memory_order_seq_cst); }
         ~AudioInFlightScope() noexcept
             { c.fetch_sub (1, std::memory_order_release); }
     };

@@ -113,6 +113,11 @@ public:
     // follow the caller's geometry.
     void tick();
 
+    // Works one control of the open editor through the callbacks it was handed,
+    // gesture start, edit and gesture end, as a drag in the editor would. False
+    // while no editor is open.
+    bool editForScenario (int index, float value);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

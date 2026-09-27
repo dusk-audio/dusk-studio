@@ -7,12 +7,31 @@
 # sequence and then defers the quit itself across further message-loop ticks, so
 # the second is dispatched while the latch is set and prints the re-entry line.
 
-# A scriptblock delegate (EnumWindows and friends) throws under iex, so the
-# P/Invoke surface stays limited to this direct call.
-if (-not ('Regress.User32' -as [type])) {
-    Add-Type -Namespace Regress -Name User32 -MemberDefinition @'
+# The close goes to the window titled Dusk Studio. MainWindowHandle is the first
+# visible unowned window .NET enumerates, and that can be one of the four
+# drop-shadow windows around the main one, which drop WM_CLOSE: the app never
+# hears the close and the phase reads it as a quit that did not happen.
+# FindWindowEx walks the titled windows with no callback, which under iex would
+# be a scriptblock delegate and throw. Its class argument is [NullString]::Value:
+# PowerShell hands $null to a string parameter as "", which matches no class.
+if (-not ('Regress.MainWindow' -as [type])) {
+    Add-Type -Namespace Regress -Name MainWindow -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+[DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
 '@
+}
+
+function Find-RegressMainWindow($procId) {
+    $h = [IntPtr]::Zero
+    while ($true) {
+        $h = [Regress.MainWindow]::FindWindowEx([IntPtr]::Zero, $h, [NullString]::Value, 'Dusk Studio')
+        if ($h -eq [IntPtr]::Zero) { return $h }
+        $owner = 0
+        [void][Regress.MainWindow]::GetWindowThreadProcessId($h, [ref]$owner)
+        if ($owner -eq $procId -and [Regress.MainWindow]::IsWindowVisible($h)) { return $h }
+    }
 }
 
 $rgApp = $null
@@ -27,17 +46,6 @@ try {
     $rgApp = Start-RegressApp $rgEnv ''
     $rgStderr = ''
 
-    $rgHwnd = [IntPtr]::Zero
-    $rgUntil = (Get-Date).AddSeconds(40)
-    while ((Get-Date) -lt $rgUntil -and -not $rgApp.HasExited) {
-        $rgApp.Refresh()
-        $rgHwnd = $rgApp.MainWindowHandle
-        if ($rgHwnd -ne [IntPtr]::Zero) { break }
-        Start-Sleep -Milliseconds 500
-    }
-    $rgLog += "pid=$($rgApp.Id) hwnd=$rgHwnd alive=$(-not $rgApp.HasExited)`n"
-    if ($rgHwnd -eq [IntPtr]::Zero) { throw "no main window after 40 s" }
-
     # Closing before the session is in would be a different test, so the phase
     # waits for the load line rather than sleeping a guessed interval.
     $rgLoadSeen = $false
@@ -49,10 +57,21 @@ try {
     }
     $rgLog += "loadMarkerSeen=$rgLoadSeen`n"
 
+    $rgHwnd = [IntPtr]::Zero
+    $rgUntil = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $rgUntil -and -not $rgApp.HasExited) {
+        $rgHwnd = Find-RegressMainWindow $rgApp.Id
+        if ($rgHwnd -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    $rgApp.Refresh()
+    $rgLog += "pid=$($rgApp.Id) hwnd=$rgHwnd mainWindowHandle=$($rgApp.MainWindowHandle) alive=$(-not $rgApp.HasExited)`n"
+    if ($rgHwnd -eq [IntPtr]::Zero) { throw "no visible window titled Dusk Studio" }
+
     # Both posts before any sleep: the second one has to already be in the queue
     # when the first is dispatched.
-    [Regress.User32]::PostMessage($rgHwnd, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-    [Regress.User32]::PostMessage($rgHwnd, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    [Regress.MainWindow]::PostMessage($rgHwnd, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    [Regress.MainWindow]::PostMessage($rgHwnd, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     $rgStart = Get-Date
     $rgUntil = $rgStart.AddSeconds(50)
     while (-not $rgApp.HasExited -and (Get-Date) -lt $rgUntil) {

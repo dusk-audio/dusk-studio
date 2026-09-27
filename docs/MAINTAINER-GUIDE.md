@@ -445,27 +445,38 @@ scripts/regress.sh linux --scenarios-only
 scripts/regress.sh linux --tarball /path/to/dusk-studio-X.Y.Z-Linux-x86_64.tar.xz
 scripts/regress.sh linux --release-run 1234567890
 scripts/regress.sh mac
+scripts/regress.sh mac --dmg /path/to/dusk-studio-X.Y.Z-macOS-arm64.dmg
+scripts/regress.sh mac --release-run 1234567890
 scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
 scripts/regress.sh windows --release-run 1234567890
 scripts/regress.sh windows --release-run 1234567890 --fixtures-run 2345678901
 scripts/regress.sh all --perf --msi /path/to/installer.msi
-scripts/regress.sh all --release-run 1234567890
+scripts/regress.sh all --release-run 1234567890 --fixtures-run 2345678901
 ```
 
 `all` routes each option to the platform that owns it, so one command line can
 carry Linux, macOS and Windows options at once. An option no platform claims is
-a usage error rather than a silently ignored word. `--release-run` has two
-owners, Linux and Windows, and goes to both: `all --release-run <id>` tests the
-Linux tarball and the Windows MSI of the same `release.yml` run. With
-`--tarball` on the same line, Linux tests that tarball and the release run goes
-to Windows alone. `--no-scenarios` also goes to both.
+a usage error rather than a silently ignored word. `--release-run` goes to all
+three: `all --release-run <id>` tests the Linux tarball, the macOS disk image
+and the Windows MSI of the same `release.yml` run, which is the 0.14 release
+gate. A platform given a local package on the same line (`--tarball`, `--dmg`,
+`--msi`) tests that one, and the release run goes to the others.
+`--no-scenarios` goes to Linux and Windows; `--fixtures-run` to Windows.
+`DUSK_REGRESS_DRY_RUN=1` prints what each platform would get and stops.
+
+Each platform prints its own table as it finishes, and `all` ends with one
+table of every platform's legs, named `<platform>/<leg>`. A platform whose
+runner exits non-zero without a failed leg (a usage error, a missing tool) gets
+a `<platform>/runner` row, so it cannot drop out of the table unseen.
 
 Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
-`scripts/regress/{linux,mac,windows}.sh` over the shared leg bookkeeping in
+`scripts/regress/{linux,mac,windows}.sh` (and `mac-package.sh`, which `mac.sh`
+hands a package run to) over the shared leg bookkeeping in
 `scripts/regress/common.sh`, the private-display plumbing in
 `scripts/regress/xvfb.sh` and the scenario legs in
 `scripts/regress/scenarios.sh`, plus the guest-side helpers in
-`scripts/regress/windows/`.
+`scripts/regress/windows/` and the Screen Sharing helper in
+`scripts/regress/mac/`.
 
 ### Linux
 
@@ -484,7 +495,7 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 | `perf-suite` | `DUSKSTUDIO_RUN_PERF_TEST=1` across the (rate, buffer, load) matrix. Off unless `--perf`. |
 | `scenario-fixtures` | every logical fixture the scenarios name resolves under `DUSKSTUDIO_FIXTURE_DIR`; `SKIP` naming the ones that do not. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
-| `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
+| `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-window-close`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui`: the plugin-editor scenarios that need a window. Off unless `--gui-scenarios` - it is the slowest leg and the most sensitive to GLX under Xvfb. |
 | `gui-plugin-picker`, `gui-settings-defaults` | `tests/gui_plugin_picker.sh` and `tests/gui_settings_defaults.sh` against the same binary: the two GUI cases that need a seeded config, which the suite runs without (the picker case skips there). With `--gui-scenarios` only. |
 | `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
@@ -548,8 +559,8 @@ private `HOME`, XDG directories, runtime directory, `DUSKSTUDIO_CONFIG_DIR` and
 `DUSKSTUDIO_MUSIC_DIR`, as in a source run. Package mode also exports
 `DUSKSTUDIO_EXPECT_MP3=1`: every release build carries the MP3 encoder, so
 `bounce.mp3_by_format` and `bounce.export_master_mp3_320` fail on a package
-without it instead of skipping. The Windows leg sets it for every launch too;
-set it by hand when running the scenarios against a macOS package.
+without it instead of skipping. The Windows and macOS package legs set it for
+every launch too.
 
 #### Scenario legs
 
@@ -585,6 +596,17 @@ display, so each leg gets a throwaway directory and a private environment:
 acknowledgement, so two instances racing for a slot a killed instance left
 behind is the leg most likely to flake. It fails with both processes' stderr and
 is not retried; re-run it ten times before trusting a change to that path.
+
+`bb-window-close` opens the minimal session through `DUSKSTUDIO_LOAD_SESSION`
+and, once its `[Dusk Studio/Load]` line is out, sends two `WM_DELETE_WINDOW`
+messages to the window titled Dusk Studio, the message a window manager's close
+button sends. The unchanged session has to exit within 30 s with no prompt,
+print the shutdown phases in order, and print the re-entry line for the second
+close. Xvfb has no window manager, and the app only asks for
+`WM_DELETE_WINDOW` when the atom already exists as it starts, so
+`scripts/regress/x11_close.py hold` interns the atom and keeps the display
+open for the length of the leg: Xvfb forgets every atom when its last client
+disconnects.
 
 `bb-damaged-recent` needs the startup picker, and GLX under Xvfb is not
 guaranteed on every host (the same caveat that keeps DAF/DGL windows in the
@@ -735,8 +757,9 @@ What it cannot prove: **anything with a window**. Launching the GUI from an ssh
 session aborts in the main window constructor on that node, and it does so on
 `main` too, so it is the environment and not the build. That covers both
 `gui-launch` and `scenarios-gui`, the GUI half of the scenario suite. Those legs
-report `SKIP` rather than a false failure; run them by hand from a console
-session on the Air:
+report `SKIP` rather than a false failure. Package mode, below, starts the app
+through `open` into the desktop session and runs the GUI suite there; for a
+source build, run them by hand from a console session on the Air:
 
 ```bash
 cd ~/src/dusk-studio
@@ -748,6 +771,66 @@ DUSKSTUDIO_RUN_SCENARIOS=gui \
 ```
 
 The IPC self-test is Linux-only code and is skipped for that reason, not this one.
+
+#### Package mode
+
+`--dmg <path>` or `--release-run <id>` tests a release disk image instead of a
+source build: installed into `/Applications` the way a user installs it, with
+the GUI suite in the logged-in desktop session. `--release-run` downloads the
+`release-macos` artifact of that `release.yml` run, and the fixtures are built
+from the commit the run built; with `--dmg` they come from this checkout's
+`HEAD`.
+
+```bash
+scripts/regress.sh mac --host marc@macbook-air.local --release-run 1234567890
+scripts/regress.sh mac --host marc@macbook-air.local --dmg /path/to/dusk-studio-X.Y.Z-macOS-arm64.dmg
+```
+
+Prerequisites, on top of the source leg's: a user logged in at the Air's
+desktop, Screen Sharing on, its password in `~/.config/dusk-mac-vnc/login` on
+this box (it is also the login password, which the unlock step types), and a
+Python with `vncdotool` at `~/.local/share/dusk-regress/vnc/bin/python`
+(`python3 -m venv ~/.local/share/dusk-regress/vnc && ~/.local/share/dusk-regress/vnc/bin/pip install vncdotool`,
+or point `DUSK_REGRESS_VNC_PYTHON` at another one). The node's own checkout is
+never touched, so it may be dirty or on any branch: the fixtures build in a
+worktree of it, `~/src/dusk-studio-regress`, which is kept between runs so the
+next build is incremental.
+
+| Leg | What it proves |
+|---|---|
+| `mac-preflight` | node reachable, review model unloaded, no `/Applications/DuskStudio.app` already running. Starts `caffeinate -d -i -u -s` for the whole leg (bounded to four hours): without it the screen locks after about 20 minutes and the GUI suite stalls. |
+| `screen-unlocked` | the desktop session is unlocked, unlocking it over Screen Sharing when it is not. |
+| `package-fetch` | `--release-run` only: the run's disk image downloaded, and its head commit taken as the source commit. |
+| `dmg-install` | the file name is `dusk-studio-X.Y.Z-macOS-arm64.dmg`, the app inside reports that version, it replaces `/Applications/DuskStudio.app` (quarantine attribute cleared), the installed binary is identical to the image's, and `codesign --verify --deep --strict` passes. The app stays installed afterwards; the next run replaces it. |
+| `fixture-source` | the source commit pushed over ssh to a scratch branch in the node's checkout, checked out detached in the worktree with its submodules, and the scratch branch deleted again whether or not the checkout worked. Only the worktree's own registration is taken over when its directory has gone; the checkout's other worktrees are never pruned. |
+| `configure-fixtures` / `donor-check` / `build-fixtures` | `build-tests/` in the worktree configured through `~/mac-configure.sh` (with its `cd` retargeted at the worktree), building the donor from `DONOR_REV`, and every `dusk-studio-*-fixture` target built at `-j5`. The test binary is not built. |
+| `scenario-fixtures` | as on Linux, against the worktree's fixture table and roots. The node builds no LV2 host, so the LV2 fixtures are unresolved there. |
+| `mic-permission` | every new build is a new ad-hoc identity, so its first launch asks for the microphone, and an app started while that prompt is up comes up with no audio device. One throwaway launch through `open` gets the prompt answered Allow before any suite runs, confirmed from tccd's log. A build already denied fails with the `tccutil reset Microphone audio.dusk.studio` to run. |
+| `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed binary over ssh, in a private `HOME`, XDG directories, `DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR`, with `DUSKSTUDIO_FIXTURE_DIR` pointed at the worktree and `DUSKSTUDIO_EXPECT_MP3=1`. Judged as on Linux; a `BAILING` teardown line anywhere in the log adds a failed `scenarios-headless:bailing` row. |
+| `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui` in the desktop session, started with `open -n --env ...` (a GUI launched over plain ssh aborts), with the same environment. `open` hands back no exit status, so a crash shows as a missing terminal line or in `crash-reports`. `[DIRTY]` lines are printed; `BAILING` fails as above. |
+| `privacy-prompts` | a watcher reads tccd's log over ssh from the first launch to the last, and answers the microphone prompt Allow over Screen Sharing. It never clicks any other prompt. Fails on a microphone prompt left unanswered while the process that asked still ran, or answered the other way, and on any folder prompt or prompt of another kind, however it was answered: the suites run in a private `HOME` and should raise none. |
+| `crash-reports` | no `DuskStudio*` report in `~/Library/Logs/DiagnosticReports` since the leg started. |
+
+The microphone prompt's Allow button is clicked at a fixed point on the Air's
+1920x1080 desktop, `DUSK_REGRESS_MAC_MIC_ALLOW` (default `1019,408`), and only
+when a screenshot taken over the same connection just before the click shows
+it there: a light two-button row whose right-hand label is the width of
+"Allow" and whose left-hand one the width of "Don't Allow". Anything else, the
+Dusk Studio window where a dismissed prompt was for one, is not clicked; the
+watcher logs `not-on-screen` and `vnc.err` says what it found instead. Each
+screenshot is kept as `prompt-<msgID>-<n>.png`, and the watcher tries each
+prompt three times, 20 s apart, stopping once tccd records an answer or the
+process that asked (the msgID's pid) has exited. If the default stops matching,
+those screenshots show where the button moved to. The watcher reads the log
+from 15 minutes before the leg started, so a prompt an interrupted run left on
+screen (which blocks this run's launches without being raised again) is
+answered too, as long as the process that raised it is still running. Screen
+Sharing logs in as the ssh user. The suite logs, `prompts.log` and the screenshots
+stay in `$TMPDIR/dusk-regress-mac-<timestamp>/`; everything on the node lives
+under `~/dusk-regress-pkg/<timestamp>/` and is removed on exit, Ctrl-C
+included, along with any app the leg started and its `caffeinate`. Other
+overrides: `DUSK_REGRESS_MAC_HOST`, `DUSK_REGRESS_MAC_VNC_HOST` (default: the
+ssh host), `DUSK_REGRESS_MAC_VNC_LOGIN`, `DUSK_JOBS`.
 
 ### Windows
 
@@ -859,7 +942,7 @@ ones stay unresolved on Windows in any case, since Windows builds no LV2 host.
 | `msi-install` | the package installs (or is already installed) through `msiexec`: the Windows Installer then lists exactly this ProductCode for the upgrade code, at this version, under `Program Files`, installed per machine with its uninstall entry under HKLM (see Per machine); every file of the package's File table is at the path its Directory table names and matches the manifest byte for byte; nothing else is in the install folder; `dusk-studio-plugin-host.exe` sits beside `DuskStudio.exe`; the all-users Start menu and desktop shortcuts exist and point at the installed executable; its FileVersion and its `--version` (run in a private profile) report the package version. It also snapshots the real user's Documents, Music, Desktop and Dusk Studio config folders and the entries at the top of the real home folder for `isolation-audit`. |
 | `phase1-selftest` | headless `DUSKSTUDIO_RUN_SELFTEST=1` with stdout and stderr captured through `ProcessStartInfo` redirection: exit code 0, at least one `[PASS]`, no `[FAIL]`. |
 | `phase2-handoff` | the first instance opens the shipped session through `DUSKSTUDIO_LOAD_SESSION` and the phase waits for its `[Dusk Studio/Load] session.json` line, then a second launch carrying `handoff.json` hands over and exits 0 within 30 s while the first instance stays alive, `GetForegroundWindow()` is its window afterwards, and its stderr shows `[Dusk Studio/Load] handoff.json` after the first load - the handoff is supposed to raise the window and load the path, which the exit code alone cannot see. Both launches share one private profile. |
-| `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
+| `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back to the process's visible window titled Dusk Studio. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
 | `ipc-selftest` | `SKIP`. `DUSKSTUDIO_RUN_IPC_SELFTEST` never returns on Windows (issue #504), so the out-of-process transport is only compile- and contract-verified there. Remove the skip when #504 closes. |
 | `scenario-fixtures` | as on Linux, against the two staged roots. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed app, 900 s budget in the guest. The whole output comes back and is judged by the same rules as the Linux leg: exit 0, no `[FAIL]`, the terminal `=== scenarios: ` line; skips in the note, missing fixtures in a `:fixtures` row. A run that hits its budget is announced before it is killed, screenshotted as `<leg>-stall.png`, and reported as `timed out in <case>`, the last case the suite started without finishing. |
@@ -885,6 +968,12 @@ wrong here:
   phases. Every script assigns its own before reading them.
 - A P/Invoke with a PowerShell scriptblock delegate (`EnumWindows`) throws under
   `iex`. The P/Invoke surface stays limited to direct calls.
+- `Process.MainWindowHandle` is not the app's window. It is the first visible
+  unowned window .NET enumerates, and the four drop-shadow windows JUCE puts
+  around the main window qualify. A `WM_CLOSE` posted to one of them is dropped,
+  so phase 3 closed nothing about one launch in four and read it as a quit that
+  never started. Find the window by its title and owning process with
+  `FindWindowEx` instead.
 - PowerShell 5.1 sends a string body as ISO-8859-1 and reads redirected output
   in the OEM code page; the scripts POST UTF-8 bytes and read the app as UTF-8.
 - The app writes `\r\n` on Windows; the runner strips the `\r` before judging.

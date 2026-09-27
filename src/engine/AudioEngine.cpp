@@ -10,6 +10,7 @@
 #include "TransportSnapshot.h"
 #include "device/DefaultInputChoice.h"
 #include "hosting/NativeStateIdentity.h"
+#include "hosting/RestartPacer.h"
 #include "../dsp/OutputPairRouting.h"
 #include "McuReceiver.h"
 #include "McuController.h"
@@ -529,13 +530,18 @@ public:
             }
         }
 
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-        // Latency and bus-layout changes both require a setActive cycle. Keep
-        // every flagged instance under one engine fence while it rebuilds its
-        // process arrays and the slot rebuilds its adapter.
+#if DUSKSTUDIO_HAS_NATIVE_VST3 || DUSKSTUDIO_HAS_NATIVE_CLAP
+        // A VST3 latency or bus-layout change, and a CLAP restart request (how
+        // an active CLAP plug-in announces a new latency), all need a
+        // deactivate / activate cycle. Keep every flagged instance under one
+        // engine fence while it rebuilds its process arrays and the slot
+        // rebuilds its adapter. Each slot's RestartPacer decides when: held
+        // through a take, and spaced out for a plug-in that keeps asking.
         bool anyReactivated = false;
         const double sr    = engine.getCurrentSampleRate();
         const int    block = engine.getCurrentBlockSize();
+        const bool holdForTake = engine.transport.isRecording()
+                                 || engine.recordManager.isActive();
         // Deferred while an offline bounce drives the callback: the
         // suspendProcessing below would gate the render into silent blocks.
         // The flags stay set, so the cycle runs on the first tick after the
@@ -543,25 +549,75 @@ public:
         if (sr > 0.0 && block > 0
             && ! engine.offlineRenderActive.load (std::memory_order_acquire))
         {
-            auto cycle = [&] (auto& slot)
+            // discardRaisedMeanwhile runs under the same fence, right after the
+            // cycle: a request the plug-in made from inside its own activation
+            // (or while it was being brought back) describes the state that
+            // activation has just read, and honouring it would restart the
+            // plug-in again on every tick.
+            auto service = [&] (auto& slot, hosting::RestartPacer& pacer, bool requested,
+                                const char* where, int index,
+                                auto&& underFence, auto&& discardRaisedMeanwhile)
+            {
+                switch (pacer.tick (requested, holdForTake, slot.generation()))
+                {
+                    case hosting::RestartPacer::Action::None:
+                        return;
+                    case hosting::RestartPacer::Action::GaveUp:
+                        std::fprintf (stderr,
+                                      "[Dusk Studio/AudioEngine] %s %d: plug-in \"%s\" keeps "
+                                      "asking to be restarted; holding its restarts until "
+                                      "it stops asking.\n",
+                                      where, index + 1, slot.getPath().c_str());
+                        return;
+                    case hosting::RestartPacer::Action::Restart:
+                        break;
+                }
+                if (! anyReactivated) engine.suspendProcessing();
+                anyReactivated = true;
+                underFence();
+                std::string err;
+                if (! slot.reactivate (sr, block, err))
+                    slot.quarantineAfterFailedReactivation();
+                discardRaisedMeanwhile();
+            };
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            auto cycleVst3 = [&] (auto& slot, hosting::RestartPacer& pacer,
+                                  const char* where, int index)
             {
                 auto* inst = slot.getInstance();
                 if (inst == nullptr) return;
                 inst->refreshParamInfoIfChanged();
                 const bool latencyChanged = slot.consumeLatencyChanged();
-                if (! latencyChanged && ! inst->ioChangePending()) return;
-                if (! anyReactivated) engine.suspendProcessing();
-                anyReactivated = true;
-                inst->consumeIoChanged();
-                std::string err;
-                if (! slot.reactivate (sr, block, err))
-                    slot.quarantineAfterFailedReactivation();
+                // The pending I/O change holds processBlock off, so it is only
+                // cleared once the fence is up. One raised during the cycle is
+                // kept: the buses it describes were not the ones just read.
+                service (slot, pacer, latencyChanged || inst->ioChangePending(), where, index,
+                         [inst] { inst->consumeIoChanged(); },
+                         [&slot] { (void) slot.consumeLatencyChanged(); });
             };
             for (int t = 0; t < Session::kNumTracks; ++t)
-                cycle (engine.getChannelStrip (t).getNativeVst3Slot());
+                cycleVst3 (engine.getChannelStrip (t).getNativeVst3Slot(),
+                           vst3TrackPacers[(size_t) t], "track", t);
             for (int a = 0; a < Session::kNumAuxLanes; ++a)
                 for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
-                    cycle (engine.getAuxLaneStrip (a).getNativeVst3Slot (s));
+                    cycleVst3 (engine.getAuxLaneStrip (a).getNativeVst3Slot (s),
+                               vst3AuxPacers[(size_t) a][(size_t) s], "aux lane", a);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            auto cycleClap = [&] (auto& slot, hosting::RestartPacer& pacer,
+                                  const char* where, int index)
+            {
+                service (slot, pacer, slot.consumeRestartRequest(), where, index,
+                         [] {}, [&slot] { (void) slot.consumeRestartRequest(); });
+            };
+            for (int t = 0; t < Session::kNumTracks; ++t)
+                cycleClap (engine.getChannelStrip (t).getNativeClapSlot(),
+                           clapTrackPacers[(size_t) t], "track", t);
+            for (int a = 0; a < Session::kNumAuxLanes; ++a)
+                for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+                    cycleClap (engine.getAuxLaneStrip (a).getNativeClapSlot (s),
+                               clapAuxPacers[(size_t) a][(size_t) s], "aux lane", a);
+#endif
             if (anyReactivated)
             {
                 engine.resumeProcessing();
@@ -585,6 +641,17 @@ public:
     }
 private:
     AudioEngine& engine;
+
+    using AuxPacers = std::array<std::array<hosting::RestartPacer, AuxLaneParams::kMaxLanePlugins>,
+                                 Session::kNumAuxLanes>;
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    std::array<hosting::RestartPacer, Session::kNumTracks> vst3TrackPacers;
+    AuxPacers vst3AuxPacers;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    std::array<hosting::RestartPacer, Session::kNumTracks> clapTrackPacers;
+    AuxPacers clapAuxPacers;
+#endif
 };
 
 AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
@@ -675,8 +742,18 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         if (types.front() != nullptr)
             preferredBackend = types.front()->getTypeName();
 
+    // macOS asks before an app may capture audio, and until the prompt is
+    // answered CoreAudio holds any open that includes an input, then fails it,
+    // output and all, if nobody answers for a few minutes. A first launch has
+    // no saved setup to honour, so until access is granted it opens outputs
+    // alone and asks for access separately; the input follows a yes.
+    const bool firstLaunch = savedDeviceState.empty();
+    const bool openInputs = ! firstLaunch
+                            || device::microphoneAccess() == device::MicrophoneAccess::Granted;
+
     std::string deviceInitError;
-    if (const auto err = deviceManager.initialise (16, 2, savedDeviceState,
+    if (const auto err = deviceManager.initialise (openInputs ? kDeviceInputChannels : 0, 2,
+                                                   savedDeviceState,
                                                    /*selectDefaultOnFailure*/ true);
         ! err.empty())
     {
@@ -698,15 +775,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // wired yet, so the setup-switch broadcasts reach no one (no re-entrancy, no
     // fallback loop).
     {
-        auto working = [this]
-        {
-            auto* d = deviceManager.getCurrentDevice();
-            // A started SR alone isn't enough: a per-device ALSA name can resolve
-            // to 0 active outputs (see the silent-failure guard further down), so
-            // require real output channels too.
-            return d != nullptr && d->getCurrentSampleRate() > 0.0
-                && d->getActiveOutputChannels().count() > 0;
-        };
+        auto working = [this] { return device::hasWorkingOutput (deviceManager); };
 
         // The user's INTENDED backend + output device (from the saved blob), not
         // whatever initialise() landed on. Windows shared and exclusive modes
@@ -722,18 +791,23 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
             deviceFallbackHold_ = true;
 
             std::vector<std::string> attemptedTypes;
-            auto attempted = [&attemptedTypes] (const std::string& typeName)
+            std::vector<std::string> outputOnlyTypes;
+            const auto listed = [] (const std::vector<std::string>& types, const std::string& typeName)
             {
-                return std::find (attemptedTypes.begin(), attemptedTypes.end(), typeName)
-                         != attemptedTypes.end();
+                return std::find (types.begin(), types.end(), typeName) != types.end();
+            };
+            auto attempted = [&attemptedTypes, &listed] (const std::string& typeName)
+            {
+                return listed (attemptedTypes, typeName);
             };
 
             // Clear the pinned (busy) device name + use default channels, else
             // setSetup can short-circuit to a non-started, sr-0 setup.
-            auto openDefaultOnType = [this, &attemptedTypes, &attempted]
+            auto openDefaultOnType = [this, &attemptedTypes, &outputOnlyTypes, &attempted]
                                      (const std::string& typeName, const std::string& devName)
             {
                 if (! attempted (typeName)) attemptedTypes.push_back (typeName);
+                outputOnlyTypes.push_back (typeName);
                 deviceManager.setCurrentDeviceType (typeName, /*treatAsChosen*/ true);
                 auto s = deviceManager.getSetup();
                 s.inputDeviceName.clear();
@@ -787,6 +861,16 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                     if (working()) break;
                 }
             }
+
+            // 4) The backend still current, with its default output alone, unless
+            //    a step above already opened it that way. The open that failed
+            //    paired that output with an input and failed whole with it. On
+            //    macOS this is the only fallback there is: CoreAudio is the one
+            //    backend, so steps 1-3 never run.
+            if (! working())
+                if (auto* type = deviceManager.getCurrentDeviceType();
+                    type != nullptr && ! listed (outputOnlyTypes, type->getTypeName()))
+                    device::openOutputAlone (deviceManager);
         }
 
         // Resolve the outcome unconditionally: this also catches the case where
@@ -821,54 +905,43 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // can both settle on an output with no input selected. Recording then rolls
     // and captures nothing. An existing configuration is never touched: a user
     // who chose no input keeps it.
-    if (savedDeviceState.empty())
+    const auto microphone = device::microphoneAccess();
+    if (firstLaunch && device::hasWorkingOutput (deviceManager))
     {
-        const auto setup = deviceManager.getSetup();
-        if (setup.inputDeviceName.empty())
+        if (openInputs)
         {
-            if (auto* type = deviceManager.getCurrentDeviceType())
+            // The alert and notice computed above still describe the device that
+            // was open before a failed reopen closed it.
+            if (! openFirstLaunchInput())
             {
-                const auto chosen = device::chooseDefaultInputDevice (
-                    setup.outputDeviceName, type->getDeviceNames (/*wantInputNames*/ true));
-                if (! chosen.empty())
-                {
-                    const auto result = device::openWithFirstLaunchInput (deviceManager, chosen);
-                    if (result.error.empty())
-                    {
-                        std::fprintf (stderr,
-                                      "[Dusk Studio/AudioEngine] first launch: selected input "
-                                      "device \"%s\" alongside output \"%s\".\n",
-                                      chosen.c_str(), setup.outputDeviceName.c_str());
-                    }
-                    else
-                    {
-                        std::fprintf (stderr,
-                                      "[Dusk Studio/AudioEngine] first launch: input device "
-                                      "\"%s\" would not open alongside output \"%s\" (%s); "
-                                      "%s.\n",
-                                      chosen.c_str(), setup.outputDeviceName.c_str(),
-                                      result.error.c_str(),
-                                      result.outputRestored ? "reopened the output on its own"
-                                                            : "the output did not reopen either");
-                        // The alert and notice computed above still describe the
-                        // device that was open before this reopen closed it.
-                        if (! result.outputRestored)
-                        {
-                            startupDeviceMessage_ = duskstudio::startupDeviceMessage (false, {}, {});
-                            backendFallbackNotice_.clear();
-                        }
-                    }
-                }
-                else
-                {
-                    std::fprintf (stderr,
-                                  "[Dusk Studio/AudioEngine] first launch: backend offers no "
-                                  "capture devices; recording is unavailable until one is "
-                                  "chosen in Settings.\n");
-                }
+                startupDeviceMessage_ = duskstudio::startupDeviceMessage (false, {}, {});
+                backendFallbackNotice_.clear();
             }
         }
+        else
+        {
+            std::fprintf (stderr,
+                          "[Dusk Studio/AudioEngine] first launch: microphone access is %s; "
+                          "opened the output alone.\n",
+                          microphone == device::MicrophoneAccess::Denied ? "denied"
+                                                                         : "not decided yet");
+        }
     }
+    // Asked whenever access is still undecided, so the transport bar follows the
+    // answer; only a first launch that left its input out adds one on a yes.
+    if (microphone == device::MicrophoneAccess::Undecided)
+    {
+        const bool addInput = firstLaunch && ! openInputs;
+        device::requestMicrophoneAccess ([this, alive = deviceCallbacksAlive, addInput] (bool granted)
+        {
+            dusk::callAsync ([this, alive, granted, addInput]
+            {
+                if (alive->load (std::memory_order_acquire))
+                    applyMicrophoneAnswer (granted, addInput);
+            });
+        });
+    }
+    microphoneNotice_ = device::microphoneAccessNotice (microphone);
 
    #if ! defined(__linux__) && ! DUSKSTUDIO_HAS_NATIVE_COREMIDI
     // The JUCE MIDI fallback drives its input enable/callback lifecycle through
@@ -1716,6 +1789,67 @@ void AudioEngine::clearDeviceFallbackHold()
     if (deviceManager.getCurrentDevice() != nullptr)
         if (const auto blob = deviceManager.getStateBlob(); ! blob.empty())
             saveAudioDeviceState (blob);
+}
+
+bool AudioEngine::openFirstLaunchInput()
+{
+    const auto setup = deviceManager.getSetup();
+    auto* type = deviceManager.getCurrentDeviceType();
+    if (! setup.inputDeviceName.empty() || type == nullptr)
+        return true;
+
+    const auto chosen = device::chooseDefaultInputDevice (
+        setup.outputDeviceName, type->getDeviceNames (/*wantInputNames*/ true));
+    if (chosen.empty())
+    {
+        std::fprintf (stderr,
+                      "[Dusk Studio/AudioEngine] first launch: backend offers no "
+                      "capture devices; recording is unavailable until one is "
+                      "chosen in Settings.\n");
+        return true;
+    }
+
+    const auto result = device::openWithFirstLaunchInput (deviceManager, chosen, kDeviceInputChannels);
+    if (result.error.empty())
+    {
+        std::fprintf (stderr,
+                      "[Dusk Studio/AudioEngine] first launch: selected input "
+                      "device \"%s\" alongside output \"%s\".\n",
+                      chosen.c_str(), setup.outputDeviceName.c_str());
+        return true;
+    }
+    std::fprintf (stderr,
+                  "[Dusk Studio/AudioEngine] first launch: input device "
+                  "\"%s\" would not open alongside output \"%s\" (%s); "
+                  "%s.\n",
+                  chosen.c_str(), setup.outputDeviceName.c_str(),
+                  result.error.c_str(),
+                  result.outputRestored ? "reopened the output on its own"
+                                        : "the output did not reopen either");
+    return result.outputRestored;
+}
+
+void AudioEngine::applyMicrophoneAnswer (bool granted, bool addFirstLaunchInput)
+{
+    microphoneNotice_ = device::microphoneAccessNotice (
+        granted ? device::MicrophoneAccess::Granted : device::MicrophoneAccess::Denied);
+    std::fprintf (stderr, "[Dusk Studio/AudioEngine] microphone access %s.\n",
+                  granted ? "allowed" : "refused");
+    if (! granted || ! addFirstLaunchInput) return;
+
+    // A device the user chose while the prompt was up is theirs, input or no
+    // input; the startup fallback's own pick does not count as one.
+    if (! deviceFallbackHold_ && ! deviceManager.getStateBlob().empty())
+        return;
+
+    // Reopening the device mid-take, mid-playback (the mixer's or the
+    // mastering player's) or under a render would cut it off; the user can
+    // still pick the input in Settings > Audio then.
+    if (! transport.isStopped() || recordManager.isActive() || masteringPlayer.isPlaying()
+        || offlineRenderActive.load (std::memory_order_acquire)
+        || ! isAudioCallbackRegistered() || ! device::hasWorkingOutput (deviceManager))
+        return;
+    openFirstLaunchInput();
 }
 
 void AudioEngine::record()

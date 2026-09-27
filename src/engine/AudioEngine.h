@@ -29,6 +29,7 @@
 #include "device/DeviceManager.h"
 #include "device/IODevice.h"
 #include "device/IODeviceCallback.h"
+#include "device/MicrophoneAccess.h"
 #include "../session/Session.h"
 #include "AudioWorkerPool.h"
 #include "MasteringPlayer.h"
@@ -346,6 +347,11 @@ public:
         return backendFallbackNotice_;
     }
     void clearBackendFallbackNotice() noexcept { backendFallbackNotice_.clear(); }
+
+    // One line for the transport bar while macOS keeps the microphone from the
+    // app, because the prompt is unanswered or access was refused. Empty once
+    // access is granted, and always on other platforms. Message thread.
+    const std::string& microphoneNotice() const noexcept { return microphoneNotice_; }
 
     // Marker jumps clamp to known points - no overshoot past zero or
     // past the last marker. Message-thread only.
@@ -1065,6 +1071,19 @@ private:
     // platform's preferred one. Read by the transport bar every timer tick and
     // cleared when the user picks a device. Message-thread only.
     std::string         backendFallbackNotice_;
+
+    // Input channels the engine asks a device for (the Settings panel's cap).
+    static constexpr int kDeviceInputChannels = 16;
+
+    // First launch: adds the capture device that goes with the open output.
+    // False only when that reopen lost the output as well. Message thread.
+    bool openFirstLaunchInput();
+
+    // The answer to the microphone prompt, delivered on the message thread. A
+    // yes adds the input a first launch left out when addFirstLaunchInput.
+    void applyMicrophoneAnswer (bool granted, bool addFirstLaunchInput);
+
+    std::string         microphoneNotice_;
 
     DeviceLostAlertSink onDeviceLostAlert_;
     RecordBlockedSink   onRecordBlocked_;

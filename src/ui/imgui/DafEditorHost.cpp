@@ -104,6 +104,7 @@ struct DafEditorHost::Impl final : private dusk::Timer
             applyEdit ((int) index, value);
         };
 
+        handedCallbacks = editorCallbacks;
         std::string error;
         editor = unit.createEditor (nativeParent, geometry.width, geometry.height,
                                     geometry.scaleFactor, std::move (editorCallbacks), error);
@@ -289,6 +290,9 @@ struct DafEditorHost::Impl final : private dusk::Timer
     Callbacks callbacks;
     std::string lastFailure;
     std::unique_ptr<builtin::DafEditor> editor;
+    // A copy of what the open editor was handed, so a scenario can work a
+    // control through the same callbacks a drag in the editor calls.
+    builtin::DafEditorCallbacks handedCallbacks;
     std::vector<float> pushedValues;
     Geometry lastGeometry;
     std::uintptr_t embeddedParent = 0;
@@ -345,4 +349,15 @@ bool DafEditorHost::hasRenderedFrame() const noexcept
 }
 
 void DafEditorHost::tick() { impl->tick(); }
+
+bool DafEditorHost::editForScenario (int index, float value)
+{
+    const auto& handed = impl->handedCallbacks;
+    if (! isOpen() || index < 0 || ! handed.gesture || ! handed.parameterEdited)
+        return false;
+    handed.gesture ((std::uint32_t) index, true);
+    handed.parameterEdited ((std::uint32_t) index, value);
+    handed.gesture ((std::uint32_t) index, false);
+    return true;
+}
 } // namespace duskstudio::imgui

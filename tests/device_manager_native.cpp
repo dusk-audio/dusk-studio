@@ -387,7 +387,7 @@ TEST_CASE ("First-launch input: a refused pairing reopens the output alone", "[a
 
     SECTION ("an input the device accepts opens alongside the output")
     {
-        const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-alt");
+        const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-alt", 16);
         REQUIRE (result.error.empty());
         REQUIRE (dm.getCurrentDevice() != nullptr);
         REQUIRE (dm.getSetup().inputDeviceName == "pw-alt");
@@ -396,7 +396,7 @@ TEST_CASE ("First-launch input: a refused pairing reopens the output alone", "[a
     SECTION ("a refused input leaves the output open as it was")
     {
         h.pw->rejectedInputs.insert ("pw-alt");
-        const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-alt");
+        const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-alt", 16);
 
         auto* device = dm.getCurrentDevice();
         REQUIRE (device != nullptr);
@@ -413,10 +413,99 @@ TEST_CASE ("First-launch input: a refused pairing reopens the output alone", "[a
     {
         h.pw->rejectedInputs.insert ("pw-alt");
         h.pw->busy.insert ("pw-default");
-        const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-alt");
+        const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-alt", 16);
         REQUIRE_FALSE (result.error.empty());
         REQUIRE_FALSE (result.outputRestored);
         REQUIRE (dm.getCurrentDevice() == nullptr);
+    }
+}
+
+// An open that pairs the default output with an input fails whole when the
+// input does: one on another card that refuses the output's rate, or on macOS
+// one whose microphone prompt nobody answered. CoreAudio is the only backend
+// there, so no other backend's output can stand in: the output has to reopen
+// on its own, on the same backend.
+TEST_CASE ("First launch: an input that fails the combined open still leaves the output",
+           "[audio][device]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Log log;
+    std::vector<std::unique_ptr<IODeviceType>> types;
+    auto only = std::make_unique<MockType> (&log, "CoreAudio",
+        std::vector<std::string> { "Speakers" }, std::vector<std::string> { "Microphone" },
+        1, 2, std::vector<double> { 48000.0 }, 512);
+    only->rejectedInputs.insert ("Microphone");
+    types.push_back (std::move (only));
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (std::move (types));
+
+    REQUIRE_FALSE (dm.initialise (16, 2, "", /*selectDefaultOnFailure*/ true).empty());
+    REQUIRE_FALSE (duskstudio::device::hasWorkingOutput (dm));
+
+    REQUIRE (duskstudio::device::openOutputAlone (dm));
+    auto* device = dm.getCurrentDevice();
+    REQUIRE (device != nullptr);
+    CHECK (device->getName() == "Speakers");
+    CHECK (device->getActiveOutputChannels().count() == 2);
+    CHECK (dm.getSetup().inputDeviceName.empty());
+    CHECK (dm.getStateBlob().empty());
+}
+
+// While access is undecided a first launch opens outputs alone, asking the
+// manager for no input channels at all, and adds the input once the answer is
+// yes. That input has to get channels even though the manager was told to
+// want none.
+TEST_CASE ("First launch: an input added after outputs alone gets its channels",
+           "[audio][device]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h;
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+
+    REQUIRE (dm.initialise (0, 2, "", /*selectDefaultOnFailure*/ true).empty());
+    REQUIRE (dm.getCurrentDevice() != nullptr);
+    REQUIRE (dm.getSetup().inputDeviceName.empty());
+    REQUIRE (dm.getCurrentDevice()->getActiveInputChannels().isZero());
+
+    const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-default", 16);
+    REQUIRE (result.error.empty());
+    CHECK (dm.getSetup().inputDeviceName == "pw-default");
+    CHECK (dm.getCurrentDevice()->getActiveInputChannels().count() > 0);
+    CHECK (dm.getCurrentDevice()->getActiveOutputChannels().count() > 0);
+    CHECK (dm.getStateBlob().empty());
+}
+
+// The engine asks for 16 inputs and arms tracks against the width the device
+// reports back. PipeWire, like this mock, reports the mask it was handed, so
+// the manager itself must not hand a two-input device sixteen: ARM on In 3
+// has to stay refused.
+TEST_CASE ("First launch: the input opens at the device's own width",
+           "[audio][device]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h;
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+    REQUIRE (dm.initialise (0, 2, "", /*selectDefaultOnFailure*/ true).empty());
+
+    const auto result = duskstudio::device::openWithFirstLaunchInput (dm, "pw-default", 16);
+    REQUIRE (result.error.empty());
+    auto* device = dm.getCurrentDevice();
+    REQUIRE (device != nullptr);
+    CHECK (device->getActiveInputChannels().count() == 2);
+    CHECK (dm.getSetup().inputChannels.count() == 2);
+
+    SECTION ("a named output mask is held to the device's outputs too")
+    {
+        auto setup = dm.getSetup();
+        setup.useDefaultOutputChannels = false;
+        setup.outputChannels.clear();
+        setup.outputChannels.setRange (0, 8, true);
+        REQUIRE (dm.setSetup (setup, /*treatAsChosen*/ false).empty());
+        REQUIRE (dm.getCurrentDevice() != nullptr);
+        CHECK (dm.getCurrentDevice()->getActiveOutputChannels().count() == 2);
+        CHECK (dm.getCurrentDevice()->getActiveInputChannels().count() == 2);
     }
 }
 

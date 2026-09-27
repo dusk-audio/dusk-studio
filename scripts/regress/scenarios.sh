@@ -41,6 +41,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-damaged-recent
     bb-clean-quit
     bb-keyboard-quit
+    bb-window-close
     bb-quit-twice
     bb-quit-during-mixdown
     bb-quit-save-rate
@@ -546,6 +547,59 @@ bb_keyboard_quit_body() {
     bb_assert_order A "${BB_SHUTDOWN_ORDER[@]}" || return 1
 }
 
+leg_bb_window_close() {
+    bb_begin bb-window-close 120 || return 1
+    local rc=0 holder=""
+    bb_window_close_body || rc=$?
+    if [[ -n "$holder" ]]; then
+        kill "$holder" 2>/dev/null || true
+        wait "$holder" 2>/dev/null || true
+    fi
+    bb_end "$rc"
+}
+
+# The window's close button on a session that has just opened and is unchanged:
+# the quit goes straight to the shutdown, with no prompt, and a second close
+# lands on the latch. The close is sent to the window titled Dusk Studio, never
+# to whichever window the process shows first, which can be a drop shadow.
+bb_window_close_body() {
+    local session
+    session="$(bb_session window-close)" || return 1
+    DISPLAY="$XVFB_DISPLAY" python3 "${SCENARIOS_DIR}/x11_close.py" hold \
+        >"$BB_SDIR/holder.out" 2>&1 &
+    holder=$!
+    local deadline=$((SECONDS + $(bb_budget 10)))
+    until grep -qx ready "$BB_SDIR/holder.out" 2>/dev/null; do
+        kill -0 "$holder" 2>/dev/null || { bb_fail "x11_close.py hold: $(cat "$BB_SDIR/holder.out")"; return 1; }
+        ((SECONDS < deadline)) || { bb_fail "x11_close.py hold never became ready"; return 1; }
+        sleep 0.1
+    done
+
+    bb_spawn A "DUSKSTUDIO_LOAD_SESSION=$session" "DUSKSTUDIO_QUIT_AFTER_MS=" \
+        "DUSKSTUDIO_RUN_SCENARIOS=" "DUSKSTUDIO_RUN_SELFTEST=" -- || return 1
+    bb_wait_marker A "[Dusk Studio/Load] session.json" 60 || return 1
+    local window="" id
+    deadline=$((SECONDS + $(bb_budget 30)))
+    while [[ -z "$window" ]]; do
+        while read -r id; do
+            if [[ "$(DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool getwindowname "$id" 2>/dev/null)" == "Dusk Studio" ]]; then
+                window="$id"
+                break
+            fi
+        done < <(DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool search --onlyvisible --pid "${BB_PID[A]}")
+        [[ -n "$window" ]] && break
+        ((SECONDS < deadline)) || { bb_fail "no visible window titled Dusk Studio"; return 1; }
+        sleep 0.2
+    done
+    DISPLAY="$XVFB_DISPLAY" python3 "${SCENARIOS_DIR}/x11_close.py" close "$window" 2 || return 1
+    if ! bb_wait_exit A 30; then
+        bb_fail "an unchanged session asked before quitting, or the close was lost"
+        return 1
+    fi
+    bb_assert_order A "${BB_SHUTDOWN_ORDER[@]}" || return 1
+    bb_assert_marker A "re-entry ignored: shutdown already in progress" || return 1
+}
+
 leg_bb_clean_quit() {
     bb_begin bb-clean-quit 240 || return 1
     local rc=0
@@ -907,6 +961,12 @@ regress_scenarios_run() {
         regress_leg "bb-keyboard-quit" leg_bb_keyboard_quit
     else
         regress_skip "bb-keyboard-quit" "needs xdotool"
+    fi
+
+    if command -v xdotool >/dev/null 2>&1 && python3 -c "import ctypes; ctypes.CDLL(\"libX11.so.6\")" 2>/dev/null; then
+        regress_leg "bb-window-close" leg_bb_window_close
+    else
+        regress_skip "bb-window-close" "needs xdotool and libX11 for python3"
     fi
 
     if scenarios_has_quit_timer; then

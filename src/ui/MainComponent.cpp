@@ -5912,11 +5912,7 @@ constexpr const char* kCleanOutFolderNotOwned =
 
 bool MainComponent::refuseCleanOut()
 {
-    // A take a bailed stop left behind is dropped rather than reported as
-    // recording: nothing records, and its file was never going to be kept.
-    auto& recorder = engine.getRecordManager();
-    recorder.reclaimBailedTake();
-    if (recorder.hasOpenTake())
+    if (engine.getRecordManager().isActive())
     {
         showDuskAlert (*this, "Clean out", kCleanOutWhileRecording);
         return true;

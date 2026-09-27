@@ -1614,7 +1614,8 @@ const ScenarioRegistrar fileKeys { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runFileKeys (host, ctx); }
 } };
 
-std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContext& ctx)
+std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContext& ctx, const std::string& unitId,
+                                                   const std::string& control, float position)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
     return ScenarioResult::skip ("requires native UI");
@@ -1653,23 +1654,30 @@ std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContex
     host.switchToStage (GuiHost::Stage::Mixing);
     std::string error;
     engine.suspendProcessing();
-    const bool loaded = strip.loadBuiltin ("dusk.builtin.utility", error);
+    const bool loaded = strip.loadBuiltin (unitId, error);
     if (loaded) strip.insertMode.store (ChannelStrip::kInsertPlugin);
     engine.resumeProcessing();
-    if (! loaded) return ScenarioResult::fail ("could not load Utility: " + error);
+    if (! loaded) return ScenarioResult::fail ("could not load " + unitId + ": " + error);
+    int paramIndex = -1;
+    for (int i = 0; i < strip.getBuiltinSlot().paramCount(); ++i)
+        if (const auto* info = strip.getBuiltinSlot().paramInfo (i);
+            info != nullptr && info->id != nullptr && control == info->id) paramIndex = i;
+    if (paramIndex < 0) return ScenarioResult::fail (unitId + " has no " + control + " parameter");
+    const float before = strip.getBuiltinSlot().getParamValue (paramIndex);
     if (auto* handle = host.strip (0)) handle->refreshInsertButton();
     ctx.expect (strip.insertLastTouchedParamIndex() == -1, "fresh unit already has a touched parameter");
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 250, [&host, &ctx]
     { ctx.expect (host.clickInsert (0, false), "insert button unavailable"); } });
-    steps->push_back ({ 600, [&host, &ctx]
-    { ctx.expect (host.builtinPointer (0, "gain_db", 0.25f, true), "native Gain pointer down failed"); } });
-    steps->push_back ({ 150, [&host, &ctx]
-    { ctx.expect (host.builtinPointer (0, "gain_db", 0.25f, false), "native Gain pointer up failed"); } });
-    steps->push_back ({ 150, [&host, &ctx, &strip]
+    steps->push_back ({ 600, [&host, &ctx, control, position]
+    { ctx.expect (host.builtinPointer (0, control, position, true), "native " + control + " pointer down failed"); } });
+    steps->push_back ({ 150, [&host, &ctx, control, position]
+    { ctx.expect (host.builtinPointer (0, control, position, false), "native " + control + " pointer up failed"); } });
+    steps->push_back ({ 150, [&host, &ctx, &strip, control, paramIndex, before]
     {
-        ctx.expect (std::abs (strip.getBuiltinSlot().getParamValue (0)) > 1.0f, "Gain control did not change parameter");
-        ctx.expect (strip.insertLastTouchedParamIndex() == 0, "Gain was not tracked as last touched");
+        ctx.expect (std::abs (strip.getBuiltinSlot().getParamValue (paramIndex) - before) > 0.05f,
+                    control + " control did not change parameter");
+        ctx.expect (strip.insertLastTouchedParamIndex() == paramIndex, control + " was not tracked as last touched");
         host.closeBuiltin (0);
     } });
     steps->push_back ({ 200, [&host, &ctx]
@@ -1688,17 +1696,18 @@ std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContex
         midi.addEvent (cc, 3, 0);
         engine.stageTestMidiInjection (0, std::move (midi));
     } });
-    runSteps (ctx, steps, [&ctx, &session]
+    runSteps (ctx, steps, [&ctx, &session, control, paramIndex]
     {
         ctx.waitUntil ([&session] { return session.midiLearnPending.load() < 0; }, 3000,
-            [&ctx, &session]
+            [&ctx, &session, control, paramIndex]
             {
                 const auto& bindingsNow = session.midiBindings.current();
-                ctx.expect (std::any_of (bindingsNow.begin(), bindingsNow.end(), [] (const MidiBinding& binding)
+                ctx.expect (std::any_of (bindingsNow.begin(), bindingsNow.end(), [paramIndex] (const MidiBinding& binding)
                 {
                     return binding.channel == 3 && binding.dataNumber == 74 && binding.trigger == MidiBindingTrigger::CC
-                        && binding.target == MidiBindingTarget::TrackPluginParam && binding.targetIndex == 0 && binding.paramIndex == 0;
-                }), "captured CC did not bind the last-touched Gain parameter");
+                        && binding.target == MidiBindingTarget::TrackPluginParam && binding.targetIndex == 0
+                        && binding.paramIndex == paramIndex;
+                }), "captured CC did not bind the last-touched " + control + " parameter");
                 ctx.complete (ctx.verdict());
             }, "MIDI Learn did not consume the injected CC");
     });
@@ -1708,7 +1717,20 @@ std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContex
 const ScenarioRegistrar builtinMidiLearn { Scenario {
     "gui.builtin_midi_learn", { "gui", "midi" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
-    [] (GuiHost& host, ScenarioContext& ctx) { return runBuiltinMidiLearn (host, ctx); }
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBuiltinMidiLearn (host, ctx, "dusk.builtin.utility", "gain_db", 0.25f); }
+} };
+
+// DuskVerb 2 brings an editor of its own, so the touch comes through the
+// callbacks that editor was handed rather than the knob panel's.
+const ScenarioRegistrar duskverbMidiLearn { Scenario {
+    "gui.duskverb_midi_learn", { "gui", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+        if (! host.canEmbedPluginEditors())
+            return ScenarioResult::skip ("requires a window the unit's editor can embed into");
+        return runBuiltinMidiLearn (host, ctx, "dusk.builtin.reverb", "mix", 0.8f);
+    }
 } };
 
 // ------------------------------------------- MIDI Learn on a native host
@@ -3672,6 +3694,8 @@ std::optional<ScenarioResult> runMasterTapeEditor (GuiHost& host, ScenarioContex
     const auto originalStage = engine.getStage();
     const bool originalTape = session.master().tapeEnabled.load();
     if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    ctx.keep (session.master().tape.bias);
+    ctx.keep (session.master().tape.autoComp);
     ctx.cleanup ([&host, &session, originalStage, originalTape]
     {
         host.closeMasterTape();
@@ -3713,6 +3737,27 @@ std::optional<ScenarioResult> runMasterTapeEditor (GuiHost& host, ScenarioContex
     {
         ctx.expect (session.master().tapeEnabled.load(), "the status light did not engage the tape");
         ctx.expect (! host.masterTapeEditorOpen(), "the status light opened the editor");
+        session.master().tapeEnabled.store (false);
+        ctx.expect (host.clickMasterTape (true), "the master TAPE label is unavailable");
+    } });
+    // Working a control in the editor engages the stage; its BYPASS switch is
+    // the status light's switch, and turning it on leaves the stage out.
+    steps->push_back ({ 1500, [&host, &ctx, &session]
+    {
+        auto& tape = session.master().tape;
+        ctx.expect (host.masterTapeEditorOpen(), "TAPE did not open the tape editor again");
+        ctx.expect (host.masterTapeEdit ("bias", 30.0f), "the tape editor took no Bias edit");
+        ctx.expect (std::abs (tape.bias.load() - 30.0f) < 0.01f,
+                    "the Bias edit left the session's bias at " + std::to_string (tape.bias.load()));
+        ctx.expect (session.master().tapeEnabled.load(), "working Bias did not engage the tape");
+        ctx.expect (host.masterTapeEdit ("daf_bypass", 1.0f), "the tape editor took no BYPASS edit");
+        ctx.expect (! session.master().tapeEnabled.load(), "BYPASS in the editor left the tape engaged");
+        ctx.expect (host.masterTapeEdit ("autoComp", 0.0f), "the tape editor took no Auto comp edit");
+        ctx.expect (! tape.autoComp.load(), "the Auto comp edit left the session's Auto comp on");
+        ctx.expect (session.master().tapeEnabled.load(), "working Auto comp did not engage the tape");
+        ctx.expect (host.masterTapeEdit ("daf_bypass", 0.0f), "the tape editor took no second BYPASS edit");
+        ctx.expect (session.master().tapeEnabled.load(), "BYPASS off in the editor did not engage the tape");
+        host.closeMasterTape();
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -7127,7 +7172,11 @@ std::optional<ScenarioResult> runBounceStemsReleasesMix (GuiHost& host, Scenario
     const auto held = [&player] { return fs::u8path (player.getLoadedFile().getFullPathName().toStdString()); };
     if (! same (held(), stem)) return ScenarioResult::fail ("the session did not open with the stem loaded");
 
-    const auto bounceStems = [&host, &ctx, &player, base] (std::vector<Step>& into)
+    // The first bounce has ten minutes to render and is still going when it is
+    // checked. The second has one second plus the tail, which a fast machine
+    // renders before any check can catch it running, so that one is judged by
+    // the file it leaves for the player instead.
+    const auto bounceStems = [&host, &ctx, &player, base] (std::vector<Step>& into, bool longRender)
     {
         into.push_back ({ 200, [&host, &ctx]
         {
@@ -7145,9 +7194,10 @@ std::optional<ScenarioResult> runBounceStemsReleasesMix (GuiHost& host, Scenario
         } });
         into.push_back ({ 500, [&host, &ctx]
         { ctx.expect (host.clickModalButton ("Overwrite"), "a stems bounce over the loaded stem did not ask to overwrite it"); } });
-        into.push_back ({ 100, [&host, &ctx, &player]
+        into.push_back ({ 100, [&host, &ctx, &player, longRender]
         {
-            ctx.expect (host.renderRunning(), "the stems bounce did not start");
+            if (longRender)
+                ctx.expect (host.renderRunning(), "the stems bounce did not start");
             ctx.expect (! player.isLoaded(), "the stems bounce started with the mastering player still holding the stem");
         } });
     };
@@ -7166,7 +7216,7 @@ std::optional<ScenarioResult> runBounceStemsReleasesMix (GuiHost& host, Scenario
             return;
         }
         auto bounce = std::make_shared<std::vector<Step>>();
-        bounceStems (*bounce);
+        bounceStems (*bounce, false);
         runSteps (ctx, bounce, [&host, &ctx, &player, same, held, stem]
         {
             ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000, [&host, &ctx, &player, same, held, stem]
@@ -7187,7 +7237,7 @@ std::optional<ScenarioResult> runBounceStemsReleasesMix (GuiHost& host, Scenario
     };
 
     auto steps = std::make_shared<std::vector<Step>>();
-    bounceStems (*steps);
+    bounceStems (*steps, true);
     steps->push_back ({ 300, [&host, &ctx]
     {
         ctx.expect (host.renderRunning(), "the stems bounce stopped before it was cancelled");
@@ -8247,6 +8297,136 @@ const ScenarioRegistrar fileBrowserCancelScan { Scenario {
     "gui.file_browser_cancel_scan", { "gui", "import" }, Needs::Engine | Needs::Gui,
     {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserCancelScan (host, ctx); }
+} };
+
+// macOS holds a protected folder such as Desktop until the user answers its
+// privacy prompt. The window has to keep handling events meanwhile, and the
+// browser moves to the folder once the prompt is answered.
+std::optional<ScenarioResult> runFileBrowserHeldFolder (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr int kTickMs = 100;
+    static constexpr int kLateMs = 1000;
+    static constexpr int kMoveMs = 2000;
+    const auto held = ctx.tempDir() / "Held";
+    std::filesystem::create_directory (held);
+    ctx.cleanup ([&host]
+    {
+        host.holdFileBrowserFolderChecks (false);
+        drainModals (host);
+    });
+    auto before = std::make_shared<std::filesystem::path>();
+    auto returnPressed = std::make_shared<std::chrono::steady_clock::time_point>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (commandChord ('i'), 'i'), "the import shortcut was not handled"); } });
+    steps->push_back ({ 300, [&host, &ctx, held, before, returnPressed]
+    {
+        if (! ctx.expect (host.clickFileBrowserControl (true), "the import browser did not open")) return;
+        *before = host.fileBrowserFolder();
+        host.holdFileBrowserFolderChecks (true);
+        typeReplacing (host, held.string());
+        *returnPressed = std::chrono::steady_clock::now();
+        host.pressPeerKey ("Return", 0);
+    } });
+    steps->push_back ({ kTickMs, [&host, &ctx, before, returnPressed]
+    {
+        const auto late = std::chrono::duration_cast<std::chrono::milliseconds> (
+                              std::chrono::steady_clock::now() - *returnPressed).count() - kTickMs;
+        ctx.expect (late < kLateMs, "the window handled nothing for " + std::to_string (late)
+                                        + " ms while the typed folder was being checked");
+        ctx.expect (host.fileBrowserFolder() == *before, "the browser moved before the typed folder was checked");
+        host.holdFileBrowserFolderChecks (false);
+    } });
+    runSteps (ctx, steps, [&host, &ctx, held]
+    {
+        ctx.waitUntil ([&host, held] { return host.fileBrowserFolder().lexically_normal() == held.lexically_normal(); },
+                       kMoveMs, [&ctx] { ctx.complete (ctx.verdict()); },
+                       "the browser did not move to the typed folder once it was checked");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar fileBrowserHeldFolder { Scenario {
+    "gui.file_browser_held_folder", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserHeldFolder (host, ctx); }
+} };
+
+// Up clicks made while a folder check is held each go up a level, and a folder
+// the user creates meanwhile is where the browser stays.
+std::optional<ScenarioResult> runFileBrowserHeldUp (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr int kMoveMs = 2000;
+    static constexpr int kSettleMs = 500;
+    const auto top = (ctx.tempDir() / "Top").lexically_normal();
+    const auto deepest = top / "Middle" / "Bottom";
+    const auto created = top / "New folder";
+    std::filesystem::create_directories (deepest);
+    ctx.cleanup ([&host]
+    {
+        host.holdFileBrowserFolderChecks (false);
+        drainModals (host);
+    });
+    const auto shown = [&host] { return host.fileBrowserFolder().lexically_normal(); };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
+    steps->push_back ({ 700, [&host, &ctx, deepest]
+    {
+        if (! ctx.expect (host.clickFileBrowserControl (true), "the Save As browser did not open")) return;
+        typeReplacing (host, deepest.string());
+        host.pressPeerKey ("Return", 0);
+    } });
+    runSteps (ctx, steps, [&host, &ctx, shown, top, deepest, created]
+    {
+        ctx.waitUntil ([shown, deepest] { return shown() == deepest.lexically_normal(); }, kMoveMs, [&host, &ctx, shown, top, created]
+        {
+            auto upSteps = std::make_shared<std::vector<Step>>();
+            upSteps->push_back ({ 0, [&host, &ctx]
+            {
+                host.holdFileBrowserFolderChecks (true);
+                ctx.expect (host.clickFileBrowserUp(), "the browser has no Up button");
+            } });
+            upSteps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickFileBrowserUp(), "the browser has no Up button"); } });
+            upSteps->push_back ({ 100, [&host] { host.holdFileBrowserFolderChecks (false); } });
+            runSteps (ctx, upSteps, [&host, &ctx, shown, top, created]
+            {
+                ctx.waitUntil ([shown, top] { return shown() == top; }, kMoveMs, [&host, &ctx, shown, top, created]
+                {
+                    auto createSteps = std::make_shared<std::vector<Step>>();
+                    createSteps->push_back ({ kSettleMs, [&host, &ctx, shown, top]
+                    {
+                        ctx.expect (shown() == top, "two Up clicks during a held check went past the folder two levels up, to "
+                                                        + shown().string());
+                        host.holdFileBrowserFolderChecks (true);
+                        ctx.expect (host.clickFileBrowserUp(), "the browser has no Up button");
+                        ctx.expect (host.clickModalButton ("New folder..."), "the Save As browser has no New folder button");
+                    } });
+                    createSteps->push_back ({ 100, [&host, &ctx]
+                    { ctx.expect (host.clickModalButton ("Create"), "the new folder row has no Create button"); } });
+                    createSteps->push_back ({ 100, [&host, &ctx, shown, created]
+                    {
+                        ctx.expect (shown() == created, "Create did not open the new folder");
+                        host.holdFileBrowserFolderChecks (false);
+                    } });
+                    createSteps->push_back ({ kSettleMs, [&ctx, shown, created]
+                    {
+                        ctx.expect (shown() == created, "an Up held on its check ran after the new folder opened and moved the browser to "
+                                                            + shown().string());
+                    } });
+                    runSteps (ctx, createSteps, [&ctx] { ctx.complete (ctx.verdict()); });
+                }, "two Up clicks during a held check did not reach the folder two levels up");
+            });
+        }, "the Save As browser did not move to the typed folder");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar fileBrowserHeldUp { Scenario {
+    "gui.file_browser_held_up", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserHeldUp (host, ctx); }
 } };
 
 const ScenarioRegistrar timelineDrawer { Scenario {
@@ -11060,6 +11240,99 @@ const ScenarioRegistrar markerKeysPlayback { Scenario {
         ctx.expect (transport.isPlaying(), "marker-key scenario stopped existing playback");
         return ctx.verdict();
     }
+} };
+
+// Held past 400 ms, Rewind and Forward scrub the stopped playhead at ten times
+// real time, and the release that ends a scrub is not also read as a tap.
+// The scrub runs on a 20 Hz timer whose first tick past the threshold only
+// starts the clock, so with a 400 ms threshold nothing moves before 450 ms, and
+// with 300 ms the playhead has moved by 400 ms.
+std::optional<ScenarioResult> runTransportHoldScrubs (GuiHost& host, ScenarioContext& ctx)
+{
+    using Clock = std::chrono::steady_clock;
+    static constexpr double kThresholdMs = 400.0;
+    static constexpr double kFirstMoveMs = kThresholdMs + 50.0;
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const double rate = engine.getCurrentSampleRate();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a running audio device");
+    const auto original = transport.getPlayhead();
+    ctx.cleanup ([&host, &transport, original]
+    {
+        host.pressTitledControl ("Rewind", false);
+        host.pressTitledControl ("Fast forward", false);
+        transport.setPlayhead (original);
+    });
+    const auto start = (std::int64_t) (rate * 120.0);
+    transport.setPlayhead (start);
+
+    struct Hold
+    {
+        Clock::time_point pressed;
+        std::int64_t from = 0;
+        std::int64_t released = 0;
+        double heldMs = 0.0;
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto hold = [&host, &ctx, &transport, rate, steps] (const std::string& title, int direction)
+    {
+        auto state = std::make_shared<Hold>();
+        steps->push_back ({ 200, [&host, &ctx, &transport, title, state]
+        {
+            state->from = transport.getPlayhead();
+            state->pressed = Clock::now();
+            ctx.expect (host.pressTitledControl (title, true), title + " did not take a press");
+        } });
+        steps->push_back ({ 250, [&ctx, &transport, title, state]
+        {
+            ctx.expect (transport.getPlayhead() == state->from,
+                        title + " moved the playhead before the hold threshold");
+        } });
+        steps->push_back ({ 170, [&ctx, &transport, title, state]
+        {
+            const auto heldMs = std::chrono::duration<double, std::milli> (Clock::now() - state->pressed).count();
+            if (heldMs >= kFirstMoveMs)
+                ctx.note (title + " threshold check came " + std::to_string (heldMs) + " ms into the hold, too late to judge");
+            else
+                ctx.expect (transport.getPlayhead() == state->from,
+                            title + " moved the playhead " + std::to_string (heldMs)
+                                + " ms into the hold, before a 400 ms threshold could");
+        } });
+        steps->push_back ({ 980, [&host, &ctx, &transport, title, state]
+        {
+            ctx.expect (host.pressTitledControl (title, false), title + " did not take a release");
+            state->heldMs = std::chrono::duration<double, std::milli> (Clock::now() - state->pressed).count();
+            state->released = transport.getPlayhead();
+        } });
+        steps->push_back ({ 300, [&ctx, &transport, title, direction, rate, state]
+        {
+            const auto moved = (double) direction * (double) (state->released - state->from);
+            const double expected = 10.0 * rate * (state->heldMs - kThresholdMs) / 1000.0;
+            ctx.note (title + " held " + std::to_string (state->heldMs) + " ms moved "
+                      + std::to_string (moved) + " samples, 10x of the time past 400 ms is "
+                      + std::to_string (expected));
+            // A tick at each end of the hold can go unscrubbed, 100 ms of the
+            // 1000, while a 600 ms threshold would leave at most 80 %.
+            ctx.expect (moved > 0.83 * expected && moved < 1.1 * expected,
+                        title + " held did not scrub at 10x: moved " + std::to_string (moved)
+                            + " samples against " + std::to_string (expected));
+            ctx.expect (transport.getPlayhead() == state->released,
+                        title + " jumped again on the release that ended the scrub");
+            ctx.expect (transport.isStopped(), title + " scrubbing started the transport");
+        } });
+    };
+    hold ("Rewind", -1);
+    hold ("Fast forward", 1);
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar transportHoldScrubs { Scenario {
+    "gui.transport_hold_scrubs", { "gui", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTransportHoldScrubs (host, ctx); }
 } };
 
 const ScenarioRegistrar markerKeys { Scenario {
@@ -14258,44 +14531,61 @@ std::optional<ScenarioResult> runCleanOutWhileRecording (GuiHost& host, Scenario
                     "stopped: the status bar says '" + host.statusMessage() + "'");
     } });
 
-    // A stop that gives up waiting for the audio thread drops its take but
-    // leaves the take's file and writer behind. Once the audio thread has
-    // left, nothing records, so Clean out must neither say a take is being
-    // recorded nor keep the dropped file.
+    // A stop that finds an audio-thread call still inside the recorder waits
+    // for it to leave, however long that takes, and commits the take on its
+    // own file, so Clean out still has nothing to offer.
     steps->push_back ({ 100, [&ctx, &engine, &transport]
     {
         engine.record();
         ctx.expect (transport.isRecording(), "the third take did not start");
     } });
-    steps->push_back ({ 300, [&ctx, &engine, &transport, &track, takes]
+    steps->push_back ({ 300, [&ctx, &engine, &transport, &track, takes, regionFiles]
     {
+        struct HeldCall
+        {
+            RecordManager& recorder;
+            int leaveAfterPasses = 0;
+            int passes = 0;
+            static void pass (void* context)
+            {
+                auto& self = *static_cast<HeldCall*> (context);
+                if (++self.passes == self.leaveAfterPasses)
+                    self.recorder.holdAudioInFlightForTest (false);
+            }
+        };
         auto& recorder = engine.getRecordManager();
+        HeldCall held { recorder, 5000 };
         recorder.holdAudioInFlightForTest (true);
+        recorder.setAudioWaitObserverForTest (&held, &HeldCall::pass);
         engine.stop();
-        recorder.holdAudioInFlightForTest (false);
-        ctx.expect (transport.isStopped(), "the bailed stop left the transport rolling");
-        ctx.expect (track.regions.size() == 2 && takes().size() == 3,
-                    "the bailed stop did not leave its take's file without a region");
+        recorder.setAudioWaitObserverForTest (nullptr, nullptr);
+        if (held.passes < held.leaveAfterPasses)
+            recorder.holdAudioInFlightForTest (false);
+        ctx.expect (held.passes == held.leaveAfterPasses,
+                    "the stop gave up on the audio thread after " + std::to_string (held.passes) + " passes");
+        ctx.expect (transport.isStopped(), "the stop that waited left the transport rolling");
+        ctx.expect (track.regions.size() == 3 && takes().size() == 3 && regionFiles() == takes(),
+                    "the stop that waited for the audio thread did not commit its take");
     } });
-    choose ("after a bailed stop");
+    choose ("after a stop that waited");
     steps->push_back ({ 400, [&host, &ctx]
     {
         if (! host.confirmationText().empty())
         {
-            ctx.expect (false, "after a bailed stop: Clean out offered '" + joinedLines (host.confirmationText()) + "'");
+            ctx.expect (false, "after a stop that waited: Clean out offered '"
+                                   + joinedLines (host.confirmationText()) + "'");
             host.clickModalButton ("Cancel");
             return;
         }
         ctx.expect (host.modalText() == "Clean out\nNo unreferenced files found. The audio directory is already clean.",
-                    "after a bailed stop: the alert read '" + host.modalText() + "'");
-        ctx.expect (host.clickModalButton ("OK"), "after a bailed stop: the alert has no OK button");
+                    "after a stop that waited: the alert read '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton ("OK"), "after a stop that waited: the alert has no OK button");
     } });
-    steps->push_back ({ 300, [&host, &ctx, &engine, takes, regionFiles]
+    steps->push_back ({ 300, [&host, &ctx, takes, regionFiles]
     {
-        ctx.expect (host.modalStackEmpty(), "after a bailed stop: '" + host.modalText() + "' is still up");
-        ctx.expect (takes().size() == 2 && regionFiles() == takes(),
-                    "after a bailed stop: the dropped take's file is still in the audio folder");
-        ctx.expect (! engine.getRecordManager().hasOpenTake(), "after a bailed stop: the dropped take is still open");
+        ctx.expect (host.modalStackEmpty(), "after a stop that waited: '" + host.modalText() + "' is still up");
+        ctx.expect (takes().size() == 3 && regionFiles() == takes(),
+                    "after a stop that waited: Clean out removed a take");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;

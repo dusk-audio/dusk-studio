@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/device/DefaultInputChoice.h"
+#include "engine/device/MicrophoneAccess.h"
 
 using duskstudio::device::chooseDefaultInputDevice;
 
@@ -44,4 +45,19 @@ TEST_CASE ("An exact match outranks a case-insensitive one")
 {
     const std::vector<std::string> inputs { "device", "Device" };
     CHECK (chooseDefaultInputDevice ("Device", inputs) == "Device");
+}
+
+// The transport bar names the microphone permission when that is why there is
+// no input, in the words the manual quotes, and says nothing once it is granted.
+TEST_CASE ("The microphone notice names what macOS decided")
+{
+    using duskstudio::device::MicrophoneAccess;
+    using duskstudio::device::microphoneAccessNotice;
+
+    CHECK (microphoneAccessNotice (MicrophoneAccess::Granted).empty());
+    CHECK (microphoneAccessNotice (MicrophoneAccess::Undecided)
+             == "Waiting for microphone access. Answer the macOS prompt to record.");
+    CHECK (microphoneAccessNotice (MicrophoneAccess::Denied)
+             == "Microphone access is off. Allow Dusk Studio in System Settings > "
+                "Privacy & Security > Microphone to record.");
 }

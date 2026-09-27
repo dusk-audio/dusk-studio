@@ -147,19 +147,8 @@ RecordManager::~RecordManager()
     // audio-thread caller that already entered, then discard the uncommitted
     // capture. The normal stopRecording path mutates the session by creating
     // regions, which must only happen through an explicit engine stop.
-    //
-    // The wait is deliberately unbounded, unlike stopRecording's capped spin.
-    // stopRecording can bail past its cap because it leaves writers[] /
-    // midiCaptures[] alive for the next startRecording to discard; a
-    // destructor cannot - every member (including the audioInFlight atomic
-    // the in-flight thread still decrements) is destroyed when it returns,
-    // so proceeding would trade the wait for a use-after-free. By this point
-    // the engine has detached the audio callback, so the drain is at most
-    // one block.
-    active.store (false, std::memory_order_release);
-    while (audioInFlight.load (std::memory_order_acquire) > 0)
-        std::this_thread::yield();
-
+    active.store (false, std::memory_order_seq_cst);
+    waitForAudioThreadToLeave();
     discardUncommittedTake();
 }
 
@@ -180,6 +169,42 @@ void RecordManager::discardUncommittedTake()
     }
 }
 
+void RecordManager::waitForAudioThreadToLeave() const
+{
+    // A call that passed its active check before active went false copies at
+    // most one block into a ring or FIFO and returns; nothing in it waits on
+    // another thread, so it leaves as soon as its thread runs again. There is
+    // no giving up: the writers cannot be torn down under that call, and a
+    // take that is not torn down cannot be committed, so a stop that stopped
+    // waiting would lose the take. AudioEngine::stop raises the process gate
+    // first, which drains the whole callback, so on that path this is zero at
+    // once; the other stop paths wait out the rest of one call.
+    static constexpr int kYieldPasses = 1000;
+    using Clock = std::chrono::steady_clock;
+    auto nextReport = Clock::now() + std::chrono::seconds (1);
+    int waitedSeconds = 0;
+    for (int pass = 0; audioInFlight.load (std::memory_order_seq_cst) > 0; ++pass)
+    {
+        if (audioWaitObserver != nullptr)
+        {
+            audioWaitObserver (audioWaitContext);
+            continue;
+        }
+        if (pass < kYieldPasses)
+            std::this_thread::yield();
+        else
+            std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        if (Clock::now() >= nextReport)
+        {
+            nextReport += std::chrono::seconds (1);
+            std::fprintf (stderr,
+                          "[Dusk Studio/RecordManager] waited %d s for an audio-thread "
+                          "call to leave the recorder (audioInFlight=%d)\n",
+                          ++waitedSeconds, audioInFlight.load (std::memory_order_relaxed));
+        }
+    }
+}
+
 bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
                                     int latencyOffsetSamples)
 {
@@ -193,21 +218,6 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
 {
     if (active.load (std::memory_order_relaxed))
         return true;
-
-    // Pairs with the bail-without-teardown path in stopRecording. If
-    // the prior take's audio thread is still inside writeInputBlock /
-    // writeMidiBlock with cached pointers into writers[] / midiCaptures
-    // [], overwriting those slots here would UAF. Refuse to arm until
-    // the audio thread drains. In practice this fires only after a
-    // real-time-priority disaster on the prior take.
-    if (! reclaimBailedTake())
-    {
-        std::fprintf (stderr,
-                      "[Dusk Studio/RecordManager] startRecording: prior take's audio "
-                      "thread still in-flight (audioInFlight=%d); refusing to arm.\n",
-                      audioInFlight.load (std::memory_order_relaxed));
-        return false;
-    }
 
     if (! session.anyTrackArmed())
     {
@@ -410,27 +420,6 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     return true;
 }
 
-bool RecordManager::reclaimBailedTake()
-{
-    // A stopRecording that bailed left its writers and captures in place, the
-    // writers still registered with the drain pool. With active false and
-    // audioInFlight at zero no audio-thread call holds a slot (a new one sees
-    // active false and returns first), so that take can go.
-    if (active.load (std::memory_order_acquire)) return false;
-    if (audioInFlight.load (std::memory_order_acquire) > 0) return false;
-    discardUncommittedTake();
-    return true;
-}
-
-bool RecordManager::hasOpenTake() const noexcept
-{
-    // writers[] is only ever reseated on the message thread; the audio thread
-    // just reads the slots.
-    return active.load (std::memory_order_acquire)
-        || std::any_of (writers.begin(), writers.end(),
-                        [] (const auto& slot) { return slot != nullptr; });
-}
-
 RecordManager::LoopCaptureSpan RecordManager::coordinateLoopCaptureSpan (
     int passOrdinal, std::int64_t transportStartSample,
     int callbackBaseOffset, int remainingSamples) const noexcept
@@ -473,7 +462,7 @@ RecordManager::LoopCaptureSpan RecordManager::coordinateLoopCaptureSpan (
 void RecordManager::beginLoopCaptureSpan (const LoopCaptureSpan& span) noexcept
 {
     AudioInFlightScope guard (audioInFlight);
-    if (! active.load (std::memory_order_acquire) || ! loopPlan.enabled)
+    if (! active.load (std::memory_order_seq_cst) || ! loopPlan.enabled)
         return;
 
     currentLoopSpan = span;
@@ -507,54 +496,14 @@ void RecordManager::stopRecording (std::int64_t endSample)
     if (! active.load (std::memory_order_relaxed))
         return;
 
-    active.store (false, std::memory_order_release);
+    active.store (false, std::memory_order_seq_cst);
     activeCaptureTrackMask.store (0, std::memory_order_release);
     activeMidiCaptureTrackMask.store (0, std::memory_order_release);
     activeStereoCaptureTrackMask.store (0, std::memory_order_release);
 
-    // Drain in-flight audio-thread calls before reading per-writer
-    // counters or destroying writers / midiCaptures. Both writeInputBlock
-    // and writeMidiBlock bump audioInFlight before touching their slots;
-    // when it reaches zero the audio thread is guaranteed to have left
-    // those entry points and any pointers it captured are no longer in
-    // use. Yield in a bounded loop - happy-path wait is sub-ms to ~10 ms
-    // (one audio block), short enough for the message thread to absorb
-    // during a stop transition.
-    //
-    // Cap at kMaxSpinIterations so a stuck / detached audio thread cannot
-    // hang the message thread forever. At a ~1 µs yield cost this is
-    // ~1 ms worst-case latency - orders of magnitude over a sane audio
-    // block. If we exceed the cap, BAIL the entire teardown: writers[]
-    // and midiCaptures[] stay populated, no regions get committed for
-    // this take. The audio thread may still be inside writeInputBlock
-    // / writeMidiBlock with cached pointers into those slots; tearing
-    // them down here would UAF.
-    //
-    // Recovery: startRecording refuses to arm while audioInFlight > 0.
-    // Once the stuck call has left (a transient scheduling glitch), the
-    // next startRecording or reclaimBailedTake discards the bailed take the
-    // way the destructor does: each writer leaves the drain pool before it
-    // is freed, its file is deleted and the MIDI captures are dropped. If
-    // the audio thread never leaves (real-time priority lost, OS bug), the
-    // slots stay until ~RecordManager, which waits it out and discards them
-    // the same way - better than a UAF crash mid-session.
-    constexpr int kMaxSpinIterations = 1000;
-    int spinIters = 0;
-    while (audioInFlight.load (std::memory_order_acquire) > 0)
-    {
-        if (++spinIters > kMaxSpinIterations)
-        {
-            std::fprintf (stderr,
-                          "[Dusk Studio/RecordManager] stopRecording: audioInFlight=%d "
-                          "after %d yields; BAILING teardown to avoid UAF. Take "
-                          "is dropped; the next startRecording discards its "
-                          "writers once the audio thread has left.\n",
-                          audioInFlight.load (std::memory_order_relaxed),
-                          kMaxSpinIterations);
-            return;
-        }
-        std::this_thread::yield();
-    }
+    // Every audio-thread call bumps audioInFlight before it touches a writer or
+    // a MIDI capture, so once it reads zero none of them is in use.
+    waitForAudioThreadToLeave();
 
     // Latch audio-thread error counters into lastRecordErrors before
     // teardown so TransportBar can surface them after engine.stop(). Per-
@@ -1292,7 +1241,7 @@ void RecordManager::writeMidiBlockImpl (int trackIndex,
                                         const LoopCaptureSpan* explicitLoopSpan) noexcept
 {
     AudioInFlightScope guard (audioInFlight);
-    if (! active.load (std::memory_order_acquire)) return;
+    if (! active.load (std::memory_order_seq_cst)) return;
     if (events.isEmpty()) return;
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return;
     auto& cap = midiCaptures[(size_t) trackIndex];
@@ -1393,7 +1342,7 @@ void RecordManager::writeInputBlock (int trackIndex,
                                      const LoopCaptureSpan* explicitLoopSpan) noexcept
 {
     AudioInFlightScope guard (audioInFlight);
-    if (! active.load (std::memory_order_acquire)) return;
+    if (! active.load (std::memory_order_seq_cst)) return;
     if (numSamples == 0) return;
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return;
     auto& slot = writers[(size_t) trackIndex];

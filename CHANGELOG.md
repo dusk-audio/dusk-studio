@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.14.0] - 2026-09-25
+## [0.14.0] - 2026-09-27
 
 The first five minutes of using Dusk Studio, offline instrument browsing,
 quitting cleanly by any route, and a release pipeline that signs what it
@@ -210,23 +210,41 @@ publishes.
   that refused left no audio device open and no message. The output now
   reopens on its own, with the "No input device" notice, and the no-device
   alert shows if even that fails.
+- **A first launch on macOS opens the output while the microphone prompt is
+  up** (#766). Opening the default input raised the prompt, and CoreAudio held
+  the whole device until it was answered; left unanswered for about three
+  minutes, the open failed with CoreAudio error 10004003 and the app came up
+  with no audio device at all. A first launch now opens the output alone and
+  asks for microphone access separately, so playback works at once. **Allow**
+  adds the input straight away when nothing is playing, recording or
+  bouncing and no device was picked in Settings > Audio while the prompt was
+  up; otherwise the input is chosen there. **Don't Allow** leaves the input
+  out instead of recording silence, and the transport bar says microphone
+  access is off and where to turn it on. At startup, an output that fails
+  only because of the input it was paired with now opens on its own.
+- **A PipeWire device reports only the inputs it has.** It reported as many
+  input channels as it was asked for, and two when it opened with no capture
+  device at all, so ARM accepted tracks on inputs that were not there, they
+  recorded silence, and the "No input device" notice stayed away. It now
+  reports the capture device's own channels, and none without one, as ALSA
+  already did.
 - **Clean out refuses while a take is recording** (#743). The take's file has
   no region until you stop, so Clean out listed it and deleted it. Clean out
   now asks you to stop recording first, both when you choose it and again when
-  you press Delete. A take dropped by a stalled stop no longer holds that
-  refusal up once nothing records; Clean out removes its file. A session you
-  have never saved is refused too once another session has been saved into
-  its folder, rather than offered that session's takes to delete.
+  you press Delete. A session you have never saved is refused too once another
+  session has been saved into its folder, rather than offered that session's
+  takes to delete.
 - **A Save As that fails partway puts the session back** (#744). If the
   notepad or `session.json` could not be written after the audio was copied,
   the session stayed pointed at the new folder while the alert said nothing
   had changed. A failed Save As now restores the session and removes what it
   made in the new folder.
-- **A take dropped by a stalled stop cannot crash the next recording** (#746).
-  When Stop gave up waiting for a stalled audio thread, the next recording
-  freed the dropped take's writer while the disk thread could still use it,
-  and the 24th track lost its take. The dropped take is now cleared properly
-  before the next recording starts.
+- **Stop never throws a take away** (#746, #766). When Stop found the audio
+  thread still writing into the take, it gave up after a fixed number of
+  tries, well under a millisecond on a fast machine, and dropped the take;
+  the next recording then freed that take's writer while the disk thread
+  could still be using it. Stop now waits for the audio thread to finish the
+  block it is writing and commits the take.
 - **The channel EQ no longer cramps near Nyquist.** At the default 1x Effect
   oversampling a high HM boost used to fall 5 to 7 dB short at 20 kHz. Every
   band now holds its shape up to 20 kHz at 1x, 2x and 4x.
@@ -429,6 +447,12 @@ publishes.
   with the name box empty, or with the name of an existing folder, wrote the
   file beside that folder under its name. A folder name now opens the folder,
   and an empty name does nothing.
+- **Moving to a protected folder no longer freezes the window on macOS**
+  (#755). Typing the path of the Desktop or Documents folder into a file
+  browser's path box, or opening one from the list, the places menu or the up
+  button, froze the whole window until the macOS privacy prompt was answered.
+  The browser now opens the folder in the background and moves there once the
+  prompt is answered, and the window keeps working meanwhile.
 - **A save asks before it replaces a file, and Save As will not replace another
   session** (#732). Bounce master mix, Export master and the MIDI bindings export
   now ask **Replace** or **Cancel** when the file they are about to write already
@@ -610,6 +634,20 @@ publishes.
   after it loads and comes back with the latency it reported then. A
   re-enabled plug-in has to run late for four blocks in a row again, not just
   one, before it is bypassed a second time.
+- **Delay compensation follows a plug-in that changes its latency while it
+  runs** (#764). An in-process plug-in's latency was read only when it loaded,
+  when the device changed, at a save and at Re-enable, so raising a look-ahead
+  limiter's look-ahead mid-session left its track out of line with the rest
+  until one of those came round. The slot now listens for the plug-in's own
+  announcement, on whichever thread it makes it, and re-reads the latency
+  within a thirtieth of a second; each track's compensation then moves to the
+  new value at that track's next silence. A native CLAP plug-in that asks to
+  be restarted for a new latency is now restarted, where the request used to
+  be ignored. A native VST3 or CLAP restart waits for the end of a take
+  rather than cut a gap into it, and a plug-in that keeps asking is restarted
+  at most twice a second, then held back until it stops, with one line in
+  the log. A plug-in in the out-of-process sandbox still keeps the latency it
+  reported when it loaded.
 - **A render that cannot open its file leaves it alone** (#763). A Mixdown,
   Bounce..., Bounce stems..., Export master... or freeze whose file already
   existed but could not be opened for writing, such as a read-only

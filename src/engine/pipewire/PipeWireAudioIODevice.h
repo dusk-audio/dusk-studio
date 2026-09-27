@@ -114,6 +114,11 @@ private:
     const int deviceInChannels;
     const int deviceOutChannels;
 
+    // The width the device lists and opens: the enumerated count, or a stereo
+    // pair when the node advertised none.
+    int inputWidth()  const noexcept { return deviceInChannels  > 0 ? deviceInChannels  : 2; }
+    int outputWidth() const noexcept { return deviceOutChannels > 0 ? deviceOutChannels : 2; }
+
     // libpipewire objects (owned; torn down in close()). pw_filter_new_simple
     // manages its own context/core internally, so we hold only the thread loop
     // (owns the RT data thread) and the filter node.

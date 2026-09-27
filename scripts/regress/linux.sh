@@ -13,6 +13,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/regress/common.sh
 source "${REPO_ROOT}/scripts/regress/common.sh"
+REGRESS_PLATFORM=linux
 # shellcheck source=scripts/regress/xvfb.sh
 source "${REPO_ROOT}/scripts/regress/xvfb.sh"
 # shellcheck source=scripts/regress/scenarios.sh
@@ -459,7 +460,8 @@ leg_package_uninstall() {
 # the fixture targets: the test binary itself says nothing about the package.
 leg_fixtures() {
     local -a targets=()
-    if [[ -f build-tests/CMakeCache.txt ]]; then
+    # A configure that failed leaves a cache but no build system behind.
+    if [[ -f build-tests/CMakeCache.txt && ( -f build-tests/build.ninja || -f build-tests/Makefile ) ]]; then
         echo "reusing build-tests/ for the fixture plug-ins; up-to-date ones are not rebuilt"
     else
         echo "build-tests/ is not configured; configuring it for the fixture plug-ins"

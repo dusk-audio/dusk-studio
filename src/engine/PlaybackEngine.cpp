@@ -267,7 +267,7 @@ void PlaybackEngine::primeLoopCaches (std::int64_t loopStart, std::int64_t loopE
 
 void PlaybackEngine::stopPlayback()
 {
-    streamsActive.store (false, std::memory_order_release);
+    streamsActive.store (false, std::memory_order_seq_cst);
 
     // Drain in-flight readForTrack calls before destroying the readers.
     // The audio callback latches the transport state once per block, so
@@ -280,7 +280,7 @@ void PlaybackEngine::stopPlayback()
     // drain. Leak beats UAF.
     constexpr auto kDrainTimeout = std::chrono::milliseconds (200);
     const auto drainDeadline = std::chrono::steady_clock::now() + kDrainTimeout;
-    while (audioInFlight.load (std::memory_order_acquire) > 0)
+    while (audioInFlight.load (std::memory_order_seq_cst) > 0)
     {
         if (std::chrono::steady_clock::now() > drainDeadline)
         {
@@ -316,7 +316,7 @@ void PlaybackEngine::readForTrack (int trackIndex,
     // waited on before the readers are destroyed. Reads that bump after
     // the flag cleared bail here and output stays silent.
     AudioInFlightScope guard (audioInFlight);
-    if (! streamsActive.load (std::memory_order_acquire)) return;
+    if (! streamsActive.load (std::memory_order_seq_cst)) return;
 
     auto& slot = streams[(size_t) trackIndex];
     if (slot == nullptr) return;

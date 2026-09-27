@@ -191,15 +191,11 @@ PluginSlot::~PluginSlot()
     // device callback). Belt-and-suspenders: clear the atomic first so
     // nothing reads from the instance during destruction.
     currentInstance.store (nullptr, std::memory_order_release);
-    // Detach the parameter listener before the instance destructs so
-    // JUCE's listener list (held inside each param) doesn't dangle on
-    // the released LastTouchedListener. Same detach-first ordering as
-    // unload() - closes the window where a plugin-UI-thread callback
-    // could race the destructor.
-    if (ownedInstance != nullptr && lastTouchedListener != nullptr)
-        for (auto* p : ownedInstance->getParameters())
-            if (p != nullptr) p->removeListener (lastTouchedListener.get());
-    lastTouchedListener.reset();
+    // Detach the listeners before the instance destructs so JUCE's listener
+    // lists don't dangle on the released LastTouchedListener or on this
+    // slot's LatencyListener. Same detach-first ordering as unload() - closes
+    // the window where a plugin-UI-thread callback could race the destructor.
+    detachInstanceListeners();
     if (ownedInstance != nullptr)
         ownedInstance->releaseResources();
     for (auto& slot : previousInstances)
@@ -218,6 +214,9 @@ PluginSlot::~PluginSlot()
 void PluginSlot::leakInstanceForShutdown()
 {
     currentInstance.store (nullptr, std::memory_order_release);
+    // The leaked instance outlives the slot, so it must not keep pointers to
+    // the slot's listeners.
+    detachInstanceListeners();
     if (ownedInstance != nullptr)
         (void) ownedInstance.release();
     for (auto& slot : previousInstances)
@@ -515,6 +514,45 @@ void PluginSlot::clearAutoBypass() noexcept
     // sees the flag down also sees the latency written above, or the zero the
     // retire left.
     autoBypassed.store (false, std::memory_order_release);
+}
+
+bool PluginSlot::refreshLatencyIfChanged() noexcept
+{
+    // Acquire pairs with the listener's release, so the write that raised the
+    // flag is visible here. processLock orders the read after any block still
+    // running, since a plug-in can write its latency again from the next one.
+    if (! latencyChangePending.exchange (false, std::memory_order_acquire))
+        return false;
+    if (ownedInstance == nullptr)
+        return false;
+    const juce::SpinLock::ScopedLockType processGuard (processLock);
+    const int latency = ownedInstance->getLatencySamples();
+    return cachedLatencySamples.exchange (latency, std::memory_order_relaxed) != latency;
+}
+
+void PluginSlot::attachInstanceListeners()
+{
+    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+    lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
+    for (auto* p : ownedInstance->getParameters())
+        if (p != nullptr) p->addListener (lastTouchedListener.get());
+    ownedInstance->addListener (&latencyListener);
+}
+
+void PluginSlot::detachInstanceListeners()
+{
+    if (ownedInstance != nullptr)
+    {
+        // Held so no block of this slot is inside the plug-in while JUCE edits
+        // its listener lists: a plug-in can notify them from processBlock.
+        const juce::SpinLock::ScopedLockType processGuard (processLock);
+        ownedInstance->removeListener (&latencyListener);
+        if (lastTouchedListener != nullptr)
+            for (auto* p : ownedInstance->getParameters())
+                if (p != nullptr) p->removeListener (lastTouchedListener.get());
+    }
+    lastTouchedListener.reset();
+    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
 }
 
 int PluginSlot::getRemoteChildPid() const noexcept
@@ -837,19 +875,15 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
     // time; a second rapid Replace within that window would destroy
     // the instance under it.
     //
-    // Mirror unload(): detach the existing lastTouchedListener from
-    // ownedInstance BEFORE the rotation. Without this, lastTouchedListener
+    // Mirror unload(): detach the instance listeners from ownedInstance
+    // BEFORE the rotation. Without this, lastTouchedListener
     // is reassigned via make_unique below (destroying the old listener
     // object) while the just-deposed instance still has the old listener
     // pointer registered on its param listener lists. A param callback
     // from the deposed instance's editor during the swap (e.g. fired
     // by the editor's teardown that follows a Replace action) would
     // then dereference freed memory.
-    if (ownedInstance != nullptr && lastTouchedListener != nullptr)
-        for (auto* p : ownedInstance->getParameters())
-            if (p != nullptr) p->removeListener (lastTouchedListener.get());
-    lastTouchedListener.reset();
-    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+    detachInstanceListeners();
 
     currentInstance.store (nullptr, std::memory_order_release);
     cachedLatencySamples.store (0, std::memory_order_relaxed);
@@ -906,16 +940,11 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
         autoBypassed.store (false, std::memory_order_relaxed);
         if (hostPlayHead != nullptr)
             ownedInstance->setPlayHead (hostPlayHead);
+        // MIDI Learn's last-touched listener, and the latency listener ahead
+        // of the first read so no change can fall between the two.
+        attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
-        // MIDI Learn last-touched: install a parameter listener on every
-        // exposed parameter so the user's plugin-UI moves stamp
-        // lastTouchedParamIndex. Cheap on load (small enum) and lock-free
-        // at runtime.
-        lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
-        lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
-        for (auto* p : ownedInstance->getParameters())
-            if (p != nullptr) p->addListener (lastTouchedListener.get());
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
     loadedDescriptor = std::move (descriptor);
@@ -971,11 +1000,7 @@ bool PluginSlot::loadFromDescriptor (const PluginDescriptor& descriptor,
     // pointer in the deposed instance's param listener lists, a param
     // callback from that instance (typical during Replace-action
     // editor teardown) would hit freed memory.
-    if (ownedInstance != nullptr && lastTouchedListener != nullptr)
-        for (auto* p : ownedInstance->getParameters())
-            if (p != nullptr) p->removeListener (lastTouchedListener.get());
-    lastTouchedListener.reset();
-    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+    detachInstanceListeners();
 
     currentInstance.store (nullptr, std::memory_order_release);
     cachedLatencySamples.store (0, std::memory_order_relaxed);
@@ -1066,7 +1091,7 @@ bool PluginSlot::loadFromDescriptor (const PluginDescriptor& descriptor,
 // instance, then atomically swaps it into currentInstance - the audio thread
 // reads via acquire. Caller has already rotated the keep-alive ring + nulled
 // currentInstance, so this only installs the new owner.
-bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInstance> fresh,
+bool PluginSlot::installInProcessInstance (PluginInstancePtr fresh,
                                            PluginDescriptor descriptor)
 {
     if (fresh == nullptr) return false;
@@ -1096,12 +1121,9 @@ bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInst
         autoBypassed.store (false, std::memory_order_relaxed);
         if (hostPlayHead != nullptr)
             ownedInstance->setPlayHead (hostPlayHead);
+        attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
-        lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
-        lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
-        for (auto* p : ownedInstance->getParameters())
-            if (p != nullptr) p->addListener (lastTouchedListener.get());
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
     loadedDescriptor = std::move (descriptor);
@@ -1142,11 +1164,7 @@ void PluginSlot::loadFromDescriptorAsync (const PluginDescriptor& descriptor,
     // Rotate the keep-alive ring + null currentInstance now - the slot goes
     // silent for the duration of the off-thread load. Same shape as the
     // synchronous path's pre-swap rotation.
-    if (ownedInstance != nullptr && lastTouchedListener != nullptr)
-        for (auto* p : ownedInstance->getParameters())
-            if (p != nullptr) p->removeListener (lastTouchedListener.get());
-    lastTouchedListener.reset();
-    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+    detachInstanceListeners();
     currentInstance.store (nullptr, std::memory_order_release);
     // Parked: clear the cached latency so the deposed plugin's value can't leak
     // into PDC accounting during the off-thread load window. installInProcess-
@@ -1199,7 +1217,7 @@ void PluginSlot::beginInProcessLoad (PluginDescriptor descriptor,
     std::weak_ptr<char> life = lifeToken;
     manager->createPluginInstanceAsync (descriptor, preparedSampleRate, preparedBlockSize,
         [this, life, epoch, onDone, descriptor]
-        (std::unique_ptr<juce::AudioPluginInstance> inst, juce::String err)
+        (PluginInstancePtr inst, juce::String err)
     {
         if (! life.lock()) return;                      // slot destroyed mid-load
         if (currentLoadEpoch.load (std::memory_order_relaxed) != epoch)
@@ -1245,11 +1263,7 @@ void PluginSlot::unload()
     // callback could fire on the listener and over-write the -1 we're
     // about to store into the atom. Once the listener is removed from
     // each param's listener list, JUCE guarantees no further callbacks.
-    if (ownedInstance != nullptr && lastTouchedListener != nullptr)
-        for (auto* p : ownedInstance->getParameters())
-            if (p != nullptr) p->removeListener (lastTouchedListener.get());
-    lastTouchedListener.reset();
-    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+    detachInstanceListeners();
     if (previousInstances[1] != nullptr)
         previousInstances[1]->releaseResources();
     previousInstances[1] = std::move (previousInstances[0]);
@@ -1487,11 +1501,7 @@ bool PluginSlot::restoreFromSavedState (
     // same two-deep deferred-destruction-via-previousInstances ring and
     // the same detach-listener-before-rotate discipline (see
     // loadFromFile for the rationale).
-    if (ownedInstance != nullptr && lastTouchedListener != nullptr)
-        for (auto* p : ownedInstance->getParameters())
-            if (p != nullptr) p->removeListener (lastTouchedListener.get());
-    lastTouchedListener.reset();
-    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+    detachInstanceListeners();
 
     currentInstance.store (nullptr, std::memory_order_release);
     if (previousInstances[1] != nullptr)
@@ -1537,17 +1547,12 @@ bool PluginSlot::restoreFromSavedState (
         autoBypassed.store (false, std::memory_order_relaxed);
         if (hostPlayHead != nullptr)
             ownedInstance->setPlayHead (hostPlayHead);
+        // Re-install the last-touched listener on the restored instance so
+        // MIDI Learn's "last-touched parameter" works after session reload,
+        // and the latency listener ahead of the first read.
+        attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
-        // Re-install the last-touched listener on the restored instance so
-        // MIDI Learn's "last-touched parameter" works after session reload.
-        // Pre-existing miss: the OOP path inherits its own listener
-        // machinery on the child side, but the in-process fallback dropped
-        // it on the floor.
-        lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
-        lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
-        for (auto* p : ownedInstance->getParameters())
-            if (p != nullptr) p->addListener (lastTouchedListener.get());
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
     loadedDescriptor = std::move (loaded);
@@ -2013,6 +2018,8 @@ void PluginSlot::timerCallback()
             applyParamWriteOnMessageThread (paramQueue[(size_t) (s2 + i)]);
         paramFifo.finishedRead (sz1 + sz2);
     }
+
+    (void) refreshLatencyIfChanged();
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     // 3c-4: detect OOP child crash and tear down the parameter mirror.

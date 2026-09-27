@@ -450,6 +450,193 @@ ScenarioResult vcaSidechainIgnoresBass (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// ------------------------------------------------------------ insert bypass
+
+// One block of `input` (the same on inputs 1 and 2) through the engine; the
+// left master output lands in `out`.
+void insertBlock (ScenarioContext& ctx, const std::array<float, kFrames>& input, std::array<float, kFrames>& out)
+{
+    std::array<float, kFrames> outR {};
+    const float* inputs[] = { input.data(), input.data() };
+    float* outputs[] = { out.data(), outR.data() };
+    ctx.engine().audioDeviceIOCallback (inputs, 2, outputs, 2, kFrames, {});
+}
+
+float blockPeak (const std::array<float, kFrames>& block)
+{
+    float peak = 0.0f;
+    for (float s : block) peak = std::max (peak, std::abs (s));
+    return peak;
+}
+
+bool loadInsert (ScenarioContext& ctx, const char* unitId)
+{
+    auto& channel = ctx.engine().getChannelStrip (kTrack);
+    std::string error;
+    if (! ctx.expect (channel.loadBuiltin (unitId, error), std::string ("could not load ") + unitId + ": " + error))
+        return false;
+    channel.insertMode.store (ChannelStrip::kInsertPlugin);
+    return true;
+}
+
+// The insert's status light bypasses it by crossfading to the dry signal while
+// the unit keeps running, so re-engaging brings back a tail it heard only while
+// bypassed, and neither edge is a step.
+ScenarioResult insertBypassKeepsProcessing (ScenarioContext& ctx)
+{
+    liveInput (ctx, Track::Mode::Mono);
+    auto& channel = ctx.engine().getChannelStrip (kTrack);
+    auto& strip = ctx.session().track (kTrack).strip;
+    ctx.keep (channel.insertMode);
+    ctx.keep (strip.insertBypassed);
+    ctx.cleanup ([&channel] { channel.unloadBuiltin(); });
+
+    std::array<float, kFrames> input {}, out {};
+    const std::array<float, kFrames> silence {};
+
+    // DuskVerb 2 hears a burst only while it is bypassed.
+    if (! loadInsert (ctx, "dusk.builtin.reverb")) return ctx.verdict();
+    strip.insertBypassed.store (true);
+    for (int b = 0; b < 40; ++b) insertBlock (ctx, silence, out);
+    double phase = 0.0;
+    const double step = kTwoPi * 1000.0 / ScenarioContext::kSampleRate;
+    for (int b = 0; b < 20; ++b)
+    {
+        for (auto& s : input) { s = 0.25f * (float) std::sin (phase); phase = std::fmod (phase + step, kTwoPi); }
+        insertBlock (ctx, input, out);
+    }
+    float bypassedAfter = 0.0f;
+    for (int b = 0; b < 10; ++b)
+    {
+        insertBlock (ctx, silence, out);
+        if (b >= 2) bypassedAfter = std::max (bypassedAfter, blockPeak (out));
+    }
+    strip.insertBypassed.store (false);
+    float tail = 0.0f;
+    for (int b = 0; b < 40; ++b)
+    {
+        insertBlock (ctx, silence, out);
+        tail = std::max (tail, blockPeak (out));
+    }
+    ctx.note ("after a burst heard while bypassed: " + std::to_string (bypassedAfter)
+              + " peak while still bypassed, " + std::to_string (tail) + " once engaged");
+    // The strip's own filters still ring down from the burst's end, so dry
+    // alone is judged against the tail the wet path carries.
+    ctx.expect (tail > 1.0e-3f, "re-engaging the insert brought back no tail, so it stopped processing while bypassed");
+    ctx.expect (bypassedAfter < 0.01f * tail, "the bypassed insert let its tail through instead of passing the dry signal alone");
+    channel.unloadBuiltin();
+
+    // Utility at -12 dB: bypassing it lifts a steady 100 Hz tone to the dry
+    // level along a ramp, never in one step.
+    if (! loadInsert (ctx, "dusk.builtin.utility")) return ctx.verdict();
+    auto& slot = channel.getBuiltinSlot();
+    for (int i = 0; i < slot.paramCount(); ++i)
+        if (const auto* info = slot.paramInfo (i); info != nullptr && std::string (info->id) == "gain_db")
+            slot.setParamValue (i, -12.0f);
+    const double lowStep = kTwoPi * 100.0 / ScenarioContext::kSampleRate;
+    phase = 0.0;
+    const auto toneBlock = [&]
+    {
+        for (auto& s : input) { s = 0.25f * (float) std::sin (phase); phase = std::fmod (phase + lowStep, kTwoPi); }
+        insertBlock (ctx, input, out);
+    };
+    const auto largestStep = [] (const std::array<float, kFrames>& block, float& previous)
+    {
+        float worst = 0.0f;
+        for (float s : block) { worst = std::max (worst, std::abs (s - previous)); previous = s; }
+        return worst;
+    };
+    for (int b = 0; b < 60; ++b) toneBlock();
+    float engagedPeak = 0.0f;
+    for (int b = 0; b < 4; ++b) { toneBlock(); engagedPeak = std::max (engagedPeak, blockPeak (out)); }
+    float previous = out.back();
+    strip.insertBypassed.store (true);
+    toneBlock();
+    const float firstPeak = blockPeak (out);
+    float transitionStep = largestStep (out, previous);
+    for (int b = 0; b < 16; ++b) { toneBlock(); transitionStep = std::max (transitionStep, largestStep (out, previous)); }
+    float dryPeak = 0.0f, dryStep = 0.0f;
+    for (int b = 0; b < 8; ++b)
+    {
+        toneBlock();
+        dryPeak = std::max (dryPeak, blockPeak (out));
+        dryStep = std::max (dryStep, largestStep (out, previous));
+    }
+    ctx.note ("Utility -12 dB bypassed: peak " + std::to_string (engagedPeak) + " -> first block "
+              + std::to_string (firstPeak) + " -> " + std::to_string (dryPeak) + ", largest sample step "
+              + std::to_string (transitionStep) + " against " + std::to_string (dryStep) + " when settled");
+    ctx.expect (std::abs (db (dryPeak, engagedPeak) - 12.0) < 1.0, "bypassing the -12 dB insert did not restore the dry level");
+    ctx.expect (firstPeak < 0.75f * dryPeak, "bypass jumped to the dry level within one block");
+    ctx.expect (transitionStep < 1.5f * dryStep, "bypassing the insert stepped the signal");
+
+    strip.insertBypassed.store (false);
+    toneBlock();
+    const float reengagedFirstPeak = blockPeak (out);
+    float reengageStep = largestStep (out, previous);
+    for (int b = 0; b < 16; ++b) { toneBlock(); reengageStep = std::max (reengageStep, largestStep (out, previous)); }
+    float wetPeak = 0.0f;
+    for (int b = 0; b < 8; ++b) { toneBlock(); wetPeak = std::max (wetPeak, blockPeak (out)); }
+    ctx.note ("Utility -12 dB re-engaged: peak " + std::to_string (dryPeak) + " -> first block "
+              + std::to_string (reengagedFirstPeak) + " -> " + std::to_string (wetPeak) + ", largest sample step "
+              + std::to_string (reengageStep));
+    ctx.expect (std::abs (db (dryPeak, wetPeak) - 12.0) < 1.0, "re-engaging the -12 dB insert did not bring back its level");
+    ctx.expect (reengageStep < 1.5f * dryStep, "re-engaging the insert stepped the signal");
+    return ctx.verdict();
+}
+
+// A fully wet DuskVerb 2 on aux lane 1 fed by track 1's send: once the send
+// goes silent the lane keeps running, so the tail still reaches the master and
+// dies away rather than stopping with the send.
+ScenarioResult auxReverbTailOutlivesTheSend (ScenarioContext& ctx)
+{
+    liveInput (ctx, Track::Mode::Mono);
+    auto& strip = ctx.session().track (kTrack).strip;
+    auto& lane = ctx.engine().getAuxLaneStrip (0);
+    ctx.keep (lane.insertMode[0]);
+    ctx.cleanup ([&lane] { lane.unloadBuiltin (0); });
+    strip.auxSendDb[0].store (0.0f);
+    strip.auxSendPreFader[0].store (true);
+    strip.faderDb.store (ChannelStripParams::kFaderMinDb);
+
+    std::string error;
+    if (! ctx.expect (lane.loadBuiltin (0, "dusk.builtin.reverb", error), "could not load DuskVerb 2 on the aux lane: " + error))
+        return ctx.verdict();
+    lane.insertMode[0].store (AuxLaneStrip::kInsertPlugin);
+    auto& slot = lane.getBuiltinSlot (0);
+    for (int i = 0; i < slot.paramCount(); ++i)
+        if (const auto* info = slot.paramInfo (i); info != nullptr && std::string (info->id) == "mix")
+            slot.setParamValue (i, info->maxValue);
+
+    std::array<float, kFrames> input {}, out {};
+    const std::array<float, kFrames> silence {};
+    for (int b = 0; b < 20; ++b) insertBlock (ctx, silence, out);
+    double phase = 0.0;
+    const double step = kTwoPi * 1000.0 / ScenarioContext::kSampleRate;
+    float during = 0.0f;
+    for (int b = 0; b < 40; ++b)
+    {
+        for (auto& s : input) { s = 0.25f * (float) std::sin (phase); phase = std::fmod (phase + step, kTwoPi); }
+        insertBlock (ctx, input, out);
+        during = std::max (during, blockPeak (out));
+    }
+    // Blocks of 256 at 48 kHz. The send itself has died below the lane's
+    // -120 dBFS silence line well before 0.4 s, so from there on only the
+    // lane's tail rule keeps the reverb running.
+    float early = 0.0f, late = 0.0f;
+    for (int b = 0; b < 188; ++b)
+    {
+        insertBlock (ctx, silence, out);
+        if (b >= 75 && b < 113) early = std::max (early, blockPeak (out));
+        if (b >= 169)           late  = std::max (late, blockPeak (out));
+    }
+    ctx.note ("master peak with the send live " + std::to_string (during) + ", 0.4-0.6 s after it stops "
+              + std::to_string (early) + ", 0.9-1.0 s after " + std::to_string (late));
+    ctx.expect (during > 1.0e-3f, "the reverb on the aux lane never reached the master");
+    ctx.expect (early > 1.0e-3f, "the reverb tail stopped with the send");
+    ctx.expect (late < early, "the reverb tail did not die away");
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
@@ -539,6 +726,12 @@ const ScenarioRegistrar sendsRegistrar { Scenario {
 const ScenarioRegistrar compModesRegistrar { Scenario {
     "strip.comp_modes_keep_their_settings", { "strip", "comp", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (compModesKeepTheirSettings, ctx); } } };
+const ScenarioRegistrar insertBypassRegistrar { Scenario {
+    "strip.insert_bypass_keeps_processing", { "strip", "insert", "dsp" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (insertBypassKeepsProcessing, ctx); } } };
+const ScenarioRegistrar auxTailRegistrar { Scenario {
+    "aux.reverb_tail_outlives_the_send", { "aux", "insert", "dsp" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (auxReverbTailOutlivesTheSend, ctx); } } };
 const ScenarioRegistrar vcaRegistrar { Scenario {
     "strip.vca_sidechain_ignores_bass", { "strip", "comp", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (vcaSidechainIgnoresBass, ctx); } } };

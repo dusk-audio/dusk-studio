@@ -2,8 +2,14 @@
 #include "DuskAlerts.h"
 #include "EmbeddedModal.h"
 #include "../foundation/Fs.h"
+#include "../foundation/MessageThread.h"
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <system_error>
+#include <thread>
 #include <vector>
 
 namespace duskstudio::filebrowser
@@ -18,16 +24,157 @@ EmbeddedModal& sharedFileBrowserModal()
 
 bool shuttingDown = false;
 
+struct FolderCheckGate
+{
+    std::mutex mutex;
+    std::condition_variable released;
+    bool held = false;
+};
+
+// Never destroyed: a folder check still running on its own thread at exit would
+// otherwise lock a destroyed mutex, which aborts the process on macOS.
+FolderCheckGate& folderCheckGate()
+{
+    static auto* gate = new FolderCheckGate();
+    return *gate;
+}
+
+// Opens the nearest folder that exists at or above `folder`, the one the browser
+// would go on to list.
+void openNearestFolder (std::filesystem::path folder)
+{
+    {
+        static constexpr auto kLongestHold = std::chrono::seconds (3);
+        auto& gate = folderCheckGate();
+        std::unique_lock<std::mutex> lock (gate.mutex);
+        gate.released.wait_for (lock, kLongestHold, [&gate] { return ! gate.held; });
+    }
+    std::error_code error;
+    while (! std::filesystem::is_directory (folder, error))
+    {
+        auto parent = folder.parent_path();
+        if (parent == folder) return;
+        folder = std::move (parent);
+    }
+    const std::filesystem::directory_iterator firstEntry (folder, error);
+}
+
 class ScanBrowser final : public juce::FileBrowserComponent
 {
 public:
-    using FileBrowserComponent::FileBrowserComponent;
+    ScanBrowser (int browserFlags, const juce::File& initial, const juce::FileFilter* filter)
+        : FileBrowserComponent (browserFlags, initial, filter, nullptr)
+    {
+        for (auto* child : getChildren())
+        {
+            if (auto* pathBox = dynamic_cast<juce::ComboBox*> (child))
+                pathBox->onChange = [this, pathBox, change = pathBox->onChange]
+                {
+                    // The folder the framework's handler moves to: a place picked
+                    // from the list, or the nearest folder at or above the typed path.
+                    auto folder = getRoot();
+                    const auto typed = pathBox->getText().trim().unquoted();
+                    if (typed.isNotEmpty())
+                    {
+                        juce::StringArray names, paths;
+                        getRoots (names, paths);
+                        const auto place = paths[pathBox->getSelectedId() - 1];
+                        folder = folder.getChildFile (place.isNotEmpty() ? place : typed);
+                    }
+                    afterOpening (folder, change);
+                };
+            else if (auto* nameBox = dynamic_cast<juce::TextEditor*> (child))
+                nameBox->onReturnKey = [this, nameBox, change = nameBox->onReturnKey]
+                {
+                    const auto name = nameBox->getText();
+                    if (name.containsChar (getRoot().getSeparatorChar()))
+                        afterOpening (getRoot().getChildFile (name), change);
+                    else
+                        change();
+                };
+        }
+        routeGoUp();
+    }
 
     // Private to this browser: the list and any folders it opens scan on it.
     auto& scanThread() { return getDisplayComponent()->directoryContentsList.getTimeSliceThread(); }
     bool scanning() const { return getDisplayComponent()->directoryContentsList.isStillLoading(); }
 
+    // macOS asks the user before an app may list a protected folder such as
+    // Desktop, and holds the listing until they answer. The framework lists a
+    // new folder on the message thread, so the folder is opened on a thread of
+    // its own first and the change runs once macOS has its answer.
+    void afterOpening (const juce::File& folder, const std::function<void()>& change)
+    {
+        pendingUpLevels = 0;
+        const int request = ++*latestChange;
+        auto path = std::filesystem::u8path (folder.getFullPathName().toStdString());
+        try
+        {
+            std::thread ([path, change, latest = std::weak_ptr<int> (latestChange), request]
+            {
+                openNearestFolder (path);
+                dusk::callAsync ([change, latest, request]
+                {
+                    if (const auto current = latest.lock(); current != nullptr && *current == request)
+                        change();
+                });
+            }).detach();
+        }
+        catch (const std::system_error&)
+        {
+            change();
+        }
+    }
+
+    void dropFolderChange()
+    {
+        pendingUpLevels = 0;
+        ++*latestChange;
+    }
+
+    void fileDoubleClicked (const juce::File& f) override
+    {
+        if (! f.isDirectory())
+        {
+            FileBrowserComponent::fileDoubleClicked (f);
+            return;
+        }
+        afterOpening (f, [this, f] { FileBrowserComponent::fileDoubleClicked (f); });
+    }
+
+    void lookAndFeelChanged() override
+    {
+        FileBrowserComponent::lookAndFeelChanged();
+        routeGoUp();
+    }
+
 private:
+    void routeGoUp()
+    {
+        for (auto* child : getChildren())
+            if (auto* up = dynamic_cast<juce::Button*> (child))
+                up->onClick = [this]
+                {
+                    // An Up clicked while the last one still waits on its check
+                    // goes on from the folder that one is going to.
+                    const int levels = pendingUpLevels + 1;
+                    auto target = getRoot();
+                    for (int level = 0; level < levels; ++level)
+                        target = target.getParentDirectory();
+                    afterOpening (target, [this, target]
+                    {
+                        pendingUpLevels = 0;
+                        setRoot (target);
+                    });
+                    pendingUpLevels = levels;
+                };
+    }
+
+    int pendingUpLevels = 0;
+
+    std::shared_ptr<int> latestChange = std::make_shared<int> (0);
+
     // The framework's browser relists its folder whenever the app comes back to
     // the front, and a relist waits for the scan in progress. A scan macOS holds
     // on a privacy prompt would then freeze the window until the prompt is
@@ -61,13 +208,13 @@ public:
         // Build the FileBrowserComponent. Flag bitmask follows juce's
         // contract: openMode/saveMode + canSelectFiles or canSelectDirectories.
         int browserFlags = (opts.mode == Mode::Save)
-                        ? (int) juce::FileBrowserComponent::saveMode
-                        : (int) juce::FileBrowserComponent::openMode;
+                        ? (int) ScanBrowser::saveMode
+                        : (int) ScanBrowser::openMode;
         browserFlags |= opts.selectDirectories
-                    ? (int) juce::FileBrowserComponent::canSelectDirectories
-                    : (int) juce::FileBrowserComponent::canSelectFiles;
+                    ? (int) ScanBrowser::canSelectDirectories
+                    : (int) ScanBrowser::canSelectFiles;
         if (multi)
-            browserFlags |= (int) juce::FileBrowserComponent::canSelectMultipleItems;
+            browserFlags |= (int) ScanBrowser::canSelectMultipleItems;
 
         // Filter: simple wildcard filter. Empty pattern = any file.
         if (opts.filePatternsAllowed.isNotEmpty())
@@ -92,7 +239,7 @@ public:
             if (! initial.exists())
                 initial = home;
         }
-        browser = std::make_unique<ScanBrowser> (browserFlags, initial, filter.get(), /*previewComp*/ nullptr);
+        browser = std::make_unique<ScanBrowser> (browserFlags, initial, filter.get());
         browser->addListener (this);
         addAndMakeVisible (*browser);
 
@@ -161,6 +308,7 @@ public:
     {
         if (browser == nullptr) return;
         browser->removeListener (this);
+        browser->dropFolderChange();
         // A folder scan that macOS holds on a privacy prompt keeps the list locked
         // until the prompt is answered, and destroying the browser waits for that
         // lock with the window frozen half repainted. So a browser still scanning
@@ -244,8 +392,8 @@ public:
         auto single = resultFn;
         auto multi  = multiResultFn;
         sharedFileBrowserModal().close();
-        if (single) single (juce::File());
-        if (multi)  multi  (juce::Array<juce::File>());
+        if (single) single ({});
+        if (multi)  multi  ({});
     }
 
 private:
@@ -287,8 +435,11 @@ private:
             // this also covers Save with nothing typed.
             if (opts.mode == Mode::Save && file.isDirectory())
             {
-                browser->setRoot (file);
-                browser->setFileName ({});
+                browser->afterOpening (file, [shown = browser.get(), file]
+                {
+                    shown->setRoot (file);
+                    shown->setFileName ({});
+                });
             }
             else
             {
@@ -344,6 +495,7 @@ private:
             return;
         }
         toggleNewFolderRow();
+        browser->dropFolderChange();
         browser->setRoot (dir);
     }
 
@@ -405,6 +557,16 @@ bool shownFolderScanningForScenario()
 int retiredScansForScenario()
 {
     return DuskFileBrowserPanel::retiredCount();
+}
+
+void holdFolderChecksForScenario (bool held)
+{
+    auto& gate = folderCheckGate();
+    {
+        const std::lock_guard<std::mutex> lock (gate.mutex);
+        gate.held = held;
+    }
+    gate.released.notify_all();
 }
 
 std::filesystem::path shownFolderForScenario()
