@@ -7127,7 +7127,11 @@ std::optional<ScenarioResult> runBounceStemsReleasesMix (GuiHost& host, Scenario
     const auto held = [&player] { return fs::u8path (player.getLoadedFile().getFullPathName().toStdString()); };
     if (! same (held(), stem)) return ScenarioResult::fail ("the session did not open with the stem loaded");
 
-    const auto bounceStems = [&host, &ctx, &player, base] (std::vector<Step>& into)
+    // The first bounce has ten minutes to render and is still going when it is
+    // checked. The second has one second plus the tail, which a fast machine
+    // renders before any check can catch it running, so that one is judged by
+    // the file it leaves for the player instead.
+    const auto bounceStems = [&host, &ctx, &player, base] (std::vector<Step>& into, bool longRender)
     {
         into.push_back ({ 200, [&host, &ctx]
         {
@@ -7145,9 +7149,10 @@ std::optional<ScenarioResult> runBounceStemsReleasesMix (GuiHost& host, Scenario
         } });
         into.push_back ({ 500, [&host, &ctx]
         { ctx.expect (host.clickModalButton ("Overwrite"), "a stems bounce over the loaded stem did not ask to overwrite it"); } });
-        into.push_back ({ 100, [&host, &ctx, &player]
+        into.push_back ({ 100, [&host, &ctx, &player, longRender]
         {
-            ctx.expect (host.renderRunning(), "the stems bounce did not start");
+            if (longRender)
+                ctx.expect (host.renderRunning(), "the stems bounce did not start");
             ctx.expect (! player.isLoaded(), "the stems bounce started with the mastering player still holding the stem");
         } });
     };
@@ -7166,7 +7171,7 @@ std::optional<ScenarioResult> runBounceStemsReleasesMix (GuiHost& host, Scenario
             return;
         }
         auto bounce = std::make_shared<std::vector<Step>>();
-        bounceStems (*bounce);
+        bounceStems (*bounce, false);
         runSteps (ctx, bounce, [&host, &ctx, &player, same, held, stem]
         {
             ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000, [&host, &ctx, &player, same, held, stem]
@@ -7187,7 +7192,7 @@ std::optional<ScenarioResult> runBounceStemsReleasesMix (GuiHost& host, Scenario
     };
 
     auto steps = std::make_shared<std::vector<Step>>();
-    bounceStems (*steps);
+    bounceStems (*steps, true);
     steps->push_back ({ 300, [&host, &ctx]
     {
         ctx.expect (host.renderRunning(), "the stems bounce stopped before it was cancelled");
@@ -14258,44 +14263,61 @@ std::optional<ScenarioResult> runCleanOutWhileRecording (GuiHost& host, Scenario
                     "stopped: the status bar says '" + host.statusMessage() + "'");
     } });
 
-    // A stop that gives up waiting for the audio thread drops its take but
-    // leaves the take's file and writer behind. Once the audio thread has
-    // left, nothing records, so Clean out must neither say a take is being
-    // recorded nor keep the dropped file.
+    // A stop that finds an audio-thread call still inside the recorder waits
+    // for it to leave, however long that takes, and commits the take on its
+    // own file, so Clean out still has nothing to offer.
     steps->push_back ({ 100, [&ctx, &engine, &transport]
     {
         engine.record();
         ctx.expect (transport.isRecording(), "the third take did not start");
     } });
-    steps->push_back ({ 300, [&ctx, &engine, &transport, &track, takes]
+    steps->push_back ({ 300, [&ctx, &engine, &transport, &track, takes, regionFiles]
     {
+        struct HeldCall
+        {
+            RecordManager& recorder;
+            int leaveAfterPasses = 0;
+            int passes = 0;
+            static void pass (void* context)
+            {
+                auto& self = *static_cast<HeldCall*> (context);
+                if (++self.passes == self.leaveAfterPasses)
+                    self.recorder.holdAudioInFlightForTest (false);
+            }
+        };
         auto& recorder = engine.getRecordManager();
+        HeldCall held { recorder, 5000 };
         recorder.holdAudioInFlightForTest (true);
+        recorder.setAudioWaitObserverForTest (&held, &HeldCall::pass);
         engine.stop();
-        recorder.holdAudioInFlightForTest (false);
-        ctx.expect (transport.isStopped(), "the bailed stop left the transport rolling");
-        ctx.expect (track.regions.size() == 2 && takes().size() == 3,
-                    "the bailed stop did not leave its take's file without a region");
+        recorder.setAudioWaitObserverForTest (nullptr, nullptr);
+        if (held.passes < held.leaveAfterPasses)
+            recorder.holdAudioInFlightForTest (false);
+        ctx.expect (held.passes == held.leaveAfterPasses,
+                    "the stop gave up on the audio thread after " + std::to_string (held.passes) + " passes");
+        ctx.expect (transport.isStopped(), "the stop that waited left the transport rolling");
+        ctx.expect (track.regions.size() == 3 && takes().size() == 3 && regionFiles() == takes(),
+                    "the stop that waited for the audio thread did not commit its take");
     } });
-    choose ("after a bailed stop");
+    choose ("after a stop that waited");
     steps->push_back ({ 400, [&host, &ctx]
     {
         if (! host.confirmationText().empty())
         {
-            ctx.expect (false, "after a bailed stop: Clean out offered '" + joinedLines (host.confirmationText()) + "'");
+            ctx.expect (false, "after a stop that waited: Clean out offered '"
+                                   + joinedLines (host.confirmationText()) + "'");
             host.clickModalButton ("Cancel");
             return;
         }
         ctx.expect (host.modalText() == "Clean out\nNo unreferenced files found. The audio directory is already clean.",
-                    "after a bailed stop: the alert read '" + host.modalText() + "'");
-        ctx.expect (host.clickModalButton ("OK"), "after a bailed stop: the alert has no OK button");
+                    "after a stop that waited: the alert read '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton ("OK"), "after a stop that waited: the alert has no OK button");
     } });
-    steps->push_back ({ 300, [&host, &ctx, &engine, takes, regionFiles]
+    steps->push_back ({ 300, [&host, &ctx, takes, regionFiles]
     {
-        ctx.expect (host.modalStackEmpty(), "after a bailed stop: '" + host.modalText() + "' is still up");
-        ctx.expect (takes().size() == 2 && regionFiles() == takes(),
-                    "after a bailed stop: the dropped take's file is still in the audio folder");
-        ctx.expect (! engine.getRecordManager().hasOpenTake(), "after a bailed stop: the dropped take is still open");
+        ctx.expect (host.modalStackEmpty(), "after a stop that waited: '" + host.modalText() + "' is still up");
+        ctx.expect (takes().size() == 3 && regionFiles() == takes(),
+                    "after a stop that waited: Clean out removed a take");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;

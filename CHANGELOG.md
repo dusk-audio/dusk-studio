@@ -210,23 +210,33 @@ publishes.
   that refused left no audio device open and no message. The output now
   reopens on its own, with the "No input device" notice, and the no-device
   alert shows if even that fails.
+- **A first launch on macOS opens the output while the microphone prompt is
+  up** (#766). Opening the default input raised the prompt, and CoreAudio held
+  the whole device until it was answered; left unanswered for about three
+  minutes, the open failed with CoreAudio error 10004003 and the app came up
+  with no audio device at all. A first launch now opens the output alone and
+  asks for microphone access separately, so playback works at once. **Allow**
+  adds the input. **Don't Allow** leaves the input out instead of recording
+  silence, and the transport bar says microphone access is off and where to
+  turn it on. Whenever an output fails only because of the input it was
+  paired with, it now opens on its own.
 - **Clean out refuses while a take is recording** (#743). The take's file has
   no region until you stop, so Clean out listed it and deleted it. Clean out
   now asks you to stop recording first, both when you choose it and again when
-  you press Delete. A take dropped by a stalled stop no longer holds that
-  refusal up once nothing records; Clean out removes its file. A session you
-  have never saved is refused too once another session has been saved into
-  its folder, rather than offered that session's takes to delete.
+  you press Delete. A session you have never saved is refused too once another
+  session has been saved into its folder, rather than offered that session's
+  takes to delete.
 - **A Save As that fails partway puts the session back** (#744). If the
   notepad or `session.json` could not be written after the audio was copied,
   the session stayed pointed at the new folder while the alert said nothing
   had changed. A failed Save As now restores the session and removes what it
   made in the new folder.
-- **A take dropped by a stalled stop cannot crash the next recording** (#746).
-  When Stop gave up waiting for a stalled audio thread, the next recording
-  freed the dropped take's writer while the disk thread could still use it,
-  and the 24th track lost its take. The dropped take is now cleared properly
-  before the next recording starts.
+- **Stop never throws a take away** (#746, #766). When Stop found the audio
+  thread still writing into the take, it gave up after a fixed number of
+  tries, well under a millisecond on a fast machine, and dropped the take;
+  the next recording then freed that take's writer while the disk thread
+  could still be using it. Stop now waits for the audio thread to finish the
+  block it is writing and commits the take.
 - **The channel EQ no longer cramps near Nyquist.** At the default 1x Effect
   oversampling a high HM boost used to fall 5 to 7 dB short at 20 kHz. Every
   band now holds its shape up to 20 kHz at 1x, 2x and 4x.

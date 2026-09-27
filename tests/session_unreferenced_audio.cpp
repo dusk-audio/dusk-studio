@@ -117,8 +117,8 @@ TEST_CASE ("Clean out reports nothing for a session with no audio directory",
 
 // A take's WAV is in the audio directory from the moment recording starts, but
 // no region names it until Stop commits one, so the scan alone offers it for
-// deletion. Clean out refuses while the recorder reports an open take; that
-// has to cover the whole of that window and let go once the region exists.
+// deletion. Clean out refuses while the recorder is active, which has to cover
+// the whole of that window and end once the region exists.
 TEST_CASE ("The recorder holds a take open for as long as its file is unreferenced",
            "[session][cleanout][recordmanager]")
 {
@@ -135,7 +135,7 @@ TEST_CASE ("The recorder holds a take open for as long as its file is unreferenc
     session.setTrackArmed (0, true);
 
     RecordManager recorder (session);
-    CHECK_FALSE (recorder.hasOpenTake());
+    CHECK_FALSE (recorder.isActive());
     REQUIRE (recorder.startRecording (48000.0, 0));
     const std::vector<float> block ((size_t) kBlock, 0.1f);
     for (int i = 0; i < kBlocks; ++i)
@@ -144,10 +144,10 @@ TEST_CASE ("The recorder holds a take open for as long as its file is unreferenc
     const auto midTake = duskstudio::findUnreferencedAudio (session);
     REQUIRE (midTake.files.size() == 1);
     const auto take = midTake.files.front();
-    CHECK (recorder.hasOpenTake());
+    CHECK (recorder.isActive());
 
     recorder.stopRecording (kBlock * kBlocks);
-    CHECK_FALSE (recorder.hasOpenTake());
+    CHECK_FALSE (recorder.isActive());
     const auto& regions = session.track (0).regions;
     REQUIRE (regions.size() == 1);
     CHECK (std::filesystem::u8path (regions.front().file.getFullPathName().toStdString())

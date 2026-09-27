@@ -45,6 +45,38 @@ inline std::string chooseDefaultInputDevice (const std::string& outputDeviceName
     return inputDeviceNames.front();
 }
 
+// A device is open at a real rate with output channels active. The rate alone is
+// not enough: a per-device ALSA name can resolve to no active outputs.
+inline bool hasWorkingOutput (DeviceManager& manager)
+{
+    auto* d = manager.getCurrentDevice();
+    return d != nullptr && d->getCurrentSampleRate() > 0.0
+        && d->getActiveOutputChannels().count() > 0;
+}
+
+// Opens the current backend's default output with no input. An open that pairs
+// an output with an input fails whole when the input does (an input on another
+// card that refuses the output's rate, or on macOS one whose microphone prompt
+// nobody answered, which CoreAudio fails with a timeout), so the output on its
+// own is not a repeat of that failure. Not a chosen setup: nothing is saved.
+inline bool openOutputAlone (DeviceManager& manager)
+{
+    auto* type = manager.getCurrentDeviceType();
+    if (type == nullptr) return false;
+    const auto outputs = type->getDeviceNames (/*wantInputNames*/ false);
+    if (outputs.empty()) return false;
+    const int index = type->getDefaultDeviceIndex (/*forInput*/ false);
+
+    auto setup = manager.getSetup();
+    setup.outputDeviceName = outputs[(index >= 0 && index < (int) outputs.size()) ? (size_t) index : 0];
+    setup.inputDeviceName.clear();
+    setup.inputChannels.clear();
+    setup.useDefaultOutputChannels = true;
+    setup.sampleRate = 0;
+    setup.bufferSize = 0;
+    return manager.setSetup (setup, /*treatAsChosen*/ false).empty() && hasWorkingOutput (manager);
+}
+
 struct FirstLaunchInputResult
 {
     std::string error;            // empty = the input opened alongside the output
@@ -56,29 +88,29 @@ struct FirstLaunchInputResult
 // another card can refuse the output's rate or be busy; nothing is saved on a
 // first launch, so without the restore every later launch would end the same
 // way, with no device open at all.
+//
+// The input channels are named rather than left to the manager's default,
+// because a manager initialised for outputs alone (a first launch waiting on
+// microphone access) defaults to none.
 inline FirstLaunchInputResult openWithFirstLaunchInput (DeviceManager& manager,
-                                                        const std::string& inputDeviceName)
+                                                        const std::string& inputDeviceName,
+                                                        int numInputChannels)
 {
-    const auto isWorking = [&manager]
-    {
-        auto* d = manager.getCurrentDevice();
-        return d != nullptr && d->getCurrentSampleRate() > 0.0
-            && d->getActiveOutputChannels().count() > 0;
-    };
-
     const auto previous = manager.getSetup();
     auto setup = previous;
     setup.inputDeviceName = inputDeviceName;
-    setup.useDefaultInputChannels = true;
+    setup.useDefaultInputChannels = false;
+    setup.inputChannels.clear();
+    setup.inputChannels.setRange (0, numInputChannels, true);
 
     FirstLaunchInputResult result;
     result.error = manager.setSetup (setup, /*treatAsChosen*/ false);
-    if (result.error.empty() && isWorking())
+    if (result.error.empty() && hasWorkingOutput (manager))
         return result;
     if (result.error.empty())
         result.error = "no working output after the reopen";
     result.outputRestored = manager.setSetup (previous, /*treatAsChosen*/ false).empty()
-                            && isWorking();
+                            && hasWorkingOutput (manager);
     return result;
 }
 } // namespace duskstudio::device

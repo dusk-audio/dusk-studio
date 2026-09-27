@@ -17,7 +17,11 @@ const juce::Colour kPanelBackground   { 0xff202024 };
 const juce::Colour kBrightText        { 0xffe0e0e0 };
 const juce::Colour kNoInputBackground { 0xff3a2020 };
 const juce::Colour kNoInputText       { 0xffe0a0a0 };
-const juce::Font   kNoticeFont        { juce::FontOptions (11.5f) };
+// Options, not a Font: a Font caches its typeface once it has drawn, and a
+// file-scope one then releases it after main returns. On macOS that release
+// locks JUCE's CoreText registry, which is a function-local static built after
+// this one and so already destroyed, and the process aborts on the way out.
+const juce::FontOptions kNoticeFont   { 11.5f };
 constexpr auto     kNoticeJustification = juce::Justification::centred;
 constexpr int      kNoticeMaxW          = 480;
 } // namespace
@@ -699,11 +703,14 @@ void TransportBar::refreshDeviceNotice()
     const bool noInput = engine.getSession().deviceCaptureChannels.load (
                              std::memory_order_relaxed) == 0;
     // No input is the one that stops the next thing the user tries, so it wins
-    // when a backend fallback is also standing. Views, not strings: this runs
-    // at the timer rate and the notice changes almost never.
+    // when a backend fallback is also standing, and when the microphone
+    // permission is why, that is what the bar names. Views, not strings: this
+    // runs at the timer rate and the notice changes almost never.
+    const std::string_view microphone (engine.microphoneNotice());
     const std::string_view wanted =
-        noInput ? std::string_view ("No input device. Choose one in Settings > Audio.")
-                : std::string_view (engine.backendFallbackNotice());
+        ! microphone.empty() ? microphone
+        : noInput ? std::string_view ("No input device. Choose one in Settings > Audio.")
+                  : std::string_view (engine.backendFallbackNotice());
     if (wanted == deviceNotice) return;
     deviceNotice.assign (wanted.data(), wanted.size());
     // The notice has a row of its own, so appearing and clearing changes the

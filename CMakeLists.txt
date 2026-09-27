@@ -948,6 +948,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 else()
     target_sources(DuskStudio PRIVATE src/engine/device/DeviceManagerJuce.cpp)
 endif()
+if(APPLE)
+    target_sources(DuskStudio PRIVATE src/engine/device/MicrophoneAccess_Mac.mm)
+    target_link_libraries(DuskStudio PRIVATE "-framework AVFoundation")
+endif()
 
 # Cross-platform window-management primitives. One implementation per
 # platform; callsites #include only PlatformWindowing.h and stay
