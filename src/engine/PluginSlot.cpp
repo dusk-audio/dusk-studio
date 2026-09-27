@@ -466,6 +466,8 @@ void PluginSlot::retireRemoteConnection()
     {
         const juce::SpinLock::ScopedLockType processGuard (processLock);
         currentRemote.store (nullptr, std::memory_order_release);
+        // The child's latency leaves the signal path with it.
+        cachedLatencySamples.store (0, std::memory_order_relaxed);
         retired = std::move (previousRemotes[1]);
         previousRemotes[1] = std::move (previousRemotes[0]);
         previousRemotes[0] = std::move (ownedRemote);
@@ -486,17 +488,20 @@ void PluginSlot::retireRemoteConnection()
 
 void PluginSlot::clearAutoBypass() noexcept
 {
-    autoBypassed.store (false, std::memory_order_relaxed);
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Clearing crashed state too: if the user explicitly asks to
     // re-enable a crashed slot, drop the dead connection so the next
-    // load (or processBlock attempt) doesn't see a stale carcass.
+    // load (or processBlock attempt) doesn't see a stale carcass. That
+    // leaves nothing in the signal path, and no latency to report.
     if (remoteCrashed.load (std::memory_order_relaxed))
     {
         retireRemoteConnection();
         remoteCrashed.store (false, std::memory_order_relaxed);
     }
    #endif
+    // Release pairs with the acquire in getLatencySamples, so a reader that
+    // sees the flag down also sees the latency the retire above cleared.
+    autoBypassed.store (false, std::memory_order_release);
 }
 
 int PluginSlot::getRemoteChildPid() const noexcept
@@ -1365,13 +1370,12 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
                 // The plug-in starts cold again and may report a new latency,
                 // so the watchdog gets its warm-up grace back and the latency
                 // is re-read, as after any other prepare. An auto-bypassed
-                // slot passes dry, so it goes on reporting none.
+                // slot still reports none until it is re-enabled.
                 const juce::SpinLock::ScopedLockType processGuard (processLock);
                 blocksSinceLoad     = 0;
                 consecutiveOverruns = 0;
-                if (! autoBypassed.load (std::memory_order_relaxed))
-                    cachedLatencySamples.store (inst.getLatencySamples(),
-                                                  std::memory_order_relaxed);
+                cachedLatencySamples.store (inst.getLatencySamples(),
+                                              std::memory_order_relaxed);
             }
         },
         parkSleepMs);

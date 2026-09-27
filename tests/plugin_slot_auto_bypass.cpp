@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "engine/PdcMath.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
 
@@ -221,7 +222,9 @@ TEST_CASE ("a save starts the count of late blocks again", "[plugin][autobypass]
 }
 
 // An auto-bypassed plug-in passes dry and adds no delay for PDC to make up. The
-// save's re-prepare lets it report a latency again, which must not reach PDC.
+// save's re-prepare lets it report a latency again, which must not reach PDC
+// until the plug-in is back in the path, and then it is the latency it settled
+// on at that prepare.
 TEST_CASE ("a save leaves an auto-bypassed plugin reporting no latency", "[plugin][autobypass]")
 {
     Harness h (64);
@@ -231,7 +234,89 @@ TEST_CASE ("a save leaves an auto-bypassed plugin reporting no latency", "[plugi
     REQUIRE (h.slot.wasAutoBypassed());
     REQUIRE (h.slot.getLatencySamples() == 0);
 
+    h.plugin->latencyOnPrepare = 96;
     h.save();
     CHECK (h.slot.wasAutoBypassed());
     CHECK (h.slot.getLatencySamples() == 0);
+
+    h.slot.clearAutoBypass();
+    CHECK (h.slot.getLatencySamples() == 96);
+}
+
+// Re-enable puts the plug-in back in the signal path, and its delay with it, so
+// delay compensation has to make room for that delay again.
+TEST_CASE ("re-enabling an auto-bypassed plugin brings its latency back", "[plugin][autobypass]")
+{
+    Harness h (64);
+    h.warmUp();
+    h.pump (kOverrunsToTrip, 3);
+    REQUIRE (h.slot.wasAutoBypassed());
+    REQUIRE (h.slot.getLatencySamples() == 0);
+
+    h.slot.clearAutoBypass();
+    CHECK (h.slot.getLatencySamples() == 64);
+}
+
+// A device change re-prepares a slot that is still bypassed. It still passes
+// dry, so it still adds no delay; the latency the prepare settled on comes back
+// only when the plug-in does.
+TEST_CASE ("preparing an auto-bypassed slot again keeps it reporting no latency", "[plugin][autobypass]")
+{
+    Harness h (64);
+    h.warmUp();
+    h.pump (kOverrunsToTrip, 3);
+    REQUIRE (h.slot.wasAutoBypassed());
+
+    h.plugin->latencyOnPrepare = 128;
+    h.slot.prepareToPlay (kRate, kBlock);
+    CHECK (h.slot.wasAutoBypassed());
+    CHECK (h.slot.getLatencySamples() == 0);
+
+    h.slot.clearAutoBypass();
+    CHECK (h.slot.getLatencySamples() == 128);
+}
+
+// The slot's report is what the engine feeds the PDC math for its track, every
+// block and after every change it makes itself, so the compensation the other
+// tracks get follows the plug-in out of the path and back into it.
+TEST_CASE ("delay compensation follows a plugin in and out of auto-bypass", "[plugin][autobypass][pdc]")
+{
+    Harness h (64);
+    const auto otherTrackDelay = [&h]
+    {
+        const int latency[2] { h.slot.getLatencySamples(), 0 };
+        int compensation[2] {};
+        pdc::computeCompensations (latency, compensation, 2);
+        return compensation[1];
+    };
+    h.warmUp();
+    CHECK (otherTrackDelay() == 64);
+
+    h.pump (kOverrunsToTrip, 3);
+    REQUIRE (h.slot.wasAutoBypassed());
+    CHECK (otherTrackDelay() == 0);
+
+    h.plugin->latencyOnPrepare = 128;
+    h.slot.prepareToPlay (kRate, kBlock);
+    CHECK (otherTrackDelay() == 0);
+
+    h.slot.clearAutoBypass();
+    CHECK (otherTrackDelay() == 128);
+}
+
+// "Four consecutive blocks" holds after a re-enable as well: the late blocks
+// that tripped the bypass do not count against the plug-in once it is back.
+TEST_CASE ("a re-enabled plugin gets four late blocks again before it is bypassed", "[plugin][autobypass]")
+{
+    Harness h;
+    h.warmUp();
+    h.pump (kOverrunsToTrip, 3);
+    REQUIRE (h.slot.wasAutoBypassed());
+
+    h.slot.clearAutoBypass();
+    h.pump (kOverrunsToTrip - 1, 3);
+    CHECK_FALSE (h.slot.wasAutoBypassed());
+
+    h.pump (1, 3);
+    CHECK (h.slot.wasAutoBypassed());
 }

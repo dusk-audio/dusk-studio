@@ -166,11 +166,15 @@ public:
     // Cached at load. AudioPluginInstance::getLatencySamples isn't
     // documented as RT-safe (plugins may take locks), so we cache on
     // the message thread and the audio thread reads the atom.
-    // A bypassed slot passes dry and adds no delay, so it reports 0 -
-    // otherwise recomputePdc() compensates for latency that isn't there.
+    // A bypassed or auto-bypassed slot passes dry and adds no delay, so it
+    // reports 0 - otherwise recomputePdc() compensates for latency that isn't
+    // there, and the MIDI scheduler shifts notes by it. The cache itself keeps
+    // following the plug-in, so a re-enable reports the latency it has now.
     int getLatencySamples() const noexcept
     {
-        if (bypassed.load (std::memory_order_relaxed)) return 0;
+        if (bypassed.load (std::memory_order_relaxed)
+            || autoBypassed.load (std::memory_order_acquire))
+            return 0;
         return cachedLatencySamples.load (std::memory_order_relaxed);
     }
 
@@ -315,12 +319,13 @@ private:
     // on a reconfigure path the engine-level gate didn't anticipate.
     juce::SpinLock processLock;
 
-    // Without zeroing latency too, the MIDI scheduler keeps shifting
-    // note timing forward by the plugin's pre-bypass latency.
+    // Audio thread, with processLock held by the process call. The latency
+    // report follows the flag (getLatencySamples), and the overrun count starts
+    // again so a plug-in the user re-enables gets four late blocks, not one.
     void engageAutoBypass() noexcept
     {
-        autoBypassed       .store (true, std::memory_order_relaxed);
-        cachedLatencySamples.store (0,    std::memory_order_relaxed);
+        consecutiveOverruns = 0;
+        autoBypassed.store (true, std::memory_order_relaxed);
     }
 
     double preparedSampleRate = 0.0;

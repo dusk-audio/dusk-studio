@@ -1806,7 +1806,7 @@ Plugins run **in-process by default** — it gives the most responsive plugin ed
 
 When a plugin crashes in OOP mode:
 
-- The slot auto-bypasses and shows a "Plugin crashed — reload to recover" message.
+- The slot auto-bypasses and shows a "Plugin crashed — reload to recover" message. It passes its track through dry and adds no delay, so delay compensation stops making room for the plugin's latency. **Re-enable plugin (crashed)** drops the dead child without starting a new one, so the latency stays out of compensation until you reload the plugin.
 - The plugin's last-known state (parameters, preset) is preserved in the session and will be re-applied when you reload the plugin.
 - You can load a different plugin to clear the slot.
 
@@ -1815,6 +1815,8 @@ The OOP child process is named `dusk-studio-plugin-host` and lives next to the m
 ## Auto-bypass on overrun
 
 Plugins have a CPU time budget: 60% of the buffer time when in-process, 85% when out-of-process. If a plugin exceeds this for four consecutive blocks, it is automatically bypassed and the slot shows a warning. Right-click the slot and choose **Re-enable plugin** to restore. The first sixteen blocks after a plugin loads, after the audio device changes, or after a save has read the plugin's settings, are exempt: reverbs, look-ahead limiters and oversamplers all do real work before they settle. Changing the buffer size does not lift a bypass on its own, so a plugin stays bypassed until you re-enable it.
+
+A bypassed plugin passes its track through dry, so it adds no delay, and delay compensation stops holding the other tracks back for it. When you re-enable it, compensation makes room for its latency again, at whatever the plugin reports then, even if the audio device changed or the session was saved while it was bypassed. A re-enabled plugin is bypassed again only after another four late blocks in a row.
 
 ## Plugin state in sessions
 

@@ -597,6 +597,16 @@ publishes.
   session with the device at another rate adopted that rate without a word
   instead of switching back or warning. File > Save and the quit prompt's Save
   now record the rate the device ran at.
+- **Delay compensation follows a plug-in in and out of auto-bypass** (#762).
+  Re-enabling an auto-bypassed plug-in put it back in the signal path but left
+  delay compensation treating it as having no latency, so its track played
+  early by that latency until something re-prepared the slot. The other way
+  round, a device change or a save while a plug-in was still bypassed made
+  compensation delay every other track for a latency the dry slot no longer
+  had, and so did a sandboxed plug-in whose crash was noticed between blocks.
+  A bypassed plug-in now adds no latency, Re-enable brings back the latency it
+  has at that moment, and a re-enabled plug-in has to run late for four blocks
+  in a row again, not just one, before it is bypassed a second time.
 - **A mix that will not load leaves the loaded one in place.** **Load mix...**
   on a file that is not audio unloaded the mix that was playing first. It now
   keeps it, the session still names it, and the source line reads "Failed to

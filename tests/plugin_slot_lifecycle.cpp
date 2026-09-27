@@ -10,6 +10,11 @@
 #include <functional>
 #include <thread>
 
+#if ! defined (_WIN32)
+ #include <csignal>
+ #include <sys/types.h>
+#endif
+
 using namespace duskstudio;
 
 namespace
@@ -282,6 +287,63 @@ TEST_CASE ("PluginSlot completes an out-of-process load off the message thread")
     CHECK (succeeded);
     CHECK (slot.isRemote());
 }
+
+#if ! defined (_WIN32)
+// A sandboxed plug-in's latency is in delay compensation while its child runs
+// it. A child that dies takes the plug-in out of the signal path, and Re-enable
+// on the crashed slot drops the dead child, so neither leaves a latency behind
+// for the other tracks to be delayed by.
+TEST_CASE ("PluginSlot reports no latency for a crashed sandbox child before or after Re-enable",
+           "[plugin][ipc]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    PluginManager manager;
+    useSandboxStub (manager, "--ipc-load-reply-stub");
+
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+
+    bool completed = false;
+    bool succeeded = false;
+    bool killed = false;
+    int latencyWhileRunning = -1;
+    slot.loadFromDescriptorAsync (sandboxTestDescriptor(),
+                                  [&] (bool ok, juce::String)
+    {
+        completed = true;
+        succeeded = ok;
+    });
+
+    // The crash is noticed by the slot's reaper timer, so the whole case runs
+    // inside the one dispatch loop a test gets.
+    pumpUntil ([&]
+    {
+        if (! completed) return false;
+        if (! succeeded || ! slot.isRemote()) return true;
+        if (! killed)
+        {
+            latencyWhileRunning = slot.getLatencySamples();
+            killed = ::kill ((pid_t) slot.getRemoteChildPid(), SIGKILL) == 0;
+            return ! killed;
+        }
+        return slot.wasCrashed();
+    }, std::chrono::seconds (20));
+
+    REQUIRE (succeeded);
+    REQUIRE (killed);
+    REQUIRE (slot.wasCrashed());
+    CHECK (latencyWhileRunning == ipc::kLoadStubLatencySamples);
+    CHECK (slot.wasAutoBypassed());
+    CHECK (slot.getLatencySamples() == 0);
+
+    slot.clearAutoBypass();
+    CHECK_FALSE (slot.wasCrashed());
+    CHECK_FALSE (slot.isRemote());
+    CHECK (slot.getLatencySamples() == 0);
+}
+#endif
 
 // With no child binary where the loader looks, the sandbox is simply not
 // available: the load must still take the in-process path rather than fail or
