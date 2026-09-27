@@ -1969,12 +1969,12 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
     };
     const ResumeGuard resumeGuard { *this };
 
-    const int parkSleepMs = 0;  // the gate keeps the audio thread out
+    static constexpr int parkSleepMs = 0;  // the gate keeps the audio thread out
 
     // Reading a JUCE-hosted plug-in's state re-prepares it, and a plug-in may
     // settle on another latency when it does.
     bool latencyMoved = false;
-    const auto readState = [&latencyMoved, parkSleepMs] (PluginSlot& slot)
+    const auto readState = [&latencyMoved] (PluginSlot& slot)
     {
         const int latencyBefore = slot.getLatencySamples();
         auto state = slot.getStateBase64ForSave (parkSleepMs);

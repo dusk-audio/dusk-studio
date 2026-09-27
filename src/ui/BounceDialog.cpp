@@ -126,7 +126,9 @@ BounceDialog::BounceDialog (AudioEngine& e,
     {
         finished = true;
         succeeded = false;
-        statusLabel.setText ("Could not start bounce (already in progress?)",
+        const auto reason = bounceEngine->getLastError();
+        statusLabel.setText (reason.empty() ? std::string ("Could not start bounce (already in progress?)")
+                                            : reason,
                              juce::dontSendNotification);
         cancelButton.setVisible (false);
         closeButton.setVisible (true);

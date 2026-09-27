@@ -2125,7 +2125,7 @@ The output is **stereo 24-bit WAV at the session sample rate** by default (or a 
 
 Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. When the bounce completes, the audio device is automatically re-attached.
 
-While a bounce, mixdown, master export or freeze is rendering, **Save** and **Save As…** do nothing but put "Session not saved: finish or cancel the render first" in the status bar, since saving pauses the audio engine the render is using.
+While a bounce, mixdown, stem bounce, master export or freeze is rendering, **Save** and **Save As…** do nothing but put "Session not saved: finish or cancel the render first" in the status bar, since saving pauses the audio engine the render is using.
 
 When **Mixdown**, **Bounce…** or **Bounce stems…** writes over the file loaded as the mix on the **MASTERING** stage, the stage lets go of the mix while the render runs and loads the new file when you close the finished render. A cancelled or failed render deletes what it had written, so the stage then reads "Failed to load: [path]". A render that cannot start, such as a realtime bounce asked for while the transport is rolling, leaves the mix loaded where it was.
 

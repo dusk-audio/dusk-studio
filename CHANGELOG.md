@@ -549,12 +549,11 @@ publishes.
   mix kept in the session folder into the new folder, but the player went on
   with the old folder's file and held it open. It now switches to the copy and
   plays on from where it was.
-- **A cancelled Mixdown no longer leaves a broken mix on the MASTERING
-  stage.** Mixdown, and a Bounce... or Bounce stems... saved over the mix the
-  MASTERING stage had loaded, wrote over that file while the Mastering player
-  still held it. A
-  cancel left the player on the half-written render, which played part of the
-  mix and then silence under the old mix's name, and on Windows the partial
+- **A cancelled Mixdown no longer leaves a broken mix on the MASTERING stage.**
+  Mixdown, and a Bounce... or Bounce stems... saved over the mix the MASTERING
+  stage had loaded, wrote over that file while the Mastering player still held
+  it. A cancel left the player on the half-written render, which played part of
+  the mix and then silence under the old mix's name, and on Windows the partial
   file stayed behind. The player now lets go of the mix before the render and
   loads the new file when the finished render is closed. A cancelled or failed
   render leaves the stage reading "Failed to load" with the file's path, and a
