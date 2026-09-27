@@ -3315,9 +3315,9 @@ bool MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate t
 }
 
 // A render owns the transport and the audio callback until it stops, and a
-// master export reads the Mastering player. A save detaches and reattaches the
-// callback, and Save As moves the player onto the copied mix, either of which
-// would silence the rest of the render.
+// master export reads the Mastering player. A save holds the audio thread out
+// and cycles every plug-in to read its state, and Save As moves the player onto
+// the copied mix: the first cuts into the render, the second silences the rest.
 bool MainComponent::saveRefusedForRender()
 {
     if (runningRenders().empty()) return false;
@@ -3419,23 +3419,11 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     // Plugin state I/O races the renderer on plugins that don't honour
     // JUCE's "must not overlap" contract (u-he Diva is the smoking-gun
     // example), corrupting the plugin's internal state and leading to
-    // an abort inside ~VST3PluginInstance later. To capture fresh
-    // plugin state safely we briefly remove the audio callback for the
-    // duration of the save, then re-attach. The user hears a short
-    // (~10-50 ms × N loaded plugins) dropout on Ctrl+S, which beats
-    // crashing.
-    //
-    // engineDetached==true means a higher layer (the quit-save path)
-    // has already detached + does NOT want re-attach. We honour that
-    // and skip the re-attach below.
-    const bool reattachAudioAfter = ! engineDetached;
-    if (! engineDetached)
-    {
-        engine.detachAudioCallback();
-        engineDetached = true;   // tell publishPluginStateForSave to skip park sleeps
-    }
-
-    engine.publishPluginStateForSave (/*audioCallbackDetached*/ true);
+    // an abort inside ~VST3PluginInstance later. The engine holds the
+    // audio thread out for the capture without leaving the device, so the
+    // user hears a short (~10-50 ms × N loaded plugins) dropout on Ctrl+S
+    // and the meters, envelopes and transport carry on afterwards.
+    engine.publishPluginStateForSave (/*capturePluginState*/ true);
     engine.publishTransportStateForSave();
 
     const auto target = dir.getChildFile ("session.json");
@@ -3443,16 +3431,6 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
         session.sessionSampleRate = engine.getCurrentSampleRate();
     const juce::String json = SessionSerializer::serialize (session);
     const bool saveOk = SessionSerializer::writeAtomic (target, json);
-
-    if (reattachAudioAfter)
-    {
-        // Re-attach so audio resumes after the save returns. PluginSlot
-        // already called prepareToPlay on each plugin during state
-        // capture (resume side of the suspend bracket), so each plugin
-        // is ready for the next callback.
-        engine.reattachAudioCallback();
-        engineDetached = false;
-    }
 
     if (saveOk)
     {
@@ -3616,9 +3594,9 @@ void MainComponent::writeAutosave()
     // Same publish bookend as the manual save - the serializer reads
     // only from Session, not from the live engine. Audio is running on
     // the autosave path (timer fires from the live message loop), so
-    // the publish keeps its atomic-park sleeps to defend against the
-    // audio-thread re-entry race.
-    engine.publishPluginStateForSave (/*audioCallbackDetached*/ false);
+    // plug-in state stays as the last manual save captured it rather
+    // than cost a dropout every 30 s.
+    engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
 
     // Skip the write entirely when the snapshot matches what's already on
@@ -3712,8 +3690,8 @@ bool MainComponent::currentSessionDirty()
     // Publish live plugin + transport/tape state into the Session model first -
     // the serializer reads only from Session, so without this a just-touched
     // plugin/tape param stays at its last-published value and the compare would
-    // falsely read clean. Audio is live here so no detach.
-    engine.publishPluginStateForSave (/*audioCallbackDetached*/ false);
+    // falsely read clean. Audio is live here, so no plug-in state capture.
+    engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
 
     // Compare with volatile state stripped (playhead / view / timestamps)
@@ -3835,16 +3813,9 @@ void MainComponent::requestQuit()
     // its end too (it move-captures the body into a callAsync), but
     // deferring at the call site is the canonical idiom.
     //
-    // Save / Don't Save also detach the audio callback up front. This
-    // does two things on the quit path:
-    //   - the save below can call publishPluginStateForSave with the
-    //     "audio detached" fast path (no atomic-park sleeps), which is
-    //     the difference between a snappy save and several hundred
-    //     milliseconds of message-thread blocking on a session with
-    //     multiple heavy plugins;
-    //   - plugin getStateInformation runs with no concurrent
-    //     processBlock, which side-steps the data race in plugins that
-    //     don't honour JUCE's "must not overlap" contract on Linux.
+    // Save / Don't Save also detach the audio callback up front: the app
+    // is about to shut down, so audio stays off through the save (which
+    // may wait on the Save As browser) and the teardown that follows.
     juce::Component::SafePointer<MainComponent> safeThis (this);
 
     dialog->onCancel = [safeThis]
@@ -3889,10 +3860,8 @@ void MainComponent::requestQuit()
             if (self == nullptr) return;
             self->quitModal.close();
 
-            // Quiesce engine BEFORE saveSessionAndThen so the save's
-            // publishPluginStateForSave skips the atomic-park sleeps
-            // and plugins see no concurrent processBlock during state
-            // I/O. stopTimer prevents the autosave timer from re-
+            // Quiesce engine BEFORE saveSessionAndThen, as shutdown
+            // would. stopTimer prevents the autosave timer from re-
             // entering a save mid-shutdown.
             self->stopTimer();
             self->engine.detachAudioCallback();
@@ -3908,7 +3877,7 @@ void MainComponent::requestQuit()
                     return;
                 }
                 // The quit is abandoned, so hand back what quiescing for it
-                // took. saveSessionTo never re-attaches a detach it did not make.
+                // took. saveSessionTo leaves the callback as it found it.
                 s->engine.reattachAudioCallback();
                 s->engineDetached = false;
                 s->startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);

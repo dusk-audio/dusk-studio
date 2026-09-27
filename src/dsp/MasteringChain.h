@@ -37,6 +37,11 @@ public:
     // integrated reading reflects only the current source.
     void resetLoudness();
 
+    // Message thread, audio quiesced: carry the integrated and true-peak
+    // measurement across a prepare, which clears it.
+    LoudnessMeter::History saveLoudnessHistory() const { return loudnessMeter.saveHistory(); }
+    void restoreLoudnessHistory (const LoudnessMeter::History& history) noexcept;
+
     // EQ (oversampler), comp and limiter are in series, so their latencies add.
     int getLatencySamples() const noexcept
     {

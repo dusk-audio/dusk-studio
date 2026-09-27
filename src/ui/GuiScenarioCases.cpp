@@ -2625,10 +2625,10 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
             }, "the export after Replace did not finish");
         });
     };
-    runSteps (ctx, steps, [&host, &ctx, &engine, output, registration, exportOverExisting]
+    runSteps (ctx, steps, [&host, &ctx, &engine, &session, output, registration, exportOverExisting]
     {
         ctx.waitUntil ([&host] { return host.clickModalButton ("Close"); }, 20000,
-            [&ctx, &engine, output, registration, exportOverExisting]
+            [&ctx, &engine, &session, output, registration, exportOverExisting]
             {
                 ctx.expect (*registration == std::vector<bool> { false, true },
                             "export did not deregister and restore the live audio callback");
@@ -2650,7 +2650,19 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
                     ctx.expect (peak > 0.001f && peak <= 1.0f, "export did not carry the loaded mix signal");
                 }
                 reader.reset();
-                exportOverExisting();
+                // The live re-prepare after the render must not clear what the
+                // meter measured of the master it wrote. The page shows what the
+                // live callbacks publish, so read it once a few have run.
+                auto settled = std::make_shared<std::vector<Step>>();
+                settled->push_back ({ 400, [&ctx, &session]
+                {
+                    const float integrated = session.mastering().meterIntegratedLufs.load();
+                    const float truePeak   = session.mastering().meterTruePeakDb.load();
+                    ctx.expect (integrated > -70.0f && truePeak > -70.0f,
+                                "the finished export left the loudness readings at " + std::to_string (integrated)
+                                    + " LUFS, " + std::to_string (truePeak) + " dBTP");
+                } });
+                runSteps (ctx, settled, exportOverExisting);
             }, "master export did not finish");
     });
     return std::nullopt;
@@ -4634,6 +4646,205 @@ const ScenarioRegistrar masteringMixFollowsSaveAs { Scenario {
     "gui.mastering_mix_follows_save_as", { "gui", "mastering", "session" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringMixFollowsSaveAs (host, ctx); }
+} };
+
+// Saving reads every plug-in's state with the audio thread held out, but it
+// stays on the device, so nothing re-prepares and the MASTERING loudness
+// readings carry on through Save and Save As. A real change of configuration -
+// Effect oversampling, or the device's block size where it offers another -
+// re-prepares the engine and starts them again, as does opening another
+// session. The mix is stopped before each check, so a meter that was cleared
+// cannot measure its way back.
+std::optional<ScenarioResult> runMasteringLoudnessSurvivesSave (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& player = engine.getMasteringPlayer();
+    auto& meters = session.mastering();
+    if (! engine.getTransport().isStopped() || player.isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and mastering player and no modal");
+    if (! engine.isAudioCallbackRegistered() || engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires a running audio device");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalFactor = session.oversamplingFactor.load();
+    auto& devices = engine.getDeviceManager();
+    const auto originalSetup = devices.getSetup();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    auto registration = std::make_shared<std::vector<bool>>();
+    ctx.cleanup ([&host, &engine, &session, &player, &devices, originalDir, originalFactor, originalSetup, restore]
+    {
+        engine.observeAudioRegistrationForScenario ({});
+        engine.stop();
+        player.stop();
+        drainModals (host);
+        if (devices.getSetup().bufferSize != originalSetup.bufferSize)
+            devices.setSetup (originalSetup, false);
+        if (session.oversamplingFactor.load() != originalFactor)
+        {
+            session.oversamplingFactor.store (originalFactor);
+            engine.restartDspWhenIdle();
+        }
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        host.refreshMasteringSource();
+    });
+
+    // Twenty seconds of a steady tone, so every pass plays well inside it. It
+    // plays through the real device, so it sits near -50 LUFS: well clear of
+    // the -70 gate, and barely audible if the machine has speakers.
+    constexpr int kFrames = 960000;
+    const auto folder = ctx.tempDir() / "Tone session";
+    const auto mix = folder / "mixdown.wav";
+    fs::create_directories (folder);
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 2;
+        auto writer = dusk::audio::FileWriter::create (mix, spec);
+        std::vector<float> tone (kFrames);
+        for (int i = 0; i < kFrames; ++i)
+            tone[(size_t) i] = 0.004f * (float) std::sin (6.283185307179586 * 997.0 * i / 48000.0);
+        const float* channels[] = { tone.data(), tone.data() };
+        if (! writer || ! writer->write (channels, 2, kFrames) || ! writer->flush())
+            return ScenarioResult::fail ("could not write the mix");
+    }
+    {
+        auto saved = std::make_unique<Session>();
+        applySessionDirectory (*saved, folder);
+        saved->uiStage.store ((int) AudioEngine::Stage::Mastering);
+        saved->mastering().sourceFile = decltype (saved->mastering().sourceFile) (mix.u8string().c_str());
+        if (! SessionSerializer::save (*saved, folder / "session.json"))
+            return ScenarioResult::fail ("could not write the session");
+    }
+    reopenSavedSession (host, folder / "session.json");
+    if (! player.isLoaded()) return ScenarioResult::fail ("could not open the session with its mix");
+
+    struct Reading { float integrated = -100.0f; float truePeak = -100.0f; };
+    auto measured = std::make_shared<Reading>();
+    const auto read = [&meters]
+    { return Reading { meters.meterIntegratedLufs.load(), meters.meterTruePeakDb.load() }; };
+    const auto format = [] (const Reading& r)
+    { return std::to_string (r.integrated) + " LUFS, " + std::to_string (r.truePeak) + " dBTP"; };
+    const auto kept = [&ctx, read, format, measured, registration] (const std::string& after)
+    {
+        const auto now = read();
+        ctx.expect (std::abs (now.integrated - measured->integrated) < 0.01f
+                        && std::abs (now.truePeak - measured->truePeak) < 0.01f,
+                    after + " changed the loudness readings from " + format (*measured) + " to " + format (now));
+        ctx.expect (registration->empty(), after + " took the engine off the audio device");
+    };
+    const auto cleared = [&ctx, read, format] (const std::string& after)
+    {
+        const auto now = read();
+        ctx.expect (now.integrated <= -99.0f && now.truePeak <= -99.0f,
+                    after + " left the loudness readings at " + format (now));
+    };
+    // Plays a second and a half of the mix, then stops it and lets the meter
+    // publish what it measured.
+    const auto measure = [&player] (std::vector<Step>& into)
+    {
+        into.push_back ({ 200, [&player] { player.play(); } });
+        into.push_back ({ 1500, [&player] { player.stop(); } });
+    };
+    const auto remember = [&ctx, read, format, measured] (const std::string& what)
+    {
+        *measured = read();
+        ctx.expect (measured->integrated > -65.0f && measured->integrated < -35.0f
+                        && measured->truePeak > -65.0f && measured->truePeak < -35.0f,
+                    what + " measured " + format (*measured));
+    };
+
+    const auto copy = ctx.tempDir() / "Tone copy";
+    auto steps = std::make_shared<std::vector<Step>>();
+    measure (*steps);
+    steps->push_back ({ 700, [&host, &ctx, &engine, remember, registration]
+    {
+        remember ("the mix");
+        engine.observeAudioRegistrationForScenario ([registration] (bool attached) { registration->push_back (attached); });
+        engine.play();
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save"), "the File menu has no Save"); } });
+    steps->push_back ({ 500, [&host, &ctx, &engine, kept]
+    {
+        ctx.expect (host.modalStackEmpty(), "Save left '" + host.modalText() + "' up");
+        ctx.expect (host.statusMessage() == "Saved: Tone session", "Save reported '" + host.statusMessage() + "'");
+        ctx.expect (engine.getTransport().isPlaying(), "Save stopped the rolling transport");
+        kept ("Save");
+    } });
+    pushSaveAsSteps (host, ctx, *steps, copy);
+    steps->push_back ({ 800, [&ctx, &engine, &session, &player, kept, copy]
+    {
+        ctx.expect (currentSessionDirectory (session) == copy,
+                    "Save As left the session at '" + currentSessionDirectory (session).string() + "'");
+        ctx.expect (fs::u8path (player.getLoadedFile().getFullPathName().toStdString()).parent_path() == copy,
+                    "Save As did not move the player onto the copied mix");
+        ctx.expect (engine.getTransport().isPlaying(), "Save As stopped the rolling transport");
+        engine.stop();
+        kept ("Save As");
+        engine.observeAudioRegistrationForScenario ({});
+    } });
+
+    // Effect oversampling re-prepares every stage that takes it.
+    steps->push_back ({ 100, [&engine, &session, originalFactor]
+    {
+        session.oversamplingFactor.store (originalFactor == 2 ? 1 : 2);
+        engine.restartDspWhenIdle();
+    } });
+    steps->push_back ({ 400, [cleared] { cleared ("changing Effect oversampling"); } });
+
+    // A block size the device offers, if it offers another.
+    measure (*steps);
+    auto resized = std::make_shared<bool> (false);
+    steps->push_back ({ 700, [&ctx, &devices, remember, resized]
+    {
+        remember ("the mix again");
+        auto* device = devices.getCurrentDevice();
+        const int current = device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
+        int other = 0;
+        if (device != nullptr)
+            for (const int size : device->getAvailableBufferSizes())
+                if (size != current && (other == 0 || std::abs (size - current) < std::abs (other - current)))
+                    other = size;
+        if (other == 0)
+        {
+            ctx.note ("the device offers no other block size; that change was not tried");
+            return;
+        }
+        auto setup = devices.getSetup();
+        setup.bufferSize = other;
+        const auto error = devices.setSetup (setup, false);
+        device = devices.getCurrentDevice();
+        *resized = error.empty() && device != nullptr && device->getCurrentBufferSizeSamples() == other;
+        if (! *resized)
+            ctx.note ("the device did not take a block size of " + std::to_string (other) + ": " + error);
+    } });
+    steps->push_back ({ 400, [cleared, resized]
+    {
+        if (*resized) cleared ("changing the block size");
+    } });
+
+    // So does opening another session.
+    measure (*steps);
+    steps->push_back ({ 700, [&host, remember, folder]
+    {
+        remember ("the copied mix");
+        reopenSavedSession (host, folder / "session.json");
+    } });
+    steps->push_back ({ 400, [cleared] { cleared ("opening another session"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringLoudnessSurvivesSave { Scenario {
+    "gui.mastering_loudness_survives_save", { "gui", "mastering", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringLoudnessSurvivesSave (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runAuxSources (GuiHost& host, ScenarioContext& ctx)

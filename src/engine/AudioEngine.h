@@ -160,6 +160,10 @@ public:
     MasterBus&        getMasterBus()       noexcept { return master; }
     Metronome&        getMetronome()       noexcept { return metronome; }
 
+    // Message thread. Puts a loudness measurement taken before a re-prepare
+    // back on the mastering chain, with the process gate held.
+    void restoreMasteringLoudness (const LoudnessMeter::History& history);
+
     // Message thread: replace the session tempo map and republish the lock-free
     // snapshot the audio thread reads. Call setTempoPoints for edits; call
     // publishTempoMap after a session load (or any other mutation of
@@ -510,12 +514,12 @@ public:
     // PluginSlot's description + state into the Track fields; consume
     // restores in reverse.
     //
-    // audioCallbackDetached: pass true only when the caller already
-    // removed this engine from AudioDeviceManager. Skips the atomic-park
-    // sleep that defends against audio-thread re-entry, dropping
-    // message-thread block time from hundreds of ms to roughly the cost
-    // of state I/O alone on heavy sessions.
-    void publishPluginStateForSave (bool audioCallbackDetached = false);
+    // capturePluginState false keeps the plug-in state strings the session
+    // already holds, so a save with audio running costs no dropout. true reads
+    // fresh state from every plug-in with the process gate held, which the
+    // plug-ins hear as a few silent blocks. The engine stays attached to the
+    // device throughout, so nothing is re-prepared and no DSP state is lost.
+    void publishPluginStateForSave (bool capturePluginState = false);
     void consumePluginStateAfterLoad();
 
     struct PluginLoadFailure

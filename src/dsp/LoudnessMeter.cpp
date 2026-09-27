@@ -95,6 +95,39 @@ void LoudnessMeter::reset()
     truePeakDb.store    (-100.0f, std::memory_order_relaxed);
 }
 
+LoudnessMeter::History LoudnessMeter::saveHistory() const
+{
+    History h;
+    h.windows.assign (windowMS.begin(), windowMS.begin() + windowCount);
+    h.absoluteGateSum   = absoluteGateSum;
+    h.absoluteGateCount = absoluteGateCount;
+    h.truePeak          = currentTruePeak;
+    return h;
+}
+
+void LoudnessMeter::restoreHistory (const History& history) noexcept
+{
+    const int n = std::min ((int) history.windows.size(), (int) windowMS.size());
+    std::copy (history.windows.begin(), history.windows.begin() + n, windowMS.begin());
+    windowCount       = n;
+    absoluteGateSum   = history.absoluteGateSum;
+    absoluteGateCount = history.absoluteGateCount;
+    currentTruePeak   = history.truePeak;
+
+    // One whole relative-gate pass, so the reading is back before the next block.
+    scanLimit = 0;
+    integratedLufs.store (-100.0f, std::memory_order_relaxed);
+    if (absoluteGateCount > 0)
+    {
+        startRelativeScan();
+        advanceRelativeScan (std::max (1, blockSize));
+    }
+    truePeakDb.store (currentTruePeak > 1.0e-5f
+                        ? dusk::audio::gainToDecibels (currentTruePeak, -100.0f)
+                        : -100.0f,
+                       std::memory_order_relaxed);
+}
+
 void LoudnessMeter::startRelativeScan() noexcept
 {
     // Relative gate: 10 LU below the mean of everything above the absolute

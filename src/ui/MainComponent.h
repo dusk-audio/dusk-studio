@@ -453,8 +453,7 @@ private:
     bool notepadDirty = false;
 
     // True once the audio callback is removed for shutdown - makes
-    // detach idempotent and signals publishPluginStateForSave that the
-    // atomic-park sleeps can be skipped.
+    // detach idempotent.
     bool engineDetached = false;
     bool tearingDown = false;
 

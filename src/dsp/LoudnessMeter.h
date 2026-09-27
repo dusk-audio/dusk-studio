@@ -45,6 +45,23 @@ public:
     void prepare (double sampleRate, int maxBlockSize);
     void reset();
 
+    // What the integrated and true-peak readings are built from. A window's
+    // mean square does not depend on the rate it was measured at, so a
+    // history taken before a prepare can be put back after one at any rate.
+    struct History
+    {
+        std::vector<double> windows;
+        double absoluteGateSum   = 0.0;
+        int    absoluteGateCount = 0;
+        float  truePeak          = 0.0f;
+    };
+
+    // Message thread, audio quiesced. restoreHistory needs a prepared meter,
+    // replaces the integrated and true-peak state with the history and
+    // publishes both readings at once; it does not allocate.
+    History saveHistory() const;
+    void restoreHistory (const History& history) noexcept;
+
     // Safe with audio running: zeroes the published readings immediately and
     // defers the state reset to the next process() block, so the window and
     // ring wipes never race the audio thread.

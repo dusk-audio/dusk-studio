@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <optional>
 #include <vector>
 #include "AudioEngine.h"
 #include "LameMp3Writer.h"
@@ -550,11 +551,19 @@ void BounceEngine::run()
     engine.setStage (savedStage);
     // Back to the user's realtime oversampling, then reattach on the message
     // thread - addAudioCallback re-prepares the engine (plugin (de)activate),
-    // which must not run on this worker.
-    runOnMessageThread ([this]
+    // which must not run on this worker. A finished master export keeps the
+    // loudness readings on the master it rendered, which the meter measured
+    // whole; the re-prepare would clear them.
+    const bool keepLoudness = succeeded && renderMode == Mode::MasteringChain;
+    runOnMessageThread ([this, keepLoudness]
     {
+        std::optional<LoudnessMeter::History> measured;
+        if (keepLoudness)
+            measured = engine.getMasteringChain().saveLoudnessHistory();
         engine.setRenderOversamplingOverride (0);
         engine.reattachAudioCallback();
+        if (measured)
+            engine.restoreMasteringLoudness (*measured);
     });
 
     rendering.store (false, std::memory_order_relaxed);

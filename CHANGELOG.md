@@ -571,6 +571,17 @@ publishes.
   Save As are now refused while any render runs, with "Session not saved:
   finish or cancel the render first" in the status bar, and opening another
   session is refused during a master export as it already was during a bounce.
+- **Saving no longer resets the mastering loudness readings** (#761). Save
+  and Save As took the engine off the audio device to read each plug-in's
+  settings, and putting it back restarted the whole engine as a device change
+  does. That cleared the MASTERING stage's loudness and true-peak readings,
+  along with every compressor's envelope and the driver xrun count in the DSP
+  readout, and it stopped the transport. Saving now pauses the audio only while
+  it reads the plug-ins and leaves the rest as it was, so playback keeps
+  rolling. A change of device, rate, block size or
+  Effect oversampling still starts the readings again. A finished **Export
+  master...** now leaves Integrated and True Peak on the master it rendered
+  instead of clearing them.
 - **A mix that will not load leaves the loaded one in place.** **Load mix...**
   on a file that is not audio unloaded the mix that was playing first. It now
   keeps it, the session still names it, and the source line reads "Failed to

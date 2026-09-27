@@ -1931,7 +1931,7 @@ void AudioEngine::jumpToLastRecordPoint()
     transport.locate (session.lastRecordPointSamples.load (std::memory_order_relaxed));
 }
 
-void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
+void AudioEngine::publishPluginStateForSave (bool capturePluginState)
 {
     // Snapshot each track's PluginSlot into its session-model strings so
     // SessionSerializer (which only sees Session) can serialise plugin
@@ -1940,11 +1940,10 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
     // Plugin state I/O briefly suspends each plugin (releaseResources /
     // prepareToPlay around getStateInformation) - JUCE's contract says
     // state I/O must not race the renderer, and plugins like u-he Diva
-    // crash hard when it does. The audio thread is parked across each
-    // suspension, so the engine's master output goes silent for a few
-    // milliseconds per loaded plugin during the save.
+    // crash hard when it does. The engine's master output goes silent for
+    // a few milliseconds per loaded plugin during the save.
     //
-    // For the autosave timer (audioCallbackDetached=false) that runs
+    // For the autosave timer (capturePluginState=false) that runs
     // every 30 s during normal playback, that dropout is unacceptable.
     // We skip plugin state entirely on that path: the existing values
     // in Session::pluginStateBase64 (set by the most recent manual save
@@ -1952,15 +1951,25 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
     // valid plugin state - just possibly stale relative to in-flight
     // knob tweaks. Manual save (Ctrl+S, File>Save, quit-save) is the
     // path that captures fresh plugin state.
-    if (! audioCallbackDetached)
-    {
-        // Plugin description/state strings on Session are kept as-is.
-        // Future enhancement: a "Save (with plugin state)" UI option
-        // that explicitly opts in to the audio dropout.
+    if (! capturePluginState)
         return;
-    }
 
-    const int parkSleepMs = 0;  // audio thread already gone; no need to wait
+    // Hold the audio thread out with the process gate, as a re-prepare does,
+    // rather than detaching from the device: reattaching fires
+    // audioDeviceAboutToStart, which re-prepares the whole engine and so
+    // resets every meter, envelope, delay line and plug-in on each Save.
+    // Callbacks during the capture emit silence; the quiesce catches a lane
+    // orphaned by a force-killed dispatcher.
+    suspendProcessing();
+    workerPool.quiesce();
+    struct ResumeGuard
+    {
+        AudioEngine& e;
+        ~ResumeGuard() { e.resumeProcessing(); }
+    };
+    const ResumeGuard resumeGuard { *this };
+
+    const int parkSleepMs = 0;  // the gate keeps the audio thread out
 
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
@@ -3553,6 +3562,15 @@ void AudioEngine::suspendProcessing()
 void AudioEngine::resumeProcessing() noexcept
 {
     processingSuspended.store (false, std::memory_order_release);
+}
+
+void AudioEngine::restoreMasteringLoudness (const LoudnessMeter::History& history)
+{
+    // The chain runs on the audio thread only, never on a worker lane, so the
+    // gate alone keeps process() off the meter while its state is replaced.
+    suspendProcessing();
+    masteringChain.restoreLoudnessHistory (history);
+    resumeProcessing();
 }
 
 void AudioEngine::applyDesiredWorkers()

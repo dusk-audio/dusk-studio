@@ -89,6 +89,16 @@ void MasteringChain::resetLoudness()
     loudnessMeter.requestReset();
 }
 
+void MasteringChain::restoreLoudnessHistory (const LoudnessMeter::History& history) noexcept
+{
+    loudnessMeter.restoreHistory (history);
+    if (paramsRef != nullptr)
+    {
+        paramsRef->meterIntegratedLufs.store (loudnessMeter.getIntegratedLufs(), std::memory_order_relaxed);
+        paramsRef->meterTruePeakDb.store     (loudnessMeter.getTruePeakDb(),     std::memory_order_relaxed);
+    }
+}
+
 #if DUSKSTUDIO_HAS_DUSK_DSP
 void MasteringChain::bindCompParams()
 {

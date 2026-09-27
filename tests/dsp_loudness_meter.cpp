@@ -278,3 +278,46 @@ TEST_CASE ("LoudnessMeter gating is exact for windows sitting on the threshold",
     // separates exact gating from a bucketed approximation.
     REQUIRE (sawNearThreshold);
 }
+
+// A finished master export carries the measurement over the live re-prepare
+// that follows it, which may run at another rate and block size. The history
+// has to bring back the same gated reading and true peak at once, relative
+// gate included, and keep integrating from there as if nothing had happened.
+TEST_CASE ("LoudnessMeter history survives a prepare at another rate", "[dsp][loudness]")
+{
+    constexpr double sr = 48000.0;
+    duskstudio::LoudnessMeter m;
+    m.prepare (sr, 480);
+    feedTone (m, sr, 0.5f, 12);
+    feedTone (m, sr, 0.05f, 12);
+    feedTone (m, sr, 0.0f, 8);
+    const float integrated = m.getIntegratedLufs();
+    const float truePeak   = m.getTruePeakDb();
+    REQUIRE (integrated > -40.0f);
+    REQUIRE (truePeak > -10.0f);
+
+    const auto history = m.saveHistory();
+    m.prepare (44100.0, 256);
+    REQUIRE_THAT (m.getIntegratedLufs(), WithinAbs (-100.0f, 1e-6f));
+
+    m.restoreHistory (history);
+    REQUIRE_THAT (m.getIntegratedLufs(), WithinAbs (integrated, 1e-4f));
+    REQUIRE_THAT (m.getTruePeakDb(),     WithinAbs (truePeak,   1e-4f));
+
+    // Silence adds nothing, so the reading holds through processing too.
+    feedTone (m, 44100.0, 0.0f, 20);
+    REQUIRE_THAT (m.getIntegratedLufs(), WithinAbs (integrated, 1e-4f));
+    REQUIRE_THAT (m.getTruePeakDb(),     WithinAbs (truePeak,   1e-4f));
+
+    // More of the loud passage pulls the reading up towards it: the relative
+    // gate then runs over the carried windows and the new ones together. The
+    // prepare empties the 400 ms ring, so the new windows start a full window in.
+    m.prepare (sr, (int) (sr * 0.1));
+    m.restoreHistory (history);
+    auto windows = history.windows;
+    int step = 0;
+    feedSteps (m, sr, 0.5f, 40, windows, step);
+    feedSteps (m, sr, 0.0f, 8, windows, step);
+    REQUIRE (m.getIntegratedLufs() > integrated);
+    REQUIRE_THAT ((double) m.getIntegratedLufs(), WithinAbs (exactGating (windows).lufs, 0.01));
+}
