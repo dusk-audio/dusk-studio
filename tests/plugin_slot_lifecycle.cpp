@@ -28,7 +28,11 @@ public:
 
     const juce::String getName() const override { return "Lifecycle test"; }
 
-    void prepareToPlay (double, int) override { ++prepareCalls; }
+    void prepareToPlay (double, int) override
+    {
+        ++prepareCalls;
+        setLatencySamples (latencyOnPrepare);
+    }
     void releaseResources() override          { ++releaseCalls; }
 
     void processBlock (juce::AudioBuffer<float>&,
@@ -62,6 +66,7 @@ public:
     int prepareCalls = 0;
     int releaseCalls = 0;
     int processCalls = 0;
+    int latencyOnPrepare = 0;
 };
 } // namespace
 
@@ -86,6 +91,37 @@ TEST_CASE ("PluginSlot republishes an in-process instance after release and prep
 
     CHECK (lifecycle->releaseCalls == 2);
     CHECK (lifecycle->prepareCalls == 2);
+    CHECK (lifecycle->processCalls == 1);
+}
+
+// A save reads a plug-in's state between a release and a prepare, and a plug-in
+// can settle on another latency when it is prepared, as a look-ahead limiter
+// does after its look-ahead has been changed. PDC has to follow the latency the
+// plug-in has once the save is done, not the one it had before.
+TEST_CASE ("PluginSlot re-reads a plugin's latency when a save re-prepares it", "[plugin]")
+{
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+
+    auto instance = std::make_unique<LifecyclePluginInstance>();
+    auto* lifecycle = instance.get();
+    lifecycle->latencyOnPrepare = 32;
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    REQUIRE (slot.getLatencySamples() == 32);
+
+    lifecycle->latencyOnPrepare = 128;
+    (void) slot.getStateBase64ForSave (0);
+    CHECK (lifecycle->releaseCalls == 1);
+    CHECK (lifecycle->prepareCalls == 2);
+    CHECK (slot.getLatencySamples() == 128);
+
+    // And the slot is back on the audio path, re-prepared.
+    float left[64] {};
+    float right[64] {};
+    juce::MidiBuffer midi;
+    slot.processStereoBlock (left, right, 64, midi);
     CHECK (lifecycle->processCalls == 1);
 }
 

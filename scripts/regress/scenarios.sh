@@ -43,6 +43,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-keyboard-quit
     bb-quit-twice
     bb-quit-during-mixdown
+    bb-quit-save-rate
     bb-startup-scan
     bb-oop-child-kill
     bb-oop-quit-during-load
@@ -624,6 +625,50 @@ bb_quit_during_mixdown_body() {
     return 0
 }
 
+leg_bb_quit_save_rate() {
+    bb_begin bb-quit-save-rate 180 || return 1
+    local rc=0
+    bb_quit_save_rate_body || rc=$?
+    bb_end "$rc"
+}
+
+# The quit prompt's Save on a session that has never been saved detaches the
+# audio callback, which zeroes the engine's running rate, before it saves through
+# Save As; the session it writes must still carry the rate the device ran at.
+# gui.quit_save_stamps_rate saves into the sandbox's Music folder, under a folder
+# named after that rate.
+bb_quit_save_rate_body() {
+    bb_spawn A "DUSKSTUDIO_RUN_SCENARIOS=gui:gui.quit_save_stamps_rate" -- || return 1
+    local rc=0
+    bb_wait_exit A 120 || rc=$?
+    if ((rc != 0)); then
+        bb_fail "the quit prompt's Save exited with status $rc"
+        sed 's/^/  /' "$BB_SDIR/A.out" >&2 || true
+        return 1
+    fi
+    bb_assert_marker A "phase 3: audio callback already detached (skipping)" || return 1
+
+    local -a saved=("$BB_SDIR/music/Quit save at "*/session.json)
+    if [[ ! -f "${saved[0]}" ]]; then
+        bb_fail "the quit prompt's Save wrote no session under $BB_SDIR/music"
+        return 1
+    fi
+    local folder rate stamped
+    folder="$(basename "$(dirname "${saved[0]}")")"
+    rate="${folder#Quit save at }"
+    stamped="$(sed -n 's/.*"session_sample_rate"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1/p' \
+        "${saved[0]}" | head -1)"
+    if [[ -z "$stamped" ]]; then
+        bb_fail "the session saved from the quit prompt has no session_sample_rate"
+        return 1
+    fi
+    if [[ "${stamped%.*}" != "$rate" ]]; then
+        bb_fail "the session saved from the quit prompt is stamped ${stamped} Hz, not the device's ${rate} Hz"
+        return 1
+    fi
+    return 0
+}
+
 leg_bb_startup_scan() {
     bb_begin bb-startup-scan 300 || return 1
     local rc=0
@@ -865,6 +910,12 @@ regress_scenarios_run() {
         regress_leg "bb-quit-during-mixdown" leg_bb_quit_during_mixdown
     else
         regress_skip "bb-quit-during-mixdown" "needs the gui.quit_during_mixdown scenario"
+    fi
+
+    if scenarios_has_case "gui.quit_save_stamps_rate"; then
+        regress_leg "bb-quit-save-rate" leg_bb_quit_save_rate
+    else
+        regress_skip "bb-quit-save-rate" "needs the gui.quit_save_stamps_rate scenario"
     fi
 
     if scenarios_has_quit_timer && scenarios_binary_has "startup plugin scan: toggle"; then

@@ -3356,10 +3356,11 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
         return false;
     }
 
-    // A take still recording would otherwise end at the detach below, after
-    // a Save As has copied the session's audio, and its file would stay in the
-    // old folder. A control surface or MIDI binding can start one under a save
-    // prompt, and R still works in the Save As browser.
+    // A take still recording is not a region until its stop commits it, so the
+    // save would be written without it, and a Save As would copy the session's
+    // audio without it and leave its file in the old folder when it ended. A
+    // control surface or MIDI binding can start one under a save prompt, and R
+    // still works in the Save As browser.
     if (engine.getTransport().isRecording() || engine.getRecordManager().isActive())
     {
         engine.stop();
@@ -3369,8 +3370,9 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     // Save As to a different folder must take the audio along: copy every
     // session-owned file into the new dir and repoint the model BEFORE the
     // directory swap, so serialize below emits relative paths. Plain Ctrl+S
-    // (same dir) is a no-op here. Copying precedes the audio-callback detach
-    // - it touches no plugin state, so a long copy adds no dropout.
+    // (same dir) is a no-op here. The copy runs before the plug-in state
+    // capture and outside its process gate - it touches no plugin state, so a
+    // long copy adds no dropout.
     const bool isSaveAs = oldDir != juce::File() && dir != oldDir;
     SessionSerializer::ConsolidationResult consolidated;
     if (isSaveAs)
@@ -3437,8 +3439,14 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     engine.publishTransportStateForSave();
 
     const auto target = dir.getChildFile ("session.json");
+    // The quit prompt's Save runs with the callback detached, which zeroes the
+    // running rate, so a stopped device stamps the rate it last ran at.
     if (session.sessionSampleRate <= 0.0)
-        session.sessionSampleRate = engine.getCurrentSampleRate();
+    {
+        const double runningRate = engine.getCurrentSampleRate();
+        session.sessionSampleRate = runningRate > 0.0 ? runningRate
+                                                      : engine.getLastDeviceSampleRate();
+    }
     const juce::String json = SessionSerializer::serialize (session);
     const bool saveOk = SessionSerializer::writeAtomic (target, json);
 

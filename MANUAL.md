@@ -1814,7 +1814,7 @@ The OOP child process is named `dusk-studio-plugin-host` and lives next to the m
 
 ## Auto-bypass on overrun
 
-Plugins have a CPU time budget: 60% of the buffer time when in-process, 85% when out-of-process. If a plugin exceeds this for four consecutive blocks, it is automatically bypassed and the slot shows a warning. Right-click the slot and choose **Re-enable plugin** to restore. The first sixteen blocks after a plugin loads, or after the audio device changes, are exempt: reverbs, look-ahead limiters and oversamplers all do real work before they settle. Changing the buffer size does not lift a bypass on its own, so a plugin stays bypassed until you re-enable it.
+Plugins have a CPU time budget: 60% of the buffer time when in-process, 85% when out-of-process. If a plugin exceeds this for four consecutive blocks, it is automatically bypassed and the slot shows a warning. Right-click the slot and choose **Re-enable plugin** to restore. The first sixteen blocks after a plugin loads, after the audio device changes, or after a save has read the plugin's settings, are exempt: reverbs, look-ahead limiters and oversamplers all do real work before they settle. Changing the buffer size does not lift a bypass on its own, so a plugin stays bypassed until you re-enable it.
 
 ## Plugin state in sessions
 

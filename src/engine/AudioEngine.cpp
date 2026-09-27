@@ -1971,6 +1971,17 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
 
     const int parkSleepMs = 0;  // the gate keeps the audio thread out
 
+    // Reading a JUCE-hosted plug-in's state re-prepares it, and a plug-in may
+    // settle on another latency when it does.
+    bool latencyMoved = false;
+    const auto readState = [&latencyMoved, parkSleepMs] (PluginSlot& slot)
+    {
+        const int latencyBefore = slot.getLatencySamples();
+        auto state = slot.getStateBase64ForSave (parkSleepMs);
+        latencyMoved = latencyMoved || slot.getLatencySamples() != latencyBefore;
+        return state;
+    };
+
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
@@ -1978,7 +1989,7 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
         auto& slot  = strip.getPluginSlot();
         track.pluginDescriptor = slot.getDescriptorForSave (parkSleepMs);
         track.pluginLegacyDescriptionXml = slot.getLegacyDescriptionXmlForSave();
-        track.pluginStateBase64    = slot.getStateBase64ForSave   (parkSleepMs);
+        track.pluginStateBase64    = readState (slot);
 
         // Native CLAP insert (parallel to the JUCE plugin; at most one is loaded).
         // Linux-only; on other platforms the saved path/state are preserved untouched
@@ -2118,7 +2129,7 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
             lane.pluginDescriptor[(size_t) s] = slot.getDescriptorForSave (parkSleepMs);
             lane.pluginLegacyDescriptionXml[(size_t) s]
                 = slot.getLegacyDescriptionXmlForSave();
-            lane.pluginStateBase64[(size_t) s]    = slot.getStateBase64ForSave   (parkSleepMs);
+            lane.pluginStateBase64[(size_t) s]    = readState (slot);
 
             // Native CLAP slot (parallel to the JUCE plugin; at most one is loaded).
             // Linux-only; preserved untouched elsewhere (see the track block above).
@@ -2231,6 +2242,12 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
             }
         }
     }
+
+    // The mixer recomputes PDC at the top of every block it runs. Doing it here
+    // as well, under the gate, leaves nothing reading the compensation for the
+    // old latency, even while the Mastering stage keeps the mixer idle.
+    if (latencyMoved)
+        recomputePdc();
 }
 
 void AudioEngine::releaseAllPluginResources()
@@ -3260,6 +3277,7 @@ void AudioEngine::audioDeviceAboutToStart (device::IODevice* device)
     // Safe to call here - the audio callback hasn't fired yet for this open.
     midiIn.resetCollectors (device->getCurrentSampleRate());
 
+    lastDeviceSampleRate.store (device->getCurrentSampleRate(), std::memory_order_relaxed);
     prepareForSelfTest (device->getCurrentSampleRate(),
                          device->getCurrentBufferSizeSamples());
 }

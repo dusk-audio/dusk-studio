@@ -197,7 +197,12 @@ public:
     // parkSleepMs: how long to wait between null-store and state read
     // so the audio thread observes the parked pointer. Default 25 ms
     // covers a 1024-sample block at 44.1 kHz. Pass 0 only when the
-    // audio callback is already detached (shutdown).
+    // audio thread is already held out: the engine's process gate, or a
+    // detached callback.
+    //
+    // An in-process plug-in is released and re-prepared around the state
+    // read, so the slot re-arms the overrun watchdog's warm-up grace and
+    // re-reads its latency afterwards, as a device re-prepare does.
     std::optional<PluginDescriptor> getDescriptorForSave (int parkSleepMs = 25);
     juce::String getLegacyDescriptionXmlForSave() const;
     juce::String getStateBase64ForSave   (int parkSleepMs = 25);

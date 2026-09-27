@@ -37,7 +37,7 @@ public:
 
     const juce::String getName() const override { return "Slow test"; }
 
-    void prepareToPlay (double, int) override {}
+    void prepareToPlay (double, int) override { setLatencySamples (latencyOnPrepare); }
     void releaseResources() override          {}
 
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override
@@ -72,6 +72,7 @@ public:
 
     std::atomic<int> blockMs { 0 };
     int processCalls = 0;
+    int latencyOnPrepare = 0;
 };
 
 struct Harness
@@ -80,14 +81,19 @@ struct Harness
     PluginSlot slot;
     SlowPluginInstance* plugin = nullptr;
 
-    Harness()
+    explicit Harness (int latency = 0)
     {
         slot.setManager (manager);
         slot.prepareToPlay (kRate, kBlock);
         auto instance = std::make_unique<SlowPluginInstance>();
         plugin = instance.get();
+        plugin->latencyOnPrepare = latency;
         REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
     }
+
+    // Saving reads the state between a release and a prepare, the way a
+    // session save does with the audio thread held out.
+    void save() { (void) slot.getStateBase64ForSave (0); }
 
     void pump (int blocks, int blockMs)
     {
@@ -185,4 +191,47 @@ TEST_CASE ("preparing a slot again leaves an auto-bypass in place", "[plugin][au
     // the watchdog again.
     h.pump (kGraceBlocks, 3);
     CHECK_FALSE (h.slot.wasAutoBypassed());
+}
+
+// A save reads each plug-in's state between a release and a prepare, so the
+// plug-in comes back as cold as after a load. A reverb or look-ahead limiter
+// saved while playing must not be bypassed for its first blocks back.
+TEST_CASE ("a plugin re-prepared by a save gets the warm-up grace back", "[plugin][autobypass]")
+{
+    Harness h;
+    h.warmUp();
+
+    h.save();
+    h.pump (kGraceBlocks, 3);
+    CHECK_FALSE (h.slot.wasAutoBypassed());
+}
+
+// Late blocks from before the save do not count against the plug-in after it.
+TEST_CASE ("a save starts the count of late blocks again", "[plugin][autobypass]")
+{
+    Harness h;
+    h.warmUp();
+    h.pump (kOverrunsToTrip - 1, 3);
+    REQUIRE_FALSE (h.slot.wasAutoBypassed());
+
+    h.save();
+    h.pump (kGraceBlocks, 0);
+    h.pump (1, 3);
+    CHECK_FALSE (h.slot.wasAutoBypassed());
+}
+
+// An auto-bypassed plug-in passes dry and adds no delay for PDC to make up. The
+// save's re-prepare lets it report a latency again, which must not reach PDC.
+TEST_CASE ("a save leaves an auto-bypassed plugin reporting no latency", "[plugin][autobypass]")
+{
+    Harness h (64);
+    REQUIRE (h.slot.getLatencySamples() == 64);
+    h.warmUp();
+    h.pump (kOverrunsToTrip, 3);
+    REQUIRE (h.slot.wasAutoBypassed());
+    REQUIRE (h.slot.getLatencySamples() == 0);
+
+    h.save();
+    CHECK (h.slot.wasAutoBypassed());
+    CHECK (h.slot.getLatencySamples() == 0);
 }

@@ -584,10 +584,19 @@ publishes.
   along with every compressor's envelope and the driver xrun count in the DSP
   readout, and it stopped the transport. Saving now pauses the audio only while
   it reads the plug-ins and leaves the rest as it was, so playback keeps
-  rolling. A change of device, rate, block size or
-  Effect oversampling still starts the readings again. A finished **Export
-  master...** now leaves Integrated and True Peak on the master it rendered
-  instead of clearing them.
+  rolling. A plug-in whose settings the save reads starts again with the same
+  warm-up allowance it gets after a load, so the overrun guard does not bypass
+  a reverb or look-ahead limiter for its first blocks back, and delay
+  compensation follows the latency it reports afterwards. A change of device,
+  rate, block size or Effect oversampling still starts the readings again. A
+  finished **Export master...** now leaves Integrated and True Peak on the
+  master it rendered instead of clearing them.
+- **A new session keeps its sample rate from its first save.** Saving a session
+  that had never been saved took the engine off the audio device before it
+  recorded the device's rate, so the rate was left out, and reopening the
+  session with the device at another rate adopted that rate without a word
+  instead of switching back or warning. File > Save and the quit prompt's Save
+  now record the rate the device ran at.
 - **A mix that will not load leaves the loaded one in place.** **Load mix...**
   on a file that is not audio unloaded the mix that was playing first. It now
   keeps it, the session still names it, and the source line reads "Failed to

@@ -2,6 +2,7 @@
 #include "AppConfig.h"
 #include "FourKColours.h"
 #include "../foundation/AppConfigDir.h"
+#include "../foundation/AppMusicDir.h"
 #include "../foundation/Fs.h"
 
 #include "../engine/AudioEngine.h"
@@ -4730,13 +4731,17 @@ std::optional<ScenarioResult> runMasteringLoudnessSurvivesSave (GuiHost& host, S
     { return Reading { meters.meterIntegratedLufs.load(), meters.meterTruePeakDb.load() }; };
     const auto format = [] (const Reading& r)
     { return std::to_string (r.integrated) + " LUFS, " + std::to_string (r.truePeak) + " dBTP"; };
-    const auto kept = [&ctx, read, format, measured, registration] (const std::string& after)
+    // The MASTERING stage returns from the callback before the transport moves,
+    // and no plug-in is loaded here, so nothing above would notice a gate the
+    // save never lifted; gui.save_keeps_mixer_running covers the mixer side.
+    const auto kept = [&ctx, &engine, read, format, measured, registration] (const std::string& after)
     {
         const auto now = read();
         ctx.expect (std::abs (now.integrated - measured->integrated) < 0.01f
                         && std::abs (now.truePeak - measured->truePeak) < 0.01f,
                     after + " changed the loudness readings from " + format (*measured) + " to " + format (now));
         ctx.expect (registration->empty(), after + " took the engine off the audio device");
+        ctx.expect (! engine.isProcessingSuspended(), after + " left the audio thread held out");
     };
     const auto cleared = [&ctx, read, format] (const std::string& after)
     {
@@ -4846,6 +4851,312 @@ const ScenarioRegistrar masteringLoudnessSurvivesSave { Scenario {
     "gui.mastering_loudness_survives_save", { "gui", "mastering", "session" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringLoudnessSurvivesSave (host, ctx); }
+} };
+
+// Save holds the audio thread out while it reads the plug-ins' state, then lets
+// it go. On a mixer stage the transport rolls on through the save, the playhead
+// keeps moving and an insert keeps processing, and the engine never leaves the
+// device. The Utility on track 1 takes the tone 24 dB down, so the strip meter
+// tells an insert still at work from a dry strip, and the meter is cleared once
+// the save returns, so only a block the mixer ran afterwards can refill it.
+std::optional<ScenarioResult> runSaveKeepsMixerRunning (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const double rate = engine.getCurrentSampleRate();
+    if (! engine.isAudioCallbackRegistered() || rate <= 0.0)
+        return ScenarioResult::skip ("requires a running audio device");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    ctx.keep (session.master().mute);
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        engine.observeAudioRegistrationForScenario ({});
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto frames = static_cast<std::int64_t> (rate * 10.0);
+    const auto folder = ctx.tempDir() / "Mixer session";
+    const auto tone = folder / "audio" / "tone.wav";
+    fs::create_directories (tone.parent_path());
+    {
+        std::vector<float> samples ((size_t) frames);
+        for (std::int64_t i = 0; i < frames; ++i)
+            samples[(size_t) i] = 0.5f * static_cast<float> (std::sin (6.283185307179586 * 440.0 * static_cast<double> (i) / rate));
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = rate;
+        spec.numChannels = 1;
+        spec.bitsPerSample = 32;
+        auto writer = dusk::audio::FileWriter::create (tone, spec);
+        const float* channels[] = { samples.data() };
+        if (writer == nullptr || ! writer->write (channels, 1, frames) || ! writer->flush())
+            return ScenarioResult::fail ("could not write the tone");
+    }
+    {
+        auto saved = std::make_unique<Session>();
+        applySessionDirectory (*saved, folder);
+        AudioRegion region;
+        using File = std::decay_t<decltype (region.file)>;
+        region.file = File (tone.u8string().c_str());
+        region.lengthInSamples = frames;
+        region.numChannels = 1;
+        saved->track (0).regions = { region };
+        saved->track (0).mode.store ((int) Track::Mode::Mono);
+        if (! SessionSerializer::save (*saved, folder / "session.json"))
+            return ScenarioResult::fail ("could not write the session");
+    }
+    reopenSavedSession (host, folder / "session.json");
+    auto& track = session.track (0);
+    if (currentSessionDirectory (session) != folder || track.regions.empty())
+        return ScenarioResult::fail ("could not open the session with its tone");
+
+    auto& strip = engine.getChannelStrip (0);
+    const auto mode = strip.insertMode.load();
+    std::string error;
+    engine.suspendProcessing();
+    const bool loaded = strip.loadBuiltin ("dusk.builtin.utility", error);
+    if (loaded) strip.insertMode.store (ChannelStrip::kInsertPlugin);
+    engine.resumeProcessing();
+    if (! loaded) return ScenarioResult::fail ("could not load Utility: " + error);
+    ctx.cleanup ([&host, &engine, &strip, mode]
+    {
+        engine.suspendProcessing();
+        strip.unloadBuiltin();
+        strip.insertMode.store (mode);
+        engine.resumeProcessing();
+        if (auto* handle = host.strip (0)) handle->refreshInsertButton();
+    });
+    auto& utility = strip.getBuiltinSlot();
+    int gainIndex = -1;
+    for (int index = 0; index < utility.paramCount(); ++index)
+        if (const auto* info = utility.paramInfo (index);
+            info != nullptr && info->id != nullptr && std::string_view (info->id) == "gain_db") gainIndex = index;
+    if (gainIndex < 0) return ScenarioResult::fail ("Utility has no gain parameter");
+    utility.setParamValue (gainIndex, -24.0f);
+    if (auto* handle = host.strip (0)) handle->refreshInsertButton();
+
+    host.switchToStage (GuiHost::Stage::Mixing);
+    session.master().mute.store (true);
+    transport.setPlayhead (0);
+    engine.play();
+
+    auto registration = std::make_shared<std::vector<bool>>();
+    auto before = std::make_shared<float> (-100.0f);
+    auto mark = std::make_shared<std::int64_t> (0);
+    const auto savedWhilePlaying = [&host, &ctx, &engine, &transport, &track, registration, mark]
+                                   (const std::string& how, const std::string& status)
+    {
+        ctx.expect (host.modalStackEmpty(), how + " left '" + host.modalText() + "' up");
+        ctx.expect (host.statusMessage() == status, how + " reported '" + host.statusMessage() + "'");
+        ctx.expect (! engine.isProcessingSuspended(), how + " left the audio thread held out");
+        ctx.expect (registration->empty(), how + " took the engine off the audio device");
+        ctx.expect (transport.isPlaying(), how + " stopped the rolling transport");
+        *mark = transport.getPlayhead();
+        track.meterOutLDb.store (-100.0f);
+    };
+    const auto mixerRanOn = [&ctx, &transport, &track, &strip, before, mark, rate] (const std::string& how)
+    {
+        const auto moved = transport.getPlayhead() - *mark;
+        ctx.expect (moved > static_cast<std::int64_t> (rate * 0.2),
+                    "the playhead moved " + std::to_string (moved) + " samples in the half second after " + how);
+        const float after = track.meterOutLDb.load();
+        ctx.expect (strip.isBuiltinLoaded() && std::abs (after - *before) < 3.0f,
+                    "after " + how + " the strip read " + std::to_string (after) + " dB, against "
+                        + std::to_string (*before) + " dB through the Utility before it");
+    };
+
+    const auto copy = ctx.tempDir() / "Mixer copy";
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 600, [&host, &ctx, &engine, &track, before, registration]
+    {
+        // The tone peaks at -6 dBFS dry, so a reading this far down is the
+        // Utility's 24 dB at work.
+        *before = track.meterOutLDb.load();
+        ctx.expect (*before > -45.0f && *before < -24.0f,
+                    "the tone through the Utility read " + std::to_string (*before) + " dB");
+        engine.observeAudioRegistrationForScenario ([registration] (bool attached) { registration->push_back (attached); });
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Save"), "the File menu has no Save"); } });
+    steps->push_back ({ 500, [savedWhilePlaying] { savedWhilePlaying ("Save", "Saved: Mixer session"); } });
+    steps->push_back ({ 500, [mixerRanOn] { mixerRanOn ("Save"); } });
+    pushSaveAsSteps (host, ctx, *steps, copy);
+    steps->push_back ({ 800, [&ctx, &session, savedWhilePlaying, copy]
+    {
+        ctx.expect (currentSessionDirectory (session) == copy,
+                    "Save As left the session at '" + currentSessionDirectory (session).string() + "'");
+        savedWhilePlaying ("Save As", "Saved: Mixer copy");
+    } });
+    steps->push_back ({ 500, [&engine, mixerRanOn]
+    {
+        mixerRanOn ("Save As");
+        engine.observeAudioRegistrationForScenario ({});
+        engine.stop();
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar saveKeepsMixerRunning { Scenario {
+    "gui.save_keeps_mixer_running", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSaveKeepsMixerRunning (host, ctx); }
+} };
+
+// A session remembers the sample rate its audio was made at, and a session that
+// has never been saved learns it at its first save. That save can run with the
+// audio callback detached: the quit prompt's Save detaches it first, and a
+// detached engine reads a running rate of 0. So File > Save on a never-saved
+// session runs once with the callback attached and once detached the way the
+// quit prompt leaves it; the bb-quit-save-rate leg drives the quit prompt's own
+// Save, which ends the process.
+std::optional<ScenarioResult> runFreshSessionSaveStampsRate (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty() || host.engineDetached())
+        return ScenarioResult::skip ("requires a stopped transport, no modal and the callback attached");
+    const double rate = engine.getCurrentSampleRate();
+    if (! engine.isAudioCallbackRegistered() || rate <= 0.0)
+        return ScenarioResult::skip ("requires a running audio device");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        drainModals (host);
+        if (! engine.isAudioCallbackRegistered()) engine.reattachAudioCallback();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    // The launch session has no rate of its own until its first save.
+    const auto startFresh = [&host, &ctx, &session]
+    {
+        host.startUnsavedSessionIn (ctx.tempDir());
+        session.sessionSampleRate = 0.0;
+        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
+    };
+    const auto stamped = [&ctx, rate] (const fs::path& folder, const std::string& how)
+    {
+        auto saved = std::make_unique<Session>();
+        applySessionDirectory (*saved, folder);
+        if (! ctx.expect (SessionSerializer::load (*saved, folder / "session.json"),
+                          how + " wrote no session that loads"))
+            return;
+        ctx.expect (std::abs (saved->sessionSampleRate - rate) < 0.5,
+                    how + " saved the session's rate as " + std::to_string (saved->sessionSampleRate)
+                        + " Hz, not the device's " + std::to_string (rate) + " Hz");
+    };
+    const auto saveAs = [&host, &ctx] (std::vector<Step>& steps, const fs::path& target, const std::string& how)
+    {
+        steps.push_back ({ 200, [&host, &ctx, how]
+        { ctx.expect (host.clickContextMenuItem ("Save"), how + ": the File menu has no Save"); } });
+        steps.push_back ({ 700, [&host, &ctx, target, how]
+        {
+            if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                              how + " showed '" + host.modalText() + "' rather than Save As")
+                || ! ctx.expect (host.focusFileName(), how + ": the Save As browser has no name field"))
+                return;
+            typeReplacing (host, target.string());
+            ctx.expect (host.clickModalButton ("Save"), how + ": the Save As browser has no Save button");
+        } });
+    };
+
+    const auto attached = ctx.tempDir() / "Saved attached";
+    const auto detached = ctx.tempDir() / "Saved detached";
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [startFresh] { startFresh(); } });
+    saveAs (*steps, attached, "File > Save");
+    steps->push_back ({ 800, [&host, &ctx, &engine, startFresh, stamped, attached]
+    {
+        ctx.expect (host.modalStackEmpty(), "File > Save left '" + host.modalText() + "' up");
+        stamped (attached, "File > Save");
+        engine.detachAudioCallback();
+        ctx.expect (engine.getCurrentSampleRate() <= 0.0, "a detached engine still reads a running rate");
+        startFresh();
+    } });
+    saveAs (*steps, detached, "File > Save with the callback detached");
+    steps->push_back ({ 800, [&host, &ctx, &engine, stamped, detached]
+    {
+        ctx.expect (host.modalStackEmpty(), "File > Save with the callback detached left '" + host.modalText() + "' up");
+        stamped (detached, "File > Save with the callback detached");
+        engine.reattachAudioCallback();
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar freshSessionSaveStampsRate { Scenario {
+    "gui.fresh_session_save_stamps_rate", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFreshSessionSaveStampsRate (host, ctx); }
+} };
+
+// For the bb-quit-save-rate leg only: the quit prompt's Save on a session that
+// has never been saved, which goes through Save As with the callback already
+// detached and then ends the process, so the case never reports. It saves into
+// the Music folder the leg names, under a folder that carries the device's rate
+// for the leg to hold the saved session to.
+std::optional<ScenarioResult> runQuitSaveStampsRate (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    const double rate = engine.getCurrentSampleRate();
+    if (! engine.isAudioCallbackRegistered() || rate <= 0.0)
+        return ScenarioResult::skip ("requires a running audio device");
+    const auto music = dusk::fs::appMusicDir();
+    if (music.empty()) return ScenarioResult::skip ("requires a Music folder");
+    const auto target = music / ("Quit save at " + std::to_string (std::llround (rate)));
+
+    host.startUnsavedSessionIn (ctx.tempDir());
+    session.sessionSampleRate = 0.0;
+    auto& fader = session.track (0).strip.faderDb;
+    fader.store (fader.load() - 3.0f);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.requestQuit(), "the edited never-saved session did not ask before quitting"); } });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        if (ctx.expect (host.modalText().rfind ("Save changes before quitting?", 0) == 0,
+                        "Quit showed '" + host.modalText() + "' rather than its prompt"))
+            ctx.expect (host.clickModalButton ("Save"), "the quit prompt did not offer Save");
+    } });
+    steps->push_back ({ 700, [&host, &ctx, target]
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                          "the quit prompt's Save showed '" + host.modalText() + "' rather than Save As")
+            || ! ctx.expect (host.engineDetached(), "the quit prompt's Save left the callback attached")
+            || ! ctx.expect (host.focusFileName(), "the Save As browser has no name field"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        typeReplacing (host, target.string());
+        ctx.expect (host.clickModalButton ("Save"), "the Save As browser has no Save button");
+    } });
+    runSteps (ctx, steps, [] {});
+    return std::nullopt;
+}
+
+const ScenarioRegistrar quitSaveStampsRate { Scenario {
+    "gui.quit_save_stamps_rate", { "helper" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runQuitSaveStampsRate (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runAuxSources (GuiHost& host, ScenarioContext& ctx)
