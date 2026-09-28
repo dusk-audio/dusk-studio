@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 
 // The real-time audio callback the device layer drives, mirroring the slice of
@@ -12,9 +13,13 @@ class IODevice;
 
 // Extra per-callback data, mirroring JUCE's AudioIODeviceCallbackContext. A null
 // hostTimeNs means the backend supplied no hardware timestamp for this block.
+// offlineRender, and the render's cancel flag, are set only by the offline
+// render driver, never by a device.
 struct CallbackContext
 {
     const std::uint64_t* hostTimeNs = nullptr;
+    bool offlineRender = false;
+    const std::atomic<bool>* renderCancelled = nullptr;
 };
 
 class IODeviceCallback

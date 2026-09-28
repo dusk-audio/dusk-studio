@@ -132,6 +132,9 @@ bool BounceEngine::processOfflineBlock (
     // Ceiling exists only to fail a truly wedged gate; sized well past any
     // legitimate suspend (plugin instantiation, consolidate file I/O).
     constexpr int kMaxGateRetries = 60000;
+    auto offlineContext = context;
+    offlineContext.offlineRender = true;
+    offlineContext.renderCancelled = &cancelRequested;
     int gateRetries = 0;
     while (! cancelRequested.load (std::memory_order_relaxed))
     {
@@ -141,7 +144,7 @@ bool BounceEngine::processOfflineBlock (
                                       outputChannelData,
                                       numOutputChannels,
                                       numSamples,
-                                      context);
+                                      offlineContext);
         if (engine.getGatedBlockCount() == gatedBefore)
             return true;
 

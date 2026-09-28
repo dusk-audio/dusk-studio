@@ -142,6 +142,15 @@ publishes.
 
 ### Fixed
 
+- **LV2 plugins that need the LV2 Worker load** (#780). Dusk's own
+  Multi-Comp 2, Multi-Q 2 and DuskVerb 2, and sfizz, need the host to run
+  slow jobs for them on a background thread. Dusk Studio did not offer that,
+  so on Linux and macOS they failed to load with only "lilv_plugin_instantiate
+  failed" in the alert. The native LV2 host now provides the Worker, and a
+  bounce, freeze or export waits for its work so the file comes out the same
+  every time. A plugin that requires an LV2 feature Dusk Studio still lacks
+  names it in the alert, and LV2 editors are told the session's sample rate
+  instead of assuming 44.1 kHz.
 - **Windows builds can export MP3** (#757). Every Windows release since
   0.11 shipped WAV-only: the build looked for the LAME library under a name
   the Windows package does not use, and quietly left MP3 bounce and MP3 master

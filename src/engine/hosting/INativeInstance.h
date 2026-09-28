@@ -56,5 +56,10 @@ public:
     // Plugin-reported processing latency in samples at the active config; 0 until
     // activate(). Fed into the engine's plugin-delay-compensation aggregator.
     virtual int getLatencySamples() const noexcept = 0;
+
+    // Message thread, app shutdown, before the instance is deliberately leaked:
+    // join any thread the host runs that calls into the plugin, so none is left
+    // inside it while the process exits. The plugin itself stays untouched.
+    virtual void stopHelperThreads() noexcept {}
 };
 } // namespace duskstudio::hosting

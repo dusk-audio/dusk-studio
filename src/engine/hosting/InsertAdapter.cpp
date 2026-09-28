@@ -40,7 +40,9 @@ void InsertAdapter::process (INativeInstance& inst,
                              const float* sidechainL,
                              const float* sidechainR,
                              const dusk::MidiBuffer* midiIn,
-                             const dusk::TransportPosition* transport) noexcept
+                             const dusk::TransportPosition* transport,
+                             bool offlineRender,
+                             const std::atomic<bool>* renderCancelled) noexcept
 {
     if (! inst.isActive() || numFrames <= 0 || numFrames > maxFrames)
         return;   // dry passthrough - leave L/R untouched
@@ -96,6 +98,8 @@ void InsertAdapter::process (INativeInstance& inst,
     io.numFrames           = numFrames;
     io.midiIn              = midiIn;
     io.transport           = transport;
+    io.offlineRender       = offlineRender;
+    io.renderCancelled     = renderCancelled;
 
     inst.processBlock (io);
 

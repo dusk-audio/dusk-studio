@@ -789,6 +789,13 @@ private:
     // setOfflineRenderActive.
     std::atomic<bool> offlineRenderActive { false };
 
+    // What the native inserts were last told about the callback driving them
+    // (see CallbackContext::offlineRender). Audio thread; the device thread and
+    // the render thread take turns, never overlap.
+    std::atomic<bool> nativeInsertsOffline { false };
+    std::atomic<const std::atomic<bool>*> nativeInsertsRenderCancelled { nullptr };
+    void setNativeInsertsOfflineRender (bool offline, const std::atomic<bool>* renderCancelled) noexcept;
+
     // Stem-capture destinations for bus groups / aux lanes (see
     // setBusStemCapture / setAuxStemCapture). nullptr when no stems bounce
     // is running.

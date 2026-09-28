@@ -2449,6 +2449,21 @@ void AudioEngine::releaseAllPluginResources()
             laneStrip.getPluginSlot (s).releaseResources();
 }
 
+void AudioEngine::setNativeInsertsOfflineRender (bool offline,
+                                                 const std::atomic<bool>* renderCancelled) noexcept
+{
+    nativeInsertsOffline.store (offline, std::memory_order_relaxed);
+    nativeInsertsRenderCancelled.store (renderCancelled, std::memory_order_relaxed);
+    // LV2 is the one host that acts on it: its Worker replies are waited for.
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    for (auto& strip : strips)
+        strip.getNativeLv2Slot().setOfflineRender (offline, renderCancelled);
+    for (auto& laneStrip : auxLaneStrips)
+        for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+            laneStrip.getNativeLv2Slot (s).setOfflineRender (offline, renderCancelled);
+#endif
+}
+
 void AudioEngine::leakAllPluginInstancesForShutdown()
 {
     for (auto& strip : strips)
@@ -3526,6 +3541,11 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     };
     const ResumeGuard resumeGuard { *this };
 
+    // A finished render's cancel flag dies with its BounceEngine, and only the
+    // next callback would clear the pointer; a slot processed directly before
+    // then must not wait on it.
+    setNativeInsertsOfflineRender (false, nullptr);
+
     // A re-prepare invalidates an armed realtime bounce: its capture
     // scratches were sized for the old block, so a grown one would overrun
     // them from the audio thread (the mixL guard tracks the NEW size and
@@ -4053,7 +4073,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                          float* const* outputChannelData,
                                          int numOutputChannels,
                                          int numSamples,
-                                         const device::CallbackContext&)
+                                         const device::CallbackContext& context)
 {
     dusk::audio::ScopedNoDenormals noDenormals;
 
@@ -4103,6 +4123,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         ~InFlightGuard() { counter.fetch_sub (1, std::memory_order_acq_rel); }
     };
     const InFlightGuard inFlightGuard { callbacksInFlight };
+
+    // offlineRenderActive spans the render's re-prepares on either side, while
+    // the device can still be running, so it cannot tell a native insert that
+    // waiting is safe. The context can: only the render driver sets it.
+    if (context.offlineRender != nativeInsertsOffline.load (std::memory_order_relaxed)
+        || context.renderCancelled != nativeInsertsRenderCancelled.load (std::memory_order_relaxed))
+        setNativeInsertsOfflineRender (context.offlineRender, context.renderCancelled);
 
     const auto callbackStart = juce::Time::getHighResolutionTicks();
 

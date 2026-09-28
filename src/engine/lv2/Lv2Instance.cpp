@@ -1,6 +1,8 @@
 #include "Lv2Instance.h"
 #include "Lv2Bundle.h"
 #include "Lv2StatePaths.h"
+#include "Lv2UridMap.h"
+#include "Lv2Worker.h"
 #include "../hosting/SpscRing.h"
 
 #include <lilv/lilv.h>
@@ -42,9 +44,8 @@ struct Lv2Instance::Impl
     // instance-access handles can detect the swap.
     std::atomic<std::uint64_t> instanceEpoch { 0 };
 
-    // URID map/unmap host feature (a simple intern table)
-    std::unordered_map<std::string, uint32_t> uridForUri;
-    std::vector<std::string> uriForUrid { std::string() };   // index 0 unused (URIDs start at 1)
+    // URID map/unmap host feature (see Lv2UridMap for the threading).
+    Lv2UridMap     urids;
     LV2_URID_Map   mapFeature   {};
     LV2_URID_Unmap unmapFeature {};
     LV2_Feature    mapFeatureStruct     {};
@@ -53,27 +54,22 @@ struct Lv2Instance::Impl
     LV2_Feature    boundedFeatureStruct {};
     std::vector<const LV2_Feature*> features;
 
-    // Backing storage for the options feature - must outlive the instance, which
-    // keeps pointers to these. Rebuilt per activate() with the live SR / block size.
+    // Backing storage for the options feature. The plugin and its UI both keep
+    // the array, and the UI outlives a reactivate, so it is built once at a
+    // fixed address and activate() only refreshes the values.
     int32_t optMinBlock = 1, optMaxBlock = 0, optNominalBlock = 0;
     float   optSampleRate = 0.0f;
-    std::vector<LV2_Options_Option> options;
+    std::array<LV2_Options_Option, 5> options {};
+
+    Lv2Worker worker;
 
     static LV2_URID mapUri (LV2_URID_Map_Handle handle, const char* uri)
     {
-        auto* self = static_cast<Impl*> (handle);
-        const std::string key = uri;
-        if (auto it = self->uridForUri.find (key); it != self->uridForUri.end())
-            return it->second;
-        const auto id = (uint32_t) self->uriForUrid.size();
-        self->uriForUrid.push_back (key);
-        self->uridForUri.emplace (key, id);
-        return id;
+        return static_cast<Impl*> (handle)->urids.map (uri);
     }
     static const char* unmapUri (LV2_URID_Unmap_Handle handle, LV2_URID urid)
     {
-        auto* self = static_cast<Impl*> (handle);
-        return (urid < self->uriForUrid.size()) ? self->uriForUrid[urid].c_str() : nullptr;
+        return static_cast<Impl*> (handle)->urids.unmap (urid);
     }
 
     void buildUridFeatures()
@@ -82,6 +78,18 @@ struct Lv2Instance::Impl
         unmapFeature.handle = this;  unmapFeature.unmap = &Impl::unmapUri;
         mapFeatureStruct   = { LV2_URID__map,   &mapFeature };
         unmapFeatureStruct = { LV2_URID__unmap, &unmapFeature };
+
+        const LV2_URID kInt   = mapUri (this, LV2_ATOM__Int);
+        const LV2_URID kFloat = mapUri (this, LV2_ATOM__Float);
+        options = { {
+            { LV2_OPTIONS_INSTANCE, 0, mapUri (this, LV2_BUF_SIZE__minBlockLength),     sizeof (int32_t), kInt,   &optMinBlock },
+            { LV2_OPTIONS_INSTANCE, 0, mapUri (this, LV2_BUF_SIZE__maxBlockLength),     sizeof (int32_t), kInt,   &optMaxBlock },
+            { LV2_OPTIONS_INSTANCE, 0, mapUri (this, LV2_BUF_SIZE__nominalBlockLength), sizeof (int32_t), kInt,   &optNominalBlock },
+            { LV2_OPTIONS_INSTANCE, 0, mapUri (this, LV2_PARAMETERS__sampleRate),       sizeof (float),   kFloat, &optSampleRate },
+            { LV2_OPTIONS_INSTANCE, 0, 0, 0, 0, nullptr },   // terminator
+        } };
+        optionsFeatureStruct = { LV2_OPTIONS__options, options.data() };
+        boundedFeatureStruct = { LV2_BUF_SIZE__boundedBlockLength, nullptr };
         uridFloat  = mapUri (this, LV2_ATOM__Float);
         uridDouble = mapUri (this, LV2_ATOM__Double);
         uridInt    = mapUri (this, LV2_ATOM__Int);
@@ -167,28 +175,54 @@ struct Lv2Instance::Impl
     static void freePathCb (LV2_State_Free_Path_Handle, char* path) { ::free (path); }
 
     // Assemble the full feature list for instantiate: urid map/unmap + the block-size
-    // and sample-rate options + boundedBlockLength. Framework-wrapped plugins REQUIRE
-    // options + boundedBlockLength and refuse to instantiate without them.
+    // and sample-rate options + boundedBlockLength + worker:schedule. Framework-
+    // wrapped plugins REQUIRE options + boundedBlockLength, DAF-built ones the
+    // worker as well, and refuse to instantiate without them.
     void assembleFeatures (double sr, int maxBlock)
     {
         optMinBlock = 1;
         optMaxBlock = maxBlock;
         optNominalBlock = maxBlock;
         optSampleRate = (float) sr;
-
-        const LV2_URID kInt   = mapUri (this, LV2_ATOM__Int);
-        const LV2_URID kFloat = mapUri (this, LV2_ATOM__Float);
-        options = {
-            { LV2_OPTIONS_INSTANCE, 0, mapUri (this, LV2_BUF_SIZE__minBlockLength),     sizeof (int32_t), kInt,   &optMinBlock },
-            { LV2_OPTIONS_INSTANCE, 0, mapUri (this, LV2_BUF_SIZE__maxBlockLength),     sizeof (int32_t), kInt,   &optMaxBlock },
-            { LV2_OPTIONS_INSTANCE, 0, mapUri (this, LV2_BUF_SIZE__nominalBlockLength), sizeof (int32_t), kInt,   &optNominalBlock },
-            { LV2_OPTIONS_INSTANCE, 0, mapUri (this, LV2_PARAMETERS__sampleRate),       sizeof (float),   kFloat, &optSampleRate },
-            { LV2_OPTIONS_INSTANCE, 0, 0, 0, 0, nullptr },   // terminator
-        };
-        optionsFeatureStruct = { LV2_OPTIONS__options, options.data() };
-        boundedFeatureStruct = { LV2_BUF_SIZE__boundedBlockLength, nullptr };
         features = { &mapFeatureStruct, &unmapFeatureStruct,
-                     &optionsFeatureStruct, &boundedFeatureStruct, nullptr };
+                     &optionsFeatureStruct, &boundedFeatureStruct,
+                     worker.scheduleFeature(), nullptr };
+    }
+
+    // lv2core's isLive, inPlaceBroken and hardRTCapable are properties, not
+    // structs a host passes, and plug-ins list them as required features anyway:
+    // this host runs in real time, never connects an input and an output port
+    // to the same buffer, and needs nothing of a hard-RT-capable plug-in. The
+    // state path features are passed to save and restore, where the state
+    // extension uses them, rather than to instantiate.
+    bool hostProvidesFeature (const char* uri) const
+    {
+        if (std::strcmp (uri, LV2_CORE__isLive) == 0
+            || std::strcmp (uri, LV2_CORE__inPlaceBroken) == 0
+            || std::strcmp (uri, LV2_CORE__hardRTCapable) == 0
+            || std::strcmp (uri, LV2_STATE__mapPath) == 0
+            || std::strcmp (uri, LV2_STATE__makePath) == 0
+            || std::strcmp (uri, LV2_STATE__freePath) == 0)
+            return true;
+        for (const auto* f : features)
+            if (f != nullptr && std::strcmp (f->URI, uri) == 0)
+                return true;
+        return false;
+    }
+
+    // The first required feature the host does not provide; empty when none.
+    std::string firstMissingRequiredFeature() const
+    {
+        std::string missing;
+        LilvNodes* required = lilv_plugin_get_required_features (plugin);
+        if (required == nullptr) return missing;
+        LILV_FOREACH (nodes, it, required)
+        {
+            const char* uri = lilv_node_as_uri (lilv_nodes_get (required, it));
+            if (uri != nullptr && ! hostProvidesFeature (uri)) { missing = uri; break; }
+        }
+        lilv_nodes_free (required);
+        return missing;
     }
 
     // plugin + instance
@@ -411,9 +445,17 @@ struct Lv2Instance::Impl
 
     void freeInstance()
     {
+        // The worker thread must be gone before the plugin it calls into, and a
+        // request queued for this instance must never reach the next one.
+        worker.stop();
         if (instance != nullptr)
         {
-            if (active) lilv_instance_deactivate (instance);
+            if (active)
+            {
+                const Lv2Worker::HostCallScope hostCall (worker);
+                lilv_instance_deactivate (instance);
+            }
+            worker.detach();
             lilv_instance_free (instance);
             instance = nullptr;
             // The instance an editor captured instance-access / data-access
@@ -814,8 +856,22 @@ bool Lv2Instance::activate (double sampleRate, int maxBlockFrames, std::string& 
     impl->maxFrames  = std::max (1, maxBlockFrames);
 
     impl->assembleFeatures (sampleRate, impl->maxFrames);   // options need the live SR/block
+    // The LV2 core forbids instantiating a plugin whose required features the
+    // host lacks, and the plugin's own refusal would only say "failed".
+    if (const auto missing = impl->firstMissingRequiredFeature(); ! missing.empty())
+    {
+        errorOut = "requires the LV2 feature <" + missing + ">, which Dusk Studio does not provide";
+        return false;
+    }
+    const Lv2Worker::HostCallScope hostCall (impl->worker);
+    impl->worker.beginInstantiate();
     impl->instance = lilv_plugin_instantiate (impl->plugin, sampleRate, impl->features.data());
-    if (impl->instance == nullptr) { errorOut = "lilv_plugin_instantiate failed"; return false; }
+    if (impl->instance == nullptr)
+    {
+        impl->worker.detach();
+        errorOut = "lilv_plugin_instantiate failed";
+        return false;
+    }
 
     const uint32_t numPorts = lilv_plugin_get_num_ports (impl->plugin);
 
@@ -889,6 +945,18 @@ bool Lv2Instance::activate (double sampleRate, int maxBlockFrames, std::string& 
                                   ? (int) impl->portValues[(size_t) impl->latencyPortIndex] : 0,
                                 std::memory_order_relaxed);
 
+    // After the ports are wired, so work scheduled from instantiate can run now.
+    const auto* workerInterface = static_cast<const LV2_Worker_Interface*> (
+        lilv_instance_get_extension_data (impl->instance, LV2_WORKER__interface));
+    std::string workerError;
+    if (! impl->worker.attach (lilv_instance_get_handle (impl->instance), workerInterface,
+                               workerError))
+    {
+        impl->freeInstance();
+        errorOut = workerError;
+        return false;
+    }
+
     lilv_instance_activate (impl->instance);
     impl->active = true;
     return true;
@@ -904,6 +972,9 @@ bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string
     // can't. The blob already reflects staged UI writes via getPortValue's shadow.
     std::vector<uint8_t> blob;
     const bool carriedRestoreFailure = impl->stateRestoreFailed;
+    // Work the plugin queued just before the restart (a state change from its
+    // UI, say) has to land before the snapshot, or the new instance never sees it.
+    impl->worker.finishQueuedWork();
     saveStateBlobOnly (blob);
     const std::vector<float> saved = impl->portValues;
     // freeInstance bumps the epoch before the rebuild, so a failed activate
@@ -1025,7 +1096,9 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
         atom->size = (uint32_t) (impl->atomBuffers[i].size() - sizeof (LV2_Atom));
     }
 
+    impl->worker.beginRun();
     lilv_instance_run (impl->instance, (uint32_t) numFrames);
+    impl->worker.finishRun (io.offlineRender, io.renderCancelled);
 
     // The plugin's outgoing patch responses (its own UI / preset loads) keep
     // the read-back shadow honest - parse the control atom output and stage
@@ -1285,8 +1358,11 @@ bool Lv2Instance::loadStateInternal (const std::vector<uint8_t>& in,
     // Cleared up front so a path the callbacks refuse during the restore is
     // still the answer this call reports.
     impl->stateRestoreFailed = false;
-    lilv_state_restore (state, impl->instance, &Impl::setPortValue, impl.get(),
-                        0, feats.data());
+    {
+        const Lv2Worker::HostCallScope hostCall (impl->worker);
+        lilv_state_restore (state, impl->instance, &Impl::setPortValue, impl.get(),
+                            0, feats.data());
+    }
     lilv_state_free (state);
     return ! impl->stateRestoreFailed;
 }
@@ -1297,6 +1373,9 @@ void*       Lv2Instance::lilvInstance()     const noexcept { return impl->instan
 std::uint64_t Lv2Instance::instanceEpoch()  const noexcept { return impl->instanceEpoch.load (std::memory_order_acquire); }
 void*       Lv2Instance::uridMapFeature()   const noexcept { return &impl->mapFeatureStruct; }
 void*       Lv2Instance::uridUnmapFeature() const noexcept { return &impl->unmapFeatureStruct; }
+void*       Lv2Instance::optionsFeature()   const noexcept { return &impl->optionsFeatureStruct; }
+
+void Lv2Instance::stopHelperThreads() noexcept { impl->worker.stop(); }
 
 void Lv2Instance::setControlPortValue (uint32_t portIndex, float value) noexcept
 {
