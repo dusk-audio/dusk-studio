@@ -29,17 +29,19 @@ def luma(p):
     return (299 * p[0] + 587 * p[1] + 114 * p[2]) // 1000
 
 
-def close(a, b):
-    return sum(abs(i - j) for i, j in zip(a, b)) <= 12
+def close(a, b, tolerance=12):
+    return sum(abs(i - j) for i, j in zip(a, b)) <= tolerance
 
 
 def button_at(img, x, y):
     """The prompt button whose label is centred on (x, y), as (left, right,
     label_left, label_right), or a string saying why there is none.
 
-    Measured on the node's microphone prompt: buttons about 110 x 28 px with a
-    light fill, 9 px apart, the label about 11 px tall and centred on the
-    point; "Allow" is 32 px wide and "Don't Allow" 69.
+    Measured on the node's microphone prompt: buttons about 110 x 28 px, 9 px
+    apart, the label about 11 px tall and centred on the point; "Allow" is 32
+    px wide and "Don't Allow" 69. In the light appearance the fill is light and
+    the label dark; the node switches to the dark appearance at night, where
+    the fill is dark grey and the label light.
     """
     w, h = img.size
     if not (100 <= x < w - 100 and 40 <= y < h - 40):
@@ -47,31 +49,37 @@ def button_at(img, x, y):
     px = img.getpixel
     row = y - 8
     fill = px((x, row))
-    if luma(fill) < 150:
-        return f"({x},{row}) is {fill}, not a light button fill"
+    light = luma(fill) >= 150
+    if not light and not 25 <= luma(fill) <= 110:
+        return f"({x},{row}) is {fill}, neither a light nor a dark button fill"
+    # The dark prompt is translucent: what lies under it tints the fill by up
+    # to about 20, while the fill still stands about 50 off the prompt around it.
+    tolerance = 12 if light else 30
     left = x
-    while left > x - 90 and close(px((left - 1, row)), fill):
+    while left > x - 90 and close(px((left - 1, row)), fill, tolerance):
         left -= 1
     right = x
-    while right < x + 90 and close(px((right + 1, row)), fill):
+    while right < x + 90 and close(px((right + 1, row)), fill, tolerance):
         right += 1
     if not 80 <= right - left <= 160:
         return f"the fill at ({x},{row}) is {right - left + 1} px wide, not a button"
     # A column clear of the label, and of the pointer a previous click left on it.
     col = left + 10
-    if not close(px((col, y + 8)), fill):
+    if not close(px((col, y + 8)), fill, tolerance):
         return f"({col},{y + 8}) is {px((col, y + 8))}, not the button fill below the label"
     top = row
-    while top > row - 30 and close(px((col, top - 1)), fill):
+    while top > row - 30 and close(px((col, top - 1)), fill, tolerance):
         top -= 1
     bottom = y + 8
-    while bottom < y + 30 and close(px((col, bottom + 1)), fill):
+    while bottom < y + 30 and close(px((col, bottom + 1)), fill, tolerance):
         bottom += 1
     if not 20 <= bottom - top <= 40:
         return f"the fill at column {col} is {bottom - top + 1} px tall, not a button"
-    dark = luma(fill) - 60
+    def on_label(p):
+        return luma(p) < luma(fill) - 60 if light else luma(p) > luma(fill) + 60
+
     cols = [cx for cx in range(left + 4, right - 3)
-            if any(luma(px((cx, cy))) < dark for cy in range(top + 4, bottom - 3))]
+            if any(on_label(px((cx, cy))) for cy in range(top + 4, bottom - 3))]
     if not cols:
         return f"the button at ({x},{y}) has no label"
     return left, right, cols[0], cols[-1]

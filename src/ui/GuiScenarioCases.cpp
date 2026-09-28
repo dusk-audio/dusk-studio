@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -68,11 +69,25 @@ constexpr int kAuxSlot    = 0;
 // A delay before each step, run from the message loop - the shape the capture
 // harness uses, and the only one that lets a plug-in editor actually come up
 // between two steps.
+//
+// A step that depends on UI state arriving asynchronously names it in `until`:
+// after the delay the step polls it and runs once it holds, so a loaded host
+// only makes the case slower. The bound catches a hang, not a slow machine, and
+// fails the case with `timeout`. `retry`, where set, is sent once if the state
+// is still missing after kRetryAfterMs; only for a click the window can lose
+// and a second press cannot change the verdict.
 struct Step
 {
     int delayMs;
     std::function<void()> run;
+    std::function<bool()> until {};
+    std::string timeout {};
+    std::function<void()> retry {};
 };
+
+constexpr int kUntilBoundMs = 15000;
+constexpr int kUntilPollMs  = 10;
+constexpr int kRetryAfterMs = 3000;
 
 // Descriptors this process holds on `file`; 0 where they can't be counted
 // (only Linux lists them), so callers pair it with a rename check.
@@ -142,12 +157,60 @@ void runSteps (ScenarioContext& ctx, std::shared_ptr<std::vector<Step>> steps,
             return;
         }
 
-        (*steps)[index].run();
+        auto runner = weakRunner.lock();
+        const auto runThenNext = [&ctx, steps, runner, index]
+        {
+            (*steps)[index].run();
 
-        const auto next = index + 1;
-        const int delay = next < steps->size() ? (*steps)[next].delayMs : 0;
-        if (auto runner = weakRunner.lock())
-            ctx.later (delay, [runner, next] { (*runner) (next); });
+            const auto next = index + 1;
+            const int delay = next < steps->size() ? (*steps)[next].delayMs : 0;
+            if (runner != nullptr)
+                ctx.later (delay, [runner, next] { (*runner) (next); });
+        };
+
+        const auto& step = (*steps)[index];
+        if (! step.until)
+        {
+            runThenNext();
+            return;
+        }
+
+        // Wall-clock bounds, as in ScenarioContext::waitUntil. A timeout goes
+        // through expect so an earlier broken expectation stays the verdict.
+        using Clock = std::chrono::steady_clock;
+        const auto started = Clock::now();
+        const auto deadline = started + std::chrono::milliseconds (kUntilBoundMs);
+        const auto retryAt = started + std::chrono::milliseconds (kRetryAfterMs);
+        auto retried = std::make_shared<bool> (false);
+        auto poll = std::make_shared<std::function<void()>>();
+        std::weak_ptr<std::function<void()>> weakPoll = poll;
+        *poll = [&ctx, steps, index, deadline, retryAt, retried, runThenNext, weakPoll]
+        {
+            const auto& waiting = (*steps)[index];
+            if (waiting.until())
+            {
+                runThenNext();
+                return;
+            }
+            const auto now = Clock::now();
+            if (now >= deadline)
+            {
+                ctx.expect (false, waiting.timeout.empty() ? "step " + std::to_string (index) + " timed out"
+                                                           : waiting.timeout);
+                ctx.complete (ctx.verdict());
+                return;
+            }
+            if (waiting.retry && ! *retried && now >= retryAt)
+            {
+                *retried = true;
+                ctx.note ("step " + std::to_string (index) + " was still waiting after "
+                          + std::to_string (kRetryAfterMs) + " ms and ran its retry");
+                waiting.retry();
+            }
+            if (auto next = weakPoll.lock())
+                ctx.later (kUntilPollMs, [next] { (*next)(); });
+        };
+        (*poll)();
     };
 
     ctx.later (steps->empty() ? 0 : steps->front().delayMs, [runFrom] { (*runFrom) (0); });
@@ -220,22 +283,61 @@ void typeReplacing (GuiHost& host, const std::string& text)
         host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
 }
 
-// File > Save as... into target, typed into the browser the way a user would.
-void pushSaveAsSteps (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
-                      const std::filesystem::path& target)
+// Opens the File menu once nothing else is up and picks item from it.
+void pushFileMenuSteps (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
+                        const std::string& item)
 {
-    steps.push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); } });
-    steps.push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.clickContextMenuItem ("Save as..."), "the File menu has no Save as..."); } });
-    steps.push_back ({ 700, [&host, &ctx, target]
+    steps.push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickFileMenu(), "the File menu is unavailable"); },
+                       [&host] { return host.modalStackEmpty(); },
+                       "a modal was still up when the File menu was wanted" });
+    // The second click goes out only while no menu is up, so it lands on the
+    // menu bar exactly where the first one did.
+    steps.push_back ({ 0, [&host, &ctx, item]
+                       { ctx.expect (host.clickContextMenuItem (item), "the File menu has no " + item); },
+                       [&host] { return ! host.contextMenuItems().empty(); },
+                       "the File menu did not open",
+                       [&host] { host.clickFileMenu(); } });
+}
+
+// File > Save as... into target, typed into the browser the way a user would.
+// The save runs inside the browser's Save press, so the steps end once the
+// browser has gone: whatever the save did is done by then. beforeSave, if set,
+// runs just before that press.
+void pushSaveAsSteps (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
+                      const std::filesystem::path& target, std::function<void()> beforeSave = {})
+{
+    const auto browserUp = [&host] { return host.modalText().rfind ("Save session as...", 0) == 0; };
+    pushFileMenuSteps (host, ctx, steps, "Save as...");
+    steps.push_back ({ 0, [&host, &ctx, target, beforeSave]
     {
-        if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
-                          "File > Save as... showed '" + host.modalText() + "' rather than Save As")
-            || ! ctx.expect (host.focusFileName(), "the Save As browser has no name field"))
-            return;
+        if (! ctx.expect (host.focusFileName(), "the Save As browser has no name field")) return;
         typeReplacing (host, target.string());
+        if (beforeSave) beforeSave();
         ctx.expect (host.clickModalButton ("Save"), "the Save As browser has no Save button");
+    },
+    browserUp, "File > Save as... did not bring up the Save As browser",
+    [&host]
+    {
+        if (! host.contextMenuItems().empty()) host.clickContextMenuItem ("Save as...");
     } });
+    // No second press: the Save button acts in the press itself, and one that
+    // went out after a failed name entry would save under the default name.
+    steps.push_back ({ 0, [] {}, [browserUp] { return ! browserUp(); },
+                       "the Save As browser did not take the name it was given" });
+}
+
+// A cancelled mixdown stops its worker, and the dialog swaps Cancel for Close on
+// its next timer tick. Close is pressed as soon as it shows. Only a case that
+// leaves open whether the dialog stays up passes closeOptional.
+void pushCancelledMixdownCloseSteps (GuiHost& host, std::vector<Step>& steps, bool closeOptional)
+{
+    steps.push_back ({ 0, [] {}, [&host] { return ! host.mixdownRunning(); }, "the mixdown did not cancel" });
+    steps.push_back ({ 0, [] {},
+                       [&host, closeOptional]
+                       { return (closeOptional && host.modalStackEmpty()) || host.clickModalButton ("Close"); },
+                       "the cancelled mixdown did not offer Close" });
+    steps.push_back ({ 0, [] {}, [&host] { return host.modalStackEmpty(); },
+                       "the cancelled mixdown left its modal open" });
 }
 
 // A key press as the display server hands it over. X11 fills JUCE's key code
@@ -4183,39 +4285,75 @@ std::optional<ScenarioResult> runMasteringTargets (GuiHost& host, ScenarioContex
     });
     const std::array<const char*, 6> names { "Off", "Spotify", "Apple Music", "YouTube", "Tidal", "Broadcast (EBU R128)" };
     const std::array<float, 6> targets { 0.0f, -14.0f, -16.0f, -14.0f, -14.0f, -23.0f };
+    // The picker opens a message-loop turn after the click, the choice reaches
+    // the session through the combo's asynchronous change notification, and the
+    // readings are recoloured on the view's timer, so each check waits for the
+    // state it reads rather than for a fixed time.
     auto steps = std::make_shared<std::vector<Step>>();
     for (int index = 0; index < (int) names.size(); ++index)
     {
+        const auto rowClick = [&host, index]
+        { return host.clickModalAt (0.5f, (4.0f + 26.0f * (static_cast<float> (index) + 0.5f)) / 164.0f); };
+        const std::string name = names[(std::size_t) index];
         steps->push_back ({ 100, [&host, &ctx]
-        { ctx.expect (host.clickMasteringTarget(), "mastering target picker did not open"); } });
-        steps->push_back ({ 300, [&host, &ctx, index]
-        {
-            ctx.expect (host.clickModalAt (0.5f, (4.0f + 26.0f * (static_cast<float> (index) + 0.5f)) / 164.0f),
-                        "mastering target row did not receive a click");
-        } });
-        steps->push_back ({ 300, [&host, &ctx, &meters, names, index]
+        { ctx.expect (host.clickMasteringTarget(), "the mastering target picker is not on screen"); },
+        [&host] { return host.modalStackEmpty(); }, "the previous target picker never closed" });
+        // While the picker is still to open, the combo ignores a second click.
+        steps->push_back ({ 0, [&ctx, rowClick]
+        { ctx.expect (rowClick(), "mastering target row did not receive a click"); },
+        [&host] { return ! host.modalStackEmpty(); }, "the mastering target picker did not open",
+        [&host] { host.clickMasteringTarget(); } });
+        // A picked row closes the picker at once, so one still up missed the
+        // click and takes the same row again.
+        steps->push_back ({ 0, [&host, &ctx, &meters, name, index]
         {
             ctx.expect (meters.targetPresetIndex.load() == index, "target picker expected " + std::to_string (index) + " but selected " + std::to_string (meters.targetPresetIndex.load()));
-            ctx.expect (host.masteringTargetText().find (names[(std::size_t) index]) == 0,
+            ctx.expect (host.masteringTargetText().find (name) == 0,
                         "target picker label differs from selected platform: " + host.masteringTargetText());
-        } });
+        },
+        [&host, &meters, name, index]
+        {
+            return host.modalStackEmpty() && meters.targetPresetIndex.load() == index
+                && host.masteringTargetText().find (name) == 0;
+        },
+        "the target picker did not select " + name,
+        [&host, rowClick] { if (! host.modalStackEmpty()) rowClick(); } });
         for (int band = 0; band < 4; ++band)
         {
-            steps->push_back ({ 0, [&meters, targets, index, band]
+            const std::array<float, 4> offsets { 0.5f, 2.0f, 2.1f, -100.0f };
+            const float lufs = band == 3 ? -100.0f : targets[(std::size_t) index] + offsets[(std::size_t) band];
+            const float truePeak = band == 3 ? -100.0f : band == 0 ? -1.0f : -0.9f;
+            steps->push_back ({ 0, [&meters, lufs, truePeak]
             {
-                const std::array<float, 4> offsets { 0.5f, 2.0f, 2.1f, -100.0f };
-                meters.meterIntegratedLufs.store (band == 3 ? -100.0f : targets[(std::size_t) index] + offsets[(std::size_t) band]);
-                meters.meterTruePeakDb.store (band == 3 ? -100.0f : band == 0 ? -1.0f : -0.9f);
+                meters.meterIntegratedLufs.store (lufs);
+                meters.meterTruePeakDb.store (truePeak);
             } });
-            steps->push_back ({ 100, [&host, &ctx, index, band]
+            // The view shows and colours a reading on the same tick, so the
+            // cells are compared once they show this one; every step's
+            // integrated reading differs from the one before it.
+            char integratedText[32], peakText[32];
+            std::snprintf (integratedText, sizeof (integratedText), "I %6.1f LUFS", lufs);
+            std::snprintf (peakText, sizeof (peakText), "TP %5.1f dBTP", truePeak);
+            const std::string shownIntegrated = band == 3 ? "I     -" : integratedText;
+            const std::string shownPeak = band == 3 ? "TP   -" : peakText;
+            const bool neutral = index == 0 || band == 3;
+            const std::array<std::uint32_t, 3> colours { 0xff1a3a1a, 0xff3a3a1a, 0xff3a1a1a };
+            const std::uint32_t integrated = neutral ? 0xff1a2228 : colours[(std::size_t) band];
+            const std::uint32_t peak = neutral ? 0xff121214 : band == 0 ? 0xff1a3a1a : 0xff3a1a1a;
+            const std::string reading = name + " reading band " + std::to_string (band);
+            steps->push_back ({ 0, [&host, &ctx, integrated, peak, reading]
             {
-                const bool neutral = index == 0 || band == 3;
-                const std::array<std::uint32_t, 3> colours { 0xff1a3a1a, 0xff3a3a1a, 0xff3a1a1a };
-                ctx.expect (host.masteringLoudnessColour (false) == (neutral ? 0xff1a2228 : colours[(std::size_t) band]),
-                            "integrated loudness colour differs from target band");
-                ctx.expect (host.masteringLoudnessColour (true) == (neutral ? 0xff121214 : band == 0 ? 0xff1a3a1a : 0xff3a1a1a),
-                            "true-peak colour differs from platform ceiling");
-            } });
+                ctx.expect (host.masteringLoudnessColour (false) == integrated,
+                            "the integrated loudness colour differs from the target band for " + reading);
+                ctx.expect (host.masteringLoudnessColour (true) == peak,
+                            "the true-peak colour differs from the platform ceiling for " + reading);
+            },
+            [&host, shownIntegrated, shownPeak]
+            {
+                return host.masteringLoudnessText (false) == shownIntegrated
+                    && host.masteringLoudnessText (true) == shownPeak;
+            },
+            "the loudness cells never showed " + reading + " ('" + shownIntegrated + "', '" + shownPeak + "')" });
         }
     }
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
@@ -4224,7 +4362,7 @@ std::optional<ScenarioResult> runMasteringTargets (GuiHost& host, ScenarioContex
 
 const ScenarioRegistrar masteringTargets { Scenario {
     "gui.mastering_targets", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
-    {}, {}, 20000,
+    {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringTargets (host, ctx); }
 } };
 
@@ -4554,7 +4692,8 @@ std::optional<ScenarioResult> runMasteringFollowsSession (GuiHost& host, Scenari
         released (secondMix, "the second session's mix");
         reopenSavedSession (host, missing);
     } });
-    steps->push_back ({ 300, [&host, &ctx, &session, same, showsNothing, missing]
+    // The load posts its missing-audio alert for the next message-loop turn.
+    steps->push_back ({ 0, [&host, &ctx, &session, same, showsNothing, missing]
     {
         const auto saved = std::filesystem::u8path (session.mastering().sourceFile.getFullPathName().toStdString());
         ctx.expect (same (saved, missing.parent_path() / "gone.wav"),
@@ -4571,8 +4710,12 @@ std::optional<ScenarioResult> runMasteringFollowsSession (GuiHost& host, Scenari
                         && text.find ("lost take.wav") < mix && text.find ("gone.wav") > mix,
                     "the missing-audio alert does not list the take and the mix apart: '" + text + "'");
         ctx.expect (host.clickModalButton ("OK"), "the missing-audio alert has no OK button");
-    } });
-    steps->push_back ({ 200, [&host, first] { reopenSavedSession (host, first); } });
+    },
+    [&host] { return ! host.modalStackEmpty(); }, "the session whose mix is missing put up no alert" });
+    // OK only closes the alert, so a press the window lost is pressed again.
+    steps->push_back ({ 0, [&host, first] { reopenSavedSession (host, first); },
+                        [&host] { return host.modalStackEmpty(); }, "OK did not close the missing-audio alert",
+                        [&host] { host.clickModalButton ("OK"); } });
     steps->push_back ({ 300, [shows, firstMix] { shows (firstMix, "switching back from an empty page"); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -4580,7 +4723,7 @@ std::optional<ScenarioResult> runMasteringFollowsSession (GuiHost& host, Scenari
 
 const ScenarioRegistrar masteringFollowsSession { Scenario {
     "gui.mastering_follows_session", { "gui", "mastering", "session" }, Needs::Engine | Needs::Gui,
-    {}, {}, 20000,
+    {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringFollowsSession (host, ctx); }
 } };
 
@@ -4609,8 +4752,9 @@ std::optional<ScenarioResult> runMasteringMixFollowsSaveAs (GuiHost& host, Scena
         host.refreshMasteringSource();
     });
 
-    // Ten seconds, so playback started before the Save As is still running at it.
-    static constexpr int kFrames = 480000;
+    // Thirty seconds, so playback started before the Save As is still running
+    // at it however long a loaded host takes over the browser.
+    static constexpr int kFrames = 1440000;
     const auto folder = ctx.tempDir() / "Mix session";
     const auto original = folder / "mixdown.wav";
     fs::create_directories (folder);
@@ -4664,26 +4808,37 @@ std::optional<ScenarioResult> runMasteringMixFollowsSaveAs (GuiHost& host, Scena
 
     auto steps = std::make_shared<std::vector<Step>>();
     pushSaveAsSteps (host, ctx, *steps, blocked);
-    steps->push_back ({ 800, [&host, &ctx, &player, holds, original, blocked]
+    steps->push_back ({ 0, [&host, &ctx]
     {
         ctx.expect (host.modalText().rfind ("Save failed\nDusk Studio could not write the session file:", 0) == 0,
                     "the blocked Save As showed '" + host.modalText() + "' rather than Save failed");
         ctx.expect (host.clickModalButton ("OK"), "the Save failed alert has no OK button");
+    } });
+    // OK only closes the alert, so a press the window lost is pressed again.
+    steps->push_back ({ 0, [&ctx, &player, holds, original, blocked]
+    {
         holds (original, "after a failed Save As");
         std::error_code ignored;
         ctx.expect (! fs::exists (blocked / "mixdown.wav", ignored), "the failed Save As left its copy of the mix");
         player.setPlayhead (kStart);
         player.play();
-    } });
-    pushSaveAsSteps (host, ctx, *steps, copy);
-    steps->push_back ({ 800, [&ctx, &session, &player, holds, original, copy]
+    },
+    [&host] { return host.modalStackEmpty(); }, "OK did not close the Save failed alert",
+    [&host] { host.clickModalButton ("OK"); } });
+    auto atSave = std::make_shared<std::int64_t> (0);
+    pushSaveAsSteps (host, ctx, *steps, copy, [&player, atSave] { *atSave = player.getPlayhead(); });
+    // The player advances on the audio thread, which a busy message loop does
+    // not hold up, so the mix is past where the Save press found it by the time
+    // this runs; a playhead the save sent back towards the start is short of it.
+    steps->push_back ({ 300, [&ctx, &session, &player, holds, original, copy, atSave]
     {
         ctx.expect (currentSessionDirectory (session) == copy,
                     "Save As left the session at '" + currentSessionDirectory (session).string() + "'");
         holds (copy / "mixdown.wav", "after Save As");
         ctx.expect (player.isPlaying(), "the mix stopped playing at the Save As");
-        ctx.expect (player.getPlayhead() > kStart && player.getPlayhead() < kFrames,
-                    "the mix did not carry on from where it was playing: playhead " + std::to_string (player.getPlayhead()));
+        ctx.expect (*atSave > kStart && player.getPlayhead() > *atSave && player.getPlayhead() < kFrames,
+                    "the mix did not carry on from where it was playing: playhead " + std::to_string (player.getPlayhead())
+                        + ", " + std::to_string (*atSave) + " at the Save press");
         player.stop();
         ctx.expect (openHandlesInProcess (original) == 0, "the old folder's mix is still open after Save As");
         auto moved = original;
@@ -4697,7 +4852,7 @@ std::optional<ScenarioResult> runMasteringMixFollowsSaveAs (GuiHost& host, Scena
 
 const ScenarioRegistrar masteringMixFollowsSaveAs { Scenario {
     "gui.mastering_mix_follows_save_as", { "gui", "mastering", "session" }, Needs::Engine | Needs::Gui,
-    {}, {}, 20000,
+    {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringMixFollowsSaveAs (host, ctx); }
 } };
 
@@ -4818,15 +4973,13 @@ std::optional<ScenarioResult> runMasteringLoudnessSurvivesSave (GuiHost& host, S
     const auto copy = ctx.tempDir() / "Tone copy";
     auto steps = std::make_shared<std::vector<Step>>();
     measure (*steps);
-    steps->push_back ({ 700, [&host, &ctx, &engine, remember, registration]
+    steps->push_back ({ 700, [&engine, remember, registration]
     {
         remember ("the mix");
         engine.observeAudioRegistrationForScenario ([registration] (bool attached) { registration->push_back (attached); });
         engine.play();
-        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
     } });
-    steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.clickContextMenuItem ("Save"), "the File menu has no Save"); } });
+    pushFileMenuSteps (host, ctx, *steps, "Save");
     steps->push_back ({ 500, [&host, &ctx, &engine, kept]
     {
         ctx.expect (host.modalStackEmpty(), "Save left '" + host.modalText() + "' up");
@@ -4900,7 +5053,7 @@ std::optional<ScenarioResult> runMasteringLoudnessSurvivesSave (GuiHost& host, S
 
 const ScenarioRegistrar masteringLoudnessSurvivesSave { Scenario {
     "gui.mastering_loudness_survives_save", { "gui", "mastering", "session" }, Needs::Engine | Needs::Gui,
-    {}, {}, 20000,
+    {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringLoudnessSurvivesSave (host, ctx); }
 } };
 
@@ -5028,7 +5181,7 @@ std::optional<ScenarioResult> runSaveKeepsMixerRunning (GuiHost& host, ScenarioC
 
     const auto copy = ctx.tempDir() / "Mixer copy";
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 600, [&host, &ctx, &engine, &track, before, registration]
+    steps->push_back ({ 600, [&ctx, &engine, &track, before, registration]
     {
         // The tone peaks at -6 dBFS dry, so a reading this far down is the
         // Utility's 24 dB at work.
@@ -5036,11 +5189,12 @@ std::optional<ScenarioResult> runSaveKeepsMixerRunning (GuiHost& host, ScenarioC
         ctx.expect (*before > -45.0f && *before < -24.0f,
                     "the tone through the Utility read " + std::to_string (*before) + " dB");
         engine.observeAudioRegistrationForScenario ([registration] (bool attached) { registration->push_back (attached); });
-        ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
     } });
-    steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.clickContextMenuItem ("Save"), "the File menu has no Save"); } });
+    pushFileMenuSteps (host, ctx, *steps, "Save");
     steps->push_back ({ 500, [savedWhilePlaying] { savedWhilePlaying ("Save", "Saved: Mixer session"); } });
+    // Fixed waits on purpose: the playhead and the meter move on the device's
+    // real-time thread, which a busy message loop does not hold up, and a late
+    // timer only gives them longer. Only audio that stopped fails these.
     steps->push_back ({ 500, [mixerRanOn] { mixerRanOn ("Save"); } });
     pushSaveAsSteps (host, ctx, *steps, copy);
     steps->push_back ({ 800, [&ctx, &session, savedWhilePlaying, copy]
@@ -5061,7 +5215,7 @@ std::optional<ScenarioResult> runSaveKeepsMixerRunning (GuiHost& host, ScenarioC
 
 const ScenarioRegistrar saveKeepsMixerRunning { Scenario {
     "gui.save_keeps_mixer_running", { "gui", "session" }, Needs::Engine | Needs::Gui,
-    {}, {}, 20000,
+    {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runSaveKeepsMixerRunning (host, ctx); }
 } };
 
@@ -5865,16 +6019,22 @@ std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext&
     {
         ctx.expect (engine.getTransport().isPlaying(), "fixture was not playing");
         ctx.expect (! listed(), "automatic hot-plug refreshed the port before Rescan");
-        ctx.expect (host.clickAudioSettingsControl ("rescan"), "Rescan devices button was not drawn");
     } });
-    steps->push_back ({ 400, [&host, &ctx, &engine, listed]
+    // The settings window lays its controls out and acts on a click in its own
+    // frames. Rescanning again lists the same ports, so pressing Rescan as soon
+    // as it is drawn, and once more if the list has not moved, cannot change
+    // the verdict.
+    steps->push_back ({ 0, [] {}, [&host] { return host.clickAudioSettingsControl ("rescan"); },
+                        "Rescan devices button was not drawn" });
+    steps->push_back ({ 0, [&host, &engine]
     {
-        ctx.expect (listed(), "Rescan devices did not enumerate the new MIDI destination");
         host.closeAudioSettings();
         engine.stop();
-    } });
-    steps->push_back ({ 150, [&host, &ctx]
-    { ctx.expect (! host.audioSettingsOpen(), "audio settings did not finish closing"); } });
+    },
+    listed, "Rescan devices did not enumerate the new MIDI destination",
+    [&host] { host.clickAudioSettingsControl ("rescan"); } });
+    steps->push_back ({ 0, [] {}, [&host] { return ! host.audioSettingsOpen(); },
+                       "audio settings did not finish closing" });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
    #endif
@@ -5882,7 +6042,7 @@ std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext&
 
 const ScenarioRegistrar settingsRescan { Scenario {
     "gui.settings_rescan_devices", { "gui", "settings", "midi" }, Needs::Engine | Needs::Gui,
-    {}, {}, 10000,
+    {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsRescan (host, ctx); }
 } };
 
@@ -5935,6 +6095,7 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
     (void) ctx;
     return ScenarioResult::skip ("virtual MIDI destination fixture requires ALSA sequencer");
    #else
+    const int noticesBefore = ctx.engine().midiHotplugNoticesForScenario();
     snd_seq_t* raw = nullptr;
     if (snd_seq_open (&raw, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) < 0)
         return ScenarioResult::skip ("ALSA sequencer is unavailable");
@@ -5958,7 +6119,7 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
         drainModals (host);
         snd_seq_delete_simple_port (seq.get(), port);
         engine.refreshMidiInputs();
-        host.openSession (restoreFile);
+        reopenSavedSession (host, restoreFile);
         applySessionDirectory (session, originalDir);
         host.switchToStage (guiStage (originalStage));
     });
@@ -5991,15 +6152,46 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
         for (int i = 0; i < row; ++i) host.pressPeerKey ("cursor down");
         host.pressPeerKey ("Return");
     };
-    auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 150, [&host, &ctx] { ctx.expect (host.openMidiIo (0), "MIDI I/O popup did not open"); } });
-    for (const auto choice : { std::pair<int, int> { 0, keyboard + 1 }, { 1, 3 }, { 2, destination + 1 } })
+    // Each picker opens a message-loop turn after its click and hands its
+    // choice to the track through an asynchronous change notification, so
+    // every pick waits for the picker to be up and then for the track to take
+    // the value. The popup that holds the pickers is the one modal under them.
+    auto popupDepth = std::make_shared<int> (0);
+    const auto pick = [&host, &ctx, select, popupDepth]
+                      (std::vector<Step>& into, int kind, int row, std::function<bool()> taken, std::string what)
     {
-        steps->push_back ({ 100, [&host, &ctx, choice]
-        { ctx.expect (host.clickMidiSelector (0, choice.first), "MIDI selector was not visible"); } });
-        steps->push_back ({ 100, [select, choice] { select (choice.second); } });
-    }
-    steps->push_back ({ 150, [&host, &track, &engine, &ctx, keyboard, keyboardId, destination, destinationId]
+        into.push_back ({ 0, [&host, &ctx, kind]
+        { ctx.expect (host.clickMidiSelector (0, kind), "MIDI selector was not visible"); },
+        [&host, popupDepth] { return host.modalCount() == *popupDepth; }, "the previous MIDI picker never closed" });
+        // While a picker is still to open its combo ignores a second click.
+        into.push_back ({ 0, [select, row] { select (row); },
+        [&host, popupDepth] { return host.modalCount() > *popupDepth; }, "the MIDI picker did not open",
+        [&host, kind] { host.clickMidiSelector (0, kind); } });
+        // The keys choose by position from the top, so going through them
+        // again picks the same row.
+        into.push_back ({ 0, [] {},
+        [&host, popupDepth, taken] { return host.modalCount() == *popupDepth && taken(); }, std::move (what),
+        [&host, select, row, popupDepth] { if (host.modalCount() > *popupDepth) select (row); } });
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    // The client and port made above reach the app as a hot-plug notice, and
+    // the refresh it arms rebuilds every strip's pickers and reopens the MIDI
+    // outputs. Picking starts once that has run, so it cannot land mid-pick.
+    steps->push_back ({ 0, [&host, &ctx, popupDepth]
+    {
+        ctx.expect (host.openMidiIo (0), "MIDI I/O popup did not open");
+        *popupDepth = host.modalCount();
+    },
+    [&engine, noticesBefore]
+    { return engine.midiHotplugNoticesForScenario() > noticesBefore && engine.midiHotplugSettledForScenario(); },
+    "the hot-plug refresh for the private MIDI destination never finished" });
+    pick (*steps, 0, keyboard + 1, [&track, keyboard] { return track.midiInputIndex.load() == keyboard; },
+          "input picker did not select the virtual keyboard");
+    pick (*steps, 1, 3, [&track] { return track.midiChannel.load() == 3; }, "channel picker did not select channel 3");
+    pick (*steps, 2, destination + 1, [&track, destination] { return track.midiOutputIndex.load() == destination; },
+          "output picker did not select the destination");
+    auto heard = std::make_shared<std::pair<bool, bool>> (false, false);
+    steps->push_back ({ 0, [&host, &track, &engine, &ctx, keyboard, keyboardId, destination, destinationId]
     {
         ctx.expect (track.midiInputIndex.load() == keyboard && track.midiInputIdentifier.toStdString() == keyboardId,
                     "input picker did not select and identify the virtual keyboard");
@@ -6012,26 +6204,25 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
         engine.postVirtualKeyboardMidi (rejected, 3);
         engine.postVirtualKeyboardMidi (accepted, 3);
     } });
-    steps->push_back ({ 300, [seq, &ctx]
+    // The rejected message is posted first, so by the time the accepted one
+    // comes out, a filter that let the other through has already sent it.
+    steps->push_back ({ 0, [&ctx, heard]
+    { ctx.expect (! heard->second, "channel filter passed the rejected channel to MIDI out"); },
+    [seq, heard]
     {
-        bool accepted = false;
-        bool rejected = false;
         snd_seq_event_t* event = nullptr;
         while (snd_seq_event_input (seq.get(), &event) >= 0)
             if (event != nullptr && event->type == SND_SEQ_EVENT_CONTROLLER && event->data.control.param == 74)
             {
-                accepted |= event->data.control.channel == 2 && event->data.control.value == 101;
-                rejected |= event->data.control.channel == 1 && event->data.control.value == 100;
+                heard->first |= event->data.control.channel == 2 && event->data.control.value == 101;
+                heard->second |= event->data.control.channel == 1 && event->data.control.value == 100;
             }
-        ctx.expect (accepted, "selected MIDI output did not receive the accepted channel");
-        ctx.expect (! rejected, "channel filter passed the rejected channel to MIDI out");
-    } });
-    for (int kind : { 0, 1, 2 })
-    {
-        steps->push_back ({ 100, [&host, kind] { host.clickMidiSelector (0, kind); } });
-        steps->push_back ({ 100, [select] { select (0); } });
-    }
-    steps->push_back ({ 100, [&host, &track, &ctx]
+        return heard->first;
+    }, "selected MIDI output did not receive the accepted channel" });
+    pick (*steps, 0, 0, [&track] { return track.midiInputIndex.load() == -1; }, "input None did not clear the route");
+    pick (*steps, 1, 0, [&track] { return track.midiChannel.load() == 0; }, "Omni did not clear the channel filter");
+    pick (*steps, 2, 0, [&track] { return track.midiOutputIndex.load() == -1; }, "output None did not clear the route");
+    steps->push_back ({ 0, [&host, &track, &ctx]
     {
         ctx.expect (track.midiInputIndex.load() == -1 && track.midiInputIdentifier.isEmpty()
                     && host.midiSelectorText (0, 0) == "None", "input None did not clear the route");
@@ -6046,7 +6237,7 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
 
 const ScenarioRegistrar midiSelectors { Scenario {
     "gui.midi_io_selectors", { "gui", "midi" }, Needs::Engine | Needs::Gui,
-    {}, {}, 10000,
+    {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMidiSelectors (host, ctx); }
 } };
 
@@ -6411,7 +6602,7 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
     {
         engine.stop();
         drainModals (host);
-        host.openSession (restoreFile);
+        reopenSavedSession (host, restoreFile);
         applySessionDirectory (session, originalDir);
         session.setTrackArmed (0, false);
     });
@@ -6432,7 +6623,10 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
     {
         steps->push_back ({ 200, [&host, &ctx, &session, &engine, outgoing]
         {
+            // An autosave the heartbeat wrote into it during an earlier pass
+            // would raise the recovery prompt; the saved file is what is meant.
             ctx.expect (host.openSession (outgoing), "could not open the outgoing session");
+            host.answerRecovery (GuiHost::Recovery::LoadSaved);
             session.setTrackArmed (0, true);
             engine.record();
             ctx.expect (engine.getTransport().isRecording(), "the take did not start");
@@ -6447,8 +6641,11 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
             const std::uint8_t note[] { 0x80, 64, 0 };
             engine.postVirtualKeyboardMidi (note, 3);
         } });
+        // A switch from outside runs a message-loop turn after the request,
+        // and each prompt button acts a turn after its press, so the steps
+        // wait for the prompt, the refusal and the switch themselves.
         steps->push_back ({ 200, [&host, incoming] { host.requestSessionSwitch (incoming); } });
-        steps->push_back ({ 200, [&host, &ctx, &engine, &session, outgoing, incoming]
+        steps->push_back ({ 0, [&host, &ctx, &engine, &session, outgoing, incoming]
         {
             ctx.expect (engine.getTransport().isStopped(), "the session switch did not stop recording");
             ctx.expect (currentSessionDirectory (session) == outgoing.parent_path(),
@@ -6457,14 +6654,14 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
             ctx.expect (regions.size() == 1 && ! regions.front().notes.empty(),
                         "the session switch did not commit the MIDI take before prompting");
             host.requestSessionSwitch (incoming);
-        } });
-        steps->push_back ({ 100, [&host, &ctx, action]
-        {
-            ctx.expect (host.statusMessage() == "Session not switched: close the open prompt first",
-                        "a second session switch did not report the open prompt");
-            ctx.expect (host.clickModalButton (action), "the prompt did not offer " + action);
-        } });
-        steps->push_back ({ 500, [&host, &ctx, &session, action, outgoing, incoming]
+        },
+        [&host] { return host.modalText().rfind ("Save changes before opening another session?", 0) == 0; },
+        "the session switch did not ask about the unsaved take" });
+        steps->push_back ({ 0, [&host, &ctx, action]
+        { ctx.expect (host.clickModalButton (action), "the prompt did not offer " + action); },
+        [&host] { return host.statusMessage() == "Session not switched: close the open prompt first"; },
+        "a second session switch did not report the open prompt" });
+        steps->push_back ({ 0, [&host, &ctx, &session, action, outgoing, incoming]
         {
             ctx.expect (host.modalStackEmpty(), action + " left the prompt open");
             ctx.expect (currentSessionDirectory (session)
@@ -6482,7 +6679,13 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
             else
                 ctx.expect (nearly (session.track (0).strip.faderDb.load(), -18.0f),
                             "the incoming session contents did not load");
-        } });
+        },
+        [&host, &session, action, outgoing, incoming]
+        {
+            return host.modalStackEmpty()
+                && currentSessionDirectory (session) == (action == "Cancel" ? outgoing.parent_path() : incoming.parent_path());
+        },
+        action + " did not close the prompt and settle on its session" });
     }
     steps->push_back ({ 200, [&host, &ctx, &session, outgoing, sampleRate]
     {
@@ -6495,7 +6698,9 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
         ctx.expect (host.mixdownRunning(), "the mixdown did not start");
         host.requestSessionSwitch (outgoing);
     } });
-    steps->push_back ({ 100, [&host, &ctx, &session, incoming]
+    // The refusal comes a message-loop turn after the request. A mixdown that
+    // ends first cannot give it, and the checks below then say why.
+    steps->push_back ({ 0, [&host, &ctx, &session, incoming]
     {
         ctx.expect (host.statusMessage() == "Session not switched: finish or cancel the mixdown first",
                     "a session switch did not report the running mixdown");
@@ -6503,29 +6708,21 @@ std::optional<ScenarioResult> runSessionSwitch (GuiHost& host, ScenarioContext& 
                     "the session switched during the bounce");
         ctx.expect (host.mixdownRunning(), "the refused session switch stopped the bounce");
         ctx.expect (host.clickModalButton ("Cancel"), "the mixdown did not offer Cancel");
-    } });
-    runSteps (ctx, steps, [&host, &ctx]
+    },
+    [&host]
     {
-        ctx.waitUntil ([&host] { return ! host.mixdownRunning(); }, 5000, [&host, &ctx]
-        {
-            ctx.later (200, [&host, &ctx]
-            {
-                if (! host.modalStackEmpty())
-                    ctx.expect (host.clickModalButton ("Close"), "the cancelled mixdown did not offer Close");
-                ctx.later (200, [&host, &ctx]
-                {
-                    ctx.expect (host.modalStackEmpty(), "the cancelled mixdown left its modal open");
-                    ctx.complete (ctx.verdict());
-                });
-            });
-        }, "the mixdown did not cancel");
-    });
+        return host.statusMessage() == "Session not switched: finish or cancel the mixdown first"
+            || ! host.mixdownRunning();
+    },
+    "a session switch did not report the running mixdown" });
+    pushCancelledMixdownCloseSteps (host, *steps, true);
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
 
 const ScenarioRegistrar sessionSwitch { Scenario {
     "gui.session_switch_commits_take", { "gui", "session" }, Needs::Engine | Needs::Gui,
-    {}, {}, 15000,
+    {}, {}, 90000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runSessionSwitch (host, ctx); }
 } };
 
@@ -6881,9 +7078,11 @@ std::optional<ScenarioResult> runQuitCancelsMixdown (GuiHost& host, ScenarioCont
         host.startMixdown();
         ctx.expect (host.mixdownRunning(), "the mixdown did not start");
     } });
-    steps->push_back ({ 300, [&host, &ctx, &transport, isQuitPrompt]
+    // The offline render rolls the transport from its worker thread, so the
+    // quit waits for it to start rolling; a mixdown that ends first fails the
+    // check below.
+    steps->push_back ({ 0, [&host, &ctx, &transport, isQuitPrompt]
     {
-        // The offline render rolls the transport from its worker thread.
         if (! ctx.expect (host.mixdownRunning() && transport.isPlaying(),
                           "the mixdown was not rolling the transport when the quit came")
             || ! ctx.expect (host.requestQuit(), "quitting the edited session during a mixdown did not go ahead"))
@@ -6892,35 +7091,33 @@ std::optional<ScenarioResult> runQuitCancelsMixdown (GuiHost& host, ScenarioCont
             return;
         }
         ctx.expect (! isQuitPrompt(), "the quit asked while the mixdown was still rendering");
-    } });
-    runSteps (ctx, steps, [&host, &ctx, &engine, isQuitPrompt, mix]
+    },
+    [&host, &transport] { return ! host.mixdownRunning() || transport.isPlaying(); },
+    "the mixdown never rolled the transport" });
+    steps->push_back ({ 0, [&host, &ctx, &engine, mix]
     {
-        ctx.waitUntil (isQuitPrompt, 5000, [&host, &ctx, &engine, mix]
-        {
-            ctx.expect (! host.mixdownRunning(), "the quit asked before the mixdown had stopped");
-            ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached(),
-                        "the cancelled mixdown did not hand the audio callback back");
-            ctx.expect (! std::filesystem::exists (mix.parent_path() / "mixdown.wav"),
-                        "the cancelled mixdown left a file behind");
-            ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt did not offer Cancel");
-            ctx.later (300, [&host, &ctx]
-            {
-                ctx.expect (host.clickModalButton ("Close"), "the cancelled mixdown did not offer Close");
-                ctx.later (200, [&host, &ctx]
-                {
-                    ctx.expect (host.modalStackEmpty(), "the cancelled mixdown left '" + host.modalText() + "' up");
-                    ctx.expect (host.autosaveRunning(), "cancelling the quit left autosave stopped");
-                    ctx.complete (ctx.verdict());
-                });
-            });
-        }, "the quit never asked after cancelling the mixdown");
-    });
+        ctx.expect (! host.mixdownRunning(), "the quit asked before the mixdown had stopped");
+        ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached(),
+                    "the cancelled mixdown did not hand the audio callback back");
+        ctx.expect (! std::filesystem::exists (mix.parent_path() / "mixdown.wav"),
+                    "the cancelled mixdown left a file behind");
+        ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt did not offer Cancel");
+    },
+    isQuitPrompt, "the quit never asked after cancelling the mixdown" });
+    // The prompt's Cancel acts a message-loop turn after the press, so a
+    // second press could run it twice; the step only waits.
+    steps->push_back ({ 0, [] {}, [isQuitPrompt] { return ! isQuitPrompt(); },
+                       "Cancel did not close the quit prompt" });
+    pushCancelledMixdownCloseSteps (host, *steps, false);
+    steps->push_back ({ 0, [] {}, [&host] { return host.autosaveRunning(); },
+                       "cancelling the quit left autosave stopped" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
 
 const ScenarioRegistrar quitCancelsMixdown { Scenario {
     "gui.quit_cancels_running_mixdown", { "gui", "session", "bounce" }, Needs::Engine | Needs::Gui,
-    {}, {}, 15000,
+    {}, {}, 90000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runQuitCancelsMixdown (host, ctx); }
 } };
 
@@ -8063,36 +8260,83 @@ std::optional<ScenarioResult> runTapTempo (GuiHost& host, ScenarioContext& ctx)
     ctx.cleanup ([&session, points = session.tempoMap.points()]
                  { session.tempoMap.setPoints (points); });
     session.tempoMap.setPoints ({});
-    auto stamps = std::make_shared<std::vector<double>>();
-    auto steps = std::make_shared<std::vector<Step>>();
-    for (const int delay : { 2200, 250, 500, 750, 1000, 300 })
-        steps->push_back ({ delay, [&host, &ctx, &session, stamps]
-        {
-            const auto now = std::chrono::steady_clock::now().time_since_epoch();
-            stamps->push_back (std::chrono::duration<double, std::milli> (now).count());
-            ctx.expect (host.pressKey ("B"), "tap tempo shortcut was not handled");
-            if (stamps->size() < 2) return;
-            const auto intervals = std::min<std::size_t> (4, stamps->size() - 1);
-            const double duration = stamps->back() - (*stamps)[stamps->size() - 1 - intervals];
-            const double expected = std::clamp (60000.0 * static_cast<double> (intervals) / duration,
-                                               30.0, 300.0);
-            ctx.expect (std::abs (session.tempoBpm.load() - expected) < 2.0,
-                        "TAP did not average the most recent four intervals");
-        } });
-    steps->push_back ({ 2200, [&host, &ctx, &session]
+    // The expected tempo comes from the times the app stamped each tap with, not
+    // from when this case's timer happened to fire, so a late step or a coarse
+    // tap clock moves both sides alike. A gap past the two-second timeout starts
+    // a new count, whether the case meant one or a loaded host made it.
+    //
+    // The app's clock is held to this case's own: B is handled inside
+    // pressKey, on this thread, so each interval between the app's stamps
+    // matches the interval between the readings taken just before each press
+    // to within the clock's resolution, however late the steps themselves run.
+    static constexpr std::int64_t kTapTimeoutMs = 2000;
+    static constexpr double kClockToleranceMs = 50.0;
+    auto stamps = std::make_shared<std::vector<std::int64_t>>();
+    auto evicted = std::make_shared<bool> (false);
+    auto previous = std::make_shared<std::pair<std::int64_t, double>> (0, 0.0);
+    const auto tap = [&host, &ctx, &session, stamps, evicted, previous] (bool afterTimeout)
     {
         const float before = session.tempoBpm.load();
-        ctx.expect (host.pressKey ("B"), "first tap after timeout was not handled");
-        ctx.expect (std::abs (session.tempoBpm.load() - before) < 0.001f,
-                    "a first tap after timeout changed the tempo");
+        const double pressedMs = std::chrono::duration<double, std::milli> (
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        ctx.expect (host.pressKey ("B"), "tap tempo shortcut was not handled");
+        const auto at = host.lastTapMs();
+        if (! ctx.expect (at > 0 && (stamps->empty() || at != stamps->back()), "TAP did not record the tap"))
+            return;
+        if (previous->first > 0)
+        {
+            const auto appInterval = static_cast<double> (at - previous->first);
+            const auto ownInterval = pressedMs - previous->second;
+            ctx.expect (std::abs (appInterval - ownInterval) < kClockToleranceMs,
+                        "TAP timed a " + std::to_string (ownInterval) + " ms interval as "
+                            + std::to_string (appInterval) + " ms");
+        }
+        *previous = { at, pressedMs };
+        const bool restarted = stamps->empty() || at - stamps->back() > kTapTimeoutMs;
+        if (restarted)
+        {
+            if (! stamps->empty() && ! afterTimeout)
+                ctx.note ("a tap came " + std::to_string (at - stamps->back()) + " ms after the last, so the count restarted");
+            stamps->clear();
+        }
+        else if (afterTimeout)
+        {
+            ctx.note ("the tap after the timeout came only " + std::to_string (at - stamps->back()) + " ms after the last");
+        }
+        stamps->push_back (at);
+        if (stamps->size() < 2)
+        {
+            ctx.expect (std::abs (session.tempoBpm.load() - before) < 0.001f,
+                        afterTimeout ? "a first tap after timeout changed the tempo"
+                                     : "the first tap of a count changed the tempo");
+            return;
+        }
+        const auto intervals = std::min<std::size_t> (4, stamps->size() - 1);
+        if (stamps->size() > 5) *evicted = true;
+        const auto duration = stamps->back() - (*stamps)[stamps->size() - 1 - intervals];
+        const double expected = std::clamp (60000.0 * static_cast<double> (intervals) / static_cast<double> (duration),
+                                            30.0, 300.0);
+        ctx.expect (std::abs (session.tempoBpm.load() - expected) < 0.01,
+                    "TAP did not average the most recent four intervals: "
+                        + std::to_string (session.tempoBpm.load()) + " BPM against " + std::to_string (expected));
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const int delay : { 2200, 250, 500, 750, 1000, 300 })
+        steps->push_back ({ delay, [tap] { tap (false); } });
+    steps->push_back ({ 0, [&ctx, evicted]
+    {
+        if (! *evicted && ctx.verdict().status == ScenarioStatus::Pass)
+            ctx.complete (ScenarioResult::skip ("the host stalled past the tap timeout between taps, "
+                                                "so no count reached a fifth interval to evict"));
     } });
+    steps->push_back ({ 2200, [tap] { tap (true); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
 
 const ScenarioRegistrar tapTempo { Scenario {
     "gui.tap_tempo_intervals", { "gui", "keyboard", "transport" }, Needs::Engine | Needs::Gui,
-    {}, {}, 15000,
+    {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runTapTempo (host, ctx); }
 } };
 std::optional<ScenarioResult> runArmInputRefusal (GuiHost& host, ScenarioContext& ctx)
@@ -13850,16 +14094,24 @@ std::optional<ScenarioResult> runSaveAsFailureKeepsSession (GuiHost& host, Scena
         ctx.expect (fs::is_regular_file (take), how + " removed the original take");
     };
 
+    // OK only closes the alert, so a press the window lost is pressed again.
+    const auto alertClosed = [&host, steps] (std::function<void()> then)
+    {
+        steps->push_back ({ 0, std::move (then), [&host] { return host.modalStackEmpty(); },
+                            "OK did not close the alert", [&host] { host.clickModalButton ("OK"); } });
+    };
+
     saveAs (blockedJson);
-    steps->push_back ({ 800, [&host, &ctx, kept, blockedJson, jsonListing]
+    steps->push_back ({ 0, [&host, &ctx, kept, blockedJson, jsonListing]
     {
         const auto text = host.modalText();
         ctx.expect (text.rfind ("Save failed\nDusk Studio could not write the session file:", 0) == 0
                         && text.find ("Blocked json") != std::string::npos,
                     "a failed session.json write showed '" + text + "' rather than Save failed");
         kept ("a failed session.json write", blockedJson, jsonListing);
-        ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S");
     } });
+    alertClosed ([&host, &ctx]
+    { ctx.expect (host.pressPeerKey (commandChord ('s'), 's'), "the window did not handle Cmd+S"); });
     steps->push_back ({ 800, [&host, &ctx, mine, take]
     {
         const auto saved = fileBytes (mine / "session.json");
@@ -13873,7 +14125,7 @@ std::optional<ScenarioResult> runSaveAsFailureKeepsSession (GuiHost& host, Scena
                     "the session saved after the failed Save As does not point at its take");
     } });
     saveAs (blockedNotes);
-    steps->push_back ({ 800, [&host, &ctx, kept, blockedNotes, notesListing]
+    steps->push_back ({ 0, [&host, &ctx, kept, blockedNotes, notesListing]
     {
         const auto text = host.modalText();
         ctx.expect (text.rfind ("Notepad save failed\nDusk Studio could not write:", 0) == 0
@@ -13881,13 +14133,14 @@ std::optional<ScenarioResult> runSaveAsFailureKeepsSession (GuiHost& host, Scena
                     "a failed notepad write showed '" + text + "' rather than Notepad save failed");
         kept ("a failed notepad write", blockedNotes, notesListing);
     } });
+    alertClosed ([] {});
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
 
 const ScenarioRegistrar saveAsFailureKeepsSession { Scenario {
     "gui.save_as_failure_keeps_session", { "gui", "session", "messages" }, Needs::Engine | Needs::Gui,
-    {}, {}, 20000,
+    {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runSaveAsFailureKeepsSession (host, ctx); }
 } };
 

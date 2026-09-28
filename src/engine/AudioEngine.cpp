@@ -1030,6 +1030,7 @@ static constexpr int kMidiHotplugDelayMs = 400;
 
 void AudioEngine::noteMidiDeviceChange()
 {
+    ++midiHotplugNotices;
     // A single plug raises a client arrival plus one port arrival per port, and
     // a hub raises several devices' worth. The armed timer IS the pending flag,
     // so re-arming while it runs is what collapses the burst into one rebuild.
@@ -1103,6 +1104,7 @@ void AudioEngine::refreshMidiInputs()
     midiIn.attachCallback();
     deviceManager.addCallback (this);
 
+    midiHotplugNoticesRefreshed = midiHotplugNotices;
     broadcastChange();
 }
 
@@ -1144,6 +1146,7 @@ void AudioEngine::fireChangeListeners()
         auto cb = it->second;
         if (cb) cb();
     }
+    midiHotplugNoticesSettled = midiHotplugNoticesRefreshed;
 }
 
 void AudioEngine::publishTempoMap()

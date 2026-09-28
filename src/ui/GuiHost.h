@@ -186,6 +186,9 @@ public:
     virtual bool rightClickPunch() = 0;
     virtual bool focusModalTextInput() = 0;
     virtual std::string clockText() const = 0;
+    // When TAP last registered a tap, in the milliseconds of the app's own tap
+    // clock; 0 before any tap, -1 without a transport bar.
+    virtual std::int64_t lastTapMs() const = 0;
 
     // Null when the index is out of range, or the stage that realises the
     // component is not the one currently shown.
@@ -296,6 +299,9 @@ public:
     virtual std::string masteringSourceText() const = 0;
     virtual std::filesystem::path masteringWaveformFile() const = 0;
     virtual std::uint32_t masteringLoudnessColour (bool peak) const = 0;
+    // What the integrated / true-peak cell shows; set on the same view tick
+    // that colours it.
+    virtual std::string masteringLoudnessText (bool peak) const = 0;
     virtual void restoreMasteringTarget (int index) = 0;
     virtual bool midiBindingsOpen() const = 0;
     virtual bool virtualKeyboardOpen() const = 0;
@@ -312,6 +318,7 @@ public:
 
     virtual bool canEmbedPluginEditors() const = 0;
     virtual bool modalStackEmpty() const = 0;
+    virtual int modalCount() const = 0;
     virtual std::string modalText() const = 0;
     virtual bool clickModalButton (const std::string& label) = 0;
     virtual void openAbout() = 0;

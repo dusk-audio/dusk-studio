@@ -186,6 +186,17 @@ public:
     void addChangeCallback (void* token, std::function<void()> fn);
     void removeChangeCallback (void* token);
 
+    // Scenario-only, message thread. How many MIDI hot-plug notices have come
+    // in, and whether every one of them is covered by a refresh whose change
+    // callbacks have run, with no further pass armed or broadcast queued.
+    int midiHotplugNoticesForScenario() const noexcept { return midiHotplugNotices; }
+    bool midiHotplugSettledForScenario() const
+    {
+        return ! midiHotplugTimer.isTimerRunning()
+            && ! changeBroadcastPending.load (std::memory_order_acquire)
+            && midiHotplugNoticesSettled == midiHotplugNotices;
+    }
+
     // Lightweight: re-map the loaded session's saved per-track MIDI in/out
     // IDENTIFIERS to runtime INDICES against the EXISTING device banks. No
     // bank rebuild / callback detach (the physical devices are unchanged since
@@ -953,6 +964,9 @@ private:
     // post still queued when the engine dies land on a no-op.
     std::map<void*, std::function<void()>> changeListeners;
     std::atomic<bool> changeBroadcastPending { false };
+    int midiHotplugNotices = 0;
+    int midiHotplugNoticesRefreshed = 0;
+    int midiHotplugNoticesSettled = 0;
     std::shared_ptr<std::atomic<bool>> changeListenersAlive
         { std::make_shared<std::atomic<bool>> (true) };
 
