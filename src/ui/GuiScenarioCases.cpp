@@ -3931,11 +3931,13 @@ std::optional<ScenarioResult> runInsertContextMenu (GuiHost& host, ScenarioConte
             host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
     } });
     button ("Open");
-    steps->push_back ({ 1200, [&ctx, &slot, component]
+    steps->push_back ({ 0, [&ctx, &slot, component]
     {
         ctx.expect (slot.isLoadedStandardVst3(), "Add insert did not load the VST3 fixture");
         component->closeEditor();
-    } });
+    },
+    [&slot, component] { return slot.isLoadedStandardVst3() && component->hasOpenEditor(); },
+    "Add insert did not load the VST3 fixture and open its editor" });
     menu ("Open editor");
     steps->push_back ({ 500, [&ctx, component]
     {
@@ -5690,6 +5692,291 @@ const ScenarioRegistrar pluginPicker { Scenario {
     "gui.plugin_picker_filter_and_load", { "gui", "plugins" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPluginPicker (host, ctx); }
+} };
+
+// ------------------------------------------------ a pick opens the editor
+
+// What a user does to get a unit on the insert: the chooser, then a row in the
+// picker. The editor has to be up afterwards with no second click, for a
+// knob-panel unit, for a unit that brings its own editor picked over it with
+// Replace insert..., and not again when the session holding it is reopened.
+std::optional<ScenarioResult> runPickOpensBuiltinEditor (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    static constexpr const char* kPanelUnit  = "dusk.builtin.utility";
+    static constexpr const char* kEditorUnit = "dusk.builtin.delay";
+    static const std::string kPanelRow  = "Utility  (Built-In)";
+    static const std::string kEditorRow = "Tape Echo 2  (Built-In)";
+    static const std::string kPluginButton = "Plugin (VST3 / CLAP / LV2 / AU)";
+
+    if (builtin::findUnit (kPanelUnit) == nullptr || builtin::findUnit (kEditorUnit) == nullptr)
+        return ScenarioResult::skip ("built without Utility and Tape Echo 2");
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& dsp = engine.getChannelStrip (kStripIndex);
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    const auto picked = ctx.tempDir() / "picked" / "session.json";
+    std::error_code ec;
+    std::filesystem::create_directories (picked.parent_path(), ec);
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    auto* strip = readyStrip (host, ctx);
+    if (strip == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    if (dsp.getPluginSlot().isLoaded() || dsp.isBuiltinLoaded() || dsp.isNativeClapLoaded()
+        || dsp.isNativeLv2Loaded() || dsp.isNativeVst3Loaded() || dsp.isNativeAuLoaded()
+        || dsp.isNativeMultisampleLoaded() || dsp.nativeInsertRestoreFailed()
+        || dsp.insertMode.load() == ChannelStrip::kInsertHardware)
+        return ScenarioResult::skip ("requires an empty first insert");
+    ctx.cleanup ([&host, &engine, &session, &dsp, originalDir, restore]
+    {
+        drainModals (host);
+        host.closeBuiltin (kStripIndex);
+        engine.suspendProcessing();
+        dsp.unloadBuiltin();
+        engine.resumeProcessing();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto editorUp = [&host] { auto* s = host.strip (kStripIndex); return s != nullptr && s->hasOpenBuiltinEditor(); };
+    const auto rowShown = [&host] (const std::string& row)
+    {
+        const auto rows = host.pickerRows (false);
+        return std::find (rows.begin(), rows.end(), row) != rows.end();
+    };
+    const auto holds = [&dsp] (const char* unitId)
+    { return dsp.isBuiltinLoaded() && dsp.getBuiltinSlot().getPluginId() == unitId; };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickInsert (kStripIndex), "the empty insert did not take a click"); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickModalButton (kPluginButton), "the insert chooser has no Plugin button"); },
+                       [&host] { return ! host.modalStackEmpty(); }, "clicking the empty insert opened no chooser" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPickerRow (kPanelRow), "the picker row for Utility took no click"); },
+                       [rowShown] { return rowShown (kPanelRow); }, "the picker never listed Utility" });
+    steps->push_back ({ 0, [&host, &ctx, holds]
+    {
+        ctx.expect (holds (kPanelUnit), "picking Utility did not load it");
+        ctx.expect (host.pickerRows (false).empty(), "the picker stayed up after the pick");
+        host.closeBuiltin (kStripIndex);
+    }, editorUp, "picking Utility left its editor closed" });
+
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickInsert (kStripIndex, true), "the loaded insert took no right-click"); },
+                       [editorUp] { return ! editorUp(); }, "Utility's editor did not close" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Replace insert..."), "the insert menu has no Replace insert..."); },
+                       [&host] { return ! host.contextMenuItems().empty(); }, "the right-click opened no menu" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickModalButton (kPluginButton), "the Replace chooser has no Plugin button"); },
+                       [&host] { return ! host.modalStackEmpty(); }, "Replace insert... opened no chooser" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPickerRow (kEditorRow), "the picker row for Tape Echo 2 took no click"); },
+                       [rowShown] { return rowShown (kEditorRow); }, "the picker never listed Tape Echo 2" });
+    steps->push_back ({ 0, [&host, &ctx, &session, holds, picked]
+    {
+        ctx.expect (holds (kEditorUnit), "Replace did not put Tape Echo 2 in the insert");
+        ctx.expect (SessionSerializer::save (session, picked), "could not save the session holding the pick");
+        host.closeBuiltin (kStripIndex);
+    }, editorUp, "replacing Utility with Tape Echo 2 left its editor closed" });
+
+    // Emptied first, so the reopened unit arriving on the insert marks the
+    // moment the reopen has been through the strip.
+    steps->push_back ({ 0, [&host, &engine, &dsp]
+    {
+        engine.suspendProcessing();
+        dsp.unloadBuiltin();
+        engine.resumeProcessing();
+        if (auto* s = host.strip (kStripIndex)) s->refreshInsertButton();
+    }, [editorUp] { return ! editorUp(); }, "Tape Echo 2's editor did not close" });
+    steps->push_back ({ 0, [&host, picked] { reopenSavedSession (host, picked); },
+                       [&host]
+                       {
+                           auto* s = host.strip (kStripIndex);
+                           return s != nullptr && s->insertLabel() == "Insert";
+                       }, "the emptied insert never read Insert" });
+    steps->push_back ({ 0, [&host, &ctx, editorUp]
+    {
+        ctx.expect (! editorUp(), "reopening the session opened the unit's editor");
+        ctx.expect (! host.strip (kStripIndex)->hasOpenEditor(), "reopening the session opened a plug-in editor");
+        ctx.expect (host.modalStackEmpty(), "reopening the session left a modal up");
+    },
+    [&host, holds]
+    {
+        auto* s = host.strip (kStripIndex);
+        return holds (kEditorUnit) && s != nullptr
+            && s->insertLabel().find ("Tape Echo 2") != std::string::npos;
+    }, "the reopened session never showed Tape Echo 2 on the insert" });
+
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar pickOpensBuiltinEditor { Scenario {
+    "gui.pick_opens_builtin_editor", { "gui", "plugins" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPickOpensBuiltinEditor (host, ctx); }
+} };
+
+// The aux lane has no editor to open: the slot's unit draws under its header
+// once it is there. Picking one from the lane's picker must still bring it up.
+std::optional<ScenarioResult> runAuxPickShowsBuiltinEditor (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    static constexpr const char* kUnit = "dusk.builtin.reverb";
+    static const std::string kRow = "DuskVerb 2  (Built-In)";
+
+    if (builtin::findUnit (kUnit) == nullptr)
+        return ScenarioResult::skip ("built without DuskVerb 2");
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    auto& strip = engine.getAuxLaneStrip (kAuxLane);
+    if (strip.isBuiltinLoaded (kAuxSlot) || strip.getPluginSlot (kAuxSlot).isLoaded()
+        || strip.isNativeClapLoaded (kAuxSlot) || strip.isNativeLv2Loaded (kAuxSlot)
+        || strip.isNativeVst3Loaded (kAuxSlot) || strip.isNativeAuLoaded (kAuxSlot)
+        || strip.nativeInsertRestoreFailed (kAuxSlot)
+        || strip.insertMode[(std::size_t) kAuxSlot].load() == AuxLaneStrip::kInsertHardware)
+        return ScenarioResult::skip ("requires an empty first aux insert");
+
+    keepStage (host, ctx);
+    ctx.keep (strip.insertMode[(std::size_t) kAuxSlot]);
+    host.switchToStage (GuiHost::Stage::Aux);
+    const int originalLane = host.activeAuxLane();
+    auto& laneParams = ctx.session().auxLane (kAuxLane);
+    ctx.cleanup ([&host, &engine, &strip, &laneParams, originalLane]
+    {
+        drainModals (host);
+        engine.suspendProcessing();
+        strip.unloadBuiltin (kAuxSlot);
+        engine.resumeProcessing();
+        laneParams.builtinUnitId[(std::size_t) kAuxSlot].clear();
+        laneParams.builtinStateBase64[(std::size_t) kAuxSlot].clear();
+        if (auto* lane = host.auxLane (kAuxLane))
+        {
+            lane->refreshSlot (kAuxSlot);
+            lane->rebuildSlots();
+        }
+        if (originalLane >= 0) host.clickAuxSelector (originalLane);
+    });
+    if (host.activeAuxLane() != kAuxLane && ! host.clickAuxSelector (kAuxLane))
+        return ScenarioResult::skip ("the aux stage cannot show the first lane");
+    auto* lane = host.auxLane (kAuxLane);
+    if (lane == nullptr)
+        return ScenarioResult::skip ("the aux stage realised no lane to drive");
+
+    const auto rowShown = [&host]
+    {
+        const auto rows = host.pickerRows (false);
+        return std::find (rows.begin(), rows.end(), kRow) != rows.end();
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Aux, kAuxLane, "insert", 1, false),
+                    "the empty aux insert took no click");
+    }, [&host] { return host.activeAuxLane() == kAuxLane; }, "the aux stage never showed the first lane" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPickerRow (kRow), "the picker row for DuskVerb 2 took no click"); },
+                       rowShown, "the aux insert opened no picker listing DuskVerb 2" });
+    steps->push_back ({ 0, [&host, &ctx, &strip, lane]
+    {
+        ctx.expect (strip.isBuiltinLoaded (kAuxSlot) && strip.getBuiltinSlot (kAuxSlot).getPluginId() == kUnit,
+                    "picking DuskVerb 2 did not load it on the aux lane");
+        ctx.expect (host.pickerRows (false).empty(), "the picker stayed up after the pick");
+        ctx.expect (lane->slotLabel (kAuxSlot) == "DuskVerb 2",
+                    "the picked slot reads \"" + lane->slotLabel (kAuxSlot) + "\"");
+    }, [lane] { return lane->builtinEditorUnit (kAuxSlot) == kUnit; },
+    "picking DuskVerb 2 on the aux lane never brought its editor up" });
+
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar auxPickShowsBuiltinEditor { Scenario {
+    "gui.aux_pick_shows_builtin_editor", { "gui", "aux" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAuxPickShowsBuiltinEditor (host, ctx); }
+} };
+
+// A native CLAP row, which only a seeded picker cache lists: the suite runs it
+// through tests/gui_plugin_picker.sh and skips it elsewhere.
+std::optional<ScenarioResult> runPickOpensNativeEditor (GuiHost& host, ScenarioContext& ctx)
+{
+    static const std::string kRow = "Window Pick  (CLAP)";
+    const auto fixture = ctx.fixture ("no_window.clap");
+    const auto descriptions = ctx.engine().getPluginManager().getClapEffectDescriptions();
+    if (! fixture || std::none_of (descriptions.begin(), descriptions.end(), [] (const auto& row)
+        { return row.name == "Window Pick"; }))
+        return ScenarioResult::skip ("requires the seeded plugin-picker cache");
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("this display embeds no plug-in editors");
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    auto* strip = readyStrip (host, ctx);
+    if (strip == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        if (auto* s = host.strip (kStripIndex)) { s->closeEditor(); s->unloadNativePlugins(); }
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickInsert (kStripIndex), "the empty insert did not take a click"); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Plugin (VST3 / CLAP / LV2 / AU)"), "the insert chooser has no Plugin button"); },
+                       [&host] { return ! host.modalStackEmpty(); }, "clicking the empty insert opened no chooser" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.clickModalAt (0.3f, 0.1f), "the picker filter took no click");
+        typeReplacing (host, "Window Pick");
+    }, [&host] { return ! host.pickerRows (true).empty(); }, "the chooser opened no picker" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPickerRow (kRow), "the picker row for the CLAP fixture took no click"); },
+                       [&host]
+                       {
+                           const auto rows = host.pickerRows (false);
+                           return std::find (rows.begin(), rows.end(), kRow) != rows.end();
+                       }, "the picker never listed the seeded CLAP row" });
+    steps->push_back ({ 0, [&host, &ctx, &engine]
+    {
+        ctx.expect (engine.getChannelStrip (kStripIndex).isNativeClapLoaded(), "the pick did not load the CLAP fixture");
+        ctx.expect (host.pickerRows (false).empty(), "the picker stayed up after the pick");
+    },
+    [&host] { auto* s = host.strip (kStripIndex); return s != nullptr && s->hasOpenEditor(); },
+    "picking the CLAP fixture left its editor closed" });
+
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pickOpensNativeEditor { Scenario {
+    "gui.pick_opens_native_editor", { "gui", "plugins" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPickOpensNativeEditor (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runSettingsDefaults (GuiHost& host, ScenarioContext& ctx)

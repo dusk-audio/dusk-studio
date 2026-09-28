@@ -24,18 +24,23 @@ fixtures = [
      root / "build-tests/dusk-studio-multi-bus-clap-fixture.clap", "studio.dusk.test.multi-bus"),
     ("lv2-native-cache.json", "LV2", "Picker Beta", "Scenario Maker B", "Fx|Delay",
      root / "build-tests/tests/file-state-fixture.lv2", "urn:duskstudio:test:control-state"),
+    ("clap-cache.json", "CLAP", "Window Pick", "Scenario Maker C", "Fx|Utility",
+     root / "build-tests/dusk-studio-no-window-clap-fixture.clap", "studio.dusk.test.no-window"),
 ]
+caches = {}
 for cache, fmt, name, maker, category, location, plugin_id in fixtures:
     assert location.exists(), location
-    descriptor = dict(version=1, backend="native", name=name, manufacturer=maker,
-                      category=category, format_name=fmt, location=str(location),
-                      plugin_id=plugin_id, num_input_channels=2, num_output_channels=2,
-                      is_instrument=False)
-    (cache_dir / cache).write_text(json.dumps(dict(version=1, descriptors=[descriptor])))
+    caches.setdefault(cache, []).append(dict(
+        version=1, backend="native", name=name, manufacturer=maker, category=category,
+        format_name=fmt, location=str(location), plugin_id=plugin_id,
+        num_input_channels=2, num_output_channels=2, is_instrument=False))
+for cache, descriptors in caches.items():
+    (cache_dir / cache).write_text(json.dumps(dict(version=1, descriptors=descriptors)))
 PY
     xvfb_run 60 env -u DBUS_SESSION_BUS_ADDRESS "${SANDBOX_ENV[@]}" \
-        DUSKSTUDIO_RUN_SCENARIOS=gui:gui.plugin_picker_filter_and_load \
+        DUSKSTUDIO_RUN_SCENARIOS=gui:gui.plugin_picker_filter_and_load,gui.pick_opens_native_editor \
         "DUSKSTUDIO_FIXTURE_DIR=$repo_root/build-tests:$repo_root/tests/fixtures" \
         "$app" | tee "$run_dir/output.log"
     grep -Fq '[PASS] gui.plugin_picker_filter_and_load' "$run_dir/output.log"
+    grep -Fq '[PASS] gui.pick_opens_native_editor' "$run_dir/output.log"
 done

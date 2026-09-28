@@ -228,6 +228,12 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         return component != nullptr && component->hasOpenPluginEditorForScenario();
     }
 
+    bool hasOpenBuiltinEditor() const override
+    {
+        auto* component = strip();
+        return component != nullptr && component->hasOpenBuiltinEditorForScenario();
+    }
+
     bool pluginWindowMissing() const override
     {
         auto* component = strip();
@@ -1675,7 +1681,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             return strip != nullptr
                 && click (strip, control == "name" ? strip->namePointForScenario() : strip->printPointForScenario());
         }
-        if (kind == StripKind::Aux && (control == "name" || control == "mute" || control == "fader"))
+        if (kind == StripKind::Aux && (control == "name" || control == "mute" || control == "fader"
+                                       || control == "insert"))
         {
             auto* lane = owner.auxView != nullptr ? owner.auxView->getLaneComponent (index) : nullptr;
             return lane != nullptr && click (lane, lane->controlPointForScenario (control));

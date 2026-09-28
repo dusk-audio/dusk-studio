@@ -758,7 +758,7 @@ Each channel has one insert slot, which can hold either a plugin or a hardware i
 
 - Click **+ Plugin** to open the plugin picker.
 - Right-click an empty slot for **Add insert...**. A loaded plugin offers **Open editor** (or **Close editor**), **Replace insert...**, and **Remove plugin**. A hardware insert offers **Edit hardware insert...**, **Replace insert...**, and **Remove hardware insert**. Choose **Hardware Insert** in the Add or Replace chooser to configure outboard gear.
-- When a plugin is loaded, the slot shows its name. Click to open the editor.
+- When a plugin is loaded, the slot shows its name. Its editor opens as soon as you pick it; after that, click the slot to open the editor again.
 - The LED on the slot's left edge bypasses the insert — green when engaged, dark when bypassed or empty, click to toggle (same grammar as the EQ and COMP LEDs). The insert keeps processing while bypassed, so re-engaging is click-free.
 
 The insert sits **before** the HPF, so any plugin you load drives the rest of the channel's tone shaping.
@@ -1629,9 +1629,11 @@ In the **plugin picker** modal:
 - Use the filter field at the top to narrow by name.
 - The list is grouped under manufacturer headings. Click **Group: Maker** to switch to grouping by plugin type; click **Group: Type** to return to manufacturer grouping. The **Built-In** section stays at the top.
 - Each row shows the plugin name and its format (VST3 / LV2 / AudioUnit / CLAP / LV2-Native / VST3-Native / Built-In).
-- Click a row to load and dismiss.
+- Click a row to load it. The picker closes and the loaded plugin or built-in unit opens its editor straight away, whatever its format, so there is no second click. On an aux lane the editor is the one under the slot header. A plugin that has no editor still loads.
 
 Both the effect and instrument pickers list VST3 plugins as **VST3-Native** rows on every OS, and LV2 plugins as **LV2-Native** rows on Linux and macOS — the same plugins, hosted by Dusk Studio's native hosts instead of the standard one. On macOS, Audio Units appear once as native **AudioUnit** rows. There are no duplicate standard-host rows for these formats.
+
+Only a pick opens a channel insert's editor. Reopening a session, undo and redo load the insert with its editor closed.
 
 The picker filters by intent: only effect plugins appear when you're loading onto a channel insert or aux lane; only instruments appear when you're loading onto a MIDI track.
 
@@ -1757,7 +1759,7 @@ It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and c
 
 ### Editing a unit
 
-On a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, or click the slot again, to dismiss it.
+Picking a unit from the picker opens its editor. After that, on a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, or click the slot again, to dismiss it.
 
 **DuskVerb 2, Tape Echo 2 and Tape Machine 2 open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. Utility and Sunset have no editor of their own, so Dusk Studio draws them from their parameter table as a panel of knobs, switch banks, drop-down lists and toggles.
 
