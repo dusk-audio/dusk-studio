@@ -87,6 +87,10 @@ public:
     int nativePanelsOpenForScenario() const;
     std::string targetTextForScenario() const { return masteringTargetCombo.getText().toStdString(); }
     void restoreTargetForScenario (int index) { masteringTargetCombo.setSelectedId (index + 1); }
+    std::string loudnessTextForScenario (bool peak) const
+    {
+        return (peak ? truePeak : lufsI).getText().toStdString();
+    }
     std::uint32_t loudnessColourForScenario (bool peak) const
     {
         const auto& label = peak ? truePeak : lufsI;

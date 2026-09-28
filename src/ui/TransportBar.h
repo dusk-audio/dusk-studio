@@ -88,6 +88,11 @@ public:
         return true;
     }
     std::string clockTextForScenario() const { return clockLabel.getText().toStdString(); }
+    // The time the last tap was stamped with, on the clock onTap reads; 0 before any.
+    std::int64_t lastTapForScenario() const
+    {
+        return tapStampCount > 0 ? tapStamps[(size_t) (tapStampCount - 1)] : 0;
+    }
     auto bpmPointForScenario() const { return bpmValue.getBounds().getCentre(); }
     auto punchPointForScenario() const { return punchButton.getBounds().getCentre(); }
 

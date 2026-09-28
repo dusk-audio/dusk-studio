@@ -865,6 +865,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.transportBar != nullptr ? owner.transportBar->clockTextForScenario() : std::string {};
     }
+    std::int64_t lastTapMs() const override
+    {
+        return owner.transportBar != nullptr ? owner.transportBar->lastTapForScenario() : -1;
+    }
 
     void switchToStage (Stage stage) override
     {
@@ -1423,6 +1427,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return EmbeddedModal::activeModalStack().empty();
     }
+    int modalCount() const override
+    {
+        return (int) EmbeddedModal::activeModalStack().size();
+    }
 
     bool clickMasteringTarget() override
     {
@@ -1460,6 +1468,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::uint32_t masteringLoudnessColour (bool peak) const override
     {
         return owner.masteringView != nullptr ? owner.masteringView->loudnessColourForScenario (peak) : 0;
+    }
+    std::string masteringLoudnessText (bool peak) const override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->loudnessTextForScenario (peak) : std::string();
     }
     void restoreMasteringTarget (int index) override
     {
