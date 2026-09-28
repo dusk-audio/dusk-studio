@@ -215,6 +215,7 @@ bool Lv2Editor::embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
     impl->features = {
         static_cast<const LV2_Feature*> (impl->instance->uridMapFeature()),
         static_cast<const LV2_Feature*> (impl->instance->uridUnmapFeature()),
+        static_cast<const LV2_Feature*> (impl->instance->optionsFeature()),
         &impl->parentFeature, &impl->instanceFeature, &impl->dataFeature,
         &impl->resizeFeature, &impl->idleFeature, nullptr
     };

@@ -113,6 +113,7 @@ public:
     std::string insertLabelForScenario() const { return pluginSlotButton.getButtonText().toStdString(); }
     bool builtinPointerForScenario (const std::string& control, float position, bool pressed);
     void closeBuiltinForScenario() { closeBuiltinEditorPopup(); }
+    bool hasOpenBuiltinEditorForScenario() const noexcept { return isBuiltinEditorOpen(); }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -443,29 +444,31 @@ private:
     // (u-he hangs in gui->destroy); leaked on shutdown via dropPluginEditor. Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     std::unique_ptr<class ClapPluginEditorComponent> clapEditor;
-    void loadNativeClapForChannel (const juce::File& clapFile, const juce::String& pluginId = {});
+    bool loadNativeClapForChannel (const juce::File& clapFile, const juce::String& pluginId = {});
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     // Native LV2 insert editor (suil) - same kept-alive/showBorrowed lifecycle as
     // clapEditor above.
     std::unique_ptr<class Lv2PluginEditorComponent> lv2Editor;
-    void loadNativeLv2ForChannel (const juce::File& bundleDir, const juce::String& pluginId = {});
+    bool loadNativeLv2ForChannel (const juce::File& bundleDir, const juce::String& pluginId = {});
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     // Native VST3 insert editor (IPlugView) - same lifecycle as clapEditor above.
     std::unique_ptr<class Vst3PluginEditorComponent> vst3Editor;
-    void loadNativeVst3ForChannel (const juce::File& vst3File, const juce::String& pluginId = {});
+    bool loadNativeVst3ForChannel (const juce::File& vst3File, const juce::String& pluginId = {});
 #endif
     // Reap any native editor that already abandoned its instance on its own pump
     // tick. Polled from refreshPluginSlotButton; the tick is what closes the UAF.
     void syncNativeEditorOwners();
 #if DUSKSTUDIO_HAS_NATIVE_AU
     std::unique_ptr<class AuPluginEditorComponent> auEditor;
-    void loadNativeAuForChannel (const juce::String& componentId);
+    bool loadNativeAuForChannel (const juce::String& componentId);
 #endif
-    // Built-in unit rung. No editor yet, so the slot label and the picker are
-    // the whole UI surface.
-    void loadBuiltinForChannel (const std::string& unitId);
+    // The load*ForChannel rungs report whether the unit loaded and never open an
+    // editor themselves: only a pick from the picker does, through
+    // openEditorForPick, so restores and scripted loads stay closed.
+    bool loadBuiltinForChannel (const std::string& unitId);
+    void openEditorForPick();
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     // Multisample instrument editor - in-process Dusk UI over the strip's
     // NativeMultisampleSlot instance, same kept-alive/showBorrowed lifecycle.
@@ -475,7 +478,7 @@ private:
     // slot's live instance stops matching (see syncMultisampleEditorOwner).
     class DuskMultisampleProcessor* multisampleEditorOwner = nullptr;
     void syncMultisampleEditorOwner();
-    void loadNativeMultisampleForChannel (const juce::File& soundfont);
+    bool loadNativeMultisampleForChannel (const juce::File& soundfont);
     // Join an in-flight soundfont load. Call BEFORE suspendProcessing on any
     // path that tears the slot down - the teardown joins the loader pool, and
     // a GM-bank decode takes seconds the audio thread must not be parked for.

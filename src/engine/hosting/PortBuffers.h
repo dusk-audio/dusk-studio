@@ -3,6 +3,8 @@
 #include "../../foundation/MidiBuffer.h"
 #include "../../foundation/TransportPosition.h"
 
+#include <atomic>
+
 namespace duskstudio::hosting
 {
 // The single audio-thread argument to INativeInstance::processBlock, replacing
@@ -41,5 +43,13 @@ struct PortBuffers
 
     // Optional transport for tempo-synced plugins (null = not supplied).
     const dusk::TransportPosition* transport = nullptr;
+
+    // True when a render thread drives this block faster than real time (bounce,
+    // stems, freeze, mastering export) rather than a device. A host may then
+    // wait on its own non-realtime helpers so the render comes out the same
+    // every time; with a device it must never wait. renderCancelled, when set,
+    // turns true once the render is cancelled, and a wait must end then.
+    bool offlineRender = false;
+    const std::atomic<bool>* renderCancelled = nullptr;
 };
 } // namespace duskstudio::hosting

@@ -152,6 +152,8 @@ public:
         processingOnline.store (false, std::memory_order_release);
         ready.store (false, std::memory_order_release);
         gen.fetch_add (1, std::memory_order_relaxed);
+        if (instance != nullptr)
+            instance->stopHelperThreads();
         (void) instance.release();
         (void) bundle.release();
         loadedPath.clear();
@@ -163,6 +165,15 @@ public:
     // The instantiated plugin's id within its bundle (class UID / URI / CLAP id) -
     // resolved even when load() defaulted, so sessions persist the actual pick.
     const std::string& getPluginId() const noexcept { return loadedPluginId; }
+
+    // Audio thread (the engine callback, as a render starts and ends): whether
+    // the blocks that follow are an offline render, and that render's cancel
+    // flag. See PortBuffers::offlineRender.
+    void setOfflineRender (bool offline, const std::atomic<bool>* renderCancelled) noexcept
+    {
+        offlineCancel.store (renderCancelled, std::memory_order_relaxed);
+        offlineRender.store (offline, std::memory_order_release);
+    }
 
     // Bypass: processStereo passes audio through untouched (the plugin stays loaded).
     void setBypassed (bool b) noexcept { bypassed.store (b, std::memory_order_relaxed); }
@@ -258,7 +269,9 @@ public:
         if (outR != r)  std::memcpy (outR, r, n);
 
         adapter.process (*instance, outL, outR, numFrames,
-                         nullptr, nullptr, midiIn, transport);
+                         nullptr, nullptr, midiIn, transport,
+                         offlineRender.load (std::memory_order_acquire),
+                         offlineCancel.load (std::memory_order_relaxed));
     }
 
     // UI: the live instance for editor attach (nullptr when not loaded).
@@ -320,6 +333,8 @@ protected:
     std::atomic<bool>          ready    { false };
     std::atomic<bool>          processingOnline { false };
     std::atomic<bool>          bypassed { false };
+    std::atomic<bool>          offlineRender { false };
+    std::atomic<const std::atomic<bool>*> offlineCancel { nullptr };
     std::atomic<std::uint64_t> gen      { 0 };
     std::string       loadedPath;
     std::string       loadedPluginId;

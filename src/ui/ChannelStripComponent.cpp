@@ -1873,66 +1873,54 @@ void ChannelStripComponent::openPluginPicker()
                                             {
                                                 auto* ss = openLater.getComponent();
                                                 if (ss == nullptr) return;
-                                                if (ss->pluginSlot.isLoaded() && ! ss->isPluginEditorOpen())
-                                                    ss->openPluginEditor();
+                                                if (ss->pluginSlot.isLoaded())
+                                                    ss->openEditorForPick();
                                             });
                                         });
                                     };
 
+    // The loaders never open an editor, so session restores and scripted loads
+    // stay closed; a pick opens one here, or from onChange for standard-host rows.
+    const auto loadThenOpen = [safe] (auto load)
+    {
+        return [safe, load] (const auto&... args)
+        {
+            if (auto* self = safe.getComponent(); self != nullptr && (self->*load) (args...))
+                self->openEditorForPick();
+        };
+    };
+
     // Native CLAP route - effects and instruments both load through the channel's
-    // native host (the picker merges whichever kind fits the slot).
-    // Linux-only; elsewhere the callback stays empty so the picker shows no CLAP rows.
+    // native host (the picker merges whichever kind fits the slot). Without the
+    // host the callback stays empty so the picker shows no CLAP rows.
     std::function<void (const juce::File&, const juce::String&)> onClap;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    onClap = [safe] (const juce::File& f, const juce::String& id)
-    {
-        if (auto* self = safe.getComponent())
-            self->loadNativeClapForChannel (f, id);
-    };
+    onClap = loadThenOpen (&ChannelStripComponent::loadNativeClapForChannel);
 #endif
     // Native LV2 route - same shape; native rows replace the JUCE LV2 rows.
     std::function<void (const juce::File&, const juce::String&)> onLv2;
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    onLv2 = [safe] (const juce::File& f, const juce::String& id)
-    {
-        if (auto* self = safe.getComponent())
-            self->loadNativeLv2ForChannel (f, id);
-    };
+    onLv2 = loadThenOpen (&ChannelStripComponent::loadNativeLv2ForChannel);
 #endif
     // Native VST3 route - same shape; native rows replace the JUCE VST3 rows.
     std::function<void (const juce::File&, const juce::String&)> onVst3;
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    onVst3 = [safe] (const juce::File& f, const juce::String& id)
-    {
-        if (auto* self = safe.getComponent())
-            self->loadNativeVst3ForChannel (f, id);
-    };
+    onVst3 = loadThenOpen (&ChannelStripComponent::loadNativeVst3ForChannel);
 #endif
 
     // Soundfont route - the native multisample rung; instruments only.
     std::function<void (const juce::File&)> onSoundfont;
 #if DUSKSTUDIO_HAS_MULTISAMPLE
-    onSoundfont = [safe] (const juce::File& f)
-    {
-        if (auto* self = safe.getComponent())
-            self->loadNativeMultisampleForChannel (f);
-    };
+    onSoundfont = loadThenOpen (&ChannelStripComponent::loadNativeMultisampleForChannel);
 #endif
 
     std::function<void (const juce::String&)> onAu;
 #if DUSKSTUDIO_HAS_NATIVE_AU
-    onAu = [safe] (const juce::String& componentId)
-    {
-        if (auto* self = safe.getComponent())
-            self->loadNativeAuForChannel (componentId);
-    };
+    onAu = loadThenOpen (&ChannelStripComponent::loadNativeAuForChannel);
 #endif
 
-    auto onBuiltin = [safe] (const std::string& unitId)
-    {
-        if (auto* self = safe.getComponent())
-            self->loadBuiltinForChannel (unitId);
-    };
+    std::function<void (const std::string&)> onBuiltin =
+        loadThenOpen (&ChannelStripComponent::loadBuiltinForChannel);
 
     pluginpicker::openInsertChooser (pluginSlot,
                                       pluginSlotButton,
@@ -3178,7 +3166,7 @@ void ChannelStripComponent::adoptInstrumentTrackDefaults()
 }
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile,
+bool ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile,
                                                        const juce::String& pluginId)
 {
     auto& strip = engine.getChannelStrip (trackIndex);
@@ -3236,7 +3224,7 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
         track.nativeClapPath = {};
         track.nativeClapPluginId = {};
         track.nativeClapStateBase64 = {};
-        return;
+        return false;
     }
 
     if (strip.getNativeClapSlot().isLoadedInstrument())
@@ -3258,12 +3246,12 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     track.nativeMultisamplePath = {};
     track.nativeMultisampleStateBase64 = {};
     refreshPluginSlotButton();
-    openPluginEditor();
+    return true;
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_CLAP
 
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir,
+bool ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir,
                                                       const juce::String& pluginId)
 {
     auto& strip = engine.getChannelStrip (trackIndex);
@@ -3315,7 +3303,7 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
         track.nativeLv2Path = {};
         track.nativeLv2PluginId = {};
         track.nativeLv2StateBase64 = {};
-        return;
+        return false;
     }
 
     if (strip.getNativeLv2Slot().isLoadedInstrument())
@@ -3334,12 +3322,12 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
     track.nativeMultisamplePath = {};
     track.nativeMultisampleStateBase64 = {};
     refreshPluginSlotButton();
-    openPluginEditor();
+    return true;
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_LV2
 
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File,
+bool ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File,
                                                        const juce::String& pluginId)
 {
     auto& strip = engine.getChannelStrip (trackIndex);
@@ -3391,7 +3379,7 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
         track.nativeVst3Path = {};
         track.nativeVst3PluginId = {};
         track.nativeVst3StateBase64 = {};
-        return;
+        return false;
     }
 
     if (strip.getNativeVst3Slot().isLoadedInstrument())
@@ -3410,12 +3398,12 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
     track.nativeMultisamplePath = {};
     track.nativeMultisampleStateBase64 = {};
     refreshPluginSlotButton();
-    openPluginEditor();
+    return true;
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_VST3
 
 #if DUSKSTUDIO_HAS_NATIVE_AU
-void ChannelStripComponent::loadNativeAuForChannel (const juce::String& componentId)
+bool ChannelStripComponent::loadNativeAuForChannel (const juce::String& componentId)
 {
     auto& strip = engine.getChannelStrip (trackIndex);
 
@@ -3475,7 +3463,7 @@ void ChannelStripComponent::loadNativeAuForChannel (const juce::String& componen
         track.nativeMultisamplePath = {};
         track.nativeMultisampleStateBase64 = {};
         refreshPluginSlotButton();
-        return;
+        return false;
     }
 
     if (strip.getNativeAuSlot().isLoadedInstrument())
@@ -3498,11 +3486,11 @@ void ChannelStripComponent::loadNativeAuForChannel (const juce::String& componen
     track.pluginLegacyDescriptionXml.clear();
     track.pluginStateBase64.clear();
     refreshPluginSlotButton();
-    openPluginEditor();
+    return true;
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_AU
 
-void ChannelStripComponent::loadBuiltinForChannel (const std::string& unitId)
+bool ChannelStripComponent::loadBuiltinForChannel (const std::string& unitId)
 {
     auto& strip = engine.getChannelStrip (trackIndex);
 
@@ -3569,13 +3557,28 @@ void ChannelStripComponent::loadBuiltinForChannel (const std::string& unitId)
         std::fprintf (stderr, "[chan builtin] load failed: %s\n", err.c_str());
         showDuskAlert (*this, "Couldn't load built-in unit", unitId + ":\n" + err);
         refreshPluginSlotButton();
-        return;
+        return false;
     }
 
     if (strip.getBuiltinSlot().isLoadedInstrument())
         adoptInstrumentTrackDefaults();
     track.builtinUnitId = strip.getBuiltinSlot().getPluginId();
     refreshPluginSlotButton();
+    return true;
+}
+
+void ChannelStripComponent::openEditorForPick()
+{
+    if (engine.getChannelStrip (trackIndex).isBuiltinLoaded())
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        // The popup toggles, so one already up must not be asked again.
+        if (! isBuiltinEditorOpen())
+            openBuiltinEditorPopup();
+       #endif
+        return;
+    }
+    openPluginEditor();
 }
 
 void ChannelStripComponent::syncNativeEditorOwners()
@@ -3623,7 +3626,7 @@ void ChannelStripComponent::drainMultisampleLoads()
     engine.getChannelStrip (trackIndex).getNativeMultisampleSlot().drainPendingLoads();
 }
 
-void ChannelStripComponent::loadNativeMultisampleForChannel (const juce::File& soundfont)
+bool ChannelStripComponent::loadNativeMultisampleForChannel (const juce::File& soundfont)
 {
     auto& strip = engine.getChannelStrip (trackIndex);
 
@@ -3675,7 +3678,7 @@ void ChannelStripComponent::loadNativeMultisampleForChannel (const juce::File& s
         // persisted references have to keep describing it.
         showDuskAlert (*this, "Couldn't load soundfont",
                        soundfont.getFileNameWithoutExtension() + ":\n" + juce::String (err));
-        return;
+        return false;
     }
 
     adoptInstrumentTrackDefaults();
@@ -3693,7 +3696,7 @@ void ChannelStripComponent::loadNativeMultisampleForChannel (const juce::File& s
     track.nativeAuIdentifier = {};
     track.nativeAuStateBase64 = {};
     refreshPluginSlotButton();
-    openPluginEditor();
+    return true;
 }
 #endif // DUSKSTUDIO_HAS_MULTISAMPLE
 

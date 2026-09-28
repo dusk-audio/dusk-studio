@@ -93,6 +93,12 @@ public:
     std::uint64_t instanceEpoch() const noexcept;
     void*       uridMapFeature()   const noexcept;
     void*       uridUnmapFeature() const noexcept;
+    // The options feature (sample rate, block lengths) the plugin was given.
+    // Stable for this instance's lifetime; the values follow each activate.
+    void*       optionsFeature()   const noexcept;
+
+    // Joins the LV2 Worker thread without deactivating the plugin.
+    void stopHelperThreads() noexcept override;
 
     // UI -> plugin control-port write (ui:floatProtocol). Staged into a lock-free
     // ring; the audio thread applies it at the top of its next processBlock so

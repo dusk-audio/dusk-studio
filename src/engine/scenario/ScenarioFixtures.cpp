@@ -27,6 +27,7 @@ constexpr FixtureCandidate kCandidates[] = {
     { "relayout.vst3",    "VST3/dusk-studio-runtime-relayout-vst3-fixture.vst3" },
     { "file_state.lv2",   "tests/file-state-fixture.lv2" },
     { "many_patch.lv2",   "tests/many-patch-fixture.lv2" },
+    { "worker.lv2",       "tests/worker-fixture.lv2" },
     { "smf.vendor_chunk", "midi/vendor-chunk.mid.hex" },
     { "smf.same_tick",    "midi/same-tick-retrigger.mid.hex" },
     { "smf.vendor_counted", "midi/vendor-chunk-counted.mid.hex" },

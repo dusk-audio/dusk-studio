@@ -2594,8 +2594,7 @@ void AudioRegionEditor::mouseWheelMove (const juce::MouseEvent& e,
     {
         // Zoom anchored on the cursor's current sample.
         const auto cursorSampleBefore = sampleForX (e.x, waveArea);
-        const float factor = w.deltaY > 0.0f ? 1.15f : (1.0f / 1.15f);
-        pixelsPerSample = jlimit (1.0e-5f, 1.0f, pixelsPerSample * factor);
+        pixelsPerSample = jlimit (1.0e-5f, 1.0f, pixelsPerSample * wheel::zoomFactor (w.deltaY, w.isSmooth, 1.15f));
         // After zoom, adjust scrollSamples so the same sample stays at
         // the cursor's x-position.
         const auto cursorSampleAfterRaw = sampleForX (e.x, waveArea);
@@ -2612,8 +2611,8 @@ void AudioRegionEditor::mouseWheelMove (const juce::MouseEvent& e,
     // (matches the legacy behaviour and the PianoRoll convention).
     const float deltaForPan = std::abs (w.deltaX) > 0.001f ? w.deltaX
                                                               : w.deltaY;
-    const auto step = (std::int64_t) std::round (
-        - (double) deltaForPan * 64.0 / std::max (1.0e-5f, pixelsPerSample));
+    const int panPx = panWheel.pixels (-deltaForPan, w.isSmooth, 12.5f);
+    const auto step = (std::int64_t) std::round ((double) panPx / std::max (1.0e-5f, pixelsPerSample));
     scrollSamples = jlimit<std::int64_t> (0,
         std::max<std::int64_t> (0, anchorTimelineLength - 1),
         scrollSamples + step);

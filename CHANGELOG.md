@@ -142,6 +142,28 @@ publishes.
 
 ### Fixed
 
+- **LV2 plugins that need the LV2 Worker load** (#780). Dusk's own
+  Multi-Comp 2, Multi-Q 2 and DuskVerb 2, and sfizz, need the host to run
+  slow jobs for them on a background thread. Dusk Studio did not offer that,
+  so on Linux and macOS they failed to load with only "lilv_plugin_instantiate
+  failed" in the alert. The native LV2 host now provides the Worker, and an
+  offline bounce, freeze or export waits for its work so the file comes out
+  the same every time. A plugin that requires an LV2 feature Dusk Studio
+  still lacks names it in the alert, and LV2 editors are told the session's
+  sample rate instead of assuming 44.1 kHz.
+- **Picking a built-in unit opens its editor** (#779). Every other kind of
+  insert opened its editor as soon as you picked it, but Utility, DuskVerb 2,
+  Tape Echo 2, Tape and Sunset loaded with the editor closed and took a second
+  click. Every pick or Replace from the insert picker now opens the unit's
+  editor. Reopening a session, undo and redo leave editors closed.
+- **The mouse wheel and trackpad scroll lists on macOS** (#781). The plug-in
+  picker, the SFZ library, combo box lists, the piano roll, the tape strip and
+  the audio region editor dropped the small scroll amounts macOS reports, so a
+  wheel click moved a list a few pixels and a trackpad did not move it at all.
+  A wheel notch now moves the same distance on every platform: two rows in the
+  picker and the SFZ library, one row in a combo box list, one key in the piano
+  roll and one row in the tape strip. That is a little further per notch than
+  before on Linux and Windows. A trackpad scrolls with your fingers.
 - **Windows builds can export MP3** (#757). Every Windows release since
   0.11 shipped WAV-only: the build looked for the LAME library under a name
   the Windows package does not use, and quietly left MP3 bounce and MP3 master

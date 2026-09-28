@@ -51,6 +51,9 @@ public:
     virtual bool openEditor() = 0;
     virtual void closeEditor() = 0;
     virtual bool hasOpenEditor() const = 0;
+    // A built-in unit's editor, which opens over the window rather than in the
+    // insert's plug-in modal.
+    virtual bool hasOpenBuiltinEditor() const = 0;
 
     // Linux CLAP only: the plug-in took the container and put no window in it.
     virtual bool pluginWindowMissing() const = 0;
@@ -203,8 +206,8 @@ public:
                                  std::string& label, bool& faderEnabled) = 0;
     // A named control on a strip: "name" on a channel strip or an aux lane,
     // "print" (PRINT / FREEZE, shown outside MIXING) on a channel strip,
-    // "mute" or "fader" (its return fader) on an aux lane, "eq" (the EQ
-    // header's label) on a bus strip.
+    // "mute", "fader" (its return fader) or "insert" (the slot's header
+    // button) on an aux lane, "eq" (the EQ header's label) on a bus strip.
     virtual bool clickStripControl (StripKind kind, int index, const std::string& control,
                                     int clicks, bool right) = 0;
     virtual std::vector<double> auxReturnRange (int lane) const = 0;
@@ -265,7 +268,7 @@ public:
     virtual void closeRegionEditors() = 0;
     virtual std::array<double, 4> pianoViewport() const = 0;
     virtual std::array<int, 4> pianoOptions() const = 0;
-    virtual bool scrollPiano (float delta, bool command, bool shift) = 0;
+    virtual bool scrollPiano (float delta, bool command, bool shift, bool smooth) = 0;
     virtual bool clickPianoFit() = 0;
     virtual bool focusPiano() = 0;
     virtual bool setStripCompact (int track, bool compact) = 0;
@@ -286,6 +289,14 @@ public:
     virtual bool clickInsert (int track, bool right = false) = 0;
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
     virtual bool clickPickerRow (const std::string& text) = 0;
+    // Opens the insert picker on `rows` stand-in effects, long enough to scroll
+    // however few plug-ins this machine has scanned.
+    virtual bool openScrollingPicker (int rows) = 0;
+    // The insert picker list's scroll offset and the most it can scroll; zeros
+    // when no picker is up.
+    virtual std::array<int, 2> pickerScroll() const = 0;
+    // A raw wheel delta over the picker list, precise when smooth.
+    virtual bool wheelPicker (float delta, bool smooth) = 0;
     virtual bool clickMasteringButton (const std::string& label) = 0;
     virtual bool clickMasteringTarget() = 0;
     // The multiband comp's preset picker; false when this build lays out none.

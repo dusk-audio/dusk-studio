@@ -751,6 +751,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/lv2_file_state_inside_session.cpp
     src/engine/scenario/cases/lv2_large_store_timing_bound.cpp
     src/engine/scenario/cases/lv2_params_numbering_stable.cpp
+    src/engine/scenario/cases/lv2_worker_bounce.cpp
     src/engine/scenario/cases/markers.cpp
     src/engine/scenario/cases/midi_bindings.cpp
     src/engine/scenario/cases/midi_out_dense_block.cpp
@@ -1146,6 +1147,7 @@ if(DUSKSTUDIO_NATIVE_LV2)
         src/engine/lv2/Lv2Bundle.cpp
         src/engine/lv2/Lv2Instance.cpp
         src/engine/lv2/Lv2Scanner.cpp
+        src/engine/lv2/Lv2Worker.cpp
         src/ui/Lv2PluginEditorComponent.cpp)
     if(APPLE)
         target_sources(DuskStudio PRIVATE src/engine/lv2/Lv2Editor_Mac.mm)

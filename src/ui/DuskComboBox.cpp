@@ -1,5 +1,6 @@
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
+#include "WheelScroll.h"
 #include "../foundation/MessageThread.h"
 
 #include <cmath>
@@ -444,12 +445,12 @@ public:
             // a horizontal wheel maps straight through.
             const float delta = std::abs (wheel.deltaX) > std::abs (wheel.deltaY)
                                     ? wheel.deltaX : wheel.deltaY;
-            setHScroll (hScroll - delta * 90.0f);
+            setHScroll (hScroll + (float) gridWheel.pixels (-delta, wheel.isSmooth, 18.0f));
             repaint();
             return;
         }
         if (flat.maxScroll() <= 0.0f) return;
-        flat.setScroll (flat.scrollOffset - wheel.deltaY * 80.0f);
+        flat.setScroll (flat.scrollOffset + (float) flatWheel.pixels (-wheel.deltaY, wheel.isSmooth, (float) kRowH));
         // Follow the row that scrolled under the pointer, but keep the active
         // row when the pointer isn't over one (see mouseMove).
         if (! flat.scrollbarTrack().contains (e.getPosition()))
@@ -1084,6 +1085,7 @@ private:
     int   hbarDragStartX = 0;
     float hbarDragStartScroll = 0.0f;
     bool  caretOn       = true;
+    wheel::Accumulator flatWheel, gridWheel;
 };
 } // namespace
 

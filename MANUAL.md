@@ -758,7 +758,7 @@ Each channel has one insert slot, which can hold either a plugin or a hardware i
 
 - Click **+ Plugin** to open the plugin picker.
 - Right-click an empty slot for **Add insert...**. A loaded plugin offers **Open editor** (or **Close editor**), **Replace insert...**, and **Remove plugin**. A hardware insert offers **Edit hardware insert...**, **Replace insert...**, and **Remove hardware insert**. Choose **Hardware Insert** in the Add or Replace chooser to configure outboard gear.
-- When a plugin is loaded, the slot shows its name. Click to open the editor.
+- When a plugin is loaded, the slot shows its name. Its editor opens as soon as you pick it; after that, click the slot to open the editor again.
 - The LED on the slot's left edge bypasses the insert — green when engaged, dark when bypassed or empty, click to toggle (same grammar as the EQ and COMP LEDs). The insert keeps processing while bypassed, so re-engaging is click-free.
 
 The insert sits **before** the HPF, so any plugin you load drives the rest of the channel's tone shaping.
@@ -1629,9 +1629,11 @@ In the **plugin picker** modal:
 - Use the filter field at the top to narrow by name.
 - The list is grouped under manufacturer headings. Click **Group: Maker** to switch to grouping by plugin type; click **Group: Type** to return to manufacturer grouping. The **Built-In** section stays at the top.
 - Each row shows the plugin name and its format (VST3 / LV2 / AudioUnit / CLAP / LV2-Native / VST3-Native / Built-In).
-- Click a row to load and dismiss.
+- Click a row to load it. The picker closes and the loaded plugin or built-in unit opens its editor straight away, whatever its format, so there is no second click. On an aux lane the editor is the one under the slot header. A plugin that has no editor still loads.
 
 Both the effect and instrument pickers list VST3 plugins as **VST3-Native** rows on every OS, and LV2 plugins as **LV2-Native** rows on Linux and macOS — the same plugins, hosted by Dusk Studio's native hosts instead of the standard one. On macOS, Audio Units appear once as native **AudioUnit** rows. There are no duplicate standard-host rows for these formats.
+
+Only a pick opens a channel insert's editor. Reopening a session, undo and redo load the insert with its editor closed.
 
 The picker filters by intent: only effect plugins appear when you're loading onto a channel insert or aux lane; only instruments appear when you're loading onto a MIDI track.
 
@@ -1757,7 +1759,7 @@ It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and c
 
 ### Editing a unit
 
-On a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, or click the slot again, to dismiss it.
+Picking a unit from the picker opens its editor. After that, on a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, or click the slot again, to dismiss it.
 
 **DuskVerb 2, Tape Echo 2 and Tape Machine 2 open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. Utility and Sunset have no editor of their own, so Dusk Studio draws them from their parameter table as a panel of knobs, switch banks, drop-down lists and toggles.
 
@@ -1784,6 +1786,7 @@ In practice the differences are small:
 - Rows tagged **CLAP**, **LV2-Native**, **VST3-Native**, or **AudioUnit** in the picker load through the native hosts; everything else about picking, replacing, and removing is identical.
 - Editors open the same way (centred modal on channel slots, inline on aux lanes) and their settings persist in the session like any other plugin.
 - Each time an **LV2-Native** editor opens or reopens, its controls are seeded from the running plugin's live parameter values. Host-side changes, including MIDI Learn, continue to update the open editor.
+- **LV2-Native** plugins that hand slow jobs to a background thread through the LV2 Worker get one of their own. Dusk's Multi-Comp 2, Multi-Q 2 and DuskVerb 2 need it to load at all, and samplers use it to load their banks. An offline bounce, stem bounce, freeze or master export waits for that work at every block, so an offline render of the same session gives the same file every time. A realtime bounce plays through the audio interface at normal speed and does not wait, so the work lands when it would during playback. An LV2 plugin that requires an LV2 feature Dusk Studio does not provide does not load, and the alert names the missing feature.
 - Native-hosted plugins always run in-process; the OOP sandbox does not apply to them. Native LV2 and Audio Unit discovery do not instantiate plugin code; CLAP and native VST3 discovery load each module to read its factory, like any host's VST3 scan.
 - Insert latency reported by a native-hosted plugin feeds plugin delay compensation like any other insert.
 - A slot holds one plugin regardless of host: loading a CLAP, an LV2-Native, a VST3-Native, an AudioUnit, or a standard-host plugin into the same slot replaces whatever was there.

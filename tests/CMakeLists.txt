@@ -83,6 +83,7 @@ add_executable(dusk-studio-tests
     crossfade.cpp
     clone_plugin_snapshot.cpp
     fade_curve_path.cpp
+    wheel_scroll.cpp
     file_importer_audio.cpp
     hardware_insert.cpp
     base64_decode.cpp
@@ -454,8 +455,11 @@ if(DUSKSTUDIO_NATIVE_LV2)
         "${CMAKE_CURRENT_BINARY_DIR}/file-state-fixture.lv2")
     set(DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE
         "${CMAKE_CURRENT_BINARY_DIR}/many-patch-fixture.lv2")
+    set(DUSKSTUDIO_WORKER_LV2_BUNDLE
+        "${CMAKE_CURRENT_BINARY_DIR}/worker-fixture.lv2")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}")
+    file(MAKE_DIRECTORY "${DUSKSTUDIO_WORKER_LV2_BUNDLE}")
     configure_file(fixtures/file_state_manifest.ttl
         "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
     # The bundle only declares a UI where one can be built: the fixture UI is an
@@ -525,23 +529,41 @@ if(DUSKSTUDIO_NATIVE_LV2)
     target_compile_features(dusk-studio-many-patch-lv2-fixture PRIVATE cxx_std_17)
     target_link_libraries(dusk-studio-many-patch-lv2-fixture PRIVATE PkgConfig::LV2)
 
+    configure_file(fixtures/worker_manifest.ttl
+        "${DUSKSTUDIO_WORKER_LV2_BUNDLE}/manifest.ttl" COPYONLY)
+    configure_file(fixtures/worker_plugin.ttl
+        "${DUSKSTUDIO_WORKER_LV2_BUNDLE}/worker_plugin.ttl" COPYONLY)
+    add_library(dusk-studio-worker-lv2-fixture MODULE
+        fixtures/worker_lv2.cpp)
+    set_target_properties(dusk-studio-worker-lv2-fixture PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "worker_fixture"
+        LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_WORKER_LV2_BUNDLE}>")
+    target_compile_features(dusk-studio-worker-lv2-fixture PRIVATE cxx_std_17)
+    find_package(Threads REQUIRED)
+    target_link_libraries(dusk-studio-worker-lv2-fixture PRIVATE PkgConfig::LV2 Threads::Threads)
+
     target_sources(dusk-studio-tests PRIVATE
         lv2_bundle_load.cpp
         lv2_file_state.cpp
         lv2_patch_feedback.cpp
         lv2_instance_process.cpp
         lv2_native_slot.cpp
+        lv2_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Scanner.cpp)
+        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Scanner.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Worker.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_NATIVE_LV2=1
         DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH="${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}"
-        DUSKSTUDIO_MANY_PATCH_LV2_FIXTURE_PATH="${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}")
+        DUSKSTUDIO_MANY_PATCH_LV2_FIXTURE_PATH="${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}"
+        DUSKSTUDIO_WORKER_LV2_FIXTURE_PATH="${DUSKSTUDIO_WORKER_LV2_BUNDLE}")
     add_dependencies(dusk-studio-tests
         dusk-studio-file-state-lv2-fixture
-        dusk-studio-many-patch-lv2-fixture)
+        dusk-studio-many-patch-lv2-fixture
+        dusk-studio-worker-lv2-fixture)
 endif()
 
 if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3)

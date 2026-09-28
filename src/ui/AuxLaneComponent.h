@@ -76,7 +76,8 @@ public:
     auto controlPointForScenario (const std::string& control) const
     {
         return (control == "mute" ? muteButton.getBounds()
-                : control == "fader" ? returnFader.getBounds() : nameLabel.getBounds()).getCentre();
+                : control == "fader" ? returnFader.getBounds()
+                : control == "insert" ? slots[0].openOrAddButton.getBounds() : nameLabel.getBounds()).getCentre();
     }
     std::vector<double> returnRangeForScenario() const { return { returnFader.getMinimum(), returnFader.getMaximum() }; }
     bool attachEditorForSlotForScenario (int slotIdx);

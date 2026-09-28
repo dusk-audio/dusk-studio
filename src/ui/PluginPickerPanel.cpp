@@ -1,4 +1,5 @@
 #include "PluginPickerPanel.h"
+#include "WheelScroll.h"
 
 #include <algorithm>
 
@@ -169,6 +170,9 @@ public:
         return rows;
     }
 
+    int scrollForScenario() const noexcept { return scrollOffset; }
+    int maxScrollForScenario() const { return std::max (0, getContentHeight() - getHeight()); }
+
     void resized() override { clampScroll(); }
 
     void paint (juce::Graphics& g) override
@@ -240,8 +244,7 @@ public:
     void mouseWheelMove (const juce::MouseEvent&,
                           const juce::MouseWheelDetails& w) override
     {
-        const int delta = (int) (-w.deltaY * 80.0f);
-        scrollOffset += delta;
+        scrollOffset += wheelScroll.pixels (-w.deltaY, w.isSmooth, (float) kWheelNotchPx);
         clampScroll();
         repaint();
     }
@@ -257,6 +260,7 @@ private:
     static constexpr int kRowH       = 22;
     static constexpr int kHeaderH    = 22;
     static constexpr int kScrollbarW = 8;
+    static constexpr int kWheelNotchPx = 2 * kRowH;
 
     int rowForY (int y) const noexcept
     {
@@ -303,6 +307,7 @@ private:
     std::vector<Entry> visibleEntries;
     std::function<void (const PluginDescriptor&)> onPick;
     int scrollOffset = 0;
+    wheel::Accumulator wheelScroll;
 };
 
 PluginPickerPanel::PluginPickerPanel (std::vector<PluginDescriptor> descriptions,
@@ -390,6 +395,12 @@ PluginPickerPanel::~PluginPickerPanel() = default;
 std::vector<PluginPickerPanel::ScenarioRow> PluginPickerPanel::rowsForScenario() const
 {
     return listBody->rowsForScenario();
+}
+
+std::array<int, 4> PluginPickerPanel::scrollForScenario() const
+{
+    const auto centre = listBody->getBounds().getCentre();
+    return { listBody->scrollForScenario(), listBody->maxScrollForScenario(), centre.x, centre.y };
 }
 
 void PluginPickerPanel::paint (juce::Graphics& g)

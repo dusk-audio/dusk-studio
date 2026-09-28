@@ -104,14 +104,14 @@ template <typename Peer, typename Source, typename Point, typename Modifiers, ty
           typename Time, typename Wheel>
 void dispatchMouseWheel (Peer& peer, void (Peer::*mouse) (Source, Point, Modifiers, Rest...),
                          void (Peer::*wheel) (Source, Point, Time, const Wheel&, int),
-                         float x, float y, float delta, bool command, bool shift, std::int64_t time)
+                         float x, float y, float delta, bool command, bool shift, bool smooth, std::int64_t time)
 {
     const auto point = Point (x, y) * peer.getComponent().getDesktopScaleFactor();
     const int flags = (command ? Modifiers::commandModifier : 0) | (shift ? Modifiers::shiftModifier : 0);
     const auto saved = Modifiers::currentModifiers;
     Modifiers::currentModifiers = Modifiers (flags);
     (peer.*mouse) (Source::mouse, point, Modifiers (flags), 1.0f, 0.0f, time, {}, 0);
-    (peer.*wheel) (Source::mouse, point, static_cast<Time> (time), Wheel { 0.0f, delta, false, false, false }, 0);
+    (peer.*wheel) (Source::mouse, point, static_cast<Time> (time), Wheel { 0.0f, delta, false, smooth, false }, 0);
     Modifiers::currentModifiers = saved;
 }
 
@@ -226,6 +226,12 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
     {
         auto* component = strip();
         return component != nullptr && component->hasOpenPluginEditorForScenario();
+    }
+
+    bool hasOpenBuiltinEditor() const override
+    {
+        auto* component = strip();
+        return component != nullptr && component->hasOpenBuiltinEditorForScenario();
     }
 
     bool pluginWindowMissing() const override
@@ -616,7 +622,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
             std::chrono::system_clock::now().time_since_epoch()).count();
         dispatchMouseWheel (*peer, &Peer::handleMouseEvent, &Peer::handleMouseWheel,
-                            point.x, point.y, delta, command, shift, time);
+                            point.x, point.y, delta, command, shift, false, time);
         return true;
     }
     bool tapeRulerPointer (float fraction, bool down, bool shift) override
@@ -1246,7 +1252,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.pianoRoll != nullptr ? owner.pianoRoll->viewportForScenario() : std::array<double, 4> {};
     }
-    bool scrollPiano (float delta, bool command, bool shift) override
+    bool scrollPiano (float delta, bool command, bool shift, bool smooth) override
     {
         auto* editor = owner.pianoRoll.get();
         auto* peer = owner.getPeer();
@@ -1256,7 +1262,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
             std::chrono::system_clock::now().time_since_epoch()).count();
         dispatchMouseWheel (*peer, &Peer::handleMouseEvent, &Peer::handleMouseWheel,
-                            point.x, point.y, delta, command, shift, time);
+                            point.x, point.y, delta, command, shift, smooth, time);
         return true;
     }
     bool clickPianoFit() override
@@ -1359,6 +1365,51 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                     return clickAt (point.x, point.y, 1);
                 }
         return false;
+    }
+    bool openScrollingPicker (int rows) override
+    {
+        std::vector<PluginDescriptor> descriptions;
+        for (int i = 0; i < rows; ++i)
+        {
+            PluginDescriptor row;
+            row.name = "Wheel Row " + std::to_string (i + 1);
+            row.manufacturer = "Scenario Maker";
+            row.category = "Fx|EQ";
+            row.formatName = "CLAP";
+            row.backend = PluginBackend::Native;
+            descriptions.push_back (std::move (row));
+        }
+        scrollingPickerModal.show (owner, std::make_unique<PluginPickerPanel> (std::move (descriptions),
+                                       PluginPickerPanel::Kind::Effects, PluginPickerPanel::Callbacks {}),
+                                   [this] { scrollingPickerModal.close(); });
+        return true;
+    }
+    std::array<int, 2> pickerScroll() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* picker = dynamic_cast<const PluginPickerPanel*> (stack.back()->getBody());
+        if (picker == nullptr) return {};
+        const auto scroll = picker->scrollForScenario();
+        return { scroll[0], scroll[1] };
+    }
+    bool wheelPicker (float delta, bool smooth) override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        auto* peer = owner.getPeer();
+        if (stack.empty() || peer == nullptr) return false;
+        const auto* picker = dynamic_cast<const PluginPickerPanel*> (stack.back()->getBody());
+        if (picker == nullptr || ! picker->isShowing()) return false;
+        const auto scroll = picker->scrollForScenario();
+        auto local = picker->getLocalBounds().getCentre();
+        local.setXY (scroll[2], scroll[3]);
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (picker, local).toFloat();
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        dispatchMouseWheel (*peer, &Peer::handleMouseEvent, &Peer::handleMouseWheel,
+                            point.x, point.y, delta, false, false, smooth, time);
+        return true;
     }
     bool focusFileName() override
     {
@@ -1675,7 +1726,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             return strip != nullptr
                 && click (strip, control == "name" ? strip->namePointForScenario() : strip->printPointForScenario());
         }
-        if (kind == StripKind::Aux && (control == "name" || control == "mute" || control == "fader"))
+        if (kind == StripKind::Aux && (control == "name" || control == "mute" || control == "fader"
+                                       || control == "insert"))
         {
             auto* lane = owner.auxView != nullptr ? owner.auxView->getLaneComponent (index) : nullptr;
             return lane != nullptr && click (lane, lane->controlPointForScenario (control));
@@ -2134,6 +2186,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::string startupChoiceMade;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;
     std::array<std::unique_ptr<ScenarioAuxLaneHandle>, Session::kNumAuxLanes> lanes;
+    EmbeddedModal scrollingPickerModal;
 };
 
 namespace scenario

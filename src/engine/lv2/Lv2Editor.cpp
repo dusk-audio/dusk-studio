@@ -189,9 +189,11 @@ bool Lv2Editor::embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
     if (impl->suilHost == nullptr)
         impl->suilHost = suil_host_new (&Impl::writePort, &Impl::portIndex, nullptr, nullptr);
 
-    // Features: the instance's URID map/unmap (shared URID space), the parent
-    // window, instance/data access for UIs that reach into their DSP side, and
-    // our ui:resize handler. idleInterface is declared so UIs can rely on it.
+    // Features: the instance's URID map/unmap (shared URID space) and options
+    // (a UI that declares options required, as DAF's do, otherwise assumes
+    // 44.1 kHz), the parent window, instance/data access for UIs that reach into
+    // their DSP side, and our ui:resize handler. idleInterface is declared so
+    // UIs can rely on it.
     impl->resizeData = { impl.get(), &Impl::uiResize };
     auto* lilvInst = static_cast<LilvInstance*> (impl->instance->lilvInstance());
     impl->extData  = { lilvInst != nullptr ? lilv_instance_get_descriptor (lilvInst)->extension_data
@@ -205,6 +207,7 @@ bool Lv2Editor::embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
     impl->features = {
         static_cast<const LV2_Feature*> (impl->instance->uridMapFeature()),
         static_cast<const LV2_Feature*> (impl->instance->uridUnmapFeature()),
+        static_cast<const LV2_Feature*> (impl->instance->optionsFeature()),
         &impl->parentFeature, &impl->instanceFeature, &impl->dataFeature,
         &impl->resizeFeature, &impl->idleFeature, nullptr };
 

@@ -32,7 +32,8 @@ public:
 
     // Audio thread. Run `inst` as a stereo insert over L/R in place. sidechainL/R
     // feed the plugin's sidechain bus when it has one (null -> silence). midiIn /
-    // transport are forwarded for instrument / tempo-synced plugins (null ok).
+    // transport are forwarded for instrument / tempo-synced plugins (null ok),
+    // offlineRender / renderCancelled as PortBuffers' fields.
     // Leaves L/R untouched (dry passthrough) if `inst` is inactive or numFrames
     // exceeds the prepared maximum.
     void process (INativeInstance& inst,
@@ -40,7 +41,9 @@ public:
                   const float* sidechainL = nullptr,
                   const float* sidechainR = nullptr,
                   const dusk::MidiBuffer* midiIn = nullptr,
-                  const dusk::TransportPosition* transport = nullptr) noexcept;
+                  const dusk::TransportPosition* transport = nullptr,
+                  bool offlineRender = false,
+                  const std::atomic<bool>* renderCancelled = nullptr) noexcept;
 
     int inputChannels()     const noexcept { return inChans; }
     int outputChannels()    const noexcept { return outChans; }
