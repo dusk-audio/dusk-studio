@@ -4,6 +4,7 @@
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
+#include "WheelScroll.h"
 
 #include <algorithm>
 
@@ -352,6 +353,7 @@ private:
     // scroll vertically by rowScrollY (plain wheel deltaY).
     int rowHeight  = kRowHDefault;
     int rowScrollY = 0;
+    wheel::Accumulator rowHeightWheel, rowScrollWheel;
     // Pixel height of all visible rows at the current rowHeight (content
     // extent below the ruler). Used to clamp rowScrollY + decide overflow.
     int rowsContentHeight() const noexcept;

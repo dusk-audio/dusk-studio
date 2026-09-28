@@ -1,6 +1,7 @@
 #include "GuiHost.h"
 #include "AppConfig.h"
 #include "FourKColours.h"
+#include "WheelScroll.h"
 #include "../foundation/AppConfigDir.h"
 #include "../foundation/AppMusicDir.h"
 #include "../foundation/Fs.h"
@@ -84,6 +85,9 @@ struct Step
     std::string timeout {};
     std::function<void()> retry {};
 };
+
+// A wheel of n notches as this platform's window peer reports it.
+float notch (float n) { return n * wheel::profile().lineNotchDelta; }
 
 constexpr int kUntilBoundMs = 15000;
 constexpr int kUntilPollMs  = 10;
@@ -1506,21 +1510,21 @@ std::optional<ScenarioResult> runTimelineKeys (GuiHost& host, ScenarioContext& c
     {
         ctx.expect (std::abs (view()[0] - *fit * 1.15) < 0.0001, "minus did not zoom out");
         *anchor = host.tapeRulerSample (0.6f);
-        ctx.expect (host.tapeWheel (0.6f, 1.0f, true, false), "command wheel unavailable");
+        ctx.expect (host.tapeWheel (0.6f, notch (1.0f), true, false), "command wheel unavailable");
     } });
     steps->push_back ({ 100, [&ctx, view, fit, &host, anchor, beforeWheel]
     {
         ctx.expect (std::abs (view()[0] - *fit * 1.15 * 1.15) < 0.0001, "command wheel did not zoom");
         ctx.expect (std::abs (host.tapeRulerSample (0.6f) - *anchor) <= 2, "wheel zoom moved the cursor's sample");
         *beforeWheel = view();
-        ctx.expect (host.tapeWheel (0.6f, -1.0f, false, true), "shift wheel unavailable");
+        ctx.expect (host.tapeWheel (0.6f, notch (-1.0f), false, true), "shift wheel unavailable");
     } });
     steps->push_back ({ 100, [&ctx, &host, view, beforeWheel]
     {
         ctx.expect (view()[1] > (*beforeWheel)[1] && std::abs (view()[0] - (*beforeWheel)[0]) < 0.0001,
                     "shift wheel did not scroll the zoomed timeline horizontally");
         *beforeWheel = view();
-        ctx.expect (host.tapeWheel (0.6f, -1.0f, false, false), "plain wheel unavailable");
+        ctx.expect (host.tapeWheel (0.6f, notch (-1.0f), false, false), "plain wheel unavailable");
     } });
     steps->push_back ({ 100, [&ctx, view, beforeWheel, key]
     {
@@ -1547,16 +1551,16 @@ std::optional<ScenarioResult> runTimelineKeys (GuiHost& host, ScenarioContext& c
     } });
     steps->push_back ({ 300, [&host, &ctx, view, beforeWheel]
     {
-        for (int i = 0; i < 8; ++i) host.tapeWheel (0.6f, 1.0f, true, true);
+        for (int i = 0; i < 8; ++i) host.tapeWheel (0.6f, notch (1.0f), true, true);
         *beforeWheel = view();
-        ctx.expect (host.tapeWheel (0.6f, -1.0f, false, false), "overflow wheel unavailable");
+        ctx.expect (host.tapeWheel (0.6f, notch (-1.0f), false, false), "overflow wheel unavailable");
     } });
     steps->push_back ({ 100, [&host, &ctx, view, beforeWheel]
     {
         ctx.expect (view()[2] > (*beforeWheel)[2] && std::abs (view()[1] - (*beforeWheel)[1]) < 0.5,
                     "plain wheel did not scroll overflowing rows vertically");
         *beforeWheel = view();
-        ctx.expect (host.tapeWheel (0.6f, 1.0f, false, true), "overflow shift wheel unavailable");
+        ctx.expect (host.tapeWheel (0.6f, notch (1.0f), false, true), "overflow shift wheel unavailable");
     } });
     steps->push_back ({ 100, [&ctx, view, beforeWheel]
     {
@@ -4120,7 +4124,7 @@ std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& 
     {
         ctx.expect (std::abs (host.pianoViewport()[0] - (*before)[0]) < 1.0e-6, "minus did not restore the zoom");
         *before = host.pianoViewport();
-        ctx.expect (host.scrollPiano (-1.0f, false, false), "vertical wheel was not delivered");
+        ctx.expect (host.scrollPiano (notch (-1.0f), false, false, false), "vertical wheel was not delivered");
     } });
     steps->push_back ({ 150, [&host, &ctx, before]
     {
@@ -4128,7 +4132,7 @@ std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& 
         ctx.expect (after[2] > (*before)[2] && std::abs (after[0] - (*before)[0]) < 1.0e-6,
                     "unmodified wheel did not scroll the pitch range");
         *before = after;
-        ctx.expect (host.scrollPiano (-1.0f, false, true), "Shift wheel was not delivered");
+        ctx.expect (host.scrollPiano (notch (-1.0f), false, true, false), "Shift wheel was not delivered");
     } });
     steps->push_back ({ 150, [&host, &ctx, before]
     {
@@ -4136,7 +4140,7 @@ std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& 
         ctx.expect (after[1] > (*before)[1] && std::abs (after[2] - (*before)[2]) < 0.1,
                     "Shift wheel did not scroll horizontally");
         *before = after;
-        ctx.expect (host.scrollPiano (1.0f, true, false), "command wheel was not delivered");
+        ctx.expect (host.scrollPiano (notch (1.0f), true, false, false), "command wheel was not delivered");
     } });
     steps->push_back ({ 150, [&host, &ctx, before]
     {
@@ -4159,6 +4163,81 @@ const ScenarioRegistrar pianoViewport { Scenario {
     "gui.piano_viewport", { "gui", "piano" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoViewport (host, ctx); }
+} };
+
+// The piano roll's pitch scroll and zoom under macOS wheel and trackpad sizes:
+// a click moves at least a key, single points add up, and a trackpad stream
+// zooms by the notches it travels instead of a whole step per event.
+std::optional<ScenarioResult> runPianoWheelSizes (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr double kKeyH = 16.0;
+    static constexpr int kPoints = 16;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        wheel::setProfileForScenario (wheel::kPlatformProfile);
+        host.closeRegionEditors();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (guiStage (originalStage));
+    });
+    MidiRegion region;
+    region.lengthInTicks = 100000;
+    region.lengthInSamples = session.ticksToSamples (region.lengthInTicks, engine.getCurrentSampleRate());
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    host.switchToStage (GuiHost::Stage::Recording);
+    const auto pitch = [&host] { return host.pianoViewport()[2]; };
+    const auto zoom = [&host] { return host.pianoViewport()[0]; };
+    const auto before = std::make_shared<double> (0.0);
+    const auto wheelOf = [&host, &ctx] (float delta, bool command, bool smooth, int events)
+    {
+        for (int i = 0; i < events; ++i)
+            ctx.expect (host.scrollPiano (delta, command, false, smooth), "the piano roll did not take the wheel");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
+    steps->push_back ({ 0, [pitch, before, wheelOf]
+    {
+        wheel::setProfileForScenario (wheel::kMacProfile);
+        *before = pitch();
+        wheelOf (-wheel::kMacProfile.lineNotchDelta, false, false, 1);
+    }, [&host] { return host.pianoRollOpen(); }, "the piano roll did not come up" });
+    steps->push_back ({ 0, [&ctx, pitch, before, wheelOf]
+    {
+        ctx.expect (pitch() - *before >= kKeyH, "a macOS wheel click scrolled the piano roll less than a key");
+        *before = pitch();
+        wheelOf (-wheel::kSmoothDeltaPerPoint, false, true, kPoints);
+    }, [pitch, before] { return pitch() > *before; }, "a macOS wheel click did not scroll the piano roll" });
+    steps->push_back ({ 0, [&ctx, pitch, zoom, before, wheelOf]
+    {
+        ctx.expect (pitch() - *before >= kPoints - 1, "single trackpad points did not follow the fingers");
+        *before = zoom();
+        wheelOf (wheel::kSmoothDeltaPerPoint, true, true, static_cast<int> (wheel::kPointsPerNotch));
+    }, [pitch, before] { return pitch() > *before; }, "single trackpad points did not scroll the piano roll" });
+    steps->push_back ({ 0, [&ctx, zoom, before]
+    {
+        const double ratio = zoom() / *before;
+        ctx.expect (ratio > 1.14 && ratio < 1.16,
+                    "a notch of trackpad travel zoomed by " + std::to_string (ratio) + " instead of one step");
+    }, [zoom, before] { return zoom() > *before; }, "a trackpad stream with command did not zoom the piano roll" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoWheelSizes { Scenario {
+    "gui.piano_wheel_sizes", { "gui", "piano" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoWheelSizes (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext& ctx)
@@ -5977,6 +6056,61 @@ const ScenarioRegistrar pickOpensNativeEditor { Scenario {
     "gui.pick_opens_native_editor", { "gui", "plugins" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPickOpensNativeEditor (host, ctx); }
+} };
+
+// macOS reports a wheel click at a fifth of an X11 one and a trackpad point at
+// a fraction of that, which the list used to truncate to a pixel or to nothing.
+std::optional<ScenarioResult> runPluginPickerWheel (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr int kRowH = 22;
+    ctx.cleanup ([&host]
+    {
+        wheel::setProfileForScenario (wheel::kPlatformProfile);
+        drainModals (host);
+    });
+    const auto offset = [&host] { return host.pickerScroll()[0]; };
+    const auto before = std::make_shared<int> (0);
+    const auto wheelOf = [&host, &ctx, offset, before] (float delta, bool smooth, int events)
+    {
+        *before = offset();
+        for (int i = 0; i < events; ++i)
+            ctx.expect (host.wheelPicker (delta, smooth), "the picker list did not take the wheel");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.openScrollingPicker (60), "the picker did not open"); } });
+    steps->push_back ({ 0, [wheelOf]
+    {
+        wheel::setProfileForScenario (wheel::kMacProfile);
+        wheelOf (-wheel::kMacProfile.lineNotchDelta, false, 1);
+    }, [&host] { return host.pickerScroll()[1] > 10 * kRowH; }, "the picker list was not long enough to scroll" });
+    steps->push_back ({ 0, [&ctx, offset, before, wheelOf]
+    {
+        ctx.expect (offset() - *before >= kRowH, "a macOS wheel click scrolled the picker less than a row");
+        wheelOf (-wheel::kSmoothDeltaPerPoint, true, kRowH);
+    }, [offset, before] { return offset() > *before; }, "a macOS wheel click did not scroll the picker" });
+    steps->push_back ({ 0, [&ctx, offset, before, wheelOf]
+    {
+        ctx.expect (offset() - *before >= kRowH - 1, "a row of single trackpad points did not scroll the picker a row");
+        wheelOf (wheel::kMacProfile.lineNotchDelta, false, 1);
+    }, [offset, before] { return offset() > *before; }, "single trackpad points did not scroll the picker" });
+    steps->push_back ({ 0, [&ctx, offset, before, wheelOf]
+    {
+        ctx.expect (*before - offset() >= kRowH, "a macOS wheel click up scrolled the picker less than a row");
+        wheel::setProfileForScenario (wheel::kPlatformProfile);
+        wheelOf (notch (-1.0f), false, 1);
+    }, [offset, before] { return offset() < *before; }, "a macOS wheel click up did not scroll the picker" });
+    steps->push_back ({ 0, [&ctx, offset, before]
+    { ctx.expect (offset() - *before >= kRowH, "a wheel notch on this platform scrolled the picker less than a row"); },
+      [offset, before] { return offset() > *before; }, "a wheel notch on this platform did not scroll the picker" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pluginPickerWheel { Scenario {
+    "gui.plugin_picker_wheel", { "gui", "plugins" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPluginPickerWheel (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runSettingsDefaults (GuiHost& host, ScenarioContext& ctx)
@@ -11732,12 +11866,12 @@ std::optional<ScenarioResult> runPianoVelocity (GuiHost& host, ScenarioContext& 
     steps->push_back ({ 100, [&host, &ctx, height]
     {
         ctx.expect (host.pianoVelocityHeight() == *height, "dragging down did not restore the velocity strip");
-        ctx.expect (host.wheelPianoVelocity (0.5f), "the velocity strip did not accept a wheel gesture");
+        ctx.expect (host.wheelPianoVelocity (notch (2.0f)), "the velocity strip did not accept a wheel gesture");
     } });
     steps->push_back ({ 100, [&host, &ctx, height]
     {
         ctx.expect (host.pianoVelocityHeight() == *height + 16, "wheel-up did not grow the velocity strip");
-        ctx.expect (host.wheelPianoVelocity (-0.5f), "the velocity strip did not accept wheel-down");
+        ctx.expect (host.wheelPianoVelocity (notch (-2.0f)), "the velocity strip did not accept wheel-down");
     } });
     steps->push_back ({ 100, [&host, &ctx, height]
     { ctx.expect (host.pianoVelocityHeight() == *height, "wheel-down did not restore the velocity strip"); } });

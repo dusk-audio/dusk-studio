@@ -83,6 +83,7 @@ add_executable(dusk-studio-tests
     crossfade.cpp
     clone_plugin_snapshot.cpp
     fade_curve_path.cpp
+    wheel_scroll.cpp
     file_importer_audio.cpp
     hardware_insert.cpp
     base64_decode.cpp

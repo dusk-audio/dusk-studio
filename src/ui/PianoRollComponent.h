@@ -4,6 +4,7 @@
 #include <functional>
 #include <array>
 #include "DuskComboBox.h"
+#include "WheelScroll.h"
 #include "../foundation/MessageThread.h"
 #include "../session/Session.h"
 
@@ -147,6 +148,7 @@ private:
 
     int scrollY = (kNumKeys - 24) * kNoteHeight / 2;  // centre near middle C
     int scrollX = 0;
+    wheel::Accumulator wheelX, wheelY, wheelStrip;
 
     // Sorted/dedup'd so set ops (toggle/contains) are O(log n). Mutating
     // ops iterate descending so earlier indices stay valid.

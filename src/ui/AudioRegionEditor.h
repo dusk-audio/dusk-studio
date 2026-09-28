@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../engine/audiofile/WaveformPeaks.h"
 #include "../foundation/MessageThread.h"
+#include "WheelScroll.h"
 #include <functional>
 #include "../session/Session.h"
 
@@ -112,6 +113,7 @@ private:
     std::int64_t anchorTimelineStart  = 0;
     std::int64_t anchorTimelineLength = 0;
     float pixelsPerSample = 0.0f;
+    wheel::Accumulator panWheel;
     std::int64_t scrollSamples = 0;
     std::int64_t editCursorSample = 0;
 

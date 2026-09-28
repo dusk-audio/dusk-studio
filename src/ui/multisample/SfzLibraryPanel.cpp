@@ -3,6 +3,7 @@
 #include "../AppConfig.h"
 #include "../EmbeddedModal.h"
 #include "../DuskFileBrowser.h"
+#include "../WheelScroll.h"
 #include "../../foundation/MessageThread.h"
 
 #include <algorithm>
@@ -141,7 +142,7 @@ public:
     void mouseWheelMove (const juce::MouseEvent&,
                          const juce::MouseWheelDetails& wheel) override
     {
-        scrollOffset += (int) (-wheel.deltaY * 80.0f);
+        scrollOffset += wheelScroll.pixels (-wheel.deltaY, wheel.isSmooth, 2.0f * kRowH);
         clampScroll();
         repaint();
     }
@@ -193,6 +194,7 @@ private:
     juce::String emptyMessage { "Scanning..." };
     std::vector<Row> rows;
     int scrollOffset = 0;
+    wheel::Accumulator wheelScroll;
 };
 
 SfzLibraryPanel::SfzLibraryPanel (Callbacks cb,

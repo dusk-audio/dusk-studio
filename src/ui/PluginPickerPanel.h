@@ -4,6 +4,7 @@
 
 #include "../engine/PluginDescriptor.h"
 
+#include <array>
 #include <functional>
 #include <string>
 #include <vector>
@@ -52,6 +53,8 @@ public:
         int x, y;
     };
     std::vector<ScenarioRow> rowsForScenario() const;
+    // The list's offset, its most, and its centre in this panel.
+    std::array<int, 4> scrollForScenario() const;
 
     void paint (juce::Graphics&) override;
     void resized() override;

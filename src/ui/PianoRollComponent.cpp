@@ -3404,7 +3404,7 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
     {
         const int topBandH = kToolbarHeight + kHeaderHeight;
         constexpr int kMinGridH = 80;
-        const int delta = (int) std::round (w.deltaY * 32.0f);  // 1 click ~ 32 px
+        constexpr float kStripNotchPx = 8.0f;
 
         if (e.y >= velTop && e.y < ccTop)
         {
@@ -3412,7 +3412,7 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
                 getHeight() - topBandH - ccStripH - kStatusBarH - kScrollBarH - kMinGridH);
             velocityStripH = jlimit (kVelocityStripHMin,
                 std::min (kVelocityStripHMax, maxAllowed),
-                velocityStripH + delta);
+                velocityStripH + wheelStrip.pixels (w.deltaY, w.isSmooth, kStripNotchPx));
             repaint();
             return;
         }
@@ -3422,7 +3422,7 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
                 getHeight() - topBandH - velocityStripH - kStatusBarH - kScrollBarH - kMinGridH);
             ccStripH = jlimit (kCcStripHMin,
                 std::min (kCcStripHMax, maxAllowed),
-                ccStripH + delta);
+                ccStripH + wheelStrip.pixels (w.deltaY, w.isSmooth, kStripNotchPx));
             repaint();
             return;
         }
@@ -3436,8 +3436,7 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
         // This makes zoom feel like it's pulling the timeline through
         // the cursor instead of resetting to tick 0.
         const auto cursorTickBefore = tickForX (e.x);
-        const float factor = w.deltaY > 0.0f ? 1.15f : (1.0f / 1.15f);
-        pixelsPerTick = jlimit (0.005f, 1.0f, pixelsPerTick * factor);
+        pixelsPerTick = jlimit (0.005f, 1.0f, pixelsPerTick * wheel::zoomFactor (w.deltaY, w.isSmooth, 1.15f));
         const int newCursorPx = (int) std::round ((double) cursorTickBefore * pixelsPerTick);
         scrollX = std::max (0, newCursorPx - (e.x - kKeyboardWidth));
         repaint();
@@ -3450,13 +3449,12 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
     if (std::abs (w.deltaX) > 0.001f || e.mods.isShiftDown())
     {
         const float dx = std::abs (w.deltaX) > 0.001f ? w.deltaX : w.deltaY;
-        const int dxPx = (int) (-dx * 120.0f);
-        scrollX = std::max (0, scrollX + dxPx);
+        scrollX = std::max (0, scrollX + wheelX.pixels (-dx, w.isSmooth, 24.0f));
         repaint();
         return;
     }
     // Vertical scroll. wheel deltaY > 0 = scroll up (show higher notes).
-    const int delta = (int) (-w.deltaY * 60.0f);
+    const int delta = wheelY.pixels (-w.deltaY, w.isSmooth, (float) kNoteHeight);
     const int maxScroll = std::max (0,
         kFullGridHeight - (getHeight() - kToolbarHeight - kHeaderHeight
                               - velocityStripH - ccStripH - kStatusBarH));

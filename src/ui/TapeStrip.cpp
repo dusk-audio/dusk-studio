@@ -2430,8 +2430,8 @@ void TapeStrip::mouseWheelMove (const juce::MouseEvent& e,
     // editors), so vertical takes the Shift modifier.
     if ((e.mods.isCommandDown() || e.mods.isCtrlDown()) && e.mods.isShiftDown())
     {
-        const int delta = (w.deltaY > 0.0f) ? 4 : -4;
-        const int nh    = jlimit (kRowHMin, kRowHMax, rowHeight + delta);
+        const int nh = jlimit (kRowHMin, kRowHMax,
+                               rowHeight + rowHeightWheel.pixels (w.deltaY, w.isSmooth, 4.0f));
         if (nh != rowHeight)
         {
             rowHeight = nh;
@@ -2446,8 +2446,7 @@ void TapeStrip::mouseWheelMove (const juce::MouseEvent& e,
     // Cmd/Ctrl + wheel = horizontal zoom anchored on the cursor sample.
     if (e.mods.isCommandDown() || e.mods.isCtrlDown())
     {
-        const float factor = w.deltaY > 0.0f ? 1.15f : (1.0f / 1.15f);
-        zoomByFactor (factor, e.x);
+        zoomByFactor (wheel::zoomFactor (w.deltaY, w.isSmooth, 1.15f), e.x);
         return;
     }
     // Plain wheel: vertical scroll first when rows overflow the (capped)
@@ -2456,7 +2455,7 @@ void TapeStrip::mouseWheelMove (const juce::MouseEvent& e,
     const int band = std::max (0, getHeight() - kRulerH);
     if (rowsContentHeight() > band && std::abs (w.deltaY) > 0.001f)
     {
-        rowScrollY -= (int) std::round (w.deltaY * (float) (rowHeight + kRowGap) * 3.0f);
+        rowScrollY -= rowScrollWheel.pixels (w.deltaY, w.isSmooth, (float) (rowHeight + kRowGap));
         clampRowScroll();
         repaint();
         return;
@@ -2466,12 +2465,10 @@ void TapeStrip::mouseWheelMove (const juce::MouseEvent& e,
         const double sr = engine.getCurrentSampleRate();
         if (sr > 0.0)
         {
-            // ~half a second per wheel-notch. Sign: positive deltaY (away
+            // A tenth of a second per notch. Sign: positive deltaY (away
             // from user) = scroll left = decrease scrollSamples.
-            const auto step = (std::int64_t) (sr * 0.5);
-            const double dx = std::abs (w.deltaX) > 0.001f ? w.deltaX
-                                                            : w.deltaY;
-            const auto delta = (std::int64_t) (dx * (double) step);
+            const float dx = std::abs (w.deltaX) > 0.001f ? w.deltaX : w.deltaY;
+            const auto delta = (std::int64_t) ((double) wheel::notches (dx, w.isSmooth) * sr * 0.1);
             scrollSamples = std::max<std::int64_t> (0, scrollSamples - delta);
             repaint();
         }
