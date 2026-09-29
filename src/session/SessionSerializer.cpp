@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
@@ -2094,7 +2095,19 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast["limiter_lookahead_ms"] = s.mastering().limiterLookaheadMs.load();
     mast["limiter_mode"]         = s.mastering().limiterMode.load();
     mast["limiter_stereo_link"]  = s.mastering().limiterStereoLink.load();
-    mast["loudness_target"]      = s.mastering().targetPresetIndex.load();
+    {
+        // Builds from before the grouped list read only target_preset, as an
+        // index into Off, Spotify, Apple Music, YouTube, Tidal, Broadcast (EBU
+        // R128). Writing it too keeps the target in those builds without a
+        // format bump that would lock them out of the whole session.
+        constexpr int kToPlatformList[] = { 0, 1, 2, 5 };
+        static_assert (std::size (kToPlatformList) == MasteringParams::kNumTargetPresets,
+                       "every loudness target needs a per-platform index");
+        const int target = std::clamp (s.mastering().targetPresetIndex.load(),
+                                       0, MasteringParams::kNumTargetPresets - 1);
+        mast["loudness_target"] = target;
+        mast["target_preset"]   = kToPlatformList[target];
+    }
     root["mastering"] = std::move (mast);
 
     // Transport (loop + punch). Mirrored onto Session by

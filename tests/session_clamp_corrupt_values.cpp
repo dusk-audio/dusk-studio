@@ -9,6 +9,8 @@
 #include <array>
 #include <cmath>
 
+#include <nlohmann/json.hpp>
+
 using duskstudio::AutomationParam;
 using duskstudio::Session;
 using duskstudio::SessionSerializer;
@@ -536,6 +538,31 @@ TEST_CASE ("SessionSerializer::load maps the per-platform loudness target onto t
         REQUIRE (SessionSerializer::load (s, target));
         INFO ("legacy index " << legacy);
         REQUIRE (s.mastering().targetPresetIndex.load() == expected[(std::size_t) legacy]);
+        target.getParentDirectory().deleteRecursively();
+    }
+}
+
+// A save carries the target under both keys, so a build that only knows the
+// per-platform list still reads the target back.
+TEST_CASE ("SessionSerializer::save writes the loudness target for grouped and per-platform readers",
+           "[session][serializer]")
+{
+    const std::array<int, duskstudio::MasteringParams::kNumTargetPresets> perPlatform { 0, 1, 2, 5 };
+    for (int grouped = 0; grouped < (int) perPlatform.size(); ++grouped)
+    {
+        const auto target = writeSession ("{}");
+        Session saved;
+        saved.mastering().targetPresetIndex.store (grouped);
+        REQUIRE (SessionSerializer::save (saved, target));
+
+        const auto root = nlohmann::json::parse (target.loadFileAsString().toStdString());
+        INFO ("grouped index " << grouped);
+        REQUIRE (root.at ("mastering").at ("loudness_target").get<int>() == grouped);
+        REQUIRE (root.at ("mastering").at ("target_preset").get<int>() == perPlatform[(std::size_t) grouped]);
+
+        Session loaded;
+        REQUIRE (SessionSerializer::load (loaded, target));
+        REQUIRE (loaded.mastering().targetPresetIndex.load() == grouped);
         target.getParentDirectory().deleteRecursively();
     }
 }
