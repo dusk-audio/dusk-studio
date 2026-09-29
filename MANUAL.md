@@ -30,7 +30,7 @@ Dusk Studio includes:
 - Four mix buses, each with a 3-band tone EQ, a highpass and a console-style bus compressor.
 - A master bus with tape saturation, a tube program EQ, bus compressor, and mono-sum check.
 - A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, and BS.1770 loudness metering.
-- VST3, LV2, AU, and CLAP plugin hosting, with optional out-of-process sandboxing for crash isolation. CLAP and VST3 — effects and instruments — run through Dusk Studio's own native hosts on Linux, macOS, and Windows; LV2 does on Linux and macOS, and Audio Units do on macOS.
+- VST3, LV2, AU, and CLAP plugin hosting, with optional out-of-process sandboxing for crash isolation. CLAP and VST3 — effects and instruments — run through Dusk Studio's own native hosts on Linux, macOS, and Windows; LV2 does on Linux and macOS, and Audio Units do on macOS. On Windows, LV2 plugins load through the standard plugin host.
 - External hardware insert per channel and per aux, with automatic latency measurement.
 - A multi-sampler that plays `.sfz` files and `.sf2` SoundFonts on MIDI tracks, both through the built-in sfizz engine (SF2 files are converted to SFZ on load — no external synth required).
 - MIDI Clock and MIDI Time Code chase and emit.
@@ -756,7 +756,7 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 
 Each channel has one insert slot, which can hold either a plugin or a hardware insert (configured via the Settings or right-click menu). Switching between plugin and hardware uses a 20-millisecond equal-power crossfade, so the change is inaudible.
 
-- Click **+ Plugin** to open the plugin picker.
+- Click the empty slot (it reads **Insert**) and choose **Plugin (VST3 / CLAP / LV2 / AU)** to open the plugin picker.
 - Right-click an empty slot for **Add insert...**. A loaded plugin offers **Open editor** (or **Close editor**), **Replace insert...**, and **Remove plugin**. A hardware insert offers **Edit hardware insert...**, **Replace insert...**, and **Remove hardware insert**. Choose **Hardware Insert** in the Add or Replace chooser to configure outboard gear.
 - When a plugin is loaded, the slot shows its name. Its editor opens as soon as you pick it; after that, click the slot to open the editor again.
 - The LED on the slot's left edge bypasses the insert — green when engaged, dark when bypassed or empty, click to toggle (same grammar as the EQ and COMP LEDs). The insert keeps processing while bypassed, so re-engaging is click-free.
@@ -1035,7 +1035,7 @@ Each lane is divided into three columns:
 
 ### Plugin chain (centre column)
 
-Each aux lane has one insert slot. Click **+ Plugin** to open the picker. Right-click for **Add / Replace / Remove / Edit / Configure as hardware insert**. The slot can hold a plugin or a hardware insert, mutually exclusive, with a 20 ms crossfade between modes.
+Each aux lane has one insert slot. Click **Click to add an insert** and choose **Plugin (VST3 / CLAP / LV2 / AU)** to open the picker. Right-click for **Add / Replace / Remove / Edit / Configure as hardware insert**. The slot can hold a plugin or a hardware insert, mutually exclusive, with a 20 ms crossfade between modes.
 
 A plugin's own editor sits under the slot header. A built-in unit's controls fill that whole area instead; see *Editing a unit* under *Built-in insert units*.
 
@@ -1599,7 +1599,7 @@ A few rules:
 Dusk Studio scans and hosts:
 
 - **VST3** on Linux, macOS, and Windows. Effects AND instruments load through Dusk Studio's own native VST3 host (rows tagged **VST3-Native**) on all three.
-- **LV2** on Linux and macOS. Effects and instruments load through Dusk Studio's own native LV2 host (rows tagged **LV2-Native**). If a plugin update adds new instruments, run **Scan plugins** for them to appear.
+- **LV2** on Linux, macOS, and Windows. On Linux and macOS, effects and instruments load through Dusk Studio's own native LV2 host (rows tagged **LV2-Native**). On Windows there is no native LV2 host, so LV2 plugins load through the standard plugin host as rows tagged **LV2**. If a plugin update adds new instruments, run **Scan plugins** for them to appear.
 - **CLAP** on Linux, macOS, and Windows, through the native host — effects and instruments.
 - **AU** on macOS only, through Dusk Studio's native Audio Unit host — effects and instruments.
 - **Native multi-sampler** (`.sfz`, `.sf2`, and ARIA `.bank.xml` files via the built-in sfizz engine — SF2 is converted to SFZ on load, while a bank manifest opens its first program) on all platforms.
@@ -1608,7 +1608,7 @@ There is no VST2 support. See *Native plugin hosting (Linux, macOS, and Windows)
 
 ## Scanning
 
-Dusk Studio does not automatically scan plugins on first launch. Open any plugin picker (right-click any channel insert slot → **+ Plugin**, or the aux lane plugin slot) and click **Scan plugins**. Scanning takes 10–30 seconds for a large collection and runs behind a progress window naming the plugin being probed, so the app stays responsive rather than appearing to hang. Click **Cancel** there, or press Esc, to stop early. The plugin currently being probed is skipped and results from completed scans stay in the picker. CLAP, VST3, LV2, and Audio Unit passes can all stop early; an interrupted native-format pass is discarded rather than publishing a partial cache, so that format's earlier results stand until you run **Scan plugins** again. The LV2 and Audio Unit passes read manifests or registry metadata rather than plugin code, and check for cancellation between discovered entries.
+Dusk Studio does not automatically scan plugins on first launch. Open any plugin picker (click an empty channel **Insert** slot, or an aux lane's **Click to add an insert**, and choose **Plugin (VST3 / CLAP / LV2 / AU)**) and click **Scan plugins**. Scanning takes 10–30 seconds for a large collection and runs behind a progress window naming the plugin being probed, so the app stays responsive rather than appearing to hang. Click **Cancel** there, or press Esc, to stop early. The plugin currently being probed is skipped and results from completed scans stay in the picker. CLAP, VST3, LV2, and Audio Unit passes can all stop early; an interrupted native-format pass is discarded rather than publishing a partial cache, so that format's earlier results stand until you run **Scan plugins** again. The LV2 and Audio Unit passes read manifests or registry metadata rather than plugin code, and check for cancellation between discovered entries.
 
 Plugin scan results are cached in:
 
@@ -1631,7 +1631,7 @@ In the **plugin picker** modal:
 - Each row shows the plugin name and its format (VST3 / LV2 / AudioUnit / CLAP / LV2-Native / VST3-Native / Built-In).
 - Click a row to load it. The picker closes and the loaded plugin or built-in unit opens its editor straight away, whatever its format, so there is no second click. On an aux lane the editor is the one under the slot header. A plugin that has no editor still loads.
 
-Both the effect and instrument pickers list VST3 plugins as **VST3-Native** rows on every OS, and LV2 plugins as **LV2-Native** rows on Linux and macOS — the same plugins, hosted by Dusk Studio's native hosts instead of the standard one. On macOS, Audio Units appear once as native **AudioUnit** rows. There are no duplicate standard-host rows for these formats.
+Both the effect and instrument pickers list VST3 plugins as **VST3-Native** rows on every OS, and LV2 plugins as **LV2-Native** rows on Linux and macOS — the same plugins, hosted by Dusk Studio's native hosts instead of the standard one. On macOS, Audio Units appear once as native **AudioUnit** rows. There are no duplicate standard-host rows for these formats. On Windows, LV2 plugins appear as standard-host **LV2** rows.
 
 Only a pick opens a channel insert's editor. Reopening a session, undo and redo load the insert with its editor closed.
 
@@ -1779,14 +1779,14 @@ This holds on all platforms, including the macOS out-of-process sandbox. Rather 
 
 ## Native plugin hosting (Linux, macOS, and Windows)
 
-CLAP and VST3 plugins — effects and instruments — are hosted by Dusk Studio's own plugin hosts on Linux, macOS, and Windows; LV2 is on Linux and macOS. Audio Units use the native host on macOS too. The native hosts own the format lifecycle and editor embedding directly; on Linux this also sidesteps the standard layer's UI breakage on Wayland desktops.
+CLAP and VST3 plugins — effects and instruments — are hosted by Dusk Studio's own plugin hosts on Linux, macOS, and Windows; LV2 is on Linux and macOS. On Windows, LV2 plugins use the standard plugin host instead. Audio Units use the native host on macOS too. The native hosts own the format lifecycle and editor embedding directly; on Linux this also sidesteps the standard layer's UI breakage on Wayland desktops.
 
 In practice the differences are small:
 
 - Rows tagged **CLAP**, **LV2-Native**, **VST3-Native**, or **AudioUnit** in the picker load through the native hosts; everything else about picking, replacing, and removing is identical.
 - Editors open the same way (centred modal on channel slots, inline on aux lanes) and their settings persist in the session like any other plugin.
 - Each time an **LV2-Native** editor opens or reopens, its controls are seeded from the running plugin's live parameter values. Host-side changes, including MIDI Learn, continue to update the open editor.
-- **LV2-Native** plugins that hand slow jobs to a background thread through the LV2 Worker get one of their own. Dusk's Multi-Comp 2, Multi-Q 2 and DuskVerb 2 need it to load at all, and samplers use it to load their banks. An offline bounce, stem bounce, freeze or master export waits for that work at every block, so an offline render of the same session gives the same file every time. A realtime bounce plays through the audio interface at normal speed and does not wait, so the work lands when it would during playback. An LV2 plugin that requires an LV2 feature Dusk Studio does not provide does not load, and the alert names the missing feature.
+- **LV2-Native** plugins that hand slow jobs to a background thread through the LV2 Worker get one of their own. Dusk's Multi-Comp 2, Multi-Q 2 and DuskVerb 2 need it to load at all, and samplers use it to load their banks. An offline bounce, stem bounce, freeze or master export waits for that work at every block, so an offline render of the same session gives the same audio every time. A 16-bit WAV is the exception: its dither noise is randomised afresh on each render, so two renders differ in the lowest bit. 24-bit WAV and MP3 renders are not dithered. A realtime bounce plays through the audio interface at normal speed and does not wait, so the work lands when it would during playback. An LV2 plugin that requires an LV2 feature Dusk Studio does not provide does not load, and the alert names the missing feature.
 - Native-hosted plugins always run in-process; the OOP sandbox does not apply to them. Native LV2 and Audio Unit discovery do not instantiate plugin code; CLAP and native VST3 discovery load each module to read its factory, like any host's VST3 scan.
 - Insert latency reported by a native-hosted plugin feeds plugin delay compensation like any other insert.
 - A slot holds one plugin regardless of host: loading a CLAP, an LV2-Native, a VST3-Native, an AudioUnit, or a standard-host plugin into the same slot replaces whatever was there.
@@ -1809,7 +1809,7 @@ Plugins run **in-process by default** — it gives the most responsive plugin ed
 
 When a plugin crashes in OOP mode:
 
-- The slot auto-bypasses and shows a "Plugin crashed — reload to recover" message. It passes its track through dry and adds no delay, so delay compensation stops making room for the plugin's latency. **Re-enable plugin (crashed)** drops the dead child without starting a new one, so the latency stays out of compensation until you reload the plugin.
+- The slot auto-bypasses and shows `! <name> (crashed)` in place of the plugin name. It passes its track through dry and adds no delay, so delay compensation stops making room for the plugin's latency. **Re-enable plugin (crashed)** drops the dead child without starting a new one, so the latency stays out of compensation until you reload the plugin.
 - The plugin's last-known state (parameters, preset) is preserved in the session and will be re-applied when you reload the plugin.
 - You can load a different plugin to clear the slot.
 
@@ -1830,7 +1830,7 @@ If a native plugin returns no state during a save, the save still completes and 
 When you load a session:
 
 - If the plugin is found on the system, it is loaded and the saved state is applied.
-- If the plugin is missing or moved, the slot shows "(plugin name) — offline". The saved description and state are preserved; the next session save round-trips them unmodified, so you do not lose the data by opening a session on a machine without that plugin installed. Reinstall the plugin and reload to restore.
+- If the plugin is missing or moved, the slot shows `⚠ <name> (offline)`, with the saved plugin name. The saved description and state are preserved; the next session save round-trips them unmodified, so you do not lose the data by opening a session on a machine without that plugin installed. Reinstall the plugin and reload to restore.
 - If the saved state is unreadable or the plugin rejects it, Dusk Studio unloads the plugin and leaves the slot offline. A rejection writes a terminal line such as `[Dusk Studio/session] track VST3 1 rejected its saved state (4096 bytes); slot left offline to preserve the saved state`, and the **Plug-in unavailable** alert lists the track or aux slot, plugin name, format, and exact reason. The original plugin reference and state text remain in the session and survive later saves instead of being replaced by the plugin's defaults.
 
 ## Multi-sample instruments
@@ -2080,6 +2080,8 @@ Because the session is a folder, you can copy or back up a session by copying th
 Every 30 seconds, if anything has changed since the last save, Dusk Studio writes a recovery file, `session.json.autosave`, next to the canonical `session.json` (it does **not** overwrite `session.json` — a manual Save is still what updates the real session file). The autosave is atomic (same temp-file-and-rename pattern) and silent — it never interrupts playback or recording. Idle sessions are skipped via a content hash, so the file isn't rewritten when nothing meaningful changed.
 
 A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, keeps its autosave, notes and takes in its own folder, which never holds another session: if you once saved a session as `Untitled`, the new one starts in `Untitled 2` (or the first `Untitled N` that is free) beside it, and that folder is reused on the next launch. If a `session.json` appears in the new session's folder anyway, its autosave and notes go to the `unsaved-session` folder in Dusk Studio's configuration folder instead, **Don't Save** and **Save As** leave the other session's autosave where it is, Save As does not take its plug-in state along, and Save As into that folder is refused like any folder that holds another session. A never-saved session has no `session.json` to open, so to get its work back after a crash, rename its `session.json.autosave` to `session.json` and open it (see Session won't open).
+
+Do that before you launch Dusk Studio again, or copy the folder somewhere safe first. The recovery prompt only appears for a session that has a `session.json`, so a crashed never-saved session gets no prompt. The next launch starts its blank session in the same `Untitled` (or `Untitled N`) folder, because that folder still holds no `session.json`, and its first autosave overwrites the crashed `session.json.autosave`. Copy or rename that folder in `~/Music/Dusk Studio`, or at least its `session.json.autosave`, before relaunching. The takes in its `audio/` folder are not overwritten, but the autosave is what places them on the timeline.
 
 If Dusk Studio crashes or loses power, the next launch detects the autosave file and offers to recover. Choosing **Recover autosave** immediately writes the recovered state to `session.json` (and only then removes the autosave), so the recovered work is on disk even if you quit right after. A manual Save deletes the autosave, so a leftover autosave that differs from `session.json` is the signal that a recovery point exists.
 
@@ -2381,9 +2383,9 @@ Each aux return lane can be sent to its own physical output pair (see the aux la
 
 # Troubleshooting
 
-![A plugin slot in the `⚠ (offline)` state after the original plugin couldn't be re-instantiated.](docs/images/ts-02-plugin-offline.png)
+![A plugin slot in the `⚠ <name> (offline)` state after the original plugin couldn't be re-instantiated.](docs/images/ts-02-plugin-offline.png)
 
-## "Plugin crashed — reload to recover"
+## "! <name> (crashed)"
 
 A plugin running in the OOP sandbox has exited. The slot is auto-bypassed and the plugin's state is preserved.
 
@@ -2392,7 +2394,7 @@ A plugin running in the OOP sandbox has exited. The slot is auto-bypassed and th
 - Some plugins are not RT-safe and may misbehave; replace with a different plugin if reloading does not help.
 - On Windows, start Dusk Studio from a console (or redirect its output to a file) to capture the child's own diagnostics — the sandbox child writes to the console it inherits from Dusk Studio.
 
-## "(plugin name) — offline"
+## "⚠ <name> (offline)"
 
 The session references a plugin Dusk Studio cannot find on this machine.
 
@@ -2651,7 +2653,7 @@ Two variants:
 ### Plugin scan complete
 
 - **When**: The scanner finishes (startup-auto or manual).
-- **Text**: title "Plugin scan complete", body "1 new plugin added." (singular) or "N new plugins added." (plural). A cancelled scan titles "Plugin scan cancelled" and reports what it added before you stopped it.
+- **Text**: title "Plugin scan complete", body "1 new plugin added." (singular) or "N new plugins added." (plural). A cancelled scan titles "Plugin scan cancelled" and reports what it added before you stopped it. A scan started from the picker then shows an alert with the same title and the body "Added N plugins to the picker. (Total known: M)" ("1 plugin" when one was added), which also says when the scan was stopped early, when the scanning sandbox was unavailable, and how many plugins are quarantined.
 - **Buttons**: **Cancel** while scanning, then none — the dialog holds briefly, then closes itself.
 
 ### Plugin slot labels (inline, not a dialog)

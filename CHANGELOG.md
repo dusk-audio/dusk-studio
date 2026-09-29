@@ -11,6 +11,10 @@ The first five minutes of using Dusk Studio, offline instrument browsing,
 quitting cleanly by any route, and a release pipeline that signs what it
 publishes.
 
+It also carries the session and plugin recovery, transport MIDI cleanup, native
+plugin hosting and release-metadata fixes that were prepared as 0.13.3. That
+version was never released, so they ship here.
+
 ### Added
 
 - **A one-page quickstart, and a menu item that opens it.** `QUICKSTART.md`
@@ -139,6 +143,36 @@ publishes.
 - **The DP import is named after the machines it reads.** **File > Import DP
   Song (experimental)...** is now **File > Import DP-24/32 Session
   (experimental)...**, and its confirmation and alerts use the same name.
+- **The manual and activation checklist caught up with the code.** They document
+  all-platform session handoff, Windows Unicode paths, live LV2 editor state,
+  and the offline policy for rejected plugin settings; screenshot references
+  were refreshed at the same time.
+- **The bundled sfizz licence records now match the shipped submodule.** Every
+  sfizz revision recorded there names `0bb8aae364dc648c7c55438d17c7564a5d5eaef5`;
+  the nested dependency submodules sfizz vendors (Abseil, ghc-filesystem, SIMDe,
+  dr_libs and the rest) keep their own recorded revisions. Release-mechanics
+  tests reject future drift.
+- **The pinned JUCE snapshot is checked for drift too.** Every workflow that
+  builds against the Dusk-owned JUCE mirror must agree on `JUCE_TAG` and
+  `JUCE_REV`, and both must match the tag and revision `LICENSES.txt` records,
+  so a partial bump can no longer ship a Linux build against a JUCE the
+  licence records do not name.
+- **The de-JUCE ledger now records its real baseline.** The increases
+  introduced in #398 are disclosed for `AuxLaneComponent.cpp` (168 to 175),
+  `ClapPluginEditorComponent.cpp` (11 to 18), its header (7 to 8), and
+  `MainComponent.cpp` (457 to 459). Five stale ceilings were tightened to their
+  actual counts so later regressions cannot hide in unused allowance.
+- **Joining regions that span more than 12 hours no longer crashes.** The join
+  render sizes its mix buffer with 64-bit arithmetic and refuses a span it
+  cannot hold, leaving the regions untouched, instead of overflowing the buffer
+  length and aborting the app from inside an undoable edit. Every other place
+  that sizes an audio buffer now handles that same refusal: an import or a
+  reverse render reports the failure and discards its part-written file, and a
+  scan or playback scratch that cannot be allocated leaves silence and a line on
+  the terminal instead of writing through a buffer that is not there.
+- **The real-time peak scan checks for NaN once per buffer** rather than once
+  every four samples, trimming roughly 8-12 percent off a scan that runs 56
+  times per audio block.
 
 ### Fixed
 
@@ -704,15 +738,6 @@ publishes.
 - **The Optimize automation refusal names Write.** It said a strip in Read or
   Touch could race the audio thread; a strip in Write blocks it too, and the
   alert now says so.
-
-## [0.13.3] - 2026-09-05
-
-This release hardens session and plugin recovery, transport MIDI cleanup,
-native plugin hosting, and cross-platform launch and window behaviour. It also
-closes release-metadata gaps found during the pre-tag audit.
-
-### Fixed
-
 - **Unreadable or rejected plugin settings are preserved.** A damaged native
   plugin state blob now leaves the slot offline and remains unchanged in the
   session. If a plugin rejects saved state, it is unloaded from the strip
@@ -938,39 +963,6 @@ closes release-metadata gaps found during the pre-tag audit.
   every exit path, including a teardown that fails part-way, so a later
   unrelated X error can no longer bring Dusk Studio down. Closing a window also
   only ever hands focus to another X11 window.
-
-### Changed
-
-- **The manual and activation checklist now match 0.13.3.** They document
-  all-platform session handoff, Windows Unicode paths, live LV2 editor state,
-  and the offline policy for rejected plugin settings; screenshot references
-  were refreshed at the same time.
-- **The bundled sfizz licence records now match the shipped submodule.** Every
-  sfizz revision recorded there names `0bb8aae364dc648c7c55438d17c7564a5d5eaef5`;
-  the nested dependency submodules sfizz vendors (Abseil, ghc-filesystem, SIMDe,
-  dr_libs and the rest) keep their own recorded revisions. Release-mechanics
-  tests reject future drift.
-- **The pinned JUCE snapshot is checked for drift too.** Every workflow that
-  builds against the Dusk-owned JUCE mirror must agree on `JUCE_TAG` and
-  `JUCE_REV`, and both must match the tag and revision `LICENSES.txt` records,
-  so a partial bump can no longer ship a Linux build against a JUCE the
-  licence records do not name.
-- **The de-JUCE ledger now records the real 0.13.3 baseline.** The increases
-  introduced in #398 are disclosed for `AuxLaneComponent.cpp` (168 to 175),
-  `ClapPluginEditorComponent.cpp` (11 to 18), its header (7 to 8), and
-  `MainComponent.cpp` (457 to 459). Five stale ceilings were tightened to their
-  actual counts so later regressions cannot hide in unused allowance.
-- **Joining regions that span more than 12 hours no longer crashes.** The join
-  render sizes its mix buffer with 64-bit arithmetic and refuses a span it
-  cannot hold, leaving the regions untouched, instead of overflowing the buffer
-  length and aborting the app from inside an undoable edit. Every other place
-  that sizes an audio buffer now handles that same refusal: an import or a
-  reverse render reports the failure and discards its part-written file, and a
-  scan or playback scratch that cannot be allocated leaves silence and a line on
-  the terminal instead of writing through a buffer that is not there.
-- **The real-time peak scan checks for NaN once per buffer** rather than once
-  every four samples, trimming roughly 8-12 percent off a scan that runs 56
-  times per audio block.
 
 ## [0.13.2] - 2026-08-26
 

@@ -32,12 +32,7 @@
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
     <release version="0.14.0" date="2026-09-29">
       <description>
-        <p>A built-in plugin suite that works on a fresh install (Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2 and the Sunset synth), the 4K EQ 2 engine on the channels with EQ knobs that play the frequency they show, Tape Machine 2 on the master, a one-page quickstart, an offline instrument library, a first launch that picks an input and follows the system audio default, a signed checksum file, and the fixes found by walking record, overdub and bounce on all three platforms and by testing each behaviour the manual documents.</p>
-      </description>
-    </release>
-    <release version="0.13.3" date="2026-09-05">
-      <description>
-        <p>Hardened session and plugin recovery, sandboxed plugin hosting on all three platforms, transport MIDI cleanup, cross-platform launch and window fixes, and the release metadata found missing in the pre-tag audit.</p>
+        <p>A built-in plugin suite that works on a fresh install (Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2 and the Sunset synth), the 4K EQ 2 engine on the channels with EQ knobs that play the frequency they show, Tape Machine 2 on the master, a one-page quickstart, an offline instrument library, a first launch that picks an input and follows the system audio default, a signed checksum file, hardened session and plugin recovery, transport MIDI cleanup, and the fixes found by walking record, overdub and bounce on all three platforms and by testing each behaviour the manual documents.</p>
       </description>
     </release>
     <release version="0.13.2" date="2026-08-26">

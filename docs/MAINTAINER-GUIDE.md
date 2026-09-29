@@ -1042,7 +1042,7 @@ Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`
 
 ### Release order
 
-Releases ship from `main`, which is where 0.13.3 and later are tagged.
+Releases ship from `main`, which is where 0.14.0 and later are tagged.
 `release/0.12` and `release/0.13` are historical: they carry the `v0.12.6` and
 `v0.13.2` tags and receive no further work.
 
