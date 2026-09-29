@@ -334,7 +334,6 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     // in a panel that has its own title + ON toggle so the user can bypass
     // the multiband comp from the same place as the EQ / Limiter sections.
     compPanelWrapper = std::make_unique<juce::Component>();
-    compPanelWrapper->setOpaque (true);
     addAndMakeVisible (compPanelWrapper.get());
 
     compHeaderBtn = std::make_unique<CompHeaderButton> (
@@ -558,7 +557,7 @@ MasteringView::captureNativePanels (const juce::File& dir)
     return captures;
 }
 
-void MasteringView::applyMultibandPreset (int presetIndex)
+void MasteringView::applyMultibandPreset ([[maybe_unused]] int presetIndex)
 {
 #if DUSKSTUDIO_HAS_DUSK_DSP
     if (presetIndex < 0 || presetIndex >= mbpresets::kNumPresets) return;
@@ -619,8 +618,6 @@ void MasteringView::applyMultibandPreset (int presetIndex)
     // up programmatic APVTS writes on its own - the visible band's knobs are
     // live SliderAttachments and its repaint timer re-syncs the crossover faders
     // and per-band enable layout within a tick.
-#else
-    juce::ignoreUnused (presetIndex);
 #endif
 }
 
@@ -640,6 +637,39 @@ void MasteringView::paint (juce::Graphics& g)
         g.setColour (juce::Colour (0xff44485a));
         g.drawRoundedRectangle (box, 4.0f, 1.2f);
     }
+
+    // The comp wrapper paints nothing itself, so its margin and header row show
+    // this fill; the colours are the ones the EQ and limiter panels draw.
+    if (compPanelWrapper != nullptr)
+    {
+        const auto panel = compPanelWrapper->getBounds();
+        g.setColour (juce::Colour (0xff20202a));
+        g.fillRect (panel);
+        g.setColour (juce::Colour (0xff3a3a46));
+        g.drawRect (panel, 1);
+    }
+}
+
+int MasteringView::unpaintedCompPanelPixelsForScenario()
+{
+    if (compPanelWrapper == nullptr || ! isShowing())
+        return -1;
+    // A snapshot starts transparent, or black when the view is opaque, and the
+    // page never paints pure black.
+    const auto image = createComponentSnapshot (getLocalBounds());
+    const auto panel = compPanelWrapper->getBounds();
+    auto editor = panel.withSize (0, 0);
+    if (compEditor != nullptr)
+        editor = compEditor->getBounds() + panel.getPosition();
+    int unpainted = 0;
+    for (int y = panel.getY(); y < panel.getBottom(); ++y)
+        for (int x = panel.getX(); x < panel.getRight(); ++x)
+        {
+            const auto argb = image.getPixelAt (x, y).getARGB();
+            if (! editor.contains (x, y) && ((argb >> 24) != 0xff || argb == 0xff000000))
+                ++unpainted;
+        }
+    return unpainted;
 }
 
 void MasteringView::resized()
@@ -733,7 +763,6 @@ void MasteringView::resized()
     auto compPanel = panelsRow.removeFromLeft (compW);
     panelsRow.removeFromLeft (kPanelGap);
     auto limPanel  = panelsRow;
-    juce::ignoreUnused (limW);
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
     eqProxy.setBounds (eqPanel);

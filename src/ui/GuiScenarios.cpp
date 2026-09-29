@@ -1503,6 +1503,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.masteringView != nullptr ? owner.masteringView->nativePanelsOpenForScenario() : 0;
     }
+    int masteringCompPanelUnpaintedPixels() override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->unpaintedCompPanelPixelsForScenario() : -1;
+    }
     std::string masteringTargetText() const override
     {
         return owner.masteringView != nullptr ? owner.masteringView->targetTextForScenario() : std::string();

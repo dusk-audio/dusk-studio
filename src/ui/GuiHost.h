@@ -304,6 +304,9 @@ public:
     // How many of the mastering stage's two native panels are open, or -1 when
     // this build has none. Zero while the stage is not up.
     virtual int masteringPanelsOpen() const = 0;
+    // Pixels around the multiband comp's editor that nothing painted, or -1
+    // while the stage is not up.
+    virtual int masteringCompPanelUnpaintedPixels() = 0;
     virtual std::string masteringTargetText() const = 0;
     // The Mastering page's source line, and the file its waveform was last
     // pointed at (empty once cleared). Both empty before the page is built.

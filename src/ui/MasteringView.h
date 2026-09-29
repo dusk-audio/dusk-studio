@@ -82,6 +82,9 @@ public:
         return getLocalPoint (&compPresetCombo, compPresetCombo.getLocalBounds().getCentre());
     }
     bool compPresetShownForScenario() const { return compPresetCombo.isShowing(); }
+    // Pixels of the multiband comp panel, outside the donor editor, that nothing
+    // painted; -1 while the page is not on screen.
+    int unpaintedCompPanelPixelsForScenario();
     // How many of the two framework children are up, or -1 when this build has
     // no native panels to open.
     int nativePanelsOpenForScenario() const;

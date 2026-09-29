@@ -4509,6 +4509,35 @@ const ScenarioRegistrar masteringComboKeepsPanels { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringComboKeepsPanels (host, ctx); }
 } };
 
+// Linux leaves an unpainted area dark and macOS leaves it white, so the check
+// reads the page's own render rather than the screen.
+std::optional<ScenarioResult> runMasteringCompPanelPainted (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || engine.getMasteringPlayer().isPlaying())
+        return ScenarioResult::skip ("requires stopped transport and mastering player");
+    const auto originalStage = engine.getStage();
+    host.switchToStage (GuiHost::Stage::Mastering);
+    ctx.cleanup ([&host, originalStage] { host.switchToStage (guiStage (originalStage)); });
+
+    ctx.waitUntil ([&host] { return host.masteringCompPanelUnpaintedPixels() >= 0; }, 10000,
+                   [&host, &ctx]
+    {
+        const int unpainted = host.masteringCompPanelUnpaintedPixels();
+        ctx.expect (unpainted == 0, "the multiband comp panel left " + std::to_string (unpainted)
+                                        + " pixels around its editor unpainted");
+        ctx.complete (ctx.verdict());
+    },
+    "the mastering page never came on screen");
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringCompPanelPainted { Scenario {
+    "gui.mastering_comp_panel_painted", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringCompPanelPainted (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runMasteringLoad (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
