@@ -24,6 +24,9 @@ struct TrackMovePlan
     bool isIdentity() const noexcept { return lo > hi; }
 };
 
+// One flag per track slot.
+using TrackSlotMask = std::array<bool, TrackMovePlan::kNumTracks>;
+
 inline TrackMovePlan identityTrackMove() noexcept
 {
     TrackMovePlan plan;

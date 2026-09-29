@@ -10,12 +10,14 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
 #include "AtomicSnapshot.h"
 #include "MidiBindings.h"
 #include "SessionLayout.h"
+#include "TrackMove.h"
 #include "../engine/PluginDescriptor.h"
 #include "../engine/StopBehavior.h"
 
@@ -1069,6 +1071,10 @@ struct Track
     juce::String nativeLv2Path;
     juce::String nativeLv2PluginId;
     juce::String nativeLv2StateBase64;
+    // The directory under state/lv2 that holds this track's LV2 file state.
+    // Empty means the slot's own trackNN; a moved track keeps the one it had,
+    // so the files its state refers to stay where they are.
+    std::string  lv2StateTag;
     juce::String nativeVst3Path;
     juce::String nativeVst3PluginId;
     juce::String nativeVst3StateBase64;
@@ -1114,6 +1120,16 @@ struct Track
     // Predicates are mutually exclusive on (mode, touched).
     // Sync via release/acquire on automationMode and each *Touched flag.
     std::array<AutomationLane, kNumAutomationParams> automationLanes {};
+};
+
+// A track's contents copied out of its slot, for Session::stageTrackMove: the
+// fields, and the value each of its snapshots will publish where it lands.
+struct StagedTrack
+{
+    Track fields;
+    std::unique_ptr<std::vector<MidiRegion>> midiRegions;
+    std::unique_ptr<HardwareInsertRouting> routing;
+    std::array<std::unique_ptr<std::vector<AutomationPoint>>, kNumAutomationParams> lanes;
 };
 
 // Bus comp = UniversalCompressor in Bus mode.
@@ -1763,6 +1779,41 @@ public:
     int resolveInputForTrack (int trackIndex) const noexcept;
     // -1 in Mono / Midi mode (second channel meaningless).
     int resolveInputRForTrack (int trackIndex) const noexcept;
+
+    // Puts every track where plan says, data and all, and returns false with
+    // nothing changed unless plan maps the slots one to one. A moved track
+    // whose input followed its track number takes the number it had as an
+    // explicit input; one that lands on a slot refollow flags, with an input
+    // naming that slot, follows again (the undo of a move that pinned it). A
+    // moved track keeps the LV2 state directory it used. The gesture flags (a
+    // fader, pan or send held down) and the MIDI activity blink are cleared,
+    // not moved: they belong to the controls. Each snapshot of a moved track
+    // publishes once. The solo and arm counters are the caller's to recompute.
+    //
+    // stageTrackMove copies the contents out, and allocates; landTrackMove then
+    // refreshes the atomics from the tracks, swaps values and publishes, and
+    // copies nothing big, so AudioEngine::moveTracks runs it with the audio
+    // callback held off. A stage lands once. permuteTracks does both. Message
+    // thread.
+    struct StagedTrackMove
+    {
+        TrackMovePlan plan;
+        TrackSlotMask refollow {};
+        std::array<std::unique_ptr<StagedTrack>, kNumTracks> into;   // by slot, null where nothing moves
+    };
+    std::optional<StagedTrackMove> stageTrackMove (const TrackMovePlan& plan,
+                                                   const TrackSlotMask& refollow = {}) const;
+    void landTrackMove (StagedTrackMove& staged);
+    bool permuteTracks (const TrackMovePlan& plan, const TrackSlotMask& refollow = {});
+
+    // The directory name under state/lv2 for track trackIndex's LV2 file state.
+    std::string lv2StateTagFor (int trackIndex) const;
+    static std::string defaultLv2StateTag (int trackIndex);
+    // "track" and two digits.
+    static bool isLv2StateTag (const std::string& tag) noexcept;
+    // After a load: drops every kept tag that is malformed, names the track's
+    // own slot, or would share a directory with another track.
+    void repairLv2StateTags();
 
 private:
     std::array<Track, kNumTracks> tracks;

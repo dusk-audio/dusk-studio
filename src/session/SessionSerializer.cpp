@@ -707,6 +707,11 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
         obj["native_lv2_plugin"] = toStd (t.nativeLv2PluginId);
         obj["native_lv2_state"]  = toStd (t.nativeLv2StateBase64);
     }
+    // Written whether or not an LV2 plug-in is loaded now: dropping it would
+    // hand the slot's own directory to this track, which a moved neighbour's
+    // kept tag may already name.
+    if (! t.lv2StateTag.empty())
+        obj["lv2_state_tag"] = t.lv2StateTag;
     if (t.nativeVst3Path.isNotEmpty())
     {
         obj["native_vst3_path"]   = toStd (t.nativeVst3Path);
@@ -1270,6 +1275,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
     t.nativeLv2Path         = json::getString (v, "native_lv2_path");
     t.nativeLv2PluginId     = json::getString (v, "native_lv2_plugin");
     t.nativeLv2StateBase64  = json::getString (v, "native_lv2_state");
+    t.lv2StateTag           = json::getString (v, "lv2_state_tag");
     t.nativeVst3Path        = json::getString (v, "native_vst3_path");
     t.nativeVst3PluginId    = json::getString (v, "native_vst3_plugin");
     t.nativeVst3StateBase64 = json::getString (v, "native_vst3_state");
@@ -2374,6 +2380,7 @@ bool SessionSerializer::load (Session& s, const File& source)
                           slotWithDefaults (trackDefaults, tracks, i),
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
+        s.repairLv2StateTags();
     }
     {
         const auto& busesArr    = ! json::array (root, "buses").empty()
