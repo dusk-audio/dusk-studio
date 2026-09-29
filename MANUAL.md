@@ -1119,7 +1119,7 @@ Right of the chain are three loudness readouts:
 - **Integrated LUFS** (entire program, gated per BS.1770).
 - **True Peak (dBTP)** (4× oversampled).
 
-The target picker offers Off, Spotify, Apple Music, YouTube, Tidal, and Broadcast (EBU R128). It colour-codes integrated LUFS and true peak against the selected target; Off leaves both neutral. Pressing **Reset I** clears the integrated reading so you can re-measure from a known point.
+The target picker offers one row per loudness target: Off, **Spotify / YouTube / Tidal** (−14 LUFS / −1 dBTP), **Apple Music** (−16 LUFS / −1 dBTP), and **Broadcast (EBU R128)** (−23 LUFS / −1 dBTP). It colour-codes integrated LUFS and true peak against the selected target; Off leaves both neutral. Pressing **Reset I** clears the integrated reading so you can re-measure from a known point.
 
 The integrated reading measures up to an hour of material loud enough to count. Silence and anything below −70 LUFS is discarded by the standard's gate and does not use up that hour, so leaving the meter running between takes costs you nothing. Past the hour it holds where it is rather than continuing to absorb material, so for anything longer, reset it and measure the section you actually care about.
 
@@ -2360,7 +2360,7 @@ An open chord slot takes the keys instead:
 2. Enable all three stages: **EQ**, **Comp**, **Limiter**.
 3. On the EQ, a 1–2 dB shelf boost at 10 kHz and a 0.5–1 dB cut at 250 Hz is a safe starting point.
 4. On the bus comp, aim for 0.5–1 dB of reduction on peaks. Slow attack (30 ms), slow release (250 ms), 2:1.
-5. On the limiter, leave the ceiling at **−1.0 dB** for Spotify, **−1.0 dB** for Apple Music, **−1.0 dB** for YouTube. Push the **Drive** until the integrated LUFS reads −14 (Spotify and YouTube) or −16 (Apple Music) — but stop pushing as soon as the limiter is regularly pulling more than 2 dB.
+5. On the limiter, leave the ceiling at **−1.0 dB**, the true-peak ceiling of every streaming target. Push the **Drive** until the integrated LUFS reads −14 (Spotify and YouTube) or −16 (Apple Music) — but stop pushing as soon as the limiter is regularly pulling more than 2 dB.
 6. Use the **streaming-platform preset** picker to colour-code the readouts and confirm you're within target.
 
 ## Headphone cue mix for tracking

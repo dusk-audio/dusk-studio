@@ -182,19 +182,17 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
 }
 namespace
 {
-// Streaming / broadcast target presets. Index 0 is the no-target case;
-// indices 1..N correspond to the dropdown items. Values are LUFS (integrated
-// program loudness) and true-peak ceiling in dBTP. Source: the platforms'
-// published mastering recommendations as of 2024.
+// Loudness targets, one row per distinct LUFS / dBTP pair; platforms that
+// share a target share its row. Index 0 is the no-target case. Values are
+// integrated program loudness in LUFS and the true-peak ceiling in dBTP, from
+// the platforms' published mastering recommendations as of 2024.
 struct MasteringTarget { const char* name; float lufs; float ceilingDbTP; };
 constexpr MasteringTarget kMasteringTargets[] =
 {
-    { "Off",                   0.0f,    0.0f },   // index 0: neutral display
-    { "Spotify",              -14.0f,  -1.0f },
-    { "Apple Music",          -16.0f,  -1.0f },
-    { "YouTube",              -14.0f,  -1.0f },
-    { "Tidal",                -14.0f,  -1.0f },
-    { "Broadcast (EBU R128)", -23.0f,  -1.0f },
+    { "Off",                        0.0f,    0.0f },   // index 0: neutral display
+    { "Spotify / YouTube / Tidal", -14.0f,  -1.0f },
+    { "Apple Music",               -16.0f,  -1.0f },
+    { "Broadcast (EBU R128)",      -23.0f,  -1.0f },
 };
 constexpr int kNumMasteringTargets = (int) (sizeof (kMasteringTargets) / sizeof (kMasteringTargets[0]));
 // The session loader clamps the saved index without seeing this table; adding a

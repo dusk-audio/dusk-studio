@@ -4364,8 +4364,8 @@ std::optional<ScenarioResult> runMasteringTargets (GuiHost& host, ScenarioContex
         engine.resumeProcessing();
         host.switchToStage (guiStage (originalStage));
     });
-    const std::array<const char*, 6> names { "Off", "Spotify", "Apple Music", "YouTube", "Tidal", "Broadcast (EBU R128)" };
-    const std::array<float, 6> targets { 0.0f, -14.0f, -16.0f, -14.0f, -14.0f, -23.0f };
+    const std::array<const char*, 4> names { "Off", "Spotify / YouTube / Tidal", "Apple Music", "Broadcast (EBU R128)" };
+    const std::array<float, 4> targets { 0.0f, -14.0f, -16.0f, -23.0f };
     // The picker opens a message-loop turn after the click, the choice reaches
     // the session through the combo's asynchronous change notification, and the
     // readings are recoloured on the view's timer, so each check waits for the
@@ -4373,8 +4373,9 @@ std::optional<ScenarioResult> runMasteringTargets (GuiHost& host, ScenarioContex
     auto steps = std::make_shared<std::vector<Step>>();
     for (int index = 0; index < (int) names.size(); ++index)
     {
-        const auto rowClick = [&host, index]
-        { return host.clickModalAt (0.5f, (4.0f + 26.0f * (static_cast<float> (index) + 0.5f)) / 164.0f); };
+        const float listHeight = 8.0f + 26.0f * static_cast<float> (names.size());
+        const auto rowClick = [&host, index, listHeight]
+        { return host.clickModalAt (0.5f, (4.0f + 26.0f * (static_cast<float> (index) + 0.5f)) / listHeight); };
         const std::string name = names[(std::size_t) index];
         steps->push_back ({ 100, [&host, &ctx]
         { ctx.expect (host.clickMasteringTarget(), "the mastering target picker is not on screen"); },

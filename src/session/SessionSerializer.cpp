@@ -2094,7 +2094,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast["limiter_lookahead_ms"] = s.mastering().limiterLookaheadMs.load();
     mast["limiter_mode"]         = s.mastering().limiterMode.load();
     mast["limiter_stereo_link"]  = s.mastering().limiterStereoLink.load();
-    mast["target_preset"]        = s.mastering().targetPresetIndex.load();
+    mast["loudness_target"]      = s.mastering().targetPresetIndex.load();
     root["mastering"] = std::move (mast);
 
     // Transport (loop + punch). Mirrored onto Session by
@@ -2745,10 +2745,20 @@ bool SessionSerializer::load (Session& s, const File& source)
                                                        kMasteringDefaults.limiterMode.load()), 0, 2));
         m.limiterStereoLink.store (json::getBool (mast, "limiter_stereo_link",
                                                   kMasteringDefaults.limiterStereoLink.load()));
-        if (json::has (mast, "target_preset"))
-            m.targetPresetIndex.store (std::clamp (json::getInt (mast, "target_preset",
+        if (json::has (mast, "loudness_target"))
+        {
+            m.targetPresetIndex.store (std::clamp (json::getInt (mast, "loudness_target",
                                                                  kMasteringDefaults.targetPresetIndex.load()),
                                                    0, MasteringParams::kNumTargetPresets - 1));
+        }
+        else if (json::has (mast, "target_preset"))
+        {
+            // The older per-platform list: Off, Spotify, Apple Music, YouTube,
+            // Tidal, Broadcast (EBU R128). The three -14 LUFS platforms map to
+            // the one row they share.
+            constexpr int kFromPlatformList[] = { 0, 1, 2, 1, 1, 3 };
+            m.targetPresetIndex.store (kFromPlatformList[std::clamp (json::getInt (mast, "target_preset", 0), 0, 5)]);
+        }
         else if (! haveMastering)
             m.targetPresetIndex.store (kMasteringDefaults.targetPresetIndex.load());
     }

@@ -1456,7 +1456,7 @@ struct MasteringParams
     // Drives I-LUFS / true-peak cell colour-coding in MasteringView.
     // 0 = Off (neutral). See kMasteringTargets for the preset table - it
     // static_asserts against this count, which is what the loader clamps to.
-    static constexpr int kNumTargetPresets = 6;
+    static constexpr int kNumTargetPresets = 4;
     std::atomic<int> targetPresetIndex { 0 };
 };
 
