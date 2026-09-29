@@ -1429,6 +1429,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::filesystem::path fileBrowserFolder() const override { return filebrowser::shownFolderForScenario(); }
     bool fileBrowserScanning() const override { return filebrowser::shownFolderScanningForScenario(); }
     int retiredFileBrowserScans() const override { return filebrowser::retiredScansForScenario(); }
+    int fileBrowserPanels() const override { return filebrowser::livePanelsForScenario(); }
     void holdFileBrowserFolderChecks (bool held) override { filebrowser::holdFolderChecksForScenario (held); }
     bool midiBindingsOpen() const override { return owner.midiBindingsModal.isOpen(); }
 

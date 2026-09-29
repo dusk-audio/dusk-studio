@@ -8980,15 +8980,34 @@ std::optional<ScenarioResult> runFileBrowserCancelScan (GuiHost& host, ScenarioC
                               : ctx.verdict());
             return;
         }
-        ctx.expect (host.clickModalButton ("Cancel"), "the browser has no Cancel button");
-        ctx.later (100, [&host, &ctx]
+        const int panels = host.fileBrowserPanels();
+        if (! ctx.expect (host.clickModalButton ("Cancel"), "the browser has no Cancel button"))
         {
-            ctx.expect (host.retiredFileBrowserScans() == 1, "the browser cancelled mid-scan was not kept for its scan");
-            ctx.waitUntil ([&host] { return host.retiredFileBrowserScans() == 0; }, kStopMs,
-                           [&ctx] { ctx.complete (ctx.verdict()); },
-                           "a browser cancelled mid-scan was still listing its folder "
-                               + std::to_string (kStopMs) + " ms later");
-        });
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        // The closed modal destroys the browser a tick later, which retires it only
+        // if its scan is still running then; retired browsers are swept every 250 ms.
+        ctx.waitUntil ([&host, panels]
+                       { return host.retiredFileBrowserScans() == 1 || host.fileBrowserPanels() < panels; },
+                       kStopMs,
+                       [&host, &ctx]
+                       {
+                           if (host.retiredFileBrowserScans() == 0)
+                           {
+                               ctx.complete (ctx.verdict().status == ScenarioStatus::Pass
+                                                 ? ScenarioResult::skip ("the folder was listed before the cancelled "
+                                                                         "browser was destroyed")
+                                                 : ctx.verdict());
+                               return;
+                           }
+                           ctx.waitUntil ([&host] { return host.retiredFileBrowserScans() == 0; }, kStopMs,
+                                          [&ctx] { ctx.complete (ctx.verdict()); },
+                                          "a browser cancelled mid-scan was still listing its folder "
+                                              + std::to_string (kStopMs) + " ms later");
+                       },
+                       "the browser cancelled mid-scan was neither destroyed nor kept for its scan "
+                           + std::to_string (kStopMs) + " ms later");
     });
     return std::nullopt;
 }
@@ -15323,13 +15342,14 @@ std::optional<ScenarioResult> runCleanOutWhileRecording (GuiHost& host, Scenario
         ctx.cleanup ([&session, index, armed] { session.setTrackArmed (index, armed); });
         session.setTrackArmed (index, false);
     }
-    ctx.cleanup ([&host, &engine, &session, &transport, &track, regions = track.regions,
+    ctx.cleanup ([&host, &engine, &session, &transport, &track, regions = track.regions, takes = track.takes,
                   originalDir = currentSessionDirectory (session), loop = transport.isLoopEnabled(),
                   punch = transport.isPunchEnabled(), at = transport.getPlayhead()]
     {
         drainModals (host);
         engine.stop();
         track.regions = regions;
+        track.takes = takes;
         engine.getPlaybackEngine().preparePlayback();
         transport.setLoopEnabled (loop);
         transport.setPunchEnabled (punch);

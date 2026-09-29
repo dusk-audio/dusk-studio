@@ -167,6 +167,8 @@ public:
     virtual bool fileBrowserScanning() const = 0;
     // File browsers closed while listing a folder whose scan has not stopped yet.
     virtual int retiredFileBrowserScans() const = 0;
+    // File browsers not yet destroyed; a closed one lingers until the next message-loop tick.
+    virtual int fileBrowserPanels() const = 0;
     // Holds, or lets go of, the file browsers' checks of a folder they are about to show.
     virtual void holdFileBrowserFolderChecks (bool held) = 0;
     virtual bool clickFileBrowserControl (bool path) = 0;

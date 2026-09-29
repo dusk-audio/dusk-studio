@@ -51,6 +51,9 @@ bool shownFolderScanningForScenario();
 // Browsers closed mid-scan that are still waiting for their scan to stop.
 int retiredScansForScenario();
 
+// Browsers not yet destroyed, including one a closed modal has still to delete.
+int livePanelsForScenario();
+
 // Holds every check of a folder a browser is about to move to, for up to three
 // seconds, as macOS does while it asks the user about a protected folder.
 void holdFolderChecksForScenario (bool held);
