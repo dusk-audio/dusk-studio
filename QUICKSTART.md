@@ -117,8 +117,11 @@ Back up the whole folder. Everything you made is inside it.
 - **No sound at all.** Check Output device, then that the track is not muted and
   the master fader is up.
 - **Clicks and dropouts.** Raise the buffer size.
-- **A plugin will not load.** Settings, then Settings..., and rescan. A plugin
-  that crashes the scan is quarantined rather than taking the app with it.
+- **A plugin will not load.** Click an empty Insert slot on a channel strip,
+  pick Plugin (VST3 / CLAP / LV2 / AU), and click Scan plugins in the picker.
+  Settings only rescans devices; its Scan plugins on startup switch repeats the
+  plugin scan at every launch. A plugin that crashes the scan is quarantined
+  rather than taking the app with it.
 
 Fuller answers are in [the manual](MANUAL.md), and the
 [Discussions](https://github.com/dusk-audio/dusk-studio/discussions) page is

@@ -414,10 +414,23 @@ libsndfile (all audio file I/O — required on every platform)
              libsndfile-devel / brew install libsndfile). A missing libsndfile
              is a configure FATAL_ERROR, and both the app and the test binary
              link the dusk_sndfile interface target.
-  Notes    : On Linux and macOS this is a dynamic link against the system
-             library — libsndfile.so.1 on Linux, libsndfile.1.dylib on macOS —
-             which is LGPL-2.1 section 6(b), the shared-library mechanism, and
-             needs nothing further.
+  Notes    : On Linux this is a dynamic link against the system library,
+             libsndfile.so.1, which is LGPL-2.1 section 6(b), the
+             shared-library mechanism, and needs nothing further.
+             The macOS DMG does not use the system's copy. The release build
+             links Homebrew's libsndfile, and scripts/bundle-macos-dylibs.sh
+             copies it into DuskStudio.app/Contents/Frameworks together with
+             every non-system dylib it pulls in: libmp3lame (LAME, see its
+             entry below), libmpg123 (LGPL-2.1-only), and libFLAC, libogg,
+             libvorbis, libvorbisenc and libopus (BSD-3-Clause). They stay
+             separate dylibs loaded through @executable_path/../Frameworks,
+             so a user can swap in a modified build of any of them, re-sign
+             the bundle, and run it; that is the 6(b) shared-library route.
+             Their versions are whatever Homebrew bottles the release runner
+             installed on the day of the build; nothing in this repository
+             pins them, and the DMG ships no source for them. As with the
+             Windows delivery gap below, this file does not claim the LGPL
+             source obligation for those copies is fully discharged today.
              Windows takes a different route. The workflows run vcpkg in
              manifest mode from the root of this repository
              (`vcpkg install --triplet x64-windows-static`), which produces
@@ -496,13 +509,19 @@ libsodium (signed SFZ catalog authentication — required on every platform)
              version; their package metadata records those bytes.
   Upstream : https://github.com/jedisct1/libsodium , https://libsodium.org/
 
-lilv / suil / lv2 (native LV2 host — Linux builds only)
+lilv / suil / lv2 (native LV2 host — Linux and macOS builds)
   License  : ISC (lilv, suil), ISC (lv2 headers)
   Path     : not vendored — system shared libraries found at configure time via
              pkg-config (lilv-0, suil-0, lv2); the native LV2 host is compiled
              only when all three are present (DUSKSTUDIO_NATIVE_LV2).
-  Notes    : Linked against the distro shared objects, never statically. ISC is
-             GPL-compatible; no additional obligations beyond the license text.
+  Notes    : Linked against the shared objects, never statically. On Linux
+             those are the distro's. The macOS release build links Homebrew's,
+             and the DMG bundles liblilv and libsuil in
+             DuskStudio.app/Contents/Frameworks with their dependencies
+             libserd, libsord, libsratom and libzix, all ISC (David
+             Robillard), at the Homebrew versions installed on the release
+             runner. ISC is GPL-compatible; no additional obligations beyond
+             the license text.
              This entry is only about the SYSTEM lilv/suil/lv2 the native host
              uses. JUCE bundles its own static copies of lv2, lilv, serd, sord
              and sratom, and those compile into every platform's binary — see
@@ -514,12 +533,15 @@ LAME / libmp3lame (MP3 bounce export — optional)
   Path     : not vendored — system shared library found at configure time via
              find_library(mp3lame); linked only when present
              (DUSKSTUDIO_HAS_LAME). Builds without it fall back to WAV-only.
-  Notes    : On Linux and macOS, linked against the system SHARED library —
+  Notes    : On Linux and macOS, linked against a SHARED library —
              find_library resolves the distro / Homebrew shared object at
              configure time (verified: release Linux build links
              /usr/lib64/libmp3lame.so), so LGPL-2.1 section 6(b) applies:
              the shared-library mechanism is a 2.1 addition, relied on here
-             under LAME's or-later grant.
+             under LAME's or-later grant. Linux uses the system's copy. The
+             macOS DMG bundles Homebrew's libmp3lame in
+             DuskStudio.app/Contents/Frameworks as a separate dylib, with the
+             same unpinned version and missing source noted under libsndfile.
              Windows is the exception: mp3lame is one of the two packages in
              the root vcpkg.json, installed statically by the same
              x64-windows-static manifest run described under libsndfile, so a
@@ -659,7 +681,8 @@ Redistribute the binary: Allowed under GPL-3.0 terms. Include LICENSE,
                           JUCE's own license points at without supplying.
                           One thing is NOT settled: the LGPL section 6 relink
                           route for the statically linked libsndfile and
-                          mpg123 in a Windows build.
+                          mpg123 in a Windows build, and the source for the
+                          LGPL dylibs the macOS DMG bundles.
                           The versions ARE pinned — vcpkg.json and its
                           builtin-baseline resolve every port in the chain to
                           one recorded revision — but the delivery half
@@ -2298,9 +2321,10 @@ libsndfile COPYING at tag 1.2.2, https://github.com/libsndfile/libsndfile
 This is the license body for the LGPL components a Windows build links
 statically and so distributes as part of the executable: libsndfile 1.2.2
 (LGPL-2.1-or-later), mpg123 1.33.4 (LGPL-2.1-only, statement above) and LAME
-(LGPL-2.0-or-later, taken here at 2.1 under its or-later grant). On Linux and
-macOS these are shared libraries from the user's system and section 6(b)
-applies instead, but the text accompanies the distribution either way.
+(LGPL-2.0-or-later, taken here at 2.1 under its or-later grant). On Linux
+these are shared libraries from the user's system. The macOS DMG bundles them
+as separate dylibs in DuskStudio.app/Contents/Frameworks. Section 6(b) applies
+on both, but the text accompanies the distribution either way.
 The copy below is libsndfile's own, verbatim. mpg123 ships the same license as
 section 1 of its COPYING; that copy differs from this one only in the
 indentation of its headings, in giving the FSF's current Franklin Street

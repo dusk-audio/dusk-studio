@@ -6,8 +6,8 @@
 # version and date, the date not in the future).
 #
 #   scripts/release-metadata-check.sh                       consistency only
-#   scripts/release-metadata-check.sh --date 2026-09-08     the heading must carry this date
-#   scripts/release-metadata-check.sh --tag v0.13.3 --commit-date 2026-09-08
+#   scripts/release-metadata-check.sh --date 2026-09-29     the heading must carry this date
+#   scripts/release-metadata-check.sh --tag v0.14.0 --commit-date 2026-09-29
 #       the tag must equal VERSION and the heading date must be within a day
 #       of the tagged commit
 set -euo pipefail

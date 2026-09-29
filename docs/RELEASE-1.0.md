@@ -63,7 +63,7 @@ Each line below is a check somebody can run and get a yes or a no.
 
 - A one-page quickstart exists, is reachable from the app, and ships in every
   package.
-- MANUAL.md describes every user-visible change since 0.13.3.
+- MANUAL.md describes every user-visible change since 0.14.0.
 - CHANGELOG.md has a dated `## [1.0.0]` section.
 - `scripts/release-metadata-check.sh` passes for the tag.
 
