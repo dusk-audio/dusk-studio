@@ -12,6 +12,8 @@
 #include "TimelineFollow.h"
 #include "../util/StringParsing.h"
 #include <cmath>
+#include <iterator>
+#include <optional>
 #include <utility>
 #include <string>
 #include <algorithm>
@@ -27,6 +29,41 @@ inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, s
 auto trackLabelFont() { return juce::Font (juce::FontOptions (10.0f, juce::Font::bold)); }
 
 constexpr int kNameEditorMinW = 140;
+
+struct RegionPaletteEntry { const char* label; std::uint32_t argb; };
+// A zero alpha is an unset customColour, so the first entry puts a region back
+// on its track's colour.
+constexpr RegionPaletteEntry kRegionPalette[] = {
+    { "Reset to track colour", 0x00000000 },
+    { "Red",     0xffd05f5f }, { "Orange",  0xffd09060 },
+    { "Yellow",  0xffd0c060 }, { "Green",   0xff60c070 },
+    { "Cyan",    0xff60c0c0 }, { "Blue",    0xff6090d0 },
+    { "Purple",  0xff9070c0 }, { "Magenta", 0xffc060a0 },
+};
+constexpr int kRegionPaletteSize = (int) std::size (kRegionPalette);
+constexpr int kColourItemBase = 5000;
+
+// Item ids run from kColourItemBase in palette order. current ticks its entry,
+// nullopt ticks none.
+juce::PopupMenu regionColourMenu (std::optional<std::uint32_t> current)
+{
+    juce::PopupMenu sub;
+    for (int i = 0; i < kRegionPaletteSize; ++i)
+    {
+        const bool ticked = current.has_value()
+                         && (i == 0 ? (*current >> 24) == 0 : *current == kRegionPalette[i].argb);
+        sub.addItem (kColourItemBase + i, kRegionPalette[i].label, true, ticked);
+    }
+    return sub;
+}
+
+// The palette colour a menu result picked, nullopt for any other item.
+std::optional<std::uint32_t> chosenRegionColour (int chosen)
+{
+    const int entry = chosen - kColourItemBase;
+    if (entry < 0 || entry >= kRegionPaletteSize) return std::nullopt;
+    return kRegionPalette[entry].argb;
+}
 
 // Process-wide static modal for the tape strip's text-input dialogs
 // (marker rename, audio region label, MIDI region label). One in-
@@ -771,6 +808,104 @@ void TapeStrip::clearAllSelections() noexcept
     selectedMidiRegion = -1;
     additionalSelections.clear();
     heldSelectionHistory.clear();
+}
+
+std::vector<TapeStrip::RegionId> TapeStrip::regionMenuTargets (int track, int idx) const
+{
+    if (isRegionSelected (track, idx)) return allSelectedRegions();
+    return { { track, idx } };
+}
+
+template <typename Field, typename Value>
+void TapeStrip::setAudioRegionField (const std::vector<RegionId>& targets, Field AudioRegion::* field, const Value& value)
+{
+    const Field wanted (value);
+    for (const auto& id : targets)
+    {
+        const auto& regs = session.track (id.track).regions;
+        if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
+        const auto& current = regs[(size_t) id.regionIdx];
+        if (current.*field == wanted) continue;
+        AudioRegion after = current;
+        after.*field = wanted;
+        performInPlace (new RegionEditAction (session, engine, id.track, id.regionIdx, current, after));
+    }
+}
+
+template <typename Field, typename Value>
+void TapeStrip::setMidiRegionField (const std::vector<RegionId>& targets, Field MidiRegion::* field, const Value& value)
+{
+    const Field wanted (value);
+    for (const auto& id : targets)
+    {
+        const auto& regs = session.track (id.track).midiRegions.current();
+        if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
+        const MidiRegion before = regs[(size_t) id.regionIdx];
+        if (before.*field == wanted) continue;
+        MidiRegion after = before;
+        after.*field = wanted;
+        performInPlace (new MidiRegionEditAction (session, engine, id.track, id.regionIdx, before, after));
+    }
+}
+
+namespace
+{
+template <typename Id>
+void sortTrackUpIndexDown (std::vector<Id>& ids)
+{
+    std::sort (ids.begin(), ids.end(), [] (const Id& a, const Id& b)
+    {
+        return a.track != b.track ? a.track < b.track : a.regionIdx > b.regionIdx;
+    });
+}
+} // namespace
+
+std::vector<TapeStrip::RegionId> TapeStrip::editableAudioRegions (std::vector<RegionId> targets,
+                                                                  const std::function<bool (const AudioRegion&)>& keep) const
+{
+    targets.erase (std::remove_if (targets.begin(), targets.end(), [this, &keep] (const RegionId& id)
+    {
+        if (id.track < 0 || id.track >= Session::kNumTracks) return true;
+        const auto& regs = session.track (id.track).regions;
+        if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) return true;
+        const auto& r = regs[(size_t) id.regionIdx];
+        return r.locked || (keep && ! keep (r));
+    }), targets.end());
+    sortTrackUpIndexDown (targets);
+    return targets;
+}
+
+std::vector<TapeStrip::RegionId> TapeStrip::editableMidiRegions (std::vector<RegionId> targets) const
+{
+    targets.erase (std::remove_if (targets.begin(), targets.end(), [this] (const RegionId& id)
+    {
+        if (id.track < 0 || id.track >= Session::kNumTracks) return true;
+        const auto& regs = session.track (id.track).midiRegions.current();
+        return id.regionIdx < 0 || id.regionIdx >= (int) regs.size() || regs[(size_t) id.regionIdx].locked;
+    }), targets.end());
+    sortTrackUpIndexDown (targets);
+    return targets;
+}
+
+void TapeStrip::deleteAudioRegions (const std::vector<RegionId>& ordered)
+{
+    auto& um = engine.getUndoManager();
+    for (const auto& id : ordered)
+        um.perform (new DeleteRegionAction (session, engine, id.track, id.regionIdx));
+}
+
+void TapeStrip::deleteMidiRegions (const std::vector<RegionId>& ordered)
+{
+    auto& um = engine.getUndoManager();
+    for (const auto& id : ordered)
+        um.perform (new DeleteMidiRegionAction (session, engine, id.track, id.regionIdx));
+}
+
+void TapeStrip::splitAudioRegions (const std::vector<RegionId>& ordered, std::int64_t at)
+{
+    auto& um = engine.getUndoManager();
+    for (const auto& id : ordered)
+        um.perform (new SplitRegionAction (session, engine, id.track, id.regionIdx, at));
 }
 
 std::uint32_t TapeStrip::regionAccentForScenario (int track, int region) const
@@ -2736,26 +2871,9 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                 {
                     if (safeThis == nullptr) return;
                     const bool target = ! currentlyMuted;
-                    std::vector<RegionId> targets;
-                    if (safeThis->isRegionSelected (hitCopy.track, hitCopy.regionIdx))
-                        targets = safeThis->allSelectedRegions();
-                    else
-                        targets.push_back ({ hitCopy.track, hitCopy.regionIdx });
-                    auto& um = safeThis->engine.getUndoManager();
-                    um.beginNewTransaction (target ? "Mute regions" : "Unmute regions");
-                    for (const auto& id : targets)
-                    {
-                        const auto& regs = safeThis->session.track (id.track).regions;
-                        if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
-                        const auto& current = regs[(size_t) id.regionIdx];
-                        if (current.muted == target) continue;
-                        AudioRegion afterState  = current;
-                        AudioRegion beforeState = current;
-                        afterState.muted = target;
-                        safeThis->performInPlace (new RegionEditAction (
-                            safeThis->session, safeThis->engine,
-                            id.track, id.regionIdx, beforeState, afterState));
-                    }
+                    safeThis->engine.getUndoManager().beginNewTransaction (target ? "Mute regions" : "Unmute regions");
+                    safeThis->setAudioRegionField (safeThis->regionMenuTargets (hitCopy.track, hitCopy.regionIdx),
+                                                   &AudioRegion::muted, target);
                     safeThis->rebuildPlaybackIfStopped();
                     safeThis->repaint();
                 });
@@ -2771,26 +2889,9 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                 {
                     if (safeThis == nullptr) return;
                     const bool target = ! currentlyLocked;
-                    std::vector<RegionId> targets;
-                    if (safeThis->isRegionSelected (hitCopy.track, hitCopy.regionIdx))
-                        targets = safeThis->allSelectedRegions();
-                    else
-                        targets.push_back ({ hitCopy.track, hitCopy.regionIdx });
-                    auto& um = safeThis->engine.getUndoManager();
-                    um.beginNewTransaction (target ? "Lock regions" : "Unlock regions");
-                    for (const auto& id : targets)
-                    {
-                        const auto& regs = safeThis->session.track (id.track).regions;
-                        if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
-                        const auto& current = regs[(size_t) id.regionIdx];
-                        if (current.locked == target) continue;
-                        AudioRegion afterState  = current;
-                        AudioRegion beforeState = current;
-                        afterState.locked = target;
-                        safeThis->performInPlace (new RegionEditAction (
-                            safeThis->session, safeThis->engine,
-                            id.track, id.regionIdx, beforeState, afterState));
-                    }
+                    safeThis->engine.getUndoManager().beginNewTransaction (target ? "Lock regions" : "Unlock regions");
+                    safeThis->setAudioRegionField (safeThis->regionMenuTargets (hitCopy.track, hitCopy.regionIdx),
+                                                   &AudioRegion::locked, target);
                     safeThis->repaint();
                 });
 
@@ -2845,34 +2946,8 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
         m.addSeparator();
     }
 
-    // Color submenu - 8 curated accent options + "Reset to track
-    // colour". Setting goes through RegionEditAction so undo/redo
-    // round-trip cleanly. Acts on every selected region (the user's
-    // multi-selection) when the right-clicked region is part of one;
-    // single-region otherwise. Same logic as note-properties popup.
-    juce::PopupMenu colourSub;
-    struct PaletteEntry { const char* label; std::uint32_t argb; };
-    static const PaletteEntry kPalette[] = {
-        { "Reset to track colour", 0x00000000 },   // 0 alpha = transparent = unset
-        { "Red",          0xffd05f5f },
-        { "Orange",       0xffd09060 },
-        { "Yellow",       0xffd0c060 },
-        { "Green",        0xff60c070 },
-        { "Cyan",         0xff60c0c0 },
-        { "Blue",         0xff6090d0 },
-        { "Purple",       0xff9070c0 },
-        { "Magenta",      0xffc060a0 },
-    };
-    for (int i = 0; i < (int) (sizeof (kPalette) / sizeof (kPalette[0])); ++i)
-    {
-        const bool isReset = (i == 0);
-        colourSub.addItem (5000 + i,
-                            kPalette[i].label,
-                            true,
-                            isReset ? region.customColour.isTransparent()
-                                    : region.customColour.getARGB() == kPalette[i].argb);
-    }
-    m.addSubMenu ("Color", colourSub);
+    // Acts on the whole selection when the right-clicked region is part of it.
+    m.addSubMenu ("Color", regionColourMenu (region.customColour.getARGB()));
 
     m.addSeparator();
     m.addItem ("Delete region",
@@ -2892,40 +2967,12 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
         [safeThis = juce::Component::SafePointer<TapeStrip> (this), hitCopy = hit]
         (int chosen)
         {
-            if (safeThis == nullptr) return;
-            // Color choices land in the 5000-range. Other items handle
-            // themselves via their per-item lambdas above; we only act
-            // on the colour-submenu IDs here.
-            if (chosen < 5000 || chosen >= 5000 + (int) (sizeof (kPalette) / sizeof (kPalette[0])))
-                return;
-            const std::uint32_t newArgb = kPalette[chosen - 5000].argb;
-            const juce::Colour newColour (newArgb);
-
-            // Pick the target list - the multi-selection if the
-            // right-clicked region is part of one, otherwise just
-            // the right-clicked region.
-            std::vector<RegionId> targets;
-            if (safeThis->isRegionSelected (hitCopy.track, hitCopy.regionIdx))
-                targets = safeThis->allSelectedRegions();
-            else
-                targets.push_back ({ hitCopy.track, hitCopy.regionIdx });
-
-            auto& um = safeThis->engine.getUndoManager();
-            um.beginNewTransaction (targets.size() == 1 ? "Set region colour"
-                                                          : "Set regions colour");
-            for (const auto& id : targets)
-            {
-                const auto& regs = safeThis->session.track (id.track).regions;
-                if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
-                const auto& current = regs[(size_t) id.regionIdx];
-                if (current.customColour == newColour) continue;
-                AudioRegion afterState  = current;
-                AudioRegion beforeState = current;
-                afterState.customColour = newColour;
-                safeThis->performInPlace (new RegionEditAction (safeThis->session, safeThis->engine,
-                                                                  id.track, id.regionIdx,
-                                                                  beforeState, afterState));
-            }
+            const auto argb = chosenRegionColour (chosen);
+            if (safeThis == nullptr || ! argb) return;
+            const auto targets = safeThis->regionMenuTargets (hitCopy.track, hitCopy.regionIdx);
+            safeThis->engine.getUndoManager().beginNewTransaction (targets.size() == 1 ? "Set region colour"
+                                                                                       : "Set regions colour");
+            safeThis->setAudioRegionField (targets, &AudioRegion::customColour, *argb);
             safeThis->repaint();
         });
 }
@@ -2995,20 +3042,23 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
 
     m.addSeparator();
 
-    // Mute / lock toggles - wrapped in MidiRegionEditAction so Cmd+Z reverts.
     m.addItem (region.muted ? "Unmute region" : "Mute region",
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this), trackIdx, regionIdx]
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this), trackIdx, regionIdx,
+                 target = ! region.muted]
                 {
-                    if (safeThis != nullptr)
-                        safeThis->commitMidiRegionToggle (trackIdx, regionIdx, "Mute MIDI region",
-                            [] (MidiRegion& r) { r.muted = ! r.muted; });
+                    if (safeThis == nullptr) return;
+                    safeThis->engine.getUndoManager().beginNewTransaction ("Mute MIDI region");
+                    safeThis->setMidiRegionField ({ { trackIdx, regionIdx } }, &MidiRegion::muted, target);
+                    safeThis->repaint();
                 });
     m.addItem (region.locked ? "Unlock region" : "Lock region",
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this), trackIdx, regionIdx]
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this), trackIdx, regionIdx,
+                 target = ! region.locked]
                 {
-                    if (safeThis != nullptr)
-                        safeThis->commitMidiRegionToggle (trackIdx, regionIdx, "Lock MIDI region",
-                            [] (MidiRegion& r) { r.locked = ! r.locked; });
+                    if (safeThis == nullptr) return;
+                    safeThis->engine.getUndoManager().beginNewTransaction ("Lock MIDI region");
+                    safeThis->setMidiRegionField ({ { trackIdx, regionIdx } }, &MidiRegion::locked, target);
+                    safeThis->repaint();
                 });
 
     m.addSeparator();
@@ -3071,26 +3121,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
         m.addSeparator();
     }
 
-    // Same 8-colour palette + Reset as the audio menu.
-    juce::PopupMenu colourSub;
-    struct PaletteEntry { const char* label; std::uint32_t argb; };
-    static const PaletteEntry kPalette[] = {
-        { "Reset to track colour", 0x00000000 },
-        { "Red",     0xffd05f5f }, { "Orange",  0xffd09060 },
-        { "Yellow",  0xffd0c060 }, { "Green",   0xff60c070 },
-        { "Cyan",    0xff60c0c0 }, { "Blue",    0xff6090d0 },
-        { "Purple",  0xff9070c0 }, { "Magenta", 0xffc060a0 },
-    };
-    for (int i = 0; i < (int) (sizeof (kPalette) / sizeof (kPalette[0])); ++i)
-    {
-        const bool isReset = (i == 0);
-        colourSub.addItem (5000 + i,
-                            kPalette[i].label,
-                            true,
-                            isReset ? region.customColour.isTransparent()
-                                    : region.customColour.getARGB() == kPalette[i].argb);
-    }
-    m.addSubMenu ("Color", colourSub);
+    m.addSubMenu ("Color", regionColourMenu (region.customColour.getARGB()));
 
     m.addSeparator();
     // Parity with the audio-region menu - the strip is otherwise the only
@@ -3101,13 +3132,10 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                 {
                     if (safeThis == nullptr) return;
                     auto& self = *safeThis;
-                    const auto regs = self.session.track (trackIdx).midiRegions.current();
-                    if (regionIdx < 0 || regionIdx >= (int) regs.size()) return;
-                    if (regs[(size_t) regionIdx].locked) return;
-                    auto& um = self.engine.getUndoManager();
-                    um.beginNewTransaction ("Delete MIDI region");
-                    um.perform (new DeleteMidiRegionAction (self.session, self.engine,
-                                                              trackIdx, regionIdx));
+                    const auto targets = self.editableMidiRegions ({ { trackIdx, regionIdx } });
+                    if (targets.empty()) return;
+                    self.engine.getUndoManager().beginNewTransaction ("Delete MIDI region");
+                    self.deleteMidiRegions (targets);
                     self.clearAllSelections();
                     self.repaint();
                 });
@@ -3117,13 +3145,11 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
          trackIdx, regionIdx]
         (int chosen)
         {
-            if (safeThis == nullptr) return;
-            if (chosen < 5000
-                || chosen >= 5000 + (int) (sizeof (kPalette) / sizeof (kPalette[0])))
-                return;
-            const juce::Colour newColour { kPalette[chosen - 5000].argb };
-            safeThis->commitMidiRegionToggle (trackIdx, regionIdx, "Color MIDI region",
-                [newColour] (MidiRegion& r) { r.customColour = newColour; });
+            const auto argb = chosenRegionColour (chosen);
+            if (safeThis == nullptr || ! argb) return;
+            safeThis->engine.getUndoManager().beginNewTransaction ("Color MIDI region");
+            safeThis->setMidiRegionField ({ { trackIdx, regionIdx } }, &MidiRegion::customColour, *argb);
+            safeThis->repaint();
         });
 }
 
@@ -4133,21 +4159,6 @@ int TapeStrip::hitTestTempoPoint (int x, int y) const noexcept
     return -1;
 }
 
-void TapeStrip::commitMidiRegionToggle (int trackIdx, int regionIdx,
-                                         const juce::String& name,
-                                         std::function<void (MidiRegion&)> mutate)
-{
-    const auto& live = session.track (trackIdx).midiRegions.current();
-    if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
-    MidiRegion before = live[(size_t) regionIdx];
-    MidiRegion after  = before;
-    mutate (after);
-    auto& um = engine.getUndoManager();
-    um.beginNewTransaction (name);
-    performInPlace (new MidiRegionEditAction (session, engine, trackIdx, regionIdx, before, after));
-    repaint();
-}
-
 void TapeStrip::commitTempoPoints (std::vector<duskstudio::TempoPoint> after,
                                     const juce::String& name)
 {
@@ -4331,56 +4342,26 @@ bool TapeStrip::pasteAtPlayhead()
 
 bool TapeStrip::deleteSelectedRegion()
 {
-    auto selection = allSelectedRegions();
+    const auto selection = allSelectedRegions();
     if (selection.empty())
     {
         // No audio selection: fall back to the selected MIDI region so the
-        // Delete key works on MIDI takes too (audio-only before - the key
-        // was a silent no-op with a MIDI region highlighted).
-        const int t = selectedMidiTrack, r = selectedMidiRegion;
-        if (t < 0 || t >= Session::kNumTracks || r < 0) return false;
-        const auto regs = session.track (t).midiRegions.current();
-        if (r >= (int) regs.size() || regs[(size_t) r].locked) return false;
-        auto& um = engine.getUndoManager();
-        um.beginNewTransaction ("Delete MIDI region");
-        um.perform (new DeleteMidiRegionAction (session, engine, t, r));
+        // Delete key works on MIDI takes too.
+        const auto midi = editableMidiRegions ({ { selectedMidiTrack, selectedMidiRegion } });
+        if (midi.empty()) return false;
+        engine.getUndoManager().beginNewTransaction ("Delete MIDI region");
+        deleteMidiRegions (midi);
         clearAllSelections();
         repaint();
         return true;
     }
 
-    // Drop locked regions from the target list. Locked = reject
-    // destructive operations. If every selected region is locked
-    // the call is a no-op.
-    selection.erase (std::remove_if (selection.begin(), selection.end(),
-        [this] (const RegionId& id)
-        {
-            const auto& regs = session.track (id.track).regions;
-            return id.regionIdx < 0 || id.regionIdx >= (int) regs.size()
-                || regs[(size_t) id.regionIdx].locked;
-        }), selection.end());
-    if (selection.empty()) return false;
-
-    // Erase in descending order PER TRACK so earlier indices on the
-    // same track stay valid through the loop. Sort by (track ASC,
-    // regionIdx DESC) and walk linearly.
-    std::sort (selection.begin(), selection.end(),
-        [] (const RegionId& a, const RegionId& b)
-        {
-            return a.track != b.track ? a.track < b.track
-                                       : a.regionIdx > b.regionIdx;
-        });
-
-    auto& um = engine.getUndoManager();
-    um.beginNewTransaction (selection.size() == 1 ? "Delete region"
-                                                    : "Delete regions");
-    for (const auto& id : selection)
-    {
-        const auto& regs = session.track (id.track).regions;
-        if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
-        um.perform (new DeleteRegionAction (session, engine,
-                                              id.track, id.regionIdx));
-    }
+    // Locked regions reject delete; with every selected region locked the
+    // key is a no-op.
+    const auto targets = editableAudioRegions (selection);
+    if (targets.empty()) return false;
+    engine.getUndoManager().beginNewTransaction (targets.size() == 1 ? "Delete region" : "Delete regions");
+    deleteAudioRegions (targets);
     clearAllSelections();
     repaint();
     return true;
@@ -4514,51 +4495,16 @@ bool TapeStrip::cycleSelectedTake (bool forward)
 
 bool TapeStrip::splitSelectedAtPlayhead()
 {
-    auto selection = allSelectedRegions();
-    if (selection.empty()) return false;
-
     const auto playhead = engine.getTransport().getPlayhead();
-
-    // Filter down to regions whose range strictly contains the
-    // playhead AND that aren't locked. SplitRegionAction tolerates
-    // edge cases internally but a click without movement shouldn't
-    // change anything; the strict-inside gate matches the right-
-    // click menu's behaviour. Locked regions reject split.
-    auto eligible = [this, playhead] (const RegionId& id)
+    // Strictly inside, as the right-click menu gates it: a split at an edge
+    // would change nothing. Locked regions reject split.
+    const auto targets = editableAudioRegions (allSelectedRegions(), [playhead] (const AudioRegion& r)
     {
-        const auto& regs = session.track (id.track).regions;
-        if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) return false;
-        const auto& r = regs[(size_t) id.regionIdx];
-        if (r.locked) return false;
-        return playhead > r.timelineStart
-            && playhead < r.timelineStart + r.lengthInSamples;
-    };
-    selection.erase (std::remove_if (selection.begin(), selection.end(),
-                                       [&] (const RegionId& id)
-                                       { return ! eligible (id); }),
-                       selection.end());
-    if (selection.empty()) return false;
-
-    // SplitRegionAction inserts the new piece at idx+1, shifting any
-    // higher indices on the same track up by one. Process splits in
-    // (track ASC, regionIdx DESC) so each split's index stays valid
-    // through the loop. Same idiom as deleteSelectedRegion.
-    std::sort (selection.begin(), selection.end(),
-        [] (const RegionId& a, const RegionId& b)
-        {
-            return a.track != b.track ? a.track < b.track
-                                       : a.regionIdx > b.regionIdx;
-        });
-
-    auto& um = engine.getUndoManager();
-    um.beginNewTransaction (selection.size() == 1 ? "Split region"
-                                                    : "Split regions");
-    for (const auto& id : selection)
-    {
-        um.perform (new SplitRegionAction (session, engine,
-                                             id.track, id.regionIdx,
-                                             playhead));
-    }
+        return playhead > r.timelineStart && playhead < r.timelineStart + r.lengthInSamples;
+    });
+    if (targets.empty()) return false;
+    engine.getUndoManager().beginNewTransaction (targets.size() == 1 ? "Split region" : "Split regions");
+    splitAudioRegions (targets, playhead);
     repaint();
     return true;
 }

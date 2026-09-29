@@ -306,10 +306,6 @@ private:
     void showMidiRegionContextMenu (int trackIdx, int regionIdx,
                                        juce::Point<int> screenPos);
 
-    // Undoable MIDI-region mute/lock toggle from the tape-strip menu.
-    void commitMidiRegionToggle (int trackIdx, int regionIdx, const juce::String& name,
-                                  std::function<void (duskstudio::MidiRegion&)> mutate);
-
     // Tempo edits, all driven from the ruler's right-click menu. Every edit
     // routes through commitTempoPoints so it's a single undoable transaction.
     void commitTempoPoints (std::vector<duskstudio::TempoPoint> after,
@@ -553,6 +549,26 @@ private:
     bool isRegionSelected (int track, int idx) const noexcept;
     std::vector<RegionId> allSelectedRegions() const;
     void clearAllSelections() noexcept;
+    // The whole selection when the right-clicked region is part of it,
+    // otherwise that region alone.
+    std::vector<RegionId> regionMenuTargets (int track, int idx) const;
+
+    // The region edits the menus and the edit keys share. None of them opens
+    // an undo transaction; the caller names one per gesture.
+    // Sets one field on every target, skipping regions that already hold it.
+    template <typename Field, typename Value>
+    void setAudioRegionField (const std::vector<RegionId>& targets, Field AudioRegion::* field, const Value& value);
+    template <typename Field, typename Value>
+    void setMidiRegionField (const std::vector<RegionId>& targets, Field MidiRegion::* field, const Value& value);
+    // The unlocked targets that keep accepts, ordered track ascending and
+    // index descending, so deleting or splitting them in that order leaves
+    // every index still to come valid.
+    std::vector<RegionId> editableAudioRegions (std::vector<RegionId> targets,
+                                                const std::function<bool (const AudioRegion&)>& keep = {}) const;
+    std::vector<RegionId> editableMidiRegions (std::vector<RegionId> targets) const;
+    void deleteAudioRegions (const std::vector<RegionId>& ordered);
+    void deleteMidiRegions (const std::vector<RegionId>& ordered);
+    void splitAudioRegions (const std::vector<RegionId>& ordered, std::int64_t at);
 
     // A region's own colour when it has one, otherwise its track's. An unset
     // customColour is transparent.
