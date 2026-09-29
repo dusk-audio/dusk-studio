@@ -754,7 +754,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
             ? std::filesystem::path {}
             : std::filesystem::u8path (
                 sessionDir.getChildFile ("state").getChildFile ("lv2")
-                    .getChildFile ("track" + juce::String (idx + 1).paddedLeft ('0', 2))
+                    .getChildFile (engine.getSession().lv2StateTagFor (idx))
                     .getFullPathName().toStdString());
         lv2Slot.setStateDirectory ({});
         captureNativeSlot ("LV2", lv2Slot, t.nativeLv2Path, t.nativeLv2PluginId,

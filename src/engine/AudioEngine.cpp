@@ -19,6 +19,7 @@
 #include "FaderBindingMap.h"
 #include "CompModeMap.h"
 #include "../session/RegionEditActions.h"
+#include "../session/TrackMove.h"
 #include "DeviceFallbackMessage.h"
 #include "LegacyStateBase64.h"
 #include "../foundation/AppConfigDir.h"
@@ -232,7 +233,8 @@ static void saveAudioDeviceState (const std::string& blob)
 
 #if DUSKSTUDIO_HAS_NATIVE_LV2
 // Per-slot directory for LV2 FILE-BACKED state, under the session: track
-// slots at state/lv2/trackNN, aux slots at state/lv2/auxA_slotS. Empty when
+// slots at state/lv2/<Session::lv2StateTagFor>, which is trackNN until the
+// track moves, aux slots at state/lv2/auxA_slotS. Empty when
 // the session has no directory yet - saves fall back to blob-only. Save As
 // consolidation copies the whole state/ tree (SessionSerializer).
 static std::filesystem::path lv2StateDirFor (Session& session, const juce::String& slotTag)
@@ -686,6 +688,25 @@ public:
         if (auLatencyChanged)
             engine.recomputePdc();
 #endif
+    }
+
+    // A pacer keys its state on the slot's load generation, which another
+    // strip can share, so it goes where its strip goes.
+    void followTrackMove (const TrackMovePlan& plan)
+    {
+        const auto follow = [&plan] (auto& perTrack)
+        {
+            const auto was = perTrack;
+            for (size_t t = 0; t < perTrack.size(); ++t)
+                perTrack[t] = was[(size_t) plan.newToOld[t]];
+        };
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        follow (vst3TrackPolicies);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        follow (clapTrackPacers);
+#endif
+        (void) follow;
     }
 private:
     AudioEngine& engine;
@@ -1451,6 +1472,79 @@ void AudioEngine::reapplyFreezeState() noexcept
             strips[(size_t) t]->getPluginSlot().setBypassed (true);
 }
 
+bool AudioEngine::canMoveTracks() const noexcept
+{
+    // Suspended means another fence is up on this thread: the gate does not
+    // nest, so the resume at the end of a move would let the callback back in
+    // under its owner.
+    return transport.isStopped() && ! offlineRenderActive.load (std::memory_order_acquire)
+        && ! isProcessingSuspended();
+}
+
+bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMask& refollow)
+{
+    // A mapping that is not one to one would hand one strip to two slots, which
+    // the worker lanes would then process at once. A frozen track's baked audio
+    // and its freeze file are named by its slot.
+    const auto checked = trackMoveFromNewToOld (requested.newToOld);
+    if (! canMoveTracks() || ! checked) return false;
+    const auto& plan = *checked;
+    for (int from = 0; from < Session::kNumTracks; ++from)
+        if (plan.oldToNew[(size_t) from] != from
+            && session.track (from).frozen.load (std::memory_order_acquire))
+            return false;
+    if (plan.isIdentity()) return true;
+
+    if (onBeforeTracksMove) onBeforeTracksMove (plan);
+
+    // The copies are made here, with the audio running. What is left for the
+    // window below is swapping them in, publishing snapshots, storing atomics
+    // and repointing the strips: everything the callback reads that a move
+    // changes, changed with no callback in flight. Nothing in the window loads
+    // or frees a plug-in, and nothing suspends again.
+    auto staged = session.stageTrackMove (plan, refollow);
+    if (! staged) return false;
+
+    suspendProcessing();
+    session.landTrackMove (*staged);
+    const auto follow = [&plan] (std::atomic<int>& slot)
+    {
+        const int was = slot.load (std::memory_order_relaxed);
+        if (was >= 0 && was < Session::kNumTracks)
+            slot.store (plan.oldToNew[(size_t) was], std::memory_order_relaxed);
+    };
+    follow (session.mcu.selectedChannel);
+    follow (session.tuneTrackIndex);
+    session.midiLearnPending.store (-1, std::memory_order_relaxed);
+
+    const auto stripsWere = strips;
+    const auto midiInputsWere = lastMidiInputIndex;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto from = (size_t) plan.newToOld[(size_t) t];
+        auto* strip = stripsWere[from];
+        strips[(size_t) t] = strip;
+        lastMidiInputIndex[(size_t) t] = midiInputsWere[from];
+        strip->bind (session.track (t).strip);
+        strip->bindHardwareInsert (session.track (t).hardwareInsert);
+    }
+    // A slot's MIDI bindings now drive another track's controls, so every
+    // soft-takeover pickup re-arms, as after a bindings edit.
+    pickupSnapshotKey = nullptr;
+    session.recomputeRtCounters();
+    resumeProcessing();
+    staged.reset();
+
+    if (regionClipboard.sourceTrack >= 0 && regionClipboard.sourceTrack < Session::kNumTracks)
+        regionClipboard.sourceTrack = plan.oldToNew[(size_t) regionClipboard.sourceTrack];
+    nativeParamDrain->followTrackMove (plan);
+    recomputePdc();
+    playbackEngine.preparePlayback();
+
+    if (onTracksMoved) onTracksMoved (plan);
+    return true;
+}
+
 void AudioEngine::reresolveTrackMidiFromSession()
 {
     // Re-map saved per-track MIDI identifiers to runtime indices against the
@@ -2213,7 +2307,7 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
                 track.nativeLv2StateBase64,
                 nativeSlot.getPath(), nativeSlot.getPluginId());
             nativeSlot.setStateDirectory (
-                lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
+                lv2StateDirFor (session, session.lv2StateTagFor (t)));
             // Preserve the carried blob when a plugin can't serialize (no state
             // extension / save failure) - don't wipe it on a save round-trip.
             if (! strip.nativeLv2ReloadFailed())
@@ -2747,7 +2841,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 if (loaded && stateWasSupplied)
                 {
                     strip.getNativeLv2Slot().setStateDirectory (
-                        lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
+                        lv2StateDirFor (session, session.lv2StateTagFor (t)));
                     stateAccepted = strip.getNativeLv2Slot().loadState (blob);
                     if (! stateAccepted) noteStateRejected ("track LV2", t, blob.size());
                 }
@@ -2771,8 +2865,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeMultisample();
                 strip.unloadBuiltin();
                 strip.setPendingNativeLv2 (lv2File, std::move (blob), track.nativeLv2PluginId,
-                                           lv2StateDirFor (session,
-                                               "track" + juce::String (t + 1).paddedLeft ('0', 2)));
+                                           lv2StateDirFor (session, session.lv2StateTagFor (t)));
             }
             continue;
         }

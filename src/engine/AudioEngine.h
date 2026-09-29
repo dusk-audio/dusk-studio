@@ -147,6 +147,23 @@ public:
     // store survives the async plugin load. Call after plugin restore.
     void reapplyFreezeState() noexcept;
 
+    // Puts every track where plan says. A track's session data and its strip,
+    // with the plug-in the strip hosts, move together and nothing reloads, so
+    // each plug-in keeps its live state. refollow is Session::permuteTracks's.
+    // Refused (false, nothing moved, no hook called) while canMoveTracks says
+    // no, when plan does not map the slots one to one, or when a frozen track
+    // would change slot. Message thread.
+    bool moveTracks (const TrackMovePlan& plan, const TrackSlotMask& refollow = {});
+    // The transport is stopped, no offline render drives the engine, and the
+    // process gate is not already held.
+    bool canMoveTracks() const noexcept;
+
+    // Called around every moveTracks, an undo or redo of one included: before,
+    // for whatever shows one of the tracks that move; after, to follow them to
+    // their new slots. Either may be empty. Message thread.
+    std::function<void (const TrackMovePlan&)> onBeforeTracksMove;
+    std::function<void (const TrackMovePlan&)> onTracksMoved;
+
     Session&          getSession()        noexcept { return session; }
     const Session&    getSession() const   noexcept { return session; }
     Transport&        getTransport()      noexcept { return transport; }
@@ -814,7 +831,7 @@ private:
     std::array<ChannelStrip, Session::kNumTracks> stripStorage;
     // The strip each track slot runs, by slot. The strips stay where they are
     // in memory, so a slot can be handed another strip, with the plug-in it
-    // hosts, without anything being rebuilt.
+    // hosts, without anything being rebuilt (moveTracks).
     std::array<ChannelStrip*, Session::kNumTracks> strips = [this]
     {
         std::array<ChannelStrip*, Session::kNumTracks> bySlot {};
