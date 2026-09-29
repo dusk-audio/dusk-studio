@@ -23,6 +23,7 @@
 #include "MidiBindingsPanel.h"
 #include "SelfTestPanel.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "imgui/AudioEditorView.h"
  #include "imgui/AudioSettingsView.h"
  #include "imgui/StartupView.h"
  #include "imgui/VirtualKeyboardView.h"
@@ -40,7 +41,6 @@
 #include "EmbeddedModal.h"
 #include "PianoRollComponent.h"
 #include "PlatformWindowing.h"
-#include "AudioRegionEditor.h"
 #include "TunerOverlay.h"
 #include "../session/SessionTemplates.h"
 #include "MasteringView.h"
@@ -1248,6 +1248,11 @@ MainComponent::~MainComponent()
     audioSettingsDim.reset();
     virtualKeyboardWindow.reset();
     virtualKeyboardDim.reset();
+    // The editor's view reads the session and the engine every frame and owns
+    // waveform workers, so it goes before either.
+    audioEditorView = nullptr;
+    audioEditorWindow.reset();
+    audioEditorDim.reset();
    #endif
     importTargetModal    .closeAndDeleteBodyNow();
     shortcutsModal       .closeAndDeleteBodyNow();
@@ -1310,6 +1315,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             closeAudioSettings();
             return true;
         }
+        if (audioEditorShowing())
+        {
+            closeAudioEditor();
+            return true;
+        }
         if (consoleView != nullptr)
         {
             if (auto* const master = consoleView->getMasterStripComponent();
@@ -1338,7 +1348,6 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (code == 'G' && noMods)
     {
         session.editMode = EditMode::Grab;
-        if (audioEditor != nullptr) audioEditor->syncEditModeToolbar();
         if (pianoRoll   != nullptr) pianoRoll->syncEditModeToolbar();
         if (tapeStrip   != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
         return true;
@@ -1438,7 +1447,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // TapeStrip zoom: '=' / '+' zoom in, '-' zoom out, '0' fit.
     // Skipped when a modal editor (audio / piano roll) has focus -
     // those have their own zoom keypress paths and grab focus first.
-    if (tapeStrip != nullptr && audioEditor == nullptr && pianoRoll == nullptr)
+    if (tapeStrip != nullptr && ! audioEditorOpen() && pianoRoll == nullptr)
     {
         const auto ch = key.getTextCharacter();
         if (noMods && (ch == '=' || ch == '+'))
@@ -6078,7 +6087,7 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
 
     // Mutually exclusive with the audio editor. Opening the piano roll
     // tears down any open audio editor first.
-    if (audioEditor != nullptr) closeAudioEditor();
+    destroyAudioEditor();
 
     // Toggle vs swap. Clicking the SAME region while the roll is already
     // open dismisses it (a second click on a region is naturally read as
@@ -6217,98 +6226,178 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
         return;
     }
 
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    setStatusText ("Audio editor unavailable: built without the native UI");
+   #else
     // Drop any pending collapse-teardown (see openPianoRoll).
     editorTeardownTimer.reset();
 
     // Remember the tapestrip's edit tool before any modal can change it.
     snapshotEditModeForModal();
 
-    // Mutual exclusion with the piano roll - opening the audio editor
-    // tears down any open piano roll first.
     if (pianoRoll != nullptr) closePianoRoll();
 
-    // Toggle vs swap, mirroring openPianoRoll's semantics. Same target
-    // region on a re-double-click closes; a different region swaps.
-    if (audioEditor != nullptr)
+    // A second double-click on the region being edited reads as "done"; any other
+    // region replaces the editor.
+    if (audioEditorShowing() && audioEditorTrackIdx == trackIdx
+        && audioEditorRegionIdx == regionIdx)
     {
-        const bool sameRegion = (audioEditorTrackIdx == trackIdx
-                                  && audioEditorRegionIdx == regionIdx);
-        if (sameRegion) { closeAudioEditorAnimated(); return; }
         closeAudioEditor();
+        return;
+    }
+    destroyAudioEditor();
+
+    auto* const topLevel = getTopLevelComponent();
+    const auto parentHandle = topLevel != nullptr
+                            ? embedscale::nativeParentHandle (*topLevel) : 0;
+    if (parentHandle == 0)
+    {
+        setStatusText ("Audio editor unavailable: main window is not ready");
+        scheduleEditModeRestore();
+        return;
     }
 
-    audioEditor = std::make_unique<AudioRegionEditor> (session, engine, trackIdx, regionIdx);
-    audioEditorTrackIdx  = trackIdx;
-    audioEditorRegionIdx = regionIdx;
-    audioEditorDim = std::make_unique<DimOverlay> (0.80f);
+    if (auto hook = EmbeddedModal::beforeModalShown())
+        hook();
 
-    const auto bounds = getLocalBounds();
-    const int inset = std::max (24, std::min (bounds.getWidth(), bounds.getHeight()) / 16);
-    const auto editorBounds = bounds.reduced (inset);
+    audioEditorWindow = std::make_unique<imgui::DuskPanelWindow> (
+        "dusk-studio-audio-editor", "audio-editor", "Audio editor");
 
-    juce::Rectangle<int> startRect;
-    if (tapeStrip != nullptr)
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    imgui::AudioEditorHost host;
+    host.navigateToRegion = [safeThis] (int t, int newIdx)
     {
-        const auto rr = tapeStrip->audioRegionScreenRect (trackIdx, regionIdx);
-        if (! rr.isEmpty())
-            startRect = getLocalArea (tapeStrip.get(), rr);
-    }
-
-    audioEditorDim->setBounds (bounds);
-    audioEditorDim->onClick = [this] { closeAudioEditorAnimated(); };
-    addAndMakeVisible (audioEditorDim.get());
-
-    audioEditor->onCloseRequested = [this] { closeAudioEditorAnimated(); };
-    audioEditor->onMouseMovedForCursor =
-        [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
-                juce::Range<int> cutLine)
+        // The request comes from inside the editor's frame, which the teardown
+        // below must not run under.
+        dusk::callAsync ([safeThis, t, newIdx]
         {
-            if (cursorOverlay != nullptr)
-                cursorOverlay->setMousePosition (src, localInSrc, m, cutLine);
-        };
-    audioEditor->onMouseExitedForCursor =
-        [this] { if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition(); };
-    audioEditor->onNavigateToRegion = [this] (int t, int newIdx)
-    {
-        // Deferred - see the piano-roll navigate handler.
-        juce::Component::SafePointer<MainComponent> safe (this);
-        dusk::callAsync ([safe, t, newIdx]
-        {
-            if (auto* self = safe.getComponent())
+            if (auto* self = safeThis.getComponent())
             {
-                self->closeAudioEditor();
+                self->destroyAudioEditor();
                 self->openAudioEditor (t, newIdx);
             }
         });
     };
-    addAndMakeVisible (audioEditor.get());
-    audioEditor->grabKeyboardFocus();
+    auto view = imgui::makeAudioEditorView (session, engine, trackIdx, regionIdx, std::move (host));
+    audioEditorView = view.get();
+    audioEditorWindow->setView (std::move (view));
+    audioEditorTrackIdx  = trackIdx;
+    audioEditorRegionIdx = regionIdx;
+    audioEditorClosing = false;
 
-    animateEditorOpen (*audioEditor, *audioEditorDim, editorBounds, startRect);
+    audioEditorDim = std::make_unique<DimOverlay> (audioEditorWindow->dimAlpha());
+    audioEditorDim->onClick = [this] { closeAudioEditor(); };
+
+    imgui::DuskPanelWindow::Callbacks callbacks;
+    callbacks.dismissed = [this] { closeAudioEditor(); };
+    callbacks.closed = [this]
+    {
+        finishAudioEditorClose();
+        reclaimFocusFromNotepad();
+    };
+    callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
+    {
+        return dispatchShellShortcut (shortcut);
+    };
+    // The editor fills the window less an inset that shrinks on small windows, so
+    // the dim still frames it.
+    callbacks.geometry = [this]
+    {
+        auto* const top = getTopLevelComponent();
+        if (top == nullptr || audioEditorWindow == nullptr)
+            return imgui::DuskPanelWindow::Geometry {};
+        const auto bounds = top->getLocalBounds();
+        const auto logical = bounds.reduced (
+            std::max (24, std::min (bounds.getWidth(), bounds.getHeight()) / 16));
+        if (audioEditorView != nullptr)
+        {
+            const auto plate = audioEditorWindow->plateSize();
+            const auto body = audioEditorView->preferredSize();
+            audioEditorView->setAvailableSize (
+                static_cast<float> (logical.getWidth()) - (static_cast<float> (plate.width) - body.x),
+                static_cast<float> (logical.getHeight()) - (static_cast<float> (plate.height) - body.y));
+        }
+        if (audioEditorDim != nullptr)
+        {
+            audioEditorDim->setBounds (bounds);
+            audioEditorDim->setNativeChildArea (logical.expanded (1));
+        }
+        const auto g = embedscale::childGeometryFor (*top, logical);
+        return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
+    };
+    const auto geometry = callbacks.geometry();
+    audioEditorWindow->setCallbacks (std::move (callbacks));
+
+    topLevel->addAndMakeVisible (audioEditorDim.get());
+    audioEditorHider.hideUnder (*topLevel, { audioEditorDim.get() });
+
+    if (! audioEditorWindow->open (parentHandle, geometry))
+    {
+        const auto why = audioEditorWindow->lastOpenFailure();
+        audioEditorView = nullptr;
+        audioEditorWindow.reset();
+        finishAudioEditorClose();
+        setStatusText (why.empty()
+                           ? "Audio editor unavailable: this display cannot carry it"
+                           : why.c_str());
+    }
+   #endif
 }
 
 void MainComponent::closeAudioEditor()
 {
-    // Cancel any in-flight collapse animation BEFORE resetting - the
-    // ComponentAnimator holds raw pointers (see closePianoRoll).
-    auto& animator = juce::Desktop::getInstance().getAnimator();
-    if (audioEditor    != nullptr) animator.cancelAnimation (audioEditor.get(), false);
-    if (audioEditorDim != nullptr) animator.cancelAnimation (audioEditorDim.get(), false);
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (! audioEditorShowing())
+        return;
+    audioEditorClosing = true;
+    audioEditorWindow->close();
+   #endif
+}
 
-    // Same reasoning as closePianoRoll - clear the overlay first so
-    // the painted glyph + Linux native-cursor hide don't outlive the
-    // editor.
-    if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
-    if (audioEditor    != nullptr) removeChildComponent (audioEditor.get());
-    if (audioEditorDim != nullptr) removeChildComponent (audioEditorDim.get());
-    audioEditor.reset();
+void MainComponent::destroyAudioEditor()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (audioEditorWindow == nullptr)
+        return;
+    const bool wasOpen = audioEditorWindow->isOpen();
+    audioEditorView = nullptr;
+    audioEditorWindow.reset();
+    if (wasOpen)
+        finishAudioEditorClose();
+   #endif
+}
+
+#if DUSKSTUDIO_HAS_NATIVE_UI
+void MainComponent::finishAudioEditorClose()
+{
+    audioEditorView = nullptr;
+    audioEditorClosing = false;
     audioEditorDim.reset();
+    audioEditorHider.restore();
     audioEditorTrackIdx  = -1;
     audioEditorRegionIdx = -1;
-    // Refresh the strip cursor for any mode change made in the editor (see
-    // closePianoRoll).
+    // The editor's toolbar may have changed session.editMode while open.
     if (tapeStrip != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
     scheduleEditModeRestore();
+}
+#endif
+
+bool MainComponent::audioEditorShowing() const noexcept
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return audioEditorOpen() && ! audioEditorClosing;
+   #else
+    return false;
+   #endif
+}
+
+bool MainComponent::audioEditorOpen() const noexcept
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return audioEditorWindow != nullptr && audioEditorWindow->isOpen();
+   #else
+    return false;
+   #endif
 }
 
 void MainComponent::snapshotEditModeForModal()
@@ -6339,33 +6428,11 @@ void MainComponent::scheduleEditModeRestore()
 void MainComponent::restoreEditModeIfModalClosed()
 {
     if (! modalEditModeSaved) return;
-    if (audioEditor != nullptr || pianoRoll != nullptr) return;   // reopened (swap / navigate)
+    if (audioEditorShowing() || pianoRoll != nullptr) return;   // reopened (swap / navigate)
     modalEditModeSaved = false;
     if (session.editMode == savedEditMode) return;
     session.editMode = savedEditMode;
     if (tapeStrip != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
-}
-
-void MainComponent::closeAudioEditorAnimated()
-{
-    if (audioEditor == nullptr) return;
-
-    juce::Rectangle<int> startRect;
-    if (tapeStrip != nullptr)
-    {
-        const auto rr = tapeStrip->audioRegionScreenRect (audioEditorTrackIdx, audioEditorRegionIdx);
-        if (! rr.isEmpty())
-            startRect = getLocalArea (tapeStrip.get(), rr);
-    }
-    if (! editorStartRectUsable (startRect)) { closeAudioEditor(); return; }
-
-    if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
-    auto& animator = juce::Desktop::getInstance().getAnimator();
-    animator.animateComponent (audioEditor.get(), startRect, 0.0f, kEditorCloseMs, false, 1.0, 0.0);
-    if (audioEditorDim != nullptr)
-        animator.animateComponent (audioEditorDim.get(), audioEditorDim->getBounds(), 0.0f,
-                                   kEditorCloseMs, false, 1.0, 0.0);
-    editorTeardownTimer = std::make_unique<OneShotTimer> (kEditorCloseMs, [this] { closeAudioEditor(); });
 }
 
 namespace

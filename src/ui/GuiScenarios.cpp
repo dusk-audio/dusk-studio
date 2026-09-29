@@ -1,12 +1,12 @@
 #include "MainComponent.h"
 #include "BounceDialog.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "imgui/AudioEditorView.h"
  #include "imgui/DuskPanelWindow.h"
  #include "imgui/StartupView.h"
 #endif
 
 #include "AuxLaneComponent.h"
-#include "AudioRegionEditor.h"
 #include "DimOverlay.h"
 #include "AuxView.h"
 #include "PianoRollComponent.h"
@@ -507,60 +507,58 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool openAudioEditor (int track, int region) override
     {
-        if (owner.audioEditor != nullptr || owner.pianoRoll != nullptr) return false;
+        if (owner.audioEditorOpen() || owner.pianoRoll != nullptr) return false;
         owner.openAudioEditor (track, region);
-        return owner.audioEditor != nullptr;
+        return owner.audioEditorOpen();
     }
-    void closeAudioEditor() override { owner.closeAudioEditor(); }
+    // Immediate, so a scenario cleanup leaves no child behind for the next case.
+    void closeAudioEditor() override { owner.destroyAudioEditor(); }
     std::vector<double> audioEditorView() const override
-    { return owner.audioEditor != nullptr ? owner.audioEditor->viewForScenario() : std::vector<double> {}; }
-    bool clickAudioEditorButton (const std::string& name) override
     {
-        if (owner.audioEditor == nullptr) return false;
-        std::vector<decltype (owner.audioEditor->getChildComponent (0))> pending;
-        pending.push_back (owner.audioEditor.get());
-        while (! pending.empty())
-        {
-            auto* child = pending.back();
-            pending.pop_back();
-            for (auto* nested : child->getChildren()) pending.push_back (nested);
-            if (child->isShowing() && child->isEnabled() && child->getName().toStdString() == name)
-            {
-                const auto point = owner.getTopLevelComponent()->getLocalPoint (child, child->getLocalBounds().getCentre()).toFloat();
-                return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
-            }
-        }
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr)
+            return owner.audioEditorView->viewForScenario();
+       #endif
+        return {};
+    }
+    // The editor names its controls, and "sample:<n>", "waveform" and "at:<x>,<y>"
+    // address points on it; see AudioEditorView::controlPointForScenario.
+    bool clickAudioEditorControl (const std::string& control)
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.audioEditorShowing() && owner.audioEditorWindow->clickControlForScenario (control);
+       #else
+        (void) control;
         return false;
+       #endif
     }
+    bool clickAudioEditorButton (const std::string& name) override { return clickAudioEditorControl (name); }
     bool clickAudioEditorSample (std::int64_t sample) override
-    {
-        auto* editor = owner.audioEditor.get();
-        if (editor == nullptr) return false;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor, editor->samplePointForScenario (sample)).toFloat();
-        return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
-    }
-    std::vector<int> audioEditorPoint (const std::string& kind, std::int64_t sample) const override
-    {
-        if (owner.audioEditor == nullptr) return {};
-        const auto p = owner.audioEditor->gesturePointForScenario (kind, sample);
-        return { p.x, p.y };
-    }
+    { return clickAudioEditorControl ("sample:" + std::to_string (sample)); }
+    std::vector<int> audioEditorPoint (const std::string&, std::int64_t) const override { return {}; }
     std::vector<std::int64_t> audioEditorSelection() const override
-    { return owner.audioEditor != nullptr ? owner.audioEditor->selectionForScenario() : std::vector<std::int64_t> {}; }
-    bool audioEditorPointer (int x, int y, bool down, int modifiers) override
     {
-        auto* editor = owner.audioEditor.get();
-        if (editor == nullptr) return false;
-        const auto p = owner.getTopLevelComponent()->getLocalPoint (editor,
-            editor->getLocalBounds().getTopLeft().translated (x, y)).toFloat();
-        return pointerAt (p.x, p.y, down, modifiers);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr)
+            return owner.audioEditorView->selectionForScenario();
+       #endif
+        return {};
     }
-    std::vector<int> audioAutomationPoint (std::int64_t sample, float value) const override
+    // Modifiers are not carried yet: the panel window presses a bare left button.
+    bool audioEditorPointer (int x, int y, bool down, int) override
     {
-        if (owner.audioEditor == nullptr) return {};
-        const auto p = owner.audioEditor->automationPointForScenario (sample, value);
-        return { p.x, p.y };
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.audioEditorShowing()
+            && owner.audioEditorWindow->pointerControlForScenario (
+                   "at:" + std::to_string (x) + "," + std::to_string (y), 0.5f, down);
+       #else
+        (void) x;
+        (void) y;
+        (void) down;
+        return false;
+       #endif
     }
+    std::vector<int> audioAutomationPoint (std::int64_t, float) const override { return {}; }
     bool openPiano (int track, int region) override
     {
         if (owner.pianoRoll != nullptr) return false;
@@ -1222,19 +1220,22 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         if (midi) { owner.openPianoRoll (track, region); return owner.pianoRoll != nullptr; }
         owner.openAudioEditor (track, region);
-        return owner.audioEditor != nullptr;
+        return owner.audioEditorOpen();
     }
     int regionEditorChase() const override
     {
-        const auto read = [this] (const auto* editor)
+        if (owner.pianoRoll != nullptr)
         {
-            if (editor == nullptr) return -1;
-            for (auto* child : editor->getChildren())
+            for (auto* child : owner.pianoRoll->getChildren())
                 if (const auto* button = dynamic_cast<const decltype (owner.hdrChaseBtn)*> (child))
                     if (button->getButtonText() == "Chase") return button->getToggleState() ? 1 : 0;
             return -1;
-        };
-        return owner.pianoRoll != nullptr ? read (owner.pianoRoll.get()) : read (owner.audioEditor.get());
+        }
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr)
+            return owner.audioEditorView->chaseEnabled() ? 1 : 0;
+       #endif
+        return -1;
     }
     bool focusPiano() override
     {
@@ -1272,7 +1273,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto point = owner.getTopLevelComponent()->getLocalPoint (editor, editor->fitPointForScenario()).toFloat();
         return clickAt (point.x, point.y, 1);
     }
-    void closeRegionEditors() override { owner.closePianoRoll(); owner.closeAudioEditor(); }
+    void closeRegionEditors() override { owner.closePianoRoll(); owner.destroyAudioEditor(); }
     bool setStripCompact (int track, bool compact) override
     {
         auto* strip = owner.consoleView->getStripComponent (track);
@@ -1920,29 +1921,39 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return clickAt (point.x, point.y, 2);
     }
 
-    bool audioEditorOpen() const override { return owner.audioEditor != nullptr; }
-    int audioEditorRegion() const override { return owner.audioEditorRegionIdx; }
-    bool clickAudioEditorWaveform() override
+    bool audioEditorOpen() const override { return owner.audioEditorOpen(); }
+    int audioEditorRegion() const override
     {
-        auto* editor = owner.audioEditor.get();
-        if (editor == nullptr || ! editor->isShowing()) return false;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (
-            editor, editor->getLocalBounds().getRelativePoint (0.5f, 0.75f)).toFloat();
-        return clickAt (point.x, point.y, 1);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr)
+            return owner.audioEditorView->regionIndex();
+       #endif
+        return owner.audioEditorRegionIdx;
     }
+    bool clickAudioEditorWaveform() override { return clickAudioEditorControl ("waveform"); }
 
+    // Only the keys the panel window can type: a bare key or escape, home, end and
+    // enter. Chords wait for the editor's keyboard pass.
     bool pressAudioEditorKey (const std::string& description) override
     {
-        return owner.audioEditor != nullptr && owner.audioEditor->isShowing()
-            && dispatchKey (*owner.audioEditor, &AudioRegionEditor::keyPressed, description, 0);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.audioEditorShowing() && owner.audioEditorWindow->inputForScenario (description);
+       #else
+        (void) description;
+        return false;
+       #endif
     }
 
     bool clickOutsideAudioEditor() override
     {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
         if (owner.audioEditorDim == nullptr) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (
             owner.audioEditorDim.get(), owner.audioEditorDim->getLocalBounds().getTopLeft()).toFloat();
         return clickAt (point.x + 2.0f, point.y + 2.0f, 1);
+       #else
+        return false;
+       #endif
     }
     void openPianoRoll (int track, int region) override { owner.openPianoRoll (track, region); }
     void closePianoRoll() override { owner.closePianoRoll(); }
@@ -2140,7 +2151,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             stack.back()->close();
 
         owner.closePianoRoll();
-        owner.closeAudioEditor();
+        owner.destroyAudioEditor();
         owner.closeAudioSettings();
         if (owner.tapeStrip != nullptr) owner.tapeStrip->cancelTrackNameEdit();
         closeStartupDialog();

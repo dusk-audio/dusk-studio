@@ -154,6 +154,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             if (input == "home") key.key = DGL::kKeyHome;
             else if (input == "end") key.key = DGL::kKeyEnd;
             else if (input == "enter") key.key = DGL::kKeyEnter;
+            else if (input == "escape") key.key = DGL::kKeyEscape;
             else if (input.size() == 1) key.key = static_cast<unsigned char> (input.front());
             else return false;
             key.press = true;

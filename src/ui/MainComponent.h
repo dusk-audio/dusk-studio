@@ -24,6 +24,7 @@ namespace imgui
 {
 class DuskPanelWindow;
 class StartupView;
+class AudioEditorView;
 struct RecentSession;
 }
 
@@ -541,14 +542,32 @@ private:
     void closePianoRoll();          // immediate teardown (swap / mutual exclusion)
     void closePianoRollAnimated();  // collapse into region rect, then teardown
 
-    // Mutually exclusive with the piano roll (opening one closes the other).
-    std::unique_ptr<class DimOverlay>           audioEditorDim;
-    std::unique_ptr<class AudioRegionEditor>    audioEditor;
+    // Mutually exclusive with the piano roll (opening one closes the other). A native
+    // panel: a framework child over the window with a dim sibling behind it.
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    std::unique_ptr<imgui::DuskPanelWindow> audioEditorWindow;
+    // The window owns the view; this reaches it for the geometry and the scenario
+    // accessors. Null once the window has closed.
+    imgui::AudioEditorView* audioEditorView = nullptr;
+    std::unique_ptr<DimOverlay> audioEditorDim;
+    PluginEditorHider audioEditorHider;
+    // Set between close() and the window's closed callback, while the child is still
+    // mapped: a reopen in that window replaces it rather than reading as a toggle.
+    bool audioEditorClosing = false;
+    void finishAudioEditorClose();
+   #endif
     int audioEditorTrackIdx  = -1;
     int audioEditorRegionIdx = -1;
     void openAudioEditor  (int trackIdx, int regionIdx);
+    // Deferred: the child comes down over the next two event-pump ticks.
     void closeAudioEditor();
-    void closeAudioEditorAnimated();
+    // Immediate, for a swap to another region or to the piano roll. Never from inside
+    // the editor's own frame.
+    void destroyAudioEditor();
+    // True while the editor is up and not on its way down.
+    bool audioEditorShowing() const noexcept;
+    // True from open until the child has finished coming down.
+    bool audioEditorOpen() const noexcept;
 
     // The edit tool (session.editMode) is global, but a modal editor changing
     // it (e.g. picking scissors in the audio editor) should not leak back to

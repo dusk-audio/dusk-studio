@@ -624,6 +624,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
     # library. They need Dear ImGui and the widget kit's headers only; the DGL half
     # of the stack stays behind DuskPanelWindow.
     target_sources(DuskStudio PRIVATE
+        src/ui/imgui/AudioEditorView.cpp
         src/ui/imgui/AudioDeviceSelector.cpp
         src/ui/imgui/AudioSettingsView.cpp
         src/ui/imgui/ChannelCompView.cpp
