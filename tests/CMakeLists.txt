@@ -102,6 +102,7 @@ add_executable(dusk-studio-tests
     session_write_atomic.cpp
     session_portable_paths.cpp
     session_track_shrink.cpp
+    track_move_plan.cpp
     device_fallback_message.cpp
     plugin_scan_message.cpp
     pipewire_default_device.cpp
