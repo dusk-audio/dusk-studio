@@ -815,6 +815,8 @@ MainComponent::MainComponent()
     tapeStrip->setChaseEnabled (appconfig::getFollowPlayheadDefault());
     tapeStrip->onMidiRegionDoubleClicked  = [this] (int t, int r) { openPianoRoll   (t, r); };
     tapeStrip->onAudioRegionDoubleClicked = [this] (int t, int r) { openAudioEditor (t, r); };
+    // consoleView is rebuilt on session load and template apply, so look it up per click.
+    tapeStrip->onTrackLabelClicked = [this] (int t) { if (consoleView != nullptr) consoleView->focusStrip (t); };
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
                                           std::int64_t timelineStart,
                                           int trackHint)

@@ -1779,6 +1779,36 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return clickAt (point.x, point.y, 1, right);
     }
 
+    bool clickTapeTrackName (int track, int clicks) override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()) return false;
+        const auto point = tape->labelPointForScenario (track);
+        if (! tape->getLocalBounds().withTrimmedTop (TapeStrip::kRulerH).contains (point)) return false;
+        const auto at = owner.getTopLevelComponent()->getLocalPoint (tape, point).toFloat();
+        return clickAt (at.x, at.y, clicks);
+    }
+    int tapeNameEditorTrack() const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->nameEditorTrackForScenario() : -1;
+    }
+    int tapeTrackRowY (int track) const override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()) return -1;
+        const auto point = tape->labelPointForScenario (track);
+        if (! tape->getLocalBounds().withTrimmedTop (TapeStrip::kRulerH).contains (point)) return -1;
+        return owner.getTopLevelComponent()->getLocalPoint (tape, point).y;
+    }
+    int tapeSelectedTrack() const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->getSelectedTrack() : -1;
+    }
+    int consoleFocusedStrip() const override
+    {
+        return owner.consoleView != nullptr ? owner.consoleView->getFocusedStrip() : -1;
+    }
+
     bool dragTapeMarker (int index, float toFraction) override
     {
         auto* tape = owner.tapeStrip.get();
@@ -2019,6 +2049,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                                                                               : "tape hides empty tracks");
             if (owner.tapeStrip->getSelectedTrack() != launch.tapeSelectedTrack)
                 lines.push_back ("tape selects track " + std::to_string (owner.tapeStrip->getSelectedTrack()));
+            if (owner.tapeStrip->nameEditorOpenForScenario())
+                lines.push_back ("tape name editor open");
         }
 
         const auto& transport = owner.engine.getTransport();
@@ -2109,6 +2141,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.closePianoRoll();
         owner.closeAudioEditor();
         owner.closeAudioSettings();
+        if (owner.tapeStrip != nullptr) owner.tapeStrip->cancelTrackNameEdit();
         closeStartupDialog();
         owner.closeVirtualKeyboard();
         owner.closeTuner();

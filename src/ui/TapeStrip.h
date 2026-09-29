@@ -88,6 +88,9 @@ public:
     // opens the dedicated editor - one mental model across audio + MIDI.
     std::function<void (int trackIdx, int regionIdx)> onMidiRegionDoubleClicked;
     std::function<void (int trackIdx, int regionIdx)> onAudioRegionDoubleClicked;
+    // A single click on a track's name in the label column, once it can no
+    // longer turn into a double-click.
+    std::function<void (int trackIdx)> onTrackLabelClicked;
 
     // CursorOverlay sink - MainComponent wires these so the strip can push
     // its local mouse position into the shared overlay (which can't poll
@@ -140,6 +143,9 @@ public:
     // zoom/scroll to the loaded content (a session saved while zoomed-in must not
     // open with its regions scrolled off-screen), and repaints unconditionally.
     void refreshAfterSessionLoad();
+    // Drops an open rename unapplied, and any name click still waiting to page
+    // the console.
+    void cancelTrackNameEdit();
     std::vector<double> viewForScenario() const
     {
         return { (double) userZoomFactor, (double) scrollSamples, (double) rowScrollY, (double) rowHeight,
@@ -171,6 +177,16 @@ public:
         rebuildVisibleTrackOrder();
     }
     auto dropPointForScenario (int track) const { return rowBounds (track).getCentre(); }
+    auto labelPointForScenario (int track) const { return rowBounds (track).getCentre().withX (labelColW / 2); }
+    bool nameEditorOpenForScenario() const { return nameEditor.isBeingEdited(); }
+    // The track whose row the open name editor sits on, -1 when it is closed
+    // or off that row.
+    int nameEditorTrackForScenario() const
+    {
+        const auto row = rowBounds (nameEditTrack);
+        const int y = nameEditor.getBounds().getCentreY();
+        return nameEditor.isBeingEdited() && y >= row.getY() && y < row.getBottom() ? nameEditTrack : -1;
+    }
     auto rulerPointForScenario (float fraction) const { return rulerBounds().getRelativePoint (fraction, 0.25f); }
     std::int64_t rulerSampleForScenario (float fraction) const { return sampleAtX (rulerPointForScenario (fraction).x); }
     std::uint32_t regionAccentForScenario (int track, int region) const;
@@ -205,6 +221,31 @@ private:
     // refreshLabelColumnWidth() on construction, layout, and name changes.
     int  labelColW { kTrackLabelW };
     void refreshLabelColumnWidth();
+    // -1 when y falls in no row, including the gaps between rows.
+    int trackAtLabelY (int y) const noexcept;
+
+    // In-place rename over a row's name cell. Only visible while editing.
+    juce::Label nameEditor;
+    int nameEditTrack = -1;
+    // The track under the last single click in the label column, and when it
+    // landed. A double-click renames this track without hit-testing its second
+    // click, and only while that click came within the double-click timeout.
+    int labelPressTrack = -1;
+    std::int64_t labelPressMs = 0;
+    // Paging the console relayouts the window and can shrink this strip, so a
+    // name click pages only once the double-click timeout has passed. Paging
+    // any sooner would move the rows under a double-click's second press.
+    struct LabelClickTimer final : dusk::Timer
+    {
+        std::function<void()> onExpired;
+        void timerCallback() override { stopTimer(); onExpired(); }
+    };
+    LabelClickTimer labelClickTimer;
+    void showNameEditor (int track);
+    // Follows the edited row through scrolling and relayout, and commits the
+    // edit once that row is scrolled fully out of view.
+    void placeNameEditor();
+    void commitTrackName();
     // Empty rect when trackIdx is collapsed - callers iterating must
     // respect this so hit tests / painters skip hidden rows.
     juce::Rectangle<int> rowBounds (int trackIdx) const noexcept;
@@ -357,7 +398,7 @@ private:
     // Pixel height of all visible rows at the current rowHeight (content
     // extent below the ruler). Used to clamp rowScrollY + decide overflow.
     int rowsContentHeight() const noexcept;
-    void clampRowScroll() noexcept;
+    void clampRowScroll();
 
     // Without these, the strip's only repaint trigger is playhead
     // motion - renaming a track wouldn't reflect until the next play.
