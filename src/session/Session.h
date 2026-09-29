@@ -59,7 +59,7 @@ struct AutomationPoint
 
     bool operator== (const AutomationPoint& o) const noexcept
     {
-        // Bit-exact compares (juce::exactlyEqual) - these are value-identity checks, not
+        // Bit-exact compares (JUCE's exactlyEqual) - these are value-identity checks, not
         // tolerance compares, and exactlyEqual silences -Wfloat-equal (a CI -Werror).
         return timeSamples == o.timeSamples
             && juce::exactlyEqual (value, o.value)
@@ -497,6 +497,22 @@ struct TakeRef
     juce::File file;
     std::int64_t sourceOffset    = 0;
     std::int64_t lengthInSamples = 0;
+    TakeProvenance provenance;
+};
+
+using TakeId = std::uint64_t;   // 0 = none
+
+// One complete recording pass on a track. Later recording never trims it;
+// regions cut from it name it through AudioRegion::takeId.
+struct AudioTake
+{
+    TakeId id = 0;
+    std::string name;
+    juce::File file;
+    std::int64_t timelineStart   = 0;   // where sourceOffset sits on the timeline
+    std::int64_t lengthInSamples = 0;
+    std::int64_t sourceOffset    = 0;
+    int numChannels = 1;
     TakeProvenance provenance;
 };
 
@@ -938,6 +954,9 @@ struct AudioRegion
 
     // Front = next to surface on cycle.
     std::vector<TakeRef> previousTakes;
+
+    // The take on the region's own track its audio came from.
+    TakeId takeId = 0;
 };
 
 inline TakeRef makeAudioTakeRef (const AudioRegion& region)
@@ -1051,6 +1070,9 @@ struct Track
     // wrapped in AtomicSnapshot for the lock-free swap.
     std::vector<AudioRegion>                regions;
     AtomicSnapshot<std::vector<MidiRegion>> midiRegions;
+
+    // Oldest first. Message thread only.
+    std::vector<AudioTake> takes;
 
     // Populated by AudioEngine::publishPluginStateForSave before save and
     // consumed by consumePluginStateAfterLoad.
@@ -1759,6 +1781,11 @@ public:
     };
     McuSessionState mcu;
 
+    // Unique across the session and never 0. The loader seeds it with the
+    // highest id the file holds. Message thread only.
+    TakeId allocateTakeId() noexcept                     { return ++lastTakeId; }
+    void   seedTakeIdAllocator (TakeId highestInUse) noexcept { lastTakeId = highestInUse; }
+
     // -2 = follow track index, -1 = no input.
     int resolveInputForTrack (int trackIndex) const noexcept;
     // -1 in Mono / Midi mode (second channel meaningless).
@@ -1772,6 +1799,7 @@ private:
     MasterBusParams masterParams;
     MasteringParams masteringParams;
     juce::File sessionDir;
+    TakeId lastTakeId = 0;
 
     // Single relaxed load per callback instead of scanning all atoms.
     std::atomic<int> soloTrackCount { 0 };

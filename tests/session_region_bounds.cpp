@@ -30,7 +30,7 @@ TEST_CASE ("SessionSerializer clamps out-of-range audio-region fields on load",
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
     using duskstudio::AudioRegion;
-    using duskstudio::TakeRef;
+    using duskstudio::AudioTake;
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
@@ -44,11 +44,14 @@ TEST_CASE ("SessionSerializer clamps out-of-range audio-region fields on load",
     r.sourceOffset    = -200;
     r.numChannels     = 99;                              // out of the [1,2] range
 
-    TakeRef take;
+    AudioTake take;
+    take.id              = a.allocateTakeId();
     take.file            = dir.getChildFile ("take_prev.wav");
+    take.timelineStart   = -70;
     take.sourceOffset    = -50;
     take.lengthInSamples = -10;
-    r.previousTakes.push_back (take);
+    take.numChannels     = 0;
+    a.track (0).takes.push_back (take);
 
     a.track (0).regions.push_back (std::move (r));
 
@@ -65,9 +68,12 @@ TEST_CASE ("SessionSerializer clamps out-of-range audio-region fields on load",
     REQUIRE (loaded.numChannels >= 1);
     REQUIRE (loaded.numChannels <= 2);
 
-    REQUIRE (loaded.previousTakes.size() == 1);
-    REQUIRE (loaded.previousTakes[0].sourceOffset    >= 0);
-    REQUIRE (loaded.previousTakes[0].lengthInSamples >= 0);
+    REQUIRE (b.track (0).takes.size() == 1);
+    const auto& loadedTake = b.track (0).takes[0];
+    REQUIRE (loadedTake.timelineStart   >= 0);
+    REQUIRE (loadedTake.sourceOffset    >= 0);
+    REQUIRE (loadedTake.lengthInSamples >= 0);
+    REQUIRE (loadedTake.numChannels     == 1);
 
     dir.deleteRecursively();
 }

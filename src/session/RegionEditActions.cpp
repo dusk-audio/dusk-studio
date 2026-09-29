@@ -11,6 +11,7 @@
 #include "../foundation/PlanarBuffer.h"
 
 #include <algorithm>
+#include <map>
 
 namespace duskstudio
 {
@@ -506,6 +507,7 @@ struct CloneTrackAction::Impl
     // Region / MIDI region content.
     std::vector<AudioRegion> regions;
     std::vector<MidiRegion>  midiRegions;
+    std::vector<AudioTake>   takes;
 };
 
 namespace
@@ -831,6 +833,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 
     s.regions     = t.regions;
     s.midiRegions = t.midiRegions.current();   // snapshot of the live vector
+    s.takes       = t.takes;
     return s;
 }
 
@@ -941,6 +944,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
 
     t.regions = s.regions;
     t.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (s.midiRegions));
+    t.takes = s.takes;
 
     // Persist the post-restore plugin state on Session so a save right
     // after a clone (with no manual edits in between) round-trips
@@ -1216,6 +1220,17 @@ bool CloneTrackAction::perform()
             captureTrack (session.track (srcIdx), engine, srcIdx));
         // Tag the cloned name so the user can tell duplicates apart.
         afterState->name = afterState->name + " (copy)";
+        // Take ids are unique across the session, so the copies get their own.
+        std::map<TakeId, TakeId> copyOf;
+        for (auto& take : afterState->takes)
+        {
+            const auto fresh = session.allocateTakeId();
+            copyOf.emplace (take.id, fresh);
+            take.id = fresh;
+        }
+        for (auto& region : afterState->regions)
+            if (const auto it = copyOf.find (region.takeId); region.takeId != 0 && it != copyOf.end())
+                region.takeId = it->second;
     }
 
     applyTrack (session.track (dstIdx), engine, dstIdx, *afterState);

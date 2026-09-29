@@ -49,12 +49,17 @@ UnreferencedAudio findUnreferencedAudio (const Session& session)
             referenced.push_back (path);
     };
     for (int t = 0; t < Session::kNumTracks; ++t)
-        for (const auto& region : session.track (t).regions)
+    {
+        const auto& track = session.track (t);
+        for (const auto& region : track.regions)
         {
             remember (pathOf (region.file));
             for (const auto& take : region.previousTakes)
                 remember (pathOf (take.file));
         }
+        for (const auto& take : track.takes)
+            remember (pathOf (take.file));
+    }
     // A bounce loaded into the Mastering stage may live in audio/ too.
     remember (pathOf (session.mastering().sourceFile));
 

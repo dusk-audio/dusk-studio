@@ -136,6 +136,7 @@ void ScenarioWorld::reset()
         clearAutomation (track.automationLanes);
 
         track.regions.clear();
+        track.takes.clear();
         track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
 
         track.midiInputIndex.store (-1, std::memory_order_relaxed);

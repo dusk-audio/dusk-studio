@@ -43,11 +43,12 @@ bool holds (const duskstudio::UnreferencedAudio& found, const juce::File& file)
 
 // Clean out offers to delete what past record passes left behind: WAVs in the
 // session's audio directory that nothing points at any more. Anything a region,
-// a take under a region or the loaded mastering source still names has to
+// a take under a region, a track take or the loaded mastering source still names has to
 // survive, and so does everything outside that one directory level.
 TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleanout]")
 {
     using duskstudio::AudioRegion;
+    using duskstudio::AudioTake;
     using duskstudio::Session;
     using duskstudio::TakeRef;
 
@@ -60,6 +61,7 @@ TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleano
 
     const auto live = writeWav (audio, "take_live.wav", 2048);
     const auto older = writeWav (audio, "take_older.wav", 1024);
+    const auto unplayed = writeWav (audio, "take_unplayed.wav", 768);
     const auto mastering = writeWav (audio, "mixdown.wav", 512);
     const auto orphanA = writeWav (audio, "orphan_a.wav", 4096);
     const auto orphanB = writeWav (audio, "orphan_b.wav", 256);
@@ -80,6 +82,10 @@ TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleano
     take.file = older;
     region.previousTakes.push_back (take);
     session.track (4).regions.push_back (region);
+    AudioTake pass;
+    pass.id = session.allocateTakeId();
+    pass.file = unplayed;
+    session.track (9).takes.push_back (pass);
     session.mastering().sourceFile = mastering;
 
     const auto found = duskstudio::findUnreferencedAudio (session);
@@ -88,6 +94,7 @@ TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleano
     CHECK (holds (found, orphanB));
     CHECK_FALSE (holds (found, live));
     CHECK_FALSE (holds (found, older));
+    CHECK_FALSE (holds (found, unplayed));
     CHECK_FALSE (holds (found, mastering));
     CHECK_FALSE (holds (found, frozen));
     CHECK_FALSE (holds (found, notes));
