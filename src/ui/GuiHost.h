@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <array>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -175,6 +176,16 @@ public:
     virtual bool clickFileBrowserUp() = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
     virtual bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) = 0;
+    // Files held over the point dropFilesOnTrack drops on, then taken away:
+    // the drop line's x and the pointer's, in the tape strip. The line is -1
+    // when none shows; empty when the row is not on screen.
+    virtual std::vector<int> tapeDropHover (int track, const std::vector<std::filesystem::path>& files) = 0;
+    // The sample under the point dropFilesOnTrack drops on.
+    virtual std::int64_t tapeDropPointSample (int track) const = 0;
+    virtual int tapeXForSample (std::int64_t sample) const = 0;
+    // Stands in for the Alt key a drop reads: true lands at the pointer, false
+    // at the playhead, nullopt reads the key again.
+    virtual void forceDropAtMouse (std::optional<bool> atMouse) = 0;
     virtual std::vector<std::string> confirmationText() const = 0;
     virtual std::vector<std::string> multiImportRows() const = 0;
     virtual bool clickMultiImportTarget (int row) = 0;

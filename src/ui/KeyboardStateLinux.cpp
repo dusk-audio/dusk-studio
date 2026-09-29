@@ -3,6 +3,9 @@
 // Sealed X11 translation unit - must NOT include any JUCE header. Xlib's
 // `#define KeyPress 2` (and Bool/None/Status/Window) collide with JUCE names.
 #include <X11/Xlib.h>
+#include <X11/keysym.h>
+
+#include <initializer_list>
 
 namespace duskstudio
 {
@@ -42,5 +45,26 @@ int isKeyPhysicallyDown (int juceKeyCode) noexcept
     char keys[32];
     XQueryKeymap (d, keys);
     return (keys[kc >> 3] & (1 << (kc & 7))) != 0 ? 1 : 0;
+}
+
+int isAltPhysicallyDown() noexcept
+{
+    Display* d = displayConnection();
+    if (d == nullptr)
+        return -1;
+
+    char keys[32];
+    XQueryKeymap (d, keys);
+    int state = -1;
+    for (const KeySym keysym : { (KeySym) XK_Alt_L, (KeySym) XK_Alt_R })
+    {
+        const KeyCode kc = XKeysymToKeycode (d, keysym);
+        if (kc == 0)
+            continue;
+        if ((keys[kc >> 3] & (1 << (kc & 7))) != 0)
+            return 1;
+        state = 0;
+    }
+    return state;
 }
 } // namespace duskstudio

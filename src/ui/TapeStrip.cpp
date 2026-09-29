@@ -10,6 +10,9 @@
 #include "EmbeddedModal.h"
 #include "FadeCurve.h"
 #include "TimelineFollow.h"
+#if defined (__linux__)
+# include "KeyboardStateLinux.h"
+#endif
 #include "../util/StringParsing.h"
 #include <cmath>
 #include <iterator>
@@ -4778,16 +4781,31 @@ void TapeStrip::fileDragEnter (const juce::StringArray& files, int x, int y)
     fileDragMove (files, x, y);
 }
 
+bool TapeStrip::dropAtMouse() const
+{
+    if (dropAtMouseOverride) return *dropAtMouseOverride;
+   #if defined (__linux__)
+    if (const int physical = isAltPhysicallyDown(); physical >= 0) return physical == 1;
+   #endif
+    return juce::ModifierKeys::getCurrentModifiersRealtime().isAltDown();
+}
+
 void TapeStrip::fileDragMove (const juce::StringArray&, int x, int y)
 {
     if (! dropAccepted) return;
     int hoveredTrack = -1;
     for (int t = 0; t < Session::kNumTracks; ++t)
         if (rowBounds (t).contains (x, y)) { hoveredTrack = t; break; }
-    if (hoveredTrack != dropHoverTrack || x != dropHoverX)
+    // The line stands where the drop will land, and only while that is in
+    // view: a playhead scrolled off the timeline would put it over the names
+    // or past the edge.
+    const auto col = tracksColumnBounds();
+    int landingX = dropAtMouse() ? x : xForSample (engine.getTransport().getPlayhead());
+    if (landingX < col.getX() || landingX >= col.getRight()) landingX = -1;
+    if (hoveredTrack != dropHoverTrack || landingX != dropHoverX)
     {
         dropHoverTrack = hoveredTrack;
-        dropHoverX     = x;
+        dropHoverX     = landingX;
         repaint();
     }
 }
@@ -4814,8 +4832,8 @@ void TapeStrip::filesDropped (const juce::StringArray& files, int x, int y)
         if (rowBounds (t).contains (x, y)) { trackHint = t; break; }
 
     const auto col = tracksColumnBounds();
-    const int clampedX = jlimit (col.getX(), col.getRight(), x);
-    const auto timelineStart = sampleAtX (clampedX);
+    const auto timelineStart = dropAtMouse() ? sampleAtX (jlimit (col.getX(), col.getRight(), x))
+                                             : engine.getTransport().getPlayhead();
 
     juce::Array<juce::File> compatible;
     for (const auto& path : files)

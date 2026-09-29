@@ -11921,6 +11921,103 @@ const ScenarioRegistrar timelineTrackMultiselect { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runTimelineTrackMultiselect (host, ctx); }
 } };
 
+// A file dropped on the tape strip lands at the playhead, where the drop line
+// stands while the file is held over the strip. With Alt held it lands, and
+// the line stands, under the pointer. With the landing point scrolled out of
+// view there is no line.
+std::optional<ScenarioResult> runDropAtPlayhead (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion region;
+    if (auto early = seedTapeRegion (host, ctx, region)) return early;
+    auto& session = ctx.session();
+    for (const int t : { 1, 2 })
+    {
+        if (! session.track (t).regions.empty() || ! session.track (t).midiRegions.current().empty())
+            return ScenarioResult::skip ("requires tracks 2 and 3 empty");
+        session.track (t).mode.store ((int) Track::Mode::Mono);
+        session.track (t).frozen.store (false);
+    }
+    ctx.cleanup ([&host] { host.forceDropAtMouse (std::nullopt); });
+    host.forceDropAtMouse (false);
+    std::error_code error;
+    std::filesystem::create_directories (ctx.tempDir() / "session" / "audio", error);
+    const auto file = ctx.tempDir() / "Dropped.wav";
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = ctx.engine().getCurrentSampleRate();
+        spec.numChannels = 1;
+        auto writer = dusk::audio::FileWriter::create (file, spec);
+        std::array<float, 4800> silence {};
+        const float* data[] = { silence.data() };
+        if (! writer || ! writer->write (data, 1, 4800) || ! writer->flush())
+            return ScenarioResult::fail ("could not write the drop fixture");
+    }
+    auto& transport = ctx.engine().getTransport();
+    const auto playhead = region.timelineStart / 2;
+    transport.locate (playhead);
+    const auto pointerSample = std::make_shared<std::int64_t> (-1);
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto importAfterDrop = [&host, &ctx, steps, file] (int track, std::function<void()> before)
+    {
+        steps->push_back ({ 300, [&host, &ctx, file, track, before]
+        {
+            before();
+            ctx.expect (host.dropFilesOnTrack (track, { file }), "the drop was rejected");
+        } });
+        steps->push_back ({ 300, [&host, &ctx]
+        { ctx.expect (host.clickModalButton ("Import"), "the import target picker did not open"); } });
+    };
+    importAfterDrop (1, [&host, &ctx, file, playhead]
+    {
+        const auto shown = host.tapeDropHover (1, { file });
+        if (! ctx.expect (shown.size() == 2, "the drop row is not on screen")) return;
+        ctx.expect (shown[0] == host.tapeXForSample (playhead), "the drop line does not stand at the playhead");
+        ctx.expect (shown[0] != shown[1], "the pointer sits on the playhead, so the drop proves nothing");
+    });
+    steps->push_back ({ 700, [&ctx, &session, playhead]
+    {
+        const auto& regions = session.track (1).regions;
+        ctx.expect (regions.size() == 1 && regions.front().timelineStart == playhead,
+                    "the dropped file did not land at the playhead");
+    } });
+    importAfterDrop (2, [&host, &ctx, file, pointerSample, playhead]
+    {
+        host.forceDropAtMouse (true);
+        const auto shown = host.tapeDropHover (2, { file });
+        if (! ctx.expect (shown.size() == 2, "the drop row is not on screen")) return;
+        ctx.expect (shown[0] == shown[1], "with Alt held the drop line does not stand under the pointer");
+        *pointerSample = host.tapeDropPointSample (2);
+        ctx.expect (*pointerSample != playhead, "the pointer sits on the playhead, so the drop proves nothing");
+    });
+    steps->push_back ({ 700, [&ctx, &session, pointerSample]
+    {
+        const auto& regions = session.track (2).regions;
+        ctx.expect (regions.size() == 1 && regions.front().timelineStart == *pointerSample,
+                    "with Alt held the dropped file did not land under the pointer");
+    } });
+    // Scrolled past the playhead, the line hides rather than stand over the names.
+    steps->push_back ({ 300, [&host, &ctx, file, playhead]
+    {
+        host.forceDropAtMouse (false);
+        const auto view = host.tapeView();
+        if (! ctx.expect (view.size() == 7, "the tape strip is missing")) return;
+        auto scrolled = view;
+        scrolled[1] = (double) (playhead + (std::int64_t) ctx.engine().getCurrentSampleRate() * 10);
+        host.restoreTapeView (scrolled);
+        const auto shown = host.tapeDropHover (1, { file });
+        ctx.expect (shown.size() == 2 && shown[0] == -1, "the drop line stands for a playhead scrolled out of view");
+        host.restoreTapeView (view);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar dropAtPlayhead { Scenario {
+    "gui.drop_at_playhead", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runDropAtPlayhead (host, ctx); }
+} };
+
 // Clone to track says why it refuses, while the transport runs or with a frozen
 // track on either side, and clones once both are clear.
 std::optional<ScenarioResult> runCloneRefusals (GuiHost& host, ScenarioContext& ctx)

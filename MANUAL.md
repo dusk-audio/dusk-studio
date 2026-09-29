@@ -1376,7 +1376,7 @@ Recording keeps your zoom. When the playhead reaches the right-hand edge the vie
 
 ## Drag-and-drop import
 
-Drop audio or MIDI files onto the tape strip. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use **Auto-assign** to assign files to tracks in order; **Clear** removes those assignments. You can choose each destination manually. Each file needs a distinct track.
+Drop audio or MIDI files onto the tape strip. They land at the playhead, the same place **File → Import Audio or MIDI…** puts them; hold **Alt** as you drop to land them where the pointer is instead. While you hold files over the strip, a line shows where they will land, as long as that spot is in view on the timeline. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use **Auto-assign** to assign files to tracks in order; **Clear** removes those assignments. You can choose each destination manually. Each file needs a distinct track.
 
 **File → Import Audio or MIDI…** (or **Cmd+I**) picks the files in a file browser instead and opens the same pickers. Pressing **Open** there without picking a file closes the browser, the same as **Cancel**.
 

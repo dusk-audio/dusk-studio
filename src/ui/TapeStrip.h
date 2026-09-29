@@ -7,6 +7,7 @@
 #include "WheelScroll.h"
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 
 namespace duskstudio
@@ -108,8 +109,9 @@ public:
     juce::Rectangle<int> audioRegionScreenRect (int trackIdx, int regionIdx) const noexcept;
     juce::Rectangle<int> midiRegionScreenRect  (int trackIdx, int regionIdx) const noexcept;
 
-    // trackHint = row under the drop, -1 if dropped on ruler / outside.
-    // Host (batch-import) picks adjacent tracks for subsequent files.
+    // timelineStart = the playhead, or the sample under the pointer when Alt
+    // is held. trackHint = row under the drop, -1 if dropped on ruler /
+    // outside. Host (batch-import) picks adjacent tracks for subsequent files.
     std::function<void (juce::Array<juce::File> files,
                          std::int64_t timelineStart,
                          int trackHint)> onFilesDropped;
@@ -181,6 +183,11 @@ public:
         rebuildVisibleTrackOrder();
     }
     auto dropPointForScenario (int track) const { return rowBounds (track).getCentre(); }
+    std::int64_t dropPointSampleForScenario (int track) const { return sampleAtX (dropPointForScenario (track).x); }
+    int dropLineXForScenario() const { return dropAccepted ? dropHoverX : -1; }
+    int xForSampleForScenario (std::int64_t sample) const { return xForSample (sample); }
+    // Stands in for the Alt key a drop reads; nullopt goes back to the key.
+    void setDropAtMouseForScenario (std::optional<bool> atMouse) { dropAtMouseOverride = atMouse; }
     auto labelPointForScenario (int track) const { return rowBounds (track).getCentre().withX (labelColW / 2); }
     bool nameEditorOpenForScenario() const { return nameEditor.isBeingEdited(); }
     // The track whose row the open name editor sits on, -1 when it is closed
@@ -538,6 +545,9 @@ private:
     int  dropHoverTrack = -1;
     int  dropHoverX     = -1;
     bool dropAccepted   = false;
+    // Drops land at the playhead, or at the pointer while Alt is held.
+    bool dropAtMouse() const;
+    std::optional<bool> dropAtMouseOverride;
 
     // Audio + MIDI share a vector index space within a track but are
     // distinct types - separate selection slots avoid "which type is

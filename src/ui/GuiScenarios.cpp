@@ -127,6 +127,19 @@ bool dispatchFileDrop (Component& component, void (Component::*handler) (const F
     return true;
 }
 
+// Enters the drag, reads what it shows, and leaves without dropping.
+template <typename Component, typename Files, typename Read>
+auto dispatchFileHover (Component& component, void (Component::*leave) (const Files&),
+                        const std::vector<std::filesystem::path>& files, int x, int y, Read read)
+{
+    Files names;
+    for (const auto& path : files) names.add (HostString::fromUTF8 (path.u8string().c_str()));
+    component.fileDragEnter (names, x, y);
+    const auto shown = read();
+    (component.*leave) (names);
+    return shown;
+}
+
 template <typename Peer, typename Source, typename Point, typename Time, typename Wheel>
 void dispatchWheel (Peer& peer, void (Peer::*handler) (Source, Point, Time, const Wheel&, int),
                     float x, float y, std::int64_t time, float delta)
@@ -643,6 +656,28 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto point = tape->dropPointForScenario (track);
         if (! tape->getLocalBounds().contains (point)) return false;
         return dispatchFileDrop (*tape, &TapeStrip::filesDropped, files, point.x, point.y);
+    }
+    std::vector<int> tapeDropHover (int track, const std::vector<std::filesystem::path>& files) override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()) return {};
+        const auto point = tape->dropPointForScenario (track);
+        if (! tape->getLocalBounds().contains (point)) return {};
+        const int line = dispatchFileHover (*tape, &TapeStrip::fileDragExit, files, point.x, point.y,
+                                            [tape] { return tape->dropLineXForScenario(); });
+        return { line, point.x };
+    }
+    std::int64_t tapeDropPointSample (int track) const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->dropPointSampleForScenario (track) : -1;
+    }
+    int tapeXForSample (std::int64_t sample) const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->xForSampleForScenario (sample) : -1;
+    }
+    void forceDropAtMouse (std::optional<bool> atMouse) override
+    {
+        if (owner.tapeStrip != nullptr) owner.tapeStrip->setDropAtMouseForScenario (atMouse);
     }
     std::vector<std::string> confirmationText() const override { return confirmationTextForScenario(); }
     bool captureMiniMarkers (bool enabled) override
