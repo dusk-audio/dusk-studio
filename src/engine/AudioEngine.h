@@ -285,12 +285,12 @@ public:
     ChannelStrip& getChannelStrip (int idx) noexcept
     {
         jassert (idx >= 0 && idx < (int) strips.size());
-        return strips[(size_t) idx];
+        return *strips[(size_t) idx];
     }
     const ChannelStrip& getChannelStrip (int idx) const noexcept
     {
         jassert (idx >= 0 && idx < (int) strips.size());
-        return strips[(size_t) idx];
+        return *strips[(size_t) idx];
     }
     // Legacy alias kept so RegionEditActions / ConsoleView compile.
     ChannelStrip&       getStrip (int idx)       noexcept { return getChannelStrip (idx); }
@@ -811,7 +811,16 @@ private:
     std::atomic<int> rtBounceSinkCount { 0 };
     std::atomic<bool> rtBounceAborted { false };
 
-    std::array<ChannelStrip, Session::kNumTracks> strips;
+    std::array<ChannelStrip, Session::kNumTracks> stripStorage;
+    // The strip each track slot runs, by slot. The strips stay where they are
+    // in memory, so a slot can be handed another strip, with the plug-in it
+    // hosts, without anything being rebuilt.
+    std::array<ChannelStrip*, Session::kNumTracks> strips = [this]
+    {
+        std::array<ChannelStrip*, Session::kNumTracks> bySlot {};
+        for (size_t i = 0; i < bySlot.size(); ++i) bySlot[i] = &stripStorage[i];
+        return bySlot;
+    }();
     std::array<BusStrip,  Session::kNumBuses> busStrips;
     std::array<AuxLaneStrip, Session::kNumAuxLanes> auxLaneStrips;
     MasterBus master;
