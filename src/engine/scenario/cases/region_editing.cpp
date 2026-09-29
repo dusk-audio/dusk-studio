@@ -100,18 +100,19 @@ ScenarioResult pasteInsertsAndUndoRemoves (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
-// Deleting a region takes its take history with it, and undo brings both back.
-ScenarioResult deleteRestoresTakesOnUndo (ScenarioContext& ctx)
+// Deleting a region leaves the take it came from on the track, and undo
+// brings the region back naming that take.
+ScenarioResult deleteKeepsItsTake (ScenarioContext& ctx)
 {
     auto& regs = regionsOf (ctx);
+    auto& takes = ctx.session().track (kTrack).takes;
+    AudioTake take;
+    take.id = ctx.session().allocateTakeId();
+    take.name = "Take 1";
+    take.lengthInSamples = 48000;
+    takes.push_back (take);
     auto region = regionAt (0, 48000);
-    for (int i = 1; i <= 3; ++i)
-    {
-        TakeRef take;
-        take.sourceOffset = 1000 * i;
-        take.lengthInSamples = 48000;
-        region.previousTakes.push_back (take);
-    }
+    region.takeId = take.id;
     regs.push_back (region);
     auto& undo = ctx.engine().getUndoManager();
     undo.clearUndoHistory();
@@ -120,13 +121,12 @@ ScenarioResult deleteRestoresTakesOnUndo (ScenarioContext& ctx)
     ctx.expect (undo.perform (new DeleteRegionAction (ctx.session(), ctx.engine(), kTrack, 0)),
                 "the delete was refused");
     ctx.expect (regs.empty(), "the region is still on the track");
+    ctx.expect (takes.size() == 1 && takes[0].id == take.id && takes[0].lengthInSamples == 48000,
+                "deleting the region removed or changed its take");
     ctx.expect (undo.undo() && regs.size() == 1, "undo did not bring the region back");
     if (regs.size() == 1)
-    {
-        ctx.expect (regs[0].previousTakes.size() == 3, "undo lost the region's take history");
-        ctx.expect (regs[0].previousTakes.size() == 3 && regs[0].previousTakes[2].sourceOffset == 3000,
-                    "undo reordered the take history");
-    }
+        ctx.expect (regs[0].takeId == take.id, "undo brought the region back without its take");
+    ctx.expect (takes.size() == 1, "undo changed the track's takes");
     return ctx.verdict();
 }
 
@@ -200,8 +200,8 @@ const ScenarioRegistrar pasteRegistrar { Scenario {
     "region.paste_inserts_and_undo_removes", { "region", "edit", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (pasteInsertsAndUndoRemoves, ctx); } } };
 const ScenarioRegistrar deleteRegistrar { Scenario {
-    "region.delete_restores_takes_on_undo", { "region", "edit", "undo", "takes" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return run (deleteRestoresTakesOnUndo, ctx); } } };
+    "region.delete_keeps_its_take", { "region", "edit", "undo", "takes" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (deleteKeepsItsTake, ctx); } } };
 const ScenarioRegistrar editRegistrar { Scenario {
     "region.edit_undo_restores_every_field", { "region", "edit", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (editUndoRestoresEveryField, ctx); } } };

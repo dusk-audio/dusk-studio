@@ -13941,14 +13941,21 @@ std::optional<ScenarioResult> runRecordKeyRegion (GuiHost& host, ScenarioContext
     const bool timeline = host.setTimelineShown (true);
     ctx.cleanup ([&host, timeline] { host.setTimelineShown (timeline); });
     auto regionsAtStart = std::make_shared<std::vector<std::decay_t<decltype (track.regions)>>>();
+    auto takesAtStart = std::make_shared<std::vector<std::decay_t<decltype (track.takes)>>>();
     for (int index = 0; index < Session::kNumTracks; ++index)
+    {
         regionsAtStart->push_back (session.track (index).regions);
-    ctx.cleanup ([&engine, &session, &transport, regionsAtStart, originalDir = currentSessionDirectory (session),
+        takesAtStart->push_back (session.track (index).takes);
+    }
+    ctx.cleanup ([&engine, &session, &transport, regionsAtStart, takesAtStart, originalDir = currentSessionDirectory (session),
                   loop = transport.isLoopEnabled(), punch = transport.isPunchEnabled(), at = transport.getPlayhead()]
     {
         engine.stop();
         for (int index = 0; index < Session::kNumTracks; ++index)
+        {
             session.track (index).regions = (*regionsAtStart)[(std::size_t) index];
+            session.track (index).takes = (*takesAtStart)[(std::size_t) index];
+        }
         engine.getPlaybackEngine().preparePlayback();
         transport.setLoopEnabled (loop);
         transport.setPunchEnabled (punch);

@@ -1729,7 +1729,8 @@ void AudioEngine::stop()
                 for (const auto& d : diff)
                     wrapped.push_back ({ d.trackIndex,
                                           d.audioBefore, d.audioAfter,
-                                          d.midiBefore,  d.midiAfter });
+                                          d.midiBefore,  d.midiAfter,
+                                          d.takesBefore, d.takesAfter });
                 undoManager.beginNewTransaction ("Record");
                 undoManager.perform (new RecordCommitAction (
                     session, *this, std::move (wrapped)));

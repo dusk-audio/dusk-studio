@@ -79,9 +79,10 @@ public:
         return activeStereoCaptureTrackMask.load (std::memory_order_acquire);
     }
 
-    // Message thread. Closes writers, finalizes WAV, appends regions. Waits
-    // for any audio-thread call already inside the recorder to leave first,
-    // however long that takes, so a stop always commits its take.
+    // Message thread. Closes writers, finalizes WAV, adds each pass as a take
+    // on its track and places the newest on the timeline. Waits for any
+    // audio-thread call already inside the recorder to leave first, however
+    // long that takes, so a stop always commits its take.
     void stopRecording (std::int64_t endSample);
 
     // Audio thread. R == nullptr for mono. numSamples == 0 early-returns.
@@ -143,6 +144,8 @@ public:
         std::vector<AudioRegion>  audioAfter;
         std::vector<MidiRegion>   midiBefore;
         std::vector<MidiRegion>   midiAfter;
+        std::vector<AudioTake>    takesBefore;
+        std::vector<AudioTake>    takesAfter;
     };
     const std::vector<TrackCommitDiff>& getLastCommitDiff() const noexcept
     {

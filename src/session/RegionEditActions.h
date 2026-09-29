@@ -320,7 +320,7 @@ private:
     std::unique_ptr<Impl> afterState;
 };
 
-// Wraps the per-track regions + midiRegions diff produced by
+// Wraps the per-track regions + midiRegions + takes diff produced by
 // RecordManager::stopRecording so a take commit (audio + midi) becomes
 // one undo step. perform() applies the after-snapshot; undo() restores
 // the before-snapshot. WAV files on disk are NOT deleted on undo -
@@ -336,6 +336,8 @@ public:
         std::vector<AudioRegion>  audioAfter;
         std::vector<MidiRegion>   midiBefore;
         std::vector<MidiRegion>   midiAfter;
+        std::vector<AudioTake>    takesBefore;
+        std::vector<AudioTake>    takesAfter;
     };
 
     RecordCommitAction (Session& session, AudioEngine& engine,

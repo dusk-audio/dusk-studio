@@ -1569,6 +1569,7 @@ std::string AudioPipelineSelfTest::testLoopRecordTakeStacking()
     auto& midiTrack  = session.track (1);
     const auto savedDir = session.getSessionDirectory();
     const auto savedAudioRegions = audioTrack.regions;
+    const auto savedAudioTakes = audioTrack.takes;
     const auto savedMidiRegions = midiTrack.midiRegions.current();
     const int savedMidiInput = midiTrack.midiInputIndex.load (std::memory_order_relaxed);
     const int savedMidiChannel = midiTrack.midiChannel.load (std::memory_order_relaxed);
@@ -1608,6 +1609,7 @@ std::string AudioPipelineSelfTest::testLoopRecordTakeStacking()
     {
         session.setSessionDirectory (testDir);
         audioTrack.regions.clear();
+        audioTrack.takes.clear();
         midiTrack.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
 
         audioTrack.mode.store ((int) Track::Mode::Mono, std::memory_order_relaxed);
@@ -1684,23 +1686,29 @@ std::string AudioPipelineSelfTest::testLoopRecordTakeStacking()
         recorderInactive = ! engine.getRecordManager().isActive();
         engine.getPlaybackEngine().stopPlayback();
 
-        if (audioTrack.regions.size() == 1)
+        const auto& takes = audioTrack.takes;
+        if (audioTrack.regions.size() == 1 && takes.size() == 3)
         {
             const auto& current = audioTrack.regions.front();
+            const auto passIs = [] (const AudioTake& take, std::int64_t offset,
+                                    std::int64_t length, int ordinal, bool partial)
+            {
+                return take.timelineStart == 1002 && take.sourceOffset == offset
+                    && take.lengthInSamples == length
+                    && take.provenance.loopPassOrdinal == ordinal
+                    && take.provenance.partialPass == partial;
+            };
             audioMetadata = current.timelineStart == 1002
                          && current.sourceOffset == 250
                          && current.lengthInSamples == 56
                          && current.provenance.loopPassOrdinal == 3
                          && current.provenance.partialPass
-                         && current.previousTakes.size() == 2
-                         && current.previousTakes[0].sourceOffset == 125
-                         && current.previousTakes[0].lengthInSamples == 125
-                         && current.previousTakes[0].provenance.loopPassOrdinal == 2
-                         && ! current.previousTakes[0].provenance.partialPass
-                         && current.previousTakes[1].sourceOffset == 0
-                         && current.previousTakes[1].lengthInSamples == 125
-                         && current.previousTakes[1].provenance.loopPassOrdinal == 1
-                         && ! current.previousTakes[1].provenance.partialPass;
+                         && current.previousTakes.empty()
+                         && current.takeId == takes[2].id
+                         && passIs (takes[0], 0, 125, 1, false)
+                         && passIs (takes[1], 125, 125, 2, false)
+                         && passIs (takes[2], 250, 56, 3, true)
+                         && takes[0].file == current.file && takes[1].file == current.file;
 
             auto reader = dusk::audio::FileReader::open (
                 std::filesystem::u8path (current.file.getFullPathName().toStdString()));
@@ -1767,6 +1775,7 @@ std::string AudioPipelineSelfTest::testLoopRecordTakeStacking()
     midiTrack.midiInputIndex.store (savedMidiInput, std::memory_order_relaxed);
     midiTrack.midiChannel.store (savedMidiChannel, std::memory_order_relaxed);
     audioTrack.regions = savedAudioRegions;
+    audioTrack.takes = savedAudioTakes;
     midiTrack.midiRegions.publish (
         std::make_unique<std::vector<MidiRegion>> (savedMidiRegions));
     session.setSessionDirectory (savedDir);
