@@ -8914,6 +8914,7 @@ std::optional<ScenarioResult> runTimelineDrawer (GuiHost& host, ScenarioContext&
                 for (int track = 0; track < Session::kNumTracks; ++track)
                     ctx.expect (host.stripCompact (track) == show,
                                 "timeline expansion left the wrong layout on strip " + std::to_string (track + 1));
+                ctx.expect (host.grMetersShown(), "a GR slider beside a fader is hidden");
             } });
         }
         runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });

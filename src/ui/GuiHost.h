@@ -123,6 +123,8 @@ public:
     virtual bool consolePageMatches (int index) const = 0;
     virtual bool timelineViewMatches (bool expanded) const = 0;
     virtual bool stripCompact (int index) const = 0;
+    // Every channel, bus and master GR slider beside its fader is on screen.
+    virtual bool grMetersShown() const = 0;
     // The level text under a channel strip's send knob, as drawn.
     virtual std::string stripSendLabel (int track, int send) const = 0;
 

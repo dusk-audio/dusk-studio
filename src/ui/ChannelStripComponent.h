@@ -138,6 +138,7 @@ public:
     // visible.
     void setCompactMode (bool compact);
     bool isCompactMode() const noexcept { return compactMode; }
+    bool grMeterShownForScenario() const { return compMeter != nullptr && compMeter->isVisible() && ! compMeter->getBounds().isEmpty(); }
 
     // Swaps the input/IN/ARM/PRINT row at the top for 4 AUX send knobs.
     void setMixingMode (bool mixing);

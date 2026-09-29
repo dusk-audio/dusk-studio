@@ -1620,7 +1620,6 @@ void ChannelStripComponent::setCompSectionVisible (bool visible)
     vcaAttackKnob   .setVisible (visible);  vcaAttackLabel  .setVisible (visible);
     vcaReleaseKnob  .setVisible (visible);  vcaReleaseLabel .setVisible (visible);
     vcaOutputKnob   .setVisible (visible);  vcaOutputLabel  .setVisible (visible);
-    if (compMeter != nullptr) compMeter->setVisible (visible);
 
     // Re-apply the per-mode filter so only the active mode's knobs are
     // shown. Without this, flipping out of TIMELINE (or any path that

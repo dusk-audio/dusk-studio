@@ -1256,7 +1256,7 @@ If something goes wrong mid-take (ring-buffer overrun on a stressed disk, MIDI F
 
 The tape strip is Dusk Studio's timeline view. It is collapsed by default. Click **▾ TIMELINE** at the top right of the transport bar (or the small drawer-handle below the bar) to expand it.
 
-When expanded, the channel strips automatically compact so that the timeline gets vertical space. EQ and compressor controls collapse into header buttons; click a header to open a modal editor with the full controls.
+When expanded, the channel strips automatically compact so that the timeline gets vertical space. EQ and compressor controls collapse into header buttons; click a header to open a modal editor with the full controls. The GR meter and threshold handle beside each fader stay on every channel strip, bus, and the master.
 
 ## Layout
 

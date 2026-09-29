@@ -861,6 +861,21 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return strip != nullptr && strip->isCompactMode();
     }
 
+    bool grMetersShown() const override
+    {
+        auto* console = owner.consoleView.get();
+        if (console == nullptr) return false;
+        for (int track = 0; track < Session::kNumTracks; ++track)
+            if (auto* strip = console->getStripComponent (track);
+                strip == nullptr || (strip->isVisible() && ! strip->grMeterShownForScenario()))
+                return false;
+        for (int bus = 0; bus < Session::kNumBuses; ++bus)
+            if (auto* busStrip = console->getBusComponent (bus); busStrip == nullptr || ! busStrip->grMeterShownForScenario())
+                return false;
+        auto* master = console->getMasterStripComponent();
+        return master != nullptr && master->grMeterShownForScenario();
+    }
+
     std::string stripSendLabel (int track, int send) const override
     {
         auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
