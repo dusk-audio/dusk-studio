@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "session/AtomicSnapshot.h"
 #include "session/Session.h"
 
+#include <memory>
 #include <vector>
 
 using duskstudio::AutomationLane;
@@ -79,6 +81,25 @@ TEST_CASE ("AutomationLane: mutatePoints copy-applies-publishes", "[automation][
     REQUIRE (lane.pointsForRead().size() == 2);
     REQUIRE (lane.pointsForRead()[0].timeSamples == 0);
     REQUIRE (lane.pointsForRead()[1].timeSamples == 20);
+}
+
+// The snapshot retires one value per publish, so an edit that publishes twice
+// inside one audio block frees what the block may still read. Region edits
+// count publishes through generation() to prove they publish once.
+TEST_CASE ("AtomicSnapshot: generation counts publishes, not in-place edits", "[automation][snapshot]")
+{
+    duskstudio::AtomicSnapshot<std::vector<int>> snapshot;
+    REQUIRE (snapshot.generation() == 0);
+
+    snapshot.currentMutable().push_back (1);
+    REQUIRE (snapshot.generation() == 0);
+
+    snapshot.mutate ([] (std::vector<int>& v) { v.push_back (2); v.push_back (3); });
+    REQUIRE (snapshot.generation() == 1);
+
+    snapshot.publish (std::make_unique<std::vector<int>> (std::vector<int> { 4 }));
+    REQUIRE (snapshot.generation() == 2);
+    REQUIRE (*snapshot.read() == std::vector<int> { 4 });
 }
 
 // evaluateLane is the audio-thread reader's hot path; pin its boundaries.

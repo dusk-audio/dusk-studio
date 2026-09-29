@@ -50,6 +50,7 @@
 #include "MiniTimelineStrip.h"
 #include "TransportBar.h"
 #include "../session/MarkerEditActions.h"
+#include "../session/RegionEditActions.h"
 #include "../session/RecentSessions.h"
 #include "../session/SessionSerializer.h"
 #include "../session/UnreferencedAudio.h"
@@ -1459,10 +1460,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     }
 
     // Edit: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y
-    if (code == 'Z' && cmd && ! shift) { um.undo(); return true; }
+    if (code == 'Z' && cmd && ! shift) { undoTransaction (engine); return true; }
     if ((code == 'Z' && cmd && shift) || (code == 'Y' && cmd))
     {
-        um.redo();
+        redoTransaction (engine);
         return true;
     }
 
@@ -1728,15 +1729,21 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // Track arm / solo / mute on the selected track. Selection state
-    // lives on TapeStrip (the most-recently-clicked region's track); when
-    // nothing's selected, the shortcuts no-op rather than guessing. The
-    // ChannelStrip's existing 30 Hz timer picks up the atom changes and
-    // refreshes its toggles.
+    // Track arm / solo / mute on the selected tracks: the names picked in the
+    // tape strip, or the selected region's track. With nothing selected the
+    // shortcuts no-op rather than guessing. A key turns its state off on every
+    // selected track when any of them has it on, and on otherwise, so a track
+    // that cannot be armed (frozen, or with no input) never leaves the others
+    // stuck armed. The ChannelStrip's existing 30 Hz timer picks up the atom
+    // changes and refreshes its toggles.
     if (tapeStrip != nullptr)
     {
-        const int sel = tapeStrip->getSelectedTrack();
-        if (sel >= 0 && sel < Session::kNumTracks)
+        const auto tracks = tapeStrip->getSelectedTracks();
+        const auto anyOn = [this, &tracks] (auto isOn)
+        {
+            return std::any_of (tracks.begin(), tracks.end(), [this, &isOn] (int t) { return isOn (session.track (t)); });
+        };
+        if (! tracks.empty())
         {
             if (code == 'A' && noMods)
             {
@@ -1744,18 +1751,16 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
                 // in sync. Bypassing it (atom.store directly) left the
                 // counter stale and silently broke the Rec button's
                 // anyTrackArmed() fast-path.
-                const bool now = session.track (sel).recordArmed
-                                       .load (std::memory_order_relaxed);
-                session.setTrackArmed (sel, ! now);
+                const bool arm = ! anyOn ([] (const Track& t) { return t.recordArmed.load (std::memory_order_relaxed); });
+                for (const int t : tracks) session.setTrackArmed (t, arm);
                 return true;
             }
             if (code == 'S' && noMods)
             {
                 // Route through setTrackSoloed so soloTrackCount stays
                 // in sync (same reason as ARM above).
-                const bool now = session.track (sel).strip.solo
-                                       .load (std::memory_order_relaxed);
-                session.setTrackSoloed (sel, ! now);
+                const bool solo = ! anyOn ([] (const Track& t) { return t.strip.solo.load (std::memory_order_relaxed); });
+                for (const int t : tracks) session.setTrackSoloed (t, solo);
                 return true;
             }
             // 'X' = mute toggle. M is already taken by drop-marker; X is
@@ -1763,9 +1768,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             // keybinding.
             if (code == 'X' && noMods)
             {
-                auto& m = session.track (sel).strip.mute;
-                m.store (! m.load (std::memory_order_relaxed),
-                          std::memory_order_relaxed);
+                const bool mute = ! anyOn ([] (const Track& t) { return t.strip.mute.load (std::memory_order_relaxed); });
+                for (const int t : tracks) session.track (t).strip.mute.store (mute, std::memory_order_relaxed);
                 return true;
             }
         }

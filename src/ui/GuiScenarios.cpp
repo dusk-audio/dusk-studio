@@ -1709,6 +1709,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     bool clickAt (float x, float y, int count, bool right = false)
     {
+        return clickWith (x, y, count, right ? 4 : 0);
+    }
+    bool clickWith (float x, float y, int count, int modifiers)
+    {
         auto* peer = owner.getPeer();
         if (peer == nullptr) return false;
         using Peer = std::remove_pointer_t<decltype (peer)>;
@@ -1716,8 +1720,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             std::chrono::system_clock::now().time_since_epoch()).count();
         for (int click = 0; click < count; ++click)
         {
-            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, true, time + click * 40, right ? 4 : 0);
-            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, false, time + click * 40 + 20, right ? 4 : 0);
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, true, time + click * 40, modifiers);
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, false, time + click * 40 + 20, modifiers);
         }
         return true;
     }
@@ -1794,14 +1798,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return clickAt (point.x, point.y, 1, right);
     }
 
-    bool clickTapeTrackName (int track, int clicks) override
+    bool clickTapeTrackName (int track, int clicks, int modifiers) override
     {
         auto* tape = owner.tapeStrip.get();
         if (tape == nullptr || ! tape->isShowing()) return false;
         const auto point = tape->labelPointForScenario (track);
         if (! tape->getLocalBounds().withTrimmedTop (TapeStrip::kRulerH).contains (point)) return false;
         const auto at = owner.getTopLevelComponent()->getLocalPoint (tape, point).toFloat();
-        return clickAt (at.x, at.y, clicks);
+        return clickWith (at.x, at.y, clicks, modifiers);
     }
     int tapeNameEditorTrack() const override
     {
@@ -1818,6 +1822,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     int tapeSelectedTrack() const override
     {
         return owner.tapeStrip != nullptr ? owner.tapeStrip->getSelectedTrack() : -1;
+    }
+    std::vector<int> tapeSelectedTracks() const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->getSelectedTracks() : std::vector<int> {};
     }
     int consoleFocusedStrip() const override
     {
@@ -2064,6 +2072,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                                                                               : "tape hides empty tracks");
             if (owner.tapeStrip->getSelectedTrack() != launch.tapeSelectedTrack)
                 lines.push_back ("tape selects track " + std::to_string (owner.tapeStrip->getSelectedTrack()));
+            if (const auto picked = owner.tapeStrip->getSelectedTracks(); picked.size() > 1)
+                lines.push_back ("tape selects " + std::to_string (picked.size()) + " tracks");
             if (owner.tapeStrip->nameEditorOpenForScenario())
                 lines.push_back ("tape name editor open");
         }

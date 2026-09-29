@@ -286,7 +286,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 5   | Loop bracket       | Set with **[** / **]** or from the ruler's right-click menu; loop turns on once the in point sits before the out point. Drawn hollow while loop is off. |
 | 6   | Punch bracket      | Set with **Shift+[** / **Shift+]** or from the ruler's right-click menu; punch turns on once the in point sits before the out point. Drawn hollow while punch is off. |
 
-**Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Click a track's name in the left column to select that track and bring its strip into the mixer; double-click the name to rename the track. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
+**Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Click a track's name in the left column to select that track and bring its strip into the mixer; **Shift+click** or **Cmd/Ctrl+click** more names to select several tracks, and right-click a name for a menu that edits every region on the selected tracks. Double-click the name to rename the track. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
 
 ## The audio region editor
 
@@ -1274,6 +1274,8 @@ The left column shows each track's colour and name (its number until you name it
 
 Click a name to select that track. A moment later, once the click can no longer become a double-click, the console pages to its channel strip and puts the gold focus ring on it, so the **A / S / X** shortcuts act on it. The selected track's row is lit in its colour whichever way you picked it: its name here, one of its audio regions, or its channel strip.
 
+To select several tracks, **Shift+click** a name to take in every row shown between it and the name you last clicked without Shift (a track hidden between them stays out), or **Cmd/Ctrl+click** names to add them to the selection or take them out. These clicks leave the console where it is. Every selected row is lit, and **A / S / X** act on all of them: when any selected track already has that state on, the key turns it off on every selected track, and otherwise turns it on for all of them. A track that can't be armed (a frozen track, or an audio track with no input) stays off, and never keeps **A** from disarming the rest. Right-click a name for the [track name menu](#track-name-menu).
+
 Double-click a name to rename the track in place. **Enter**, or clicking anywhere else, keeps the new name; **Escape** keeps the old one. An empty name falls back to the track number, and **Cmd/Ctrl+Z** undoes a rename.
 
 ## The ruler
@@ -1324,6 +1326,20 @@ A right-click on any region shows a context menu:
 - **Delete**.
 
 Normalize is not on this menu — it lives in the audio region editor (double-click the region).
+
+### Track name menu
+
+A right-click on a track's name in the left column acts on every region, audio and MIDI, on the selected tracks. If the track you right-click isn't selected, it becomes the only selected track first. The menu's header reads **Track** and the track's number, or counts the tracks. Frozen tracks sit the whole menu out: their regions aren't counted, offered or changed. Every item that edits regions is one undo step; **Loop region span** sets the transport loop, which undo doesn't cover:
+
+- **Loop region span**: set the transport loop from the earliest region start to the latest region end.
+- **Split at playhead**: split every audio region the playhead crosses.
+- **Reverse regions**: reverse every audio region, as **Reverse region** does.
+- **Mute regions** / **Unmute regions**: the item reads **Unmute regions** when more than half of the regions are already muted.
+- **Lock regions** / **Unlock regions**: the same, for locking.
+- **Color**: the region palette, with **Reset to track colour**. It colours the regions, not the tracks.
+- **Delete regions**.
+
+Split, reverse and delete skip locked regions. The region-only items (join, label and takes) stay on the region menu.
 
 ### Take cycling
 
@@ -2228,9 +2244,9 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 
 | Shortcut | Action                        |
 | -------- | ----------------------------- |
-| **A**    | Toggle ARM on selected track  |
-| **S**    | Toggle SOLO on selected track |
-| **X**    | Toggle MUTE on selected track |
+| **A**    | Toggle ARM on selected tracks  |
+| **S**    | Toggle SOLO on selected tracks |
+| **X**    | Toggle MUTE on selected tracks |
 
 ## Stages & banks
 

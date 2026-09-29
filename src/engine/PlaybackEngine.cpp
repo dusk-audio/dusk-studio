@@ -87,6 +87,7 @@ void PlaybackEngine::refreshLiveRegionParams()
 
 void PlaybackEngine::preparePlayback()
 {
+    ++rebuilds;
     stopPlayback();
 
     for (int t = 0; t < Session::kNumTracks; ++t)

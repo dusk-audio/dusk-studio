@@ -13,6 +13,8 @@
 #include "../util/StringParsing.h"
 #include <cmath>
 #include <iterator>
+#include <limits>
+#include <map>
 #include <optional>
 #include <utility>
 #include <string>
@@ -305,7 +307,8 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
         // Anything picked during the wait wins: paging focuses the strip,
         // which would select the clicked track again over it.
         const bool stillPicked = selectedTrack == labelPressTrack && selectedRegion < 0
-                              && selectedMidiTrack < 0 && additionalSelections.empty();
+                              && selectedMidiTrack < 0 && additionalSelections.empty()
+                              && selectedTracks.size() == 1;
         if (labelPressTrack >= 0 && stillPicked && onTrackLabelClicked)
             onTrackLabelClicked (labelPressTrack);
     };
@@ -647,6 +650,8 @@ void TapeStrip::refreshAfterSessionLoad()
     selectedMidiRegion = -1;
     additionalSelections.clear();   // else allSelectedRegions() keeps stale group picks
     heldSelectionHistory.clear();
+    selectedTracks.clear();
+    trackAnchor = -1;
     drag = ActiveDrag{};
     midiDrag.clear();
     cancelTrackNameEdit();
@@ -808,6 +813,64 @@ void TapeStrip::clearAllSelections() noexcept
     selectedMidiRegion = -1;
     additionalSelections.clear();
     heldSelectionHistory.clear();
+    selectedTracks.clear();
+}
+
+bool TapeStrip::trackSetHolds() const noexcept
+{
+    return selectedRegion < 0 && selectedMidiTrack < 0 && additionalSelections.empty()
+        && std::binary_search (selectedTracks.begin(), selectedTracks.end(), selectedTrack);
+}
+
+std::vector<int> TapeStrip::getSelectedTracks() const
+{
+    if (trackSetHolds()) return selectedTracks;
+    if (selectedTrack >= 0) return { selectedTrack };
+    return {};
+}
+
+void TapeStrip::selectOnlyTrack (int t)
+{
+    clearAllSelections();
+    selectedTrack = t;
+    selectedTracks = { t };
+    trackAnchor = t;
+}
+
+void TapeStrip::extendTrackSelection (int t, bool range)
+{
+    const bool holds = trackSetHolds();
+    auto picked = getSelectedTracks();
+    const auto rowOf = [this] (int track)
+    {
+        return (int) (std::find (visibleTrackOrder.begin(), visibleTrackOrder.end(), track) - visibleTrackOrder.begin());
+    };
+    // A picked region's track anchors a range as well as a picked name does.
+    const int anchorRow = rowOf (holds ? trackAnchor : selectedTrack);
+    const int clickedRow = rowOf (t);
+    if (range && anchorRow < (int) visibleTrackOrder.size() && clickedRow < (int) visibleTrackOrder.size())
+    {
+        // By shown row, so a range never takes in a track hidden between the two.
+        trackAnchor = visibleTrackOrder[(size_t) anchorRow];
+        picked.assign (visibleTrackOrder.begin() + std::min (anchorRow, clickedRow),
+                       visibleTrackOrder.begin() + std::max (anchorRow, clickedRow) + 1);
+    }
+    else if (range)
+    {
+        picked = { t };
+        trackAnchor = t;
+    }
+    else
+    {
+        const auto at = std::lower_bound (picked.begin(), picked.end(), t);
+        if (at != picked.end() && *at == t) picked.erase (at);
+        else                                picked.insert (at, t);
+        trackAnchor = t;
+    }
+    clearAllSelections();
+    selectedTracks = std::move (picked);
+    const bool kept = std::binary_search (selectedTracks.begin(), selectedTracks.end(), t);
+    selectedTrack = kept ? t : (selectedTracks.empty() ? -1 : selectedTracks.back());
 }
 
 std::vector<TapeStrip::RegionId> TapeStrip::regionMenuTargets (int track, int idx) const
@@ -819,6 +882,7 @@ std::vector<TapeStrip::RegionId> TapeStrip::regionMenuTargets (int track, int id
 template <typename Field, typename Value>
 void TapeStrip::setAudioRegionField (const std::vector<RegionId>& targets, Field AudioRegion::* field, const Value& value)
 {
+    const RegionRebuildBatch batch (engine);
     const Field wanted (value);
     for (const auto& id : targets)
     {
@@ -835,17 +899,21 @@ void TapeStrip::setAudioRegionField (const std::vector<RegionId>& targets, Field
 template <typename Field, typename Value>
 void TapeStrip::setMidiRegionField (const std::vector<RegionId>& targets, Field MidiRegion::* field, const Value& value)
 {
+    const RegionRebuildBatch batch (engine);
     const Field wanted (value);
+    std::map<int, std::vector<MidiRegionEditAction::Change>> byTrack;
     for (const auto& id : targets)
     {
         const auto& regs = session.track (id.track).midiRegions.current();
         if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
-        const MidiRegion before = regs[(size_t) id.regionIdx];
+        const MidiRegion& before = regs[(size_t) id.regionIdx];
         if (before.*field == wanted) continue;
         MidiRegion after = before;
         after.*field = wanted;
-        performInPlace (new MidiRegionEditAction (session, engine, id.track, id.regionIdx, before, after));
+        byTrack[id.track].push_back ({ id.regionIdx, before, std::move (after) });
     }
+    for (auto& [track, changes] : byTrack)
+        performInPlace (new MidiRegionEditAction (session, engine, track, std::move (changes)));
 }
 
 namespace
@@ -887,8 +955,44 @@ std::vector<TapeStrip::RegionId> TapeStrip::editableMidiRegions (std::vector<Reg
     return targets;
 }
 
+std::vector<TapeStrip::RegionId> TapeStrip::splittableAudioRegions (std::vector<RegionId> targets, std::int64_t at) const
+{
+    return editableAudioRegions (std::move (targets), [at] (const AudioRegion& r)
+    {
+        return at > r.timelineStart && at < r.timelineStart + r.lengthInSamples;
+    });
+}
+
+std::vector<TapeStrip::RegionId> TapeStrip::regionsOnTracks (const std::vector<int>& tracks, bool midi) const
+{
+    std::vector<RegionId> ids;
+    for (const int t : tracks)
+    {
+        if (t < 0 || t >= Session::kNumTracks) continue;
+        const auto& track = session.track (t);
+        if (track.frozen.load (std::memory_order_relaxed)) continue;
+        const int count = (int) (midi ? track.midiRegions.current().size() : track.regions.size());
+        for (int i = 0; i < count; ++i) ids.push_back ({ t, i });
+    }
+    return ids;
+}
+
+std::pair<std::int64_t, std::int64_t> TapeStrip::regionSpan (const std::vector<int>& tracks) const
+{
+    std::int64_t start = std::numeric_limits<std::int64_t>::max(), end = 0;
+    const auto take = [&start, &end] (const auto& region)
+    {
+        start = std::min (start, region.timelineStart);
+        end   = std::max (end, region.timelineStart + region.lengthInSamples);
+    };
+    for (const auto& id : regionsOnTracks (tracks, false)) take (session.track (id.track).regions[(size_t) id.regionIdx]);
+    for (const auto& id : regionsOnTracks (tracks, true))  take (session.track (id.track).midiRegions.current()[(size_t) id.regionIdx]);
+    return { start, end };
+}
+
 void TapeStrip::deleteAudioRegions (const std::vector<RegionId>& ordered)
 {
+    const RegionRebuildBatch batch (engine);
     auto& um = engine.getUndoManager();
     for (const auto& id : ordered)
         um.perform (new DeleteRegionAction (session, engine, id.track, id.regionIdx));
@@ -896,13 +1000,18 @@ void TapeStrip::deleteAudioRegions (const std::vector<RegionId>& ordered)
 
 void TapeStrip::deleteMidiRegions (const std::vector<RegionId>& ordered)
 {
-    auto& um = engine.getUndoManager();
+    const RegionRebuildBatch batch (engine);
+    std::map<int, std::vector<int>> byTrack;
     for (const auto& id : ordered)
-        um.perform (new DeleteMidiRegionAction (session, engine, id.track, id.regionIdx));
+        byTrack[id.track].push_back (id.regionIdx);
+    auto& um = engine.getUndoManager();
+    for (auto& [track, indices] : byTrack)
+        um.perform (new DeleteMidiRegionAction (session, engine, track, std::move (indices)));
 }
 
 void TapeStrip::splitAudioRegions (const std::vector<RegionId>& ordered, std::int64_t at)
 {
+    const RegionRebuildBatch batch (engine);
     auto& um = engine.getUndoManager();
     for (const auto& id : ordered)
         um.perform (new SplitRegionAction (session, engine, id.track, id.regionIdx, at));
@@ -967,12 +1076,15 @@ void TapeStrip::toggleRegionSelected (int track, int idx)
     additionalSelections.insert (it, id);
 }
 
-void TapeStrip::setSelectedTrack (int t) noexcept
+void TapeStrip::setSelectedTrack (int t)
 {
     if (t < 0 || t >= Session::kNumTracks) t = -1;
-    if (selectedTrack == t && selectedRegion == -1) return;
+    const std::vector<int> only = t >= 0 ? std::vector<int> { t } : std::vector<int> {};
+    if (selectedTrack == t && selectedRegion == -1 && selectedTracks == only) return;
     selectedTrack  = t;
     selectedRegion = -1;
+    selectedTracks = only;
+    trackAnchor    = t;
     repaint();
 }
 
@@ -1234,6 +1346,22 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    // A right-click on a name that is not already picked picks it alone first.
+    if (e.mods.isRightButtonDown() && labelColumnBounds().contains (e.x, e.y))
+    {
+        const int track = trackAtLabelY (e.y);
+        if (track < 0) return;
+        auto tracks = getSelectedTracks();
+        if (std::find (tracks.begin(), tracks.end(), track) == tracks.end())
+        {
+            selectOnlyTrack (track);
+            tracks = { track };
+            repaint();
+        }
+        showTrackContextMenu (std::move (tracks), e.getScreenPosition());
+        return;
+    }
+
     // Right-click on a region opens a region-specific menu (delete, split).
     // Right-click on empty timeline / ruler opens the loop+punch menu.
     if (e.mods.isRightButtonDown())
@@ -1439,7 +1567,8 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
     // row, before the timeline column starts) selects that track without
     // picking a region, so keyboard shortcuts (A / S / X) can target a
     // track that has no recorded regions yet, and brings its strip into
-    // the mixer.
+    // the mixer. Cmd/Ctrl and Shift build a multi-track selection instead,
+    // leaving the mixer where it is.
     if (labelColumnBounds().contains (e.x, e.y) && ! e.mods.isRightButtonDown())
     {
         const auto pressMs = e.eventTime.toMilliseconds();
@@ -1450,11 +1579,18 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
             return;
         }
         labelClickTimer.stopTimer();
-        labelPressTrack = trackAtLabelY (e.y);
+        const int track = trackAtLabelY (e.y);
         labelPressMs = pressMs;
+        if (e.mods.isCommandDown() || e.mods.isShiftDown())
+        {
+            labelPressTrack = -1;
+            if (track >= 0) extendTrackSelection (track, e.mods.isShiftDown());
+            repaint();
+            return;
+        }
+        labelPressTrack = track;
         if (labelPressTrack < 0) return;
-        clearAllSelections();
-        selectedTrack = labelPressTrack;
+        selectOnlyTrack (labelPressTrack);
         repaint();
         labelClickTimer.startTimer (e.getDoubleClickTimeout());
         return;
@@ -3153,6 +3289,125 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
         });
 }
 
+void TapeStrip::showTrackContextMenu (std::vector<int> tracks, juce::Point<int> screenPos)
+{
+    if (tracks.empty()) return;
+    const auto audio = regionsOnTracks (tracks, false);
+    const auto midi  = regionsOnTracks (tracks, true);
+
+    int total = 0, muted = 0, locked = 0;
+    std::optional<std::uint32_t> sharedColour;
+    bool coloursDiffer = false;
+    const auto tally = [&] (const auto& region)
+    {
+        const std::uint32_t argb = region.customColour.getARGB();
+        if (total++ == 0) sharedColour = argb;
+        else if (sharedColour != argb) coloursDiffer = true;
+        muted  += region.muted ? 1 : 0;
+        locked += region.locked ? 1 : 0;
+    };
+    for (const auto& id : audio) tally (session.track (id.track).regions[(size_t) id.regionIdx]);
+    for (const auto& id : midi)  tally (session.track (id.track).midiRegions.current()[(size_t) id.regionIdx]);
+    if (coloursDiffer) sharedColour.reset();
+    const auto playhead = engine.getTransport().getPlayhead();
+
+    juce::PopupMenu m;
+    m.addSectionHeader (tracks.size() == 1 ? "Track " + std::to_string (tracks.front() + 1)
+                                           : std::to_string (tracks.size()) + " tracks");
+    // Each item gathers its regions again when it runs, from the tracks alone:
+    // an edit made while the menu was open may have moved them.
+    m.addItem ("Loop region span", total > 0, false,
+                [safeThis = SafePointer<TapeStrip> (this), tracks]
+                {
+                    if (safeThis == nullptr) return;
+                    const auto [start, end] = safeThis->regionSpan (tracks);
+                    if (end <= start) return;
+                    auto& tr = safeThis->engine.getTransport();
+                    tr.setLoopRange (start, end);
+                    tr.setLoopEnabled (true);
+                    tr.locate (start);
+                    safeThis->repaint();
+                });
+    m.addItem ("Split at playhead", ! splittableAudioRegions (audio, playhead).empty(), false,
+                [safeThis = SafePointer<TapeStrip> (this), tracks]
+                {
+                    if (safeThis == nullptr) return;
+                    const auto at = safeThis->engine.getTransport().getPlayhead();
+                    const auto targets = safeThis->splittableAudioRegions (safeThis->regionsOnTracks (tracks, false), at);
+                    if (targets.empty()) return;
+                    safeThis->engine.getUndoManager().beginNewTransaction ("Split regions");
+                    safeThis->splitAudioRegions (targets, at);
+                    safeThis->repaint();
+                });
+    m.addItem ("Reverse regions", ! editableAudioRegions (audio).empty(), false,
+                [safeThis = SafePointer<TapeStrip> (this), tracks]
+                {
+                    if (safeThis == nullptr) return;
+                    const auto targets = safeThis->editableAudioRegions (safeThis->regionsOnTracks (tracks, false));
+                    if (targets.empty()) return;
+                    const RegionRebuildBatch batch (safeThis->engine);
+                    safeThis->engine.getUndoManager().beginNewTransaction ("Reverse regions");
+                    for (const auto& id : targets)
+                        safeThis->performInPlace (new ReverseRegionAction (safeThis->session, safeThis->engine,
+                                                                           id.track, id.regionIdx));
+                    safeThis->repaint();
+                });
+    m.addSeparator();
+
+    const bool mute = muted * 2 <= total;
+    m.addItem (mute ? "Mute regions" : "Unmute regions", total > 0, false,
+                [safeThis = SafePointer<TapeStrip> (this), tracks, mute]
+                {
+                    if (safeThis == nullptr) return;
+                    const RegionRebuildBatch batch (safeThis->engine);
+                    safeThis->engine.getUndoManager().beginNewTransaction (mute ? "Mute regions" : "Unmute regions");
+                    safeThis->setAudioRegionField (safeThis->regionsOnTracks (tracks, false), &AudioRegion::muted, mute);
+                    safeThis->setMidiRegionField (safeThis->regionsOnTracks (tracks, true), &MidiRegion::muted, mute);
+                    safeThis->repaint();
+                });
+    const bool lock = locked * 2 <= total;
+    m.addItem (lock ? "Lock regions" : "Unlock regions", total > 0, false,
+                [safeThis = SafePointer<TapeStrip> (this), tracks, lock]
+                {
+                    if (safeThis == nullptr) return;
+                    const RegionRebuildBatch batch (safeThis->engine);
+                    safeThis->engine.getUndoManager().beginNewTransaction (lock ? "Lock regions" : "Unlock regions");
+                    safeThis->setAudioRegionField (safeThis->regionsOnTracks (tracks, false), &AudioRegion::locked, lock);
+                    safeThis->setMidiRegionField (safeThis->regionsOnTracks (tracks, true), &MidiRegion::locked, lock);
+                    safeThis->repaint();
+                });
+    m.addSeparator();
+    m.addSubMenu ("Color", regionColourMenu (sharedColour), total > 0);
+    m.addSeparator();
+
+    const bool deletable = ! editableAudioRegions (audio).empty() || ! editableMidiRegions (midi).empty();
+    m.addItem ("Delete regions", deletable, false,
+                [safeThis = SafePointer<TapeStrip> (this), tracks]
+                {
+                    if (safeThis == nullptr) return;
+                    const auto audioTargets = safeThis->editableAudioRegions (safeThis->regionsOnTracks (tracks, false));
+                    const auto midiTargets  = safeThis->editableMidiRegions (safeThis->regionsOnTracks (tracks, true));
+                    if (audioTargets.empty() && midiTargets.empty()) return;
+                    const RegionRebuildBatch batch (safeThis->engine);
+                    safeThis->engine.getUndoManager().beginNewTransaction ("Delete regions");
+                    safeThis->deleteAudioRegions (audioTargets);
+                    safeThis->deleteMidiRegions (midiTargets);
+                    safeThis->repaint();
+                });
+
+    showContextMenu (m, *this, screenPos,
+        [safeThis = SafePointer<TapeStrip> (this), tracks] (int chosen)
+        {
+            const auto argb = chosenRegionColour (chosen);
+            if (safeThis == nullptr || ! argb) return;
+            const RegionRebuildBatch batch (safeThis->engine);
+            safeThis->engine.getUndoManager().beginNewTransaction ("Set regions colour");
+            safeThis->setAudioRegionField (safeThis->regionsOnTracks (tracks, false), &AudioRegion::customColour, *argb);
+            safeThis->setMidiRegionField (safeThis->regionsOnTracks (tracks, true), &MidiRegion::customColour, *argb);
+            safeThis->repaint();
+        });
+}
+
 void TapeStrip::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff0e0e10));
@@ -3277,6 +3532,7 @@ void TapeStrip::paint (juce::Graphics& g)
                          std::max (0, getHeight() - kRulerH));
 
     // Track rows
+    const auto litTracks = getSelectedTracks();
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto row = rowBounds (t);
@@ -3294,7 +3550,7 @@ void TapeStrip::paint (juce::Graphics& g)
         // back to the 1-based track number if no name has been set).
         auto labelRow = juce::Rectangle<int> (label.getX(), row.getY(),
                                                 label.getWidth(), row.getHeight());
-        const bool rowSelected = t == selectedTrack;
+        const bool rowSelected = std::binary_search (litTracks.begin(), litTracks.end(), t);
         if (rowSelected)
         {
             g.setColour (session.track (t).colour.withAlpha (0.18f));
@@ -4496,12 +4752,7 @@ bool TapeStrip::cycleSelectedTake (bool forward)
 bool TapeStrip::splitSelectedAtPlayhead()
 {
     const auto playhead = engine.getTransport().getPlayhead();
-    // Strictly inside, as the right-click menu gates it: a split at an edge
-    // would change nothing. Locked regions reject split.
-    const auto targets = editableAudioRegions (allSelectedRegions(), [playhead] (const AudioRegion& r)
-    {
-        return playhead > r.timelineStart && playhead < r.timelineStart + r.lengthInSamples;
-    });
+    const auto targets = splittableAudioRegions (allSelectedRegions(), playhead);
     if (targets.empty()) return false;
     engine.getUndoManager().beginNewTransaction (targets.size() == 1 ? "Split region" : "Split regions");
     splitAudioRegions (targets, playhead);

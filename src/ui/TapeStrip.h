@@ -7,6 +7,7 @@
 #include "WheelScroll.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace duskstudio
 {
@@ -120,10 +121,13 @@ public:
     void filesDropped  (const juce::StringArray& files, int x, int y) override;
 
     int  getSelectedTrack() const noexcept { return selectedTrack; }
+    // The tracks picked in the name column, ascending; otherwise the selected
+    // track alone, or nothing.
+    std::vector<int> getSelectedTracks() const;
 
     // From ChannelStripComponent click etc. Clears region selection
     // (gesture wasn't region-specific) and repaints.
-    void setSelectedTrack (int t) noexcept;
+    void setSelectedTrack (int t);
 
     // anchorX >= 0 = zoom anchors on that pixel so the sample under
     // the cursor stays put.
@@ -305,6 +309,8 @@ private:
     // through MidiRegionEditAction for undo.
     void showMidiRegionContextMenu (int trackIdx, int regionIdx,
                                        juce::Point<int> screenPos);
+    // The name column's menu: every region, audio and MIDI, on these tracks.
+    void showTrackContextMenu (std::vector<int> tracks, juce::Point<int> screenPos);
 
     // Tempo edits, all driven from the ruler's right-click menu. Every edit
     // routes through commitTempoPoints so it's a single undoable transaction.
@@ -518,6 +524,17 @@ private:
     int selectedTrack    = -1;
     int selectedRegion   = -1;
 
+    // Name-column picks, sorted, and the row a Shift range starts from. The
+    // set counts only while no region is picked and it holds selectedTrack;
+    // any other gesture that moves the selection leaves it stale, and
+    // selectedTrack alone is then the selection.
+    std::vector<int> selectedTracks;
+    int trackAnchor = -1;
+    bool trackSetHolds() const noexcept;
+    void selectOnlyTrack (int t);
+    // Cmd/Ctrl toggles the row, Shift takes every shown row from the anchor.
+    void extendTrackSelection (int t, bool range);
+
     int  dropHoverTrack = -1;
     int  dropHoverX     = -1;
     bool dropAccepted   = false;
@@ -554,7 +571,9 @@ private:
     std::vector<RegionId> regionMenuTargets (int track, int idx) const;
 
     // The region edits the menus and the edit keys share. None of them opens
-    // an undo transaction; the caller names one per gesture.
+    // an undo transaction; the caller names one per gesture. Each rebuilds
+    // playback once however many regions it edits, and puts a track's MIDI
+    // regions in one action, which publishes them to the audio thread once.
     // Sets one field on every target, skipping regions that already hold it.
     template <typename Field, typename Value>
     void setAudioRegionField (const std::vector<RegionId>& targets, Field AudioRegion::* field, const Value& value);
@@ -566,6 +585,13 @@ private:
     std::vector<RegionId> editableAudioRegions (std::vector<RegionId> targets,
                                                 const std::function<bool (const AudioRegion&)>& keep = {}) const;
     std::vector<RegionId> editableMidiRegions (std::vector<RegionId> targets) const;
+    // Unlocked and cut strictly inside by at: a split at an edge changes nothing.
+    std::vector<RegionId> splittableAudioRegions (std::vector<RegionId> targets, std::int64_t at) const;
+    // Every region on the tracks, leaving out frozen tracks: every region
+    // action refuses one, since its regions are baked into the file it plays.
+    std::vector<RegionId> regionsOnTracks (const std::vector<int>& tracks, bool midi) const;
+    // The earliest start and latest end of those regions; end <= start with none.
+    std::pair<std::int64_t, std::int64_t> regionSpan (const std::vector<int>& tracks) const;
     void deleteAudioRegions (const std::vector<RegionId>& ordered);
     void deleteMidiRegions (const std::vector<RegionId>& ordered);
     void splitAudioRegions (const std::vector<RegionId>& ordered, std::int64_t at);

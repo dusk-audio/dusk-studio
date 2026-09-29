@@ -376,11 +376,14 @@ public:
     virtual bool clickTapeMarker (int index, bool right) = 0;
     virtual bool dragTapeMarker (int index, float toFraction) = 0;
     // A track's name in the tape strip's label column, clicked once or
-    // double-clicked. False when that row is not on screen.
-    virtual bool clickTapeTrackName (int track, int clicks) = 0;
+    // double-clicked, with modifiers as pianoNotePointer takes them (1 Shift,
+    // 2 Cmd/Ctrl, 4 right button). False when that row is not on screen.
+    virtual bool clickTapeTrackName (int track, int clicks, int modifiers = 0) = 0;
     // The track whose row the open name editor sits on; -1 when none is open.
     virtual int tapeNameEditorTrack() const = 0;
     virtual int tapeSelectedTrack() const = 0;
+    // Every track the tape strip lights as selected, ascending.
+    virtual std::vector<int> tapeSelectedTracks() const = 0;
     // Where a track's row sits in the window, as a y; -1 when the row is not shown.
     virtual int tapeTrackRowY (int track) const = 0;
     // The strip carrying the console's focus ring, -1 when none does.

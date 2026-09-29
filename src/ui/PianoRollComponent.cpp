@@ -368,11 +368,11 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     // mouse-only conveniences (zoom-fit, CC-lane toggle).
     addAndMakeVisible (undoButton);
     undoButton.setTooltip ("Undo");
-    undoButton.onClick = [this] { engine.getUndoManager().undo(); repaint(); };
+    undoButton.onClick = [this] { undoTransaction (engine); repaint(); };
 
     addAndMakeVisible (redoButton);
     redoButton.setTooltip ("Redo");
-    redoButton.onClick = [this] { engine.getUndoManager().redo(); repaint(); };
+    redoButton.onClick = [this] { redoTransaction (engine); repaint(); };
 
     addAndMakeVisible (splitButton);
     splitButton.setTooltip ("Split at edit cursor");
@@ -3105,8 +3105,8 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
                                   || k.getModifiers().isCtrlDown();
         if (cmdOrCtrl && code == 'Z')
         {
-            if (k.getModifiers().isShiftDown()) engine.getUndoManager().redo();
-            else                                  engine.getUndoManager().undo();
+            if (k.getModifiers().isShiftDown()) redoTransaction (engine);
+            else                                  undoTransaction (engine);
             rangeActive = false;
             clearSelection();
             refreshStatusBarReadouts();

@@ -11520,6 +11520,407 @@ const ScenarioRegistrar timelineTrackName { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runTimelineTrackName (host, ctx); }
 } };
 
+// Shift and Cmd/Ctrl on the tape strip's track names build a multi-track
+// selection without paging the console, Shift by shown row so a hidden track
+// between stays out. The names' right-click menu then edits every region on
+// those tracks, audio and MIDI, one undo step per edit, rebuilding playback
+// once and publishing a MIDI track's regions once per edit and per undo; a
+// frozen track sits the menu out. A / S / X turn their state off on every
+// selected track when any has it on, and on otherwise.
+std::optional<ScenarioResult> runTimelineTrackMultiselect (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion region;
+    if (auto early = seedTapeRegion (host, ctx, region)) return early;
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    if (host.consolePageCount() < 2) return ScenarioResult::skip ("requires a console with more than one page");
+    static constexpr int first = Session::kNumTracks - 4;
+    static constexpr int hidden = Session::kNumTracks - 3;
+    static constexpr int second = Session::kNumTracks - 2;
+    static constexpr int midi = Session::kNumTracks - 1;
+    static constexpr std::uint32_t blue = 0xff6090d0;
+    auto& session = ctx.session();
+    auto& transport = ctx.engine().getTransport();
+    session.track (first).regions = { region };
+    session.track (second).regions = { region };
+    MidiRegion notes;
+    notes.timelineStart = region.timelineStart;
+    notes.lengthInTicks = 7680;
+    notes.lengthInSamples = session.ticksToSamples (notes.lengthInTicks, ctx.engine().getCurrentSampleRate());
+    notes.notes = { { 1, 60, 100, 0, 480 } };
+    // Two on the one track, so an edit that published per region would show.
+    MidiRegion later = notes;
+    later.timelineStart = notes.timelineStart + notes.lengthInSamples;
+    session.track (midi).mode.store ((int) Track::Mode::Midi);
+    session.track (midi).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::initializer_list<MidiRegion> { notes, later }));
+    auto view = host.tapeView();
+    if (view.size() != 7) return ScenarioResult::fail ("the tape strip is missing");
+    view[5] = 0.0;
+    host.restoreTapeView (view);
+
+    const std::vector<int> all { first, second, midi };
+    const auto picked = [&host, &ctx] (std::vector<int> expected, const std::string& failure)
+    {
+        const auto tracks = host.tapeSelectedTracks();
+        std::string got;
+        for (const int t : tracks) got += " " + std::to_string (t);
+        ctx.expect (tracks == expected, failure + " (selected:" + got + ")");
+    };
+    // Each region on the three tracks, and the seeded one on track 0 that
+    // nothing here may touch.
+    const auto regionsHold = [&ctx, &session] (std::function<bool (const AudioRegion&)> audio,
+                                               std::function<bool (const MidiRegion&)> notesHold,
+                                               const std::string& failure)
+    {
+        bool held = session.track (0).regions.size() == 1;
+        for (const int t : { first, second })
+            held = held && session.track (t).regions.size() == 1 && audio (session.track (t).regions.front());
+        const auto& live = session.track (midi).midiRegions.current();
+        held = held && live.size() == 2;
+        for (const auto& r : live) held = held && notesHold (r);
+        ctx.expect (held, failure);
+    };
+    const auto trackZeroUntouched = [&ctx, &session] (const std::string& failure)
+    {
+        const auto& seeded = session.track (0).regions;
+        ctx.expect (seeded.size() == 1 && ! seeded.front().muted && ! seeded.front().locked
+                    && seeded.front().customColour.isTransparent(), failure);
+    };
+    // Playback rebuilds and MIDI-track publishes since the last mark.
+    auto marks = std::make_shared<std::array<std::uint64_t, 2>>();
+    const auto mark = [&ctx, &session, marks]
+    {
+        *marks = { ctx.engine().getPlaybackEngine().rebuildCount(), session.track (midi).midiRegions.generation() };
+    };
+    const auto costs = [&ctx, &session, marks, mark] (std::uint64_t rebuilds, std::uint64_t publishes, const std::string& what)
+    {
+        const auto rebuilt = ctx.engine().getPlaybackEngine().rebuildCount() - (*marks)[0];
+        const auto published = session.track (midi).midiRegions.generation() - (*marks)[1];
+        ctx.expect (rebuilt == rebuilds && published == publishes,
+                    what + " rebuilt playback " + std::to_string (rebuilt) + " times and published the MIDI track "
+                    + std::to_string (published) + " times");
+        mark();
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto menu = [&host, &ctx, steps, mark] (int track, std::vector<std::string> path)
+    {
+        steps->push_back ({ 300, [&host, &ctx, track, mark]
+        {
+            mark();
+            ctx.expect (host.clickTapeTrackName (track, 1, 4), "the track's name did not take a right-click");
+        } });
+        for (const auto& item : path)
+            steps->push_back ({ 200, [&host, &ctx, item]
+            { ctx.expect (host.clickContextMenuItem (item), "the track name menu has no " + item); } });
+    };
+    const auto undo = [&host, &ctx, steps, mark]
+    {
+        steps->push_back ({ 300, [&host, &ctx, mark]
+        {
+            mark();
+            ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+        } });
+    };
+
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.pressKey ("2", '2') && host.pressKey ("1", '1') && host.consolePageMatches (0),
+                    "the console did not go to its first page");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, picked]
+    {
+        ctx.expect (host.tapeTrackRowY (hidden) < 0 && host.tapeTrackRowY (first) >= 0 && host.tapeTrackRowY (midi) >= 0,
+                    "the rows around the hidden track are not laid out as the range needs");
+        ctx.expect (host.clickTapeTrackName (first, 1), "the first name did not take a click");
+        picked ({ first }, "a plain click did not select just its track");
+        ctx.expect (host.clickTapeTrackName (midi, 1, 1), "the name did not take a Shift-click");
+        picked ({ first, second, midi }, "Shift did not select the shown rows from the anchor");
+        ctx.expect (host.clickTapeTrackName (second, 1, 2), "the name did not take a Cmd-click");
+        picked ({ first, midi }, "Cmd did not take its track out of the selection");
+    } });
+    // Past the double-click window: a second press on the same name inside it
+    // is a double-click, not another toggle.
+    steps->push_back ({ 700, [&host, &ctx, picked]
+    {
+        ctx.expect (host.clickTapeTrackName (second, 1, 2), "the name did not take a Cmd-click");
+        picked ({ first, second, midi }, "Cmd did not put its track back into the selection");
+        ctx.expect (host.tapeSelectedTrack() == second, "the last clicked name is not the primary selection");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.consolePageMatches (0), "a modified name click paged the console"); } });
+    // A track lit by its selected region carries into a Cmd-click selection.
+    steps->push_back ({ 300, [&host, &ctx, picked]
+    {
+        ctx.expect (host.clickAudioRegion (first, 0), "the region did not take a click");
+        picked ({ first }, "a selected region did not light its track");
+        ctx.expect (host.clickTapeTrackName (midi, 1, 2), "the name did not take a Cmd-click");
+        picked ({ first, midi }, "Cmd dropped the track its selected region lit");
+        ctx.expect (host.clickTapeTrackName (second, 1, 2), "the name did not take a Cmd-click");
+        picked ({ first, second, midi }, "Cmd did not add its track");
+    } });
+
+    steps->push_back ({ 300, [&host, &ctx, mark]
+    {
+        mark();
+        ctx.expect (host.clickTapeTrackName (second, 1, 4), "the track's name did not take a right-click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, picked, all]
+    {
+        const std::vector<std::string> expected { "3 tracks", "Loop region span", "Split at playhead", "Reverse regions",
+                                                  "-", "Mute regions", "Lock regions", "-", "Color", "-", "Delete regions" };
+        const auto items = host.contextMenuItems();
+        std::string got;
+        for (const auto& item : items) got += " | " + item;
+        ctx.expect (items == expected, "the track name menu reads:" + got);
+        picked (all, "right-clicking a selected name changed the selection");
+        ctx.expect (host.clickContextMenuItem ("Color"), "the track name menu has no Color");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Blue"), "the Color submenu has no Blue"); } });
+    steps->push_back ({ 300, [regionsHold, trackZeroUntouched, costs]
+    {
+        regionsHold ([] (const AudioRegion& r) { return r.customColour.getARGB() == blue; },
+                     [] (const MidiRegion& r) { return r.customColour.getARGB() == blue; },
+                     "Color did not tint every region on the selected tracks");
+        trackZeroUntouched ("Color tinted a region on a track that is not selected");
+        costs (1, 1, "Color");
+    } });
+    undo();
+    steps->push_back ({ 300, [regionsHold, picked, all, costs]
+    {
+        regionsHold ([] (const AudioRegion& r) { return r.customColour.isTransparent(); },
+                     [] (const MidiRegion& r) { return r.customColour.isTransparent(); },
+                     "one Undo did not take back the whole recolour");
+        picked (all, "Undo dropped the track selection");
+        costs (1, 1, "undoing Color");
+    } });
+
+    menu (first, { "Mute regions" });
+    steps->push_back ({ 300, [regionsHold, trackZeroUntouched, costs]
+    {
+        regionsHold ([] (const AudioRegion& r) { return r.muted; }, [] (const MidiRegion& r) { return r.muted; },
+                     "Mute regions did not mute every region on the selected tracks");
+        trackZeroUntouched ("Mute regions muted a region on a track that is not selected");
+        costs (1, 1, "Mute regions");
+    } });
+    undo();
+    steps->push_back ({ 300, [regionsHold, costs]
+    {
+        regionsHold ([] (const AudioRegion& r) { return ! r.muted; }, [] (const MidiRegion& r) { return ! r.muted; },
+                     "one Undo did not take back the whole mute");
+        costs (1, 1, "undoing Mute regions");
+    } });
+
+    menu (midi, { "Lock regions" });
+    steps->push_back ({ 300, [&host, &ctx, regionsHold, costs]
+    {
+        regionsHold ([] (const AudioRegion& r) { return r.locked; }, [] (const MidiRegion& r) { return r.locked; },
+                     "Lock regions did not lock every region on the selected tracks");
+        costs (1, 1, "Lock regions");
+        ctx.expect (host.clickTapeTrackName (first, 1, 4), "the track's name did not take a right-click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (! host.contextMenuItemEnabled ("Delete regions"), "Delete regions is offered with every region locked");
+        ctx.expect (host.contextMenuItemEnabled ("Unlock regions"), "a locked selection is not offered Unlock regions");
+        host.closeTopModal();
+    } });
+    undo();
+    steps->push_back ({ 300, [&host, &ctx, regionsHold, costs]
+    {
+        regionsHold ([] (const AudioRegion& r) { return ! r.locked; }, [] (const MidiRegion& r) { return ! r.locked; },
+                     "one Undo did not take back the whole lock");
+        costs (1, 1, "undoing Lock regions");
+        ctx.expect (host.clickAudioRegion (second, 0, true), "the region did not take a right-click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Lock region"), "the region menu has no Lock region"); } });
+    menu (first, { "Delete regions" });
+    steps->push_back ({ 300, [&ctx, &session, trackZeroUntouched, costs]
+    {
+        ctx.expect (session.track (first).regions.empty() && session.track (midi).midiRegions.current().empty(),
+                    "Delete regions did not delete the unlocked regions");
+        ctx.expect (session.track (second).regions.size() == 1 && session.track (second).regions.front().locked,
+                    "Delete regions deleted a locked region");
+        trackZeroUntouched ("Delete regions touched a track that is not selected");
+        costs (1, 1, "Delete regions");
+    } });
+    undo();
+    steps->push_back ({ 300, [&ctx, &session, notes, later, costs]
+    {
+        const auto& live = session.track (midi).midiRegions.current();
+        ctx.expect (session.track (first).regions.size() == 1 && live.size() == 2,
+                    "one Undo did not bring back every deleted region");
+        ctx.expect (live.size() == 2 && live[0].timelineStart == notes.timelineStart
+                    && live[1].timelineStart == later.timelineStart,
+                    "Undo did not put the MIDI regions back in their order");
+        costs (1, 1, "undoing Delete regions");
+    } });
+    undo();
+    steps->push_back ({ 300, [&ctx, &session]
+    { ctx.expect (! session.track (second).regions.front().locked, "Undo did not unlock the region the region menu locked"); } });
+
+    menu (second, { "Loop region span" });
+    steps->push_back ({ 300, [&ctx, &transport, region, later]
+    {
+        const auto end = std::max (region.timelineStart + region.lengthInSamples, later.timelineStart + later.lengthInSamples);
+        ctx.expect (transport.isLoopEnabled() && transport.getLoopStart() == region.timelineStart
+                    && transport.getLoopEnd() == end && transport.getPlayhead() == region.timelineStart,
+                    "Loop region span did not loop from the earliest start to the latest end");
+        transport.locate (region.timelineStart + region.lengthInSamples / 4);
+    } });
+    menu (second, { "Split at playhead" });
+    steps->push_back ({ 300, [&ctx, &session, costs]
+    {
+        ctx.expect (session.track (first).regions.size() == 2 && session.track (second).regions.size() == 2
+                    && session.track (0).regions.size() == 1,
+                    "Split at playhead did not split the selected tracks' regions, and only those");
+        costs (1, 0, "Split at playhead");
+    } });
+    undo();
+    steps->push_back ({ 300, [&ctx, &session, costs]
+    {
+        ctx.expect (session.track (first).regions.size() == 1 && session.track (second).regions.size() == 1,
+                    "one Undo did not take back the whole split");
+        costs (1, 0, "undoing Split at playhead");
+    } });
+    menu (second, { "Reverse regions" });
+    steps->push_back ({ 300, [regionsHold, trackZeroUntouched, region, costs]
+    {
+        regionsHold ([region] (const AudioRegion& r) { return r.file != region.file; },
+                     [] (const MidiRegion&) { return true; },
+                     "Reverse regions did not reverse every audio region on the selected tracks");
+        trackZeroUntouched ("Reverse regions changed a track that is not selected");
+        costs (1, 0, "Reverse regions");
+    } });
+    undo();
+    steps->push_back ({ 300, [regionsHold, region, costs]
+    {
+        regionsHold ([region] (const AudioRegion& r) { return r.file == region.file; },
+                     [] (const MidiRegion&) { return true; },
+                     "one Undo did not take back the whole reverse");
+        costs (1, 0, "undoing Reverse regions");
+    } });
+
+    // A frozen track sits the menu out. Its four muted, unlocked regions would
+    // otherwise turn the label to Unmute and offer Split and Delete over the
+    // locked regions of the other two.
+    steps->push_back ({ 300, [&host, &ctx, &session, region, mark]
+    {
+        auto& frozen = session.track (second);
+        frozen.frozen.store (true);
+        frozen.regions.clear();
+        for (int i = 0; i < 4; ++i)
+        {
+            auto copy = region;
+            copy.timelineStart += i * region.lengthInSamples;
+            copy.muted = true;
+            frozen.regions.push_back (copy);
+        }
+        session.track (first).regions.front().locked = true;
+        session.track (midi).midiRegions.mutate ([] (std::vector<MidiRegion>& regions)
+        {
+            for (auto& r : regions) r.locked = true;
+        });
+        mark();
+        ctx.expect (host.clickTapeTrackName (first, 1, 4), "the track's name did not take a right-click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        const auto items = host.contextMenuItems();
+        ctx.expect (std::find (items.begin(), items.end(), "Mute regions") != items.end(),
+                    "a frozen track's muted regions turned the label to Unmute regions");
+        ctx.expect (! host.contextMenuItemEnabled ("Split at playhead") && ! host.contextMenuItemEnabled ("Delete regions")
+                    && ! host.contextMenuItemEnabled ("Reverse regions"),
+                    "a frozen track's regions are offered to Split, Reverse or Delete");
+        ctx.expect (host.clickContextMenuItem ("Mute regions"), "the track name menu has no Mute regions");
+    } });
+    steps->push_back ({ 300, [&ctx, &session, costs]
+    {
+        const auto& frozen = session.track (second).regions;
+        const auto& live = session.track (midi).midiRegions.current();
+        bool thawedMuted = session.track (first).regions.front().muted && live.size() == 2;
+        for (const auto& r : live) thawedMuted = thawedMuted && r.muted;
+        ctx.expect (thawedMuted, "Mute regions did not mute the thawed tracks' regions");
+        ctx.expect (frozen.size() == 4 && std::all_of (frozen.begin(), frozen.end(),
+                                                       [] (const AudioRegion& r) { return r.muted && ! r.locked; }),
+                    "Mute regions changed a frozen track");
+        costs (1, 1, "Mute regions beside a frozen track");
+    } });
+    steps->push_back ({ 300, [&session, region]
+    {
+        auto& frozen = session.track (second);
+        frozen.frozen.store (false);
+        frozen.regions = { region };
+    } });
+
+    steps->push_back ({ 300, [&host, &ctx, picked]
+    {
+        ctx.expect (host.clickTapeTrackName (0, 1, 4), "the track's name did not take a right-click");
+        picked ({ 0 }, "right-clicking a name outside the selection did not select just that track");
+        const auto items = host.contextMenuItems();
+        ctx.expect (! items.empty() && items.front() == "Track 1", "the menu does not name the one track it acts on");
+        host.closeTopModal();
+    } });
+    // Past the double-click window, so the plain click does not rename. The
+    // Shift-clicked audio track is the last clicked, and a headless device may
+    // give it no input to arm with.
+    steps->push_back ({ 700, [&host, &ctx, picked, all]
+    {
+        ctx.expect (host.clickTapeTrackName (midi, 1) && host.clickTapeTrackName (first, 1, 1),
+                    "the names did not take the clicks");
+        picked (all, "the selection for the keys did not form");
+        ctx.expect (host.tapeSelectedTrack() == first, "the Shift-clicked name is not the primary selection");
+    } });
+    for (const char key : { 'S', 'X', 'A' })
+    {
+        const auto state = [&session, key] (int t)
+        {
+            auto& track = session.track (t);
+            return key == 'S' ? track.strip.solo.load() : key == 'X' ? track.strip.mute.load() : track.recordArmed.load();
+        };
+        // Only the MIDI track on, which arming never refuses, and the last
+        // clicked track off: the key turns it off everywhere.
+        steps->push_back ({ 200, [&ctx, &session, state, key]
+        {
+            if (key == 'S') session.setTrackSoloed (midi, true);
+            else if (key == 'X') session.track (midi).strip.mute.store (true);
+            else session.setTrackArmed (midi, true);
+            ctx.expect (state (midi) && ! state (first), std::string (1, key) + " could not start from a mixed selection");
+        } });
+        for (const bool on : { false, true, false })
+        {
+            steps->push_back ({ 200, [&host, &ctx, key]
+            {
+                const char lower = (char) (key - 'A' + 'a');
+                ctx.expect (host.pressKey (std::string (1, key), lower), std::string (1, key) + " was not handled");
+            } });
+            steps->push_back ({ 200, [&ctx, &session, state, key, on, all]
+            {
+                bool together = ! state (0);
+                for (const int t : all)
+                {
+                    // Arming refuses an audio track with no input to record from,
+                    // which the device a headless run opens may not offer.
+                    const bool armable = key != 'A' || session.missingInputForTrack (t) == Session::kInputAvailable;
+                    together = together && state (t) == (on && armable);
+                }
+                ctx.expect (together, std::string (1, key) + (on ? " did not switch on" : " did not switch off")
+                                          + " every selected track, and only those");
+            } });
+        }
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar timelineTrackMultiselect { Scenario {
+    "gui.timeline_track_multiselect", { "gui", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 40000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTimelineTrackMultiselect (host, ctx); }
+} };
+
 // Clone to track says why it refuses, while the transport runs or with a frozen
 // track on either side, and clones once both are clear.
 std::optional<ScenarioResult> runCloneRefusals (GuiHost& host, ScenarioContext& ctx)
