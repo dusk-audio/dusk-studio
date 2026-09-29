@@ -265,7 +265,12 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
     addChildComponent (nameEditor);
     labelClickTimer.onExpired = [this]
     {
-        if (labelPressTrack >= 0 && onTrackLabelClicked) onTrackLabelClicked (labelPressTrack);
+        // Anything picked during the wait wins: paging focuses the strip,
+        // which would select the clicked track again over it.
+        const bool stillPicked = selectedTrack == labelPressTrack && selectedRegion < 0
+                              && selectedMidiTrack < 0 && additionalSelections.empty();
+        if (labelPressTrack >= 0 && stillPicked && onTrackLabelClicked)
+            onTrackLabelClicked (labelPressTrack);
     };
 
     // Seed the visible list so naturalHeight() returns something sane

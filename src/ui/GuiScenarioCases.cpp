@@ -11401,8 +11401,8 @@ std::optional<ScenarioResult> runTimelineTrackName (GuiHost& host, ScenarioConte
     host.switchToStage (GuiHost::Stage::Mixing);
     const int pages = host.consolePageCount();
     if (pages < 2) return ScenarioResult::skip ("requires a console with more than one page");
-    constexpr int first = Session::kNumTracks - 2;
-    constexpr int last = Session::kNumTracks - 1;
+    static constexpr int first = Session::kNumTracks - 2;
+    static constexpr int last = Session::kNumTracks - 1;
     auto& session = ctx.session();
     // Content keeps both rows in the strip whichever page is up. On the first
     // page they follow that page's tracks; on their own page they follow track
@@ -11496,6 +11496,17 @@ std::optional<ScenarioResult> runTimelineTrackName (GuiHost& host, ScenarioConte
         ctx.expect (host.tapeNameEditorTrack() < 0, "Return left the name editor open");
         ctx.expect (session.track (first).name == std::to_string (first + 1).c_str(),
                     "an emptied name did not fall back to the track number");
+        ctx.expect (host.pressKey ("1", '1') && host.consolePageMatches (0), "the console did not go back to its first page");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        ctx.expect (host.clickTapeTrackName (first, 1), "the track's name is not in the tape strip");
+        ctx.expect (host.clickAudioRegion (last, 0), "the other track's region did not take a click");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        ctx.expect (host.tapeSelectedTrack() == last, "a name click still waiting to page took the selection back");
+        ctx.expect (host.consolePageMatches (0), "a name click paged the console after another track was picked");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
