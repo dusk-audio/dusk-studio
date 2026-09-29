@@ -373,6 +373,16 @@ public:
     // A marker pill in the tape ruler: clicked, or dragged to a ruler fraction.
     virtual bool clickTapeMarker (int index, bool right) = 0;
     virtual bool dragTapeMarker (int index, float toFraction) = 0;
+    // A track's name in the tape strip's label column, clicked once or
+    // double-clicked. False when that row is not on screen.
+    virtual bool clickTapeTrackName (int track, int clicks) = 0;
+    // The track whose row the open name editor sits on; -1 when none is open.
+    virtual int tapeNameEditorTrack() const = 0;
+    virtual int tapeSelectedTrack() const = 0;
+    // Where a track's row sits in the window, as a y; -1 when the row is not shown.
+    virtual int tapeTrackRowY (int track) const = 0;
+    // The strip carrying the console's focus ring, -1 when none does.
+    virtual int consoleFocusedStrip() const = 0;
     virtual bool audioEditorOpen() const = 0;
     virtual int audioEditorRegion() const = 0;
     virtual bool clickAudioEditorWaveform() = 0;

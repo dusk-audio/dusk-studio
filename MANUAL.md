@@ -286,7 +286,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 5   | Loop bracket       | Set with **[** / **]** or from the ruler's right-click menu; loop turns on once the in point sits before the out point. Drawn hollow while loop is off. |
 | 6   | Punch bracket      | Set with **Shift+[** / **Shift+]** or from the ruler's right-click menu; punch turns on once the in point sits before the out point. Drawn hollow while punch is off. |
 
-**Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
+**Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Click a track's name in the left column to select that track and bring its strip into the mixer; double-click the name to rename the track. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
 
 ## The audio region editor
 
@@ -710,7 +710,7 @@ Every editor a strip opens — EQ, COMP, or AUX — carries that strip's name ce
 
 ## Track name and colour
 
-Double-click the name label at the top of the strip to rename the track. Right-click the name, or any empty part of the strip, to pick one of eight track colours. The colour appears as the strip's accent and on every region that track owns in the tape strip.
+Double-click the name label at the top of the strip to rename the track, or double-click the track's name in the tape strip's left column. Right-click the name, or any empty part of the strip, to pick one of eight track colours. The colour appears as the strip's accent and on every region that track owns in the tape strip.
 
 ## Clone to track
 
@@ -1270,7 +1270,11 @@ When expanded, the channel strips automatically compact so that the timeline get
 └──────────┴─────────────────────────────┘
 ```
 
-The left column shows each track's number, colour, and small ARM/SOLO/MUTE buttons. The right area is the timeline canvas.
+The left column shows each track's colour and name (its number until you name it). The right area is the timeline canvas.
+
+Click a name to select that track. A moment later, once the click can no longer become a double-click, the console pages to its channel strip and puts the gold focus ring on it, so the **A / S / X** shortcuts act on it. The selected track's row is lit in its colour whichever way you picked it: its name here, one of its audio regions, or its channel strip.
+
+Double-click a name to rename the track in place. **Enter**, or clicking anywhere else, keeps the new name; **Escape** keeps the old one. An empty name falls back to the track number, and **Cmd/Ctrl+Z** undoes a rename.
 
 ## The ruler
 
@@ -2484,7 +2488,7 @@ Dusk Studio targets functional accessibility for screen reader users. The 24-cha
 ## What's still rough
 
 - Naming and formatted-value coverage is incomplete, particularly in the EQ editors, bus and master strips. Modal keyboard focus handling does not guarantee that a screen reader is confined to the active dialog or returns to the expected control after dismissal.
-- In the **Recording** and **Mixing** stages, **Left / Right arrows** move a gold focus ring across the 24 channel strips, automatically flipping the visible page as you cross a boundary. The focused strip is the target for the **A / S / X** (arm / solo / mute) shortcuts, so you can walk the mixer and toggle states without the mouse. (Clicking a strip moves the ring too.)
+- In the **Recording** and **Mixing** stages, **Left / Right arrows** move a gold focus ring across the 24 channel strips, automatically flipping the visible page as you cross a boundary. The focused strip is the target for the **A / S / X** (arm / solo / mute) shortcuts, so you can walk the mixer and toggle states without the mouse. (Clicking a strip, or a track's name in the tape strip, moves the ring too.)
 - Region drag-and-drop on the timeline relies on mouse gestures. Region edit actions (split, trim, fade, gain) are all available via the keyboard reference; the drag-to-move case is the gap.
 - Plugin editors provide their own accessibility support; coverage varies by vendor and plugin format.
 

@@ -34,6 +34,8 @@ public:
     // strips (auto-flipping the visible bank at a boundary); the focused
     // strip becomes the A/S/X target via the same path a click uses.
     void moveFocus (int delta);
+    // Rings the strip and pages the console to it when banking is active.
+    void focusStrip (int track);
     int  getFocusedStrip() const noexcept { return focusedStrip; }
     void restoreFocusForScenario (int track) { focusedStrip = track; repaint(); }
 
@@ -144,7 +146,6 @@ private:
     // -1 = none. Drives the focus ring + (via stripFocusCb) the A/S/X target.
     int focusedStrip = -1;
     std::function<void (int)> stripFocusCb;
-    void focusStrip (int track);
 
     void updateBankVisibility();
     void applyBankChange();

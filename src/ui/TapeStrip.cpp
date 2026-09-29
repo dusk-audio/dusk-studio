@@ -5,12 +5,14 @@
 #include "../session/SnapHelpers.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
+#include "DuskLabelEditor.h"
 #include "EditCursors.h"
 #include "EmbeddedModal.h"
 #include "FadeCurve.h"
 #include "TimelineFollow.h"
 #include "../util/StringParsing.h"
 #include <cmath>
+#include <utility>
 #include <string>
 #include <algorithm>
 
@@ -21,6 +23,10 @@ namespace
 // clamp with jlimit's argument order (lo, hi, value).
 template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
+
+auto trackLabelFont() { return juce::Font (juce::FontOptions (10.0f, juce::Font::bold)); }
+
+constexpr int kNameEditorMinW = 140;
 
 // Process-wide static modal for the tape strip's text-input dialogs
 // (marker rename, audio region label, MIDI region label). One in-
@@ -249,6 +255,24 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
     };
     addAndMakeVisible (showAllToggle);
 
+    nameEditor.setFont (trackLabelFont());
+    // Opaque, because the editor is wider than a short name column and would
+    // otherwise show the lane's regions through the text.
+    nameEditor.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff15151c));
+    disableLabelEditorPopup (nameEditor);
+    nameEditor.onEditorHide = [this] { nameEditor.setVisible (false); };
+    nameEditor.onTextChange = [this] { commitTrackName(); };
+    addChildComponent (nameEditor);
+    labelClickTimer.onExpired = [this]
+    {
+        // Anything picked during the wait wins: paging focuses the strip,
+        // which would select the clicked track again over it.
+        const bool stillPicked = selectedTrack == labelPressTrack && selectedRegion < 0
+                              && selectedMidiTrack < 0 && additionalSelections.empty();
+        if (labelPressTrack >= 0 && stillPicked && onTrackLabelClicked)
+            onTrackLabelClicked (labelPressTrack);
+    };
+
     // Seed the visible list so naturalHeight() returns something sane
     // before the first resized()/timer tick.
     rebuildVisibleTrackOrder();
@@ -275,7 +299,14 @@ void TapeStrip::changeListenerCallback (juce::ChangeBroadcaster*)
     // has been deleted or shifted, so clear both primary and additional.
     observedHistory = undoHistory();
     if (heldSelectionHistory.empty() || heldSelectionHistory != observedHistory)
-        clearAllSelections();
+    {
+        // A track picked on its own names no region, so no edit can leave it
+        // pointing at the wrong one, and A / S / X keep their target.
+        if (selectedRegion < 0 && selectedMidiTrack < 0 && additionalSelections.empty())
+            heldSelectionHistory.clear();
+        else
+            clearAllSelections();
+    }
     // Region count may have changed (paste/cut/undo/redo) - recompute
     // the visible row set so tracks that just gained or lost content
     // appear / disappear without the user toggling SHOW ALL.
@@ -299,11 +330,12 @@ int TapeStrip::naturalHeight() const noexcept
     return kRulerH + rows * (kRowHDefault + kRowGap) + 6;
 }
 
-void TapeStrip::clampRowScroll() noexcept
+void TapeStrip::clampRowScroll()
 {
     const int band = std::max (0, getHeight() - kRulerH);
     const int maxScroll = std::max (0, rowsContentHeight() - band);
     rowScrollY = jlimit (0, maxScroll, rowScrollY);
+    placeNameEditor();
 }
 
 int TapeStrip::maxNaturalHeight() noexcept
@@ -406,7 +438,7 @@ void TapeStrip::refreshLabelColumnWidth()
     // the same 10 pt bold the painter uses, and widen the column to the longest
     // plus the stripe + insets, clamped so a stray long name can't swallow the
     // timeline.
-    const juce::Font font (juce::FontOptions (10.0f, juce::Font::bold));
+    const auto font = trackLabelFont();
     float maxText = 0.0f;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
@@ -419,6 +451,73 @@ void TapeStrip::refreshLabelColumnWidth()
     // 3 px colour stripe + 4 px left inset (see paint) + text + 6 px right pad.
     const int want = 3 + 4 + (int) maxText + 1 + 6;
     labelColW = jlimit (kTrackLabelW, kTrackLabelWMax, want);
+}
+
+int TapeStrip::trackAtLabelY (int y) const noexcept
+{
+    for (const int t : visibleTrackOrder)
+    {
+        const auto row = rowBounds (t);
+        if (y >= row.getY() && y < row.getBottom()) return t;
+    }
+    return -1;
+}
+
+void TapeStrip::showNameEditor (int track)
+{
+    const auto row = rowBounds (track);
+    if (row.isEmpty()) return;
+    const auto band = labelColumnBounds();
+    if (row.getY() < band.getY())                rowScrollY -= band.getY() - row.getY();
+    else if (row.getBottom() > band.getBottom()) rowScrollY += row.getBottom() - band.getBottom();
+    clampRowScroll();
+    repaint();
+
+    nameEditTrack = track;
+    nameEditor.setText (session.track (track).name, juce::dontSendNotification);
+    nameEditor.setVisible (true);
+    placeNameEditor();
+    if (nameEditor.isVisible()) nameEditor.showEditor();
+}
+
+void TapeStrip::placeNameEditor()
+{
+    if (! nameEditor.isVisible()) return;
+    // Past the stripe, and wide enough to type into when every name is short.
+    const auto cell = rowBounds (nameEditTrack).withX (3).withWidth (std::max (labelColW - 3, kNameEditorMinW));
+    const auto shown = cell.getIntersection (getLocalBounds().withTrimmedTop (kRulerH));
+    if (shown.isEmpty())
+    {
+        if (nameEditor.isBeingEdited()) nameEditor.hideEditor (false);
+        nameEditor.setVisible (false);
+        return;
+    }
+    nameEditor.setBounds (shown);
+}
+
+void TapeStrip::cancelTrackNameEdit()
+{
+    labelClickTimer.stopTimer();
+    labelPressTrack = -1;
+    if (nameEditor.isBeingEdited()) nameEditor.hideEditor (true);
+    nameEditor.setVisible (false);
+    nameEditTrack = -1;
+}
+
+void TapeStrip::commitTrackName()
+{
+    const int t = nameEditTrack;
+    if (t < 0 || t >= Session::kNumTracks) return;
+    auto txt = nameEditor.getText().trim();
+    if (txt.isEmpty()) txt << (t + 1);
+    const auto oldName = session.track (t).name;
+    if (txt == oldName) return;
+    auto& um = engine.getUndoManager();
+    um.beginNewTransaction ("Track name");
+    um.perform (new ParamEditAction (
+        [&s = session, t, txt]     { s.track (t).name = txt; },
+        [&s = session, t, oldName] { s.track (t).name = oldName; }));
+    repaint();
 }
 
 juce::Rectangle<int> TapeStrip::rowBounds (int trackIdx) const noexcept
@@ -513,6 +612,7 @@ void TapeStrip::refreshAfterSessionLoad()
     heldSelectionHistory.clear();
     drag = ActiveDrag{};
     midiDrag.clear();
+    cancelTrackNameEdit();
 
     rebuildVisibleTrackOrder (/*relayoutParent*/ true);
     zoomFit();    // resets scrollSamples + refits zoom, and repaints
@@ -782,6 +882,7 @@ void TapeStrip::resized()
     const int allW = std::max (24, labelColW - 2 * kShowAllInset);
     const int allY = (kRulerH - kShowAllH) / 2;
     showAllToggle.setBounds ((labelColW - allW) / 2, allY, allW, kShowAllH);
+    placeNameEditor();
     inheritCursorOnDescendants (*this);
 }
 
@@ -1201,23 +1302,27 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
 
     // Left-click on the track label (the strip on the far left of each
     // row, before the timeline column starts) selects that track without
-    // picking a region. Lets keyboard shortcuts (A / S / X) target a
-    // track that has no recorded regions yet.
+    // picking a region, so keyboard shortcuts (A / S / X) can target a
+    // track that has no recorded regions yet, and brings its strip into
+    // the mixer.
+    if (labelColumnBounds().contains (e.x, e.y) && ! e.mods.isRightButtonDown())
     {
-        const auto labelCol = labelColumnBounds();
-        if (labelCol.contains (e.x, e.y) && ! e.mods.isRightButtonDown())
+        const auto pressMs = e.eventTime.toMilliseconds();
+        if (e.getNumberOfClicks() > 1)
         {
-            for (int t = 0; t < Session::kNumTracks; ++t)
-            {
-                if (rowBounds (t).contains (e.x, e.y))
-                {
-                    selectedTrack  = t;
-                    selectedRegion = -1;
-                    repaint();
-                    return;
-                }
-            }
+            // The first press of this multi-click went somewhere else.
+            if (pressMs - labelPressMs > e.getDoubleClickTimeout()) labelPressTrack = -1;
+            return;
         }
+        labelClickTimer.stopTimer();
+        labelPressTrack = trackAtLabelY (e.y);
+        labelPressMs = pressMs;
+        if (labelPressTrack < 0) return;
+        clearAllSelections();
+        selectedTrack = labelPressTrack;
+        repaint();
+        labelClickTimer.startTimer (e.getDoubleClickTimeout());
+        return;
     }
 
     if (! col.contains (e.x, e.y)) return;
@@ -2114,6 +2219,17 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
             editBaseTempo();
         else
             editTempoPointBpm (session.tempoMap.points()[(size_t) tIdx].timelineSamples);
+        return;
+    }
+
+    if (labelColumnBounds().contains (e.x, e.y))
+    {
+        labelClickTimer.stopTimer();
+        const int track = std::exchange (labelPressTrack, -1);
+        if (track < 0) return;
+        // Page first, so the editor is placed against the layout it will stay in.
+        if (onTrackLabelClicked) onTrackLabelClicked (track);
+        showNameEditor (track);
         return;
     }
 
@@ -3152,10 +3268,17 @@ void TapeStrip::paint (juce::Graphics& g)
         // back to the 1-based track number if no name has been set).
         auto labelRow = juce::Rectangle<int> (label.getX(), row.getY(),
                                                 label.getWidth(), row.getHeight());
+        const bool rowSelected = t == selectedTrack;
+        if (rowSelected)
+        {
+            g.setColour (session.track (t).colour.withAlpha (0.18f));
+            g.fillRect (row);
+            g.fillRect (labelRow);
+        }
         g.setColour (session.track (t).colour.withAlpha (0.85f));
         g.fillRect (labelRow.removeFromLeft (3));
-        g.setColour (juce::Colour (0xffd0d0d0));
-        g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+        g.setColour (juce::Colour (rowSelected ? 0xffffffff : 0xffd0d0d0));
+        g.setFont (trackLabelFont());
         const auto& trackName = session.track (t).name;
         const juce::String displayLabel = trackName.isNotEmpty() ? trackName
                                                                   : juce::String (t + 1);

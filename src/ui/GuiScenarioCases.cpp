@@ -11384,6 +11384,140 @@ const ScenarioRegistrar trackNameAndColour { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runTrackNameAndColour (host, ctx); }
 } };
 
+// Clicking a track's name in the tape strip selects the track at once and,
+// once the click cannot become a double-click, brings its strip into the
+// mixer on its own page. Double-clicking a name renames the track in place: a
+// click on another name, Return and an emptied name commit, Escape does not,
+// and the rename undoes.
+std::optional<ScenarioResult> runTimelineTrackName (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion region;
+    if (auto early = seedTapeRegion (host, ctx, region)) return early;
+    // The page has to go back before seedTapeRegion's session reopen replaces
+    // the console: the new one would otherwise follow the surface bank this
+    // case published, one poll after that cleanup restored the page.
+    ctx.cleanup (host.preserveKeyboardFocus());
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    const int pages = host.consolePageCount();
+    if (pages < 2) return ScenarioResult::skip ("requires a console with more than one page");
+    static constexpr int first = Session::kNumTracks - 2;
+    static constexpr int last = Session::kNumTracks - 1;
+    auto& session = ctx.session();
+    // Content keeps both rows in the strip whichever page is up. On the first
+    // page they follow that page's tracks; on their own page they follow track
+    // 1 and whatever of that page comes before them, which is never the same
+    // number of rows, so paging moves them.
+    session.track (first).regions = { region };
+    session.track (last).regions = { region };
+    session.track (first).name = "keys";
+    const auto lastName = session.track (last).name.toStdString();
+    auto view = host.tapeView();
+    if (view.size() != 7) return ScenarioResult::fail ("the tape strip is missing");
+    view[5] = 0.0;
+    host.restoreTapeView (view);
+    const auto firstPageY = std::make_shared<int> (-1);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.tapeView()[5] < 0.5, "the tape strip still shows every track");
+        // Content set straight into the session reaches the strip's rows on its
+        // next poll, but its height only on the window's next layout, which a
+        // page change runs.
+        ctx.expect (host.pressKey ("2", '2') && host.pressKey ("1", '1') && host.consolePageMatches (0),
+                    "the console did not go to its first page");
+        ctx.expect (host.clickTapeTrackName (first, 1), "the track's name is not in the tape strip");
+        ctx.expect (host.tapeSelectedTrack() == first, "clicking the name did not select the track");
+        ctx.expect (host.consolePageMatches (0), "the click paged the console before it could become a double-click");
+    } });
+    steps->push_back ({ 700, [&host, &ctx, pages, firstPageY]
+    {
+        ctx.expect (host.consolePageMatches (pages - 1), "clicking the name did not show the track's console page");
+        ctx.expect (host.consoleFocusedStrip() == first, "clicking the name did not focus the track's strip");
+        ctx.expect (host.tapeNameEditorTrack() < 0, "a single click opened the name editor");
+        ctx.expect (host.pressKey ("1", '1') && host.consolePageMatches (0), "the console did not go back to its first page");
+        *firstPageY = host.tapeTrackRowY (last);
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickTapeTrackName (last, 2), "the name did not take a double-click"); } });
+    steps->push_back ({ 200, [&host, &ctx, pages, firstPageY]
+    {
+        ctx.expect (host.tapeSelectedTrack() == last && host.consolePageMatches (pages - 1)
+                    && host.consoleFocusedStrip() == last,
+                    "the double-click did not select the track and page the console to it");
+        ctx.expect (*firstPageY >= 0 && host.tapeTrackRowY (last) >= 0 && host.tapeTrackRowY (last) != *firstPageY,
+                    "paging did not move the double-clicked row, so the layout proves nothing");
+        if (! ctx.expect (host.tapeNameEditorTrack() == last, "the double-click did not open the editor on its row")) return;
+        ctx.expect (host.pressPeerKey ("command + A"), "the name editor did not accept Select All");
+        for (const char character : std::string ("bass"))
+            ctx.expect (host.pressPeerKey (std::string (1, character), character), "the name editor rejected a character");
+        ctx.expect (host.clickTapeTrackName (first, 1), "another name did not take a click during the edit");
+    } });
+    // Checked before the click pages the console, whose focus would select
+    // the track again and hide a selection the rename's undo step dropped.
+    steps->push_back ({ 200, [&host, &ctx, &session]
+    {
+        ctx.expect (session.track (last).name == "bass", "clicking another name did not commit the rename");
+        ctx.expect (host.tapeNameEditorTrack() < 0, "clicking another name left the editor open");
+        ctx.expect (host.tapeSelectedTrack() == first, "the click that committed the rename did not keep its own track selected");
+    } });
+    steps->push_back ({ 500, [&host, &ctx]
+    {
+        ctx.expect (host.consoleFocusedStrip() == first, "the click that committed the rename did not focus its track's strip");
+        ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &session, lastName]
+    {
+        ctx.expect (session.track (last).name.toStdString() == lastName, "Undo did not restore the track name");
+        ctx.expect (host.tapeSelectedTrack() == first, "Undo dropped the selected track");
+        ctx.expect (host.clickTapeTrackName (first, 2), "the name did not take a double-click");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        if (! ctx.expect (host.tapeNameEditorTrack() == first, "the double-click did not open the editor")) return;
+        ctx.expect (host.pressPeerKey ("x", 'x'), "the name editor rejected a character");
+        ctx.expect (host.pressPeerKey ("escape"), "the name editor did not accept Escape");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &session]
+    {
+        ctx.expect (host.tapeNameEditorTrack() < 0, "Escape left the name editor open");
+        ctx.expect (session.track (first).name == "keys", "Escape renamed the track");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickTapeTrackName (first, 2), "the name did not take a double-click"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        if (! ctx.expect (host.tapeNameEditorTrack() == first, "the double-click did not open the editor")) return;
+        ctx.expect (host.pressPeerKey ("command + A") && host.pressPeerKey ("backspace"), "the name editor did not clear");
+        ctx.expect (host.pressPeerKey ("return"), "the name editor did not accept Return");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &session]
+    {
+        ctx.expect (host.tapeNameEditorTrack() < 0, "Return left the name editor open");
+        ctx.expect (session.track (first).name == std::to_string (first + 1).c_str(),
+                    "an emptied name did not fall back to the track number");
+        ctx.expect (host.pressKey ("1", '1') && host.consolePageMatches (0), "the console did not go back to its first page");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        ctx.expect (host.clickTapeTrackName (first, 1), "the track's name is not in the tape strip");
+        ctx.expect (host.clickAudioRegion (last, 0), "the other track's region did not take a click");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        ctx.expect (host.tapeSelectedTrack() == last, "a name click still waiting to page took the selection back");
+        ctx.expect (host.consolePageMatches (0), "a name click paged the console after another track was picked");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar timelineTrackName { Scenario {
+    "gui.timeline_track_name", { "gui", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTimelineTrackName (host, ctx); }
+} };
+
 // Clone to track says why it refuses, while the transport runs or with a frozen
 // track on either side, and clones once both are clear.
 std::optional<ScenarioResult> runCloneRefusals (GuiHost& host, ScenarioContext& ctx)
