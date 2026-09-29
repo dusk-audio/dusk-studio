@@ -5,6 +5,7 @@
 #include "../../dsp/AuxLaneStrip.h"
 #include "../../dsp/ChannelStrip.h"
 #include "../../session/Session.h"
+#include "../../session/TrackMove.h"
 
 #include <array>
 #include <cstddef>
@@ -29,6 +30,7 @@ void clearPluginState (Track& track)
     track.nativeLv2Path.clear();
     track.nativeLv2PluginId.clear();
     track.nativeLv2StateBase64.clear();
+    track.lv2StateTag.clear();
     track.nativeVst3Path.clear();
     track.nativeVst3PluginId.clear();
     track.nativeVst3StateBase64.clear();
@@ -69,6 +71,8 @@ ScenarioWorld::ScenarioWorld()
       enginePtr (std::make_unique<AudioEngine> (*sessionPtr)),
       bootstrapSessionDir (currentSessionDirectory (*sessionPtr))
 {
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        constructedStripOrder[(std::size_t) t] = &enginePtr->getChannelStrip (t);
     prepareOffline();
 }
 
@@ -84,12 +88,41 @@ void ScenarioWorld::prepareOffline()
     enginePtr->prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
 }
 
-void ScenarioWorld::reset()
+std::vector<std::string> ScenarioWorld::reset()
 {
     auto& engineRef = *enginePtr;
     auto& sessionRef = *sessionPtr;
+    std::vector<std::string> dirt;
 
     engineRef.stop();
+
+    // Before the per-slot resets below, as moving the strips back moves the
+    // tracks' data with them. A frozen track would refuse to move.
+    if (engineRef.onBeforeTracksMove || engineRef.onTracksMoved)
+        dirt.push_back ("left track-move hooks installed");
+    engineRef.onBeforeTracksMove = nullptr;
+    engineRef.onTracksMoved = nullptr;
+    std::array<int, Session::kNumTracks> newToOld {};
+    int firstMoved = -1;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        sessionRef.track (t).frozen.store (false, std::memory_order_relaxed);
+        int now = 0;
+        while (now < Session::kNumTracks - 1
+               && &engineRef.getChannelStrip (now) != constructedStripOrder[(std::size_t) t])
+            ++now;
+        newToOld[(std::size_t) t] = now;
+        if (now != t && firstMoved < 0) firstMoved = t;
+    }
+    if (firstMoved >= 0)
+    {
+        dirt.push_back ("left the tracks moved: the strip built for track "
+                        + std::to_string (firstMoved + 1) + " runs track "
+                        + std::to_string (newToOld[(std::size_t) firstMoved] + 1));
+        const auto back = trackMoveFromNewToOld (newToOld);
+        if (! back || ! engineRef.moveTracks (*back))
+            dirt.push_back ("the tracks could not be moved back");
+    }
 
     auto& transport = engineRef.getTransport();
     transport.setPlayhead (0);
@@ -224,5 +257,6 @@ void ScenarioWorld::reset()
     // the next one must drive blocks itself with no hardware running.
     prepareOffline();
     engineRef.recomputePdc();
+    return dirt;
 }
 } // namespace duskstudio::scenario

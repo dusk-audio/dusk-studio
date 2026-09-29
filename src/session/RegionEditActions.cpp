@@ -1,4 +1,5 @@
 #include "RegionEditActions.h"
+#include "ParamEditAction.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/LegacyStateBase64.h"
 #include "../engine/PlaybackEngine.h"
@@ -11,7 +12,12 @@
 #include "../foundation/PlanarBuffer.h"
 
 #include <algorithm>
+#include <array>
 #include <functional>
+#include <iterator>
+#include <map>
+#include <memory>
+#include <string>
 #include <utility>
 
 namespace duskstudio
@@ -117,14 +123,136 @@ RegionRebuildBatch::~RegionRebuildBatch()
 
 bool undoTransaction (AudioEngine& engine)
 {
+    if (trackMoveUndoRefusal (engine, false).kind != TrackMoveRefusal::Kind::None) return false;
     const RegionRebuildBatch batch (engine);
     return engine.getUndoManager().undo();
 }
 
 bool redoTransaction (AudioEngine& engine)
 {
+    if (trackMoveUndoRefusal (engine, true).kind != TrackMoveRefusal::Kind::None) return false;
     const RegionRebuildBatch batch (engine);
     return engine.getUndoManager().redo();
+}
+
+// Track moves
+
+namespace
+{
+bool anyPassOpen (const Track& track)
+{
+    for (const auto& lane : track.automationLanes)
+        if (lane.passOpen.load (std::memory_order_acquire))
+            return true;
+    return false;
+}
+
+// The move a commit put on an engine's undo stack. The commit clears the
+// history first, so an engine has at most one, and the entry lives exactly as
+// long as the action holding it.
+struct LiveTrackMove
+{
+    TrackMovePlan plan;
+    // By slot before the move: the inputs it pinned, which follow again on undo.
+    TrackSlotMask pinnedInputs {};
+    bool moved = false;
+};
+
+std::map<const AudioEngine*, std::weak_ptr<LiveTrackMove>>& liveTrackMoves()
+{
+    static std::map<const AudioEngine*, std::weak_ptr<LiveTrackMove>> moves;
+    return moves;
+}
+} // namespace
+
+TrackMoveRefusal trackMoveRefusalFor (const Session& session, AudioEngine& engine,
+                                      const TrackMovePlan& plan)
+{
+    for (int from = 0; from < Session::kNumTracks; ++from)
+        if (plan.oldToNew[(size_t) from] != from
+            && session.track (from).frozen.load (std::memory_order_relaxed))
+            return { TrackMoveRefusal::Kind::Frozen, from };
+    if (! engine.canMoveTracks())
+        return { TrackMoveRefusal::Kind::Playing, -1 };
+    for (int from = 0; from < Session::kNumTracks; ++from)
+        if (plan.oldToNew[(size_t) from] != from && anyPassOpen (session.track (from)))
+            return { TrackMoveRefusal::Kind::Playing, -1 };
+    return {};
+}
+
+std::string trackMoveRefusalMessage (const TrackMoveRefusal& refusal, TrackMoveStep step)
+{
+    const char* retry = step == TrackMoveStep::Undo ? "undo the move again"
+                      : step == TrackMoveStep::Redo ? "redo the move again"
+                                                    : "move the tracks again";
+    switch (refusal.kind)
+    {
+        case TrackMoveRefusal::Kind::Playing:
+            return std::string ("Stop playback, then ") + retry + ".";
+        case TrackMoveRefusal::Kind::Frozen:
+            return "Unfreeze track " + std::to_string (refusal.frozenTrack + 1) + ", then " + retry
+                 + ". A frozen track can't be moved or shifted.";
+        case TrackMoveRefusal::Kind::None:
+            break;
+    }
+    return {};
+}
+
+bool commitTrackMove (AudioEngine& engine, const TrackMovePlan& requested)
+{
+    auto& session = engine.getSession();
+    const auto plan = trackMoveFromNewToOld (requested.newToOld);
+    if (! plan || plan->isIdentity()
+        || trackMoveRefusalFor (session, engine, *plan).kind != TrackMoveRefusal::Kind::None)
+        return false;
+
+    auto live = std::make_shared<LiveTrackMove>();
+    live->plan = *plan;
+    for (int from = 0; from < Session::kNumTracks; ++from)
+        live->pinnedInputs[(size_t) from] = plan->oldToNew[(size_t) from] != from
+            && session.track (from).inputSource.load (std::memory_order_relaxed) == kInputFollowsTrack;
+
+    // live->moved says which way round the tracks are, so a perform or undo the
+    // engine refuses leaves it as it was instead of running the other half twice.
+    auto& um = engine.getUndoManager();
+    um.clearUndoHistory();
+    um.beginNewTransaction (kMoveTracksTransaction);
+    um.perform (new ParamEditAction (
+        [&engine, live]
+        {
+            if (! live->moved) live->moved = engine.moveTracks (live->plan);
+        },
+        [&engine, live]
+        {
+            if (live->moved && engine.moveTracks (invertTrackMove (live->plan), live->pinnedInputs))
+                live->moved = false;
+        }));
+    um.beginNewTransaction();
+    if (! live->moved)
+    {
+        um.clearUndoHistory();
+        return false;
+    }
+
+    auto& moves = liveTrackMoves();
+    for (auto it = moves.begin(); it != moves.end();)
+        it = it->second.expired() ? moves.erase (it) : std::next (it);
+    moves[&engine] = live;
+    return true;
+}
+
+TrackMoveRefusal trackMoveUndoRefusal (AudioEngine& engine, bool redo)
+{
+    auto& um = engine.getUndoManager();
+    if ((redo ? um.getRedoDescription() : um.getUndoDescription()) != kMoveTracksTransaction)
+        return {};
+    const auto& moves = liveTrackMoves();
+    const auto it = moves.find (&engine);
+    const auto live = it != moves.end() ? it->second.lock() : nullptr;
+    if (live == nullptr)
+        return {};
+    return trackMoveRefusalFor (engine.getSession(), engine,
+                                redo ? live->plan : invertTrackMove (live->plan));
 }
 
 // RegionEditAction

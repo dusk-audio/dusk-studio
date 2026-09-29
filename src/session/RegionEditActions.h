@@ -2,7 +2,9 @@
 
 #include <juce_data_structures/juce_data_structures.h>
 #include "Session.h"
+#include "TrackMove.h"
 #include <algorithm>
+#include <string>
 #include <vector>
 
 namespace duskstudio
@@ -432,6 +434,43 @@ private:
 
 // The engine's undo and redo, inside a RegionRebuildBatch so a transaction of
 // many region actions rebuilds playback once, as the gesture that made it did.
+// Both refuse, leaving the history as it is, while trackMoveUndoRefusal says
+// the step is a track move that can't run now.
 bool undoTransaction (AudioEngine& engine);
 bool redoTransaction (AudioEngine& engine);
+
+// The name of the one undo step a track move makes.
+constexpr const char* kMoveTracksTransaction = "Move tracks";
+
+// Why a track move would be refused now. Playing: the transport runs, an
+// offline render drives the engine or its process gate is already held, or an
+// automation pass is still open on a track that moves. Frozen: frozenTrack (the
+// lowest) is frozen and would change slot; its baked audio and file are named
+// by the slot.
+struct TrackMoveRefusal
+{
+    enum class Kind { None, Playing, Frozen };
+    Kind kind = Kind::None;
+    int frozenTrack = -1;
+};
+TrackMoveRefusal trackMoveRefusalFor (const Session& session, AudioEngine& engine,
+                                      const TrackMovePlan& plan);
+
+// What the "Can't move tracks" alert says, for a move or for the undo or redo
+// of one; empty for None.
+enum class TrackMoveStep { Move, Undo, Redo };
+std::string trackMoveRefusalMessage (const TrackMoveRefusal& refusal,
+                                     TrackMoveStep step = TrackMoveStep::Move);
+
+// Moves the tracks as the only step in the undo history: the steps before it
+// name tracks by number, so they go. On undo, an input the move pinned from
+// following its track number follows again, unless it was changed since.
+// False, with nothing changed, history included, when refused, when the plan
+// moves nothing or does not map the slots one to one. Message thread.
+bool commitTrackMove (AudioEngine& engine, const TrackMovePlan& plan);
+
+// Why the next undo (redo when redo is true) can't run now, when that step is a
+// track move; None otherwise. Asked before the undo manager is: an action that
+// refuses its undo makes the undo manager drop the whole history.
+TrackMoveRefusal trackMoveUndoRefusal (AudioEngine& engine, bool redo);
 } // namespace duskstudio

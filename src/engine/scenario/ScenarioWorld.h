@@ -1,12 +1,18 @@
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <memory>
+#include <string>
+#include <vector>
+
+#include "../../session/SessionLayout.h"
 
 namespace duskstudio
 {
 class Session;
 class AudioEngine;
+class ChannelStrip;
 
 namespace scenario
 {
@@ -16,6 +22,8 @@ namespace scenario
 //
 // reset() returns the world to its as-constructed state between scenarios, so
 // one scenario's routing, plugins or transport position cannot reach the next.
+// What a scenario should have put back itself and did not, reset() still puts
+// back but also names, so the runner can fail the scenario that left it.
 class ScenarioWorld
 {
 public:
@@ -25,7 +33,7 @@ public:
     Session&     session() noexcept { return *sessionPtr; }
     AudioEngine& engine()  noexcept { return *enginePtr; }
 
-    void reset();
+    std::vector<std::string> reset();
 
 private:
     void prepareOffline();
@@ -36,6 +44,10 @@ private:
     std::unique_ptr<AudioEngine> enginePtr;
 
     std::filesystem::path bootstrapSessionDir;
+
+    // The strip each track slot ran at construction. A track move hands the
+    // strips to other slots, and only another move hands them back.
+    std::array<const ChannelStrip*, SessionLayout::kNumTracks> constructedStripOrder {};
 
     ScenarioWorld (const ScenarioWorld&) = delete;
     ScenarioWorld& operator= (const ScenarioWorld&) = delete;
