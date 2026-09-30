@@ -199,6 +199,7 @@ add_executable(dusk-studio-tests
     record_stop_waits_for_audio.cpp
     playback_loop_read.cpp
     playback_take_audition.cpp
+    playback_live_swap.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PlaybackEngine.cpp
     mastering_player_resample.cpp
     mastering_player_file_release.cpp

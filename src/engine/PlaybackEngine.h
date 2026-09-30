@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include "audiofile/BufferedFileReader.h"
@@ -48,6 +49,25 @@ public:
         return { auditionedTrack.load (std::memory_order_relaxed),
                  auditionedTake.load (std::memory_order_relaxed) };
     }
+
+    // Rebuilds one track's streams while the transport rolls, so a comp edit or a
+    // take solo is heard at once: the new streams are built and warmed here, and
+    // service() hands them to the audio thread once their readers hold the audio
+    // at the playhead, or after a short wait regardless. The audio thread then
+    // crossfades from the old streams to the new ones. A newer rebuild of the
+    // same track replaces one still waiting. Message thread; does nothing unless
+    // the streams are live.
+    void refreshTrackPlayback (int trackIndex, Audition audition);
+
+    // Hands warmed rebuilds to the audio thread and frees the streams it has
+    // finished with. Message thread, called often while the transport rolls.
+    void service();
+
+    // Tests only: open every reader without its background thread and fill it
+    // at once, so a rebuild is warm the moment it is built.
+    void setSynchronousReadersForTest (bool synchronous) noexcept { synchronousReaders = synchronous; }
+    // How many track stream sets exist, for tests that prove none leak.
+    static int liveStreamCountForTest() noexcept;
 
     // Hot-update region gain + mute on the live snapshot without
     // rebuilding readers. Matches streams to AudioRegion entries by
@@ -120,10 +140,55 @@ private:
 
     struct PerTrackStream
     {
+        PerTrackStream() noexcept;
+        ~PerTrackStream();
+        PerTrackStream (const PerTrackStream&) = delete;
+        PerTrackStream& operator= (const PerTrackStream&) = delete;
+
         std::vector<RegionStream> regions;  // sorted by timelineStart
     };
 
-    std::array<std::unique_ptr<PerTrackStream>, Session::kNumTracks> streams;
+    // One track's streams. While they are live, the audio thread owns `current`
+    // and the crossfade state; the message thread only publishes to `incoming`
+    // and takes back what the audio thread leaves in `retired`. While they are
+    // not, the message thread owns everything.
+    struct TrackSlot
+    {
+        std::atomic<PerTrackStream*> current { nullptr };
+        std::atomic<PerTrackStream*> incoming { nullptr };
+        std::array<std::atomic<PerTrackStream*>, 4> retired {};
+        // The streams being faded out, and how far the fade has run; -1 when
+        // none is running. A fade that has run its course but whose streams
+        // found no free retired entry holds here until one frees.
+        PerTrackStream* fadingFrom = nullptr;
+        int             fadePos    = -1;
+    };
+    std::array<TrackSlot, Session::kNumTracks> slots;
+
+    // A rebuild built and warming, not yet handed to the audio thread.
+    struct PendingSwap
+    {
+        std::unique_ptr<PerTrackStream> stream;
+        std::chrono::steady_clock::time_point deadline;
+        TakeId auditioned = 0;
+    };
+    std::array<PendingSwap, Session::kNumTracks> pending;
+    bool synchronousReaders = false;
+
+    // One track's streams, readers opened and warmed at `warmAt`, loop cache
+    // primed. `auditioned` is set to the take played in place of its regions,
+    // or 0. Null when the track has nothing to play.
+    std::unique_ptr<PerTrackStream> buildTrackStream (int trackIndex, Audition audition,
+                                                      std::int64_t warmAt, TakeId& auditioned);
+    void publish (int trackIndex);
+    // Whether every reader holds the audio from `playhead` a short way on.
+    static bool readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead) noexcept;
+    void freeSlot (TrackSlot& slot);
+
+    // One track's streams summed into outL / outR, loop-aware as readForTrack
+    // describes. The outputs must be cleared first.
+    void readStream (PerTrackStream& stream, std::int64_t playheadSamples, float* outL, float* outR,
+                     int numSamples, std::int64_t loopStart, std::int64_t loopEnd) noexcept;
 
     // The track whose streams play an auditioned take, which
     // refreshLiveRegionParams must leave alone, and that take. Written on the
@@ -140,9 +205,9 @@ private:
                            float* outL, float* outR, int outOffset,
                            int numSamples) noexcept;
 
-    // Fill every stream's loop-start cache for the given loop range.
-    // Message thread, only while streamsActive is false.
-    void primeLoopCaches (std::int64_t loopStart, std::int64_t loopEnd);
+    // Fill one track's loop-start caches for the given loop range. Message
+    // thread, before the audio thread can see the streams.
+    static void primeLoopCache (PerTrackStream& stream, std::int64_t loopStart, std::int64_t loopEnd);
 
     // Audio thread bumps audioInFlight BEFORE inspecting streamsActive /
     // streams[] and decrements on exit. stopPlayback clears streamsActive
@@ -169,5 +234,7 @@ private:
     };
 
     dusk::audio::PlanarBuffer readScratch;
+    // Where the streams being faded out are read during a crossfade.
+    dusk::audio::PlanarBuffer fadeScratch;
 };
 } // namespace duskstudio

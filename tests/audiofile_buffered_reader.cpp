@@ -205,6 +205,30 @@ TEST_CASE ("BufferedFileReader prefetch warms a span the audio thread has not as
     discard (path);
 }
 
+TEST_CASE ("BufferedFileReader says whether a span is resident before anyone reads it",
+           "[audiofile][buffered]")
+{
+    const auto path = tmp ("dusk_bfr_holds.wav");
+    REQUIRE (writeRamp (path));
+
+    auto r = manualReader (path);
+    REQUIRE (r != nullptr);
+
+    const std::int64_t at = 2048;
+    r->prefetch (at);
+    CHECK_FALSE (r->holds (at, kBlock));
+    r->fillNow();
+    CHECK (r->holds (at, kBlock));
+    CHECK (r->holds (at + kWindow - 1 - kBlock, kBlock));
+    CHECK_FALSE (r->holds (at - 1, kBlock));
+    CHECK_FALSE (r->holds (at + kWindow, kBlock));
+    // Past the end of the file is silence, which is always there.
+    CHECK (r->holds (kFrames, kBlock));
+
+    r.reset();
+    discard (path);
+}
+
 TEST_CASE ("BufferedFileReader treats frames past the end of the file as silence",
            "[audiofile][buffered]")
 {

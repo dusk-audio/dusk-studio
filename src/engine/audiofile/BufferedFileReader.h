@@ -62,6 +62,11 @@ public:
     // hint only moves the window after a miss.
     void prefetch (std::int64_t startFrame) noexcept;
 
+    // Message thread. Whether [startFrame, startFrame + numFrames) is resident now,
+    // so a read of it would be served; frames past the end of the file count as
+    // held. An unreadable file holds nothing but never will, so it reports true.
+    bool holds (std::int64_t startFrame, std::int64_t numFrames) const noexcept;
+
     // Fills the window from the current position until it is full or at EOF,
     // on the calling thread. For Fill::Manual owners: it does the disk I/O the
     // worker would otherwise do, which is what makes residency testable.
