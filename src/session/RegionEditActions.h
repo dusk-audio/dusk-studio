@@ -190,10 +190,11 @@ private:
 
 // Puts the take's audio on the timeline over [start, end), clamped to the take,
 // carving what the track played there (TakeComp's promoteTakeRange). The
-// track's regions and takes are snapshotted whole before and after, so undo
-// also removes a take the carve made of a region naming none, and ends an
-// audition of it. Refused when a locked region lies in the range, since
-// carving would split or trim it.
+// track's regions are snapshotted whole before and after. Undo removes a take
+// the carve made of a region naming none, and ends an audition of it, but no
+// take the track gained since outside the undo history; redo puts it back.
+// Refused when a locked region lies in the range, since carving would split or
+// trim it.
 class PromoteTakeRangeAction final : public UndoableAction
 {
 public:
@@ -400,9 +401,10 @@ private:
 // RecordManager::stopRecording so a take commit (audio + midi) becomes
 // one undo step. perform() applies the after-snapshot; undo() restores
 // the before-snapshot and ends an audition of a take it removes, which
-// redo does not bring back. WAV files on disk are NOT deleted on undo -
-// the user can redo to re-attach the take, and orphaned files are
-// reclaimed via the existing "Clean Out" menu action.
+// redo does not bring back. Only the takes the commit added or removed
+// change, so one added outside the undo history stays. WAV files on disk
+// are NOT deleted on undo - the user can redo to re-attach the take, and
+// orphaned files are reclaimed via the existing "Clean Out" menu action.
 class RecordCommitAction final : public UndoableAction
 {
 public:

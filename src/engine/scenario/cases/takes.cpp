@@ -716,6 +716,22 @@ ScenarioResult auditionEndsWhenItsTakeGoes (ScenarioContext& ctx)
     ctx.expect (undo.undo() && findTake (track, second) != nullptr && nothingAuditioned(),
                 "undoing the clone brought the audition back");
 
+    auto& source = session.track (kTrack + 1);
+    AudioTake sourceTake;
+    sourceTake.id = session.allocateTakeId();
+    sourceTake.name = "Take 1";
+    sourceTake.lengthInSamples = 24000;
+    source.takes.push_back (sourceTake);
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new CloneTrackAction (session, engine, kTrack + 1, kTrack)),
+                "cloning a track with a take was refused");
+    const auto cloned = track.takes.size() == 1 ? track.takes[0].id : TakeId { 0 };
+    engine.setTakeAudition (kTrack, cloned);
+    ctx.expect (cloned != 0 && auditioning (cloned), "the cloned take could not be auditioned");
+    ctx.expect (undo.undo() && findTake (track, cloned) == nullptr, "undoing the clone left the cloned take");
+    ctx.expect (nothingAuditioned(), "undoing the clone left the audition on the cloned take it removed");
+    source.takes.clear();
+
     armTrack (ctx);
     if (! recordSpan (ctx, 30000, 36000)) return ctx.verdict();
     const auto recorded = track.takes.back().id;
@@ -725,6 +741,59 @@ ScenarioResult auditionEndsWhenItsTakeGoes (ScenarioContext& ctx)
     ctx.expect (nothingAuditioned(), "undoing the recording left the audition on its take");
     ctx.expect (undo.redo() && findTake (track, recorded) != nullptr, "redo did not bring the recorded take back");
     ctx.expect (nothingAuditioned(), "redo brought the audition back with the recorded take");
+    return ctx.verdict();
+}
+
+std::vector<TakeId> takeIds (const Track& track)
+{
+    std::vector<TakeId> ids;
+    for (const auto& take : track.takes)
+        ids.push_back (take.id);
+    return ids;
+}
+
+// A take can join the track with no undo step: a recording stopped by a stage
+// switch or a lost device. Undoing an earlier promote or recording removes only
+// the takes that step added, and redo puts them back where they were.
+ScenarioResult undoKeepsTakesAddedOutsideHistory (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (kTrack);
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+
+    auto plain = regionAt (0, 48000, 200);
+    plain.file = SessionFile ((ctx.tempDir() / "imported.wav").u8string().c_str());
+    track.regions.push_back (plain);
+    const auto promoted = addTake (ctx, 0, 48000, 500);
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new PromoteTakeRangeAction (session, engine, kTrack, promoted, 12000, 24000)),
+                      "the promote was refused"))
+        return ctx.verdict();
+    if (! ctx.expect (track.takes.size() == 2, "the promote did not make the region a take"))
+        return ctx.verdict();
+    const auto adopted = track.takes[0].id;
+    const auto outside = addTake (ctx, 0, 48000, 0);
+
+    ctx.expect (undo.undo() && takeIds (track) == std::vector<TakeId> { promoted, outside },
+                "undoing the promote touched a take added after it with no undo step");
+    ctx.expect (undo.redo() && takeIds (track) == std::vector<TakeId> { adopted, promoted, outside },
+                "redoing the promote did not put its take back where it was");
+
+    undo.clearUndoHistory();
+    track.regions.clear();
+    track.takes.clear();
+    armTrack (ctx);
+    if (! recordSpan (ctx, 4800, 9600)) return ctx.verdict();
+    if (! ctx.expect (track.takes.size() == 1, "the recording did not add one take"))
+        return ctx.verdict();
+    const auto recorded = track.takes[0].id;
+    const auto later = addTake (ctx, 0, 48000, 0);
+    ctx.expect (undo.undo() && takeIds (track) == std::vector<TakeId> { later },
+                "undoing the recording touched a take added after it with no undo step");
+    ctx.expect (undo.redo() && takeIds (track) == std::vector<TakeId> { recorded, later },
+                "redoing the recording did not put its take back where it was");
     return ctx.verdict();
 }
 
@@ -1258,6 +1327,9 @@ const ScenarioRegistrar deleteTakeRegistrar { Scenario {
 const ScenarioRegistrar auditionEndsRegistrar { Scenario {
     "take.audition_ends_when_its_take_goes", { "take", "comp", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (auditionEndsWhenItsTakeGoes, ctx); } } };
+const ScenarioRegistrar undoKeepsOutsideTakesRegistrar { Scenario {
+    "take.undo_keeps_takes_added_outside_history", { "take", "comp", "record", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (undoKeepsTakesAddedOutsideHistory, ctx); } } };
 const ScenarioRegistrar renameTakeRegistrar { Scenario {
     "take.rename_take_round_trips_through_save", { "take", "session", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (renameTakeRoundTrips, ctx); } } };

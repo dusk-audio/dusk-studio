@@ -513,6 +513,7 @@ void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
             order[timedPlaces[k]] = timed[k];
 
         std::vector<TakeId> ids (passes.size());
+        std::vector<std::int64_t> takeFileStarts (passes.size());
         auto takes = nlohmann::json::array();
         for (std::size_t n = 0; n < order.size(); ++n)
         {
@@ -525,6 +526,7 @@ void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
                 fileStart -= timelineStart;
                 timelineStart = 0;
             }
+            takeFileStarts[order[n]] = fileStart;
             nlohmann::json take;
             take["id"]             = lastId;
             take["name"]           = "Take " + std::to_string (n + 1);
@@ -538,8 +540,11 @@ void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
                 take["take_provenance"] = pass.provenance;
             takes.push_back (std::move (take));
         }
+        // A region reading file from before where its take now starts names
+        // no take, so the next carve over it makes it one.
         for (const auto& [region, pass] : regionPasses)
-            (*region)["take_id"] = ids[pass];
+            if (std::max ((std::int64_t) 0, json::getInt64 (*region, "source_offset", 0)) >= takeFileStarts[pass])
+                (*region)["take_id"] = ids[pass];
         track["takes"] = std::move (takes);
     }
 }

@@ -602,11 +602,16 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         dw::drawDragBubble (ctx);
 
         // A field or menu that opens asks for the keyboard, which a child the click
-        // did not focus (Windows) might then get and keep for itself.
+        // did not focus (Windows) might then get and keep for itself. Asked even when
+        // the child believes it has it: on X11 a focus event the pointer caused marks
+        // it focused while the keys still go to the parent.
         const bool capturing = view->capturesKeyboard();
-        if (capturing && ! wasCapturing && panelWidget != nullptr && ! panelWidget->hasKeyboard())
+        if (capturing && ! wasCapturing && panelWidget != nullptr)
             if (auto* window = host.window())
+            {
                 window->focus();
+                ++keyboardRequests;
+            }
         wasCapturing = capturing;
 
         // A click outside the panel lands on the host's dim overlay rather than
@@ -667,6 +672,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     std::unique_ptr<DuskPanelView> view;
     PanelWidget* panelWidget = nullptr;
     bool wasCapturing = false;
+    int keyboardRequests = 0;
     dw::Fonts fonts;
     dw::KnobAtlas knobAtlas;
     dw::DragState drag;
@@ -822,5 +828,9 @@ bool DuskPanelWindow::keyboardFocusForScenario (bool focused)
     if (! isOpen() || impl->panelWidget == nullptr) return false;
     impl->panelWidget->focusForScenario (focused);
     return true;
+}
+int DuskPanelWindow::keyboardRequestsForScenario() const noexcept
+{
+    return impl->keyboardRequests;
 }
 } // namespace duskstudio::imgui

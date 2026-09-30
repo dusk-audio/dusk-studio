@@ -68,6 +68,43 @@ void endAuditionOfMissingTake (Session& s)
         s.takeAudition = {};
 }
 
+bool holdsTake (const std::vector<AudioTake>& takes, TakeId id)
+{
+    return std::any_of (takes.begin(), takes.end(), [id] (const AudioTake& t) { return t.id == id; });
+}
+
+// Carries the change from `from` to `to` over onto `takes` and leaves alone any
+// take neither list holds: a recording stopped with no undo step (a stage switch,
+// a lost device) adds its take outside the history, and restoring a whole list
+// would drop it and leave its file to Clean Out. A take coming back goes after
+// the take it followed in `to`.
+void applyTakeChange (std::vector<AudioTake>& takes, const std::vector<AudioTake>& from,
+                      const std::vector<AudioTake>& to)
+{
+    takes.erase (std::remove_if (takes.begin(), takes.end(), [&from, &to] (const AudioTake& t)
+                 {
+                     return holdsTake (from, t.id) && ! holdsTake (to, t.id);
+                 }),
+                 takes.end());
+    for (std::size_t i = 0; i < to.size(); ++i)
+    {
+        if (holdsTake (from, to[i].id) || holdsTake (takes, to[i].id)) continue;
+        auto at = takes.begin();
+        for (auto j = i; j-- > 0;)
+        {
+            const auto id = to[j].id;
+            const auto previous = std::find_if (takes.begin(), takes.end(),
+                                                [id] (const AudioTake& t) { return t.id == id; });
+            if (previous != takes.end())
+            {
+                at = previous + 1;
+                break;
+            }
+        }
+        takes.insert (at, to[i]);
+    }
+}
+
 // Join helpers. The selection is timeline-sorted (lead = earliest start), so
 // the lead is not necessarily the lowest numeric index, and every erase below
 // it shifts it down one slot. The bounds check is separate so the slow path
@@ -393,7 +430,7 @@ bool PromoteTakeRangeAction::perform()
     else
     {
         track.regions = afterRegions;
-        track.takes = afterTakes;
+        applyTakeChange (track.takes, beforeTakes, afterTakes);
     }
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -405,7 +442,7 @@ bool PromoteTakeRangeAction::undo()
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
     session.track (trackIdx).regions = beforeRegions;
-    session.track (trackIdx).takes = beforeTakes;
+    applyTakeChange (session.track (trackIdx).takes, afterTakes, beforeTakes);
     endAuditionOfMissingTake (session);
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -1405,6 +1442,7 @@ bool CloneTrackAction::undo()
     // frozen guard. Unfreeze first to undo.
     if (session.track (dstIdx).frozen.load (std::memory_order_relaxed)) return false;
     applyTrack (session.track (dstIdx), engine, dstIdx, *beforeState);
+    endAuditionOfMissingTake (session);
     rebuildPlaybackIfStopped (engine);
     return true;
 }
@@ -1690,7 +1728,7 @@ bool RecordCommitAction::perform()
         if (d.trackIndex < 0 || d.trackIndex >= Session::kNumTracks) continue;
         if (frozenLocked (session, d.trackIndex)) continue;   // frozen track is edit-locked
         session.track (d.trackIndex).regions = d.audioAfter;
-        session.track (d.trackIndex).takes   = d.takesAfter;
+        applyTakeChange (session.track (d.trackIndex).takes, d.takesBefore, d.takesAfter);
         session.track (d.trackIndex).midiRegions.mutate (
             [&d] (std::vector<MidiRegion>& mregs) { mregs = d.midiAfter; });
     }
@@ -1705,7 +1743,7 @@ bool RecordCommitAction::undo()
         if (d.trackIndex < 0 || d.trackIndex >= Session::kNumTracks) continue;
         if (frozenLocked (session, d.trackIndex)) continue;   // frozen track is edit-locked
         session.track (d.trackIndex).regions = d.audioBefore;
-        session.track (d.trackIndex).takes   = d.takesBefore;
+        applyTakeChange (session.track (d.trackIndex).takes, d.takesAfter, d.takesBefore);
         session.track (d.trackIndex).midiRegions.mutate (
             [&d] (std::vector<MidiRegion>& mregs) { mregs = d.midiBefore; });
     }

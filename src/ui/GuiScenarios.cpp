@@ -666,6 +666,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
        #endif
     }
+    int audioEditorKeyboardRequests() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.audioEditorWindow != nullptr ? owner.audioEditorWindow->keyboardRequestsForScenario() : 0;
+       #else
+        return 0;
+       #endif
+    }
     bool openPiano (int track, int region) override
     {
         if (owner.pianoRoll != nullptr) return false;

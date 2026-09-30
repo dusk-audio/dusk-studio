@@ -64,7 +64,7 @@ void PlaybackEngine::refreshLiveRegionParams()
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& stream = streams[(size_t) t];
-        if (stream == nullptr || t == auditionedTrack) continue;
+        if (stream == nullptr || t == auditionedTrack.load (std::memory_order_relaxed)) continue;
         const auto& regs = session.track (t).regions;
 
         // Streams are sorted by timelineStart in preparePlayback; the
@@ -89,7 +89,8 @@ void PlaybackEngine::refreshLiveRegionParams()
 void PlaybackEngine::preparePlayback (Audition audition)
 {
     stopPlayback();
-    auditionedTrack = -1;
+    auditionedTrack.store (-1, std::memory_order_relaxed);
+    auditionedTake.store (0, std::memory_order_relaxed);
     const auto& takeAudition = session.takeAudition;
 
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -117,7 +118,8 @@ void PlaybackEngine::preparePlayback (Audition audition)
                                                  take->timelineStart + take->lengthInSamples))
                 {
                     substitute.push_back (std::move (*whole));
-                    auditionedTrack = t;
+                    auditionedTrack.store (t, std::memory_order_relaxed);
+                    auditionedTake.store (take->id, std::memory_order_relaxed);
                 }
         }
         const auto& regions = substitute.empty() ? track.regions : substitute;

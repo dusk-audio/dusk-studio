@@ -2,12 +2,16 @@
 
 #include "session/Session.h"
 #include "session/SessionSerializer.h"
+#include "session/TakeComp.h"
 
 #include <juce_core/juce_core.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace duskstudio
 {
@@ -418,6 +422,26 @@ TEST_CASE ("Loading a v8 session starts no take before the timeline and keeps it
     CHECK (moved.takeId == take.id);
     CHECK (take.timelineStart + (moved.sourceOffset - take.sourceOffset) == moved.timelineStart);
     CHECK (take.timelineStart + take.lengthInSamples == 9000);
+
+    // The left region reads file [0, 5000), which starts before the take now
+    // does: it names no take, so a carve over it makes it one.
+    const auto& left = track.regions[0];
+    CHECK (left.takeId == 0);
+    CHECK (takeCoverage (track, take.id) == std::vector<std::pair<std::int64_t, std::int64_t>> { { 2000, 9000 } });
+
+    auto& carved = loaded->track (0);
+    detail::carveRegions (*loaded, carved, 101000, 102000);
+    const auto holdsCutAudio = std::any_of (carved.takes.begin(), carved.takes.end(), [] (const AudioTake& t)
+    {
+        return t.file.getFileName() == "split.wav" && t.sourceOffset <= 1000
+            && t.sourceOffset + t.lengthInSamples >= 2000;
+    });
+    CHECK (holdsCutAudio);
+    for (const auto& region : carved.regions)
+    {
+        INFO ("region at " << region.timelineStart);
+        CHECK (findTake (carved, region.takeId) != nullptr);
+    }
     dir.deleteRecursively();
 }
 

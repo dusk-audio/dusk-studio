@@ -155,7 +155,7 @@ CarvedEdges carve (std::vector<AudioRegion>& regs, std::int64_t start, std::int6
 }
 } // namespace
 
-void carveRegions (Session& session, Track& track, std::int64_t start, std::int64_t end)
+void detail::carveRegions (Session& session, Track& track, std::int64_t start, std::int64_t end)
 {
     adoptRegionsNamingNoTake (session, track, start, end, 0);
     carve (track.regions, start, end);

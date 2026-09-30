@@ -3,6 +3,7 @@
 #include "TakeLaneLayout.h"
 #include "../AppConfig.h"
 #include "../../engine/AudioEngine.h"
+#include "../../engine/PlaybackEngine.h"
 #include "../../engine/Transport.h"
 #include "../../engine/audiofile/FileReader.h"
 #include "../../engine/audiofile/WaveformPeaks.h"
@@ -435,6 +436,8 @@ public:
     bool handleShellKey (const std::string& description) override
     {
         const auto chord = parseKeyDescription (description);
+        if (drag != Drag::none)
+            return chord ? handleKey (*chord) : true;
         return chord && keysAvailable && handleKey (*chord);
     }
 
@@ -591,8 +594,6 @@ public:
     {
         popupWasOpen = popupOpen;
         ++frame;
-        if (engine.getTransport().isStopped())
-            auditionAtNextPlay = false;
         controls.clear();
         layout = layoutFor (origin, size, ctx.scale, takeCount());
         laidOut = true;
@@ -770,9 +771,6 @@ private:
     double pendingPromoteAt = 0.0;
     std::uint64_t renamingTake = 0;
     std::uint64_t confirmingDelete = 0;
-    // An audition started or ended while the transport rolls changes what plays only
-    // from the next Play.
-    bool auditionAtNextPlay = false;
     std::string notice;
     std::chrono::steady_clock::time_point noticeUntil;
     std::vector<TakeSlice> takeSlices;
@@ -1350,12 +1348,21 @@ private:
         const bool bare = ! command && ! k.shift && ! k.alt;
         const auto is = [&k] (ImGuiKey key) { return k.key == key; };
 
+        // A key that edits the track would act on the region the drag holds half
+        // changed, and the release would then commit that snapshot over whatever
+        // the key left there.
+        if (drag != Drag::none)
+        {
+            if (bare && is (ImGuiKey_Escape))
+                cancelDrag();
+            return true;
+        }
+
         if (is (ImGuiKey_Escape))
         {
             if (! bare)
                 return false;
-            if (drag != Drag::none) cancelDrag();
-            else if (confirmingDelete != 0) confirmingDelete = 0;
+            if (confirmingDelete != 0) confirmingDelete = 0;
             else if (rangeActive) rangeActive = false;
             else if (! additional.empty()) additional.clear();
             else dismissRequested = true;
@@ -3941,14 +3948,19 @@ private:
     {
         if (noticeShowing())
             return { notice, argb (kNotice) };
+        // An audition started or ended while the transport rolls changes what plays
+        // only from the next Play, so the caption compares the ask with what plays.
         const AudioTake* auditioned = session.takeAudition.trackIdx == trackIdx
                                     ? takeWithId (session.takeAudition.takeId) : nullptr;
-        if (auditioned != nullptr && auditionAtNextPlay)
+        const bool stopped = engine.getTransport().isStopped();
+        const auto streams = engine.getPlaybackEngine().playingAudition();
+        const TakeId playing = ! stopped && streams.trackIdx == trackIdx ? streams.takeId : 0;
+        if (auditioned != nullptr && (stopped || playing == auditioned->id))
+            return { "Auditioning \"" + auditioned->name + "\": the track plays this take alone.", argb (kAudition) };
+        if (auditioned != nullptr)
             return { "Auditioning \"" + auditioned->name + "\" from the next Play: the track will play this take alone.",
                      argb (kAudition) };
-        if (auditioned != nullptr)
-            return { "Auditioning \"" + auditioned->name + "\": the track plays this take alone.", argb (kAudition) };
-        if (auditionAtNextPlay)
+        if (playing != 0)
             return { "The audition ends at the next Play.", argb (kAudition) };
         return { "Drag across a take to use that part of it, or click its name to use all of it.",
                  argb (kHeaderText, 0.75f) };
@@ -4248,7 +4260,6 @@ private:
         std::optional<AudioRegion> focused;
         if (const auto* r = region())
             focused = *r;
-        const bool auditioned = isAuditioned (id);
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction ("Delete take");
         if (! undo.perform (new DeleteTakeAction (session, engine, trackIdx, id)))
@@ -4260,7 +4271,6 @@ private:
         if (renamingTake == id)
             editing = Field::none;
         rangeActive = false;
-        auditionAtNextPlay = auditionAtNextPlay || (auditioned && ! engine.getTransport().isStopped());
 
         // The regions cut from the take went with it, which moves the others' indices.
         if (const int same = focused ? indexOfRegion (*focused) : -1; same >= 0)
@@ -4289,7 +4299,6 @@ private:
     void toggleAudition (const AudioTake& take)
     {
         auto& transport = engine.getTransport();
-        auditionAtNextPlay = auditionAtNextPlay || ! transport.isStopped();
         if (isAuditioned (take.id))
         {
             engine.clearTakeAudition();

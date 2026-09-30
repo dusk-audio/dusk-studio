@@ -29,7 +29,10 @@ constexpr std::int64_t kPunchFadeSamples = 64;
 // recording order: a made take whose region has a capture time goes before the
 // first take captured after it, a shared capture time ordered by loop pass;
 // one without a capture time goes last.
+namespace detail
+{
 void carveRegions (Session& session, Track& track, std::int64_t start, std::int64_t end);
+} // namespace detail
 
 // The part of the take inside [start, end), placed where the take plays it.
 std::optional<AudioRegion> regionFromTake (const AudioTake& take, std::int64_t start, std::int64_t end);

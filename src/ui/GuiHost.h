@@ -159,6 +159,8 @@ public:
     // when the focus moves. A Windows child never holds it, so every key reaches the
     // shell's window instead.
     virtual bool audioEditorKeyboardFocus (bool focused) = 0;
+    // How often a field or menu opening in the editor has asked for the keyboard.
+    virtual int audioEditorKeyboardRequests() const = 0;
     virtual bool openPiano (int track, int region) = 0;
     virtual void closePiano() = 0;
     virtual bool clickPianoCcToggle() = 0;

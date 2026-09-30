@@ -37,6 +37,14 @@ public:
     void preparePlayback (Audition audition = Audition::Ignore);
     void stopPlayback();
 
+    // The take the streams play in place of its track's regions, as the last
+    // preparePlayback left them; none when they play no audition. Message thread.
+    Session::TakeAudition playingAudition() const noexcept
+    {
+        return { auditionedTrack.load (std::memory_order_relaxed),
+                 auditionedTake.load (std::memory_order_relaxed) };
+    }
+
     // Hot-update region gain + mute on the live snapshot without
     // rebuilding readers. Matches streams to AudioRegion entries by
     // (file, timelineStart, lengthInSamples) - structural changes
@@ -113,10 +121,12 @@ private:
     std::array<std::unique_ptr<PerTrackStream>, Session::kNumTracks> streams;
 
     // The track whose streams play an auditioned take, which
-    // refreshLiveRegionParams must leave alone. Same threads as streams
-    // (the message thread, or a render's worker with the device detached);
+    // refreshLiveRegionParams must leave alone, and that take. Written on the
+    // same threads as streams (the message thread, or a render's worker with
+    // the device detached), so the editor can read them while a render runs;
     // never read by the audio thread.
-    int auditionedTrack = -1;
+    std::atomic<int> auditionedTrack { -1 };
+    std::atomic<TakeId> auditionedTake { 0 };
 
     // One linear (non-wrapping) read span summed into the output at
     // outOffset. The public readForTrack handles clearing, the in-flight

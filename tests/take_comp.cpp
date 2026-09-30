@@ -73,7 +73,7 @@ struct CarveTrack
     Track& track = session->track (0);
     std::vector<AudioRegion>& regs = track.regions;
 
-    void carve (std::int64_t start, std::int64_t end) { carveRegions (*session, track, start, end); }
+    void carve (std::int64_t start, std::int64_t end) { detail::carveRegions (*session, track, start, end); }
 };
 } // namespace
 
