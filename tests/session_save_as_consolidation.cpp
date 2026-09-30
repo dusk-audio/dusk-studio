@@ -415,3 +415,43 @@ TEST_CASE ("revertConsolidation restores every path and removes what the Save As
         CHECK (dirB.getChildFile ("audio/take1.wav").loadFileAsString() == "theirs");
     }
 }
+
+// A reversed region remembers the render it plays and the file it reversed. Save As
+// takes both along and repoints both, so reversing the region again in the new
+// folder still finds its source rather than rendering the render in reverse.
+TEST_CASE ("consolidateInto carries what a reversed region reversed",
+           "[session][serializer][consolidate][reverse]")
+{
+    const auto dirA = makeTempDir ("dusk-consolidate-rev-a-");
+    const auto dirB = makeTempDir ("dusk-consolidate-rev-b-");
+    const struct Cleanup
+    {
+        juce::File a, b;
+        ~Cleanup() { a.deleteRecursively(); b.deleteRecursively(); }
+    } cleanup { dirA, dirB };
+
+    Session s;
+    s.setSessionDirectory (dirA);
+    const auto source = makeFakeWav (dirA.getChildFile ("audio/imported.wav"));
+    const auto render = makeFakeWav (dirA.getChildFile ("takes/imported-reversed.wav"));
+    AudioRegion r;
+    r.file = render;
+    r.lengthInSamples = 1000;
+    r.reversedFrom = AudioRegion::ReverseSource { render, source, 0, 1000, 0 };
+    s.track (0).regions.push_back (r);
+
+    const auto res = SessionSerializer::consolidateInto (s, dirB);
+    REQUIRE (res.ok);
+    CHECK (res.filesCopied == 2);
+    const auto& moved = s.track (0).regions[0];
+    REQUIRE (moved.reversedFrom.has_value());
+    CHECK (moved.file == dirB.getChildFile ("takes/imported-reversed.wav"));
+    CHECK (moved.reversedFrom->render == moved.file);
+    CHECK (moved.reversedFrom->file == dirB.getChildFile ("audio/imported.wav"));
+    CHECK (dirB.getChildFile ("audio/imported.wav").existsAsFile());
+    CHECK (forwardOfReversed (moved).has_value());
+
+    SessionSerializer::revertConsolidation (s, res);
+    CHECK (s.track (0).regions[0].reversedFrom->file == source);
+    CHECK (s.track (0).regions[0].reversedFrom->render == render);
+}

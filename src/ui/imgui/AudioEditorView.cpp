@@ -1,5 +1,6 @@
 #include "AudioEditorView.h"
 #include "PanelControls.h"
+#include "RegionTrim.h"
 #include "TakeLaneLayout.h"
 #include "../AppConfig.h"
 #include "../../engine/AudioEngine.h"
@@ -1015,6 +1016,13 @@ private:
         if (r == nullptr) return 0;
         const auto fileSample = r->sourceOffset + (timelineForX (x) - r->timelineStart);
         return std::clamp (fileSample, r->sourceOffset, r->sourceOffset + r->lengthInSamples);
+    }
+
+    // The file sample under x by where the region lay when the drag began, unclamped,
+    // so a trim can reach past the region's current ends.
+    std::int64_t dragStartFileSampleForX (float x) const
+    {
+        return regionAtDragStart.sourceOffset + (timelineForX (x) - regionAtDragStart.timelineStart);
     }
 
     int regionIndexAtX (float x) const
@@ -2468,26 +2476,13 @@ private:
                 r->gainDb = std::clamp (dragOriginGainDb + (dragDown.y - p.y) / layout.scale * 0.1f, -24.0f, 12.0f);
                 break;
             case Drag::trimStart:
-            {
-                // The start slides along the file, so the audio under it stays put.
-                const auto& origin = regionAtDragStart;
-                const auto offset = clampTo (snapToGrid (fileSampleForX (p.x)), 0,
-                                             origin.sourceOffset + origin.lengthInSamples - 1);
-                const auto delta = offset - origin.sourceOffset;
-                r->sourceOffset = offset;
-                r->lengthInSamples = origin.lengthInSamples - delta;
-                r->timelineStart = origin.timelineStart + delta;
-                r->fadeInSamples = clampTo (r->fadeInSamples, 0, r->lengthInSamples);
-                r->fadeOutSamples = clampTo (r->fadeOutSamples, 0, r->lengthInSamples - r->fadeInSamples);
+                *r = trim::trimmedStart (regionAtDragStart, snapToGrid (dragStartFileSampleForX (p.x)));
                 break;
-            }
             case Drag::trimEnd:
             {
-                const auto length = clampTo (snapToGrid (fileSampleForX (p.x)) - regionAtDragStart.sourceOffset, 1,
-                                             std::numeric_limits<std::int64_t>::max());
-                r->lengthInSamples = length;
-                r->fadeInSamples = clampTo (r->fadeInSamples, 0, length);
-                r->fadeOutSamples = clampTo (r->fadeOutSamples, 0, length - r->fadeInSamples);
+                const auto* source = sourceFor (regionAtDragStart.file.getFullPathName().toStdString());
+                const auto frames = source != nullptr && source->snapshot.info ? source->snapshot.info->numFrames : 0;
+                *r = trim::trimmedEnd (regionAtDragStart, snapToGrid (dragStartFileSampleForX (p.x)), frames);
                 break;
             }
             case Drag::none: case Drag::moveCursor: case Drag::range: case Drag::moveRegion: case Drag::pan:

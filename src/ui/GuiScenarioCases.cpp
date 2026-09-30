@@ -4491,6 +4491,9 @@ std::optional<ScenarioResult> runAudioEditorGestures (GuiHost& host, ScenarioCon
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 400, [drag] { drag ("start", 0, 12000, 0, false); } });
     steps->push_back ({ 150, [checkRegion, drag] { checkRegion (12000, 36000, 0); drag ("end", 48000, 36000, 0, false); } });
+    // A handle goes back out past where an earlier trim left it.
+    steps->push_back ({ 150, [checkRegion, drag] { checkRegion (12000, 24000, 0); drag ("end", 36000, 42000, 0, false); } });
+    steps->push_back ({ 150, [checkRegion, drag] { checkRegion (12000, 30000, 0); drag ("end", 42000, 36000, 0, false); } });
     steps->push_back ({ 150, [checkRegion, drag] { checkRegion (12000, 24000, 0); drag ("gain", 24000, 24000, -60, false); } });
     steps->push_back ({ 150, [checkRegion, drag] { checkRegion (12000, 24000, 6); drag ("gain", 24000, 24000, -100, false); } });
     steps->push_back ({ 150, [checkRegion, drag] { checkRegion (12000, 24000, 12); drag ("gain", 24000, 24000, 400, false); } });

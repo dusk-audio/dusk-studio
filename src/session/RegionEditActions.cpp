@@ -1602,9 +1602,18 @@ bool CloneTrackAction::perform()
             copyOf.emplace (take.id, fresh);
             take.id = fresh;
         }
+        const auto copied = [&copyOf] (TakeId id)
+        {
+            const auto it = copyOf.find (id);
+            return id != 0 && it != copyOf.end() ? it->second : TakeId { 0 };
+        };
         for (auto& region : afterState->regions)
-            if (const auto it = copyOf.find (region.takeId); region.takeId != 0 && it != copyOf.end())
-                region.takeId = it->second;
+        {
+            if (region.takeId != 0 && copyOf.count (region.takeId) != 0)
+                region.takeId = copied (region.takeId);
+            if (region.reversedFrom)
+                region.reversedFrom->takeId = copied (region.reversedFrom->takeId);
+        }
     }
 
     applyTrack (session.track (dstIdx), engine, dstIdx, *afterState, beforeState->takes);

@@ -1289,6 +1289,45 @@ ScenarioResult seamMoveIsOneStep (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// A cloned track's reversed region reverses back onto the clone's own copy of the
+// take, not onto an id only the source track holds.
+ScenarioResult cloneKeepsReverseTake (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& source = session.track (kTrack + 1);
+    auto& clone = session.track (kTrack);
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    source.regions.clear();
+    source.takes.clear();
+    const auto take = writtenTake (ctx, "clone-reverse", 0, 9600);
+    if (! take) return ScenarioResult::fail ("could not write the take");
+    // writtenTake puts the take on kTrack; the case wants it on the source.
+    source.takes.push_back (*take);
+    clone.takes.clear();
+    clone.regions.clear();
+    source.regions.push_back (*regionFromTake (*take, 0, 9600));
+
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new ReverseRegionAction (session, engine, kTrack + 1, 0)), "the reverse was refused"))
+        return ctx.verdict();
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new CloneTrackAction (session, engine, kTrack + 1, kTrack)), "the clone was refused")
+        || ! ctx.expect (clone.takes.size() == 1 && clone.regions.size() == 1, "the clone did not copy the take and region"))
+        return ctx.verdict();
+    const auto copyId = clone.takes[0].id;
+    ctx.expect (copyId != take->id, "the clone's take kept the source's id");
+    ctx.expect (clone.regions[0].reversedFrom && clone.regions[0].reversedFrom->takeId == copyId,
+                "the clone's reversed region remembers the source track's take");
+
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new ReverseRegionAction (session, engine, kTrack, 0)), "reversing the clone back was refused");
+    ctx.expect (clone.regions[0].file == take->file && clone.regions[0].takeId == copyId,
+                "reversing the clone back did not name the clone's take");
+    return ctx.verdict();
+}
+
 // Join keeps a take only while the result still reads that take alone: two
 // halves of one take rejoin naming it, two loop passes that share a file and
 // abut join naming neither, and regions of two takes render into a new file
@@ -1533,6 +1572,9 @@ const ScenarioRegistrar switchTakeRegistrar { Scenario {
 const ScenarioRegistrar seamMoveRegistrar { Scenario {
     "take.seam_move_is_one_step", { "take", "comp", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (seamMoveIsOneStep, ctx); } } };
+const ScenarioRegistrar cloneReverseRegistrar { Scenario {
+    "take.clone_keeps_reverse_take", { "take", "region", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (cloneKeepsReverseTake, ctx); } } };
 const ScenarioRegistrar joinRegistrar { Scenario {
     "take.join_names_a_take_only_while_it_reads_it", { "take", "region", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (joinNamesATakeOnlyWhileItReadsIt, ctx); } } };

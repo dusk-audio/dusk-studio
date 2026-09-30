@@ -3276,7 +3276,14 @@ void forEachConsolidatedPath (Session& s, Visit&& visit)
     {
         auto& track = s.track (t);
         for (auto& r : track.regions)
+        {
             visit (r.file);
+            if (r.reversedFrom)
+            {
+                visit (r.reversedFrom->render);
+                visit (r.reversedFrom->file);
+            }
+        }
         for (auto& take : track.takes)
             visit (take.file);
         if (track.frozenAudioPath.isNotEmpty())
@@ -3375,7 +3382,15 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
     {
         auto& track = s.track (t);
         for (auto& r : track.regions)
+        {
             plan (r.file);
+            // What a reverse would go back to is not audio the session plays, so a
+            // missing one is not reported; one that is there goes along.
+            if (r.reversedFrom)
+                for (const auto& kept : { r.reversedFrom->render, r.reversedFrom->file })
+                    if (kept.existsAsFile())
+                        plan (kept);
+        }
         for (auto& take : track.takes)
             plan (take.file);
         if (track.frozenAudioPath.isNotEmpty())

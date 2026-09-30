@@ -977,8 +977,8 @@ struct AudioRegion
     // again plays that span forward instead of rendering the render in reverse.
     struct ReverseSource
     {
-        decltype (file) render;
-        decltype (file) file;
+        decltype (AudioRegion::file) render;
+        decltype (AudioRegion::file) file;
         std::int64_t sourceOffset = 0;
         std::int64_t lengthInSamples = 0;
         TakeId takeId = 0;
