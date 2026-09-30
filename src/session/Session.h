@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -62,11 +63,12 @@ struct AutomationPoint
 
     bool operator== (const AutomationPoint& o) const noexcept
     {
-        // Bit-exact compares (JUCE's exactlyEqual) - these are value-identity checks, not
-        // tolerance compares, and exactlyEqual silences -Wfloat-equal (a CI -Werror).
+        // Exact compares - these are value-identity checks, not tolerance compares, and
+        // std::equal_to keeps -Wfloat-equal (a CI -Werror) quiet.
+        const std::equal_to<float> same;
         return timeSamples == o.timeSamples
-            && juce::exactlyEqual (value, o.value)
-            && juce::exactlyEqual (recordedAtBPM, o.recordedAtBPM);
+            && same (value, o.value)
+            && same (recordedAtBPM, o.recordedAtBPM);
     }
     bool operator!= (const AutomationPoint& o) const noexcept { return ! (*this == o); }
 };
@@ -906,18 +908,20 @@ enum class FadeShape : int
 
 // Used by PlaybackEngine for audio + the audio editor for envelope
 // painting - keep in sync.
+constexpr float kFadePi = 3.141592653589793238f;
+
 inline float applyFadeShape (float t, FadeShape s) noexcept
 {
     t = std::clamp (t, 0.0f, 1.0f);
     switch (s)
     {
         case FadeShape::Linear:      return t;
-        case FadeShape::EqualPower:  return std::sin (t * juce::MathConstants<float>::halfPi);
+        case FadeShape::EqualPower:  return std::sin (t * kFadePi * 0.5f);
         case FadeShape::Sigmoid:     return t * t * (3.0f - 2.0f * t);
         case FadeShape::Exp:         return t * t;
         case FadeShape::Log:         return 1.0f - (1.0f - t) * (1.0f - t);
         case FadeShape::RaisedCosine:
-            return 0.5f * (1.0f - std::cos (t * juce::MathConstants<float>::pi));
+            return 0.5f * (1.0f - std::cos (t * kFadePi));
     }
     return t;
 }

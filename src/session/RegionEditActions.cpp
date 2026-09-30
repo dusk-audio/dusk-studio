@@ -957,7 +957,8 @@ void applyNativeSlot (AudioEngine& engine, const CloneNativeSnapshot& s,
         // Keep the reference so a save right after the clone still round-trips
         // it and the load can be retried - same as a failed session restore.
         markFailed();
-        juce::ignoreUnused (label, idx);
+        (void) label;
+        (void) idx;
         DBG ("CloneTrackAction: " << label << " restore failed on strip " << idx
               << " (" << s.path << "): " << err.c_str());
     }
@@ -1349,8 +1350,8 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
                 [&] { strip.markNativeClapRestoreFailed(); });
             t.nativeClapPath = s.clap.path;
             t.nativeClapPluginId = s.clap.pluginId;
-            t.nativeClapStateBase64 = s.clap.state.empty() ? juce::String()
-                : juce::Base64::toBase64 (s.clap.state.data(), s.clap.state.size());
+            t.nativeClapStateBase64 = s.clap.state.empty() ? std::string()
+                : dusk::base64::encode (s.clap.state.data(), s.clap.state.size());
             nativeSelected = true;
         }
 #endif
@@ -1369,8 +1370,8 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
                 [&] { strip.markNativeLv2RestoreFailed(); });
             t.nativeLv2Path = s.lv2.path;
             t.nativeLv2PluginId = s.lv2.pluginId;
-            t.nativeLv2StateBase64 = s.lv2.state.empty() ? juce::String()
-                : juce::Base64::toBase64 (s.lv2.state.data(), s.lv2.state.size());
+            t.nativeLv2StateBase64 = s.lv2.state.empty() ? std::string()
+                : dusk::base64::encode (s.lv2.state.data(), s.lv2.state.size());
             nativeSelected = true;
         }
 #endif
@@ -1389,8 +1390,8 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
                 [&] { strip.markNativeVst3RestoreFailed(); });
             t.nativeVst3Path = s.vst3.path;
             t.nativeVst3PluginId = s.vst3.pluginId;
-            t.nativeVst3StateBase64 = s.vst3.state.empty() ? juce::String()
-                : juce::Base64::toBase64 (s.vst3.state.data(), s.vst3.state.size());
+            t.nativeVst3StateBase64 = s.vst3.state.empty() ? std::string()
+                : dusk::base64::encode (s.vst3.state.data(), s.vst3.state.size());
             nativeSelected = true;
         }
 #endif
@@ -1414,8 +1415,8 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
                       << " (" << s.auIdentifier << "): " << auErr.c_str());
             }
             t.nativeAuIdentifier = s.auIdentifier;
-            t.nativeAuStateBase64 = s.auState.empty() ? juce::String()
-                : juce::Base64::toBase64 (s.auState.data(), s.auState.size());
+            t.nativeAuStateBase64 = s.auState.empty() ? std::string()
+                : dusk::base64::encode (s.auState.data(), s.auState.size());
             nativeSelected = true;
         }
 #endif
@@ -1538,8 +1539,8 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
         // with no multisample has to clear whatever the destination held.
         t.nativeMultisamplePath = s.multisamplePath;
         t.nativeMultisampleStateBase64 = s.multisampleState.empty()
-            ? juce::String()
-            : juce::Base64::toBase64 (s.multisampleState.data(), s.multisampleState.size());
+            ? std::string()
+            : dusk::base64::encode (s.multisampleState.data(), s.multisampleState.size());
     }
 #endif
 

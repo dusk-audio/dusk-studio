@@ -3,6 +3,7 @@
 #include "../foundation/Decibels.h"
 #include "../session/TakeComp.h"
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -15,7 +16,8 @@ namespace duskstudio
 {
 namespace
 {
-std::filesystem::path audioPath (const juce::File& file)
+template <typename FileType>
+std::filesystem::path audioPath (const FileType& file)
 {
     return std::filesystem::u8path (file.getFullPathName().toStdString());
 }
@@ -24,6 +26,8 @@ std::filesystem::path audioPath (const juce::File& file)
 // comfortably longer than the prefetch thread needs to re-warm a reader
 // after the backward seek at a loop wrap.
 constexpr int kLoopCacheSamples = 32768;
+
+constexpr float kPi = 3.14159265358979f;
 
 // Declick ramp applied on both sides of an in-block loop seam. 64 samples
 // matches the punch-in click-mask fade (docs/DuskStudio.md §5b).
@@ -42,8 +46,6 @@ constexpr int kSwapFadeSamples = 512;
 // longer than kSwapWarmWait: after that it is handed over regardless.
 constexpr std::int64_t kSwapWarmFrames = 8192;
 constexpr auto kSwapWarmWait = std::chrono::milliseconds (300);
-
-constexpr float kPi = 3.14159265358979f;
 
 std::atomic<int> liveStreams { 0 };
 } // namespace
@@ -105,7 +107,7 @@ void PlaybackEngine::refreshLiveRegionParams()
         {
             for (const auto& region : regs)
             {
-                if (region.file != rs.sourceFile
+                if (audioPath (region.file) != rs.sourcePath
                     || region.timelineStart   != rs.timelineStart
                     || region.lengthInSamples != rs.lengthInSamples) continue;
                 rs.gainLinear = dusk::audio::decibelsToGain (
@@ -208,7 +210,7 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
 
         RegionStream rs;
         rs.reader          = std::move (buffered);
-        rs.sourceFile      = region.file;
+        rs.sourcePath      = audioPath (region.file);
         rs.timelineStart   = region.timelineStart;
         rs.lengthInSamples = region.lengthInSamples;
         rs.sourceOffset    = region.sourceOffset;
@@ -304,7 +306,7 @@ void PlaybackEngine::primeLoopCache (PerTrackStream& stream, std::int64_t loopSt
         // A fresh plain reader for the fill: the region's own buffered
         // reader would return silence on a cold window, and bumping its
         // window here would fight the audio thread's forward prefetch.
-        auto fillReader = dusk::audio::FileReader::open (audioPath (rs.sourceFile));
+        auto fillReader = dusk::audio::FileReader::open (rs.sourcePath);
         if (fillReader == nullptr) continue;
 
         const int len = (int) (cacheEnd - cacheStart);
@@ -571,8 +573,7 @@ void PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSa
             // g rises with distance from the seam: ~0 at the sample next to
             // the wrap, 1 at the far edge of the fade window - so multiply by
             // g directly to silence the seam and leave the far edge untouched.
-            const float g = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::pi
-                                                     * (float) i / (float) kLoopSeamFade);
+            const float g = 0.5f - 0.5f * std::cos (kPi * (float) i / (float) kLoopSeamFade);
             outL[idx] *= g;
             if (outR != nullptr) outR[idx] *= g;
         }
@@ -580,8 +581,7 @@ void PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSa
         {
             const int idx = seam + i;
             if (idx >= numSamples) break;
-            const float g = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::pi
-                                                     * (float) i / (float) kLoopSeamFade);
+            const float g = 0.5f - 0.5f * std::cos (kPi * (float) i / (float) kLoopSeamFade);
             outL[idx] *= g;
             if (outR != nullptr) outR[idx] *= g;
         }
@@ -620,7 +620,7 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         // If this fires, prepare() was called with a maxBlockSize smaller than
         // the host's actual block size. Skip silently in release so we don't
         // crash, but make the misconfiguration visible in debug.
-        jassert (withinSamples <= readScratch.numSamples());
+        assert (withinSamples <= readScratch.numSamples());
         if (withinSamples > readScratch.numSamples()) continue;
 
         const std::int64_t readStart = r.sourceOffset + (firstWithin - r.timelineStart);

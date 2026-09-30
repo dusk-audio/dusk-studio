@@ -20,8 +20,6 @@ src/engine/FileImporter.h	4
 src/engine/JuceCompat.h	5
 src/engine/MasteringPlayer.cpp	2
 src/engine/MasteringPlayer.h	4
-src/engine/PlaybackEngine.cpp	3
-src/engine/PlaybackEngine.h	2
 src/engine/PluginManager.cpp	105
 src/engine/PluginManager.h	29
 src/engine/PluginSlot.cpp	69
@@ -48,10 +46,10 @@ src/session/MarkerEditActions.h	4
 src/session/MidiBindings.cpp	44
 src/session/MidiBindings.h	8
 src/session/ParamEditAction.h	2
-src/session/RegionEditActions.cpp	31
+src/session/RegionEditActions.cpp	20
 src/session/RegionEditActions.h	4
 src/session/Session.cpp	10
-src/session/Session.h	75
+src/session/Session.h	71
 src/session/SessionSerializer.cpp	77
 src/session/SessionSerializer.h	13
 src/session/SessionTemplates.cpp	3

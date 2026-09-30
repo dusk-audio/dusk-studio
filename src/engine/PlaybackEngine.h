@@ -1,10 +1,10 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include "audiofile/BufferedFileReader.h"
 #include "../foundation/PlanarBuffer.h"
@@ -98,7 +98,7 @@ private:
     struct RegionStream
     {
         std::unique_ptr<dusk::audio::BufferedFileReader> reader;
-        juce::File  sourceFile;
+        std::filesystem::path sourcePath;
         std::int64_t timelineStart   = 0;
         std::int64_t lengthInSamples = 0;
         std::int64_t sourceOffset    = 0;
