@@ -66,16 +66,26 @@ AudioTake takeAt (TakeId id, const juce::File& file, std::int64_t start, std::in
     take.sourceOffset    = offset;
     return take;
 }
+// A track of its own session, so a carve can give a region a take.
+struct CarveTrack
+{
+    std::unique_ptr<Session> session = std::make_unique<Session>();
+    Track& track = session->track (0);
+    std::vector<AudioRegion>& regs = track.regions;
+
+    void carve (std::int64_t start, std::int64_t end) { carveRegions (*session, track, start, end); }
+};
 } // namespace
 
 TEST_CASE ("carveRegions removes, splits and trims what the range covers", "[take][comp]")
 {
-    std::vector<AudioRegion> regs;
+    CarveTrack t;
+    auto& regs = t.regs;
 
     SECTION ("a region inside the range goes")
     {
         regs.push_back (regionAt (1000, 1000));
-        carveRegions (regs, 500, 2500);
+        t.carve (500, 2500);
         REQUIRE (regs.empty());
     }
 
@@ -85,7 +95,7 @@ TEST_CASE ("carveRegions removes, splits and trims what the range covers", "[tak
         spanning.fadeInSamples  = 10;
         spanning.fadeOutSamples = 20;
         regs.push_back (spanning);
-        carveRegions (regs, 4000, 6000);
+        t.carve (4000, 6000);
         REQUIRE (regs.size() == 2);
 
         const auto* left  = startingAt (regs, 0);
@@ -108,7 +118,7 @@ TEST_CASE ("carveRegions removes, splits and trims what the range covers", "[tak
     SECTION ("a region over the left edge is trimmed to reach one fade into the range")
     {
         regs.push_back (regionAt (0, 5000, 7));
-        carveRegions (regs, 4000, 8000);
+        t.carve (4000, 8000);
         REQUIRE (regs.size() == 1);
         CHECK (regs[0].timelineStart == 0);
         CHECK (regs[0].sourceOffset == 7);
@@ -120,7 +130,7 @@ TEST_CASE ("carveRegions removes, splits and trims what the range covers", "[tak
     SECTION ("a region over the right edge starts one fade before the range end")
     {
         regs.push_back (regionAt (6000, 4000, 50));
-        carveRegions (regs, 4000, 8000);
+        t.carve (4000, 8000);
         REQUIRE (regs.size() == 1);
         CHECK (regs[0].timelineStart == 8000 - kPunchFadeSamples);
         CHECK (endOf (regs[0]) == 10000);
@@ -132,7 +142,7 @@ TEST_CASE ("carveRegions removes, splits and trims what the range covers", "[tak
     SECTION ("a region ending inside the seam keeps its own end")
     {
         regs.push_back (regionAt (0, 4020, 7));
-        carveRegions (regs, 4000, 8000);
+        t.carve (4000, 8000);
         REQUIRE (regs.size() == 1);
         CHECK (regs[0].timelineStart == 0);
         CHECK (regs[0].sourceOffset == 7);
@@ -144,7 +154,7 @@ TEST_CASE ("carveRegions removes, splits and trims what the range covers", "[tak
     SECTION ("a region starting inside the seam keeps its own start and source offset")
     {
         regs.push_back (regionAt (7980, 2020, 0));
-        carveRegions (regs, 4000, 8000);
+        t.carve (4000, 8000);
         REQUIRE (regs.size() == 1);
         CHECK (regs[0].timelineStart == 7980);
         CHECK (regs[0].sourceOffset == 0);
@@ -157,7 +167,7 @@ TEST_CASE ("carveRegions removes, splits and trims what the range covers", "[tak
     {
         regs.push_back (regionAt (0, 4000));
         regs.push_back (regionAt (8000, 4000, 3));
-        carveRegions (regs, 4000, 8000);
+        t.carve (4000, 8000);
         REQUIRE (regs.size() == 2);
         CHECK (regs[0].timelineStart == 0);
         CHECK (regs[0].lengthInSamples == 4000);
@@ -165,6 +175,9 @@ TEST_CASE ("carveRegions removes, splits and trims what the range covers", "[tak
         CHECK (regs[1].timelineStart == 8000);
         CHECK (regs[1].sourceOffset == 3);
         CHECK (regs[1].fadeInSamples == 0);
+        CHECK (t.track.takes.empty());
+        CHECK (regs[0].takeId == 0);
+        CHECK (regs[1].takeId == 0);
     }
 }
 
@@ -173,10 +186,13 @@ TEST_CASE ("carveRegions seam fades are 64-sample raised cosines capped at half 
 {
     REQUIRE (kPunchFadeSamples == 64);
 
+    CarveTrack t;
+    auto& regs = t.regs;
+
     SECTION ("a short range halves the seam fade")
     {
-        std::vector<AudioRegion> regs { regionAt (0, 10000) };
-        carveRegions (regs, 4000, 4100);
+        regs = { regionAt (0, 10000) };
+        t.carve (4000, 4100);
         REQUIRE (regs.size() == 2);
         const auto* left  = startingAt (regs, 0);
         const auto* right = startingAt (regs, 4100 - 50);
@@ -189,8 +205,8 @@ TEST_CASE ("carveRegions seam fades are 64-sample raised cosines capped at half 
 
     SECTION ("a one-sample range cuts without a fade")
     {
-        std::vector<AudioRegion> regs { regionAt (0, 10000) };
-        carveRegions (regs, 4000, 4001);
+        regs = { regionAt (0, 10000) };
+        t.carve (4000, 4001);
         REQUIRE (regs.size() == 2);
         CHECK (startingAt (regs, 0)->fadeOutSamples == 0);
         CHECK (endOf (*startingAt (regs, 0)) == 4000);
@@ -201,8 +217,8 @@ TEST_CASE ("carveRegions seam fades are 64-sample raised cosines capped at half 
     {
         auto r = regionAt (3900, 200);
         r.fadeInSamples = 150;
-        std::vector<AudioRegion> regs { r };
-        carveRegions (regs, 4000, 8000);
+        regs = { r };
+        t.carve (4000, 8000);
         REQUIRE (regs.size() == 1);
         CHECK (regs[0].lengthInSamples == 100 + kPunchFadeSamples);
         CHECK (regs[0].fadeInSamples + regs[0].fadeOutSamples <= regs[0].lengthInSamples);
@@ -215,6 +231,136 @@ TEST_CASE ("carveRegions seam fades are 64-sample raised cosines capped at half 
         CHECK_THAT (applyFadeShape (1.0f, FadeShape::RaisedCosine), WithinAbs (1.0f, 1e-6));
         CHECK_THAT (applyFadeShape (0.25f, FadeShape::RaisedCosine),
                     WithinAbs (0.5f * (1.0f - std::cos (0.25f * 3.14159265f)), 1e-6));
+    }
+}
+
+TEST_CASE ("carveRegions makes a region naming no take a take of its own before cutting it",
+           "[take][comp][regression]")
+{
+    using Span = std::pair<std::int64_t, std::int64_t>;
+    CarveTrack t;
+    const juce::File importedFile ("/tmp/imported.wav"), recordedFile ("/tmp/recorded.wav");
+    t.track.takes.push_back (takeAt (5, recordedFile, 20000, 4000, 0));
+    t.session->seedTakeIdAllocator (5);
+
+    auto plain = regionAt (0, 10000, 100);
+    plain.file = importedFile;
+    plain.numChannels = 2;
+    plain.provenance = { 0, 0, false };
+    auto recorded = regionAt (20000, 4000, 0);
+    recorded.file = recordedFile;
+    recorded.takeId = 5;
+    auto elsewhere = regionAt (30000, 1000, 0);
+    elsewhere.file = importedFile;
+    t.regs = { plain, recorded, elsewhere };
+
+    t.carve (4000, 22000);
+
+    REQUIRE (t.track.takes.size() == 2);
+    const auto& adopted = t.track.takes[1];
+    CHECK (adopted.id == 6);
+    CHECK (adopted.name == "Take 6");
+    CHECK (adopted.file == importedFile);
+    CHECK (adopted.timelineStart == 0);
+    CHECK (adopted.lengthInSamples == 10000);
+    CHECK (adopted.sourceOffset == 100);
+    CHECK (adopted.numChannels == 2);
+    CHECK (t.track.takes[0].id == 5);
+    CHECK (takeCoverage (t.track, 6) == std::vector<Span> { { 0, 4000 + kPunchFadeSamples } });
+    const auto* left = startingAt (t.regs, 0);
+    REQUIRE (left != nullptr);
+    CHECK (left->takeId == 6);
+    const auto* after = startingAt (t.regs, 30000);
+    REQUIRE (after != nullptr);
+    CHECK (after->takeId == 0);
+    CHECK (startingAt (t.regs, 22000 - kPunchFadeSamples)->takeId == 5);
+}
+
+TEST_CASE ("nextTakeName numbers past the highest take still named Take N", "[take][comp]")
+{
+    auto session = std::make_unique<Session>();
+    auto& track = session->track (0);
+    CHECK (nextTakeName (track) == "Take 1");
+    for (const char* name : { "Take 2", "Take 10", "Take 11 keeper", "Lead", "Take", "Take -4",
+                              "take 40", "Take 1234567890", "Take 3" })
+    {
+        auto take = takeAt (1, juce::File(), 0, 10, 0);
+        take.name = name;
+        track.takes.push_back (take);
+    }
+    CHECK (nextTakeName (track) == "Take 11");
+}
+
+TEST_CASE ("A take made of a region naming no take joins the track in recording order",
+           "[take][comp][regression]")
+{
+    auto session = std::make_unique<Session>();
+    auto& track = session->track (0);
+    const juce::File plainFile ("/tmp/plain.wav");
+    auto older = takeAt (1, juce::File ("/tmp/older.wav"), 0, 48000, 0);
+    older.provenance.capturedAtMs = 100;
+    auto newer = takeAt (2, juce::File ("/tmp/newer.wav"), 0, 48000, 0);
+    newer.provenance = { 300, 2, false };
+    track.takes = { older, newer };
+    session->seedTakeIdAllocator (2);
+    auto plain = regionAt (1000, 2000, 0);
+    plain.file = plainFile;
+    const auto idsInOrder = [&track]
+    {
+        std::vector<TakeId> ids;
+        for (const auto& take : track.takes) ids.push_back (take.id);
+        return ids;
+    };
+
+    SECTION ("without a capture time it goes just before the take being placed")
+    {
+        track.regions = { plain };
+        promoteTakeRange (*session, track, track.takes[1], 0, 48000);
+        CHECK (idsInOrder() == std::vector<TakeId> { 1, 3, 2 });
+        CHECK (track.takes[1].file == plainFile);
+        CHECK (track.takes[1].name == "Take 3");
+    }
+
+    SECTION ("with a capture time it goes before the first take captured after it")
+    {
+        plain.provenance.capturedAtMs = 200;
+        track.regions = { plain };
+        promoteTakeRange (*session, track, track.takes[0], 0, 48000);
+        CHECK (idsInOrder() == std::vector<TakeId> { 1, 3, 2 });
+    }
+
+    SECTION ("a capture time shared with a take is ordered by loop pass")
+    {
+        plain.provenance = { 300, 1, false };
+        track.regions = { plain };
+        promoteTakeRange (*session, track, track.takes[0], 0, 48000);
+        CHECK (idsInOrder() == std::vector<TakeId> { 1, 3, 2 });
+    }
+
+    SECTION ("captured after every take it goes last")
+    {
+        plain.provenance.capturedAtMs = 400;
+        track.regions = { plain };
+        promoteTakeRange (*session, track, track.takes[0], 0, 48000);
+        CHECK (idsInOrder() == std::vector<TakeId> { 1, 2, 3 });
+    }
+
+    SECTION ("placing a take the track does not hold yet puts it last, several in timeline order")
+    {
+        auto later = plain;
+        later.timelineStart = 5000;
+        later.file = juce::File ("/tmp/plain-later.wav");
+        track.regions = { later, plain };
+        auto incoming = takeAt (9, juce::File ("/tmp/incoming.wav"), 0, 48000, 0);
+        session->seedTakeIdAllocator (9);
+        promoteTakeRange (*session, track, incoming, 0, 48000);
+        CHECK (idsInOrder() == std::vector<TakeId> { 1, 2, 10, 11 });
+        CHECK (track.takes[2].file == plainFile);
+        CHECK (track.takes[3].file == later.file);
+        CHECK (track.takes[2].name == "Take 3");
+        CHECK (track.takes[3].name == "Take 4");
+        REQUIRE (track.regions.size() == 1);
+        CHECK (track.regions[0].takeId == 9);
     }
 }
 
@@ -284,7 +430,7 @@ TEST_CASE ("promoteTakeRange plays the take over the range and leaves the rest a
     track.regions.push_back (live);
 
     const auto before = track.regions;
-    promoteTakeRange (track, track.takes[1], 10000, 20000);
+    promoteTakeRange (*session, track, track.takes[1], 10000, 20000);
 
     REQUIRE (track.regions.size() == 3);
     const auto* promoted = startingAt (track.regions, 10000);
@@ -322,7 +468,7 @@ TEST_CASE ("promoteTakeRange plays the take over the range and leaves the rest a
     SECTION ("the range is clamped to the take")
     {
         track.takes.push_back (takeAt (3, fileB, 30000, 5000, 0));
-        promoteTakeRange (track, track.takes[2], 25000, 60000);
+        promoteTakeRange (*session, track, track.takes[2], 25000, 60000);
         const auto* clamped = startingAt (track.regions, 30000);
         REQUIRE (clamped != nullptr);
         CHECK (clamped->takeId == 3);
@@ -335,7 +481,7 @@ TEST_CASE ("promoteTakeRange plays the take over the range and leaves the rest a
     {
         track.takes.push_back (takeAt (3, fileB, 30000, 5000, 0));
         const auto untouched = track.regions.size();
-        promoteTakeRange (track, track.takes[2], 40000, 45000);
+        promoteTakeRange (*session, track, track.takes[2], 40000, 45000);
         CHECK (track.regions.size() == untouched);
     }
 }
@@ -345,7 +491,7 @@ TEST_CASE ("promoteTakeRange onto empty timeline adds no seam fades", "[take][co
     auto session = std::make_unique<Session>();
     auto& track = session->track (0);
     track.takes.push_back (takeAt (4, juce::File ("/tmp/take-c.wav"), 1000, 2000, 0));
-    promoteTakeRange (track, track.takes[0], 0, 99999);
+    promoteTakeRange (*session, track, track.takes[0], 0, 99999);
     REQUIRE (track.regions.size() == 1);
     CHECK (track.regions[0].timelineStart == 1000);
     CHECK (track.regions[0].lengthInSamples == 2000);

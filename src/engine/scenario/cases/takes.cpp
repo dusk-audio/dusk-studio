@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -33,6 +34,10 @@ namespace
 constexpr int kTrack = 5;
 // The click-mask crossfade a punch leaves against the region it cuts into.
 constexpr std::int64_t kPunchFade = 64;
+
+// The render API takes the framework's file type; named through Session's own
+// getter so this file stays free of the framework header.
+using SessionFile = std::decay_t<decltype (std::declval<const Session&>().getSessionDirectory())>;
 
 AudioRegion regionAt (std::int64_t start, std::int64_t length, std::int64_t offset = 0)
 {
@@ -526,6 +531,78 @@ ScenarioResult promoteRangeReplacesThatSpan (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// A region that names no take (an imported file, a reversed region, a 0.14
+// recording) becomes a take of its own before a promote or a recording cuts
+// into it, so no part of its audio is left out of every take. Undo removes that
+// take again and ends an audition of it; redo brings it back under its id.
+ScenarioResult carveAdoptsARegionNamingNoTake (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (kTrack);
+    auto& regs = track.regions;
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+
+    auto plain = regionAt (0, 48000, 200);
+    plain.file = SessionFile ((ctx.tempDir() / "imported.wav").u8string().c_str());
+    regs.push_back (plain);
+    const auto promoted = addTake (ctx, 0, 48000, 500);
+
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new PromoteTakeRangeAction (session, engine, kTrack, promoted, 12000, 24000)),
+                      "promoting over a region naming no take was refused"))
+        return ctx.verdict();
+    if (! ctx.expect (track.takes.size() == 2 && track.takes[1].id == promoted,
+                      "the region did not become a take ahead of the promoted one; "
+                          + std::to_string (track.takes.size()) + " takes on the track"))
+        return ctx.verdict();
+    const auto adopted = track.takes[0];
+    ctx.expect (adopted.id != 0 && adopted.file == plain.file && adopted.name == "Take 2",
+                "the adopted take is not the region's file under a new take name");
+    ctx.expect (takeIsWhole (ctx, adopted.id, 0, 48000, 200), "the adopted take is not the region as it stood");
+    const std::vector<Span> adoptedSpans { { 0, 12000 + kPunchFade }, { 24000 - kPunchFade, 48000 } };
+    ctx.note ("the adopted take plays " + spansText (takeCoverage (track, adopted.id)));
+    ctx.expect (takeCoverage (track, adopted.id) == adoptedSpans,
+                "the carved pieces of the region do not name the adopted take");
+
+    engine.setTakeAudition (kTrack, adopted.id);
+    ctx.expect (undo.undo(), "undo of the promote was refused");
+    ctx.expect (track.takes.size() == 1 && track.takes[0].id == promoted, "undo left the adopted take on the track");
+    ctx.expect (regs.size() == 1 && regs[0].takeId == 0 && regs[0].file == plain.file
+                    && regs[0].timelineStart == 0 && regs[0].lengthInSamples == 48000,
+                "undo did not put the region back whole, naming no take");
+    ctx.expect (session.takeAudition.trackIdx == -1 && session.takeAudition.takeId == 0,
+                "undo left the audition on the adopted take it removed");
+    ctx.expect (undo.redo() && track.takes.size() == 2 && track.takes[0].id == adopted.id
+                    && takeCoverage (track, adopted.id) == adoptedSpans,
+                "redo did not bring the adopted take back under its id");
+    ctx.expect (session.takeAudition.takeId == 0, "redo brought the audition back");
+
+    undo.clearUndoHistory();
+    regs.clear();
+    track.takes.clear();
+    auto older = regionAt (4800, 4800, 1000);
+    older.file = SessionFile ((ctx.tempDir() / "older.wav").u8string().c_str());
+    regs.push_back (older);
+    armTrack (ctx);
+    if (! recordSpan (ctx, 2400, 12000)) return ctx.verdict();
+    if (! ctx.expect (track.takes.size() == 2, "recording over a region naming no take did not keep it as a take; "
+                                                   + std::to_string (track.takes.size()) + " takes on the track"))
+        return ctx.verdict();
+    const auto kept = track.takes[0];
+    ctx.expect (kept.file == older.file && takeIsWhole (ctx, kept.id, 4800, 4800, 1000) && kept.name == "Take 1",
+                "the covered region's audio is not the first take, whole");
+    ctx.expect (track.takes[1].name == "Take 2" && regs.size() == 1 && regs[0].takeId == track.takes[1].id,
+                "the recording is not the second take on the timeline");
+    ctx.expect (undo.undo() && track.takes.empty() && regs.size() == 1 && regs[0].takeId == 0
+                    && regs[0].file == older.file,
+                "undo of the recording did not remove both takes and put the region back naming none");
+    ctx.expect (undo.redo() && track.takes.size() == 2 && track.takes[0].id == kept.id,
+                "redo did not bring the kept take back under its id");
+    return ctx.verdict();
+}
+
 // Deleting a take takes every region cut from it off the timeline; undo puts the
 // take back at its place in recording order and the regions back as they were.
 ScenarioResult deleteTakeRemovesItsRegions (ScenarioContext& ctx)
@@ -538,8 +615,8 @@ ScenarioResult deleteTakeRemovesItsRegions (ScenarioContext& ctx)
     const auto first = seedRegion (ctx, 0, 24000, 0);
     const auto second = addTake (ctx, 0, 48000, 0);
     const auto third = seedRegion (ctx, 30000, 9600, 0);
-    promoteTakeRange (track, *findTake (track, second), 6000, 12000);
-    promoteTakeRange (track, *findTake (track, second), 26000, 28000);
+    promoteTakeRange (ctx.session(), track, *findTake (track, second), 6000, 12000);
+    promoteTakeRange (ctx.session(), track, *findTake (track, second), 26000, 28000);
     const auto takesBefore = track.takes;
     const auto regionsBefore = regs;
     if (! ctx.expect (takeCoverage (track, second).size() == 2, "the setup did not put the second take on the timeline twice"))
@@ -591,6 +668,8 @@ ScenarioResult deleteTakeRemovesItsRegions (ScenarioContext& ctx)
 
 // Deleting the auditioned take, or cloning another track over its track, ends
 // the audition; undo brings the take back without auditioning it again.
+// Undoing the recording that added the auditioned take ends it too, and redo
+// brings the take back without the audition.
 ScenarioResult auditionEndsWhenItsTakeGoes (ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
@@ -636,6 +715,16 @@ ScenarioResult auditionEndsWhenItsTakeGoes (ScenarioContext& ctx)
     ctx.expect (nothingAuditioned(), "a clone over the auditioned track left the audition set");
     ctx.expect (undo.undo() && findTake (track, second) != nullptr && nothingAuditioned(),
                 "undoing the clone brought the audition back");
+
+    armTrack (ctx);
+    if (! recordSpan (ctx, 30000, 36000)) return ctx.verdict();
+    const auto recorded = track.takes.back().id;
+    engine.setTakeAudition (kTrack, recorded);
+    ctx.expect (auditioning (recorded), "the recorded take could not be auditioned");
+    ctx.expect (undo.undo() && findTake (track, recorded) == nullptr, "undo did not remove the recorded take");
+    ctx.expect (nothingAuditioned(), "undoing the recording left the audition on its take");
+    ctx.expect (undo.redo() && findTake (track, recorded) != nullptr, "redo did not bring the recorded take back");
+    ctx.expect (nothingAuditioned(), "redo brought the audition back with the recorded take");
     return ctx.verdict();
 }
 
@@ -683,10 +772,6 @@ ScenarioResult renameTakeRoundTrips (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
-// The render API takes the framework's file type; named through Session's own
-// getter so this file stays free of the framework header.
-using SessionFile = std::decay_t<decltype (std::declval<const Session&>().getSessionDirectory())>;
-
 bool writeMono (const std::filesystem::path& path, const std::vector<float>& samples)
 {
     dusk::audio::WriteSpec spec;
@@ -706,17 +791,39 @@ float peakOf (const std::vector<float>& samples)
     return peak;
 }
 
-struct AuditionBounce
+struct AuditionRender
 {
     std::unique_ptr<BounceEngine> bounce;
     std::atomic<bool> finished { false };
-    bool ok = false;
+    std::atomic<bool> ok { false };
     std::string error;
+    std::filesystem::path printed;
 };
+
+enum class AuditionLeg { RealtimeMix, Mix, Stems, Freeze };
+
+std::string legName (AuditionLeg leg)
+{
+    switch (leg)
+    {
+        case AuditionLeg::RealtimeMix: return "the realtime mixdown";
+        case AuditionLeg::Mix:         return "the mixdown";
+        case AuditionLeg::Stems:       return "the stems bounce";
+        case AuditionLeg::Freeze:      return "the freeze";
+    }
+    return {};
+}
+
+std::filesystem::path pathOf (const SessionFile& file)
+{
+    return std::filesystem::u8path (file.getFullPathName().toStdString());
+}
 
 // The track plays a tone from its region and has a silent take over the same
 // span. Auditioning the silent take silences the track's playback, and a
-// master bounce taken during the audition still prints the tone.
+// realtime mixdown, an offline mixdown, a stems bounce and a freeze taken during
+// the audition all still print the tone. The realtime pass is clocked by
+// pumped blocks, as a device would clock it.
 std::optional<ScenarioResult> auditionNeverReachesBounce (ScenarioContext& ctx)
 {
     constexpr int kTrackIdx = 0;
@@ -774,41 +881,101 @@ std::optional<ScenarioResult> auditionNeverReachesBounce (ScenarioContext& ctx)
     transport.setLoopRange (0, 0);
     transport.setPlayhead (0);
 
-    auto run = std::make_shared<AuditionBounce>();
-    run->bounce = std::make_unique<BounceEngine> (engine, session);
-    ctx.cleanup ([run] { run->bounce.reset(); });
-    run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+    const std::vector<AuditionLeg> legs { AuditionLeg::RealtimeMix, AuditionLeg::Mix,
+                                          AuditionLeg::Stems, AuditionLeg::Freeze };
+    auto next = std::make_shared<std::function<void (std::size_t)>>();
+    std::weak_ptr<std::function<void (std::size_t)>> weakNext = next;
+    *next = [&ctx, &engine, &session, legs, weakNext, silent = silentTake.id] (std::size_t index)
     {
-        raw->ok = ok;
-        raw->error = std::move (error);
-        raw->finished.store (true, std::memory_order_release);
-    };
-    const auto out = ctx.sessionDir() / "bounce.wav";
-    if (! run->bounce->start (SessionFile (out.u8string().c_str()), ScenarioContext::kSampleRate, 1024, 1.0,
-                              BounceEngine::Mode::MasterMix, BounceEngine::Format::Wav, 320, 24))
-        return ScenarioResult::fail ("the bounce refused to start: " + run->bounce->getLastError());
+        if (index >= legs.size())
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        const auto leg = legs[index];
+        const auto label = legName (leg);
+        auto run = std::make_shared<AuditionRender>();
+        run->bounce = std::make_unique<BounceEngine> (engine, session);
+        ctx.cleanup ([run] { run->bounce.reset(); });
+        run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+        {
+            raw->error = std::move (error);
+            raw->ok.store (ok);
+            raw->finished.store (true, std::memory_order_release);
+        };
 
-    ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
-                   90000,
-                   [&ctx, run, out, silent = silentTake.id]
-                   {
-                       auto reader = dusk::audio::FileReader::open (out);
-                       if (ctx.expect (run->ok, "the bounce failed: " + run->error)
-                           && ctx.expect (reader != nullptr, "the bounce wrote no readable file"))
+        const auto out = ctx.sessionDir() / ("audition-" + std::to_string (index) + ".wav");
+        const SessionFile outFile (out.u8string().c_str());
+        const bool realtime = leg == AuditionLeg::RealtimeMix;
+        bool started = false;
+        switch (leg)
+        {
+            case AuditionLeg::RealtimeMix:
+            case AuditionLeg::Mix:
+                run->printed = out;
+                started = run->bounce->start (outFile, ScenarioContext::kSampleRate, 1024, 1.0,
+                                              BounceEngine::Mode::MasterMix, BounceEngine::Format::Wav,
+                                              320, 24, realtime);
+                break;
+            case AuditionLeg::Stems:
+                run->printed = pathOf (BounceEngine::stemOutputFile (
+                    outFile, kTrackIdx, session.track (kTrackIdx).name.toStdString()));
+                started = run->bounce->start (outFile, ScenarioContext::kSampleRate, 1024, 1.0,
+                                              BounceEngine::Mode::Stems, BounceEngine::Format::Wav, 320, 24);
+                break;
+            case AuditionLeg::Freeze:
+            {
+                SessionFile frozen;
+                std::int64_t length = 0;
+                if (! ctx.expect (engine.freezePrepare (kTrackIdx, frozen, length),
+                                  "freeze refused: " + engine.getLastFreezeError().toStdString()))
+                {
+                    ctx.complete (ctx.verdict());
+                    return;
+                }
+                run->printed = pathOf (frozen);
+                started = run->bounce->startFreeze (kTrackIdx, frozen, length, ScenarioContext::kSampleRate);
+                break;
+            }
+        }
+        if (! ctx.expect (started, label + " refused to start: " + run->bounce->getLastError()))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+
+        auto self = weakNext.lock();
+        ctx.waitUntil ([&ctx, run, realtime]
                        {
-                           std::vector<float> left ((std::size_t) kLength - 512);
-                           float* dest[] = { left.data() };
-                           reader->read (dest, 1, kStart + 256, (std::int64_t) left.size());
-                           const float printed = peakOf (left);
-                           ctx.note ("bounce peak over the region " + std::to_string (printed));
-                           ctx.expect (printed > 0.05f, "the bounce printed the auditioned silent take, not the region");
-                       }
-                       const auto& audition = ctx.session().takeAudition;
-                       ctx.expect (audition.trackIdx == kTrackIdx && audition.takeId == silent,
-                                   "the bounce changed the audition the user had set");
-                       ctx.complete (ctx.verdict());
-                   },
-                   "the bounce never finished");
+                           if (realtime) ctx.pump (8);
+                           return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering();
+                       },
+                       90000,
+                       [&ctx, &engine, run, label, realtime, silent, index, self]
+                       {
+                           auto reader = dusk::audio::FileReader::open (run->printed);
+                           if (ctx.expect (run->ok.load(), label + " failed: " + run->error)
+                               && ctx.expect (reader != nullptr, label + " wrote no readable file"))
+                           {
+                               std::vector<float> left ((std::size_t) kLength - 512);
+                               float* dest[] = { left.data() };
+                               reader->read (dest, 1, kStart + 256, (std::int64_t) left.size());
+                               const float printed = peakOf (left);
+                               ctx.note (label + " peak over the region " + std::to_string (printed));
+                               ctx.expect (printed > 0.05f, label + " printed the auditioned silent take, not the region");
+                           }
+                           const auto& audition = ctx.session().takeAudition;
+                           ctx.expect (audition.trackIdx == kTrackIdx && audition.takeId == silent,
+                                       label + " changed the audition the user had set");
+                           // An offline render hands the engine back to the device,
+                           // whose restart re-prepares it; this world has no device.
+                           if (! realtime)
+                               engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+                           (*self) (index + 1);
+                       },
+                       label + " never finished");
+    };
+    (*next) (0);
     return std::nullopt;
 }
 
@@ -1082,6 +1249,9 @@ const ScenarioRegistrar undoRegistrar { Scenario {
 const ScenarioRegistrar promoteRegistrar { Scenario {
     "take.promote_range_replaces_that_span", { "take", "comp", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (promoteRangeReplacesThatSpan, ctx); } } };
+const ScenarioRegistrar adoptRegistrar { Scenario {
+    "take.carve_adopts_a_region_naming_no_take", { "take", "comp", "record", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (carveAdoptsARegionNamingNoTake, ctx); } } };
 const ScenarioRegistrar deleteTakeRegistrar { Scenario {
     "take.delete_take_removes_its_regions_and_undo_restores_ids", { "take", "comp", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (deleteTakeRemovesItsRegions, ctx); } } };
@@ -1101,7 +1271,7 @@ const ScenarioRegistrar pasteRegistrar { Scenario {
     "take.paste_keeps_the_take_while_it_reads_it", { "take", "region", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (pasteKeepsTheTakeWhileItReadsIt, ctx); } } };
 const ScenarioRegistrar auditionRegistrar { Scenario {
-    "take.audition_never_reaches_bounce", { "take", "bounce", "playback" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return auditionNeverReachesBounce (ctx); }, 120000 } };
+    "take.audition_never_reaches_bounce", { "take", "bounce", "freeze", "playback" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return auditionNeverReachesBounce (ctx); }, 180000 } };
 } // namespace
 } // namespace duskstudio::scenario

@@ -1,6 +1,7 @@
 #include "TakeComp.h"
 
 #include <algorithm>
+#include <string_view>
 
 namespace duskstudio
 {
@@ -22,6 +23,79 @@ std::int64_t seamFadeFor (std::int64_t start, std::int64_t end)
 void fitFarFade (std::int64_t& farFade, std::int64_t length, std::int64_t seamFade)
 {
     farFade = std::max ((std::int64_t) 0, std::min (farFade, length - seamFade));
+}
+
+// Past nine digits a name is not a number the recorder handed out.
+bool takeNumber (const std::string& name, std::uint64_t& number)
+{
+    constexpr std::string_view prefix = "Take ";
+    if (name.size() <= prefix.size() || name.size() - prefix.size() > 9
+        || name.compare (0, prefix.size(), prefix) != 0)
+        return false;
+    std::uint64_t n = 0;
+    for (auto i = prefix.size(); i < name.size(); ++i)
+    {
+        if (name[i] < '0' || name[i] > '9') return false;
+        n = n * 10 + (std::uint64_t) (name[i] - '0');
+    }
+    number = n;
+    return true;
+}
+
+bool capturedAfter (const TakeProvenance& a, const TakeProvenance& b)
+{
+    return a.capturedAtMs > b.capturedAtMs
+        || (a.capturedAtMs == b.capturedAtMs && a.loopPassOrdinal > b.loopPassOrdinal);
+}
+
+std::size_t adoptedTakeIndex (const Track& track, const TakeProvenance& provenance, TakeId placing)
+{
+    const auto& takes = track.takes;
+    const auto at = provenance.capturedAtMs != 0
+        ? std::find_if (takes.begin(), takes.end(), [&provenance] (const AudioTake& take)
+          {
+              return take.provenance.capturedAtMs != 0 && capturedAfter (take.provenance, provenance);
+          })
+        : std::find_if (takes.begin(), takes.end(), [placing] (const AudioTake& take)
+          {
+              return placing != 0 && take.id == placing;
+          });
+    return (std::size_t) (at - takes.begin());
+}
+
+void adoptRegionsNamingNoTake (Session& session, Track& track, std::int64_t start, std::int64_t end,
+                               TakeId placing)
+{
+    if (end <= start) return;
+    std::vector<std::size_t> plain;
+    for (std::size_t i = 0; i < track.regions.size(); ++i)
+    {
+        const auto& r = track.regions[i];
+        if (r.takeId == 0 && r.lengthInSamples > 0 && r.timelineStart < end
+            && r.timelineStart + r.lengthInSamples > start)
+            plain.push_back (i);
+    }
+    std::stable_sort (plain.begin(), plain.end(), [&track] (std::size_t a, std::size_t b)
+    {
+        return track.regions[a].timelineStart < track.regions[b].timelineStart;
+    });
+
+    for (const auto i : plain)
+    {
+        auto& region = track.regions[i];
+        AudioTake take;
+        take.id              = session.allocateTakeId();
+        take.name            = nextTakeName (track);
+        take.file            = region.file;
+        take.timelineStart   = region.timelineStart;
+        take.lengthInSamples = region.lengthInSamples;
+        take.sourceOffset    = region.sourceOffset;
+        take.numChannels     = region.numChannels;
+        take.provenance      = region.provenance;
+        region.takeId = take.id;
+        const auto at = adoptedTakeIndex (track, take.provenance, placing);
+        track.takes.insert (track.takes.begin() + (std::ptrdiff_t) at, std::move (take));
+    }
 }
 
 CarvedEdges carve (std::vector<AudioRegion>& regs, std::int64_t start, std::int64_t end)
@@ -81,9 +155,10 @@ CarvedEdges carve (std::vector<AudioRegion>& regs, std::int64_t start, std::int6
 }
 } // namespace
 
-void carveRegions (std::vector<AudioRegion>& regions, std::int64_t start, std::int64_t end)
+void carveRegions (Session& session, Track& track, std::int64_t start, std::int64_t end)
 {
-    carve (regions, start, end);
+    adoptRegionsNamingNoTake (session, track, start, end, 0);
+    carve (track.regions, start, end);
 }
 
 std::optional<AudioRegion> regionFromTake (const AudioTake& take, std::int64_t start, std::int64_t end)
@@ -103,13 +178,17 @@ std::optional<AudioRegion> regionFromTake (const AudioTake& take, std::int64_t s
     return region;
 }
 
-void promoteTakeRange (Track& track, const AudioTake& take, std::int64_t start, std::int64_t end)
+void promoteTakeRange (Session& session, Track& track, const AudioTake& take,
+                       std::int64_t start, std::int64_t end)
 {
     auto region = regionFromTake (take, start, end);
     if (! region) return;
 
+    // Adopting inserts into track.takes, which may hold `take`: nothing reads
+    // it past this point.
     const std::int64_t from = region->timelineStart;
     const std::int64_t to   = from + region->lengthInSamples;
+    adoptRegionsNamingNoTake (session, track, from, to, region->takeId);
     const auto edges = carve (track.regions, from, to);
     const std::int64_t fade = seamFadeFor (from, to);
     if (edges.left)
@@ -123,6 +202,18 @@ void promoteTakeRange (Track& track, const AudioTake& take, std::int64_t start, 
         region->fadeOutShape   = FadeShape::RaisedCosine;
     }
     track.regions.push_back (std::move (*region));
+}
+
+std::string nextTakeName (const Track& track)
+{
+    std::uint64_t highest = 0;
+    for (const auto& take : track.takes)
+    {
+        std::uint64_t number = 0;
+        if (takeNumber (take.name, number))
+            highest = std::max (highest, number);
+    }
+    return "Take " + std::to_string (highest + 1);
 }
 
 std::vector<std::pair<std::int64_t, std::int64_t>> takeCoverage (const Track& track, TakeId id)

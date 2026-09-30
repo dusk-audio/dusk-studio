@@ -9,8 +9,8 @@ namespace duskstudio
 class Session;
 
 // What Clean out would delete: the .wav files sitting in the session's audio
-// directory that no region, no take under a region and no loaded mastering
-// source points at. Subdirectories are left alone, so freeze renders and
+// directory that no region, no take on a track and no loaded mastering source
+// points at. Subdirectories are left alone, so freeze renders and
 // anything the user dropped in by hand are never candidates.
 struct UnreferencedAudio
 {

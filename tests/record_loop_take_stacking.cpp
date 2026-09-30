@@ -4,6 +4,8 @@
 #include "engine/RecordManager.h"
 #include "engine/audiofile/FileReader.h"
 #include "session/Session.h"
+#include "session/TakeComp.h"
+#include "session/UnreferencedAudio.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
@@ -1202,4 +1204,119 @@ TEST_CASE ("A take recorded over the end of a region never stretches that region
         CHECK (keptRight.fadeInSamples == fade);
         CHECK (keptRight.fadeOutSamples == 200);
     }
+}
+
+TEST_CASE ("A take recorded over a region naming no take keeps that region's audio as a take",
+           "[recording][recordmanager][takes][regression]")
+{
+    const auto temp = makeSessionDir ("dusk-adopt-plain-region-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    const auto audioDir = session.getAudioDirectory();
+    REQUIRE (audioDir.createDirectory().wasOk());
+    RecordManager manager (session);
+    auto& track = session.track (0);
+
+    AudioRegion plain;
+    plain.file = audioDir.getChildFile ("imported.wav");
+    REQUIRE (plain.file.replaceWithText ("not audio"));
+    plain.numChannels = 2;
+
+    SECTION ("a region the take covers whole")
+    {
+        plain.timelineStart = 1200;
+        plain.lengthInSamples = 800;
+        plain.sourceOffset = 300;
+        track.regions = { plain };
+
+        recordLinear (manager, 1000, 1500);
+
+        REQUIRE (track.takes.size() == 2);
+        const auto& adopted = track.takes[0];
+        CHECK (adopted.id != 0);
+        CHECK (adopted.name == "Take 1");
+        CHECK (adopted.file == plain.file);
+        CHECK (adopted.timelineStart == 1200);
+        CHECK (adopted.lengthInSamples == 800);
+        CHECK (adopted.sourceOffset == 300);
+        CHECK (adopted.numChannels == 2);
+        CHECK (track.takes[1].name == "Take 2");
+        CHECK (takeMatches (track.takes[1], 1000, 1500, 0));
+        REQUIRE (track.regions.size() == 1);
+        CHECK (track.regions[0].takeId == track.takes[1].id);
+
+        const auto unreferenced = findUnreferencedAudio (session);
+        CHECK_FALSE (unreferenced.scanFailed);
+        CHECK (std::none_of (unreferenced.files.begin(), unreferenced.files.end(),
+                             [] (const std::filesystem::path& file)
+                             {
+                                 return file.filename() == "imported.wav";
+                             }));
+
+        const auto& diff = manager.getLastCommitDiff();
+        REQUIRE (diff.size() == 1);
+        REQUIRE (diff[0].audioBefore.size() == 1);
+        CHECK (diff[0].audioBefore[0].takeId == 0);
+        CHECK (diff[0].takesBefore.empty());
+        REQUIRE (diff[0].takesAfter.size() == 2);
+        CHECK (diff[0].takesAfter[0].id == adopted.id);
+        CHECK (diff[0].takesAfter[1].id == track.takes[1].id);
+    }
+
+    SECTION ("a region the take punches into")
+    {
+        plain.timelineStart = 5000;
+        plain.lengthInSamples = 6000;
+        plain.sourceOffset = 40;
+        track.regions = { plain };
+
+        recordLinear (manager, 7000, 1000);
+
+        REQUIRE (track.takes.size() == 2);
+        const auto adopted = track.takes[0];
+        CHECK (adopted.name == "Take 1");
+        CHECK (adopted.file == plain.file);
+        CHECK (adopted.timelineStart == 5000);
+        CHECK (adopted.lengthInSamples == 6000);
+        CHECK (adopted.sourceOffset == 40);
+        CHECK (track.takes[1].name == "Take 2");
+
+        REQUIRE (track.regions.size() == 3);
+        CHECK (std::count_if (track.regions.begin(), track.regions.end(),
+                              [&adopted] (const AudioRegion& r) { return r.takeId == adopted.id; }) == 2);
+        using Span = std::pair<std::int64_t, std::int64_t>;
+        CHECK (takeCoverage (track, adopted.id)
+               == std::vector<Span> { { 5000, 7000 + kPunchFadeSamples }, { 8000 - kPunchFadeSamples, 11000 } });
+    }
+}
+
+TEST_CASE ("A recorded take is numbered after the highest take number on its track",
+           "[recording][recordmanager][takes][regression]")
+{
+    const auto temp = makeSessionDir ("dusk-take-numbering-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    RecordManager manager (session);
+    auto& track = session.track (0);
+
+    recordLinear (manager, 1000, 400);
+    recordLinear (manager, 2000, 400);
+    REQUIRE (track.takes.size() == 2);
+    REQUIRE (track.takes[0].name == "Take 1");
+    REQUIRE (track.takes[1].name == "Take 2");
+
+    const auto gone = track.takes[0].id;
+    track.takes.erase (track.takes.begin());
+    track.regions.erase (std::remove_if (track.regions.begin(), track.regions.end(),
+                                         [gone] (const AudioRegion& r) { return r.takeId == gone; }),
+                         track.regions.end());
+
+    recordLinear (manager, 3000, 400);
+    REQUIRE (track.takes.size() == 2);
+    CHECK (track.takes[1].name == "Take 3");
+
+    track.takes[1].name = "Take 3 keeper";
+    recordLinear (manager, 4000, 400);
+    REQUIRE (track.takes.size() == 3);
+    CHECK (track.takes[2].name == "Take 3");
 }

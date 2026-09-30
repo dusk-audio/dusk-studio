@@ -262,17 +262,19 @@ TEST_CASE ("Loading a v8 session turns audio take history into track takes",
     loaded->setSessionDirectory (dir);
     REQUIRE (SessionSerializer::load (*loaded, target));
 
+    // Oldest first: the pass with no capture time sat at the bottom of the
+    // history, and the other two follow their capture times.
     const auto& vox = loaded->track (0);
     REQUIRE (vox.takes.size() == 4);
-    checkTake (vox.takes[0], { 1, "Take 1", "audio/pass1.wav", 48000, 24000, 12000, 2, { 1000, 1, false } });
+    checkTake (vox.takes[0], { 1, "Take 1", "audio/pass0.wav", 48000, 10000, 500,   2, {} });
     checkTake (vox.takes[1], { 2, "Take 2", "audio/pass1.wav", 48000, 36000, 0,     2, { 900, 2, false } });
-    checkTake (vox.takes[2], { 3, "Take 3", "audio/pass0.wav", 48000, 10000, 500,   2, {} });
+    checkTake (vox.takes[2], { 3, "Take 3", "audio/pass1.wav", 48000, 24000, 12000, 2, { 1000, 1, false } });
     // The split pair is one pass: the union of both halves, placed where the
     // earlier of the two puts the file.
     checkTake (vox.takes[3], { 4, "Take 4", "audio/split.wav", 99000, 12000, 0,     1, { 2000, 0, true } });
 
     REQUIRE (vox.regions.size() == 4);
-    CHECK (vox.regions[0].takeId == 1);
+    CHECK (vox.regions[0].takeId == 3);
     CHECK (vox.regions[1].takeId == 4);
     CHECK (vox.regions[2].takeId == 4);
     CHECK (vox.regions[3].takeId == 0);
@@ -308,6 +310,114 @@ TEST_CASE ("Loading a v8 session turns audio take history into track takes",
             CHECK_FALSE (region.contains ("previous_takes"));
     CHECK (resaved["tracks"][1]["midi_regions"][0]["previous_takes"].size() == 1);
 
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("Loading a v8 session numbers each track's takes oldest first",
+           "[session][serializer][migration][takes]")
+{
+    const auto pass = [] (const char* file, std::int64_t offset, std::int64_t capturedAtMs, int loopPass)
+    {
+        Json take { { "file", file }, { "source_offset", offset }, { "length", 500 } };
+        if (capturedAtMs != 0)
+            take["take_provenance"] = { { "captured_at_ms", capturedAtMs }, { "loop_pass", loopPass } };
+        return take;
+    };
+    const auto region = [] (Json live, Json history)
+    {
+        live["timeline_start"] = 4800;
+        live["previous_takes"] = std::move (history);
+        return Json { { "regions", Json::array ({ std::move (live) }) } };
+    };
+
+    // The v8 history lists the newest displaced take first. The passes of one
+    // loop share the capture time.
+    const Json root {
+        { "version", 8 },
+        { "tracks", Json::array ({
+            region (pass ("audio/loop.wav", 1000, 5000, 3),
+                    Json::array ({ pass ("audio/loop.wav", 500, 5000, 2), pass ("audio/loop.wav", 0, 5000, 1) })),
+            region (pass ("audio/after.wav", 0, 0, 0),
+                    Json::array ({ pass ("audio/loop2.wav", 500, 6000, 2), pass ("audio/loop2.wav", 0, 6000, 1) })),
+            region (pass ("audio/loop3.wav", 500, 7000, 2),
+                    Json::array ({ pass ("audio/loop3.wav", 0, 7000, 1), pass ("audio/before.wav", 0, 0, 0) })) }) }
+    };
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+    writeJson (target, root);
+    auto loaded = std::make_unique<Session>();
+    loaded->setSessionDirectory (dir);
+    REQUIRE (SessionSerializer::load (*loaded, target));
+
+    const auto& loop = loaded->track (0);
+    REQUIRE (loop.takes.size() == 3);
+    checkTake (loop.takes[0], { 1, "Take 1", "audio/loop.wav", 4800, 500, 0,    1, { 5000, 1, false } });
+    checkTake (loop.takes[1], { 2, "Take 2", "audio/loop.wav", 4800, 500, 500,  1, { 5000, 2, false } });
+    checkTake (loop.takes[2], { 3, "Take 3", "audio/loop.wav", 4800, 500, 1000, 1, { 5000, 3, false } });
+    REQUIRE (loop.regions.size() == 1);
+    CHECK (loop.regions[0].takeId == 3);
+
+    // A plain take recorded over a loop.
+    const auto& after = loaded->track (1);
+    REQUIRE (after.takes.size() == 3);
+    checkTake (after.takes[0], { 4, "Take 1", "audio/loop2.wav", 4800, 500, 0,   1, { 6000, 1, false } });
+    checkTake (after.takes[1], { 5, "Take 2", "audio/loop2.wav", 4800, 500, 500, 1, { 6000, 2, false } });
+    checkTake (after.takes[2], { 6, "Take 3", "audio/after.wav", 4800, 500, 0,   1, {} });
+    REQUIRE (after.regions.size() == 1);
+    CHECK (after.regions[0].takeId == 6);
+
+    // A loop recorded over a plain take.
+    const auto& before = loaded->track (2);
+    REQUIRE (before.takes.size() == 3);
+    checkTake (before.takes[0], { 7, "Take 1", "audio/before.wav", 4800, 500, 0,   1, {} });
+    checkTake (before.takes[1], { 8, "Take 2", "audio/loop3.wav",  4800, 500, 0,   1, { 7000, 1, false } });
+    checkTake (before.takes[2], { 9, "Take 3", "audio/loop3.wav",  4800, 500, 500, 1, { 7000, 2, false } });
+    REQUIRE (before.regions.size() == 1);
+    CHECK (before.regions[0].takeId == 9);
+
+    CHECK (loaded->allocateTakeId() == 10);
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("Loading a v8 session starts no take before the timeline and keeps it under its regions",
+           "[session][serializer][migration][takes]")
+{
+    // One pass split in two, its right half moved near the start: where that
+    // half puts the file, the pass would begin 3000 samples before zero.
+    const Json root {
+        { "version", 8 },
+        { "tracks", Json::array ({
+            { { "regions", Json::array ({
+                  { { "file", "audio/split.wav" }, { "timeline_start", 100000 }, { "length", 5000 },
+                    { "source_offset", 0 }, { "take_provenance", { { "captured_at_ms", 2000 } } } },
+                  { { "file", "audio/split.wav" }, { "timeline_start", 2000 }, { "length", 7000 },
+                    { "source_offset", 5000 }, { "take_provenance", { { "captured_at_ms", 2000 } } } } }) } } }) }
+    };
+
+    auto migrated = root;
+    REQUIRE (migrateSession (migrated, 8));
+    const auto& saved = migrated["tracks"][0]["takes"];
+    REQUIRE (saved.size() == 1);
+    CHECK (saved[0]["timeline_start"].get<std::int64_t>() == 0);
+    CHECK (saved[0]["source_offset"].get<std::int64_t>() == 3000);
+    CHECK (saved[0]["length"].get<std::int64_t>() == 9000);
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+    writeJson (target, root);
+    auto loaded = std::make_unique<Session>();
+    loaded->setSessionDirectory (dir);
+    REQUIRE (SessionSerializer::load (*loaded, target));
+
+    const auto& track = loaded->track (0);
+    REQUIRE (track.takes.size() == 1);
+    REQUIRE (track.regions.size() == 2);
+    const auto& take = track.takes[0];
+    const auto& moved = track.regions[1];
+    CHECK (moved.takeId == take.id);
+    CHECK (take.timelineStart + (moved.sourceOffset - take.sourceOffset) == moved.timelineStart);
+    CHECK (take.timelineStart + take.lengthInSamples == 9000);
     dir.deleteRecursively();
 }
 

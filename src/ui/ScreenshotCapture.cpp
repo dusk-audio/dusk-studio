@@ -712,9 +712,9 @@ void MainComponent::captureNativePanels (std::string outDir)
             }
             track.takes.push_back (take);
         }
-        promoteTakeRange (track, track.takes[2], 0, length);
-        promoteTakeRange (track, track.takes[0], 0, (std::int64_t) (sr * 1.4));
-        promoteTakeRange (track, track.takes[1], (std::int64_t) (sr * 2.6), length);
+        promoteTakeRange (self.session, track, track.takes[2], 0, length);
+        promoteTakeRange (self.session, track, track.takes[0], 0, (std::int64_t) (sr * 1.4));
+        promoteTakeRange (self.session, track, track.takes[1], (std::int64_t) (sr * 2.6), length);
         self.openAudioEditorOnTakes (kTakeLanesTrack);
     } });
     steps->push_back ({ 1000, [outDir] (MainComponent& self)

@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <system_error>
 #include <utility>
@@ -406,8 +407,16 @@ bool migrateStripEqDialsToHz (nlohmann::json& root)
 // Up to format 8 an audio region carried the recordings it had displaced as
 // previous_takes. Each distinct recording pass on a track - one file and loop
 // pass - becomes one of the track's takes, spanning all of the file that any
-// region or previous take used and sitting where the earliest of them put it.
-// Only a region's take_id is added; what it plays is left exactly as it was.
+// region or previous take used and sitting where the earliest of them put it,
+// or from sample 0 with the file start moved up to match when that would be
+// before the timeline starts. Only a region's take_id is added; what it plays
+// is left exactly as it was.
+//
+// The takes are numbered oldest first. A history lists the newest displaced
+// take first under the region playing the newest of all, so walking each one
+// backwards meets its passes oldest first. Passes with a capture time are then
+// ordered by it, and by loop pass within one loop recording, among the places
+// they hold; a pass without one keeps its place.
 void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
 {
     const auto tracks = root.find ("tracks");
@@ -425,47 +434,49 @@ void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
         {
             std::string file;
             int loopPass = 0;
+            std::int64_t capturedAtMs = 0;
             std::int64_t fileStart = 0, fileEnd = 0;
             // Timeline position of the file's first sample.
             std::int64_t origin = 0;
             int numChannels = 1;
             nlohmann::json provenance;
-            TakeId id = 0;
         };
         std::vector<Pass> passes;
+        std::vector<std::pair<nlohmann::json*, std::size_t>> regionPasses;
 
         const auto contribute = [&] (const nlohmann::json& source, std::int64_t timelineStart,
-                                     int numChannels) -> TakeId
+                                     int numChannels) -> std::optional<std::size_t>
         {
             auto file = json::getString (source, "file");
-            if (file.empty()) return 0;
-            const int loopPass = parseTakeProvenance (source).loopPassOrdinal;
+            if (file.empty()) return std::nullopt;
+            const auto provenance = parseTakeProvenance (source);
             const auto offset = std::max ((std::int64_t) 0, json::getInt64 (source, "source_offset", 0));
             const auto length = std::max ((std::int64_t) 0, json::getInt64 (source, "length", 0));
             const auto end = offset > kMaxSample - length ? kMaxSample : offset + length;
             const auto origin = timelineStart - offset;
 
-            for (auto& pass : passes)
-                if (pass.file == file && pass.loopPass == loopPass)
-                {
-                    pass.fileStart = std::min (pass.fileStart, offset);
-                    pass.fileEnd   = std::max (pass.fileEnd, end);
-                    pass.origin    = std::min (pass.origin, origin);
-                    return pass.id;
-                }
+            for (std::size_t i = 0; i < passes.size(); ++i)
+            {
+                auto& pass = passes[i];
+                if (pass.file != file || pass.loopPass != provenance.loopPassOrdinal) continue;
+                pass.fileStart = std::min (pass.fileStart, offset);
+                pass.fileEnd   = std::max (pass.fileEnd, end);
+                pass.origin    = std::min (pass.origin, origin);
+                return i;
+            }
 
             Pass pass;
             pass.file = std::move (file);
-            pass.loopPass = loopPass;
+            pass.loopPass = provenance.loopPassOrdinal;
+            pass.capturedAtMs = provenance.capturedAtMs;
             pass.fileStart = offset;
             pass.fileEnd = end;
             pass.origin = origin;
             pass.numChannels = numChannels;
             if (const auto it = source.find ("take_provenance"); it != source.end() && it->is_object())
                 pass.provenance = *it;
-            pass.id = ++lastId;
             passes.push_back (std::move (pass));
-            return lastId;
+            return passes.size() - 1;
         };
 
         for (auto& region : *regions)
@@ -476,33 +487,59 @@ void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
             {
                 const auto timelineStart = std::max ((std::int64_t) 0, json::getInt64 (region, "timeline_start", 0));
                 const int numChannels = jlimit (1, 2, json::getInt (region, "num_channels", 1));
-                if (const auto own = contribute (region, timelineStart, numChannels); own != 0)
-                    region["take_id"] = own;
-                for (const auto& take : prior)
-                    if (take.is_object())
-                        contribute (take, timelineStart, numChannels);
+                for (auto take = prior.rbegin(); take != prior.rend(); ++take)
+                    if (take->is_object())
+                        contribute (*take, timelineStart, numChannels);
+                if (const auto own = contribute (region, timelineStart, numChannels))
+                    regionPasses.emplace_back (&region, *own);
             }
             region.erase ("previous_takes");
         }
 
         if (passes.empty()) continue;
-        auto takes = nlohmann::json::array();
-        for (size_t i = 0; i < passes.size(); ++i)
+
+        std::vector<std::size_t> timedPlaces;
+        for (std::size_t i = 0; i < passes.size(); ++i)
+            if (passes[i].capturedAtMs != 0) timedPlaces.push_back (i);
+        auto timed = timedPlaces;
+        std::stable_sort (timed.begin(), timed.end(), [&passes] (std::size_t a, std::size_t b)
         {
-            const auto& pass = passes[i];
+            return std::make_pair (passes[a].capturedAtMs, passes[a].loopPass)
+                 < std::make_pair (passes[b].capturedAtMs, passes[b].loopPass);
+        });
+        std::vector<std::size_t> order (passes.size());
+        for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+        for (std::size_t k = 0; k < timedPlaces.size(); ++k)
+            order[timedPlaces[k]] = timed[k];
+
+        std::vector<TakeId> ids (passes.size());
+        auto takes = nlohmann::json::array();
+        for (std::size_t n = 0; n < order.size(); ++n)
+        {
+            const auto& pass = passes[order[n]];
+            ids[order[n]] = ++lastId;
+            auto fileStart = pass.fileStart;
+            auto timelineStart = pass.origin + pass.fileStart;
+            if (timelineStart < 0)
+            {
+                fileStart -= timelineStart;
+                timelineStart = 0;
+            }
             nlohmann::json take;
-            take["id"]             = pass.id;
-            take["name"]           = "Take " + std::to_string (i + 1);
+            take["id"]             = lastId;
+            take["name"]           = "Take " + std::to_string (n + 1);
             take["file"]           = pass.file;
-            take["timeline_start"] = pass.origin + pass.fileStart;
-            take["length"]         = pass.fileEnd - pass.fileStart;
-            take["source_offset"]  = pass.fileStart;
+            take["timeline_start"] = timelineStart;
+            take["length"]         = pass.fileEnd - fileStart;
+            take["source_offset"]  = fileStart;
             if (pass.numChannels != 1)
                 take["num_channels"] = pass.numChannels;
             if (! pass.provenance.is_null())
                 take["take_provenance"] = pass.provenance;
             takes.push_back (std::move (take));
         }
+        for (const auto& [region, pass] : regionPasses)
+            (*region)["take_id"] = ids[pass];
         track["takes"] = std::move (takes);
     }
 }

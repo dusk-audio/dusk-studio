@@ -955,30 +955,9 @@ void TransportBar::notifyRecordStopped()
     const auto& errs = engine.getRecordManager().getLastRecordErrors();
     if (errs.empty()) return;
 
-    static_assert (RecordManager::kMaxLoopPassesPerGesture == 1024,
-                   "the loop pass limit message quotes the limit");
-    juce::String body =
-        "The last take captured with errors. Listed tracks may be partial "
-        "or missing audio / MIDI data:\n\n";
-    for (const auto& e : errs)
-    {
-        const juce::String kind =
-            e.kind == RecordManager::RecordErrorKind::WavWrite
-                ? "WAV write failed (disk full / I/O error)"
-            : e.kind == RecordManager::RecordErrorKind::OffsetConsumedTake
-                ? "take discarded (recording offset exceeds its length)"
-            : e.kind == RecordManager::RecordErrorKind::LoopPassLimit
-                ? "loop passes not recorded (past 1,024 in one take)"
-                : "MIDI events dropped (capture buffer full)";
-        body += "    Track " + juce::String (e.trackIndex + 1)
-              + " - " + kind + " ("
-              + juce::String (e.count) + ")\n";
-    }
-    body += "\nCheck the session's audio folder for free space and the "
-            "session log for I/O details before continuing.";
-
     if (auto* tlw = getTopLevelComponent())
-        showDuskAlert (*tlw, "Recording errors", body);
+        showDuskAlert (*tlw, "Recording errors",
+                       juce::String (RecordManager::describeRecordErrors (errs)));
 }
 
 void TransportBar::refreshButtonStates()

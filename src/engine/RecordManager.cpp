@@ -136,6 +136,30 @@ bool sliceMidiTake (const MidiTakeRef& source,
 
 RecordManager::RecordManager (Session& s) : session (s) {}
 
+std::string RecordManager::describeRecordErrors (const std::vector<RecordError>& errors)
+{
+    static_assert (kMaxLoopPassesPerGesture == 1024, "the loop pass limit message quotes the limit");
+    std::string text = "The last take captured with errors. Listed tracks may be partial "
+                       "or missing audio / MIDI data:\n";
+    for (const auto& e : errors)
+    {
+        const char* kind = e.kind == RecordErrorKind::WavWrite
+                               ? "WAV write failed (disk full / I/O error)"
+                         : e.kind == RecordErrorKind::OffsetConsumedTake
+                               ? "take discarded (recording offset exceeds its length)"
+                         : e.kind == RecordErrorKind::LoopPassLimit
+                               ? "loop passes not recorded (past 1,024 in one take)"
+                               : "MIDI events dropped (capture buffer full)";
+        text += "\n    Track " + std::to_string (e.trackIndex + 1) + " - " + kind + " ("
+              + std::to_string (e.count) + ")";
+    }
+    if (std::any_of (errors.begin(), errors.end(),
+                     [] (const RecordError& e) { return e.kind == RecordErrorKind::WavWrite; }))
+        text += "\n\nCheck the session's audio folder for free space and the "
+                "session log for I/O details before continuing.";
+    return text;
+}
+
 RecordManager::~RecordManager()
 {
     // Destruction is an abnormal take end: prevent new writes, wait for any
@@ -1007,17 +1031,19 @@ void RecordManager::stopRecording (std::int64_t endSample)
         {
             auto& track = session.track (t);
             for (auto& take : passTakes)
-            {
-                take.id   = session.allocateTakeId();
-                take.name = "Take " + std::to_string (track.takes.size() + 1);
-                track.takes.push_back (std::move (take));
-            }
+                take.id = session.allocateTakeId();
 
             // Only the newest pass goes on the timeline. What it covers is
-            // carved out of the regions under it; their takes stay whole.
-            const auto& newest = track.takes.back();
-            promoteTakeRange (track, newest, newest.timelineStart,
+            // carved out of the regions under it; their takes stay whole, and
+            // one naming no take becomes a take ahead of this recording's.
+            const auto& newest = passTakes.back();
+            promoteTakeRange (session, track, newest, newest.timelineStart,
                               newest.timelineStart + newest.lengthInSamples);
+            for (auto& take : passTakes)
+            {
+                take.name = nextTakeName (track);
+                track.takes.push_back (std::move (take));
+            }
         }
         else
         {

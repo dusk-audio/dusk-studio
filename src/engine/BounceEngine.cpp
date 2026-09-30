@@ -974,7 +974,7 @@ bool BounceEngine::runRealtimeMode()
                 }
                 transport.setLoopEnabled (false);
                 transport.setPlayhead (0);
-                engine.play();
+                engine.play (PlaybackEngine::Audition::Ignore);
             }))
         {
             engine.disarmRealtimeBounce();

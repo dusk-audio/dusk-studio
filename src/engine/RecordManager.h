@@ -4,6 +4,8 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <string>
+#include <vector>
 #include "../foundation/MidiBuffer.h"
 #include "../foundation/SpscIndexFifo.h"
 #include "../session/Session.h"
@@ -139,6 +141,8 @@ public:
         return lastRecordErrors;
     }
     void clearLastRecordErrors() noexcept { lastRecordErrors.clear(); }
+    // The body of the alert that lists them at Stop.
+    static std::string describeRecordErrors (const std::vector<RecordError>& errors);
 
     // BEFORE / AFTER snapshots so AudioEngine can wrap stopRecording
     // in an UndoableAction (Ctrl+Z reverts the take).

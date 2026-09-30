@@ -317,7 +317,9 @@ public:
         return auxLaneStrips[(size_t) idx];
     }
 
-    void play();
+    // A realtime bounce plays with Audition::Ignore, so it prints the
+    // track's regions and not a take being auditioned.
+    void play (PlaybackEngine::Audition audition = PlaybackEngine::Audition::Honour);
 
     // Plays one take alone on its track in place of the track's regions,
     // until cleared. Stopped, it applies at once; rolling, at the next Play.

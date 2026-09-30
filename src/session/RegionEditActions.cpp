@@ -58,6 +58,16 @@ bool frozenLocked (Session& s, int trackIdx)
         && s.track (trackIdx).frozen.load (std::memory_order_relaxed);
 }
 
+// Left set, an audition of a take an undo removed would come back with the take
+// on redo and play in place of the track's regions without being asked for.
+void endAuditionOfMissingTake (Session& s)
+{
+    const auto& audition = s.takeAudition;
+    if (audition.trackIdx >= 0 && audition.trackIdx < Session::kNumTracks
+        && findTake (s.track (audition.trackIdx), audition.takeId) == nullptr)
+        s.takeAudition = {};
+}
+
 // Join helpers. The selection is timeline-sorted (lead = earliest start), so
 // the lead is not necessarily the lowest numeric index, and every erase below
 // it shifts it down one slot. The bounds check is separate so the slow path
@@ -374,13 +384,16 @@ bool PromoteTakeRangeAction::perform()
                          }))
             return false;
         beforeRegions = track.regions;
-        promoteTakeRange (track, *take, start, end);
+        beforeTakes = track.takes;
+        promoteTakeRange (session, track, *take, start, end);
         afterRegions = track.regions;
+        afterTakes = track.takes;
         firstPerformDone = true;
     }
     else
     {
         track.regions = afterRegions;
+        track.takes = afterTakes;
     }
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -392,6 +405,8 @@ bool PromoteTakeRangeAction::undo()
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
     session.track (trackIdx).regions = beforeRegions;
+    session.track (trackIdx).takes = beforeTakes;
+    endAuditionOfMissingTake (session);
     rebuildPlaybackIfStopped (engine);
     return true;
 }
@@ -1694,6 +1709,7 @@ bool RecordCommitAction::undo()
         session.track (d.trackIndex).midiRegions.mutate (
             [&d] (std::vector<MidiRegion>& mregs) { mregs = d.midiBefore; });
     }
+    endAuditionOfMissingTake (session);
     rebuildPlaybackIfStopped (engine);
     return true;
 }

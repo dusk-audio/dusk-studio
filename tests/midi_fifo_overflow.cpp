@@ -119,3 +119,35 @@ TEST_CASE ("RecordManager clean MIDI take leaves overflow list empty",
 
     dir.deleteRecursively();
 }
+
+TEST_CASE ("The recording errors alert advises on free space only when a write failed",
+           "[recording][recordmanager][errors]")
+{
+    using duskstudio::RecordManager;
+    using Kind = RecordManager::RecordErrorKind;
+
+    SECTION ("errors that are not about the disk get no disk advice")
+    {
+        const auto text = RecordManager::describeRecordErrors ({ { 0, Kind::LoopPassLimit, 3 },
+                                                                 { 4, Kind::MidiOverflow, 12 },
+                                                                 { 6, Kind::OffsetConsumedTake, 80 } });
+        CHECK (text.find ("\n    Track 1 - loop passes not recorded (past 1,024 in one take) (3)\n") != std::string::npos);
+        CHECK (text.find ("\n    Track 5 - MIDI events dropped (capture buffer full) (12)\n") != std::string::npos);
+        const std::string last = "\n    Track 7 - take discarded (recording offset exceeds its length) (80)";
+        REQUIRE (text.size() > last.size());
+        CHECK (text.compare (text.size() - last.size(), last.size(), last) == 0);
+        CHECK (text.find ("free space") == std::string::npos);
+        CHECK (text.find ("I/O details") == std::string::npos);
+    }
+
+    SECTION ("a write failure among them brings the disk advice")
+    {
+        const auto text = RecordManager::describeRecordErrors ({ { 0, Kind::LoopPassLimit, 3 },
+                                                                 { 1, Kind::WavWrite, 4096 } });
+        CHECK (text.find ("\n    Track 2 - WAV write failed (disk full / I/O error) (4096)\n") != std::string::npos);
+        const std::string advice = "\n\nCheck the session's audio folder for free space and the "
+                                   "session log for I/O details before continuing.";
+        REQUIRE (text.size() > advice.size());
+        CHECK (text.compare (text.size() - advice.size(), advice.size(), advice) == 0);
+    }
+}

@@ -2460,8 +2460,8 @@ std::optional<ScenarioResult> runAudioTakePromoteDrag (GuiHost& host, ScenarioCo
         track.takes.push_back (take);
         ids.push_back (take.id);
     }
-    promoteTakeRange (track, track.takes[2], 0, kLength);
-    promoteTakeRange (track, track.takes[0], 24000, 48000);
+    promoteTakeRange (session, track, track.takes[2], 0, kLength);
+    promoteTakeRange (session, track, track.takes[0], 24000, 48000);
     const auto regionsBefore = track.regions;
 
     session.tempoMap.clear();
@@ -2659,7 +2659,7 @@ std::optional<ScenarioResult> runAudioTakeLanesOpen (GuiHost& host, ScenarioCont
     auto& track = session.track (0);
     const auto ids = addLevelTakes (ctx, track, 3);
     if (! ids) return ScenarioResult::fail ("could not write take fixture");
-    promoteTakeRange (track, track.takes[1], 0, kTakeCaseLength);
+    promoteTakeRange (session, track, track.takes[1], 0, kTakeCaseLength);
 
     auto& plain = session.track (1);
     plain.frozen.store (false);
@@ -2734,7 +2734,7 @@ std::optional<ScenarioResult> runAudioTakePromoteName (GuiHost& host, ScenarioCo
         if (! id) return ScenarioResult::fail ("could not write take fixture");
         ids.push_back (*id);
     }
-    promoteTakeRange (track, track.takes[2], 0, kTakeCaseLength);
+    promoteTakeRange (ctx.session(), track, track.takes[2], 0, kTakeCaseLength);
     const auto regionsBefore = track.regions;
 
     if (! host.openAudioEditorOnTakes (0)) return ScenarioResult::fail ("audio editor unavailable");
@@ -2793,7 +2793,7 @@ std::optional<ScenarioResult> runAudioTakeRename (GuiHost& host, ScenarioContext
     auto& track = session.track (0);
     const auto ids = addLevelTakes (ctx, track, 2);
     if (! ids) return ScenarioResult::fail ("could not write take fixture");
-    promoteTakeRange (track, track.takes[0], 0, kTakeCaseLength);
+    promoteTakeRange (session, track, track.takes[0], 0, kTakeCaseLength);
     const auto regionsBefore = track.regions;
     const auto newest = ids->back();
     const auto saved = ctx.tempDir() / "renamed" / "session.json";
@@ -2886,8 +2886,8 @@ std::optional<ScenarioResult> runAudioTakeDelete (GuiHost& host, ScenarioContext
     auto& track = ctx.session().track (0);
     const auto ids = addLevelTakes (ctx, track, 3);
     if (! ids) return ScenarioResult::fail ("could not write take fixture");
-    promoteTakeRange (track, track.takes[2], 0, kTakeCaseLength);
-    promoteTakeRange (track, track.takes[0], 24000, 48000);
+    promoteTakeRange (ctx.session(), track, track.takes[2], 0, kTakeCaseLength);
+    promoteTakeRange (ctx.session(), track, track.takes[0], 24000, 48000);
     const auto regionsBefore = track.regions;
     const auto oldest = ids->front();
     const auto expected = laneOrder (*ids);
@@ -2991,8 +2991,8 @@ std::optional<ScenarioResult> runTrackTakeBadge (GuiHost& host, ScenarioContext&
     const auto ids = addLevelTakes (ctx, track, 3);
     const auto only = addLevelTake (ctx, single, "Take 1", 0, kTakeCaseLength, 0.3f);
     if (! ids || ! only) return ScenarioResult::fail ("could not write take fixture");
-    promoteTakeRange (track, track.takes[2], 0, kTakeCaseLength);
-    promoteTakeRange (single, single.takes[0], 0, kTakeCaseLength);
+    promoteTakeRange (session, track, track.takes[2], 0, kTakeCaseLength);
+    promoteTakeRange (session, single, single.takes[0], 0, kTakeCaseLength);
     const auto oldest = ids->front();
     const auto expected = laneOrder (*ids);
     const bool expanded = host.timelineViewMatches (true);
@@ -3090,7 +3090,7 @@ std::optional<ScenarioResult> runAudioTakeAudition (GuiHost& host, ScenarioConte
     const auto shortTake = addLevelTake (ctx, track, "Take 2", 24000, 48000, kShortTakeLevel);
     const auto whole = addLevelTake (ctx, track, "Take 3", 0, kTakeCaseLength, kWholeTakeLevel);
     if (! region || ! shortTake || ! whole) return ScenarioResult::fail ("could not write take fixture");
-    promoteTakeRange (track, track.takes[0], 0, kTakeCaseLength);
+    promoteTakeRange (session, track, track.takes[0], 0, kTakeCaseLength);
 
     if (! host.openAudioEditorOnTakes (0)) return ScenarioResult::fail ("audio editor unavailable");
     // Read while stopped, when the audio thread leaves the track's streams alone.

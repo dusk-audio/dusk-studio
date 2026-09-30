@@ -1689,7 +1689,7 @@ void AudioEngine::clearTakeAudition()
         playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
 }
 
-void AudioEngine::play()
+void AudioEngine::play (PlaybackEngine::Audition audition)
 {
     if (transport.isPlaying() || transport.isRecording()) return;
     performPendingDspRestartIfIdle();
@@ -1711,7 +1711,7 @@ void AudioEngine::play()
     }
 
     transport.setRollStart (transport.getPlayhead());
-    playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
+    playbackEngine.preparePlayback (audition);
     transport.setState (Transport::State::Playing);
 }
 
