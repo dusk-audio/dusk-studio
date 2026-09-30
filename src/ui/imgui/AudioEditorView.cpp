@@ -2149,6 +2149,8 @@ private:
                 auto& undo = engine.getUndoManager();
                 undo.beginNewTransaction ("Split region");
                 undo.perform (new SplitRegionAction (session, engine, trackIdx, hit, at));
+                if (hit != regionIdx)
+                    rangeActive = false;
                 regionIdx = hit;
             }
             return;
@@ -2186,6 +2188,8 @@ private:
         // slice it drops the cursor and only becomes a move once the pointer travels.
         if (hit != regionIdx)
         {
+            // The range is the focused region's, so it goes with the focus.
+            rangeActive = false;
             regionIdx = hit;
             const auto* r = region();
             regionAtDragStart = *r;

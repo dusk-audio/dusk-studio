@@ -4304,6 +4304,97 @@ const ScenarioRegistrar audioEditorGestures { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorGestures (host, ctx); }
 } };
 
+// A range belongs to the region it was taken on: a Grab or Cut click that focuses
+// another region drops it rather than carrying it over.
+std::optional<ScenarioResult> runAudioEditorFocusDropsRange (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    const auto modeWas = session.editMode;
+    ctx.cleanup ([&host, &session, originalDir, restore, modeWas]
+    {
+        drainModals (host);
+        host.closeAudioEditor();
+        session.editMode = modeWas;
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto source = ctx.tempDir() / "FocusRange.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = 48000;
+    spec.numChannels = 1;
+    auto writer = dusk::audio::FileWriter::create (source, spec);
+    std::vector<float> signal (48000, 0.5f);
+    const float* channels[] = { signal.data() };
+    if (! writer || ! writer->write (channels, 1, 48000) || ! writer->flush())
+        return ScenarioResult::fail ("could not write editor fixture");
+    writer.reset();
+    auto& track = session.track (0);
+    track.frozen.store (false);
+    track.regions.clear();
+    AudioRegion region;
+    region.file = decltype (region.file) (source.string());
+    region.lengthInSamples = 48000;
+    track.regions.push_back (region);
+    region.timelineStart = 96000;
+    track.regions.push_back (region);
+    session.audioEditorSnap = false;
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    const auto press = [&host, &ctx] (std::int64_t from, std::int64_t to)
+    {
+        const auto start = host.audioEditorPoint ("wave", from);
+        const auto end = host.audioEditorPoint ("wave", to);
+        if (! ctx.expect (start.size() == 2 && end.size() == 2, "the waveform has no geometry")) return;
+        ctx.expect (host.audioEditorPointer (start[0], start[1], true), "the press was not taken");
+        host.audioEditorPointer (end[0], end[1], true);
+        host.audioEditorPointer (end[0], end[1], false);
+    };
+    const auto selection = [&host, &ctx] (int focused, bool range, const std::string& failure)
+    {
+        const auto state = host.audioEditorSelection();
+        ctx.expect (state.size() == 4 && state[0] == focused && (state[1] != 0) == range, failure);
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&session, press] { session.editMode = EditMode::Range; press (12000, 30000); } });
+    steps->push_back ({ 150, [&session, selection, press]
+    {
+        selection (0, true, "the Range drag did not select a range on the first region");
+        session.editMode = EditMode::Grab;
+        press (120000, 120000);
+    } });
+    steps->push_back ({ 150, [&session, selection, press]
+    {
+        selection (1, false, "a Grab click on another region kept the first region's range");
+        session.editMode = EditMode::Range;
+        press (100000, 110000);
+    } });
+    steps->push_back ({ 150, [&session, selection, press]
+    {
+        selection (1, true, "the Range drag did not select a range on the second region");
+        session.editMode = EditMode::Cut;
+        press (24000, 24000);
+    } });
+    steps->push_back ({ 150, [&session, &ctx, selection]
+    {
+        ctx.expect (session.track (0).regions.size() == 3, "the Cut click did not split the first region");
+        selection (0, false, "a Cut click on another region kept the second region's range");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorFocusDropsRange { Scenario {
+    "gui.audio_editor_focus_drops_range", { "gui", "editor" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorFocusDropsRange (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runAudioEditorToolbar (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
