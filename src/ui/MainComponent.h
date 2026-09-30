@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <string>
 #include "EmbeddedModal.h"
 #include "DuskMenuBar.h"
 #include "DuskStudioLookAndFeel.h"
@@ -540,7 +541,9 @@ private:
     int pianoRollTrackIdx  = -1;
     int pianoRollRegionIdx = -1;
     void openPianoRoll  (int trackIdx, int regionIdx);
-    void closePianoRoll();          // immediate teardown (swap / mutual exclusion)
+    // Immediate teardown (swap / mutual exclusion). Deferred destruction for a
+    // close the roll's own handler may have led to.
+    void closePianoRoll (bool deferDestruction = false);
     void closePianoRollAnimated();  // collapse into region rect, then teardown
 
     // Mutually exclusive with the piano roll (opening one closes the other). A native
@@ -608,6 +611,20 @@ private:
     std::unique_ptr<dusk::Timer>         tunerPoller;
     void toggleTuner();
     void closeTuner();
+
+    // A name dropped on another row of the tape strip. Refused with an alert,
+    // or committed and the console paged to the dragged track.
+    void dropTrackMove (const TrackMovePlan& plan, int draggedTrack);
+    // The engine's hooks around every track move, undo and redo included.
+    // Neither may perform an undoable action: both run inside one.
+    void closeForTrackMove (const TrackMovePlan& plan);
+    void followTrackMove (const TrackMovePlan& plan);
+    // Undo, or redo when redo is true: the edit keys and the region editors'
+    // undo buttons and keys. A track move's undo is refused, with the reason,
+    // while a render's dialog is open or the engine refuses it.
+    void undoOrRedo (bool redo);
+    // What the render dialog on screen is called; empty when none is up.
+    std::string openRenderDialog() const;
 
     // Snapshot of the recent-sessions list captured when the File menu
     // opens, so menuItemSelected can resolve an "Open Recent" pick by

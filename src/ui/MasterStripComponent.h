@@ -34,6 +34,7 @@ public:
 
     // Scenario-harness only: the mode label and whether the fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
+    bool grMeterShownForScenario() const { return compMeter != nullptr && compMeter->isVisible() && ! compMeter->getBounds().isEmpty(); }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
 
     // The tape's editor, which is Tape Machine 2's own. TAPE toggles it; these

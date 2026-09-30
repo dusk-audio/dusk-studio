@@ -5,7 +5,7 @@ src/dsp/AuxLaneStrip.h	23
 src/dsp/ChannelStrip.cpp	22
 src/dsp/ChannelStrip.h	29
 src/dsp/MasteringChain.h	4
-src/engine/AudioEngine.cpp	83
+src/engine/AudioEngine.cpp	80
 src/engine/AudioEngine.h	14
 src/engine/AudioPipelineSelfTest.cpp	22
 src/engine/BounceEngine.cpp	43
@@ -48,7 +48,7 @@ src/session/MarkerEditActions.h	4
 src/session/MidiBindings.cpp	44
 src/session/MidiBindings.h	8
 src/session/ParamEditAction.h	2
-src/session/RegionEditActions.cpp	32
+src/session/RegionEditActions.cpp	31
 src/session/RegionEditActions.h	4
 src/session/Session.cpp	10
 src/session/Session.h	75
@@ -142,7 +142,7 @@ src/ui/SteppedKnob.h	12
 src/ui/SupportersPanel.h	42
 src/ui/SystemStatusBar.cpp	31
 src/ui/SystemStatusBar.h	11
-src/ui/TapeStrip.cpp	331
+src/ui/TapeStrip.cpp	330
 src/ui/TapeStrip.h	54
 src/ui/TransportBar.cpp	179
 src/ui/TransportBar.h	32

@@ -1,9 +1,233 @@
 #include "Session.h"
+#include "TrackMove.h"
 
 #include <algorithm>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
 
 namespace duskstudio
 {
+namespace
+{
+constexpr auto kRelaxed = std::memory_order_relaxed;
+
+// Every field a track carries, in the order a landing has to store them in: the
+// frequencies and voicing before the dial words that pair with them, a frozen
+// region before the flag that gates it, the lanes before the mode that plays
+// them. Staging, refreshing and landing a moved track all walk this one list.
+template <typename Src, typename Fields>
+void eachTrackField (Track& dst, Src& src, Fields& f)
+{
+    f.value (dst.name, src.name);
+    f.value (dst.colour, src.colour);
+
+    auto& d = dst.strip;
+    auto& s = src.strip;
+    f.atomic (d.faderDb, s.faderDb);
+    f.atomic (d.pan, s.pan);
+    f.atomic (d.mute, s.mute);
+    f.atomic (d.solo, s.solo);
+    f.atomic (d.phaseInvert, s.phaseInvert);
+    f.atomic (d.insertBypassed, s.insertBypassed);
+    f.atomic (d.faderGroupId, s.faderGroupId);
+    for (size_t i = 0; i < d.busAssign.size(); ++i)
+        f.atomic (d.busAssign[i], s.busAssign[i]);
+    f.atomic (d.auxSendsBypassed, s.auxSendsBypassed);
+    for (size_t i = 0; i < d.auxSendDb.size(); ++i)
+    {
+        f.atomic (d.auxSendDb[i], s.auxSendDb[i]);
+        f.atomic (d.auxSendPreFader[i], s.auxSendPreFader[i]);
+    }
+
+    f.atomic (d.hpfEnabled, s.hpfEnabled);
+    f.atomic (d.hpfFreq, s.hpfFreq);
+    f.atomic (d.lpfEnabled, s.lpfEnabled);
+    f.atomic (d.lpfFreq, s.lpfFreq);
+    f.atomic (d.lfGainDb, s.lfGainDb);
+    f.atomic (d.lfFreq, s.lfFreq);
+    f.atomic (d.lmGainDb, s.lmGainDb);
+    f.atomic (d.lmFreq, s.lmFreq);
+    f.atomic (d.lmQ, s.lmQ);
+    f.atomic (d.hmGainDb, s.hmGainDb);
+    f.atomic (d.hmFreq, s.hmFreq);
+    f.atomic (d.hmQ, s.hmQ);
+    f.atomic (d.hfGainDb, s.hfGainDb);
+    f.atomic (d.hfFreq, s.hfFreq);
+    f.atomic (d.eqBlackMode, s.eqBlackMode);
+    for (size_t i = 0; i < d.eqFreqDial.size(); ++i)
+        f.dial (d.eqFreqDial[i], s.eqFreqDial[i]);
+    f.atomic (d.eqEnabled, s.eqEnabled, std::memory_order_release);
+
+    f.atomic (d.compEnabled, s.compEnabled);
+    f.atomic (d.compMode, s.compMode);
+    f.atomic (d.compModePicked, s.compModePicked);
+    f.atomic (d.compOptoPeakRed, s.compOptoPeakRed);
+    f.atomic (d.compOptoGain, s.compOptoGain);
+    f.atomic (d.compOptoLimit, s.compOptoLimit);
+    f.atomic (d.compFetInput, s.compFetInput);
+    f.atomic (d.compFetOutput, s.compFetOutput);
+    f.atomic (d.compFetAttack, s.compFetAttack);
+    f.atomic (d.compFetRelease, s.compFetRelease);
+    f.atomic (d.compFetRatio, s.compFetRatio);
+    f.atomic (d.compFetThresholdDb, s.compFetThresholdDb);
+    f.atomic (d.compVcaThreshDb, s.compVcaThreshDb);
+    f.atomic (d.compVcaRatio, s.compVcaRatio);
+    f.atomic (d.compVcaAttack, s.compVcaAttack);
+    f.atomic (d.compVcaRelease, s.compVcaRelease);
+    f.atomic (d.compVcaOutput, s.compVcaOutput);
+    f.atomic (d.compVcaOverEasy, s.compVcaOverEasy);
+    f.atomic (d.compVcaDetectorClassic, s.compVcaDetectorClassic);
+
+    f.atomic (d.liveFaderDb, s.liveFaderDb);
+    f.atomic (d.livePan, s.livePan);
+    for (size_t i = 0; i < d.liveAuxSendDb.size(); ++i)
+        f.atomic (d.liveAuxSendDb[i], s.liveAuxSendDb[i]);
+    f.atomic (d.liveMute, s.liveMute);
+    f.atomic (d.liveSolo, s.liveSolo);
+    f.gesture (d.faderTouched);
+    f.gesture (d.panTouched);
+    for (auto& touched : d.auxSendTouched)
+        f.gesture (touched);
+
+    auto& dh = dst.hardwareInsert;
+    auto& sh = src.hardwareInsert;
+    f.atomic (dh.enabled, sh.enabled);
+    f.routing (dh.routing, sh.routing);
+    f.atomic (dh.outputGainDb, sh.outputGainDb);
+    f.atomic (dh.inputGainDb, sh.inputGainDb);
+    f.atomic (dh.dryWet, sh.dryWet);
+    f.atomic (dh.pingResult, sh.pingResult);
+    f.atomic (dh.pingPending, sh.pingPending);
+
+    f.atomic (dst.mode, src.mode);
+    f.atomic (dst.recordArmed, src.recordArmed);
+    f.atomic (dst.inputMonitor, src.inputMonitor);
+    f.atomic (dst.printEffects, src.printEffects);
+    f.atomic (dst.inputSource, src.inputSource);
+    f.atomic (dst.inputSourceR, src.inputSourceR);
+    f.atomic (dst.midiInputIndex, src.midiInputIndex);
+    f.value (dst.midiInputIdentifier, src.midiInputIdentifier);
+    f.atomic (dst.midiOutputIndex, src.midiOutputIndex);
+    f.value (dst.midiOutputIdentifier, src.midiOutputIdentifier);
+    f.atomic (dst.midiChannel, src.midiChannel);
+    f.gesture (dst.midiActivity);
+
+    f.value (dst.regions, src.regions);
+    f.value (dst.takes, src.takes);
+    f.midiRegions (dst.midiRegions, src.midiRegions);
+
+    f.value (dst.pluginDescriptor, src.pluginDescriptor);
+    f.value (dst.pluginLegacyDescriptionXml, src.pluginLegacyDescriptionXml);
+    f.value (dst.pluginStateBase64, src.pluginStateBase64);
+    f.value (dst.nativeClapPath, src.nativeClapPath);
+    f.value (dst.nativeClapPluginId, src.nativeClapPluginId);
+    f.value (dst.nativeClapStateBase64, src.nativeClapStateBase64);
+    f.value (dst.nativeLv2Path, src.nativeLv2Path);
+    f.value (dst.nativeLv2PluginId, src.nativeLv2PluginId);
+    f.value (dst.nativeLv2StateBase64, src.nativeLv2StateBase64);
+    f.value (dst.lv2StateTag, src.lv2StateTag);
+    f.value (dst.nativeVst3Path, src.nativeVst3Path);
+    f.value (dst.nativeVst3PluginId, src.nativeVst3PluginId);
+    f.value (dst.nativeVst3StateBase64, src.nativeVst3StateBase64);
+    f.value (dst.nativeAuIdentifier, src.nativeAuIdentifier);
+    f.value (dst.nativeAuStateBase64, src.nativeAuStateBase64);
+    f.value (dst.nativeMultisamplePath, src.nativeMultisamplePath);
+    f.value (dst.nativeMultisampleStateBase64, src.nativeMultisampleStateBase64);
+    f.value (dst.builtinUnitId, src.builtinUnitId);
+    f.value (dst.builtinStateBase64, src.builtinStateBase64);
+
+    f.value (dst.frozenAudioPath, src.frozenAudioPath);
+    f.value (dst.frozenRegion, src.frozenRegion);
+    f.atomic (dst.frozenPluginBypass, src.frozenPluginBypass);
+    f.atomic (dst.frozen, src.frozen, std::memory_order_release);
+
+    f.atomic (dst.meterGrDb, src.meterGrDb);
+    f.atomic (dst.meterInputDb, src.meterInputDb);
+    f.atomic (dst.meterInputRDb, src.meterInputRDb);
+    f.atomic (dst.meterOutLDb, src.meterOutLDb);
+    f.atomic (dst.meterOutRDb, src.meterOutRDb);
+
+    for (size_t p = 0; p < dst.automationLanes.size(); ++p)
+    {
+        f.lane (p, dst.automationLanes[p], src.automationLanes[p]);
+        f.atomic (dst.automationLanes[p].passOpen, src.automationLanes[p].passOpen,
+                  std::memory_order_release);
+    }
+    f.atomic (dst.automationMode, src.automationMode, std::memory_order_release);
+}
+
+// Live track -> stage: everything copied, each snapshot's value into a fresh
+// one ready to publish.
+struct CopyOut
+{
+    StagedTrack& stage;
+
+    template <typename T> void value (T& to, const T& from) { to = from; }
+    template <typename T>
+    void atomic (std::atomic<T>& to, const std::atomic<T>& from,
+                 std::memory_order = kRelaxed) noexcept { to.store (from.load (kRelaxed), kRelaxed); }
+    void dial (LegacyEqDial& to, const LegacyEqDial& from) noexcept { to.setRaw (from.raw()); }
+    template <typename T> void gesture (std::atomic<T>&) noexcept {}
+    void routing (AtomicSnapshot<HardwareInsertRouting>&, const AtomicSnapshot<HardwareInsertRouting>& from)
+    {
+        stage.routing = std::make_unique<HardwareInsertRouting> (from.current());
+    }
+    void midiRegions (AtomicSnapshot<std::vector<MidiRegion>>&,
+                      const AtomicSnapshot<std::vector<MidiRegion>>& from)
+    {
+        stage.midiRegions = std::make_unique<std::vector<MidiRegion>> (from.current());
+    }
+    void lane (size_t p, AutomationLane&, const AutomationLane& from)
+    {
+        stage.lanes[p] = std::make_unique<std::vector<AutomationPoint>> (from.pointsConst());
+    }
+};
+
+// Live track -> stage, the atomics alone: whatever the audio thread or a
+// control surface changed after the stage was built.
+struct RefreshAtomics
+{
+    template <typename T> void value (T&, const T&) noexcept {}
+    template <typename T>
+    void atomic (std::atomic<T>& to, const std::atomic<T>& from,
+                 std::memory_order = kRelaxed) noexcept { to.store (from.load (kRelaxed), kRelaxed); }
+    void dial (LegacyEqDial& to, const LegacyEqDial& from) noexcept { to.setRaw (from.raw()); }
+    template <typename T> void gesture (std::atomic<T>&) noexcept {}
+    template <typename Snapshot> void routing (Snapshot&, const Snapshot&) noexcept {}
+    template <typename Snapshot> void midiRegions (Snapshot&, const Snapshot&) noexcept {}
+    void lane (size_t, AutomationLane&, const AutomationLane&) noexcept {}
+};
+
+// Stage -> live track: values swapped in, so what they replace is freed with the
+// stage rather than here; atomics stored; the staged snapshots published.
+struct Land
+{
+    StagedTrack& stage;
+
+    template <typename T> void value (T& to, T& from) { using std::swap; swap (to, from); }
+    template <typename T>
+    void atomic (std::atomic<T>& to, const std::atomic<T>& from,
+                 std::memory_order order = kRelaxed) noexcept { to.store (from.load (kRelaxed), order); }
+    void dial (LegacyEqDial& to, const LegacyEqDial& from) noexcept { to.setRaw (from.raw()); }
+    template <typename T> void gesture (std::atomic<T>& to) noexcept { to.store (T {}, kRelaxed); }
+    void routing (AtomicSnapshot<HardwareInsertRouting>& to, AtomicSnapshot<HardwareInsertRouting>&) noexcept
+    {
+        to.publish (std::move (stage.routing));
+    }
+    void midiRegions (AtomicSnapshot<std::vector<MidiRegion>>& to,
+                      AtomicSnapshot<std::vector<MidiRegion>>&) noexcept
+    {
+        to.publish (std::move (stage.midiRegions));
+    }
+    void lane (size_t p, AutomationLane& to, AutomationLane&) noexcept
+    {
+        to.snapshot.publish (std::move (stage.lanes[p]));
+    }
+};
+} // namespace
+
 Session::Session()
 {
     for (int i = 0; i < kNumTracks; ++i)
@@ -218,6 +442,114 @@ int Session::resolveInputRForTrack (int trackIndex) const noexcept
         return (lResolved >= 0) ? lResolved + 1 : -1;
     }
     return rSrc;                        // -1 = none, 0..N = explicit input
+}
+
+std::optional<Session::StagedTrackMove> Session::stageTrackMove (const TrackMovePlan& requested,
+                                                                const TrackSlotMask& refollow) const
+{
+    const auto plan = trackMoveFromNewToOld (requested.newToOld);
+    if (! plan) return std::nullopt;
+
+    StagedTrackMove staged { *plan, refollow, {} };
+    for (int to = 0; to < kNumTracks; ++to)
+    {
+        const int from = plan->newToOld[(size_t) to];
+        if (from == to) continue;
+        auto stage = std::make_unique<StagedTrack>();
+        CopyOut copy { *stage };
+        eachTrackField (stage->fields, tracks[(size_t) from], copy);
+        auto& tag = stage->fields.lv2StateTag;
+        if (tag.empty())
+            tag = defaultLv2StateTag (from);
+        if (tag == defaultLv2StateTag (to))
+            tag.clear();
+        staged.into[(size_t) to] = std::move (stage);
+    }
+    return staged;
+}
+
+void Session::landTrackMove (StagedTrackMove& staged)
+{
+    // Every stage takes its source's atomics before any track is written, as
+    // the sources are the tracks about to be overwritten.
+    RefreshAtomics refresh;
+    for (int to = 0; to < kNumTracks; ++to)
+    {
+        auto* stage = staged.into[(size_t) to].get();
+        if (stage == nullptr) continue;
+        const int from = staged.plan.newToOld[(size_t) to];
+        const Track& source = tracks[(size_t) from];
+        eachTrackField (stage->fields, source, refresh);
+
+        auto& input = stage->fields.inputSource;
+        int landed = followInputAfterMove (input.load (kRelaxed), from);
+        if (staged.refollow[(size_t) to] && landed == to)
+            landed = kInputFollowsTrack;
+        input.store (landed, kRelaxed);
+    }
+
+    for (int to = 0; to < kNumTracks; ++to)
+        if (auto* stage = staged.into[(size_t) to].get())
+        {
+            Land land { *stage };
+            eachTrackField (tracks[(size_t) to], stage->fields, land);
+        }
+
+    if (auto& audition = takeAudition; audition.trackIdx >= 0 && audition.trackIdx < kNumTracks)
+        audition.trackIdx = staged.plan.oldToNew[(size_t) audition.trackIdx];
+}
+
+bool Session::permuteTracks (const TrackMovePlan& plan, const TrackSlotMask& refollow)
+{
+    auto staged = stageTrackMove (plan, refollow);
+    if (! staged) return false;
+    landTrackMove (*staged);
+    return true;
+}
+
+std::string Session::defaultLv2StateTag (int trackIndex)
+{
+    const int number = trackIndex + 1;
+    return std::string (number < 10 ? "track0" : "track") + std::to_string (number);
+}
+
+std::string Session::lv2StateTagFor (int trackIndex) const
+{
+    const auto& kept = track (trackIndex).lv2StateTag;
+    return kept.empty() ? defaultLv2StateTag (trackIndex) : kept;
+}
+
+bool Session::isLv2StateTag (const std::string& tag) noexcept
+{
+    const auto digit = [] (char c) { return c >= '0' && c <= '9'; };
+    return tag.size() == 7 && tag.compare (0, 5, "track") == 0 && digit (tag[5]) && digit (tag[6]);
+}
+
+void Session::repairLv2StateTags()
+{
+    for (int i = 0; i < kNumTracks; ++i)
+    {
+        auto& tag = tracks[(size_t) i].lv2StateTag;
+        if (! tag.empty() && (! isLv2StateTag (tag) || tag == defaultLv2StateTag (i)))
+            tag.clear();
+    }
+
+    // A kept tag that clashes falls back to its slot's own, which can clash
+    // with another kept tag in turn; each pass drops at least one, so this
+    // settles within kNumTracks passes.
+    for (bool dropped = true; dropped;)
+    {
+        dropped = false;
+        std::map<std::string, int> uses;
+        for (int i = 0; i < kNumTracks; ++i)
+            ++uses[lv2StateTagFor (i)];
+        for (auto& t : tracks)
+            if (! t.lv2StateTag.empty() && uses[t.lv2StateTag] > 1)
+            {
+                t.lv2StateTag.clear();
+                dropped = true;
+            }
+    }
 }
 
 void Session::setSessionDirectory (const juce::File& dir)

@@ -238,7 +238,7 @@ TEST_CASE ("Loading a v8 session turns audio take history into track takes",
     {
         auto root = original;
         REQUIRE (migrateSession (root, 8));
-        CHECK (root["version"].get<int>() == 9);
+        CHECK (root["version"].get<int>() == 10);
 
         // Playback parity: a region gains take_id and loses previous_takes,
         // and nothing else about it moves.
@@ -308,11 +308,47 @@ TEST_CASE ("Loading a v8 session turns audio take history into track takes",
 
     REQUIRE (SessionSerializer::save (*loaded, target));
     const auto resaved = readJson (target);
-    CHECK (resaved["version"].get<int>() == 9);
+    CHECK (resaved["version"].get<int>() == 10);
     for (const auto& track : resaved["tracks"])
         for (const auto& region : track["regions"])
             CHECK_FALSE (region.contains ("previous_takes"));
     CHECK (resaved["tracks"][1]["midi_regions"][0]["previous_takes"].size() == 1);
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("Loading a v9 session turns audio take history into track takes",
+           "[session][serializer][migration][takes]")
+{
+    // Format 9 stamped the LV2 state tags a moved track keeps; its regions still
+    // carried their take history the way format 8 did.
+    auto original = v8Session();
+    original["version"] = 9;
+    original["tracks"][0]["lv2_state_tag"] = "track18";
+
+    auto root = original;
+    REQUIRE (migrateSession (root, 9));
+    CHECK (root["version"].get<int>() == 10);
+    CHECK (root["tracks"][0]["lv2_state_tag"] == "track18");
+    for (const auto& region : root["tracks"][0]["regions"])
+        CHECK_FALSE (region.contains ("previous_takes"));
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+    writeJson (target, original);
+
+    auto loaded = std::make_unique<Session>();
+    loaded->setSessionDirectory (dir);
+    REQUIRE (SessionSerializer::load (*loaded, target));
+
+    const auto& vox = loaded->track (0);
+    REQUIRE (vox.takes.size() == 4);
+    checkTake (vox.takes[0], { 1, "Take 1", "audio/pass0.wav", 48000, 10000, 500,   2, {} });
+    checkTake (vox.takes[2], { 3, "Take 3", "audio/pass1.wav", 48000, 24000, 12000, 2, { 1000, 1, false } });
+    REQUIRE (vox.regions.size() == 4);
+    CHECK (vox.regions[0].takeId == 3);
+    REQUIRE (loaded->track (2).takes.size() == 1);
+    CHECK (loaded->track (2).regions[0].takeId == 5);
 
     dir.deleteRecursively();
 }
@@ -448,7 +484,7 @@ TEST_CASE ("Loading a v8 session starts no take before the timeline and keeps it
 TEST_CASE ("Loading gives zero and duplicate take ids fresh ones", "[session][serializer][takes]")
 {
     const Json root {
-        { "version", 9 },
+        { "version", 10 },
         { "tracks", Json::array ({
             { { "takes", Json::array ({
                   { { "id", 7 }, { "file", "audio/a.wav" }, { "length", 100 } },
@@ -504,7 +540,7 @@ TEST_CASE ("A region naming a take its track does not hold names none after load
            "[session][serializer][takes]")
 {
     const Json root {
-        { "version", 9 },
+        { "version", 10 },
         { "tracks", Json::array ({
             { { "takes", Json::array ({ { { "id", 4 }, { "file", "audio/a.wav" }, { "length", 100 } } }) },
               { "regions", Json::array ({
@@ -538,7 +574,7 @@ TEST_CASE ("Loading a session drops the takes the previous one held",
 {
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
-    writeJson (target, Json { { "version", 9 },
+    writeJson (target, Json { { "version", 10 },
                               { "tracks", Json::array ({ { { "takes", Json::array ({
                                   { { "id", 41 }, { "file", "audio/a.wav" }, { "length", 100 } } }) } } }) } });
 

@@ -5,6 +5,7 @@
 #include "../../../foundation/Fs.h"
 #include "../../../session/Session.h"
 #include "../../../session/SessionSerializer.h"
+#include "../../../session/TrackMove.h"
 
 #include <array>
 #include <filesystem>
@@ -125,6 +126,45 @@ ScenarioResult runFileState (ScenarioContext& ctx)
     ctx.expect (left.front() > 0.2f && right.front() < -0.4f,
             "the restored plugin stayed silent, so it never read its stored file");
 
+    // Moved to track 6, the track keeps the directory it stored its file in,
+    // through a save and a load, and the plug-in still finds the file there.
+    constexpr int kMovedTo = 5;
+    const auto move = planBlockMove ({ kTrackIndex }, kMovedTo + 1);
+    if (! ctx.expect (engine.moveTracks (move), "moving the track was refused"))
+        return ctx.verdict();
+    ctx.cleanup ([&engine, move] { engine.moveTracks (invertTrackMove (move)); });
+    ctx.expect (&engine.getChannelStrip (kMovedTo) == &strip, "the plugin's strip did not move with its track");
+    ctx.expect (session.lv2StateTagFor (kMovedTo) == "track01",
+                "the moved track did not keep its state directory");
+
+    engine.publishPluginStateForSave (true);
+    ctx.expect (! std::filesystem::exists (sessionDir / "state" / "lv2" / "track06", fsError),
+                "the moved track's file state went to its new slot's directory");
+    if (! ctx.expect (SessionSerializer::save (session, sessionFile), "saving the moved session failed"))
+        return ctx.verdict();
+
+    strip.unloadNativeLv2();
+    auto& moved = session.track (kMovedTo);
+    moved.nativeLv2Path.clear();
+    moved.nativeLv2PluginId.clear();
+    moved.nativeLv2StateBase64.clear();
+    moved.lv2StateTag.clear();
+    if (! ctx.expect (SessionSerializer::load (session, sessionFile), "loading the moved session failed"))
+        return ctx.verdict();
+    engine.consumePluginStateAfterLoad();
+    ctx.expect (session.lv2StateTagFor (kMovedTo) == "track01",
+                "the kept state directory did not survive a save and a load");
+    if (! ctx.expect (engine.getChannelStrip (kMovedTo).isNativeLv2Loaded(),
+                      "the plugin did not come back on the moved track"))
+        return ctx.verdict();
+    left.fill (0.25f);
+    right.fill (-0.5f);
+    engine.getChannelStrip (kMovedTo).getNativeLv2Slot().processStereo (
+        left.data(), right.data(), left.data(), right.data(), ScenarioContext::kBlockSize);
+    ctx.expect (left.front() > 0.2f && right.front() < -0.4f,
+                "the plugin on the moved track stayed silent, so it looked for its file elsewhere");
+
+    engine.getChannelStrip (kMovedTo).unloadNativeLv2();
     strip.unloadNativeLv2();
     return ctx.verdict();
 }

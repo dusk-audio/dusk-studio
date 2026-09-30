@@ -88,6 +88,7 @@ void PlaybackEngine::refreshLiveRegionParams()
 
 void PlaybackEngine::preparePlayback (Audition audition)
 {
+    ++rebuilds;
     stopPlayback();
     auditionedTrack.store (-1, std::memory_order_relaxed);
     auditionedTake.store (0, std::memory_order_relaxed);

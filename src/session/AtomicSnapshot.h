@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <cstdint>
 #include <memory>
 #include <utility>
 
@@ -25,6 +26,8 @@ namespace duskstudio
 //                   the audio thread might iterate.
 // publish()       : message thread.
 // mutate()        : message thread; copy current, apply lambda, publish.
+// generation()    : message thread; how many publishes so far, so an edit can
+//                   be checked to publish once however many entries it touches.
 template <typename T>
 class AtomicSnapshot
 {
@@ -57,7 +60,10 @@ public:
         currentPtr.store (fresh.get(), std::memory_order_release);
         previous = std::move (owned);
         owned    = std::move (fresh);
+        ++publishes;
     }
+
+    std::uint64_t generation() const noexcept { return publishes; }
 
     template <typename Fn>
     void mutate (Fn&& fn)
@@ -71,5 +77,6 @@ private:
     std::atomic<const T*> currentPtr { nullptr };
     std::unique_ptr<T>    owned;
     std::unique_ptr<T>    previous;  // kept alive for one publish
+    std::uint64_t         publishes = 0;
 };
 } // namespace duskstudio

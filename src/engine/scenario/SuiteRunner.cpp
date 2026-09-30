@@ -283,7 +283,8 @@ void SuiteRunner::finishCurrent (ScenarioResult result)
     {
         if (guard.expired()) return;
         context.reset();
-        if (world != nullptr) world->reset();
+        if (world != nullptr)
+            failPassOnDirt (name, world->reset());
         if (guiHost == nullptr)
         {
             runNext();
@@ -298,6 +299,21 @@ void SuiteRunner::finishCurrent (ScenarioResult result)
             sweepWindow (name, [this] { runNext(); });
         });
     });
+}
+
+void SuiteRunner::failPassOnDirt (const std::string& attribution, const std::vector<std::string>& dirty)
+{
+    for (const auto& line : dirty)
+        std::fprintf (stdout, "[DIRTY] %s: %s\n", attribution.c_str(), line.c_str());
+    if (! dirty.empty() && passAwaitingSweep)
+    {
+        std::fprintf (stdout, "[FAIL] %s: left the engine dirty: %s\n",
+                      attribution.c_str(), dirty.front().c_str());
+        --summary.pass;
+        ++summary.fail;
+    }
+    passAwaitingSweep = false;
+    std::fflush (stdout);
 }
 
 void SuiteRunner::sweepWindow (std::string attribution, std::function<void()> next)

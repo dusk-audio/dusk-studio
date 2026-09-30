@@ -1482,7 +1482,6 @@ void MasterStripComponent::setCompactMode (bool compact)
     eqHfBoostFreqKnob.setVisible (sec);  eqHfBoostFreqLabel.setVisible (sec);
     eqHfAttenFreqKnob.setVisible (sec);  eqHfAttenFreqLabel.setVisible (sec);
     if (compHeaderBtn != nullptr) compHeaderBtn->setVisible (sec);
-    if (compMeter     != nullptr) compMeter    ->setVisible (sec);
     compRatio   .setVisible (sec);  compRatLabel.setVisible (sec);
     compAttack  .setVisible (sec);  compAtkLabel.setVisible (sec);
     compRelease .setVisible (sec);  compRelLabel.setVisible (sec);

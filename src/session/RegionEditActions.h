@@ -2,7 +2,10 @@
 
 #include <juce_data_structures/juce_data_structures.h>
 #include "Session.h"
+#include "TrackMove.h"
 #include <algorithm>
+#include <string>
+#include <vector>
 
 namespace duskstudio
 {
@@ -141,31 +144,45 @@ private:
     int         insertedAt = -1;
 };
 
-// Replaces a single MidiRegion's fields with new values. Mirror of
+// Replaces a MidiRegion's fields with new values. Mirror of
 // RegionEditAction for the MIDI side. Used for tape-lane drag-move
 // of MIDI regions and any future MIDI-region edits that benefit
 // from full before/after capture (trim, label, colour, etc.). The
 // notes / ccs vectors come along for free in the snapshot, which is
 // what makes this safe even if a recording committed new notes
 // between the drag start and finalise.
+//
+// Several regions on one track go in one action: each perform and undo
+// publishes the track's regions once, however many it changes. The snapshot
+// keeps a single retired vector, so a second publish inside one audio block
+// would free the vector that block is still reading.
 class MidiRegionEditAction final : public UndoableAction
 {
 public:
+    struct Change
+    {
+        int regionIdx;
+        MidiRegion before;
+        MidiRegion after;
+    };
+
     MidiRegionEditAction (Session& session, AudioEngine& engine,
                             int trackIdx, int regionIdx,
                             const MidiRegion& before, const MidiRegion& after);
+    MidiRegionEditAction (Session& session, AudioEngine& engine,
+                            int trackIdx, std::vector<Change> changes);
 
     bool perform() override;
     bool undo()    override;
-    int  getSizeInUnits() override { return 1; }
+    int  getSizeInUnits() override { return std::max (1, (int) changes.size()); }
 
 private:
+    bool apply (bool forward);
+
     Session& session;
     AudioEngine& engine;
     int trackIdx;
-    int regionIdx;
-    MidiRegion beforeState;
-    MidiRegion afterState;
+    std::vector<Change> changes;
 };
 
 // Removes a region; undo re-inserts it at its original index.
@@ -323,24 +340,28 @@ private:
 
 // MIDI counterpart to DeleteRegionAction. Erase/insert reshape the
 // vector, so both go through mutate() (copy + publish) - never
-// currentMutable() while the audio thread iterates the snapshot.
+// currentMutable() while the audio thread iterates the snapshot. Several
+// regions on one track are one action for the reason MidiRegionEditAction
+// gives: one publish per perform and per undo.
 class DeleteMidiRegionAction final : public UndoableAction
 {
 public:
     DeleteMidiRegionAction (Session& session, AudioEngine& engine,
                               int trackIdx, int regionIdx);
+    DeleteMidiRegionAction (Session& session, AudioEngine& engine,
+                              int trackIdx, std::vector<int> regionIndices);
 
     bool perform() override;
     bool undo()    override;
-    int  getSizeInUnits() override { return 1; }
+    int  getSizeInUnits() override { return std::max (1, (int) indices.size()); }
 
 private:
     Session& session;
     AudioEngine& engine;
     int trackIdx;
-    int regionIdx;
-    MidiRegion removed;
-    bool       haveRemoved = false;
+    std::vector<int>        indices;   // descending, no repeats
+    std::vector<MidiRegion> removed;   // one per index
+    bool haveRemoved = false;
 };
 
 // Clones a source track's full per-strip state onto a destination slot:
@@ -475,4 +496,62 @@ private:
     int trackIdx, paramIdx;
     std::vector<AutomationPoint> before, after;
 };
+// Holds back the playback rebuild every region action runs while one of these
+// is open on the calling thread, and runs it once as the outermost closes. A
+// rebuild reopens a reader for every region in the session, so a gesture over
+// many regions would otherwise rebuild as many times as it has actions.
+class RegionRebuildBatch
+{
+public:
+    explicit RegionRebuildBatch (AudioEngine& engine) noexcept;
+    ~RegionRebuildBatch();
+    RegionRebuildBatch (const RegionRebuildBatch&) = delete;
+    RegionRebuildBatch& operator= (const RegionRebuildBatch&) = delete;
+
+private:
+    AudioEngine& engine;
+};
+
+// The engine's undo and redo, inside a RegionRebuildBatch so a transaction of
+// many region actions rebuilds playback once, as the gesture that made it did.
+// Both refuse, leaving the history as it is, while trackMoveUndoRefusal says
+// the step is a track move that can't run now.
+bool undoTransaction (AudioEngine& engine);
+bool redoTransaction (AudioEngine& engine);
+
+// The name of the one undo step a track move makes.
+constexpr const char* kMoveTracksTransaction = "Move tracks";
+
+// Why a track move would be refused now. Playing: the transport runs, an
+// offline render drives the engine or its process gate is already held, or an
+// automation pass is still open on a track that moves. Frozen: frozenTrack (the
+// lowest) is frozen and would change slot; its baked audio and file are named
+// by the slot. Loading: a plug-in is still loading into the insert of a track
+// that moves, and its completion finishes the load for the slot it started in.
+struct TrackMoveRefusal
+{
+    enum class Kind { None, Playing, Frozen, Loading };
+    Kind kind = Kind::None;
+    int frozenTrack = -1;
+};
+TrackMoveRefusal trackMoveRefusalFor (const Session& session, AudioEngine& engine,
+                                      const TrackMovePlan& plan);
+
+// What the "Can't move tracks" alert says, for a move or for the undo or redo
+// of one; empty for None.
+enum class TrackMoveStep { Move, Undo, Redo };
+std::string trackMoveRefusalMessage (const TrackMoveRefusal& refusal,
+                                     TrackMoveStep step = TrackMoveStep::Move);
+
+// Moves the tracks as the only step in the undo history: the steps before it
+// name tracks by number, so they go. On undo, an input the move pinned from
+// following its track number follows again, unless it was changed since.
+// False, with nothing changed, history included, when refused, when the plan
+// moves nothing or does not map the slots one to one. Message thread.
+bool commitTrackMove (AudioEngine& engine, const TrackMovePlan& plan);
+
+// Why the next undo (redo when redo is true) can't run now, when that step is a
+// track move; None otherwise. Asked before the undo manager is: an action that
+// refuses its undo makes the undo manager drop the whole history.
+TrackMoveRefusal trackMoveUndoRefusal (AudioEngine& engine, bool redo);
 } // namespace duskstudio

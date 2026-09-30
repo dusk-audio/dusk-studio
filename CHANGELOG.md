@@ -40,9 +40,9 @@ Takes live on the track now, and the audio editor is where you comp them.
 - **Audio regions no longer cycle takes.** The T 1/N pill, the Takes submenu
   and Alt+T / Alt+Shift+T now work on MIDI regions only; audio takes are chosen
   in the take lanes. MIDI take history is unchanged.
-- **Sessions are saved in format v9.** A session from 0.14 loads each region's
+- **Sessions are saved in format v10.** A session from 0.14 loads each region's
   old take history as takes on its track, with the audio files untouched. An
-  older build cannot open a v9 session.
+  older build cannot open a v10 session.
 
 ### Fixed
 

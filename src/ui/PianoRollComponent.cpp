@@ -4,6 +4,7 @@
 #include "EditCursors.h"
 #include "EditModeToolbar.h"
 #include "EmbeddedModal.h"
+#include "TrackMoveUndo.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/Transport.h"
 #include "../session/RegionEditActions.h"
@@ -368,11 +369,11 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     // mouse-only conveniences (zoom-fit, CC-lane toggle).
     addAndMakeVisible (undoButton);
     undoButton.setTooltip ("Undo");
-    undoButton.onClick = [this] { engine.getUndoManager().undo(); repaint(); };
+    undoButton.onClick = [this] { undoOrRedo (false); repaint(); };
 
     addAndMakeVisible (redoButton);
     redoButton.setTooltip ("Redo");
-    redoButton.onClick = [this] { engine.getUndoManager().redo(); repaint(); };
+    redoButton.onClick = [this] { undoOrRedo (true); repaint(); };
 
     addAndMakeVisible (splitButton);
     splitButton.setTooltip ("Split at edit cursor");
@@ -759,6 +760,12 @@ void PianoRollComponent::refreshStatusBarReadouts()
         muteToggle.setToggleState (r->muted,  juce::dontSendNotification);
         lockToggle.setToggleState (r->locked, juce::dontSendNotification);
     }
+}
+
+void PianoRollComponent::undoOrRedo (bool redo)
+{
+    if (onUndoRequested) onUndoRequested (redo);
+    else                 undoOrExplain (engine, *this, redo);
 }
 
 void PianoRollComponent::paint (juce::Graphics& g)
@@ -3105,8 +3112,9 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
                                   || k.getModifiers().isCtrlDown();
         if (cmdOrCtrl && code == 'Z')
         {
-            if (k.getModifiers().isShiftDown()) engine.getUndoManager().redo();
-            else                                  engine.getUndoManager().undo();
+            undoOrRedo (k.getModifiers().isShiftDown());
+            // A track move's undo closes this editor; its track index is stale.
+            if (getParentComponent() == nullptr) return true;
             rangeActive = false;
             clearSelection();
             refreshStatusBarReadouts();

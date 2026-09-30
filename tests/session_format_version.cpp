@@ -29,7 +29,7 @@ void writeRaw (const juce::File& target, const juce::String& contents)
 } // namespace
 
 // Format-version contract:
-//   * Manual save writes "version": kFormatVersion (currently 9).
+//   * Manual save writes "version": kFormatVersion (currently 10).
 //   * Load rejects sessions whose version is HIGHER than the build's
 //     kFormatVersion — newer Dusk Studio can read older sessions (via the
 //     migrateSession switch) but older Dusk Studio must refuse newer ones
@@ -91,7 +91,7 @@ TEST_CASE ("SessionSerializer round-trip preserves version field",
     auto root = juce::JSON::parse (target);
     REQUIRE (root.isObject());
     REQUIRE (root.hasProperty ("version"));
-    REQUIRE ((int) root["version"] == 9);
+    REQUIRE ((int) root["version"] == 10);
 
     dir.deleteRecursively();
 }
@@ -122,7 +122,7 @@ TEST_CASE ("SessionSerializer stamps the current version on a session carrying b
     const auto root = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (root.is_object());
-    REQUIRE (root["version"].get<int>() == 9);
+    REQUIRE (root["version"].get<int>() == 10);
     REQUIRE (root["version"].get<int>() > kLastReleasedReaderMaxVersion);
 
     auto loadedPtr = std::make_unique<Session>();
@@ -135,7 +135,7 @@ TEST_CASE ("SessionSerializer stamps the current version on a session carrying b
     dir.deleteRecursively();
 }
 
-TEST_CASE ("SessionSerializer refuses a v10 session before touching the live model",
+TEST_CASE ("SessionSerializer refuses a v11 session before touching the live model",
            "[session][serializer][version]")
 {
     using duskstudio::Session;
@@ -147,7 +147,7 @@ TEST_CASE ("SessionSerializer refuses a v10 session before touching the live mod
     // One version above this build's format, carrying values the loader would
     // otherwise write into the live Session.
     writeRaw (target,
-              R"({"version":10,"tempo":76.0,)"
+              R"({"version":11,"tempo":76.0,)"
               R"("tracks":[{"name":"From the future","builtin_id":"dusk.builtin.utility"}]})");
 
     auto livePtr = std::make_unique<Session>();

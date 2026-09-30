@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include "audiofile/BufferedFileReader.h"
 #include "../foundation/PlanarBuffer.h"
@@ -36,6 +37,9 @@ public:
     enum class Audition { Ignore, Honour };
     void preparePlayback (Audition audition = Audition::Ignore);
     void stopPlayback();
+    // How many times preparePlayback has run. Message thread; lets a check
+    // prove that an edit over many regions rebuilt once.
+    std::uint64_t rebuildCount() const noexcept { return rebuilds; }
 
     // The take the streams play in place of its track's regions, as the last
     // preparePlayback left them; none when they play no audition. Message thread.
@@ -69,6 +73,7 @@ public:
 private:
     Session& session;
     const Transport* transport = nullptr;
+    std::uint64_t rebuilds = 0;
 
     struct RegionStream
     {

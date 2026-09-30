@@ -22,4 +22,9 @@ namespace duskstudio
 //  -1  -> unknown (no X display, or keysym unmapped) - the caller falls back to
 //         whatever key state its own toolkit tracks.
 int isKeyPhysicallyDown (int juceKeyCode) noexcept;
+
+// Either Alt key, by the same query and with the same returns. JUCE's own
+// modifier state follows the key events its window receives, which the source
+// of an external drag-and-drop can hold back, so it can be stale at a drop.
+int isAltPhysicallyDown() noexcept;
 } // namespace duskstudio

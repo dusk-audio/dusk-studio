@@ -21,6 +21,10 @@ struct AudioEditorHost
     // Reopen on another region of the same track. Called from inside a frame, so the
     // shell defers the close-and-reopen until the frame has returned.
     std::function<void (int track, int region)> navigateToRegion;
+    // Undo, or redo when redo is true, as the shell's own keys run it: a track
+    // move's undo is refused, with the reason, on the same grounds. The engine's
+    // undo manager when unset.
+    std::function<void (bool redo)> undo;
 };
 
 // The audio region editor: toolbar, bar ruler, the track's regions around the focused
@@ -45,6 +49,10 @@ public:
     // Moves the edit focus to another region of the same track without re-fitting
     // the view.
     virtual void focusRegion (int regionIndex) = 0;
+
+    // The editor's track now sits in another slot, a track move having moved it with
+    // its regions and takes. Any drag or open field is dropped.
+    virtual void followTrack (int trackIndex) = 0;
 
     virtual bool chaseEnabled() const = 0;
 

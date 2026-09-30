@@ -449,6 +449,15 @@ public:
                                            r->sourceOffset + r->lengthInSamples);
     }
 
+    void followTrack (int index) override
+    {
+        trackIdx = index;
+        if (drag != Drag::none)
+            cancelDrag();
+        editing = Field::none;
+        confirmingDelete = 0;
+    }
+
     std::vector<double> viewForScenario() const override
     {
         return { static_cast<double> (pixelsPerSample), static_cast<double> (scrollSamples),
@@ -1529,9 +1538,12 @@ private:
         std::optional<AudioRegion> focused;
         if (const auto* r = region())
             focused = *r;
-        auto& undo = engine.getUndoManager();
-        if (redo) undo.redo();
-        else      undo.undo();
+        if (host.undo)
+            host.undo (redo);
+        else if (redo)
+            engine.getUndoManager().redo();
+        else
+            engine.getUndoManager().undo();
         rangeActive = false;
         additional.clear();
         if (const int same = focused ? indexOfRegion (*focused) : -1; same >= 0)

@@ -6,7 +6,10 @@
 
 #include <juce_core/juce_core.h>
 
+#include <array>
 #include <cmath>
+
+#include <nlohmann/json.hpp>
 
 using duskstudio::AutomationParam;
 using duskstudio::Session;
@@ -356,7 +359,7 @@ TEST_CASE ("SessionSerializer::load clamps out-of-range mastering values",
         "limiter_release_ms": -1e30,
         "limiter_lookahead_ms": 1e30,
         "limiter_mode": 99,
-        "target_preset": 99
+        "loudness_target": 99
       }
     }
     )JSON");
@@ -518,4 +521,46 @@ TEST_CASE ("SessionSerializer::load agrees on tempo between the peek and the blo
     loadWithTempo ("5000.0", sessionBpm, anchorBpm);
     REQUIRE_THAT (sessionBpm, WithinAbs (300.0f, 1e-3f));
     REQUIRE_THAT (anchorBpm, WithinAbs (300.0f, 1e-3f));
+}
+
+// Sessions saved before the target list was grouped by loudness carry the
+// old six-row index under "target_preset"; each platform lands on the row
+// that holds its LUFS target.
+TEST_CASE ("SessionSerializer::load maps the per-platform loudness target onto the grouped list",
+           "[session][serializer]")
+{
+    const std::array<int, 7> expected { 0, 1, 2, 1, 1, 3, 3 };
+    for (int legacy = 0; legacy < (int) expected.size(); ++legacy)
+    {
+        const auto target = writeSession (juce::String (R"({"version":3,"mastering":{"target_preset":)")
+                                          + juce::String (legacy == 6 ? 99 : legacy) + "}}");
+        Session s;
+        REQUIRE (SessionSerializer::load (s, target));
+        INFO ("legacy index " << legacy);
+        REQUIRE (s.mastering().targetPresetIndex.load() == expected[(std::size_t) legacy]);
+        target.getParentDirectory().deleteRecursively();
+    }
+}
+
+// A save carries the grouped target under loudness_target and loads it back.
+TEST_CASE ("SessionSerializer::save writes the loudness target and loads it back",
+           "[session][serializer]")
+{
+    for (int grouped = 0; grouped < duskstudio::MasteringParams::kNumTargetPresets; ++grouped)
+    {
+        const auto target = writeSession ("{}");
+        Session saved;
+        saved.mastering().targetPresetIndex.store (grouped);
+        REQUIRE (SessionSerializer::save (saved, target));
+
+        const auto root = nlohmann::json::parse (target.loadFileAsString().toStdString());
+        INFO ("grouped index " << grouped);
+        REQUIRE (root.at ("mastering").at ("loudness_target").get<int>() == grouped);
+        REQUIRE_FALSE (root.at ("mastering").contains ("target_preset"));
+
+        Session loaded;
+        REQUIRE (SessionSerializer::load (loaded, target));
+        REQUIRE (loaded.mastering().targetPresetIndex.load() == grouped);
+        target.getParentDirectory().deleteRecursively();
+    }
 }

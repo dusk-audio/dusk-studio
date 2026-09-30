@@ -57,6 +57,9 @@ public:
 
     // Host sets so Esc dismisses the overlay.
     std::function<void()> onCloseRequested;
+    // Undo, or redo when redo is true. The host runs it, so a track move's
+    // undo is refused here on the same grounds as from the main window.
+    std::function<void (bool redo)> onUndoRequested;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -124,6 +127,7 @@ public:
     void syncScrollBarRange();
 
 private:
+    void undoOrRedo (bool redo);
     Session& session;
     AudioEngine& engine;
     int trackIdx;

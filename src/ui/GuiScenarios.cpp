@@ -33,6 +33,7 @@
 #include "SaveTargetChecks.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/SuiteRunner.h"
+#include "../session/TrackMove.h"
 #include "../foundation/Fs.h"
 
 #include <algorithm>
@@ -43,7 +44,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -125,6 +128,19 @@ bool dispatchFileDrop (Component& component, void (Component::*handler) (const F
     component.fileDragEnter (names, x, y);
     (component.*handler) (names, x, y);
     return true;
+}
+
+// Enters the drag, reads what it shows, and leaves without dropping.
+template <typename Component, typename Files, typename Read>
+auto dispatchFileHover (Component& component, void (Component::*leave) (const Files&),
+                        const std::vector<std::filesystem::path>& files, int x, int y, Read read)
+{
+    Files names;
+    for (const auto& path : files) names.add (HostString::fromUTF8 (path.u8string().c_str()));
+    component.fileDragEnter (names, x, y);
+    const auto shown = read();
+    (component.*leave) (names);
+    return shown;
 }
 
 template <typename Peer, typename Source, typename Point, typename Time, typename Wheel>
@@ -450,6 +466,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             check (! track.recordArmed.load(), "first launch armed a track");
             check (strip (index) != nullptr, "first launch omitted a channel strip");
             launch.trackMode[(std::size_t) index] = track.mode.load();
+            launch.stripOrder[(std::size_t) index] = &owner.engine.getChannelStrip (index);
         }
 
         launch.uiScale = uiScale();
@@ -757,6 +774,28 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (! tape->getLocalBounds().contains (point)) return false;
         return dispatchFileDrop (*tape, &TapeStrip::filesDropped, files, point.x, point.y);
     }
+    std::vector<int> tapeDropHover (int track, const std::vector<std::filesystem::path>& files) override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()) return {};
+        const auto point = tape->dropPointForScenario (track);
+        if (! tape->getLocalBounds().contains (point)) return {};
+        const int line = dispatchFileHover (*tape, &TapeStrip::fileDragExit, files, point.x, point.y,
+                                            [tape] { return tape->dropLineXForScenario(); });
+        return { line, point.x };
+    }
+    std::int64_t tapeDropPointSample (int track) const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->dropPointSampleForScenario (track) : -1;
+    }
+    int tapeXForSample (std::int64_t sample) const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->xForSampleForScenario (sample) : -1;
+    }
+    void forceDropAtMouse (std::optional<bool> atMouse) override
+    {
+        if (owner.tapeStrip != nullptr) owner.tapeStrip->setDropAtMouseForScenario (atMouse);
+    }
     std::vector<std::string> confirmationText() const override { return confirmationTextForScenario(); }
     bool captureMiniMarkers (bool enabled) override
     {
@@ -972,6 +1011,21 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index) : nullptr;
         return strip != nullptr && strip->isCompactMode();
+    }
+
+    bool grMetersShown() const override
+    {
+        auto* console = owner.consoleView.get();
+        if (console == nullptr) return false;
+        for (int track = 0; track < Session::kNumTracks; ++track)
+            if (auto* strip = console->getStripComponent (track);
+                strip == nullptr || (strip->isVisible() && ! strip->grMeterShownForScenario()))
+                return false;
+        for (int bus = 0; bus < Session::kNumBuses; ++bus)
+            if (auto* busStrip = console->getBusComponent (bus); busStrip == nullptr || ! busStrip->grMeterShownForScenario())
+                return false;
+        auto* master = console->getMasterStripComponent();
+        return master != nullptr && master->grMeterShownForScenario();
     }
 
     std::string stripSendLabel (int track, int send) const override
@@ -1820,6 +1874,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     bool clickAt (float x, float y, int count, bool right = false)
     {
+        return clickWith (x, y, count, right ? 4 : 0);
+    }
+    bool clickWith (float x, float y, int count, int modifiers)
+    {
         auto* peer = owner.getPeer();
         if (peer == nullptr) return false;
         using Peer = std::remove_pointer_t<decltype (peer)>;
@@ -1827,8 +1885,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             std::chrono::system_clock::now().time_since_epoch()).count();
         for (int click = 0; click < count; ++click)
         {
-            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, true, time + click * 40, right ? 4 : 0);
-            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, false, time + click * 40 + 20, right ? 4 : 0);
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, true, time + click * 40, modifiers);
+            dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, false, time + click * 40 + 20, modifiers);
         }
         return true;
     }
@@ -1922,14 +1980,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return clickAt (point.x, point.y, 1, right);
     }
 
-    bool clickTapeTrackName (int track, int clicks) override
+    bool clickTapeTrackName (int track, int clicks, int modifiers) override
     {
         auto* tape = owner.tapeStrip.get();
         if (tape == nullptr || ! tape->isShowing()) return false;
         const auto point = tape->labelPointForScenario (track);
         if (! tape->getLocalBounds().withTrimmedTop (TapeStrip::kRulerH).contains (point)) return false;
         const auto at = owner.getTopLevelComponent()->getLocalPoint (tape, point).toFloat();
-        return clickAt (at.x, at.y, clicks);
+        return clickWith (at.x, at.y, clicks, modifiers);
     }
     int tapeNameEditorTrack() const override
     {
@@ -1947,9 +2005,98 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.tapeStrip != nullptr ? owner.tapeStrip->getSelectedTrack() : -1;
     }
+    std::vector<int> tapeSelectedTracks() const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->getSelectedTracks() : std::vector<int> {};
+    }
     int consoleFocusedStrip() const override
     {
         return owner.consoleView != nullptr ? owner.consoleView->getFocusedStrip() : -1;
+    }
+    std::string stripInputText (int track) const override
+    {
+        auto* component = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
+        return component != nullptr ? component->inputTextForScenario() : std::string();
+    }
+    std::vector<int> consoleStripsOffTheirSlot() const override
+    {
+        std::vector<int> off;
+        for (int track = 0; track < Session::kNumTracks; ++track)
+        {
+            auto* component = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
+            if (component == nullptr
+                || component->pluginSlotForScenario() != &owner.engine.getChannelStrip (track).getPluginSlot())
+                off.push_back (track);
+        }
+        return off;
+    }
+
+    // A point in the tape strip's name column, in window coordinates, when it
+    // is on screen below the ruler.
+    template <typename LocalPoint>
+    bool tapeNameColumnPoint (LocalPoint point, float& x, float& y) const
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()
+            || ! tape->getLocalBounds().withTrimmedTop (TapeStrip::kRulerH).contains (point)) return false;
+        const auto at = owner.getTopLevelComponent()->getLocalPoint (tape, point).toFloat();
+        x = at.x;
+        y = at.y;
+        return true;
+    }
+    bool tapePointer (float x, float y, bool down, std::int64_t time)
+    {
+        auto* peer = owner.getPeer();
+        if (peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, down, time);
+        return true;
+    }
+    static std::int64_t pointerTime()
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+    bool dragTapeTrackName (int track, int gap, bool release) override
+    {
+        if (owner.tapeStrip == nullptr) return false;
+        float fromX = 0, fromY = 0, toX = 0, toY = 0;
+        if (! tapeNameColumnPoint (owner.tapeStrip->labelPointForScenario (track), fromX, fromY)
+            || ! tapeNameColumnPoint (owner.tapeStrip->trackMoveGapPointForScenario (gap), toX, toY)) return false;
+        const auto time = pointerTime();
+        if (! tapePointer (fromX, fromY, true, time)) return false;
+        heldTapePress = { fromX, fromY };
+        tapePointer (toX, toY, true, time + 40);
+        return ! release || releaseTapeTrackName (gap);
+    }
+    // Off screen, the button still comes up, where it went down.
+    bool releaseTapeTrackName (int gap) override
+    {
+        float x = 0, y = 0;
+        const bool atGap = owner.tapeStrip != nullptr
+                        && tapeNameColumnPoint (owner.tapeStrip->trackMoveGapPointForScenario (gap), x, y);
+        if (! atGap && heldTapePress) std::tie (x, y) = *heldTapePress;
+        const bool released = (atGap || heldTapePress) && tapePointer (x, y, false, pointerTime());
+        heldTapePress.reset();
+        return atGap && released;
+    }
+    bool nudgeTapeTrackName (int track, int pixels) override
+    {
+        float x = 0, y = 0;
+        if (owner.tapeStrip == nullptr
+            || ! tapeNameColumnPoint (owner.tapeStrip->labelPointForScenario (track), x, y)) return false;
+        const auto time = pointerTime();
+        const float to = y + (float) pixels;
+        return tapePointer (x, y, true, time) && tapePointer (x, to, true, time + 40)
+            && tapePointer (x, to, false, time + 80);
+    }
+    int tapeMoveLineY() const override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()) return -1;
+        const int local = tape->trackMoveLineYForScenario();
+        return local < 0 ? -1
+                         : owner.getTopLevelComponent()->getLocalPoint (tape, tape->getLocalBounds().getTopLeft().withY (local)).y;
     }
 
     bool dragTapeMarker (int index, float toFraction) override
@@ -2070,6 +2217,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             return owner.audioEditorView->regionIndex();
        #endif
         return owner.audioEditorRegionIdx;
+    }
+    int audioEditorTrack() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr)
+            return owner.audioEditorView->trackIndex();
+       #endif
+        return owner.audioEditorOpen() ? owner.audioEditorTrackIdx : -1;
     }
     bool clickAudioEditorWaveform() override { return clickAudioEditorControl ("waveform"); }
 
@@ -2201,13 +2356,24 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                                                                               : "tape hides empty tracks");
             if (owner.tapeStrip->getSelectedTrack() != launch.tapeSelectedTrack)
                 lines.push_back ("tape selects track " + std::to_string (owner.tapeStrip->getSelectedTrack()));
+            if (const auto picked = owner.tapeStrip->getSelectedTracks(); picked.size() > 1)
+                lines.push_back ("tape selects " + std::to_string (picked.size()) + " tracks");
             if (owner.tapeStrip->nameEditorOpenForScenario())
                 lines.push_back ("tape name editor open");
+            if (owner.tapeStrip->trackMovePressedForScenario())
+                lines.push_back ("tape name press or drag still held");
         }
 
         const auto& transport = owner.engine.getTransport();
         if (! transport.isStopped())
             lines.push_back (transport.isRecording() ? "transport is recording" : "transport is playing");
+
+        if (const auto back = moveBackToLaunch())
+        {
+            const int slot = back->lo;
+            lines.push_back ("tracks moved: the strip built for track " + std::to_string (slot + 1)
+                             + " runs track " + std::to_string (back->newToOld[(std::size_t) slot] + 1));
+        }
 
         for (int index = 0; index < Session::kNumTracks; ++index)
         {
@@ -2293,7 +2459,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.closePianoRoll();
         owner.destroyAudioEditor();
         owner.closeAudioSettings();
-        if (owner.tapeStrip != nullptr) owner.tapeStrip->cancelTrackNameEdit();
+        // Cancelled before the button comes up, so the release drops nothing.
+        if (owner.tapeStrip != nullptr)
+        {
+            owner.tapeStrip->cancelTrackNameEdit();
+            owner.tapeStrip->cancelTrackMoveDrag();
+        }
+        if (heldTapePress) releaseTapeTrackName (-1);
         closeStartupDialog();
         owner.closeVirtualKeyboard();
         owner.closeTuner();
@@ -2307,6 +2479,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             }
 
         owner.stopTransportForSessionSwitch();
+        // Only another move hands the strips back to the slots they launched
+        // in, and the tracks' data goes with them.
+        if (const auto back = moveBackToLaunch()) owner.engine.moveTracks (*back);
         for (int track = 0; track < Session::kNumTracks; ++track)
             owner.session.setTrackArmed (track, false);
 
@@ -2350,6 +2525,24 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         }
     }
 
+    // The move that gives every slot back the strip it launched with; nullopt
+    // when none has moved.
+    std::optional<TrackMovePlan> moveBackToLaunch() const
+    {
+        std::array<int, Session::kNumTracks> newToOld {};
+        bool moved = false;
+        for (int track = 0; track < Session::kNumTracks; ++track)
+        {
+            int now = 0;
+            while (now < Session::kNumTracks - 1
+                   && &owner.engine.getChannelStrip (now) != launch.stripOrder[(std::size_t) track])
+                ++now;
+            newToOld[(std::size_t) track] = now;
+            moved = moved || now != track;
+        }
+        return moved ? trackMoveFromNewToOld (newToOld) : std::nullopt;
+    }
+
     // What the window held before the first scenario ran. Everything the suite
     // runner puts back, and everything it measures drift against.
     struct LaunchState
@@ -2364,6 +2557,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         int consoleFocus = -1;
         std::array<int, 4> window { 0, 0, 0, 0 };
         std::array<int, Session::kNumTracks> trackMode {};
+        std::array<const ChannelStrip*, Session::kNumTracks> stripOrder {};
         std::string masteringSource;
         std::filesystem::path sessionDir;
         bool sessionOnDisk = false;
@@ -2371,6 +2565,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     MainComponent& owner;
     LaunchState launch;
+    // Where a name drag went down, while the button is held.
+    std::optional<std::pair<float, float>> heldTapePress;
     std::vector<std::string> startupErrors;
     std::string startupChoiceMade;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;
