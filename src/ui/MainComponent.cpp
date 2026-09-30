@@ -1000,9 +1000,10 @@ MainComponent::MainComponent()
         // behind one is invisible and unclickable - not just the notepad. The panels
         // that a user opened deliberately step aside the way it does. The startup
         // dialog is left alone: dismissing it would spend the session choice nobody
-        // has made yet, and it is never up alongside these two.
+        // has made yet, and it is never up alongside these.
         closeVirtualKeyboard();
         closeAudioSettings();
+        closeAudioEditor();
         if (consoleView != nullptr)
         {
             for (int t = 0; t < Session::kNumTracks; ++t)
@@ -1311,11 +1312,16 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
     // The audio editor's keys land here whenever its child does not have the
-    // keyboard, which on Windows is always. It answers first, as it did when it
-    // was a JUCE component holding the focus; what it passes on is the shell's.
-    if (audioEditorShowing() && audioEditorView != nullptr
-        && audioEditorView->handleShellKey (key.getTextDescription().toStdString()))
-        return true;
+    // keyboard, which on Windows is always. While one of its fields or menus is
+    // open every key is the editor's, typed into it; otherwise the editor answers
+    // first and what it passes on is the shell's.
+    if (audioEditorShowing() && audioEditorView != nullptr)
+    {
+        const auto description = key.getTextDescription().toStdString();
+        if (audioEditorWindow->offerShellKey (description, static_cast<std::uint32_t> (key.getTextCharacter()))
+            || audioEditorView->handleShellKey (description))
+            return true;
+    }
 
     // The audio settings panel is a native child window with its own Escape
     // handling, which only runs when that window has the keyboard. On Windows

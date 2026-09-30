@@ -166,6 +166,34 @@ unsigned int frameworkModifiers (bool shift, bool ctrl, bool super, bool alt)
          | (super ? DGL::kModifierSuper : 0u) | (alt ? DGL::kModifierAlt : 0u);
 }
 
+void encodeUtf8 (std::uint32_t c, char (&out)[8])
+{
+    std::fill (std::begin (out), std::end (out), '\0');
+    const auto byte = [] (std::uint32_t v) { return static_cast<char> (static_cast<unsigned char> (v)); };
+    if (c < 0x80)
+    {
+        out[0] = byte (c);
+    }
+    else if (c < 0x800)
+    {
+        out[0] = byte (0xc0 | (c >> 6));
+        out[1] = byte (0x80 | (c & 0x3f));
+    }
+    else if (c < 0x10000)
+    {
+        out[0] = byte (0xe0 | (c >> 12));
+        out[1] = byte (0x80 | ((c >> 6) & 0x3f));
+        out[2] = byte (0x80 | (c & 0x3f));
+    }
+    else
+    {
+        out[0] = byte (0xf0 | (c >> 18));
+        out[1] = byte (0x80 | ((c >> 12) & 0x3f));
+        out[2] = byte (0x80 | ((c >> 6) & 0x3f));
+        out[3] = byte (0x80 | (c & 0x3f));
+    }
+}
+
 bool commandIsSuper()
 {
    #if defined (__APPLE__)
@@ -334,12 +362,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         void typeForScenario (const std::string& text)
         {
             for (const char c : text)
-            {
-                CharacterInputEvent input;
-                input.character = static_cast<unsigned char> (c);
-                input.string[0] = c;
-                onCharacterInput (input);
-            }
+                type (static_cast<unsigned char> (c));
         }
 
         bool inputForScenario (const std::string& input)
@@ -350,20 +373,38 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 return true;
             }
             const auto chord = parseKeyDescription (input);
-            if (! chord)
-                return false;
-            KeyboardEvent key;
-            key.key = frameworkKeyCode (chord->key);
-            if (key.key == 0)
-                return false;
-            key.mod = frameworkModifiers (chord->shift, chord->ctrl, chord->super, chord->alt);
-            key.press = true;
-            onKeyboard (key);
-            keyReleases.push_back (key.key);
-            return true;
+            return chord && press (*chord);
+        }
+
+        // The key as the platform would have delivered it to a focused child: the press
+        // now, its release after the next frame, and the character it types.
+        void replayShellKey (const std::string& description, std::uint32_t character)
+        {
+            const auto chord = parseKeyDescription (description);
+            if (chord)
+                press (*chord);
+            const bool typesText = character >= 0x20 && character != 0x7f && character <= 0x10ffff;
+            if (typesText && ! (chord && chord->command()))
+                type (character);
+        }
+
+        bool hasKeyboard() const noexcept { return keyboardFocused; }
+
+        void focusForScenario (bool focused)
+        {
+            FocusEvent event;
+            event.focus = focused;
+            event.mode = DGL::kCrossingNormal;
+            onFocusChanged (event);
         }
 
     protected:
+        void onFocusChanged (const FocusEvent& event) override
+        {
+            keyboardFocused = event.focus;
+            DGL::ImGuiTopLevelWidget::onFocusChanged (event);
+        }
+
         // A key the widget reports as unused is handed to the host window, where the
         // shell's own bindings claim it - so a note letter typed at the panel would
         // also toggle mute behind it. The panel names the shortcuts it wants the shell
@@ -407,7 +448,29 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         }
 
     private:
+        bool press (const KeyChord& chord)
+        {
+            KeyboardEvent key;
+            key.key = frameworkKeyCode (chord.key);
+            if (key.key == 0)
+                return false;
+            key.mod = frameworkModifiers (chord.shift, chord.ctrl, chord.super, chord.alt);
+            key.press = true;
+            onKeyboard (key);
+            keyReleases.push_back (key.key);
+            return true;
+        }
+
+        void type (std::uint32_t character)
+        {
+            CharacterInputEvent input;
+            input.character = character;
+            encodeUtf8 (character, input.string);
+            onCharacterInput (input);
+        }
+
         Impl& owner;
+        bool keyboardFocused = false;
         bool releasePending = false;
         std::vector<unsigned int> keyReleases;
         DGL::MouseButton heldButton = DGL::kMouseButtonLeft;
@@ -538,6 +601,14 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         view->draw (ctx, bodyTl, body);
         dw::drawDragBubble (ctx);
 
+        // A field or menu that opens asks for the keyboard, which a child the click
+        // did not focus (Windows) might then get and keep for itself.
+        const bool capturing = view->capturesKeyboard();
+        if (capturing && ! wasCapturing && panelWidget != nullptr && ! panelWidget->hasKeyboard())
+            if (auto* window = host.window())
+                window->focus();
+        wasCapturing = capturing;
+
         // A click outside the panel lands on the host's dim overlay rather than
         // here, because the child is exactly the plate.
         if (view->takeDismissRequest())
@@ -594,7 +665,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     // below - is destroyed before the state those callbacks touch.
     Callbacks callbacks;
     std::unique_ptr<DuskPanelView> view;
-    PanelWidget* scenarioWidget = nullptr;
+    PanelWidget* panelWidget = nullptr;
+    bool wasCapturing = false;
     dw::Fonts fonts;
     dw::KnobAtlas knobAtlas;
     dw::DragState drag;
@@ -612,14 +684,15 @@ DuskPanelWindow::DuskPanelWindow (std::string className, std::string logTag,
     callbacks.createWidget = [this] (DGL::Window& window) -> std::unique_ptr<DGL::TopLevelWidget>
     {
         auto widget = std::unique_ptr<Impl::PanelWidget> (new Impl::PanelWidget (window, *impl));
-        impl->scenarioWidget = widget.get();
+        impl->panelWidget = widget.get();
         impl->buildFonts (static_cast<float> (window.getScaleFactor()));
         return std::unique_ptr<DGL::TopLevelWidget> (widget.release());
     };
     callbacks.checkGraphics = [] (const char*, const char*) { return std::string(); };
     callbacks.widgetReleased = [this]
     {
-        impl->scenarioWidget = nullptr;
+        impl->panelWidget = nullptr;
+        impl->wasCapturing = false;
         // The fonts and the baked dome live in the atlas the widget owned.
         impl->fonts = {};
         impl->knobAtlas = {};
@@ -700,39 +773,54 @@ bool DuskPanelWindow::isOpen() const noexcept
     return impl->host.isOpen();
 }
 
+bool DuskPanelWindow::offerShellKey (const std::string& description, std::uint32_t character)
+{
+    if (! isOpen() || impl->view == nullptr || impl->panelWidget == nullptr || ! impl->view->capturesKeyboard())
+        return false;
+    if (! impl->panelWidget->hasKeyboard())
+        impl->panelWidget->replayShellKey (description, character);
+    return true;
+}
+
 bool DuskPanelWindow::clickControlForScenario (const std::string& control)
 {
     ImVec2 point;
-    if (! isOpen() || impl->view == nullptr || impl->scenarioWidget == nullptr
+    if (! isOpen() || impl->view == nullptr || impl->panelWidget == nullptr
         || ! impl->view->controlPointForScenario (control, point)) return false;
     if (auto* window = impl->host.window()) window->focus();
-    impl->scenarioWidget->clickForScenario (point);
+    impl->panelWidget->clickForScenario (point);
     return true;
 }
 bool DuskPanelWindow::inputForScenario (const std::string& input)
 {
-    if (! isOpen() || impl->scenarioWidget == nullptr) return false;
-    return impl->scenarioWidget->inputForScenario (input);
+    if (! isOpen() || impl->panelWidget == nullptr) return false;
+    return impl->panelWidget->inputForScenario (input);
 }
 bool DuskPanelWindow::typeForScenario (const std::string& text)
 {
-    if (! isOpen() || impl->scenarioWidget == nullptr) return false;
-    impl->scenarioWidget->typeForScenario (text);
+    if (! isOpen() || impl->panelWidget == nullptr) return false;
+    impl->panelWidget->typeForScenario (text);
     return true;
 }
 bool DuskPanelWindow::scrollForScenario (float wheel)
 {
-    if (! isOpen() || impl->scenarioWidget == nullptr) return false;
-    impl->scenarioWidget->scrollForScenario (wheel);
+    if (! isOpen() || impl->panelWidget == nullptr) return false;
+    impl->panelWidget->scrollForScenario (wheel);
     return true;
 }
 bool DuskPanelWindow::pointerControlForScenario (const std::string& control, float position, bool pressed,
                                                  int modifiers)
 {
     ImVec2 point;
-    if (! isOpen() || impl->view == nullptr || impl->scenarioWidget == nullptr
+    if (! isOpen() || impl->view == nullptr || impl->panelWidget == nullptr
         || ! impl->view->controlPointForScenario (control, point, position)) return false;
-    impl->scenarioWidget->pointerForScenario (point, pressed, modifiers);
+    impl->panelWidget->pointerForScenario (point, pressed, modifiers);
+    return true;
+}
+bool DuskPanelWindow::keyboardFocusForScenario (bool focused)
+{
+    if (! isOpen() || impl->panelWidget == nullptr) return false;
+    impl->panelWidget->focusForScenario (focused);
     return true;
 }
 } // namespace duskstudio::imgui

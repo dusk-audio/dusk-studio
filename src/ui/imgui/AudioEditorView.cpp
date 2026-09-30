@@ -49,7 +49,7 @@ using dusk::audio::WaveformDetails;
 using dusk::audio::WaveformPeaks;
 using dusk::audio::WaveformSource;
 
-// The JUCE editor's bands, in design pixels.
+// In design pixels.
 constexpr float kIconRowH = 48.0f;
 constexpr float kRulerH = 28.0f;
 constexpr float kStatusH = 30.0f;
@@ -195,7 +195,7 @@ ImU32 argb (std::uint32_t c, float alpha = 1.0f) noexcept
     return IM_COL32 ((c >> 16) & 0xffu, (c >> 8) & 0xffu, c & 0xffu, a);
 }
 
-// HSB brightness, the way the JUCE editor dimmed its neighbouring slices.
+// Scales HSB brightness, which is how the regions around the focused one are dimmed.
 ImU32 withBrightness (ImU32 colour, float factor, float alpha) noexcept
 {
     ImVec4 v = ImGui::ColorConvertU32ToFloat4 (colour);
@@ -315,9 +315,9 @@ WaveformDetails::Window windowFor (std::int64_t sourceOffset, std::int64_t lengt
 }
 
 // The edit-mode glyphs the timeline shows at the pointer, drawn here because nothing
-// JUCE paints can land on top of the editor's child. The hand's hotspot is the tip of
-// the index finger and the scissors' the blades' crossing; both are authored at the
-// JUCE glyphs' size and drawn at 0.85 of it, as the overlay drew them.
+// the shell paints can land on top of the editor's child. The hand's hotspot is the tip
+// of the index finger and the scissors' the blades' crossing; both are the timeline's
+// glyphs (EditCursors.cpp) drawn at 0.85 of their size.
 void drawHandGlyph (ImDrawList* dl, ImVec2 at, float scale)
 {
     struct Part { float x, y, w, h, rounding; };
@@ -355,7 +355,7 @@ void drawScissorsGlyph (ImDrawList* dl, ImVec2 at, float scale)
 }
 
 // The Draw pencil, lead tip on the hotspot and eraser up to the right, built along
-// the barrel's axis in the JUCE glyph's 24-unit grid drawn 34 px wide.
+// the barrel's axis in the timeline pencil's 24-unit grid drawn 34 px wide.
 void drawPencilGlyph (ImDrawList* dl, ImVec2 at, float scale)
 {
     constexpr float kUnit = 34.0f / 24.0f;
@@ -400,6 +400,8 @@ public:
             session.editMode = EditMode::Grab;
     }
 
+    ~AudioEditorViewImpl() override { cancelDrag(); }
+
     void setAvailableSize (float width, float height) override
     {
         available = ImVec2 (std::max (200.0f, width), std::max (200.0f, height));
@@ -410,6 +412,8 @@ public:
 
     // Escape is the view's, so an open dropdown takes it before the editor closes.
     bool escapeDismisses() const override { return false; }
+
+    bool capturesKeyboard() const override { return editing != Field::none || popupOpen; }
 
     bool takeDismissRequest() override { return std::exchange (dismissRequested, false); }
 
@@ -431,21 +435,7 @@ public:
     bool handleShellKey (const std::string& description) override
     {
         const auto chord = parseKeyDescription (description);
-        if (! chord)
-            return false;
-        if (keysAvailable)
-            return handleKey (*chord);
-
-        // A menu or a field open over the editor takes Escape, as it does when the
-        // child has the keyboard, rather than letting the shell close the editor
-        // under it. The key is replayed into Dear ImGui on the next frame.
-        const bool bareEscape = chord->key == ImGuiKey_Escape && ! chord->command() && ! chord->shift && ! chord->alt;
-        if (bareEscape && (popupWasOpen || editing != Field::none))
-        {
-            escapePending = true;
-            return true;
-        }
-        return false;
+        return chord && keysAvailable && handleKey (*chord);
     }
 
     void focusRegion (int index) override
@@ -555,10 +545,14 @@ public:
         return noticeShowing() ? notice : std::string();
     }
 
-    // Toolbar and status controls by the name the JUCE editor gave each button, plus
-    // "waveform" (the point the JUCE editor's centre-low click used), "sample:<n>" for
-    // a timeline sample, "at:<x>,<y>" for a body-relative design-pixel point and
-    // "menu:<item>" for an item of the menu that is open.
+    std::string takeCaptionForScenario() const override
+    {
+        return laidOut && takeCount() > 0 ? takeCaption().first : std::string();
+    }
+
+    // Toolbar and status controls by name, plus "waveform" (a point low in the middle of
+    // the body), "sample:<n>" for a timeline sample, "at:<x>,<y>" for a body-relative
+    // design-pixel point and "menu:<item>" for an item of the menu that is open.
     bool controlPointForScenario (const std::string& name, ImVec2& point, float position) const override
     {
         if (! laidOut)
@@ -597,13 +591,8 @@ public:
     {
         popupWasOpen = popupOpen;
         ++frame;
-        if (std::exchange (escapePending, false))
-        {
-            // Queued as a press and a release, which Dear ImGui plays over two frames.
-            auto& io = ImGui::GetIO();
-            io.AddKeyEvent (ImGuiKey_Escape, true);
-            io.AddKeyEvent (ImGuiKey_Escape, false);
-        }
+        if (engine.getTransport().isStopped())
+            auditionAtNextPlay = false;
         controls.clear();
         layout = layoutFor (origin, size, ctx.scale, takeCount());
         laidOut = true;
@@ -713,7 +702,6 @@ private:
     bool popupOpen = false;
     bool popupWasOpen = false;
     bool keysAvailable = false;
-    bool escapePending = false;
 
     // A pointer gesture from press to release. The press snapshots the region, the
     // drag edits it live so the view follows, and the release rolls it back and
@@ -726,6 +714,7 @@ private:
     ImVec2 dragLast;
     bool gestureActive = false;
     AudioRegion regionAtDragStart;
+    std::pair<std::int64_t, std::int64_t> edgeRangeAtDragStart;
     float dragOriginGainDb = 0.0f;
     std::int64_t dragOriginTimeline = 0;
     std::int64_t panStartScroll = 0;
@@ -751,6 +740,7 @@ private:
     int automationParam = -1;
     std::vector<AutomationPoint> automationBefore;
     std::vector<AutomationPoint> automationWorking;
+    int automationModeBefore = 0;
     int draggedPoint = -1;
     AutomationStroke automationStroke;
 
@@ -780,6 +770,9 @@ private:
     double pendingPromoteAt = 0.0;
     std::uint64_t renamingTake = 0;
     std::uint64_t confirmingDelete = 0;
+    // An audition started or ended while the transport rolls changes what plays only
+    // from the next Play.
+    bool auditionAtNextPlay = false;
     std::string notice;
     std::chrono::steady_clock::time_point noticeUntil;
     std::vector<TakeSlice> takeSlices;
@@ -985,8 +978,8 @@ private:
         return -1;
     }
 
-    // The visible width in samples, measured across the whole editor the way the JUCE
-    // editor measured it, so a pan step and the chase jump land where they did.
+    // The visible width in samples, measured across the whole body rather than the
+    // lanes. A pan step and the chase jump are fractions of it.
     std::int64_t viewSamples() const
     {
         return static_cast<std::int64_t> (std::llround (
@@ -1141,6 +1134,7 @@ private:
 
         automationBefore = automationLane().pointsConst();
         automationWorking = automationBefore;
+        automationModeBefore = session.track (trackIdx).automationMode.load (std::memory_order_acquire);
         if (session.editMode == EditMode::Draw)
         {
             automationStroke = {};
@@ -1360,7 +1354,8 @@ private:
         {
             if (! bare)
                 return false;
-            if (confirmingDelete != 0) confirmingDelete = 0;
+            if (drag != Drag::none) cancelDrag();
+            else if (confirmingDelete != 0) confirmingDelete = 0;
             else if (rangeActive) rangeActive = false;
             else if (! additional.empty()) additional.clear();
             else dismissRequested = true;
@@ -1505,13 +1500,37 @@ private:
         return false;
     }
 
+    // The region in the track's list that plays the same stretch of the same file,
+    // or -1. What an index cannot survive, since undoing a promote or a delete
+    // restores the list in its old order.
+    int indexOfRegion (const AudioRegion& like) const
+    {
+        const auto& regions = trackRegions();
+        for (int i = 0; i < static_cast<int> (regions.size()); ++i)
+        {
+            const auto& r = regions[static_cast<std::size_t> (i)];
+            if (r.file == like.file && r.timelineStart == like.timelineStart
+                && r.sourceOffset == like.sourceOffset && r.lengthInSamples == like.lengthInSamples)
+                return i;
+        }
+        return -1;
+    }
+
     void undoStep (bool redo)
     {
+        std::optional<AudioRegion> focused;
+        if (const auto* r = region())
+            focused = *r;
         auto& undo = engine.getUndoManager();
         if (redo) undo.redo();
         else      undo.undo();
         rangeActive = false;
         additional.clear();
+        if (const int same = focused ? indexOfRegion (*focused) : -1; same >= 0)
+        {
+            regionIdx = same;
+            return;
+        }
         // An undone split can leave the focused index past the end of the list.
         const auto count = static_cast<int> (trackRegions().size());
         if (count > 0)
@@ -1916,8 +1935,8 @@ private:
     }
 
     // The ruler and the waveform are one gesture surface. Dear ImGui tracks the press
-    // so the toolbar cannot take a drag that wanders over it; which gesture a press
-    // starts is decided here, in the order the JUCE editor's mouseDown decided it.
+    // so the toolbar cannot take a drag that wanders over it; pointerDown decides which
+    // gesture a press starts.
     void handlePointer()
     {
         const Box area { layout.ruler.x0, layout.ruler.y0, layout.wave.x1, layout.wave.y1 };
@@ -2006,6 +2025,10 @@ private:
         if (button == ImGuiMouseButton_Left && inRuler)
             if (const auto edge = loopPunchEdgeAt (p.x); edge != Drag::none)
             {
+                const auto& transport = engine.getTransport();
+                edgeRangeAtDragStart = edge == Drag::loopIn || edge == Drag::loopOut
+                                     ? std::pair { transport.getLoopStart(), transport.getLoopEnd() }
+                                     : std::pair { transport.getPunchIn(), transport.getPunchOut() };
                 drag = edge;
                 return;
             }
@@ -2361,6 +2384,58 @@ private:
             syncAutoCrossfades();
     }
 
+    // Puts back whatever the drag in progress changed and ends it with nothing
+    // recorded. Closing the editor mid-drag runs it too, so no edit is left live on a
+    // region with no undo step and no playback rebuild behind it.
+    void cancelDrag()
+    {
+        const auto cancelled = std::exchange (drag, Drag::none);
+        snapGuide = -1;
+        auto& transport = engine.getTransport();
+        switch (cancelled)
+        {
+            case Drag::fadeIn: case Drag::fadeOut: case Drag::gain: case Drag::trimStart: case Drag::trimEnd:
+            case Drag::moveRegion:
+            {
+                // Whatever replaced the track's regions meanwhile is left alone.
+                auto* r = region();
+                if (r == nullptr || r->file != regionAtDragStart.file)
+                    break;
+                *r = regionAtDragStart;
+                auto& regions = session.track (trackIdx).regions;
+                if (cancelled == Drag::moveRegion)
+                    for (std::size_t i = 0; i < additional.size() && i < additionalOrigins.size(); ++i)
+                        if (const int index = additional[i]; index >= 0 && index < static_cast<int> (regions.size()))
+                            regions[static_cast<std::size_t> (index)].timelineStart = additionalOrigins[i];
+                break;
+            }
+            case Drag::automationPoint: case Drag::automationPaint:
+                session.track (trackIdx).automationMode.store (automationModeBefore, std::memory_order_release);
+                automationBefore.clear();
+                automationWorking.clear();
+                draggedPoint = -1;
+                automationStroke = {};
+                break;
+            case Drag::loopIn: case Drag::loopOut:
+                transport.setLoopRange (edgeRangeAtDragStart.first, edgeRangeAtDragStart.second);
+                break;
+            case Drag::punchIn: case Drag::punchOut:
+                transport.setPunchRange (edgeRangeAtDragStart.first, edgeRangeAtDragStart.second);
+                break;
+            case Drag::takeRange:
+                dragTake = 0;
+                break;
+            case Drag::range:
+                rangeActive = false;
+                break;
+            case Drag::pan:
+                scrollSamples = panStartScroll;
+                break;
+            case Drag::none: case Drag::moveCursor:
+                break;
+        }
+    }
+
     std::int64_t snapFileSample (std::int64_t fileSample, bool bypass) const
     {
         const auto* r = region();
@@ -2486,7 +2561,7 @@ private:
         return clicked;
     }
 
-    // The JUCE IconButton glyphs, in design units about the disc centre.
+    // The toolbar glyphs, in design units about the disc centre.
     static void drawGlyph (ImDrawList* dl, Glyph glyph, ImVec2 c, float r, float scale, ImU32 colour)
     {
         const auto p = [c, scale] (float dx, float dy) { return ImVec2 (c.x + dx * scale, c.y + dy * scale); };
@@ -2507,7 +2582,7 @@ private:
             case Glyph::undo:
             case Glyph::redo:
             {
-                // Clockwise from twelve o'clock, as the JUCE arc was specified.
+                // Angles run clockwise from twelve o'clock.
                 const float radius = r * 0.95f;
                 const float mirror = glyph == Glyph::redo ? -1.0f : 1.0f;
                 constexpr float kPi = 3.14159265f;
@@ -2918,6 +2993,7 @@ private:
         if (! drawField (ctx, Field::gain, gain))
         {
             readout (ctx, gain, text, dw::Align::left);
+            addControl ("Gain", gain, true);
             if (doubleClicked (ctx, "##gain-readout", gain))
                 beginEdit (Field::gain, text);
         }
@@ -2931,6 +3007,7 @@ private:
         if (! drawField (ctx, Field::fade, fade))
         {
             readout (ctx, fade, text, dw::Align::left);
+            addControl ("Fades", fade, true);
             if (doubleClicked (ctx, "##fade-readout", fade))
                 beginEdit (Field::fade, text);
         }
@@ -3626,7 +3703,7 @@ private:
 
     void drawPropertiesMenu()
     {
-        // Hung from the button, as the menu it replaces was.
+        // Hung from the button.
         ImGui::SetNextWindowPos (propertiesAnchor, ImGuiCond_Appearing);
         if (! beginMenu (kPropertiesMenu))
             return;
@@ -3859,6 +3936,24 @@ private:
 
     static constexpr const char* kFrozenNotice = "Unfreeze this track to change its takes.";
 
+    // What the caption beside the take count says, and in which colour.
+    std::pair<std::string, ImU32> takeCaption() const
+    {
+        if (noticeShowing())
+            return { notice, argb (kNotice) };
+        const AudioTake* auditioned = session.takeAudition.trackIdx == trackIdx
+                                    ? takeWithId (session.takeAudition.takeId) : nullptr;
+        if (auditioned != nullptr && auditionAtNextPlay)
+            return { "Auditioning \"" + auditioned->name + "\" from the next Play: the track will play this take alone.",
+                     argb (kAudition) };
+        if (auditioned != nullptr)
+            return { "Auditioning \"" + auditioned->name + "\": the track plays this take alone.", argb (kAudition) };
+        if (auditionAtNextPlay)
+            return { "The audition ends at the next Play.", argb (kAudition) };
+        return { "Drag across a take to use that part of it, or click its name to use all of it.",
+                 argb (kHeaderText, 0.75f) };
+    }
+
     void drawTakeLanes (dw::Context& ctx)
     {
         const auto& takes = trackTakes();
@@ -3877,20 +3972,7 @@ private:
         clippedText (ctx, line.takeLeft (ctx.s (72.0f)), ctx.fonts->value, 11.0f, argb (kReadoutText), title,
                      dw::Align::left);
 
-        const AudioTake* auditioned = session.takeAudition.trackIdx == trackIdx
-                                    ? takeWithId (session.takeAudition.takeId) : nullptr;
-        std::string status = "Drag across a take to use that part of it, or click its name to use all of it.";
-        auto statusColour = argb (kHeaderText, 0.75f);
-        if (noticeShowing())
-        {
-            status = notice;
-            statusColour = argb (kNotice);
-        }
-        else if (auditioned != nullptr)
-        {
-            status = "Auditioning \"" + auditioned->name + "\": the track plays this take alone.";
-            statusColour = argb (kAudition);
-        }
+        const auto [status, statusColour] = takeCaption();
         clippedText (ctx, line, ctx.fonts->value, 11.0f, statusColour, status.c_str(), dw::Align::left);
 
         const auto& viewport = layout.takeLanes;
@@ -4131,8 +4213,10 @@ private:
         undo.beginNewTransaction (transaction);
         if (! undo.perform (new PromoteTakeRangeAction (session, engine, trackIdx, id, from, to)))
         {
-            showNotice (trackFrozen() ? kFrozenNotice
-                                      : "A locked region is in the way. Unlock it to use this part of the take.");
+            if (trackFrozen())
+                showNotice (kFrozenNotice);
+            else if (lockedRegionUnder (*take, from, to))
+                showNotice ("A locked region is in the way. Unlock it to use this part of the take.");
             return;
         }
         rangeActive = false;
@@ -4147,11 +4231,24 @@ private:
             }
     }
 
+    bool lockedRegionUnder (const AudioTake& take, std::int64_t from, std::int64_t to) const
+    {
+        const auto placed = regionFromTake (take, from, to);
+        if (! placed)
+            return false;
+        const auto start = placed->timelineStart;
+        const auto end = start + placed->lengthInSamples;
+        const auto& regions = trackRegions();
+        return std::any_of (regions.begin(), regions.end(), [start, end] (const AudioRegion& r)
+                            { return r.locked && r.timelineStart < end && r.timelineStart + r.lengthInSamples > start; });
+    }
+
     void deleteTake (std::uint64_t id)
     {
         std::optional<AudioRegion> focused;
         if (const auto* r = region())
             focused = *r;
+        const bool auditioned = isAuditioned (id);
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction ("Delete take");
         if (! undo.perform (new DeleteTakeAction (session, engine, trackIdx, id)))
@@ -4163,21 +4260,15 @@ private:
         if (renamingTake == id)
             editing = Field::none;
         rangeActive = false;
+        auditionAtNextPlay = auditionAtNextPlay || (auditioned && ! engine.getTransport().isStopped());
 
         // The regions cut from the take went with it, which moves the others' indices.
-        const auto& regions = trackRegions();
-        if (focused)
-            for (int i = 0; i < static_cast<int> (regions.size()); ++i)
-            {
-                const auto& r = regions[static_cast<std::size_t> (i)];
-                if (r.file == focused->file && r.timelineStart == focused->timelineStart
-                    && r.sourceOffset == focused->sourceOffset && r.lengthInSamples == focused->lengthInSamples)
-                {
-                    additional.clear();
-                    focusRegion (i);
-                    return;
-                }
-            }
+        if (const int same = focused ? indexOfRegion (*focused) : -1; same >= 0)
+        {
+            additional.clear();
+            focusRegion (same);
+            return;
+        }
         reanchorOrClose();
     }
 
@@ -4197,12 +4288,13 @@ private:
     // to the take's start so Play begins where it does.
     void toggleAudition (const AudioTake& take)
     {
+        auto& transport = engine.getTransport();
+        auditionAtNextPlay = auditionAtNextPlay || ! transport.isStopped();
         if (isAuditioned (take.id))
         {
             engine.clearTakeAudition();
             return;
         }
-        auto& transport = engine.getTransport();
         if (transport.isStopped())
             transport.locate (take.timelineStart);
         engine.setTakeAudition (trackIdx, take.id);

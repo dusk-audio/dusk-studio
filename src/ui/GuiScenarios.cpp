@@ -649,6 +649,23 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
        #endif
     }
+    std::string audioEditorTakeCaption() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr)
+            return owner.audioEditorView->takeCaptionForScenario();
+       #endif
+        return {};
+    }
+    bool audioEditorKeyboardFocus (bool focused) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.audioEditorShowing() && owner.audioEditorWindow->keyboardFocusForScenario (focused);
+       #else
+        (void) focused;
+        return false;
+       #endif
+    }
     bool openPiano (int track, int region) override
     {
         if (owner.pianoRoll != nullptr) return false;
@@ -1643,6 +1660,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         auto& stack = EmbeddedModal::activeModalStack();
         if (! stack.empty()) stack.back()->close();
+    }
+
+    void raiseAlert (const std::string& title, const std::string& message) override
+    {
+        showDuskAlert (owner, HostString::fromUTF8 (title.c_str()), HostString::fromUTF8 (message.c_str()));
     }
 
     void autosaveTick() override { owner.writeAutosave(); }

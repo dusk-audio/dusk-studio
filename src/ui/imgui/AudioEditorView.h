@@ -50,8 +50,9 @@ public:
 
     // A key the shell received while the editor is up, as JUCE's KeyPress describes it
     // ("ctrl + E", "delete"). The editor's child only has the keyboard once it takes
-    // focus, which a Windows child never does, so the shell offers every key here
-    // first. False when the editor has no use for it.
+    // focus, which a Windows child never does, so the shell offers keys here first,
+    // after DuskPanelWindow::offerShellKey has taken those typed into an open field
+    // or menu. False when the editor has no use for it.
     virtual bool handleShellKey (const std::string& description) = 0;
 
     // { pixelsPerSample, scrollSamples, editCursorSample }. Pixels are design pixels.
@@ -95,6 +96,9 @@ public:
 
     // What the lane caption says about the last refused take edit; empty when nothing.
     virtual std::string takeNoticeForScenario() const = 0;
+
+    // The whole lane caption beside the take count; empty when the editor shows no lanes.
+    virtual std::string takeCaptionForScenario() const = 0;
 };
 
 std::unique_ptr<AudioEditorView> makeAudioEditorView (Session& session, AudioEngine& engine,

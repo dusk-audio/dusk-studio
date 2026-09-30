@@ -1226,7 +1226,7 @@ MIDI tracks do not produce separate files; their note and CC data is embedded in
 
 ## Takes
 
-Every recording pass on an audio track is kept on that track as a take, named **Take 1**, **Take 2** and so on in recording order. A take is the whole pass. Recording over it later never trims it, so no take loses audio.
+Every recording pass on an audio track is kept on that track as a take, named **Take 1**, **Take 2** and so on in recording order. A take is the whole pass. Recording over it later never trims it, so no take loses audio. A new take is numbered one past the highest **Take N** on the track, so a take you renamed does not count, and deleting a take never renumbers the others.
 
 Only the newest pass is placed on the timeline. Where it lands over older regions, those regions are cut back to meet it with a short crossfade at each join, and a region it covers completely leaves the timeline. The takes those regions came from stay whole on the track, so any part of them can be put back from the take lanes in the audio region editor (see *Take lanes* in that chapter).
 
@@ -1238,9 +1238,11 @@ When a track has two or more takes, the tape strip shows the count, for example 
 
 A region names its take only while it plays that take's audio. **Reverse region** and a join that has to render a new file make a region that names no take, and a pasted region keeps naming its take only on a track that holds that take.
 
+A region that names no take (an imported file, a reversed or rendered region, or a region an older session loads without one) first becomes a take of its own when something is recorded or put from a take lane over it, so the audio cut away from it can be put back. It gets a lane in the audio editor like any other take.
+
 MIDI tracks keep their own take history. Each MIDI region holds up to **8 previous takes**; see *Take count and MIDI take cycling* under The tape strip.
 
-Sessions saved by Dusk Studio 0.14 load with each region's old take history as takes on its track. The audio files are not touched.
+Sessions saved by Dusk Studio 0.14 load with each region's old take history as takes on its track, numbered oldest first. The audio files are not touched.
 
 ## Recording errors
 
@@ -1387,7 +1389,7 @@ It is marked **experimental** because parts of the DP file format are reverse-en
 
 ![Region editor modal over a region with fades.](docs/images/ed-04-region-editor-modal.png)
 
-Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. Press **Esc** or click outside to close. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
+Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
 
 ## What's editable
 
@@ -1423,7 +1425,7 @@ Below the toolbar:
 - **Bar/beat ruler** for the region.
 - **Waveform area** showing the region centred, with adjacent regions on the same track faded so splits don't shift the view.
 - **Take lanes** under the waveform when the track has takes (see *Take lanes* below).
-- **Status bar** at the bottom showing position, gain, fade lengths, a raw sample readout (`smp` — the cursor's timeline sample, or a range's start and length in samples), mute and lock toggles. Double-click the gain or fade readout to type a value; fades take `in / out` in milliseconds.
+- **Status bar** at the bottom showing position, gain, fade lengths, a raw sample readout (`smp`: the cursor's timeline sample, or a range's start and length in samples), mute and lock toggles. Double-click the gain or fade readout to type a value; fades take `in / out` in milliseconds.
 
 ## Editing gestures
 
@@ -1453,7 +1455,7 @@ When the track has takes, each take gets a lane under the waveform, newest at th
 - **Drag across a lane** to put that part of the take on the track, replacing whatever played there, with a short crossfade at each end. The span snaps to the grid when the editor's **Snap** is on; hold **Cmd/Ctrl** to drag off the grid. The undo step is **Promote take range**.
 - **Click a take's name** to put the whole take on the track (**Promote take**).
 - **Double-click a take's name** to rename it. Enter keeps the new name, Esc the old one (**Rename take**).
-- **Audition** plays that take alone on the track, in place of its regions, from the next Play. With the transport stopped the playhead moves to the take's start. The caption reads "Auditioning "Take 2": the track plays this take alone." Click **Audition** again to stop. Auditioning another lane replaces it, and closing the editor or deleting the take ends it. Bounce, mixdown and freeze never hear an audition.
+- **Audition** plays that take alone on the track, in place of its regions, from the next Play. With the transport stopped the playhead moves to the take's start and the caption reads "Auditioning "Take 2": the track plays this take alone." Pressed while the transport rolls, it changes nothing you hear until the next Play, and the caption reads "Auditioning "Take 2" from the next Play: the track will play this take alone." Click **Audition** again to stop. Auditioning another lane replaces it, and closing the editor or deleting the take ends it. An audition ended while the transport rolls also ends at the next Play: the take keeps playing until then, and the caption reads "The audition ends at the next Play." Bounce, mixdown and freeze never hear an audition.
 - **Delete** asks "Delete this take and the regions cut from it?" in the lane, with **Delete** and **Cancel**. Deleting takes the take and every region cut from it off the track. **Undo** puts both back (**Delete take**).
 
 Every lane edit is one undo step and is saved with the session. An edit that cannot go ahead says why in the caption instead:
@@ -2564,9 +2566,9 @@ The format for each entry:
 ### Recording errors
 
 - **When**: A take finishes, but at least one track had a write error or MIDI overflow mid-take.
-- **Text**: "The last take captured with errors. Listed tracks may be partial or missing audio / MIDI data: [per-track byte/event counts]. Check the session's audio folder for free space and the session log for I/O details before continuing."
+- **Text**: "The last take captured with errors. Listed tracks may be partial or missing audio / MIDI data:" and then one line per problem, "Track [n] - [what went wrong] ([count])", where what went wrong is "WAV write failed (disk full / I/O error)", "take discarded (recording offset exceeds its length)", "loop passes not recorded (past 1,024 in one take)" or "MIDI events dropped (capture buffer full)". When a WAV write failed the alert ends "Check the session's audio folder for free space and the session log for I/O details before continuing."
 - **Buttons**: OK.
-- **Action**: Check disk space and the session log. The partial take is kept as a take on its track, with every earlier take, so you can choose what plays in the audio editor's take lanes and re-record the bad parts. A track listed with "loop passes not recorded (past 1,024 in one take)" kept its first 1,024 passes and left the rest out.
+- **Action**: After a failed WAV write, check disk space and the session log. The partial take is kept as a take on its track, with every earlier take, so you can choose what plays in the audio editor's take lanes and re-record the bad parts. A track listed with "loop passes not recorded (past 1,024 in one take)" kept its first 1,024 passes and left the rest out. A take discarded for the recording offset would have landed entirely before the start of the timeline; see **Recording offset** under *Configuring audio*. Dropped MIDI events are missing from that take's MIDI region; record the part again if they matter.
 
 ## Session
 

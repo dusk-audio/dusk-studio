@@ -153,6 +153,12 @@ public:
     virtual std::string audioEditorTakeNotice() const = 0;
     // Characters typed into the editor's open text field.
     virtual bool typeInAudioEditor (const std::string& text) = 0;
+    // The whole take-lane caption; empty when the editor shows no lanes.
+    virtual std::string audioEditorTakeCaption() const = 0;
+    // Tells the editor's child it gained or lost the keyboard, as the platform does
+    // when the focus moves. A Windows child never holds it, so every key reaches the
+    // shell's window instead.
+    virtual bool audioEditorKeyboardFocus (bool focused) = 0;
     virtual bool openPiano (int track, int region) = 0;
     virtual void closePiano() = 0;
     virtual bool clickPianoCcToggle() = 0;
@@ -414,6 +420,8 @@ public:
     virtual bool clickOutsideAudioEditor() = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.
     virtual void closeTopModal() = 0;
+    // An alert over the main window, the way the engine's own reports raise one.
+    virtual void raiseAlert (const std::string& title, const std::string& message) = 0;
 
     // One tick of the autosave heartbeat, as its timer runs it.
     virtual void autosaveTick() = 0;

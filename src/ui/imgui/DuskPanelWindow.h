@@ -70,6 +70,11 @@ public:
     // should close first). The window dismisses on Escape only when this is true.
     virtual bool escapeDismisses() const { return true; }
 
+    // True while a text field is being edited or a menu is open: every key is the
+    // view's then, and one the shell received instead is replayed into the child
+    // (see DuskPanelWindow::offerShellKey).
+    virtual bool capturesKeyboard() const { return false; }
+
     // A view that closes itself - a Cancel button, or the shortcut that opened it
     // pressed again - raises this and the window dismisses. Cleared by the read,
     // because a framework child has no parent chain for an unhandled key to walk
@@ -160,6 +165,14 @@ public:
     void setGeometry (Geometry geometry);
     void close();
     bool isOpen() const noexcept;
+
+    // A key the shell received, as JUCE's KeyPress describes it, with the character it
+    // types (0 for none). True when the view captures the keyboard (capturesKeyboard),
+    // so the shell must not act on the key. The key is replayed into the child only
+    // while the child does not hold the keyboard, which a Windows child never does; one
+    // that does got the key itself, so replaying it would type it twice.
+    bool offerShellKey (const std::string& description, std::uint32_t character);
+
     // GuiHost's pointer modifier bits.
     enum ScenarioModifier : int
     {
@@ -177,6 +190,9 @@ public:
     bool scrollForScenario (float wheel);
     bool pointerControlForScenario (const std::string& control, float position, bool pressed,
                                     int modifiers = 0);
+    // Tells the child it gained or lost the keyboard, as the platform does when the
+    // focus moves.
+    bool keyboardFocusForScenario (bool focused);
 
 private:
     struct Impl;

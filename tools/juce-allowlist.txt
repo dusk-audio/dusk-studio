@@ -93,7 +93,7 @@ src/ui/DuskFileBrowser.h	12
 src/ui/DuskLabelEditor.h	3
 src/ui/DuskMenuBar.h	29
 src/ui/DuskStudioLookAndFeel.h	124
-src/ui/EditCursors.cpp	39
+src/ui/EditCursors.cpp	38
 src/ui/EditCursors.h	6
 src/ui/EditModeToolbar.cpp	48
 src/ui/EditModeToolbar.h	10

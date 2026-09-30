@@ -60,16 +60,6 @@ void paintPencilGlyph (juce::Graphics& g, float cx, float cy)
     auto axis = [&] (float t) { return juce::Point<float> (tip.x + kInv * t, tip.y - kInv * t); };
     auto eA = [&] (float t, float w) { auto c = axis (t); return P (c.x - kInv * w, c.y - kInv * w); };
     auto eB = [&] (float t, float w) { auto c = axis (t); return P (c.x + kInv * w, c.y + kInv * w); };
-    auto quad = [&] (float t0, float w0, float t1, float w1)
-    {
-        juce::Path p;
-        p.startNewSubPath (eA (t0, w0));
-        p.lineTo (eB (t0, w0));
-        p.lineTo (eB (t1, w1));
-        p.lineTo (eA (t1, w1));
-        p.closeSubPath();
-        return p;
-    };
 
     constexpr float W  = 3.0f;   // barrel half-width
     constexpr float wG = 1.2f;   // graphite base half-width
