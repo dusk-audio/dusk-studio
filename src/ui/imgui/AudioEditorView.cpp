@@ -4197,12 +4197,12 @@ private:
         const auto streams = engine.getPlaybackEngine().playingAudition();
         const TakeId playing = ! stopped && streams.trackIdx == trackIdx ? streams.takeId : 0;
         if (auditioned != nullptr && (stopped || playing == auditioned->id))
-            return { "Auditioning \"" + auditioned->name + "\": the track plays this take alone.", argb (kAudition) };
+            return { "Solo \"" + auditioned->name + "\": the track plays only this take.", argb (kAudition) };
         if (auditioned != nullptr)
-            return { "Auditioning \"" + auditioned->name + "\" from the next Play: the track will play this take alone.",
+            return { "Solo \"" + auditioned->name + "\" from the next Play: the track will play only this take.",
                      argb (kAudition) };
         if (playing != 0)
-            return { "The audition ends at the next Play.", argb (kAudition) };
+            return { "The solo ends at the next Play.", argb (kAudition) };
         return { "Click a take to use it for that section, drag across it to pick any range, or drag a divider to "
                  "move a split.",
                  argb (kHeaderText, 0.75f) };
@@ -4430,8 +4430,9 @@ private:
                 audition.onFill = argb (kAudition);
                 if (button ("delete", 48.0f, "Delete", false, plain))
                     action = { LaneAction::Kind::askDelete, take.id };
-                if (button ("audition", 64.0f, "Audition", auditioned, audition))
+                if (button ("audition", 22.0f, "S", auditioned, audition))
                     action = { LaneAction::Kind::audition, take.id };
+                formTooltip ("Solo: the track plays only this take (T)");
             }
         }
         inner.takeRight (ctx.s (4.0f));
@@ -4650,18 +4651,15 @@ private:
             engine.clearTakeAudition();
     }
 
-    // One take at a time: auditioning another replaces it. Stopped, the playhead goes
-    // to the take's start so Play begins where it does.
+    // One take soloed at a time: soloing another replaces it. The playhead stays where
+    // it is, as a lane solo leaves it in other DAWs.
     void toggleAudition (const AudioTake& take)
     {
-        auto& transport = engine.getTransport();
         if (isAuditioned (take.id))
         {
             engine.clearTakeAudition();
             return;
         }
-        if (transport.isStopped())
-            transport.locate (take.timelineStart);
         engine.setTakeAudition (trackIdx, take.id);
     }
 

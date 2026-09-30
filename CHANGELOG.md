@@ -20,7 +20,7 @@ Takes live on the track now, and the audio editor is where you comp them.
   take under the regions, newest at the top, with the parts the track plays
   drawn bright. Drag across a lane to put that part of the take on the track,
   or click a take's name to use all of it. Double-click a name to rename the
-  take. Each lane has Audition, which plays that take alone from the next Play,
+  take. Each lane has a solo button (S), which plays that take alone from the next Play,
   and Delete, which asks first and takes the take and its regions off the track.
   Every lane edit is one undo step and is saved with the session.
 - **Takes are easier to tell apart in the editor.** Each take has a colour,
@@ -31,7 +31,7 @@ Takes live on the track now, and the audio editor is where you comp them.
   zoomed out to every take, so a punch that starts later shows in its lane.
 - **Comp from the keyboard.** In the audio editor, **Down** puts the take in
   the lane below on the focused region (or the selected range) and **Up** the
-  one above, each one undo step; **T** auditions the take under the pointer or
+  one above, each one undo step; **T** solos the take under the pointer or
   the focused region's, and **T** again stops it.
 - **Click a take to use it for a section.** In the audio editor's take lanes,
   a click on a take gives it the comp section under the click, as in Logic's

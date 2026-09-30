@@ -3408,9 +3408,9 @@ const ScenarioRegistrar trackTakeBadge { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runTrackTakeBadge (host, ctx); }
 } };
 
-// Audition makes the track play one take alone in place of its regions, and moves a
-// stopped playhead to the take's start. Another lane's Audition replaces it, a second
-// press ends it, and closing the editor ends it too.
+// A lane's solo makes the track play one take alone in place of its regions and
+// leaves the playhead where it is. Another lane's solo replaces it, a second press
+// ends it, and closing the editor ends it too.
 std::optional<ScenarioResult> runAudioTakeAudition (GuiHost& host, ScenarioContext& ctx)
 {
     if (auto early = beginTakeCase (host, ctx)) return early;
@@ -3424,6 +3424,7 @@ std::optional<ScenarioResult> runAudioTakeAudition (GuiHost& host, ScenarioConte
     promoteTakeRange (session, track, track.takes[0], 0, kTakeCaseLength);
 
     if (! host.openAudioEditorOnTakes (0)) return ScenarioResult::fail ("audio editor unavailable");
+    engine.getTransport().locate (5000);
     // Read while stopped, when the audio thread leaves the track's streams alone.
     const auto levelAt = [&engine] (std::int64_t sample)
     {
@@ -3437,7 +3438,7 @@ std::optional<ScenarioResult> runAudioTakeAudition (GuiHost& host, ScenarioConte
     const auto auditioning = [&session] (TakeId take)
     { return session.takeAudition.trackIdx == 0 && session.takeAudition.takeId == take; };
     const auto audition = [&host, &ctx] (TakeId take)
-    { ctx.expect (host.clickAudioEditorButton (takeControl ("audition", take)), "no Audition on the take's lane"); };
+    { ctx.expect (host.clickAudioEditorButton (takeControl ("audition", take)), "no solo on the take's lane"); };
     const auto shownAudition = [&host] (TakeId take)
     { return [&host, take] { return host.audioEditorTakePoint ("audition", take, 0).size() == 2; }; };
 
@@ -3448,8 +3449,8 @@ std::optional<ScenarioResult> runAudioTakeAudition (GuiHost& host, ScenarioConte
                         "the short take's header never came into view" });
     steps->push_back ({ 100, [&ctx, &engine]
     {
-        ctx.expect (engine.getTransport().getPlayhead() == 24000, "a stopped audition did not go to the take's start");
-    }, [auditioning, t = *shortTake] { return auditioning (t); }, "Audition did not audition the take" });
+        ctx.expect (engine.getTransport().getPlayhead() == 5000, "a stopped solo moved the playhead");
+    }, [auditioning, t = *shortTake] { return auditioning (t); }, "the solo did not solo the take" });
     steps->push_back ({ 100, [&host, &ctx, levelAt, t = *whole]
     {
         ctx.expect (levelIs (levelAt (48000), kShortTakeLevel), "the track does not play the auditioned take");
@@ -3461,8 +3462,8 @@ std::optional<ScenarioResult> runAudioTakeAudition (GuiHost& host, ScenarioConte
                         "the whole take's header never came into view" });
     steps->push_back ({ 100, [&ctx, &engine]
     {
-        ctx.expect (engine.getTransport().getPlayhead() == 0, "the second audition did not go to its take's start");
-    }, [auditioning, t = *whole] { return auditioning (t); }, "another lane's Audition did not replace the first" });
+        ctx.expect (engine.getTransport().getPlayhead() == 5000, "the second solo moved the playhead");
+    }, [auditioning, t = *whole] { return auditioning (t); }, "another lane's solo did not replace the first" });
     steps->push_back ({ 100, [&ctx, levelAt, audition, t = *whole]
     {
         ctx.expect (levelIs (levelAt (12000), kWholeTakeLevel) && levelIs (levelAt (48000), kWholeTakeLevel),
@@ -3478,7 +3479,7 @@ std::optional<ScenarioResult> runAudioTakeAudition (GuiHost& host, ScenarioConte
                         "the short take's header did not come back into view" });
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.pressAudioEditorKey ("escape"), "Escape was not delivered"); },
-      [auditioning, t = *shortTake] { return auditioning (t); }, "Audition did not start again" });
+      [auditioning, t = *shortTake] { return auditioning (t); }, "the solo did not start again" });
     steps->push_back ({ 100, [&ctx, &session]
     {
         ctx.expect (session.takeAudition.trackIdx == -1 && session.takeAudition.takeId == 0,
@@ -3516,12 +3517,12 @@ std::optional<ScenarioResult> runAudioTakeAuditionWhileRolling (GuiHost& host, S
     auto& transport = engine.getTransport();
     const auto newest = ids->back();
     const auto audition = [&host, &ctx, newest]
-    { ctx.expect (host.clickAudioEditorButton (takeControl ("audition", newest)), "no Audition on the take's lane"); };
+    { ctx.expect (host.clickAudioEditorButton (takeControl ("audition", newest)), "no solo on the take's lane"); };
     const auto auditioning = [&session, newest] { return session.takeAudition.trackIdx == 0 && session.takeAudition.takeId == newest; };
     const auto captionReads = [&host] (std::string text) { return [&host, text] { return host.audioEditorTakeCaption() == text; }; };
-    const std::string pending = "Auditioning \"Take 2\" from the next Play: the track will play this take alone.";
-    const std::string ending = "The audition ends at the next Play.";
-    const std::string playing = "Auditioning \"Take 2\": the track plays this take alone.";
+    const std::string pending = "Solo \"Take 2\" from the next Play: the track will play only this take.";
+    const std::string ending = "The solo ends at the next Play.";
+    const std::string playing = "Solo \"Take 2\": the track plays only this take.";
     const std::string idle = "Click a take to use it for that section, drag across it to pick any range, or drag a "
                              "divider to move a split.";
 
@@ -3533,7 +3534,7 @@ std::optional<ScenarioResult> runAudioTakeAuditionWhileRolling (GuiHost& host, S
     {
         ctx.expect (host.audioEditorTakeCaption() == pending,
                     "Audition pressed while rolling reads '" + host.audioEditorTakeCaption() + "'");
-    }, auditioning, "Audition did not audition the take" });
+    }, auditioning, "the solo did not solo the take" });
     steps->push_back ({ 100, audition });
     steps->push_back ({ 100, [&engine] { engine.stop(); }, captionReads (idle),
                         "an audition pressed on and off in one roll did not bring the caption back to its hint" });
@@ -3790,10 +3791,10 @@ std::optional<ScenarioResult> runAudioEditorStepsAsideForModals (GuiHost& host, 
     const auto lanesShown = [&host] { return host.audioEditorOpen() && host.audioEditorTakeLanes().size() == 2; };
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, [&host, &ctx, newest]
-    { ctx.expect (host.clickAudioEditorButton (takeControl ("audition", newest)), "no Audition on the take's lane"); },
+    { ctx.expect (host.clickAudioEditorButton (takeControl ("audition", newest)), "no solo on the take's lane"); },
     lanesShown, "the take lanes never showed" });
     steps->push_back ({ 100, [&host] { host.raiseAlert ("Audio device lost", "The audio device went away."); },
-                        [&session, newest] { return session.takeAudition.takeId == newest; }, "Audition did not audition the take" });
+                        [&session, newest] { return session.takeAudition.takeId == newest; }, "the solo did not solo the take" });
     steps->push_back ({ 100, [&host, &ctx, &session]
     {
         ctx.expect (host.modalText().rfind ("Audio device lost", 0) == 0, "'" + host.modalText() + "' is up rather than the alert");
