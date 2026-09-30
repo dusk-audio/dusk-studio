@@ -250,4 +250,25 @@ const AudioTake* findTake (const Track& track, TakeId id)
         if (take.id == id) return &take;
     return nullptr;
 }
+
+std::vector<TakeId> takesCovering (const Track& track, std::int64_t start, std::int64_t end)
+{
+    std::vector<TakeId> covering;
+    if (end <= start) return covering;
+    for (auto it = track.takes.rbegin(); it != track.takes.rend(); ++it)
+        if (it->lengthInSamples > 0 && it->timelineStart <= start && it->timelineStart + it->lengthInSamples >= end)
+            covering.push_back (it->id);
+    return covering;
+}
+
+TakeId steppedTake (const std::vector<TakeId>& covering, TakeId current, int step)
+{
+    const auto count = static_cast<int> (covering.size());
+    if (count == 0 || step == 0) return 0;
+    const auto found = std::find (covering.begin(), covering.end(), current);
+    if (found == covering.end())
+        return step > 0 ? covering.front() : covering.back();
+    const int next = static_cast<int> (found - covering.begin()) + step;
+    return next >= 0 && next < count ? covering[static_cast<std::size_t> (next)] : 0;
+}
 } // namespace duskstudio

@@ -56,4 +56,13 @@ std::string nextTakeName (const Track& track);
 std::vector<std::pair<std::int64_t, std::int64_t>> takeCoverage (const Track& track, TakeId id);
 
 const AudioTake* findTake (const Track& track, TakeId id);
+
+// The takes whose audio covers all of [start, end), newest first as the lanes show
+// them. Empty for an empty span.
+std::vector<TakeId> takesCovering (const Track& track, std::int64_t start, std::int64_t end);
+
+// The take `step` lanes below `current` among `covering` (above for a negative step),
+// or 0 past either end. A current take not among them stands just above the first
+// lane, so stepping down reaches the newest and stepping up the oldest.
+TakeId steppedTake (const std::vector<TakeId>& covering, TakeId current, int step);
 } // namespace duskstudio

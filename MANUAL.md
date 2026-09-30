@@ -1478,6 +1478,8 @@ Every region on the track that plays a take carries a stripe in that take's colo
 - **Click a take's name** to put the whole take on the track (**Promote take**).
 - **Double-click a take's name** to rename it. Enter keeps the new name, Esc the old one (**Rename take**).
 - **Audition** plays that take alone on the track, in place of its regions, from the next Play. With the transport stopped the playhead moves to the take's start and the caption reads "Auditioning "Take 2": the track plays this take alone." Pressed while the transport rolls, it changes nothing you hear until the next Play, and the caption reads "Auditioning "Take 2" from the next Play: the track will play this take alone." Click **Audition** again to stop. Auditioning another lane replaces it, and closing the editor or deleting the take ends it. An audition ended while the transport rolls with its take playing also ends at the next Play: the take keeps playing until then, and the caption reads "The audition ends at the next Play." Pressing that take's **Audition** again before then keeps it playing. An audition started and ended in the same roll never played, so the caption goes back to saying what to do. Bounce, mixdown and freeze never hear an audition.
+- **Down** puts the take in the lane below on the focused region, and **Up** the take in the lane above, stepping only through takes that cover all of the region (**Switch take**). With a range selected, only the range changes. Past the last lane the caption says "No older take covers all of this." (or "No newer take...") and nothing changes.
+- **T** auditions the take in the lane under the pointer, or the focused region's take when the pointer is not over a lane, as **Audition** does. **T** again stops it.
 - **Delete** asks "Delete this take and the regions cut from it?" in the lane, with **Delete** and **Cancel**. Deleting takes the take and every region cut from it off the track. **Undo** puts both back (**Delete take**).
 
 Every lane edit is one undo step and is saved with the session. An edit that cannot go ahead says why in the caption instead:
@@ -2321,6 +2323,8 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **G**                 | Grab (move / select) edit mode (used inside the region / piano-roll editors) |
 | **Cmd+]** / **Cmd+[** | Next / previous region                             |
 | **=** / **−** / **0** | Zoom in / zoom out / zoom fit                      |
+| **Down** / **Up**     | Put the take in the lane below / above on the focused region, or on the selected range |
+| **T**                 | Audition the take under the pointer, or the focused region's; again to stop |
 | **Esc**               | Close modal                                        |
 
 ## Piano roll

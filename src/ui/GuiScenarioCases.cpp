@@ -2798,6 +2798,83 @@ std::optional<ScenarioResult> runAudioEditorLaneDivider (GuiHost& host, Scenario
     return std::nullopt;
 }
 
+// Down puts the take in the lane below on the focused region and Up the one above,
+// each a "Switch take" step; with a range selected only the range switches. T
+// auditions the focused region's take, and T again stops.
+std::optional<ScenarioResult> runAudioEditorTakeKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    const auto ids = addLevelTakes (ctx, track, 3);
+    if (! ids) return ScenarioResult::fail ("could not write take fixture");
+    promoteTakeRange (session, track, track.takes[2], 0, kTakeCaseLength);
+    session.audioEditorSnap = false;
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    const auto plays = [&track] (TakeId id)
+    {
+        return takeCoverage (track, id) == std::vector<std::pair<std::int64_t, std::int64_t>> { { 0, kTakeCaseLength } };
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressAudioEditorKey ("cursor down"), "Down was not handled"); },
+      [&host] { return host.audioEditorTakeLanes().size() == 3; }, "the take lanes never showed" });
+    steps->push_back ({ 150, [&host, &ctx, &engine = ctx.engine(), plays, ids]
+    {
+        ctx.expect (plays (ids->at (1)), "Down did not put the take in the lane below on the region");
+        ctx.expect (undoDescription (engine) == "Switch take", "Down is not a \"Switch take\" step");
+        ctx.expect (host.pressAudioEditorKey ("cursor up"), "Up was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, plays, ids]
+    {
+        ctx.expect (plays (ids->at (2)), "Up did not put the newest take back");
+        ctx.expect (host.pressAudioEditorKey ("cursor up"), "a second Up was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, plays, ids]
+    {
+        ctx.expect (plays (ids->at (2)), "Up past the newest take changed the region");
+        ctx.expect (host.audioEditorTakeCaption().find ("No newer take") != std::string::npos,
+                    "Up past the newest take did not say why in the caption");
+        // A range over the middle of the region switches that alone.
+        const auto from = host.audioEditorPoint ("wave", 24000);
+        const auto to = host.audioEditorPoint ("wave", 48000);
+        if (! ctx.expect (from.size() == 2 && to.size() == 2, "the waveform has no geometry")) return;
+        host.audioEditorPointer (from[0], from[1], true, 1);
+        host.audioEditorPointer (to[0], to[1], true, 1);
+        host.audioEditorPointer (to[0], to[1], false, 1);
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        const auto selection = host.audioEditorSelection();
+        ctx.expect (selection.size() == 4 && selection[1] == 1, "the Shift drag did not select a range");
+        ctx.expect (host.pressAudioEditorKey ("cursor down"), "Down over a range was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &track, ids]
+    {
+        const auto middle = takeCoverage (track, ids->at (1));
+        ctx.expect (middle.size() == 1 && std::abs (middle[0].first - 24000) < 256 && std::abs (middle[0].second - 48000) < 256,
+                    "Down over a range did not switch just the range");
+        ctx.expect (host.pressAudioEditorKey ("T"), "T was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &session, ids]
+    {
+        ctx.expect (session.takeAudition.trackIdx == 0 && session.takeAudition.takeId == ids->at (1),
+                    "T did not audition the focused region's take");
+        ctx.expect (host.pressAudioEditorKey ("T"), "a second T was not handled");
+    } });
+    steps->push_back ({ 150, [&ctx, &session]
+    { ctx.expect (session.takeAudition.trackIdx == -1, "a second T did not stop the audition"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorTakeKeys { Scenario {
+    "gui.audio_editor_take_keys", { "gui", "keyboard", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorTakeKeys (host, ctx); }
+} };
+
 const ScenarioRegistrar audioEditorLaneDivider { Scenario {
     "gui.audio_editor_lane_divider", { "gui", "editor", "take" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,

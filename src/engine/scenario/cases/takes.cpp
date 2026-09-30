@@ -1189,6 +1189,55 @@ ScenarioResult reverseTwiceRestoresTheSource (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// A comp section steps through the takes that cover it, newest to oldest, each
+// step one undo step that puts the next take over the section's span and leaves
+// the neighbours as they were; a punch that covers only part of it is skipped.
+ScenarioResult switchTakeStepsThroughCoveringTakes (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
+    auto& regs = track.regions;
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto first = writtenTake (ctx, "switch-first", 0, 96000);
+    const auto second = writtenTake (ctx, "switch-second", 0, 96000);
+    const auto punch = writtenTake (ctx, "switch-punch", 40000, 16000);
+    if (! first || ! second || ! punch) return ScenarioResult::fail ("could not write the takes");
+    promoteTakeRange (session, track, *second, 0, 96000);
+    promoteTakeRange (session, track, *first, 24000, 48000);
+    const auto sectionOf = [&regs] (TakeId id) -> const AudioRegion*
+    {
+        for (const auto& r : regs)
+            if (r.takeId == id && r.timelineStart == 24000) return &r;
+        return nullptr;
+    };
+    const auto* section = sectionOf (first->id);
+    if (! ctx.expect (section != nullptr, "the comp has no section from the first take"))
+        return ctx.verdict();
+
+    const auto from = section->timelineStart;
+    const auto to = from + section->lengthInSamples;
+    const auto covering = takesCovering (track, from, to);
+    ctx.expect (covering == std::vector<TakeId> { second->id, first->id },
+                "the punch, which covers only part of the section, was offered for it");
+    const auto newer = steppedTake (covering, first->id, -1);
+    ctx.expect (newer == second->id, "stepping up from the first take did not reach the second");
+    ctx.expect (steppedTake (covering, first->id, 1) == 0, "stepping down past the oldest take went somewhere");
+
+    const auto before = regs;
+    undo.beginNewTransaction ("Switch take");
+    ctx.expect (undo.perform (new PromoteTakeRangeAction (session, ctx.engine(), kTrack, newer, from, to)),
+                "switching the section to the second take was refused");
+    ctx.expect (takeCoverage (track, first->id).empty(), "the first take still plays after the switch");
+    ctx.expect (takeCoverage (track, second->id)
+                    == std::vector<std::pair<std::int64_t, std::int64_t>> { { 0, 96000 } },
+                "the second take does not play over the whole of it after the switch");
+    ctx.expect (undo.getUndoDescription() == "Switch take", "the switch is not one \"Switch take\" step");
+    ctx.expect (undo.undo() && regs.size() == before.size() && sectionOf (first->id) != nullptr,
+                "undoing the switch did not put the first take's section back");
+    return ctx.verdict();
+}
+
 // Join keeps a take only while the result still reads that take alone: two
 // halves of one take rejoin naming it, two loop passes that share a file and
 // abut join naming neither, and regions of two takes render into a new file
@@ -1427,6 +1476,9 @@ const ScenarioRegistrar reverseRegistrar { Scenario {
 const ScenarioRegistrar reverseTwiceRegistrar { Scenario {
     "take.reverse_twice_restores_the_source", { "take", "region", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (reverseTwiceRestoresTheSource, ctx); } } };
+const ScenarioRegistrar switchTakeRegistrar { Scenario {
+    "take.switch_region_take_steps_through_covering_takes", { "take", "comp", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (switchTakeStepsThroughCoveringTakes, ctx); } } };
 const ScenarioRegistrar joinRegistrar { Scenario {
     "take.join_names_a_take_only_while_it_reads_it", { "take", "region", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (joinNamesATakeOnlyWhileItReadsIt, ctx); } } };

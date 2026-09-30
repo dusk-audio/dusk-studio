@@ -700,3 +700,33 @@ TEST_CASE ("SessionSerializer round-trips what a reversed region reversed",
 
     dir.deleteRecursively();
 }
+
+TEST_CASE ("The takes covering a span are listed newest first, whole cover only",
+           "[session][takes]")
+{
+    Track track;
+    track.takes.push_back ({ 1, "Take 1", {}, 0, 96000, 0, 1, {} });
+    track.takes.push_back ({ 2, "Take 2", {}, 0, 96000, 0, 1, {} });
+    track.takes.push_back ({ 3, "Punch", {}, 24000, 48000, 0, 1, {} });
+
+    CHECK (takesCovering (track, 0, 96000) == std::vector<TakeId> { 2, 1 });
+    CHECK (takesCovering (track, 30000, 60000) == std::vector<TakeId> { 3, 2, 1 });
+    CHECK (takesCovering (track, 20000, 30000) == std::vector<TakeId> { 2, 1 });
+    CHECK (takesCovering (track, 24000, 72000) == std::vector<TakeId> { 3, 2, 1 });
+    CHECK (takesCovering (track, 5000, 5000).empty());
+}
+
+TEST_CASE ("Stepping a comp section's take moves one lane at a time and stops at the ends",
+           "[session][takes]")
+{
+    const std::vector<TakeId> lanes { 3, 2, 1 };
+    CHECK (steppedTake (lanes, 3, 1) == 2);
+    CHECK (steppedTake (lanes, 2, 1) == 1);
+    CHECK (steppedTake (lanes, 1, 1) == 0);
+    CHECK (steppedTake (lanes, 2, -1) == 3);
+    CHECK (steppedTake (lanes, 3, -1) == 0);
+    // A section playing no take on the list steps onto the nearest end.
+    CHECK (steppedTake (lanes, 0, 1) == 3);
+    CHECK (steppedTake (lanes, 9, -1) == 1);
+    CHECK (steppedTake ({}, 3, 1) == 0);
+}

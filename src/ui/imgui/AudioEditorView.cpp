@@ -195,7 +195,7 @@ constexpr EditorKey kEditorKeys[] = {
     { ImGuiKey_RightBracket, false }, { ImGuiKey_L, false }, { ImGuiKey_P, false },
     { ImGuiKey_Delete, false }, { ImGuiKey_Backspace, false }, { ImGuiKey_Equal, true },
     { ImGuiKey_Minus, true }, { ImGuiKey_KeypadAdd, true }, { ImGuiKey_KeypadSubtract, true },
-    { ImGuiKey_0, false },
+    { ImGuiKey_0, false }, { ImGuiKey_UpArrow, false }, { ImGuiKey_DownArrow, false }, { ImGuiKey_T, false },
 };
 
 // std::clamp, but tolerant of an upper bound below the lower one.
@@ -1539,6 +1539,18 @@ private:
         if (bare && (is (ImGuiKey_Delete) || is (ImGuiKey_Backspace)))
         {
             deleteSelection();
+            return true;
+        }
+
+        if (bare && (is (ImGuiKey_UpArrow) || is (ImGuiKey_DownArrow)))
+        {
+            stepTake (is (ImGuiKey_DownArrow) ? 1 : -1);
+            return true;
+        }
+
+        if (bare && is (ImGuiKey_T))
+        {
+            auditionFromKey();
             return true;
         }
 
@@ -4439,6 +4451,51 @@ private:
         undo.beginNewTransaction ("Rename take");
         if (! undo.perform (new RenameTakeAction (session, trackIdx, id, name)))
             showNotice (kFrozenNotice);
+    }
+
+    // Down puts the take in the lane below on the focused region, or on the range when
+    // there is one, and Up the take in the lane above, through the promote a lane drag
+    // makes. Only takes that cover all of it are stepped through.
+    void stepTake (int step)
+    {
+        const auto* r = region();
+        if (r == nullptr || takeCount() == 0)
+            return;
+        auto from = r->timelineStart;
+        auto to = from + r->lengthInSamples;
+        if (rangeActive)
+        {
+            const auto fileToTimeline = r->timelineStart - r->sourceOffset;
+            from = std::min (rangeStartSample, rangeEndSample) + fileToTimeline;
+            to = std::max (rangeStartSample, rangeEndSample) + fileToTimeline;
+        }
+        const auto target = steppedTake (takesCovering (session.track (trackIdx), from, to), r->takeId, step);
+        if (target == 0)
+        {
+            showNotice (step > 0 ? "No older take covers all of this." : "No newer take covers all of this.");
+            return;
+        }
+        promoteTake (target, from, to, "Switch take");
+    }
+
+    // T auditions the take under the pointer, else the one the focused region plays;
+    // T on the take already auditioning stops it.
+    void auditionFromKey()
+    {
+        const AudioTake* target = nullptr;
+        const auto p = ImGui::GetIO().MousePos;
+        if (ImGui::IsMousePosValid() && layout.takeLanes.contains (p))
+            if (const int lane = takelanes::laneAt ((p.y - layout.takeLanes.y0) / layout.scale, laneScroll, takeCount(),
+                                                    layout.laneHeight);
+                lane >= 0)
+                target = takeInLane (lane);
+        if (target == nullptr)
+            if (const auto* r = region())
+                target = takeWithId (r->takeId);
+        if (target != nullptr)
+            toggleAudition (*target);
+        else if (session.takeAudition.trackIdx == trackIdx)
+            engine.clearTakeAudition();
     }
 
     // One take at a time: auditioning another replaces it. Stopped, the playhead goes

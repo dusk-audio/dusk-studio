@@ -29,6 +29,10 @@ Takes live on the track now, and the audio editor is where you comp them.
   up to be readable, grow to fill their part of the editor, and the caption
   above them drags to give the lanes more or less room. The editor opens
   zoomed out to every take, so a punch that starts later shows in its lane.
+- **Comp from the keyboard.** In the audio editor, **Down** puts the take in
+  the lane below on the focused region (or the selected range) and **Up** the
+  one above, each one undo step; **T** auditions the take under the pointer or
+  the focused region's, and **T** again stops it.
 - **A take count beside the track name.** The tape strip shows "3 takes" on a
   track with several takes, or "1 take" when its only take has no region on the
   timeline. Click it to open the audio editor on the take lanes.
