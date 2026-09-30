@@ -11,6 +11,7 @@
 #include "ChannelStripComponent.h"
 #include "MasterStripComponent.h"
 #include "../session/Session.h"
+#include "../session/TrackMove.h"
 #include "../engine/AudioEngine.h"
 
 namespace duskstudio
@@ -35,7 +36,8 @@ public:
     // strip becomes the A/S/X target via the same path a click uses.
     void moveFocus (int delta);
     // Rings the strip and pages the console to it when banking is active.
-    void focusStrip (int track);
+    // select passes it on to the strip-focus callback.
+    void focusStrip (int track, bool select = true);
     int  getFocusedStrip() const noexcept { return focusedStrip; }
     void restoreFocusForScenario (int track) { focusedStrip = track; repaint(); }
 
@@ -114,8 +116,16 @@ public:
     // in a quiet window rather than racing Mutter's teardown.
     void dropAllPluginEditors (NativeEditorTeardown teardown);
 
+    // Around a track move. Before: every editor over a strip whose track moves
+    // closes. After: those strips are built again against the strips and
+    // inserts the engine now runs in their slots, and the focus ring follows
+    // its track. True when the keyboard focus was in a strip that went.
+    void closeTrackEditors (const TrackMovePlan& plan);
+    bool followTrackMove (const TrackMovePlan& plan);
+
 private:
     Session& sessionRef;
+    AudioEngine& engineRef;
 
     std::array<std::unique_ptr<ChannelStripComponent>, Session::kNumTracks> strips;
 
@@ -135,7 +145,9 @@ private:
     // Applied state = userWantsCompact OR autoCompact.
     bool userWantsCompact = false;
     bool autoCompact      = false;
+    bool stripsMixing     = false;
     void applyCompactState();
+    bool rebuildTrackStrips (const TrackMovePlan& plan);
 
     std::array<std::unique_ptr<BusComponent>,       Session::kNumBuses> busStrips;
     std::unique_ptr<MasterStripComponent> masterStrip;

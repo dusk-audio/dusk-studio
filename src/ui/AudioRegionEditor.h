@@ -55,6 +55,9 @@ public:
     std::vector<std::int64_t> selectionForScenario() const
     { return { regionIdx, rangeActive ? 1 : 0, rangeStartSample, rangeEndSample }; }
     std::function<void()> onCloseRequested;
+    // Undo, or redo when redo is true. The host runs it, so a track move's
+    // undo is refused here on the same grounds as from the main window.
+    std::function<void (bool redo)> onUndoRequested;
 
     // Cmd+]/Cmd+[ in-place swap. Host re-opens; editor state (zoom,
     // scroll, cursor) resets to fit the new region.
@@ -81,6 +84,7 @@ public:
     void syncScrollBarRange();
 
 private:
+    void undoOrRedo (bool redo);
     Session& session;
     AudioEngine& engine;
     int trackIdx;

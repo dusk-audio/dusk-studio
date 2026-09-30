@@ -3,10 +3,13 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
+#include "../session/TrackMove.h"
 #include "../foundation/MessageThread.h"
 #include "WheelScroll.h"
 
 #include <algorithm>
+#include <optional>
+#include <utility>
 
 namespace duskstudio
 {
@@ -91,6 +94,18 @@ public:
     // A single click on a track's name in the label column, once it can no
     // longer turn into a double-click.
     std::function<void (int trackIdx)> onTrackLabelClicked;
+    // A name dragged to another row: the move it asks for, and the track whose
+    // name was dragged, by its slot before the move. The host commits it.
+    std::function<void (const TrackMovePlan& plan, int draggedTrack)> onTrackMoveDropped;
+    // Ends a name drag without moving anything; true when one was under way. A
+    // press that has not dragged yet is left to end as a click.
+    bool cancelTrackMoveDrag();
+    // Around every track move, its undo and redo included. Before: the rename
+    // and any name drag, which name tracks by slot, are dropped. After: the
+    // picked tracks and any region drag follow their tracks, region picks are
+    // cleared and the rows are rebuilt.
+    void prepareForTrackMove();
+    void followTrackMove (const TrackMovePlan& plan);
 
     // CursorOverlay sink - MainComponent wires these so the strip can push
     // its local mouse position into the shared overlay (which can't poll
@@ -107,8 +122,9 @@ public:
     juce::Rectangle<int> audioRegionScreenRect (int trackIdx, int regionIdx) const noexcept;
     juce::Rectangle<int> midiRegionScreenRect  (int trackIdx, int regionIdx) const noexcept;
 
-    // trackHint = row under the drop, -1 if dropped on ruler / outside.
-    // Host (batch-import) picks adjacent tracks for subsequent files.
+    // timelineStart = the playhead, or the sample under the pointer when Alt
+    // is held. trackHint = row under the drop, -1 if dropped on ruler /
+    // outside. Host (batch-import) picks adjacent tracks for subsequent files.
     std::function<void (juce::Array<juce::File> files,
                          std::int64_t timelineStart,
                          int trackHint)> onFilesDropped;
@@ -120,10 +136,13 @@ public:
     void filesDropped  (const juce::StringArray& files, int x, int y) override;
 
     int  getSelectedTrack() const noexcept { return selectedTrack; }
+    // The tracks picked in the name column, ascending; otherwise the selected
+    // track alone, or nothing.
+    std::vector<int> getSelectedTracks() const;
 
     // From ChannelStripComponent click etc. Clears region selection
     // (gesture wasn't region-specific) and repaints.
-    void setSelectedTrack (int t) noexcept;
+    void setSelectedTrack (int t);
 
     // anchorX >= 0 = zoom anchors on that pixel so the sample under
     // the cursor stays put.
@@ -177,7 +196,24 @@ public:
         rebuildVisibleTrackOrder();
     }
     auto dropPointForScenario (int track) const { return rowBounds (track).getCentre(); }
+    std::int64_t dropPointSampleForScenario (int track) const { return sampleAtX (dropPointForScenario (track).x); }
+    int dropLineXForScenario() const { return dropAccepted ? dropHoverX : -1; }
+    int xForSampleForScenario (std::int64_t sample) const { return xForSample (sample); }
+    // Stands in for the Alt key a drop reads; nullopt goes back to the key.
+    void setDropAtMouseForScenario (std::optional<bool> atMouse) { dropAtMouseOverride = atMouse; }
     auto labelPointForScenario (int track) const { return rowBounds (track).getCentre().withX (labelColW / 2); }
+    // In the name column, in the gap before the gap-th shown row; the row count
+    // is the gap after the last.
+    auto trackMoveGapPointForScenario (int gap) const
+    {
+        const int rows = (int) visibleTrackOrder.size();
+        const int at = std::clamp (gap, 0, rows);
+        const auto row = rowBounds (visibleTrackOrder[(size_t) std::min (at, rows - 1)]);
+        const int y = at == 0 ? row.getY() + 1 : at < rows ? row.getY() : row.getBottom();
+        return row.getCentre().withX (labelColW / 2).withY (y);
+    }
+    int trackMoveLineYForScenario() const { return trackMoveLineY(); }
+    bool trackMovePressedForScenario() const noexcept { return trackMove.pressed >= 0; }
     bool nameEditorOpenForScenario() const { return nameEditor.isBeingEdited(); }
     // The track whose row the open name editor sits on, -1 when it is closed
     // or off that row.
@@ -211,6 +247,29 @@ public:
 private:
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
+
+    // A plain press on a name arms a track move; this much vertical travel
+    // starts it. gap counts the shown rows whose centre is above the pointer.
+    static constexpr int kTrackMoveStartPx = 4;
+    struct TrackMoveDrag
+    {
+        int pressed = -1;
+        int pressY = 0;
+        int pointerY = 0;
+        bool active = false;
+        // The pressed name is one of several picked. A click still narrows the
+        // pick to it, but on release, so that a drag carries all of them.
+        bool narrowOnRelease = false;
+        std::vector<int> moving;
+        int gap = 0;
+    };
+    TrackMoveDrag trackMove;
+    void startTrackMove();
+    void trackMovePointerAt (int y);
+    void autoScrollTrackMove();
+    TrackMovePlan trackMovePlanFor (const TrackMoveDrag& moveDrag) const;
+    // The drop line's y, -1 when a drop there would move nothing.
+    int trackMoveLineY() const;
 
     juce::Rectangle<int> labelColumnBounds() const noexcept;
     juce::Rectangle<int> rulerBounds() const noexcept;
@@ -305,10 +364,8 @@ private:
     // through MidiRegionEditAction for undo.
     void showMidiRegionContextMenu (int trackIdx, int regionIdx,
                                        juce::Point<int> screenPos);
-
-    // Undoable MIDI-region mute/lock toggle from the tape-strip menu.
-    void commitMidiRegionToggle (int trackIdx, int regionIdx, const juce::String& name,
-                                  std::function<void (duskstudio::MidiRegion&)> mutate);
+    // The name column's menu: every region, audio and MIDI, on these tracks.
+    void showTrackContextMenu (std::vector<int> tracks, juce::Point<int> screenPos);
 
     // Tempo edits, all driven from the ruler's right-click menu. Every edit
     // routes through commitTempoPoints so it's a single undoable transaction.
@@ -522,9 +579,23 @@ private:
     int selectedTrack    = -1;
     int selectedRegion   = -1;
 
+    // Name-column picks, sorted, and the row a Shift range starts from. The
+    // set counts only while no region is picked and it holds selectedTrack;
+    // any other gesture that moves the selection leaves it stale, and
+    // selectedTrack alone is then the selection.
+    std::vector<int> selectedTracks;
+    int trackAnchor = -1;
+    bool trackSetHolds() const noexcept;
+    void selectOnlyTrack (int t);
+    // Cmd/Ctrl toggles the row, Shift takes every shown row from the anchor.
+    void extendTrackSelection (int t, bool range);
+
     int  dropHoverTrack = -1;
     int  dropHoverX     = -1;
     bool dropAccepted   = false;
+    // Drops land at the playhead, or at the pointer while Alt is held.
+    bool dropAtMouse() const;
+    std::optional<bool> dropAtMouseOverride;
 
     // Audio + MIDI share a vector index space within a track but are
     // distinct types - separate selection slots avoid "which type is
@@ -553,6 +624,35 @@ private:
     bool isRegionSelected (int track, int idx) const noexcept;
     std::vector<RegionId> allSelectedRegions() const;
     void clearAllSelections() noexcept;
+    // The whole selection when the right-clicked region is part of it,
+    // otherwise that region alone.
+    std::vector<RegionId> regionMenuTargets (int track, int idx) const;
+
+    // The region edits the menus and the edit keys share. None of them opens
+    // an undo transaction; the caller names one per gesture. Each rebuilds
+    // playback once however many regions it edits, and puts a track's MIDI
+    // regions in one action, which publishes them to the audio thread once.
+    // Sets one field on every target, skipping regions that already hold it.
+    template <typename Field, typename Value>
+    void setAudioRegionField (const std::vector<RegionId>& targets, Field AudioRegion::* field, const Value& value);
+    template <typename Field, typename Value>
+    void setMidiRegionField (const std::vector<RegionId>& targets, Field MidiRegion::* field, const Value& value);
+    // The unlocked targets that keep accepts, ordered track ascending and
+    // index descending, so deleting or splitting them in that order leaves
+    // every index still to come valid.
+    std::vector<RegionId> editableAudioRegions (std::vector<RegionId> targets,
+                                                const std::function<bool (const AudioRegion&)>& keep = {}) const;
+    std::vector<RegionId> editableMidiRegions (std::vector<RegionId> targets) const;
+    // Unlocked and cut strictly inside by at: a split at an edge changes nothing.
+    std::vector<RegionId> splittableAudioRegions (std::vector<RegionId> targets, std::int64_t at) const;
+    // Every region on the tracks, leaving out frozen tracks: every region
+    // action refuses one, since its regions are baked into the file it plays.
+    std::vector<RegionId> regionsOnTracks (const std::vector<int>& tracks, bool midi) const;
+    // The earliest start and latest end of those regions; end <= start with none.
+    std::pair<std::int64_t, std::int64_t> regionSpan (const std::vector<int>& tracks) const;
+    void deleteAudioRegions (const std::vector<RegionId>& ordered);
+    void deleteMidiRegions (const std::vector<RegionId>& ordered);
+    void splitAudioRegions (const std::vector<RegionId>& ordered, std::int64_t at);
 
     // A region's own colour when it has one, otherwise its track's. An unset
     // customColour is transparent.

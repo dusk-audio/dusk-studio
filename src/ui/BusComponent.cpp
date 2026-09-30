@@ -1468,7 +1468,6 @@ void BusComponent::setCompactMode (bool compact)
     eqMidGain .setVisible (sec);  eqMidLbl.setVisible (sec);
     eqHfGain  .setVisible (sec);  eqHfLbl .setVisible (sec);
     if (compHeaderBtn != nullptr) compHeaderBtn->setVisible (sec);
-    if (compMeter     != nullptr) compMeter    ->setVisible (sec);
     compRatio  .setVisible (sec);  compRatLbl.setVisible (sec);
     compAttack .setVisible (sec);  compAtkLbl.setVisible (sec);
     compRelease.setVisible (sec);  compRelLbl.setVisible (sec);

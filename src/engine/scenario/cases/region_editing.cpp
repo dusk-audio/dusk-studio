@@ -6,7 +6,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace duskstudio::scenario
 {
@@ -185,6 +187,105 @@ ScenarioResult joinRejoinsASplit (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// An edit over several MIDI regions of one track publishes the track's regions
+// once on perform, undo and redo: the snapshot keeps one retired vector, so a
+// second publish inside an audio block frees the vector that block reads. A
+// batch of region edits, and its undo and redo, rebuilds playback once.
+ScenarioResult batchedEditsPublishAndRebuildOnce (ScenarioContext& ctx)
+{
+    constexpr int kMidiTrack = kTrack + 1;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& lane = session.track (kMidiTrack).midiRegions;
+    session.track (kMidiTrack).mode.store ((int) Track::Mode::Midi);
+    std::vector<MidiRegion> seeded (3);
+    for (int i = 0; i < 3; ++i)
+    {
+        seeded[(size_t) i].timelineStart = 48000 * i;
+        seeded[(size_t) i].lengthInSamples = 48000;
+    }
+    lane.publish (std::make_unique<std::vector<MidiRegion>> (seeded));
+    auto& regs = regionsOf (ctx);
+    regs.push_back (regionAt (0, 48000));
+    regs.push_back (regionAt (48000, 48000));
+
+    auto& undo = engine.getUndoManager();
+    auto& playback = engine.getPlaybackEngine();
+    undo.clearUndoHistory();
+    auto published = lane.generation();
+    auto rebuilt = playback.rebuildCount();
+    const auto once = [&] (std::uint64_t publishes, const std::string& what)
+    {
+        const auto p = lane.generation() - published;
+        const auto r = playback.rebuildCount() - rebuilt;
+        ctx.expect (p == publishes && r == 1, what + " published the MIDI track " + std::to_string (p)
+                                               + " times and rebuilt playback " + std::to_string (r) + " times");
+        published = lane.generation();
+        rebuilt = playback.rebuildCount();
+    };
+    const auto muted = [&lane, &regs] (bool on)
+    {
+        const auto& live = lane.current();
+        return live.size() == 3 && live[0].muted == on && ! live[1].muted && live[2].muted == on
+            && regs.size() == 2 && regs[0].muted == on && regs[1].muted == on;
+    };
+    const auto starts = [&lane]
+    {
+        std::vector<std::int64_t> at;
+        for (const auto& r : lane.current()) at.push_back (r.timelineStart);
+        return at;
+    };
+
+    undo.beginNewTransaction();
+    {
+        const RegionRebuildBatch batch (engine);
+        std::vector<MidiRegionEditAction::Change> changes;
+        for (const int i : { 0, 2 })
+        {
+            auto after = seeded[(size_t) i];
+            after.muted = true;
+            changes.push_back ({ i, seeded[(size_t) i], after });
+        }
+        ctx.expect (undo.perform (new MidiRegionEditAction (session, engine, kMidiTrack, std::move (changes))),
+                    "the MIDI edit was refused");
+        for (int i = 0; i < 2; ++i)
+        {
+            auto after = regs[(size_t) i];
+            after.muted = true;
+            ctx.expect (undo.perform (new RegionEditAction (session, engine, kTrack, i, regs[(size_t) i], after)),
+                        "an audio edit was refused");
+        }
+    }
+    once (1, "muting two MIDI regions and two audio regions");
+    ctx.expect (muted (true), "the batch did not mute its regions, and only those");
+    ctx.expect (undoTransaction (engine), "undo was refused");
+    once (1, "undoing the mute");
+    ctx.expect (muted (false), "undo did not unmute every region");
+    ctx.expect (redoTransaction (engine), "redo was refused");
+    once (1, "redoing the mute");
+    ctx.expect (muted (true), "redo did not mute the regions again");
+
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new DeleteMidiRegionAction (session, engine, kMidiTrack, std::vector<int> { 0, 2 })),
+                "the delete was refused");
+    once (1, "deleting two MIDI regions");
+    ctx.expect (starts() == std::vector<std::int64_t> { 48000 }, "the delete did not leave just the middle region");
+    ctx.expect (undoTransaction (engine), "undoing the delete was refused");
+    once (1, "undoing the delete");
+    ctx.expect (starts() == std::vector<std::int64_t> { 0, 48000, 96000 },
+                "undo did not put each region back in its slot");
+    ctx.expect (redoTransaction (engine), "redoing the delete was refused");
+    once (1, "redoing the delete");
+    ctx.expect (starts() == std::vector<std::int64_t> { 48000 }, "redo did not delete the two regions again");
+
+    undo.beginNewTransaction();
+    ctx.expect (! undo.perform (new DeleteMidiRegionAction (session, engine, kMidiTrack, std::vector<int> { 0, 5 })),
+                "a delete reaching past the last region was accepted");
+    ctx.expect (lane.generation() == published && starts() == std::vector<std::int64_t> { 48000 },
+                "a refused delete changed or published the regions");
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
@@ -208,5 +309,8 @@ const ScenarioRegistrar editRegistrar { Scenario {
 const ScenarioRegistrar joinRegistrar { Scenario {
     "region.join_rejoins_a_split", { "region", "edit", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (joinRejoinsASplit, ctx); } } };
+const ScenarioRegistrar batchedRegistrar { Scenario {
+    "region.batched_edits_publish_and_rebuild_once", { "region", "edit", "undo", "midi" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (batchedEditsPublishAndRebuildOnce, ctx); } } };
 } // namespace
 } // namespace duskstudio::scenario

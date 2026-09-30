@@ -47,9 +47,11 @@
 #include "UpdateChecker.h"
 #include "SystemStatusBar.h"
 #include "TapeStrip.h"
+#include "TrackMoveUndo.h"
 #include "MiniTimelineStrip.h"
 #include "TransportBar.h"
 #include "../session/MarkerEditActions.h"
+#include "../session/RegionEditActions.h"
 #include "../session/RecentSessions.h"
 #include "../session/SessionSerializer.h"
 #include "../session/UnreferencedAudio.h"
@@ -817,6 +819,9 @@ MainComponent::MainComponent()
     tapeStrip->onAudioRegionDoubleClicked = [this] (int t, int r) { openAudioEditor (t, r); };
     // consoleView is rebuilt on session load and template apply, so look it up per click.
     tapeStrip->onTrackLabelClicked = [this] (int t) { if (consoleView != nullptr) consoleView->focusStrip (t); };
+    tapeStrip->onTrackMoveDropped = [this] (const TrackMovePlan& plan, int dragged) { dropTrackMove (plan, dragged); };
+    engine.onBeforeTracksMove = [this] (const TrackMovePlan& plan) { closeForTrackMove (plan); };
+    engine.onTracksMoved = [this] (const TrackMovePlan& plan) { followTrackMove (plan); };
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
                                           std::int64_t timelineStart,
                                           int trackHint)
@@ -1187,6 +1192,8 @@ MainComponent::~MainComponent()
     tearingDown = true;
     stopTimer();   // halt autosave before tearing down engine / session
     engine.setPluginRestoreAlertSink ({});
+    engine.onBeforeTracksMove = nullptr;
+    engine.onTracksMoved = nullptr;
 
     // Drop the modal hook before anything else: its closure holds a raw this,
     // and the teardown below can still raise an alert.
@@ -1283,6 +1290,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     const bool cmd     = mods.isCommandDown();   // Ctrl on Linux/Windows, Cmd on macOS
     const bool shift   = mods.isShiftDown();
     const bool escape  = code == juce::KeyPress::escapeKey;
+
+    if (escape && tapeStrip != nullptr && tapeStrip->cancelTrackMoveDrag())
+        return true;
 
     // Should an open modal's body lose the keyboard to this canvas, Escape
     // still closes it, taken bare as the modal's own handler takes it.
@@ -1459,10 +1469,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     }
 
     // Edit: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y
-    if (code == 'Z' && cmd && ! shift) { um.undo(); return true; }
+    if (code == 'Z' && cmd && ! shift) { undoOrRedo (false); return true; }
     if ((code == 'Z' && cmd && shift) || (code == 'Y' && cmd))
     {
-        um.redo();
+        undoOrRedo (true);
         return true;
     }
 
@@ -1728,15 +1738,21 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // Track arm / solo / mute on the selected track. Selection state
-    // lives on TapeStrip (the most-recently-clicked region's track); when
-    // nothing's selected, the shortcuts no-op rather than guessing. The
-    // ChannelStrip's existing 30 Hz timer picks up the atom changes and
-    // refreshes its toggles.
+    // Track arm / solo / mute on the selected tracks: the names picked in the
+    // tape strip, or the selected region's track. With nothing selected the
+    // shortcuts no-op rather than guessing. A key turns its state off on every
+    // selected track when any of them has it on, and on otherwise, so a track
+    // that cannot be armed (frozen, or with no input) never leaves the others
+    // stuck armed. The ChannelStrip's existing 30 Hz timer picks up the atom
+    // changes and refreshes its toggles.
     if (tapeStrip != nullptr)
     {
-        const int sel = tapeStrip->getSelectedTrack();
-        if (sel >= 0 && sel < Session::kNumTracks)
+        const auto tracks = tapeStrip->getSelectedTracks();
+        const auto anyOn = [this, &tracks] (auto isOn)
+        {
+            return std::any_of (tracks.begin(), tracks.end(), [this, &isOn] (int t) { return isOn (session.track (t)); });
+        };
+        if (! tracks.empty())
         {
             if (code == 'A' && noMods)
             {
@@ -1744,18 +1760,16 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
                 // in sync. Bypassing it (atom.store directly) left the
                 // counter stale and silently broke the Rec button's
                 // anyTrackArmed() fast-path.
-                const bool now = session.track (sel).recordArmed
-                                       .load (std::memory_order_relaxed);
-                session.setTrackArmed (sel, ! now);
+                const bool arm = ! anyOn ([] (const Track& t) { return t.recordArmed.load (std::memory_order_relaxed); });
+                for (const int t : tracks) session.setTrackArmed (t, arm);
                 return true;
             }
             if (code == 'S' && noMods)
             {
                 // Route through setTrackSoloed so soloTrackCount stays
                 // in sync (same reason as ARM above).
-                const bool now = session.track (sel).strip.solo
-                                       .load (std::memory_order_relaxed);
-                session.setTrackSoloed (sel, ! now);
+                const bool solo = ! anyOn ([] (const Track& t) { return t.strip.solo.load (std::memory_order_relaxed); });
+                for (const int t : tracks) session.setTrackSoloed (t, solo);
                 return true;
             }
             // 'X' = mute toggle. M is already taken by drop-marker; X is
@@ -1763,9 +1777,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             // keybinding.
             if (code == 'X' && noMods)
             {
-                auto& m = session.track (sel).strip.mute;
-                m.store (! m.load (std::memory_order_relaxed),
-                          std::memory_order_relaxed);
+                const bool mute = ! anyOn ([] (const Track& t) { return t.strip.mute.load (std::memory_order_relaxed); });
+                for (const int t : tracks) session.track (t).strip.mute.store (mute, std::memory_order_relaxed);
                 return true;
             }
         }
@@ -6119,6 +6132,7 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     addAndMakeVisible (pianoRollDim.get());
 
     pianoRoll->onCloseRequested = [this] { closePianoRollAnimated(); };
+    pianoRoll->onUndoRequested = [this] (bool redo) { undoOrRedo (redo); };
     pianoRoll->onMouseMovedForCursor =
         [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
                 juce::Range<int> cutLine)
@@ -6151,7 +6165,7 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     animateEditorOpen (*pianoRoll, *pianoRollDim, rollBounds, startRect);
 }
 
-void MainComponent::closePianoRoll()
+void MainComponent::closePianoRoll (bool deferDestruction)
 {
     // Cancel any in-flight collapse animation BEFORE resetting - the
     // ComponentAnimator holds raw pointers and would tick into freed
@@ -6169,6 +6183,8 @@ void MainComponent::closePianoRoll()
     if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
     if (pianoRoll != nullptr) removeChildComponent (pianoRoll.get());
     if (pianoRollDim != nullptr) removeChildComponent (pianoRollDim.get());
+    if (deferDestruction && pianoRoll != nullptr)
+        dusk::callAsync ([doomed = std::shared_ptr<PianoRollComponent> (std::move (pianoRoll))] {});
     pianoRoll.reset();
     pianoRollDim.reset();
     pianoRollTrackIdx  = -1;
@@ -6259,6 +6275,7 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
     addAndMakeVisible (audioEditorDim.get());
 
     audioEditor->onCloseRequested = [this] { closeAudioEditorAnimated(); };
+    audioEditor->onUndoRequested = [this] (bool redo) { undoOrRedo (redo); };
     audioEditor->onMouseMovedForCursor =
         [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
                 juce::Range<int> cutLine)
@@ -6287,7 +6304,7 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
     animateEditorOpen (*audioEditor, *audioEditorDim, editorBounds, startRect);
 }
 
-void MainComponent::closeAudioEditor()
+void MainComponent::closeAudioEditor (bool deferDestruction)
 {
     // Cancel any in-flight collapse animation BEFORE resetting - the
     // ComponentAnimator holds raw pointers (see closePianoRoll).
@@ -6301,6 +6318,8 @@ void MainComponent::closeAudioEditor()
     if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
     if (audioEditor    != nullptr) removeChildComponent (audioEditor.get());
     if (audioEditorDim != nullptr) removeChildComponent (audioEditorDim.get());
+    if (deferDestruction && audioEditor != nullptr)
+        dusk::callAsync ([doomed = std::shared_ptr<AudioRegionEditor> (std::move (audioEditor))] {});
     audioEditor.reset();
     audioEditorDim.reset();
     audioEditorTrackIdx  = -1;
@@ -6439,6 +6458,64 @@ void MainComponent::closeTuner()
         dusk::callAsync ([trashTuner, trashDim]() mutable {});
     }
     session.tuneTrackIndex.store (-1, std::memory_order_relaxed);
+}
+
+std::string MainComponent::openRenderDialog() const
+{
+    if (mixdownModal.isOpen()) return "mixdown";
+    for (auto* modal : EmbeddedModal::activeModalStack())
+        if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody()))
+            return render->renderName();
+    return {};
+}
+
+void MainComponent::dropTrackMove (const TrackMovePlan& plan, int draggedTrack)
+{
+    // The engine cannot see a render's dialog, which holds tracks by slot.
+    if (const auto dialog = openRenderDialog(); ! dialog.empty())
+    {
+        explainTrackMoveRefused (*this, "Close the " + dialog + " dialog, then move the tracks again.");
+        return;
+    }
+    if (const auto refusal = trackMoveRefusalFor (session, engine, plan);
+        refusal.kind != TrackMoveRefusal::Kind::None)
+    {
+        explainTrackMoveRefused (*this, trackMoveRefusalMessage (refusal));
+        return;
+    }
+    if (! commitTrackMove (engine, plan)) return;
+    if (consoleView != nullptr && draggedTrack >= 0 && draggedTrack < Session::kNumTracks)
+        consoleView->focusStrip (plan.oldToNew[(size_t) draggedTrack], /*select*/ false);
+}
+
+void MainComponent::closeForTrackMove (const TrackMovePlan& plan)
+{
+    const auto moves = [&plan] (int t) { return t >= 0 && t < Session::kNumTracks && plan.oldToNew[(size_t) t] != t; };
+    if (tapeStrip != nullptr) tapeStrip->prepareForTrackMove();
+    // Either editor may be the one whose undo is moving the tracks.
+    if (pianoRoll != nullptr && moves (pianoRollTrackIdx)) closePianoRoll (true);
+    if (audioEditor != nullptr && moves (audioEditorTrackIdx)) closeAudioEditor (true);
+    if (tuner != nullptr && moves (session.tuneTrackIndex.load (std::memory_order_relaxed))) closeTuner();
+    if (consoleView != nullptr) consoleView->closeTrackEditors (plan);
+}
+
+void MainComponent::followTrackMove (const TrackMovePlan& plan)
+{
+    if (consoleView != nullptr && consoleView->followTrackMove (plan)) focusMainCanvas();
+    if (tapeStrip != nullptr) tapeStrip->followTrackMove (plan);
+}
+
+void MainComponent::undoOrRedo (bool redo)
+{
+    auto& um = engine.getUndoManager();
+    if ((redo ? um.getRedoDescription() : um.getUndoDescription()) == kMoveTracksTransaction)
+        if (const auto dialog = openRenderDialog(); ! dialog.empty())
+        {
+            explainTrackMoveRefused (*this, "Close the " + dialog + " dialog, then "
+                                                + (redo ? "redo" : "undo") + " the move again.");
+            return;
+        }
+    undoOrExplain (engine, *this, redo);
 }
 
 void MainComponent::closeVirtualKeyboard()

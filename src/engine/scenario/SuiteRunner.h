@@ -73,6 +73,9 @@ private:
     // `attribution`, puts the window back and hops a message turn before next().
     // Headless runs it straight through to next().
     void sweepWindow (std::string attribution, std::function<void()> next);
+    // Headless mode. Names what the world reset had to put back, and fails the
+    // scenario that left it when that scenario passed.
+    void failPassOnDirt (const std::string& attribution, const std::vector<std::string>& dirty);
     void finishSuite();
 
     std::string selectorText;

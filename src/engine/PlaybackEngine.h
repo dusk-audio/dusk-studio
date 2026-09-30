@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include "audiofile/BufferedFileReader.h"
 #include "../foundation/PlanarBuffer.h"
@@ -34,6 +35,9 @@ public:
     // the audio thread can early-out past blocks.
     void preparePlayback();
     void stopPlayback();
+    // How many times preparePlayback has run. Message thread; lets a check
+    // prove that an edit over many regions rebuilt once.
+    std::uint64_t rebuildCount() const noexcept { return rebuilds; }
 
     // Hot-update region gain + mute on the live snapshot without
     // rebuilding readers. Matches streams to AudioRegion entries by
@@ -59,6 +63,7 @@ public:
 private:
     Session& session;
     const Transport* transport = nullptr;
+    std::uint64_t rebuilds = 0;
 
     struct RegionStream
     {

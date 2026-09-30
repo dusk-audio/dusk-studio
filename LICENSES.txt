@@ -390,8 +390,8 @@ Steinberg VST3 SDK (native VST3 host — Linux builds only)
              for the whole binary.
 
 CLAP headers (native CLAP plugin host)
-  Version  : 1.2.9, submodule rev
-             cd94482ba5941ae410809b6fbaed3bc851044270
+  Version  : 1.2.10, submodule rev
+             a47f6badb49d948fd009998f28309cdab78979c9
   License  : MIT — Copyright (c) 2021 Alexandre BIQUE (external/clap/LICENSE)
   Path     : external/clap/include/ (git submodule of free-audio/clap). Headers
              only: the API declarations compile into the host, no CLAP source
@@ -4601,9 +4601,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------------------
-CLAP 1.2.9 — MIT
+CLAP 1.2.10 — MIT
 external/clap/LICENSE, submodule rev
-cd94482ba5941ae410809b6fbaed3bc851044270
+a47f6badb49d948fd009998f28309cdab78979c9
 --------------------------------------------------------------------------------
 
 MIT License

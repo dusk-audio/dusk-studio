@@ -79,7 +79,7 @@ inline std::optional<PluginDescriptor> descriptorFromObject (
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 8;
+constexpr int kFormatVersion = 9;
 
 inline bool hasTakeProvenance (const TakeProvenance& provenance) noexcept
 {
@@ -507,6 +507,19 @@ bool migrateSession (nlohmann::json& root, int from)
                 ++v;
                 break;
 
+            case 8:
+                // v8 -> v9: a moved track may carry lv2_state_tag, naming the
+                // LV2 file-state directory it kept from its old slot. Absent
+                // means the slot's own directory, so legacy payloads only need
+                // the version stamp advanced. The bump exists because a v8
+                // build would read a moved track's LV2 state from the slot's
+                // directory, which holds a neighbour's files, and overwrite
+                // them on the next save.
+                if (root.is_object())
+                    root["version"] = 9;
+                ++v;
+                break;
+
             default:
                 std::fprintf (stderr,
                               "[Dusk Studio/SessionSerializer] no migrator from v%d to v%d\n",
@@ -706,6 +719,11 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
         obj["native_lv2_plugin"] = toStd (t.nativeLv2PluginId);
         obj["native_lv2_state"]  = toStd (t.nativeLv2StateBase64);
     }
+    // Written whether or not an LV2 plug-in is loaded now: dropping it would
+    // hand the slot's own directory to this track, which a moved neighbour's
+    // kept tag may already name.
+    if (! t.lv2StateTag.empty())
+        obj["lv2_state_tag"] = t.lv2StateTag;
     if (t.nativeVst3Path.isNotEmpty())
     {
         obj["native_vst3_path"]   = toStd (t.nativeVst3Path);
@@ -1269,6 +1287,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
     t.nativeLv2Path         = json::getString (v, "native_lv2_path");
     t.nativeLv2PluginId     = json::getString (v, "native_lv2_plugin");
     t.nativeLv2StateBase64  = json::getString (v, "native_lv2_state");
+    t.lv2StateTag           = json::getString (v, "lv2_state_tag");
     t.nativeVst3Path        = json::getString (v, "native_vst3_path");
     t.nativeVst3PluginId    = json::getString (v, "native_vst3_plugin");
     t.nativeVst3StateBase64 = json::getString (v, "native_vst3_state");
@@ -2094,7 +2113,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast["limiter_lookahead_ms"] = s.mastering().limiterLookaheadMs.load();
     mast["limiter_mode"]         = s.mastering().limiterMode.load();
     mast["limiter_stereo_link"]  = s.mastering().limiterStereoLink.load();
-    mast["target_preset"]        = s.mastering().targetPresetIndex.load();
+    mast["loudness_target"]      = s.mastering().targetPresetIndex.load();
     root["mastering"] = std::move (mast);
 
     // Transport (loop + punch). Mirrored onto Session by
@@ -2361,6 +2380,7 @@ bool SessionSerializer::load (Session& s, const File& source)
                           slotWithDefaults (trackDefaults, tracks, i),
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
+        s.repairLv2StateTags();
     }
     {
         const auto& busesArr    = ! json::array (root, "buses").empty()
@@ -2745,10 +2765,20 @@ bool SessionSerializer::load (Session& s, const File& source)
                                                        kMasteringDefaults.limiterMode.load()), 0, 2));
         m.limiterStereoLink.store (json::getBool (mast, "limiter_stereo_link",
                                                   kMasteringDefaults.limiterStereoLink.load()));
-        if (json::has (mast, "target_preset"))
-            m.targetPresetIndex.store (std::clamp (json::getInt (mast, "target_preset",
+        if (json::has (mast, "loudness_target"))
+        {
+            m.targetPresetIndex.store (std::clamp (json::getInt (mast, "loudness_target",
                                                                  kMasteringDefaults.targetPresetIndex.load()),
                                                    0, MasteringParams::kNumTargetPresets - 1));
+        }
+        else if (json::has (mast, "target_preset"))
+        {
+            // The older per-platform list: Off, Spotify, Apple Music, YouTube,
+            // Tidal, Broadcast (EBU R128). The three -14 LUFS platforms map to
+            // the one row they share.
+            constexpr int kFromPlatformList[] = { 0, 1, 2, 1, 1, 3 };
+            m.targetPresetIndex.store (kFromPlatformList[std::clamp (json::getInt (mast, "target_preset", 0), 0, 5)]);
+        }
         else if (! haveMastering)
             m.targetPresetIndex.store (kMasteringDefaults.targetPresetIndex.load());
     }

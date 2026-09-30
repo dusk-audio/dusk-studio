@@ -11,7 +11,7 @@ void ConsoleView::dropAllPluginEditors (NativeEditorTeardown teardown)
             strip->dropPluginEditor (teardown);
 }
 
-ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (session)
+ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (session), engineRef (engine)
 {
     // Follow the MCU surface's bank (set on the audio thread by the Bank
     // Left/Right buttons). Fires on the message loop, after this ctor.
@@ -39,6 +39,50 @@ ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (s
     // controls live in MainComponent (under the stage selector) so the channel
     // strips get the full vertical body for taller faders.
     updateBankVisibility();
+}
+
+void ConsoleView::closeTrackEditors (const TrackMovePlan& plan)
+{
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (auto& strip = strips[(size_t) t]; strip != nullptr && plan.newToOld[(size_t) t] != t)
+            strip->closeEditorsForTrackMove();
+}
+
+bool ConsoleView::followTrackMove (const TrackMovePlan& plan)
+{
+    const bool focusLost = rebuildTrackStrips (plan);
+    if (focusedStrip >= 0 && focusedStrip < Session::kNumTracks)
+        focusedStrip = plan.oldToNew[(size_t) focusedStrip];
+    repaint();
+    return focusLost;
+}
+
+// A strip component holds its slot's PluginSlot, which a move hands to another
+// slot along with the rest of the engine strip.
+bool ConsoleView::rebuildTrackStrips (const TrackMovePlan& plan)
+{
+    bool focusLost = false;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        if (plan.newToOld[(size_t) t] == t) continue;
+        auto& strip = strips[(size_t) t];
+        if (strip != nullptr)
+        {
+            focusLost = focusLost || strip->hasKeyboardFocus (true);
+            removeChildComponent (strip.get());
+        }
+        strip.reset();
+        strip = std::make_unique<ChannelStripComponent> (
+            t, sessionRef.track (t), sessionRef, engineRef.getStrip (t).getPluginSlot(), engineRef);
+        addChildComponent (strip.get());
+        strip->setCompactMode (userWantsCompact || autoCompact);
+        strip->setMixingMode (stripsMixing);
+        if (stripFocusCb)
+            strip->onTrackFocusRequested = [this] (int track) { focusStrip (track); };
+    }
+    updateBankVisibility();
+    resized();
+    return focusLost;
 }
 
 int ConsoleView::allTracksContentWidth() const
@@ -284,6 +328,7 @@ void ConsoleView::applyCompactState()
 
 void ConsoleView::setStripsMixingMode (bool mixing)
 {
+    stripsMixing = mixing;
     for (auto& strip : strips)
         if (strip != nullptr)
             strip->setMixingMode (mixing);
@@ -300,7 +345,7 @@ void ConsoleView::setOnStripFocusRequested (std::function<void (int)> cb)
             strip->onTrackFocusRequested = [this] (int t) { focusStrip (t); };
 }
 
-void ConsoleView::focusStrip (int track)
+void ConsoleView::focusStrip (int track, bool select)
 {
     if (track < 0 || track >= Session::kNumTracks) return;
     focusedStrip = track;
@@ -312,7 +357,7 @@ void ConsoleView::focusStrip (int track)
         if (stride > 0) setBank (screenBankForTrack (track, stride, numBanks()));
     }
     repaint();
-    if (stripFocusCb) stripFocusCb (track);
+    if (select && stripFocusCb) stripFocusCb (track);
 }
 
 void ConsoleView::moveFocus (int delta)

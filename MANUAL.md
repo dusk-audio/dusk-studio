@@ -202,7 +202,7 @@ In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` become
 
 ### Fader groups
 
-Assign a strip to one of eight fader groups (right-click the strip → **Fader group…** → *Group 1–8*, or *None* to leave). Members of a group move together: dragging any member's fader — or moving it from a control surface or MIDI — shifts every other member by the same dB amount, so the group's relative balance is preserved. The lowest-numbered track in a group is the **master** and shows a filled chip; the rest show an outlined chip in the same colour. Groups link the **fader only** — mute, solo, and pan stay per-track — and a group can span banks and buses. Group membership is saved with the session.
+Assign a strip to one of eight fader groups (right-click the strip → **Fader group…** → *Group 1–8*, or *None* to leave). Members of a group move together: dragging any member's fader — or moving it from a control surface or MIDI — shifts every other member by the same dB amount, so the group's relative balance is preserved. The lowest-numbered track in a group is the **master** and shows a filled chip; the rest show an outlined chip in the same colour. Moving tracks in the tape strip can make another member the lowest-numbered one, and so the master. Groups link the **fader only** — mute, solo, and pan stay per-track — and a group can span banks and buses. Group membership is saved with the session.
 
 ## The channel strip — RECORDING stage
 
@@ -286,7 +286,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 5   | Loop bracket       | Set with **[** / **]** or from the ruler's right-click menu; loop turns on once the in point sits before the out point. Drawn hollow while loop is off. |
 | 6   | Punch bracket      | Set with **Shift+[** / **Shift+]** or from the ruler's right-click menu; punch turns on once the in point sits before the out point. Drawn hollow while punch is off. |
 
-**Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Click a track's name in the left column to select that track and bring its strip into the mixer; double-click the name to rename the track. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
+**Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Click a track's name in the left column to select that track and bring its strip into the mixer; **Shift+click** or **Cmd/Ctrl+click** more names to select several tracks, and right-click a name for a menu that edits every region on the selected tracks. Double-click the name to rename the track, or drag it up or down to move the track to another row. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
 
 ## The audio region editor
 
@@ -1119,7 +1119,7 @@ Right of the chain are three loudness readouts:
 - **Integrated LUFS** (entire program, gated per BS.1770).
 - **True Peak (dBTP)** (4× oversampled).
 
-The target picker offers Off, Spotify, Apple Music, YouTube, Tidal, and Broadcast (EBU R128). It colour-codes integrated LUFS and true peak against the selected target; Off leaves both neutral. Pressing **Reset I** clears the integrated reading so you can re-measure from a known point.
+The target picker offers one row per loudness target: Off, **Spotify / YouTube / Tidal** (−14 LUFS / −1 dBTP), **Apple Music** (−16 LUFS / −1 dBTP), and **Broadcast (EBU R128)** (−23 LUFS / −1 dBTP). It colour-codes integrated LUFS and true peak against the selected target; Off leaves both neutral. Pressing **Reset I** clears the integrated reading so you can re-measure from a known point.
 
 The integrated reading measures up to an hour of material loud enough to count. Silence and anything below −70 LUFS is discarded by the standard's gate and does not use up that hour, so leaving the meter running between takes costs you nothing. Past the hour it holds where it is rather than continuing to absorb material, so for anything longer, reset it and measure the section you actually care about.
 
@@ -1256,7 +1256,7 @@ If something goes wrong mid-take (ring-buffer overrun on a stressed disk, MIDI F
 
 The tape strip is Dusk Studio's timeline view. It is collapsed by default. Click **▾ TIMELINE** at the top right of the transport bar (or the small drawer-handle below the bar) to expand it.
 
-When expanded, the channel strips automatically compact so that the timeline gets vertical space. EQ and compressor controls collapse into header buttons; click a header to open a modal editor with the full controls.
+When expanded, the channel strips automatically compact so that the timeline gets vertical space. EQ and compressor controls collapse into header buttons; click a header to open a modal editor with the full controls. The GR meter and threshold handle beside each fader stay on every channel strip, bus, and the master.
 
 ## Layout
 
@@ -1274,7 +1274,13 @@ The left column shows each track's colour and name (its number until you name it
 
 Click a name to select that track. A moment later, once the click can no longer become a double-click, the console pages to its channel strip and puts the gold focus ring on it, so the **A / S / X** shortcuts act on it. The selected track's row is lit in its colour whichever way you picked it: its name here, one of its audio regions, or its channel strip.
 
+To select several tracks, **Shift+click** a name to take in every row shown between it and the name you last clicked without Shift (a track hidden between them stays out), or **Cmd/Ctrl+click** names to add them to the selection or take them out. These clicks leave the console where it is. Every selected row is lit, and **A / S / X** act on all of them: when any selected track already has that state on, the key turns it off on every selected track, and otherwise turns it on for all of them. A track that can't be armed (a frozen track, or an audio track with no input) stays off, and never keeps **A** from disarming the rest. Right-click a name for the [track name menu](#track-name-menu).
+
 Double-click a name to rename the track in place. **Enter**, or clicking anywhere else, keeps the new name; **Escape** keeps the old one. An empty name falls back to the track number, and **Cmd/Ctrl+Z** undoes a rename.
+
+Drag a name up or down to move the track to another row. A line shows where it will land, and the tracks between its old row and the new one each shift one slot to make room. Everything on the track goes with it: name, colour, regions, channel strip settings, the insert with its plug-in's current state, and automation. Every track that changes row, the shifted ones included, keeps the input it had: an input that followed the track number becomes that same input, fixed, so the track still records from the same channel. Drag one of several selected names and they all move together as one block, in their order. With **ALL** off, a drop between two shown rows lands right after the upper one, so the hidden tracks under that row stay under the moved track; a drop just above a row that is moving leaves the tracks where they are. **Escape** cancels the drag, and a click that doesn't drag still selects the track as before. After the drop the console pages to the moved track.
+
+A move is one undo step, and its undo sets the inputs it fixed back to following the track number. It clears the undo history from before it, though, because those steps name tracks by their number. Stop playback before moving tracks, unfreeze any frozen track that would move or shift, and let a plug-in that is still loading on one of them finish: otherwise the move is refused with [Can't move tracks](#cant-move-tracks). Plug-in parameter and track MIDI controller bindings stay on the track number, so after a move they drive whichever track now sits there.
 
 ## The ruler
 
@@ -1325,6 +1331,20 @@ A right-click on any region shows a context menu:
 
 Normalize is not on this menu — it lives in the audio region editor (double-click the region).
 
+### Track name menu
+
+A right-click on a track's name in the left column acts on every region, audio and MIDI, on the selected tracks. If the track you right-click isn't selected, it becomes the only selected track first. The menu's header reads **Track** and the track's number, or counts the tracks. Frozen tracks sit the whole menu out: their regions aren't counted, offered or changed. Every item that edits regions is one undo step; **Loop region span** sets the transport loop, which undo doesn't cover:
+
+- **Loop region span**: set the transport loop from the earliest region start to the latest region end.
+- **Split at playhead**: split every audio region the playhead crosses.
+- **Reverse regions**: reverse every audio region, as **Reverse region** does.
+- **Mute regions** / **Unmute regions**: the item reads **Unmute regions** when more than half of the regions are already muted.
+- **Lock regions** / **Unlock regions**: the same, for locking.
+- **Color**: the region palette, with **Reset to track colour**. It colours the regions, not the tracks.
+- **Delete regions**.
+
+Split, reverse and delete skip locked regions. The region-only items (join, label and takes) stay on the region menu.
+
 ### Take cycling
 
 Right-click a region to see a take submenu (if more than one take exists), or use **Alt+T** / **Alt+Shift+T** to cycle.
@@ -1360,7 +1380,7 @@ Recording keeps your zoom. When the playhead reaches the right-hand edge the vie
 
 ## Drag-and-drop import
 
-Drop audio or MIDI files onto the tape strip. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use **Auto-assign** to assign files to tracks in order; **Clear** removes those assignments. You can choose each destination manually. Each file needs a distinct track.
+Drop audio or MIDI files onto the tape strip. They land at the playhead, the same place **File → Import Audio or MIDI…** puts them; hold **Alt** as you drop to land them where the pointer is instead. While you hold files over the strip, a line shows where they will land, as long as that spot is in view on the timeline. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use **Auto-assign** to assign files to tracks in order; **Clear** removes those assignments. You can choose each destination manually. Each file needs a distinct track.
 
 **File → Import Audio or MIDI…** (or **Cmd+I**) picks the files in a file browser instead and opens the same pickers. Pressing **Open** there without picking a file closes the browser, the same as **Cancel**.
 
@@ -2228,9 +2248,9 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 
 | Shortcut | Action                        |
 | -------- | ----------------------------- |
-| **A**    | Toggle ARM on selected track  |
-| **S**    | Toggle SOLO on selected track |
-| **X**    | Toggle MUTE on selected track |
+| **A**    | Toggle ARM on selected tracks  |
+| **S**    | Toggle SOLO on selected tracks |
+| **X**    | Toggle MUTE on selected tracks |
 
 ## Stages & banks
 
@@ -2360,7 +2380,7 @@ An open chord slot takes the keys instead:
 2. Enable all three stages: **EQ**, **Comp**, **Limiter**.
 3. On the EQ, a 1–2 dB shelf boost at 10 kHz and a 0.5–1 dB cut at 250 Hz is a safe starting point.
 4. On the bus comp, aim for 0.5–1 dB of reduction on peaks. Slow attack (30 ms), slow release (250 ms), 2:1.
-5. On the limiter, leave the ceiling at **−1.0 dB** for Spotify, **−1.0 dB** for Apple Music, **−1.0 dB** for YouTube. Push the **Drive** until the integrated LUFS reads −14 (Spotify and YouTube) or −16 (Apple Music) — but stop pushing as soon as the limiter is regularly pulling more than 2 dB.
+5. On the limiter, leave the ceiling at **−1.0 dB**, the true-peak ceiling of every streaming target. Push the **Drive** until the integrated LUFS reads −14 (Spotify and YouTube) or −16 (Apple Music) — but stop pushing as soon as the limiter is regularly pulling more than 2 dB.
 6. Use the **streaming-platform preset** picker to colour-code the readouts and confirm you're within target.
 
 ## Headphone cue mix for tracking
@@ -2690,6 +2710,15 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 - **Text**: "Stop playback, then clone the track again." (Or "Unfreeze the track, then clone it again. A frozen track can't be cloned or cloned onto." when a track is frozen.)
 - **Buttons**: OK.
 - **Action**: Stop the transport, or unfreeze the track, then clone again. Nothing was copied.
+
+## Tape strip
+
+### Can't move tracks
+
+- **When**: You drop a dragged track name, or undo or redo a track move, while the transport is playing or recording, while a frozen track would move or shift, while a plug-in is still loading into a track that would move or shift, or while a render's dialog is open.
+- **Text**: "Stop playback, then move the tracks again." (Or "Unfreeze track [N], then move the tracks again. A frozen track can't be moved or shifted." when a frozen track is in the way, "Wait for the plug-in to finish loading, then move the tracks again." while a plug-in loads, or "Close the [render] dialog, then move the tracks again." while the bounce, stem bounce, mixdown, master export or freeze dialog is open. For an undo or a redo, "move the tracks again" reads "undo the move again" or "redo the move again".)
+- **Buttons**: OK.
+- **Action**: Stop the transport, unfreeze the track, wait for the plug-in, or close the dialog, then try again. Nothing moved, and the undo history is as it was.
 
 ## Startup
 

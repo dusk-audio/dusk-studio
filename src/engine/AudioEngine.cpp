@@ -19,6 +19,7 @@
 #include "FaderBindingMap.h"
 #include "CompModeMap.h"
 #include "../session/RegionEditActions.h"
+#include "../session/TrackMove.h"
 #include "DeviceFallbackMessage.h"
 #include "LegacyStateBase64.h"
 #include "../foundation/AppConfigDir.h"
@@ -232,7 +233,8 @@ static void saveAudioDeviceState (const std::string& blob)
 
 #if DUSKSTUDIO_HAS_NATIVE_LV2
 // Per-slot directory for LV2 FILE-BACKED state, under the session: track
-// slots at state/lv2/trackNN, aux slots at state/lv2/auxA_slotS. Empty when
+// slots at state/lv2/<Session::lv2StateTagFor>, which is trackNN until the
+// track moves, aux slots at state/lv2/auxA_slotS. Empty when
 // the session has no directory yet - saves fall back to blob-only. Save As
 // consolidation copies the whole state/ tree (SessionSerializer).
 static std::filesystem::path lv2StateDirFor (Session& session, const juce::String& slotTag)
@@ -687,6 +689,25 @@ public:
             engine.recomputePdc();
 #endif
     }
+
+    // A pacer keys its state on the slot's load generation, which another
+    // strip can share, so it goes where its strip goes.
+    void followTrackMove (const TrackMovePlan& plan)
+    {
+        const auto follow = [&plan] (auto& perTrack)
+        {
+            const auto was = perTrack;
+            for (size_t t = 0; t < perTrack.size(); ++t)
+                perTrack[t] = was[(size_t) plan.newToOld[t]];
+        };
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        follow (vst3TrackPolicies);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        follow (clapTrackPacers);
+#endif
+        (void) follow;
+    }
 private:
     AudioEngine& engine;
 
@@ -755,9 +776,9 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
 
     for (int i = 0; i < Session::kNumTracks; ++i)
     {
-        strips[(size_t) i].bind (session.track (i).strip);
-        strips[(size_t) i].bindPluginManager (pluginManager);
-        strips[(size_t) i].bindHardwareInsert (session.track (i).hardwareInsert);
+        strips[(size_t) i]->bind (session.track (i).strip);
+        strips[(size_t) i]->bindPluginManager (pluginManager);
+        strips[(size_t) i]->bindHardwareInsert (session.track (i).hardwareInsert);
     }
     for (int i = 0; i < Session::kNumBuses; ++i)
         busStrips[(size_t) i].bind (session.bus (i).strip);
@@ -1192,7 +1213,7 @@ void AudioEngine::recomputePdc() noexcept
     int latency[Session::kNumTracks];
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
-        auto& strip = strips[(size_t) t];
+        auto& strip = *strips[(size_t) t];
         int lat = 0;
         // MIDI tracks report 0: the instrument's latency is already absorbed by
         // the MIDI scheduling pre-shift (audioDeviceIOCallback), so
@@ -1221,7 +1242,7 @@ void AudioEngine::recomputePdc() noexcept
     int comp[Session::kNumTracks];
     const int deepest = pdc::computeCompensations (latency, comp, Session::kNumTracks);
     for (int t = 0; t < Session::kNumTracks; ++t)
-        strips[(size_t) t].setPdcCompensationSamples (comp[t]);
+        strips[(size_t) t]->setPdcCompensationSamples (comp[t]);
     aggregatePdcLatencySamples.store (deepest, std::memory_order_relaxed);
 
     // Aux-lane (send-effect) latency delays only the wet return. Master-stage
@@ -1279,7 +1300,7 @@ void AudioEngine::recomputePdc() noexcept
 
 int AudioEngine::getTrackOutputLatencySamples() const noexcept
 {
-    return getAggregatePdcLatencySamples() + strips[0].getOversamplingLatencySamples();
+    return getAggregatePdcLatencySamples() + strips[0]->getOversamplingLatencySamples();
 }
 
 int AudioEngine::getBusOutputLatencySamples() const noexcept
@@ -1392,7 +1413,7 @@ void AudioEngine::commitFreeze (int trackIndex, const juce::File& outFile, std::
     // instrument (defensive - the frozen strip path already skips it) and
     // publish frozen with release so the audio thread sees the flag only after
     // frozenRegion + the path are fully written.
-    auto& slot = strips[(size_t) trackIndex].getPluginSlot();
+    auto& slot = strips[(size_t) trackIndex]->getPluginSlot();
     track.frozenPluginBypass.store (slot.isBypassed(), std::memory_order_relaxed);
     slot.setBypassed (true);
     track.frozen.store (true, std::memory_order_release);
@@ -1412,7 +1433,7 @@ void AudioEngine::unfreezeTrack (int trackIndex)
     // Restore the pre-freeze bypass (not a blanket false) before clearing the
     // flag so a block observed between the two reads still routes through a
     // plugin in the user's intended bypass state.
-    strips[(size_t) trackIndex].getPluginSlot().setBypassed (
+    strips[(size_t) trackIndex]->getPluginSlot().setBypassed (
         track.frozenPluginBypass.load (std::memory_order_relaxed));
     track.frozen.store (false, std::memory_order_release);
 
@@ -1448,7 +1469,80 @@ void AudioEngine::reapplyFreezeState() noexcept
 {
     for (int t = 0; t < Session::kNumTracks; ++t)
         if (session.track (t).frozen.load (std::memory_order_relaxed))
-            strips[(size_t) t].getPluginSlot().setBypassed (true);
+            strips[(size_t) t]->getPluginSlot().setBypassed (true);
+}
+
+bool AudioEngine::canMoveTracks() const noexcept
+{
+    // Suspended means another fence is up on this thread: the gate does not
+    // nest, so the resume at the end of a move would let the callback back in
+    // under its owner.
+    return transport.isStopped() && ! offlineRenderActive.load (std::memory_order_acquire)
+        && ! isProcessingSuspended();
+}
+
+bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMask& refollow)
+{
+    // A mapping that is not one to one would hand one strip to two slots, which
+    // the worker lanes would then process at once. A frozen track's baked audio
+    // and its freeze file are named by its slot.
+    const auto checked = trackMoveFromNewToOld (requested.newToOld);
+    if (! canMoveTracks() || ! checked) return false;
+    const auto& plan = *checked;
+    for (int from = 0; from < Session::kNumTracks; ++from)
+        if (plan.oldToNew[(size_t) from] != from
+            && session.track (from).frozen.load (std::memory_order_acquire))
+            return false;
+    if (plan.isIdentity()) return true;
+
+    if (onBeforeTracksMove) onBeforeTracksMove (plan);
+
+    // The copies are made here, with the audio running. What is left for the
+    // window below is swapping them in, publishing snapshots, storing atomics
+    // and repointing the strips: everything the callback reads that a move
+    // changes, changed with no callback in flight. Nothing in the window loads
+    // or frees a plug-in, and nothing suspends again.
+    auto staged = session.stageTrackMove (plan, refollow);
+    if (! staged) return false;
+
+    suspendProcessing();
+    session.landTrackMove (*staged);
+    const auto follow = [&plan] (std::atomic<int>& slot)
+    {
+        const int was = slot.load (std::memory_order_relaxed);
+        if (was >= 0 && was < Session::kNumTracks)
+            slot.store (plan.oldToNew[(size_t) was], std::memory_order_relaxed);
+    };
+    follow (session.mcu.selectedChannel);
+    follow (session.tuneTrackIndex);
+    session.midiLearnPending.store (-1, std::memory_order_relaxed);
+
+    const auto stripsWere = strips;
+    const auto midiInputsWere = lastMidiInputIndex;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto from = (size_t) plan.newToOld[(size_t) t];
+        auto* strip = stripsWere[from];
+        strips[(size_t) t] = strip;
+        lastMidiInputIndex[(size_t) t] = midiInputsWere[from];
+        strip->bind (session.track (t).strip);
+        strip->bindHardwareInsert (session.track (t).hardwareInsert);
+    }
+    // A slot's MIDI bindings now drive another track's controls, so every
+    // soft-takeover pickup re-arms, as after a bindings edit.
+    pickupSnapshotKey = nullptr;
+    session.recomputeRtCounters();
+    resumeProcessing();
+    staged.reset();
+
+    if (regionClipboard.sourceTrack >= 0 && regionClipboard.sourceTrack < Session::kNumTracks)
+        regionClipboard.sourceTrack = plan.oldToNew[(size_t) regionClipboard.sourceTrack];
+    nativeParamDrain->followTrackMove (plan);
+    recomputePdc();
+    playbackEngine.preparePlayback();
+
+    if (onTracksMoved) onTracksMoved (plan);
+    return true;
 }
 
 void AudioEngine::reresolveTrackMidiFromSession()
@@ -2171,7 +2265,7 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
-        auto& strip = strips[(size_t) t];
+        auto& strip = *strips[(size_t) t];
         auto& slot  = strip.getPluginSlot();
         track.pluginDescriptor = slot.getDescriptorForSave (parkSleepMs);
         track.pluginLegacyDescriptionXml = slot.getLegacyDescriptionXmlForSave();
@@ -2213,7 +2307,7 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
                 track.nativeLv2StateBase64,
                 nativeSlot.getPath(), nativeSlot.getPluginId());
             nativeSlot.setStateDirectory (
-                lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
+                lv2StateDirFor (session, session.lv2StateTagFor (t)));
             // Preserve the carried blob when a plugin can't serialize (no state
             // extension / save failure) - don't wipe it on a save round-trip.
             if (! strip.nativeLv2ReloadFailed())
@@ -2442,7 +2536,7 @@ void AudioEngine::releaseAllPluginResources()
     // instance. PluginSlot::releaseResources also clears currentInstance,
     // so any audio callback that does happen to fire after this (despite
     // the caller's contract) will see null and bypass.
-    for (auto& strip : strips)
+    for (auto& strip : stripStorage)
         strip.getPluginSlot().releaseResources();
     for (auto& laneStrip : auxLaneStrips)
         for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
@@ -2456,7 +2550,7 @@ void AudioEngine::setNativeInsertsOfflineRender (bool offline,
     nativeInsertsRenderCancelled.store (renderCancelled, std::memory_order_relaxed);
     // LV2 is the one host that acts on it: its Worker replies are waited for.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    for (auto& strip : strips)
+    for (auto& strip : stripStorage)
         strip.getNativeLv2Slot().setOfflineRender (offline, renderCancelled);
     for (auto& laneStrip : auxLaneStrips)
         for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
@@ -2466,7 +2560,7 @@ void AudioEngine::setNativeInsertsOfflineRender (bool offline,
 
 void AudioEngine::leakAllPluginInstancesForShutdown()
 {
-    for (auto& strip : strips)
+    for (auto& strip : stripStorage)
     {
         strip.getPluginSlot().leakInstanceForShutdown();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -2650,7 +2744,7 @@ void AudioEngine::consumePluginStateAfterLoad()
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
-        auto& strip = strips[(size_t) t];
+        auto& strip = *strips[(size_t) t];
         auto& slot  = strip.getPluginSlot();
 
 #if DUSKSTUDIO_HAS_NATIVE_AU
@@ -2747,7 +2841,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 if (loaded && stateWasSupplied)
                 {
                     strip.getNativeLv2Slot().setStateDirectory (
-                        lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
+                        lv2StateDirFor (session, session.lv2StateTagFor (t)));
                     stateAccepted = strip.getNativeLv2Slot().loadState (blob);
                     if (! stateAccepted) noteStateRejected ("track LV2", t, blob.size());
                 }
@@ -2771,8 +2865,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeMultisample();
                 strip.unloadBuiltin();
                 strip.setPendingNativeLv2 (lv2File, std::move (blob), track.nativeLv2PluginId,
-                                           lv2StateDirFor (session,
-                                               "track" + juce::String (t + 1).paddedLeft ('0', 2)));
+                                           lv2StateDirFor (session, session.lv2StateTagFor (t)));
             }
             continue;
         }
@@ -3555,7 +3648,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     {
         rtBounceSinkCount.store (0, std::memory_order_relaxed);
         rtBounceAborted.store (true, std::memory_order_release);
-        for (auto& s : strips) s.setStemCapture (nullptr, nullptr);
+        for (auto& s : stripStorage) s.setStemCapture (nullptr, nullptr);
         for (int a = 0; a < Session::kNumBuses; ++a)    setBusStemCapture (a, nullptr, nullptr);
         for (int a = 0; a < Session::kNumAuxLanes; ++a) setAuxStemCapture (a, nullptr, nullptr);
     }
@@ -3585,7 +3678,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
                              ? oxOverride
                              : session.oversamplingFactor.load (std::memory_order_relaxed);
 
-    for (auto& s : strips)        s.prepare (sr, bs, oxFactor);
+    for (auto& s : stripStorage)  s.prepare (sr, bs, oxFactor);
     for (auto& a : busStrips)     a.prepare (sr, bs, oxFactor);
     busAlignSamples.store (busStrips[0].getOversamplingLatencySamples(), std::memory_order_relaxed);
     for (auto& a : auxLaneStrips) a.prepare (sr, bs);
@@ -3611,7 +3704,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // synths/effects see the session's BPM, transport state, and sample
     // position. Without this, tempo-synced LFOs / arps / delays in
     // plugins like Diva default to 120 BPM regardless of session tempo.
-    for (auto& s : strips)
+    for (auto& s : stripStorage)
     {
         s.getPluginSlot().setHostPlayHead (playHead.get());
         s.setTransport (&blockTransport);
@@ -3722,7 +3815,7 @@ void AudioEngine::collectDeferredNativeRestoreFailures()
     };
 
     for (int t = 0; t < Session::kNumTracks; ++t)
-        for (auto& failure : strips[(size_t) t].takeNativeRestoreFailures())
+        for (auto& failure : strips[(size_t) t]->takeNativeRestoreFailures())
             collect ("Track " + juce::String (t + 1), std::move (failure));
 
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
@@ -4001,7 +4094,7 @@ void AudioEngine::accumulateStrip (int t, float* mL, float* mR,
 {
     const auto& job = trackJobs[(size_t) t];
     copyDuskMidiToJuce (perTrackMidi[(size_t) t], perTrackMidiScratch[(size_t) t]);
-    strips[(size_t) t].processAndAccumulate (job.monoIn, job.monoInR,
+    strips[(size_t) t]->processAndAccumulate (job.monoIn, job.monoInR,
                                              perTrackMidiScratch[(size_t) t], job.isMidi,
                                              mL, mR, bL, bR, aL, aR,
                                              numSamples, job.passes,
@@ -5606,7 +5699,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         {
             monoIn = deviceInput;
         }
-        else if ((! isFrozen && strips[(size_t) t].getPluginSlot().isLoaded())
+        else if ((! isFrozen && strips[(size_t) t]->getPluginSlot().isLoaded())
                  || session.track (t).hardwareInsert.pingPending.load (std::memory_order_acquire))
         {
             // Generator-style insert with no input source: feed a
@@ -5845,7 +5938,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // tracks have no instrument plugin so latency is 0 even when
             // the slot is loaded with an effect.
             const std::int64_t pluginLatency = midiTrack
-                ? (std::int64_t) strips[(size_t) t].getPluginSlot().getLatencySamples()
+                ? (std::int64_t) strips[(size_t) t]->getPluginSlot().getLatencySamples()
                 : 0;
             const auto schedStart = blockStartSamples + pluginLatency;
 
@@ -6185,7 +6278,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // skip the heavy pass to save CPU on silent tracks.
         const bool needPrintBuffer = isRecording && armed && deviceInput != nullptr
                                   && session.track (t).printEffects.load (std::memory_order_relaxed);
-        strips[(size_t) t].setNeedsProcessedMono (needPrintBuffer);
+        strips[(size_t) t]->setNeedsProcessedMono (needPrintBuffer);
 
         // Stereo input source for stereo tracks. Two paths:
         //   - Disk playback: PlaybackEngine wrote the R channel into
@@ -6227,7 +6320,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         trackJobs[(size_t) t] = { monoIn, monoInR, deviceInput,
                                   midiTrack && ! isFrozen, stripPasses, armed,
                                   stereoTrackInput || isFrozen, isFrozen,
-                                  strips[(size_t) t].insertMode.load (std::memory_order_relaxed)
+                                  strips[(size_t) t]->insertMode.load (std::memory_order_relaxed)
                                       == ChannelStrip::kInsertHardware };
     }
 
@@ -6280,11 +6373,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto& job = trackJobs[(size_t) t];
-        session.track (t).meterGrDb.store (strips[(size_t) t].getCurrentGrDb(),
+        session.track (t).meterGrDb.store (strips[(size_t) t]->getCurrentGrDb(),
                                             std::memory_order_relaxed);
-        session.track (t).meterOutLDb.store (strips[(size_t) t].getOutLDb(),
+        session.track (t).meterOutLDb.store (strips[(size_t) t]->getOutLDb(),
                                               std::memory_order_relaxed);
-        session.track (t).meterOutRDb.store (strips[(size_t) t].getOutRDb(),
+        session.track (t).meterOutRDb.store (strips[(size_t) t]->getOutRDb(),
                                               std::memory_order_relaxed);
 
         // Output peak for MIDI tracks: the strip's "input" meter only
@@ -6297,8 +6390,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // poll renders a real level for MIDI tracks.
         if (job.isMidi)
         {
-            const int n = strips[(size_t) t].getLastProcessedSamples();
-            if (auto* lp = strips[(size_t) t].getLastProcessedMono(); lp != nullptr && n > 0)
+            const int n = strips[(size_t) t]->getLastProcessedSamples();
+            if (auto* lp = strips[(size_t) t]->getLastProcessedMono(); lp != nullptr && n > 0)
             {
                 const auto rng = findSignedMinMax (lp, n);
                 const float pk = std::max (std::abs (rng.min), std::abs (rng.max));
@@ -6306,7 +6399,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     pk > 1e-5f ? dusk::audio::gainToDecibels (pk, -100.0f) : -100.0f,
                     std::memory_order_relaxed);
             }
-            if (auto* rp = strips[(size_t) t].getLastProcessedR(); rp != nullptr && n > 0)
+            if (auto* rp = strips[(size_t) t]->getLastProcessedR(); rp != nullptr && n > 0)
             {
                 const auto rng = findSignedMinMax (rp, n);
                 const float pk = std::max (std::abs (rng.min), std::abs (rng.max));
@@ -6338,7 +6431,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             const float* recR = job.stereoInput ? job.monoInR : nullptr;
             if (printEfx)
             {
-                auto& strip = strips[(size_t) t];
+                auto& strip = *strips[(size_t) t];
                 if (auto* processed = strip.getLastProcessedMono();
                     processed != nullptr
                     && strip.getLastProcessedSamples() >= numSamples)

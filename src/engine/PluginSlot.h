@@ -88,6 +88,13 @@ public:
     // load-epoch guards).
     void loadFromDescriptorAsync (const PluginDescriptor& descriptor,
                                   LoadCompletion onDone);
+    // An async load has been asked for and has neither completed nor been
+    // replaced by another load or an unload. Message thread.
+    bool isAsyncLoadPending() const noexcept
+    {
+        return asyncLoadOutstanding
+            && asyncLoadEpoch == currentLoadEpoch.load (std::memory_order_relaxed);
+    }
 
     void unload();
 
@@ -308,6 +315,11 @@ private:
     // Liveness token for async-load completions: a completion captures a
     // weak_ptr to this and bails if it has expired (slot destroyed mid-load).
     std::shared_ptr<char> lifeToken { std::make_shared<char>() };
+
+    // The epoch of the last async load, and whether its completion is still
+    // to come. Message thread.
+    std::uint32_t asyncLoadEpoch = 0;
+    bool asyncLoadOutstanding = false;
 
     PluginManager* manager = nullptr;
 

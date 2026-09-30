@@ -6,6 +6,7 @@
 #include "EditCursors.h"
 #include "EditModeToolbar.h"
 #include "FadeCurve.h"
+#include "TrackMoveUndo.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/Transport.h"
 #include "../engine/audiofile/FileReader.h"
@@ -77,8 +78,8 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
         b.setTooltip (tip);
         b.onClick = std::move (onClick);
     };
-    wireIcon (undoButton,       "Undo",                [this] { engine.getUndoManager().undo(); refreshStatusBarReadouts(); repaint(); });
-    wireIcon (redoButton,       "Redo",                [this] { engine.getUndoManager().redo(); refreshStatusBarReadouts(); repaint(); });
+    wireIcon (undoButton,       "Undo",                [this] { undoOrRedo (false); if (getParentComponent() == nullptr) return; refreshStatusBarReadouts(); repaint(); });
+    wireIcon (redoButton,       "Redo",                [this] { undoOrRedo (true); if (getParentComponent() == nullptr) return; refreshStatusBarReadouts(); repaint(); });
     wireIcon (splitButton,      "Split at edit cursor",[this] { splitAtCursor(); });
     wireIcon (normalizeButton,  "Normalize",           [this] { normalizeRegion(); });
     wireIcon (propertiesButton, "Region properties...", [this] { showRegionPropertiesPopup(); });
@@ -2715,8 +2716,10 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         const int code = k.getKeyCode();
         if (cmdOrCtrl && (code == 'Z' || code == 'z'))
         {
-            if (k.getModifiers().isShiftDown()) engine.getUndoManager().redo();
-            else                                  engine.getUndoManager().undo();
+            undoOrRedo (k.getModifiers().isShiftDown());
+            // A track move's undo closes this editor and leaves trackIdx
+            // naming a slot that now holds another track.
+            if (getParentComponent() == nullptr) return true;
             rangeActive = false;
             additionalSelectedRegions.clear();
             // Undo can shuffle region order (split-merge restores the
@@ -3465,6 +3468,12 @@ void AudioRegionEditor::reanchorOrClose()
                                           editCursorSample);
     refreshStatusBarReadouts();
     repaint();
+}
+
+void AudioRegionEditor::undoOrRedo (bool redo)
+{
+    if (onUndoRequested) onUndoRequested (redo);
+    else                 undoOrExplain (engine, *this, redo);
 }
 
 void AudioRegionEditor::refreshStatusBarReadouts()

@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <array>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -123,6 +124,8 @@ public:
     virtual bool consolePageMatches (int index) const = 0;
     virtual bool timelineViewMatches (bool expanded) const = 0;
     virtual bool stripCompact (int index) const = 0;
+    // Every channel, bus and master GR slider beside its fader is on screen.
+    virtual bool grMetersShown() const = 0;
     // The level text under a channel strip's send knob, as drawn.
     virtual std::string stripSendLabel (int track, int send) const = 0;
 
@@ -173,6 +176,16 @@ public:
     virtual bool clickFileBrowserUp() = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
     virtual bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) = 0;
+    // Files held over the point dropFilesOnTrack drops on, then taken away:
+    // the drop line's x and the pointer's, in the tape strip. The line is -1
+    // when none shows; empty when the row is not on screen.
+    virtual std::vector<int> tapeDropHover (int track, const std::vector<std::filesystem::path>& files) = 0;
+    // The sample under the point dropFilesOnTrack drops on.
+    virtual std::int64_t tapeDropPointSample (int track) const = 0;
+    virtual int tapeXForSample (std::int64_t sample) const = 0;
+    // Stands in for the Alt key a drop reads: true lands at the pointer, false
+    // at the playhead, nullopt reads the key again.
+    virtual void forceDropAtMouse (std::optional<bool> atMouse) = 0;
     virtual std::vector<std::string> confirmationText() const = 0;
     virtual std::vector<std::string> multiImportRows() const = 0;
     virtual bool clickMultiImportTarget (int row) = 0;
@@ -374,15 +387,34 @@ public:
     virtual bool clickTapeMarker (int index, bool right) = 0;
     virtual bool dragTapeMarker (int index, float toFraction) = 0;
     // A track's name in the tape strip's label column, clicked once or
-    // double-clicked. False when that row is not on screen.
-    virtual bool clickTapeTrackName (int track, int clicks) = 0;
+    // double-clicked, with modifiers as pianoNotePointer takes them (1 Shift,
+    // 2 Cmd/Ctrl, 4 right button). False when that row is not on screen.
+    virtual bool clickTapeTrackName (int track, int clicks, int modifiers = 0) = 0;
     // The track whose row the open name editor sits on; -1 when none is open.
     virtual int tapeNameEditorTrack() const = 0;
     virtual int tapeSelectedTrack() const = 0;
+    // Every track the tape strip lights as selected, ascending.
+    virtual std::vector<int> tapeSelectedTracks() const = 0;
     // Where a track's row sits in the window, as a y; -1 when the row is not shown.
     virtual int tapeTrackRowY (int track) const = 0;
+    // Presses a track's name and drags it to the gap before the gap-th shown
+    // row (the row count is the gap after the last), releasing there unless
+    // release is false. False when either point is not on screen.
+    virtual bool dragTapeTrackName (int track, int gap, bool release = true) = 0;
+    // Lets go of a name drag in the gap-th gap. With that gap off screen it
+    // lets go where the drag went down, and returns false.
+    virtual bool releaseTapeTrackName (int gap) = 0;
+    // A click on a track's name whose pointer drifts `pixels` down while held.
+    virtual bool nudgeTapeTrackName (int track, int pixels) = 0;
+    // The window y of the line a name drag would drop on; -1 when none shows.
+    virtual int tapeMoveLineY() const = 0;
     // The strip carrying the console's focus ring, -1 when none does.
     virtual int consoleFocusedStrip() const = 0;
+    // What a channel strip's input selector shows; empty when it is not built.
+    virtual std::string stripInputText (int track) const = 0;
+    // The console strips whose insert is not the one the engine runs in their
+    // slot, ascending.
+    virtual std::vector<int> consoleStripsOffTheirSlot() const = 0;
     virtual bool audioEditorOpen() const = 0;
     virtual int audioEditorRegion() const = 0;
     virtual bool clickAudioEditorWaveform() = 0;
