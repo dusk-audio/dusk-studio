@@ -1,5 +1,6 @@
 #include "RecordManager.h"
 #include "audiofile/FileWriter.h"
+#include "../session/TakeComp.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -965,11 +966,11 @@ void RecordManager::stopRecording (std::int64_t endSample)
                                           : recordStartSample)
                                    - recordLatencyOffsetSamples;
         const std::int64_t trim = shifted < 0 ? -shifted : 0;
-        std::vector<AudioRegion> passRegions;
+        std::vector<AudioTake> passTakes;
 
         if (loopPlan.enabled)
         {
-            passRegions.reserve ((size_t) slot->loopPassCount);
+            passTakes.reserve ((size_t) slot->loopPassCount);
             const auto captureLength = loopPlan.captureEndSample
                                      - loopPlan.captureStartSample;
             for (int i = 0; i < slot->loopPassCount; ++i)
@@ -978,149 +979,45 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 if (pass.writeFailed || pass.lengthInSamples <= 0
                     || trim >= pass.lengthInSamples)
                     continue;
-                AudioRegion passRegion;
-                passRegion.file = slot->file;
-                passRegion.timelineStart = std::max<std::int64_t> (0, shifted);
-                passRegion.lengthInSamples = pass.lengthInSamples - trim;
-                passRegion.sourceOffset = pass.sourceOffset + trim;
-                passRegion.numChannels = slot->numChannels;
-                passRegion.provenance = {
+                AudioTake passTake;
+                passTake.file = slot->file;
+                passTake.timelineStart = std::max<std::int64_t> (0, shifted);
+                passTake.lengthInSamples = pass.lengthInSamples - trim;
+                passTake.sourceOffset = pass.sourceOffset + trim;
+                passTake.numChannels = slot->numChannels;
+                passTake.provenance = {
                     gestureCapturedAtMs, pass.passOrdinal,
                     ! pass.endsPass || pass.lengthInSamples < captureLength
                 };
-                passRegions.push_back (std::move (passRegion));
+                passTakes.push_back (std::move (passTake));
             }
         }
         else if (frames > 0 && trim < frames)
         {
-            AudioRegion region;
-            region.file = slot->file;
-            region.timelineStart = std::max<std::int64_t> (0, shifted);
-            region.lengthInSamples = frames - trim;
-            region.sourceOffset = trim;
-            region.numChannels = slot->numChannels;
-            passRegions.push_back (std::move (region));
+            AudioTake take;
+            take.file = slot->file;
+            take.timelineStart = std::max<std::int64_t> (0, shifted);
+            take.lengthInSamples = frames - trim;
+            take.sourceOffset = trim;
+            take.numChannels = slot->numChannels;
+            passTakes.push_back (std::move (take));
         }
 
-        if (! passRegions.empty())
+        if (! passTakes.empty())
         {
             auto& track = session.track (t);
-            for (auto& pass : passRegions)
+            for (auto& take : passTakes)
             {
-                AudioTake take;
-                take.id              = session.allocateTakeId();
-                take.name            = "Take " + std::to_string (track.takes.size() + 1);
-                take.file            = pass.file;
-                take.timelineStart   = pass.timelineStart;
-                take.lengthInSamples = pass.lengthInSamples;
-                take.sourceOffset    = pass.sourceOffset;
-                take.numChannels     = pass.numChannels;
-                take.provenance      = pass.provenance;
-                pass.takeId = take.id;
+                take.id   = session.allocateTakeId();
+                take.name = "Take " + std::to_string (track.takes.size() + 1);
                 track.takes.push_back (std::move (take));
             }
 
             // Only the newest pass goes on the timeline. What it covers is
             // carved out of the regions under it; their takes stay whole.
-            AudioRegion region = std::move (passRegions.back());
-            const std::int64_t newStart = region.timelineStart;
-            const std::int64_t newEnd   = newStart + region.lengthInSamples;
-            auto& regs = track.regions;
-
-            // Crossfade length: 64 samples per side, raised-cosine
-            // shape. docs/DuskStudio.md §5b specifies the click-mask fade as
-            // 64 samples ~ 1.3 ms at 48 kHz - imperceptible as a fade
-            // but enough to suppress the boundary discontinuity. Bound
-            // by half the new take's length so a punch shorter than 128
-            // samples still gets symmetric ramps that don't overlap.
-            constexpr std::int64_t kPunchFadeSamples = 64;
-            const std::int64_t fadeSamples = std::max (
-                (std::int64_t) 0, std::min (kPunchFadeSamples, region.lengthInSamples / 2));
-
-            regs.erase (std::remove_if (regs.begin(), regs.end(),
-                                        [newStart, newEnd] (const AudioRegion& r)
-                        {
-                            return r.timelineStart >= newStart
-                                && r.timelineStart + r.lengthInSamples <= newEnd;
-                        }),
-                        regs.end());
-
-            // Partial overlaps get split / trimmed so the new take's edges
-            // crossfade against the existing region's audio instead of
-            // clicking. Three cases:
-            //   - Left overlap  (exStart < newStart, exEnd inside punch):
-            //     trim ex to [exStart, newStart + fade], fadeOut at end.
-            //   - Right overlap (exStart inside punch, exEnd > newEnd):
-            //     trim ex to [newEnd - fade, exEnd] + advance sourceOffset.
-            //   - Span (ex wraps both ends): produce two fragments - left
-            //     half + right half - sharing the original source file.
-            // Fades are matched on the new region by hasOverlapL / R below.
-            std::vector<AudioRegion> spawnedFragments;
-            bool hasOverlapL = false, hasOverlapR = false;
-            for (auto& ex : regs)
-            {
-                const auto exStart = ex.timelineStart;
-                const auto exEnd   = ex.timelineStart + ex.lengthInSamples;
-                if (exEnd <= newStart || exStart >= newEnd) continue;
-
-                const bool spansLeft  = exStart < newStart;
-                const bool spansRight = exEnd   > newEnd;
-
-                if (spansLeft && spansRight)
-                {
-                    AudioRegion right = ex;
-                    right.timelineStart   = newEnd - fadeSamples;
-                    right.sourceOffset    = ex.sourceOffset
-                                           + (right.timelineStart - ex.timelineStart);
-                    right.lengthInSamples = exEnd - right.timelineStart;
-                    right.fadeInSamples   = fadeSamples;
-                    right.fadeInShape     = FadeShape::RaisedCosine;
-                    // Right fragment ends at the original exEnd, so any fade-out
-                    // the source region carried still applies. Clamp so the new
-                    // shorter length still satisfies fadeIn + fadeOut <= length.
-                    right.fadeOutSamples  = std::max ((std::int64_t) 0,
-                        std::min (right.fadeOutSamples,
-                                     right.lengthInSamples - right.fadeInSamples));
-                    spawnedFragments.push_back (std::move (right));
-
-                    ex.lengthInSamples = (newStart + fadeSamples) - exStart;
-                    ex.fadeOutSamples  = fadeSamples;
-                    ex.fadeOutShape    = FadeShape::RaisedCosine;
-                    hasOverlapL = hasOverlapR = true;
-                }
-                else if (spansLeft)
-                {
-                    ex.lengthInSamples = (newStart + fadeSamples) - exStart;
-                    ex.fadeOutSamples  = fadeSamples;
-                    ex.fadeOutShape    = FadeShape::RaisedCosine;
-                    hasOverlapL = true;
-                }
-                else if (spansRight)
-                {
-                    const std::int64_t newLeft = newEnd - fadeSamples;
-                    ex.sourceOffset    += (newLeft - exStart);
-                    ex.timelineStart    = newLeft;
-                    ex.lengthInSamples  = exEnd - newLeft;
-                    ex.fadeInSamples    = fadeSamples;
-                    ex.fadeInShape      = FadeShape::RaisedCosine;
-                    hasOverlapR = true;
-                }
-            }
-            for (auto& frag : spawnedFragments)
-                regs.push_back (std::move (frag));
-
-            if (hasOverlapL)
-            {
-                region.fadeInSamples = fadeSamples;
-                region.fadeInShape   = FadeShape::RaisedCosine;
-            }
-            if (hasOverlapR)
-            {
-                region.fadeOutSamples = fadeSamples;
-                region.fadeOutShape   = FadeShape::RaisedCosine;
-            }
-
-            regs.push_back (std::move (region));
+            const auto& newest = track.takes.back();
+            promoteTakeRange (track, newest, newest.timelineStart,
+                              newest.timelineStart + newest.lengthInSamples);
         }
         else
         {

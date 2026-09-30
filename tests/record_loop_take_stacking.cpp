@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/RecordManager.h"
 #include "engine/audiofile/FileReader.h"
@@ -1122,4 +1123,83 @@ TEST_CASE ("A take punched into a recorded region leaves both pieces naming the 
     {
         return r.takeId == split;
     }) == 2);
+}
+
+TEST_CASE ("A take recorded over the end of a region never stretches that region past its own audio",
+           "[recording][recordmanager][takes][punch][regression]")
+{
+    const auto temp = makeSessionDir ("dusk-record-seam-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    RecordManager manager (session);
+    constexpr std::int64_t fade = 64;
+
+    SECTION ("a region ending inside the seam stops where its loop pass does")
+    {
+        REQUIRE (manager.startRecording (48000.0, 0, 0, loopPlan (0, 100)));
+        writeAudioPass (manager, 1, 0, 100, 0.25f);
+        writeAudioPass (manager, 2, 0, 100, 0.75f);
+        manager.stopRecording (100);
+        const auto firstPass = session.track (0).takes[0];
+        session.track (0).regions.assign (1, regionFromTake (firstPass));
+
+        recordLinear (manager, 90, 200);
+
+        const auto& kept = regionOfTake (session, firstPass.id);
+        CHECK (kept.timelineStart == 0);
+        CHECK (kept.sourceOffset == 0);
+        CHECK (kept.lengthInSamples == 100);
+        CHECK (kept.fadeOutSamples == 10);
+        CHECK (kept.fadeOutShape == FadeShape::RaisedCosine);
+
+        const auto reader = dusk::audio::FileReader::open (
+            kept.file.getFullPathName().toStdString());
+        REQUIRE (reader != nullptr);
+        std::vector<float> played ((size_t) kept.lengthInSamples);
+        float* dest[] { played.data() };
+        REQUIRE (reader->read (dest, 1, kept.sourceOffset, kept.lengthInSamples)
+                 == kept.lengthInSamples);
+        const auto [quietest, loudest] = std::minmax_element (played.begin(), played.end());
+        CHECK_THAT (*quietest, Catch::Matchers::WithinAbs (0.25f, 1e-4));
+        CHECK_THAT (*loudest, Catch::Matchers::WithinAbs (0.25f, 1e-4));
+    }
+
+    SECTION ("a region starting inside the seam keeps its own start and source offset")
+    {
+        recordLinear (manager, 1000, 2000);
+        const auto older = session.track (0).takes[0];
+
+        recordLinear (manager, 0, 1020);
+
+        const auto& kept = regionOfTake (session, older.id);
+        CHECK (kept.timelineStart == 1000);
+        CHECK (kept.sourceOffset == 0);
+        CHECK (kept.lengthInSamples == 2000);
+        CHECK (kept.fadeInSamples == 20);
+        CHECK (kept.fadeInShape == FadeShape::RaisedCosine);
+    }
+
+    SECTION ("a region trimmed at one edge shrinks its far fade so the two never overlap")
+    {
+        auto left = regionFromTake (
+            seedTake (session, temp.dir.getChildFile ("left.wav"), 1000, 200, 0, 11));
+        left.fadeInSamples = 150;
+        auto right = regionFromTake (
+            seedTake (session, temp.dir.getChildFile ("right.wav"), 1900, 300, 0, 12));
+        right.fadeOutSamples = 250;
+        session.track (0).regions = { left, right };
+
+        recordLinear (manager, 1100, 900);
+
+        const auto& keptLeft = regionOfTake (session, left.takeId);
+        CHECK (keptLeft.lengthInSamples == 100 + fade);
+        CHECK (keptLeft.fadeOutSamples == fade);
+        CHECK (keptLeft.fadeInSamples == 100);
+
+        const auto& keptRight = regionOfTake (session, right.takeId);
+        CHECK (keptRight.timelineStart == 2000 - fade);
+        CHECK (keptRight.lengthInSamples == 200 + fade);
+        CHECK (keptRight.fadeInSamples == fade);
+        CHECK (keptRight.fadeOutSamples == 200);
+    }
 }

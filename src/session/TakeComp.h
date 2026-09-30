@@ -10,8 +10,7 @@
 namespace duskstudio
 {
 // Seam crossfade where a take range meets the regions it cuts into, capped at
-// half the new range so its two ramps never overlap. RecordManager's audio
-// commit still carves with its own copy of this rule.
+// half the new range so its two ramps never overlap.
 constexpr std::int64_t kPunchFadeSamples = 64;
 
 // Clears [start, end) for a new region: regions inside it go, a region that
