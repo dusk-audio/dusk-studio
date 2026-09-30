@@ -584,6 +584,71 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
         return {};
     }
+    bool openAudioEditorOnTakes (int track) override
+    {
+        if (owner.pianoRoll != nullptr) return false;
+        owner.openAudioEditorOnTakes (track);
+        return owner.audioEditorShowing();
+    }
+    std::vector<std::uint64_t> audioEditorTakeLanes() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr)
+            return owner.audioEditorView->takeLanesForScenario();
+       #endif
+        return {};
+    }
+    std::vector<int> audioEditorTakePoint (const std::string& kind, std::uint64_t take,
+                                           std::int64_t sample) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        ImVec2 point;
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr
+            && owner.audioEditorView->takePointForScenario (kind, take, sample, point))
+            return { static_cast<int> (std::lround (point.x)), static_cast<int> (std::lround (point.y)) };
+       #else
+        (void) kind;
+        (void) take;
+        (void) sample;
+       #endif
+        return {};
+    }
+    bool revealAudioEditorTake (std::uint64_t take) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.audioEditorShowing() || owner.audioEditorView == nullptr) return false;
+        owner.audioEditorView->revealTakes (take);
+        return true;
+       #else
+        (void) take;
+        return false;
+       #endif
+    }
+    std::vector<std::int64_t> audioEditorTakeState() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr)
+            return owner.audioEditorView->takeStateForScenario();
+       #endif
+        return {};
+    }
+    std::string audioEditorTakeNotice() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr)
+            return owner.audioEditorView->takeNoticeForScenario();
+       #endif
+        return {};
+    }
+    bool typeInAudioEditor (const std::string& text) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.audioEditorShowing() && owner.audioEditorWindow->typeForScenario (text);
+       #else
+        (void) text;
+        return false;
+       #endif
+    }
     bool openPiano (int track, int region) override
     {
         if (owner.pianoRoll != nullptr) return false;

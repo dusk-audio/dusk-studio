@@ -136,6 +136,23 @@ public:
     virtual bool audioEditorPointer (int x, int y, bool down, int modifiers = 0) = 0;
     virtual std::vector<std::int64_t> audioEditorSelection() const = 0;
     virtual std::vector<int> audioAutomationPoint (std::int64_t sample, float value) const = 0;
+    // The audio editor on a track's take lanes, the way the timeline's take count opens it.
+    virtual bool openAudioEditorOnTakes (int track) = 0;
+    // Take ids in lane order, newest first; empty when the editor shows no lanes.
+    virtual std::vector<std::uint64_t> audioEditorTakeLanes() const = 0;
+    // In the frame audioEditorPointer takes: "lane" is a take's waveform at a timeline
+    // sample; "name", "audition", "delete", "confirm" and "cancel" its header controls.
+    // Empty while the lane or the control is off screen.
+    virtual std::vector<int> audioEditorTakePoint (const std::string& kind, std::uint64_t take,
+                                                   std::int64_t sample) const = 0;
+    // Scrolls the lanes to the take's, the newest when take is 0; lands on the next frame.
+    virtual bool revealAudioEditorTake (std::uint64_t take) = 0;
+    // { renamingTake, confirmingDeleteTake, draggedTake, dragStart, dragEnd }.
+    virtual std::vector<std::int64_t> audioEditorTakeState() const = 0;
+    // The lane caption's explanation of a refused take edit; empty when none shows.
+    virtual std::string audioEditorTakeNotice() const = 0;
+    // Characters typed into the editor's open text field.
+    virtual bool typeInAudioEditor (const std::string& text) = 0;
     virtual bool openPiano (int track, int region) = 0;
     virtual void closePiano() = 0;
     virtual bool clickPianoCcToggle() = 0;

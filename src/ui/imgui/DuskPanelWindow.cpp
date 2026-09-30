@@ -331,6 +331,17 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             onScroll (scroll);
         }
 
+        void typeForScenario (const std::string& text)
+        {
+            for (const char c : text)
+            {
+                CharacterInputEvent input;
+                input.character = static_cast<unsigned char> (c);
+                input.string[0] = c;
+                onCharacterInput (input);
+            }
+        }
+
         bool inputForScenario (const std::string& input)
         {
             if (input == "scroll-down")
@@ -702,6 +713,12 @@ bool DuskPanelWindow::inputForScenario (const std::string& input)
 {
     if (! isOpen() || impl->scenarioWidget == nullptr) return false;
     return impl->scenarioWidget->inputForScenario (input);
+}
+bool DuskPanelWindow::typeForScenario (const std::string& text)
+{
+    if (! isOpen() || impl->scenarioWidget == nullptr) return false;
+    impl->scenarioWidget->typeForScenario (text);
+    return true;
 }
 bool DuskPanelWindow::scrollForScenario (float wheel)
 {

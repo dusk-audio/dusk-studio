@@ -6351,6 +6351,31 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
    #endif
 }
 
+void MainComponent::openAudioEditorOnTakes (int trackIdx)
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks)
+        return;
+    const auto& track = session.track (trackIdx);
+    if (track.takes.empty() && track.regions.empty())
+        return;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (audioEditorShowing() && audioEditorTrackIdx == trackIdx && audioEditorView != nullptr)
+    {
+        audioEditorView->revealTakes (0);
+        return;
+    }
+   #endif
+    int first = -1;
+    for (int i = 0; i < (int) track.regions.size(); ++i)
+        if (first < 0 || track.regions[(size_t) i].timelineStart < track.regions[(size_t) first].timelineStart)
+            first = i;
+    openAudioEditor (trackIdx, first);
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (audioEditorShowing() && audioEditorView != nullptr && ! track.takes.empty())
+        audioEditorView->revealTakes (0);
+   #endif
+}
+
 void MainComponent::closeAudioEditor()
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -6377,6 +6402,9 @@ void MainComponent::destroyAudioEditor()
 #if DUSKSTUDIO_HAS_NATIVE_UI
 void MainComponent::finishAudioEditorClose()
 {
+    // An audition started in the editor lasts only while it is up.
+    if (audioEditorTrackIdx >= 0 && session.takeAudition.trackIdx == audioEditorTrackIdx)
+        engine.clearTakeAudition();
     audioEditorView = nullptr;
     audioEditorClosing = false;
     audioEditorDim.reset();

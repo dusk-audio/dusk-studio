@@ -171,6 +171,8 @@ public:
     bool clickControlForScenario (const std::string& control);
     // "scroll-down", or a key as parseKeyDescription reads it.
     bool inputForScenario (const std::string& input);
+    // Characters typed into whatever field has the keyboard.
+    bool typeForScenario (const std::string& text);
     // A vertical wheel at the window centre; negative scrolls down.
     bool scrollForScenario (float wheel);
     bool pointerControlForScenario (const std::string& control, float position, bool pressed,

@@ -24,12 +24,14 @@ struct AudioEditorHost
 };
 
 // The audio region editor: toolbar, bar ruler, the track's regions around the focused
-// one as stacked per-channel waveforms, the edit cursor and playhead, and the status
-// bar of region readouts.
+// one as stacked per-channel waveforms, the edit cursor and playhead, the track's
+// takes as lanes under the regions, and the status bar of region readouts.
 //
 // The editor addresses its region by index into the track's region list, which other
 // surfaces edit while it is open, so every read goes through a bounds check and a
-// stale index paints "region unavailable" rather than reaching past the list.
+// stale index paints "region unavailable" rather than reaching past the list. A track
+// with takes but no region to focus (index -1) shows its lanes over an empty region
+// view, so a take can be promoted into it.
 class AudioEditorView : public DuskPanelView
 {
 public:
@@ -72,6 +74,27 @@ public:
 
     // { regionIndex, rangeActive, rangeStart, rangeEnd }.
     virtual std::vector<std::int64_t> selectionForScenario() const = 0;
+
+    // Fits the whole track in view and scrolls the take lanes to the take's lane, the
+    // newest take's when `take` is 0. Takes effect on the next frame.
+    virtual void revealTakes (std::uint64_t take) = 0;
+
+    // Take ids in lane order, newest first; empty when the editor shows no lanes.
+    virtual std::vector<std::uint64_t> takeLanesForScenario() const = 0;
+
+    // Where a take lane shows something, in the same body-relative design pixels as
+    // gesturePointForScenario: "lane" is the lane's waveform at a timeline sample, and
+    // "name", "audition", "delete", "confirm" and "cancel" the controls in its header.
+    // False while the lane or the control is not on screen.
+    virtual bool takePointForScenario (const std::string& kind, std::uint64_t take,
+                                       std::int64_t timelineSample, ImVec2& point) const = 0;
+
+    // { renamingTake, confirmingDeleteTake, draggedTake, dragStart, dragEnd }, 0 for
+    // none; the drag ends are timeline samples, snapped as the drag snaps them.
+    virtual std::vector<std::int64_t> takeStateForScenario() const = 0;
+
+    // What the lane caption says about the last refused take edit; empty when nothing.
+    virtual std::string takeNoticeForScenario() const = 0;
 };
 
 std::unique_ptr<AudioEditorView> makeAudioEditorView (Session& session, AudioEngine& engine,

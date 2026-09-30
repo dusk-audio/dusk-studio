@@ -559,6 +559,10 @@ private:
     int audioEditorTrackIdx  = -1;
     int audioEditorRegionIdx = -1;
     void openAudioEditor  (int trackIdx, int regionIdx);
+    // The editor on a track's take lanes, focused on the track's first region, or on
+    // none when only takes are left. Already open on the track, it keeps its region
+    // and scrolls to the lanes.
+    void openAudioEditorOnTakes (int trackIdx);
     // Deferred: the child comes down over the next two event-pump ticks.
     void closeAudioEditor();
     // Immediate, for a swap to another region or to the piano roll. Never from inside

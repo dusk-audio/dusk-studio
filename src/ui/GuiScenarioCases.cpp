@@ -20,6 +20,7 @@
 #include "../session/Session.h"
 #include "../session/SessionSerializer.h"
 #include "../session/SessionTemplates.h"
+#include "../session/TakeComp.h"
 
 #include <algorithm>
 #include <array>
@@ -2402,6 +2403,155 @@ const ScenarioRegistrar audioAutomationGestures { Scenario {
     "gui.audio_automation_gestures", { "gui", "automation" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioAutomationGestures (host, ctx); }
+} };
+
+// Three takes under a mixed comp. A drag across the middle take's lane shows its span
+// while held, puts exactly that span of the take on the track on release as one undo
+// step snapped to the grid, and a Cmd drag lands where the pointer went.
+std::optional<ScenarioResult> runAudioTakePromoteDrag (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore, points = session.tempoMap.points()]
+    {
+        drainModals (host);
+        host.closeAudioEditor();
+        engine.clearTakeAudition();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        session.tempoMap.setPoints (points);
+    });
+
+    constexpr int kRate = 48000;
+    constexpr std::int64_t kLength = 96000;
+    auto& track = session.track (0);
+    track.frozen.store (false);
+    track.regions.clear();
+    track.takes.clear();
+    std::vector<TakeId> ids;
+    for (int pass = 0; pass < 3; ++pass)
+    {
+        const auto path = ctx.tempDir() / ("Take" + std::to_string (pass + 1) + ".wav");
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = kRate;
+        spec.numChannels = 1;
+        auto writer = dusk::audio::FileWriter::create (path, spec);
+        std::vector<float> signal ((std::size_t) kLength);
+        const float level = 0.3f + 0.25f * (float) pass;
+        for (std::size_t i = 0; i < signal.size(); ++i)
+        {
+            const double t = (double) i / kRate;
+            signal[i] = level * (float) ((0.6 + 0.4 * std::sin (6.2831853 * (1.5 + pass) * t))
+                                         * std::sin (6.2831853 * 110.0 * t));
+        }
+        const float* channels[] = { signal.data() };
+        if (! writer || ! writer->write (channels, 1, kLength) || ! writer->flush())
+            return ScenarioResult::fail ("could not write take fixture");
+        AudioTake take;
+        take.id = session.allocateTakeId();
+        take.name = "Take " + std::to_string (pass + 1);
+        take.file = decltype (take.file) (path.string());
+        take.lengthInSamples = kLength;
+        track.takes.push_back (take);
+        ids.push_back (take.id);
+    }
+    promoteTakeRange (track, track.takes[2], 0, kLength);
+    promoteTakeRange (track, track.takes[0], 24000, 48000);
+    const auto regionsBefore = track.regions;
+
+    session.tempoMap.clear();
+    session.tempoBpm.store (120.0f);
+    session.beatsPerBar.store (4);
+    session.snapResolution = SnapResolution::Quarter;
+    session.audioEditorSnap = true;
+    engine.getUndoManager().clearUndoHistory();
+    if (! host.openAudioEditorOnTakes (0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    using Span = std::pair<std::int64_t, std::int64_t>;
+    const auto point = [&host, &ctx] (TakeId take, std::int64_t sample)
+    {
+        const auto at = host.audioEditorTakePoint ("lane", take, sample);
+        ctx.expect (at.size() == 2, "take lane geometry unavailable");
+        return at.size() == 2 ? at : std::vector<int> { 0, 0 };
+    };
+    // The drag's snapped span at either rate the grid can be read at: the file's own,
+    // or the device's before the file's header has been read.
+    const auto snappedSpan = [] (Span span)
+    { return span == Span { 24000, 72000 } || span == Span { 22050, 66150 }; };
+    auto dragged = std::make_shared<Span>();
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 600, [&host, &ctx, ids, point]
+    {
+        ctx.expect (host.audioEditorTakeLanes() == std::vector<std::uint64_t> { ids[2], ids[1], ids[0] },
+                    "the lanes are not the three takes, newest first");
+        const auto from = point (ids[1], 30000);
+        const auto to = point (ids[1], 70000);
+        ctx.expect (host.audioEditorPointer (from[0], from[1], true), "take lane press failed");
+        host.audioEditorPointer (to[0], to[1], true);
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &track, ids, point, snappedSpan, dragged]
+    {
+        const auto state = host.audioEditorTakeState();
+        if (ctx.expect (state.size() == 5 && state[2] == (std::int64_t) ids[1], "the drag is not held on the take"))
+        {
+            *dragged = { std::min (state[3], state[4]), std::max (state[3], state[4]) };
+            ctx.expect (snappedSpan (*dragged), "the held span did not snap to quarter notes");
+        }
+        ctx.expect (takeCoverage (track, ids[1]).empty(), "the take went on the track before the release");
+        const auto to = point (ids[1], 70000);
+        host.audioEditorPointer (to[0], to[1], false);
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &track, ids, dragged]
+    {
+        ctx.expect (takeCoverage (track, ids[1]) == std::vector<Span> { *dragged },
+                    "the release did not put exactly the held span of the take on the track");
+        ctx.expect (takeCoverage (track, ids[0]).empty(), "the span did not replace the first take's part");
+        ctx.expect (track.takes.size() == 3, "the drag changed the takes");
+        const auto selection = host.audioEditorSelection();
+        ctx.expect (selection.size() == 4 && selection[0] >= 0 && selection[0] < (std::int64_t) track.regions.size()
+                        && track.regions[(std::size_t) selection[0]].takeId == ids[1],
+                    "the editor did not focus the promoted region");
+        ctx.expect (host.clickAudioEditorButton ("Undo"), "Undo unavailable after the promote");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &track, ids, regionsBefore]
+    {
+        ctx.expect (takeCoverage (track, ids[1]).empty()
+                        && takeCoverage (track, ids[0]) == std::vector<Span> { { 24000, 48000 } }
+                        && track.regions.size() == regionsBefore.size(),
+                    "one Undo did not take the whole promote back");
+        ctx.expect (host.clickAudioEditorButton ("Redo"), "Redo unavailable after the undo");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &track, ids, point, dragged]
+    {
+        ctx.expect (takeCoverage (track, ids[1]) == std::vector<Span> { *dragged }, "Redo did not bring the span back");
+        const auto from = point (ids[0], 60000);
+        const auto to = point (ids[0], 84000);
+        constexpr int command = 2;
+        ctx.expect (host.audioEditorPointer (from[0], from[1], true, command), "Cmd press on the lane failed");
+        host.audioEditorPointer (to[0], to[1], true, command);
+        host.audioEditorPointer (to[0], to[1], false, command);
+    } });
+    steps->push_back ({ 400, [&ctx, &track, ids]
+    {
+        const auto spans = takeCoverage (track, ids[0]);
+        ctx.expect (spans.size() == 1 && std::abs (spans[0].first - 60000) < 256
+                        && std::abs (spans[0].second - 84000) < 256,
+                    "a Cmd drag did not land where the pointer went");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioTakePromoteDrag { Scenario {
+    "gui.audio_take_promote_drag", { "gui", "region", "take" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioTakePromoteDrag (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runAudioEditorGestures (GuiHost& host, ScenarioContext& ctx)
