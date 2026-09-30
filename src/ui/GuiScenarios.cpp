@@ -535,7 +535,20 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool clickAudioEditorButton (const std::string& name) override { return clickAudioEditorControl (name); }
     bool clickAudioEditorSample (std::int64_t sample) override
     { return clickAudioEditorControl ("sample:" + std::to_string (sample)); }
-    std::vector<int> audioEditorPoint (const std::string&, std::int64_t) const override { return {}; }
+    // In design pixels from the editor body's top-left, the frame audioEditorPointer takes.
+    std::vector<int> audioEditorPoint (const std::string& kind, std::int64_t sample) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        ImVec2 point;
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr
+            && owner.audioEditorView->gesturePointForScenario (kind, sample, point))
+            return { static_cast<int> (std::lround (point.x)), static_cast<int> (std::lround (point.y)) };
+       #else
+        (void) kind;
+        (void) sample;
+       #endif
+        return {};
+    }
     std::vector<std::int64_t> audioEditorSelection() const override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -544,17 +557,17 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
         return {};
     }
-    // Modifiers are not carried yet: the panel window presses a bare left button.
-    bool audioEditorPointer (int x, int y, bool down, int) override
+    bool audioEditorPointer (int x, int y, bool down, int modifiers) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
         return owner.audioEditorShowing()
             && owner.audioEditorWindow->pointerControlForScenario (
-                   "at:" + std::to_string (x) + "," + std::to_string (y), 0.5f, down);
+                   "at:" + std::to_string (x) + "," + std::to_string (y), 0.5f, down, modifiers);
        #else
         (void) x;
         (void) y;
         (void) down;
+        (void) modifiers;
         return false;
        #endif
     }
@@ -976,6 +989,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     bool clickContextMenuItem (const std::string& text) override
     {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing() && clickAudioEditorControl ("menu:" + text))
+            return true;
+       #endif
         int x = 0, y = 0;
         if (! contextMenuItemPointForScenario (text, x, y)) return false;
         auto* body = EmbeddedModal::activeModalStack().back()->getBody();
@@ -1932,8 +1949,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool clickAudioEditorWaveform() override { return clickAudioEditorControl ("waveform"); }
 
-    // Only the keys the panel window can type: a bare key or escape, home, end and
-    // enter. Chords wait for the editor's keyboard pass.
+    // Typed at the editor's child, so the key takes the path a focused child gives it.
     bool pressAudioEditorKey (const std::string& description) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI

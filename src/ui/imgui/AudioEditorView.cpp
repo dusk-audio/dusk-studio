@@ -7,6 +7,7 @@
 #include "../../engine/audiofile/WaveformPeaks.h"
 #include "../../foundation/Decibels.h"
 #include "../../foundation/PlanarBuffer.h"
+#include "../../foundation/Text.h"
 #include "../../foundation/VectorOps.h"
 #include "../../session/RegionEditActions.h"
 #include "../../session/Session.h"
@@ -18,6 +19,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -77,6 +80,65 @@ constexpr std::uint32_t kChaseTextOn = 0xffe0e0e0;
 constexpr std::uint32_t kAutoFill = 0xff282830;
 constexpr std::uint32_t kScrollTrack = 0xff15151b;
 constexpr std::uint32_t kScrollThumb = 0xff4a4a54;
+constexpr std::uint32_t kRange = 0xffffd060;
+constexpr std::uint32_t kSelection = 0xff80c0ff;
+
+constexpr const char* kContextMenu = "##editor-context";
+constexpr const char* kFadeMenu = "##editor-fade-shape";
+constexpr const char* kPropertiesMenu = "##editor-properties";
+
+using RegionColour = decltype (AudioRegion::customColour);
+using RegionLabel = decltype (AudioRegion::label);
+
+// The region colours every region surface offers, the tape strip's included.
+struct PaletteEntry
+{
+    const char* label;
+    std::uint32_t argb;
+};
+
+constexpr PaletteEntry kPalette[] = {
+    { "Reset to track colour", 0x00000000 },
+    { "Red", 0xffd05f5f }, { "Orange", 0xffd09060 }, { "Yellow", 0xffd0c060 },
+    { "Green", 0xff60c070 }, { "Cyan", 0xff60c0c0 }, { "Blue", 0xff6090d0 },
+    { "Purple", 0xff9070c0 }, { "Magenta", 0xffc060a0 },
+};
+
+struct FadeShapeEntry
+{
+    FadeShape shape;
+    const char* label;
+};
+
+constexpr FadeShapeEntry kFadeShapes[] = {
+    { FadeShape::Linear, "Linear" }, { FadeShape::EqualPower, "Equal-power" },
+    { FadeShape::Sigmoid, "S-curve" }, { FadeShape::Exp, "Exponential" },
+    { FadeShape::Log, "Logarithmic" },
+};
+
+// The keys the editor reads from Dear ImGui, and whether holding one repeats it.
+struct EditorKey
+{
+    ImGuiKey key;
+    bool repeats;
+};
+
+constexpr EditorKey kEditorKeys[] = {
+    { ImGuiKey_Escape, false }, { ImGuiKey_LeftArrow, true }, { ImGuiKey_RightArrow, true },
+    { ImGuiKey_Home, false }, { ImGuiKey_End, false }, { ImGuiKey_G, false }, { ImGuiKey_R, false },
+    { ImGuiKey_C, false }, { ImGuiKey_Z, true }, { ImGuiKey_E, false }, { ImGuiKey_F, false },
+    { ImGuiKey_X, false }, { ImGuiKey_V, false }, { ImGuiKey_LeftBracket, false },
+    { ImGuiKey_RightBracket, false }, { ImGuiKey_L, false }, { ImGuiKey_P, false },
+    { ImGuiKey_Delete, false }, { ImGuiKey_Backspace, false }, { ImGuiKey_Equal, true },
+    { ImGuiKey_Minus, true }, { ImGuiKey_KeypadAdd, true }, { ImGuiKey_KeypadSubtract, true },
+    { ImGuiKey_0, false },
+};
+
+// std::clamp, but tolerant of an upper bound below the lower one.
+std::int64_t clampTo (std::int64_t value, std::int64_t lo, std::int64_t hi) noexcept
+{
+    return std::clamp (value, lo, std::max (lo, hi));
+}
 
 bool nonZero (float v) noexcept { return v < 0.0f || v > 0.0f; }
 
@@ -148,18 +210,9 @@ struct Layout
 
 enum class Glyph { undo, redo, split, normalize, reverse, properties, zoomOut, zoomIn, zoomFit };
 
-// What a pointer position addresses; pointer gestures dispatch on it.
-enum class Zone { none, ruler, wave, scroll };
-
-struct Hit
-{
-    Zone zone = Zone::none;
-    int region = -1;
-};
-
 struct Control
 {
-    const char* name = nullptr;
+    std::string name;
     Box box;
     bool enabled = true;
 };
@@ -206,6 +259,57 @@ WaveformDetails::Window windowFor (const AudioRegion& region, int xa, int xb, in
              std::min (xb, clipX1) - first };
 }
 
+// The edit-mode glyphs the timeline shows at the pointer, drawn here because nothing
+// JUCE paints can land on top of the editor's child. The hand's hotspot is the tip of
+// the index finger and the scissors' the blades' crossing; both are authored at the
+// JUCE glyphs' size and drawn at 0.85 of it, as the overlay drew them.
+void drawHandGlyph (ImDrawList* dl, ImVec2 at, float scale)
+{
+    struct Part { float x, y, w, h, rounding; };
+    static constexpr Part kParts[] = { { 6.0f, 11.0f, 12.0f, 10.0f, 3.0f }, { 7.0f, 2.0f, 3.2f, 13.0f, 1.6f },
+                                       { 11.0f, 9.0f, 3.0f, 4.0f, 1.4f }, { 14.5f, 9.5f, 3.0f, 4.0f, 1.4f },
+                                       { 4.0f, 13.0f, 3.0f, 6.0f, 1.4f } };
+    const float g = 0.85f * scale;
+    const auto fill = [dl, at, g] (const Part& part, float grow, ImU32 colour)
+    {
+        const float x = part.x - 8.6f, y = part.y - 2.0f;
+        dl->AddRectFilled (ImVec2 (at.x + (x - grow) * g, at.y + (y - grow) * g),
+                           ImVec2 (at.x + (x + part.w + grow) * g, at.y + (y + part.h + grow) * g),
+                           colour, (part.rounding + grow) * g);
+    };
+    for (const auto& part : kParts)
+        fill (part, 1.7f, IM_COL32 (0, 0, 0, 191));
+    for (const auto& part : kParts)
+        fill (part, 0.0f, IM_COL32_WHITE);
+}
+
+void drawScissorsGlyph (ImDrawList* dl, ImVec2 at, float scale)
+{
+    const float g = 0.85f * scale;
+    const auto p = [at, g] (float x, float y) { return ImVec2 (at.x + x * g, at.y + y * g); };
+    constexpr float a = 8.0f;
+    constexpr float loop = 2.5f;
+    for (const auto& [colour, width] : { std::pair<ImU32, float> { IM_COL32 (0, 0, 0, 217), 2.6f },
+                                         std::pair<ImU32, float> { IM_COL32_WHITE, 1.4f } })
+    {
+        dl->AddLine (p (-a, -a), p (a, a), colour, width * g);
+        dl->AddLine (p (a, -a), p (-a, a), colour, width * g);
+        dl->AddCircle (p (-a, a), loop * g, colour, 12, width * g);
+        dl->AddCircle (p (a, a), loop * g, colour, 12, width * g);
+    }
+}
+
+// Where a Cut click would split: a dashed line down the waveform, dark under light so
+// it reads over the audio.
+void drawCutLine (ImDrawList* dl, float x, float y0, float y1, float scale)
+{
+    const float dash = 3.0f * scale;
+    for (const auto& [colour, width] : { std::pair<ImU32, float> { IM_COL32 (0, 0, 0, 217), 2.2f },
+                                         std::pair<ImU32, float> { IM_COL32_WHITE, 1.2f } })
+        for (float y = y0; y < y1; y += dash * 2.0f)
+            dl->AddLine (ImVec2 (x, y), ImVec2 (x, std::min (y + dash, y1)), colour, width * scale);
+}
+
 class AudioEditorViewImpl final : public AudioEditorView
 {
 public:
@@ -232,19 +336,40 @@ public:
 
     bool takeDismissRequest() override { return std::exchange (dismissRequested, false); }
 
-    // Home and the loop and punch keys act on the editor's own view and cursor; the
-    // transport keys stay the shell's.
+    // Home and the loop and punch keys act on the editor's own view and cursor, and R
+    // picks the Range tool rather than recording; the other transport keys stay the
+    // shell's.
     bool claimsShortcut (ShellShortcut shortcut) const override
     {
         return shortcut == ShellShortcut::playheadToZero || shortcut == ShellShortcut::toggleLoop
             || shortcut == ShellShortcut::togglePunch || shortcut == ShellShortcut::setLoopIn
             || shortcut == ShellShortcut::setLoopOut || shortcut == ShellShortcut::setPunchIn
-            || shortcut == ShellShortcut::setPunchOut;
+            || shortcut == ShellShortcut::setPunchOut || shortcut == ShellShortcut::record;
     }
 
     int trackIndex() const override { return trackIdx; }
     int regionIndex() const override { return regionIdx; }
     bool chaseEnabled() const override { return chase; }
+
+    bool handleShellKey (const std::string& description) override
+    {
+        const auto chord = parseKeyDescription (description);
+        if (! chord)
+            return false;
+        if (keysAvailable)
+            return handleKey (*chord);
+
+        // A menu or a field open over the editor takes Escape, as it does when the
+        // child has the keyboard, rather than letting the shell close the editor
+        // under it. The key is replayed into Dear ImGui on the next frame.
+        const bool bareEscape = chord->key == ImGuiKey_Escape && ! chord->command() && ! chord->shift && ! chord->alt;
+        if (bareEscape && (popupWasOpen || editing != Field::none))
+        {
+            escapePending = true;
+            return true;
+        }
+        return false;
+    }
 
     void focusRegion (int index) override
     {
@@ -268,14 +393,28 @@ public:
         return true;
     }
 
+    bool gesturePointForScenario (const std::string& kind, std::int64_t timelineSample,
+                                  ImVec2& point) const override
+    {
+        if (! samplePointForScenario (timelineSample, point) || region() == nullptr)
+            return false;
+        if (kind == "start") point.x = trimStart().at (0.5f, 0.5f).x;
+        else if (kind == "end") point.x = trimEnd().at (0.5f, 0.5f).x;
+        else if (kind == "gain") point.y = gainLineY();
+        else if (kind != "wave") return false;
+        point = { (point.x - layout.body.x0) / layout.scale, (point.y - layout.body.y0) / layout.scale };
+        return true;
+    }
+
     std::vector<std::int64_t> selectionForScenario() const override
     {
-        return { regionIdx, 0, 0, 0 };
+        return { regionIdx, rangeActive ? 1 : 0, rangeStartSample, rangeEndSample };
     }
 
     // Toolbar and status controls by the name the JUCE editor gave each button, plus
     // "waveform" (the point the JUCE editor's centre-low click used), "sample:<n>" for
-    // a timeline sample and "at:<x>,<y>" for a body-relative design-pixel point.
+    // a timeline sample, "at:<x>,<y>" for a body-relative design-pixel point and
+    // "menu:<item>" for an item of the menu that is open.
     bool controlPointForScenario (const std::string& name, ImVec2& point, float position) const override
     {
         if (! laidOut)
@@ -314,6 +453,13 @@ public:
     {
         popupWasOpen = popupOpen;
         ++frame;
+        if (std::exchange (escapePending, false))
+        {
+            // Queued as a press and a release, which Dear ImGui plays over two frames.
+            auto& io = ImGui::GetIO();
+            io.AddKeyEvent (ImGuiKey_Escape, true);
+            io.AddKeyEvent (ImGuiKey_Escape, false);
+        }
         controls.clear();
         layout = layoutFor (origin, size, ctx.scale);
         laidOut = true;
@@ -344,6 +490,8 @@ public:
             dw::text (ctx, ctx.fonts->valueLarge, ctx.s (14.0f),
                       ImVec2 (centre.x, centre.y - ctx.s (7.0f)), layout.body.width(),
                       argb (kHeaderText), "region unavailable");
+            drag = Drag::none;
+            drawPopups (ctx);
             finishFrame();
             return;
         }
@@ -358,12 +506,16 @@ public:
         drawFades (ctx);
         drawLoopPunch (ctx);
         drawHandles (ctx);
+        drawRange (ctx);
         drawEditCursor (ctx);
         drawPlayhead (ctx);
+        drawSnapGuide (ctx);
         dl->PopClipRect();
 
         drawScrollBar (ctx);
-        handleWavePointer (ctx);
+        handlePointer();
+        drawPopups (ctx);
+        drawPointerGlyph (ctx);
         finishFrame();
     }
 
@@ -392,6 +544,44 @@ private:
     bool dismissRequested = false;
     bool popupOpen = false;
     bool popupWasOpen = false;
+    bool keysAvailable = false;
+    bool escapePending = false;
+
+    // A pointer gesture from press to release. The press snapshots the region, the
+    // drag edits it live so the view follows, and the release rolls it back and
+    // commits the whole gesture as one undo step.
+    enum class Drag { none, fadeIn, fadeOut, gain, trimStart, trimEnd, moveCursor, range, moveRegion,
+                      pan, loopIn, loopOut, punchIn, punchOut };
+    Drag drag = Drag::none;
+    ImGuiMouseButton dragButton = ImGuiMouseButton_Left;
+    ImVec2 dragDown;
+    ImVec2 dragLast;
+    bool gestureActive = false;
+    AudioRegion regionAtDragStart;
+    float dragOriginGainDb = 0.0f;
+    std::int64_t dragOriginTimeline = 0;
+    std::int64_t panStartScroll = 0;
+    std::int64_t snapGuide = -1;
+
+    // Regions selected alongside the focused one, which is always implicitly selected.
+    // Delete, move and nudge act on the lot.
+    std::vector<int> additional;
+    std::vector<std::int64_t> additionalOrigins;
+
+    // [start, end) in file samples of the focused region; active once it has width.
+    bool rangeActive = false;
+    std::int64_t rangeStartSample = 0;
+    std::int64_t rangeEndSample = 0;
+
+    bool fadeMenuIsIn = true;
+    ImVec2 propertiesAnchor;
+
+    enum class Field { none, title, label, gain, fade };
+    Field editing = Field::none;
+    bool fieldTakesFocus = false;
+    bool fieldDrawn = false;
+    std::array<char, 256> fieldText {};
+    std::string fieldOriginal;
 
     bool scrollDragging = false;
     float scrollDragX = 0.0f;
@@ -491,17 +681,6 @@ private:
                 return i;
         }
         return -1;
-    }
-
-    Hit hitTest (ImVec2 p) const
-    {
-        Hit hit;
-        if (layout.ruler.contains (p)) hit.zone = Zone::ruler;
-        else if (layout.wave.contains (p)) hit.zone = Zone::wave;
-        else if (layout.scroll.contains (p)) hit.zone = Zone::scroll;
-        if (hit.zone == Zone::wave)
-            hit.region = regionIndexAtX (p.x);
-        return hit;
     }
 
     // The visible width in samples, measured across the whole editor the way the JUCE
@@ -660,77 +839,507 @@ private:
         scrollSamples = std::clamp<std::int64_t> (scrollSamples + samples, 0, maxScroll());
     }
 
+    // Keys wait while a menu or a text field has the keyboard. The editor's own drag
+    // holds an item active, which would otherwise read as "busy" too.
     void handleKeys (const dw::Context& ctx)
     {
-        if (popupWasOpen || ! dw::shortcutsAvailable (ctx))
+        const auto& io = ImGui::GetIO();
+        keysAvailable = editing == Field::none && ! popupWasOpen && ! io.WantTextInput
+                     && (dw::shortcutsAvailable (ctx) || gestureActive);
+        if (! keysAvailable)
+            return;
+        for (const auto& entry : kEditorKeys)
+            if (ImGui::IsKeyPressed (entry.key, entry.repeats))
+                handleKey ({ entry.key, io.KeyCtrl, io.KeySuper, io.KeyShift, io.KeyAlt });
+    }
+
+    bool handleKey (const KeyChord& k)
+    {
+        const bool command = k.command();
+        const bool bare = ! command && ! k.shift && ! k.alt;
+        const auto is = [&k] (ImGuiKey key) { return k.key == key; };
+
+        if (is (ImGuiKey_Escape))
+        {
+            if (! bare)
+                return false;
+            if (rangeActive) rangeActive = false;
+            else if (! additional.empty()) additional.clear();
+            else dismissRequested = true;
+            return true;
+        }
+
+        if (command && (is (ImGuiKey_LeftArrow) || is (ImGuiKey_RightArrow)))
+        {
+            const auto step = std::max<std::int64_t> (1, viewSamples() / 4);
+            panBy (is (ImGuiKey_LeftArrow) ? -step : step);
+            return true;
+        }
+        if (bare && is (ImGuiKey_Home))
+        {
+            scrollSamples = 0;
+            return true;
+        }
+        if (bare && is (ImGuiKey_End))
+        {
+            scrollSamples = maxScroll();
+            return true;
+        }
+
+        // R and C are the shell's record and click keys; inside the editor they pick
+        // tools, as G does everywhere.
+        if (bare && (is (ImGuiKey_G) || is (ImGuiKey_R) || is (ImGuiKey_C)))
+        {
+            session.editMode = is (ImGuiKey_G) ? EditMode::Grab
+                             : is (ImGuiKey_R) ? EditMode::Range : EditMode::Cut;
+            return true;
+        }
+
+        if (command && is (ImGuiKey_Z))
+        {
+            undoStep (k.shift);
+            return true;
+        }
+
+        if (command && (is (ImGuiKey_RightBracket) || is (ImGuiKey_LeftBracket)))
+        {
+            if (host.navigateToRegion)
+                if (const int index = neighbourRegion (is (ImGuiKey_RightBracket) ? 1 : -1); index >= 0)
+                    host.navigateToRegion (trackIdx, index);
+            return true;
+        }
+
+        auto& transport = engine.getTransport();
+        if (! command && ! k.alt)
+        {
+            if (is (ImGuiKey_L) && ! k.shift)
+            {
+                transport.setLoopEnabled (! transport.isLoopEnabled());
+                return true;
+            }
+            if (is (ImGuiKey_P) && ! k.shift)
+            {
+                transport.setPunchEnabled (! transport.isPunchEnabled());
+                return true;
+            }
+            const auto* r = region();
+            if (r != nullptr && (is (ImGuiKey_LeftBracket) || is (ImGuiKey_RightBracket)))
+            {
+                const bool punch = k.shift;
+                const auto cursor = editCursorSample + (r->timelineStart - r->sourceOffset);
+                if (is (ImGuiKey_LeftBracket))
+                {
+                    if (punch) transport.placePunchRange (cursor, std::max (transport.getPunchOut(), cursor));
+                    else       transport.placeLoopRange (cursor, std::max (transport.getLoopEnd(), cursor));
+                }
+                else
+                {
+                    // An unset partner reads as 0, so ']' alone drops a zero-width marker
+                    // at the cursor rather than making a range from the session start.
+                    auto start = punch ? transport.getPunchIn() : transport.getLoopStart();
+                    if (start == 0) start = cursor;
+                    if (punch) transport.placePunchRange (std::min (start, cursor), cursor);
+                    else       transport.placeLoopRange (std::min (start, cursor), cursor);
+                }
+                return true;
+            }
+        }
+
+        if (command && is (ImGuiKey_E))
+        {
+            if (rangeActive) splitRange();
+            else             splitAtCursor();
+            return true;
+        }
+
+        if (! command && ! k.alt && is (ImGuiKey_F) && rangeActive)
+        {
+            fadeToSelection (k.shift);
+            return true;
+        }
+
+        if (command && is (ImGuiKey_C))
+        {
+            copyToClipboard();
+            return true;
+        }
+        if (command && is (ImGuiKey_X))
+        {
+            cutToClipboard();
+            return true;
+        }
+        if (command && is (ImGuiKey_V))
+        {
+            pasteFromClipboard();
+            return true;
+        }
+
+        if (bare && (is (ImGuiKey_Delete) || is (ImGuiKey_Backspace)))
+        {
+            deleteSelection();
+            return true;
+        }
+
+        if (! command && ! k.alt && (is (ImGuiKey_LeftArrow) || is (ImGuiKey_RightArrow)))
+        {
+            nudge (is (ImGuiKey_LeftArrow) ? -1 : 1, k.shift);
+            return true;
+        }
+
+        if (! command && ! k.alt)
+        {
+            if (is (ImGuiKey_Equal) || is (ImGuiKey_KeypadAdd))
+            {
+                zoomOnCursor (kZoomStep);
+                return true;
+            }
+            if (is (ImGuiKey_Minus) || is (ImGuiKey_KeypadSubtract))
+            {
+                zoomOnCursor (1.0f / kZoomStep);
+                return true;
+            }
+        }
+        if (bare && is (ImGuiKey_0))
+        {
+            zoomFit();
+            return true;
+        }
+        return false;
+    }
+
+    void undoStep (bool redo)
+    {
+        auto& undo = engine.getUndoManager();
+        if (redo) undo.redo();
+        else      undo.undo();
+        rangeActive = false;
+        additional.clear();
+        // An undone split can leave the focused index past the end of the list.
+        const auto count = static_cast<int> (trackRegions().size());
+        if (count == 0)
+            dismissRequested = true;
+        else
+            regionIdx = std::clamp (regionIdx, 0, count - 1);
+    }
+
+    bool trackFrozen() const
+    {
+        return session.track (trackIdx).frozen.load (std::memory_order_relaxed);
+    }
+
+    // Splits at both edges of the range, the right one first so the left edge's index
+    // still names the same region.
+    void splitRange()
+    {
+        const auto* r = region();
+        if (r == nullptr) return;
+        const auto a = std::min (rangeStartSample, rangeEndSample);
+        const auto b = std::max (rangeStartSample, rangeEndSample);
+        const auto tlA = r->timelineStart + (a - r->sourceOffset);
+        const auto tlB = r->timelineStart + (b - r->sourceOffset);
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction ("Split range");
+        undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
+        undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
+        rangeActive = false;
+    }
+
+    void fadeToSelection (bool fadeOut)
+    {
+        const auto* r = region();
+        if (r == nullptr) return;
+        const auto length = std::abs (rangeEndSample - rangeStartSample);
+        const AudioRegion before = *r;
+        AudioRegion after = before;
+        if (fadeOut)
+            after.fadeOutSamples = std::min (length, std::max<std::int64_t> (0, r->lengthInSamples - r->fadeInSamples));
+        else
+            after.fadeInSamples = std::min (length, std::max<std::int64_t> (0, r->lengthInSamples - r->fadeOutSamples));
+        commit (fadeOut ? "Fade-out to selection" : "Fade-in to selection", before, after);
+    }
+
+    // The range as a free-standing slice of the same file: no fades of its own and no
+    // takes, since a paste places it anew.
+    AudioRegion rangeChunk (const AudioRegion& r) const
+    {
+        AudioRegion chunk = r;
+        chunk.sourceOffset = std::min (rangeStartSample, rangeEndSample);
+        chunk.lengthInSamples = std::abs (rangeEndSample - rangeStartSample);
+        chunk.timelineStart = 0;
+        chunk.fadeInSamples = 0;
+        chunk.fadeOutSamples = 0;
+        chunk.previousTakes.clear();
+        return chunk;
+    }
+
+    void copyToClipboard()
+    {
+        const auto* r = region();
+        if (r == nullptr) return;
+        auto& clip = engine.getRegionClipboard();
+        clip.region = rangeActive ? rangeChunk (*r) : *r;
+        clip.sourceTrack = trackIdx;
+        clip.hasContent = true;
+    }
+
+    void cutToClipboard()
+    {
+        const auto* r = region();
+        if (r == nullptr) return;
+        if (cutRange())
+            return;
+        // A range cutRange refused - locked or frozen - is a no-op, not a licence to
+        // cut the whole region.
+        if (rangeActive || r->locked || trackFrozen())
             return;
 
-        const auto& io = ImGui::GetIO();
-        const bool command = io.KeyCtrl || io.KeySuper;
-        const bool plain = ! command && ! io.KeyAlt;
-        const auto pressed = [] (ImGuiKey key) { return ImGui::IsKeyPressed (key, true); };
+        auto& clip = engine.getRegionClipboard();
+        clip.region = *r;
+        clip.sourceTrack = trackIdx;
+        clip.hasContent = true;
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction ("Cut region");
+        undo.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx));
+        dismissRequested = true;
+    }
 
-        if (plain && ! io.KeyShift && ImGui::IsKeyPressed (ImGuiKey_Escape, false))
+    void pasteFromClipboard()
+    {
+        auto& clip = engine.getRegionClipboard();
+        if (! clip.hasContent) return;
+        AudioRegion pasted = clip.region;
+        if (const auto* r = region())
+            pasted.timelineStart = r->timelineStart + (editCursorSample - r->sourceOffset);
+        else
+            pasted.timelineStart = engine.getTransport().getPlayhead();
+        const int target = clip.sourceTrack >= 0 && clip.sourceTrack < Session::kNumTracks
+                         ? clip.sourceTrack : trackIdx;
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction ("Paste region");
+        undo.perform (new PasteRegionAction (session, engine, target, pasted));
+    }
+
+    // Removes the range from the focused region: split at whichever edges are inside
+    // it, since a split on the region's own edge does nothing, then delete the middle.
+    void deleteRange (const char* transaction)
+    {
+        const auto* r = region();
+        const auto a = std::min (rangeStartSample, rangeEndSample);
+        const auto b = std::max (rangeStartSample, rangeEndSample);
+        const auto regionStart = r->timelineStart;
+        const auto regionEnd = r->timelineStart + r->lengthInSamples;
+        const auto tlA = r->timelineStart + (a - r->sourceOffset);
+        const auto tlB = r->timelineStart + (b - r->sourceOffset);
+        const bool needLeft = tlA > regionStart;
+        const bool needRight = tlB < regionEnd;
+
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction (transaction);
+        if (needRight)
+            undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
+        int doomed = regionIdx;
+        if (needLeft)
+        {
+            undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
+            doomed = regionIdx + 1;
+        }
+        undo.perform (new DeleteRegionAction (session, engine, trackIdx, doomed));
+        rangeActive = false;
+        reanchorOrClose();
+    }
+
+    bool cutRange()
+    {
+        const auto* r = region();
+        if (r == nullptr || ! rangeActive || r->locked || trackFrozen())
+            return false;
+        if (std::max (rangeStartSample, rangeEndSample) <= std::min (rangeStartSample, rangeEndSample))
+            return false;
+        auto& clip = engine.getRegionClipboard();
+        clip.region = rangeChunk (*r);
+        clip.sourceTrack = trackIdx;
+        clip.hasContent = true;
+        deleteRange ("Cut chunk");
+        return true;
+    }
+
+    void deleteSelection()
+    {
+        const auto* r = region();
+        if (rangeActive && r != nullptr)
+        {
+            if (! r->locked && ! trackFrozen()
+                && std::max (rangeStartSample, rangeEndSample) > std::min (rangeStartSample, rangeEndSample))
+                deleteRange ("Delete chunk");
+            return;
+        }
+
+        // Highest index first, so each delete leaves the indices still to go intact.
+        std::vector<int> doomed = additional;
+        doomed.push_back (regionIdx);
+        std::sort (doomed.begin(), doomed.end(), std::greater<int>());
+        doomed.erase (std::unique (doomed.begin(), doomed.end()), doomed.end());
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction (doomed.size() > 1 ? "Delete regions" : "Delete region");
+        for (const int index : doomed)
+            undo.perform (new DeleteRegionAction (session, engine, trackIdx, index));
+        reanchorOrClose();
+    }
+
+    // After a delete, stay on a surviving region with the cursor inside it, or close
+    // when the track has none left.
+    void reanchorOrClose()
+    {
+        additional.clear();
+        const int total = static_cast<int> (trackRegions().size());
+        if (total <= 0)
         {
             dismissRequested = true;
             return;
         }
+        regionIdx = std::clamp (regionIdx, 0, total - 1);
+        if (const auto* r = region())
+            editCursorSample = std::clamp (editCursorSample, r->sourceOffset, r->sourceOffset + r->lengthInSamples);
+    }
 
-        if (command && ! io.KeyAlt && (pressed (ImGuiKey_LeftArrow) || pressed (ImGuiKey_RightArrow)))
+    // One beat, or one bar with Shift, for the focused region and every selected one.
+    void nudge (int direction, bool bar)
+    {
+        if (region() == nullptr) return;
+        const double bpm = std::max (1.0, static_cast<double> (session.tempoBpm.load (std::memory_order_relaxed)));
+        const int beatsPerBar = std::max (1, session.beatsPerBar.load (std::memory_order_relaxed));
+        const auto beat = static_cast<std::int64_t> (std::llround (sampleRate() * 60.0 / bpm));
+        const auto delta = direction * (bar ? beat * beatsPerBar : beat);
+
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction (delta < 0 ? "Nudge region left" : "Nudge region right");
+        const auto nudgeOne = [&] (int index)
         {
-            const auto step = std::max<std::int64_t> (1, viewSamples() / 4);
-            panBy (ImGui::IsKeyDown (ImGuiKey_LeftArrow) ? -step : step);
-            return;
-        }
+            auto& regions = session.track (trackIdx).regions;
+            if (index < 0 || index >= static_cast<int> (regions.size())) return;
+            const AudioRegion before = regions[static_cast<std::size_t> (index)];
+            if (before.locked) return;
+            AudioRegion after = before;
+            after.timelineStart = std::max<std::int64_t> (0, before.timelineStart + delta);
+            if (after.timelineStart == before.timelineStart) return;
+            undo.perform (new RegionEditAction (session, engine, trackIdx, index, before, after));
+        };
+        nudgeOne (regionIdx);
+        for (const int index : additional)
+            nudgeOne (index);
+    }
 
-        if (command && ! io.KeyAlt && ! io.KeyShift)
-        {
-            const bool next = ImGui::IsKeyPressed (ImGuiKey_RightBracket, false);
-            const bool previous = ImGui::IsKeyPressed (ImGuiKey_LeftBracket, false);
-            if ((next || previous) && host.navigateToRegion)
-                if (const int index = neighbourRegion (next ? 1 : -1); index >= 0)
-                    host.navigateToRegion (trackIdx, index);
-            return;
-        }
+    void joinSelected()
+    {
+        if (additional.empty()) return;
+        std::vector<int> indices = additional;
+        indices.push_back (regionIdx);
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction (("Join " + std::to_string (indices.size()) + " regions").c_str());
+        undo.perform (new JoinRegionsAction (session, engine, trackIdx, indices));
+        additional.clear();
+        // The joined region takes the lowest of the indices it replaced.
+        const int lowest = *std::min_element (indices.begin(), indices.end());
+        const int total = static_cast<int> (trackRegions().size());
+        regionIdx = std::clamp (lowest, 0, std::max (0, total - 1));
+    }
 
-        if (! plain)
-            return;
-
-        if (! io.KeyShift && pressed (ImGuiKey_Home))
-            scrollSamples = 0;
-        if (! io.KeyShift && pressed (ImGuiKey_End))
-            scrollSamples = maxScroll();
-        if (pressed (ImGuiKey_Equal) || pressed (ImGuiKey_KeypadAdd))
-            zoomOnCursor (kZoomStep);
-        if ((! io.KeyShift && pressed (ImGuiKey_Minus)) || pressed (ImGuiKey_KeypadSubtract))
-            zoomOnCursor (1.0f / kZoomStep);
-
-        auto& transport = engine.getTransport();
-        if (! io.KeyShift && ImGui::IsKeyPressed (ImGuiKey_L, false))
-            transport.setLoopEnabled (! transport.isLoopEnabled());
-        if (! io.KeyShift && ImGui::IsKeyPressed (ImGuiKey_P, false))
-            transport.setPunchEnabled (! transport.isPunchEnabled());
-
-        const bool in = ImGui::IsKeyPressed (ImGuiKey_LeftBracket, false);
-        const bool out = ImGui::IsKeyPressed (ImGuiKey_RightBracket, false);
+    void reverseRegion()
+    {
         const auto* r = region();
-        if (r == nullptr || (! in && ! out))
-            return;
-        const bool punch = io.KeyShift;
-        const auto cursor = editCursorSample + (r->timelineStart - r->sourceOffset);
-        if (in)
+        if (r == nullptr || r->locked || trackFrozen()) return;
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction ("Reverse region");
+        undo.perform (new ReverseRegionAction (session, engine, trackIdx, regionIdx));
+    }
+
+    template <typename Edit>
+    void editFocused (const char* transaction, Edit&& edit)
+    {
+        const auto* r = region();
+        if (r == nullptr) return;
+        const AudioRegion before = *r;
+        AudioRegion after = before;
+        edit (after);
+        commit (transaction, before, after);
+    }
+
+    void setColour (std::uint32_t argb)
+    {
+        const auto* r = region();
+        const RegionColour colour (argb);
+        if (r == nullptr || r->customColour == colour) return;
+        editFocused ("Set region colour", [&colour] (AudioRegion& a) { a.customColour = colour; });
+    }
+
+    void deleteFocused()
+    {
+        if (region() == nullptr) return;
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction ("Delete region");
+        undo.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx));
+        dismissRequested = true;
+    }
+
+    // Brings every overlap on the track to a matching pair of auto-fades, and retracts
+    // the auto-fades whose overlap is gone. A fade the user set is left alone. Each
+    // change joins the caller's undo transaction.
+    void syncAutoCrossfades()
+    {
+        auto& regions = session.track (trackIdx).regions;
+        std::vector<int> order (regions.size());
+        for (int i = 0; i < static_cast<int> (order.size()); ++i)
+            order[static_cast<std::size_t> (i)] = i;
+        std::sort (order.begin(), order.end(), [&regions] (int a, int b)
         {
-            if (punch) transport.placePunchRange (cursor, std::max (transport.getPunchOut(), cursor));
-            else       transport.placeLoopRange (cursor, std::max (transport.getLoopEnd(), cursor));
-        }
-        else
+            return regions[static_cast<std::size_t> (a)].timelineStart < regions[static_cast<std::size_t> (b)].timelineStart;
+        });
+        const auto overlap = [] (const AudioRegion& a, const AudioRegion& b) -> std::int64_t
         {
-            // An unset partner reads as 0, so ']' alone drops a zero-width marker at the
-            // cursor rather than making a range from the session start.
-            auto start = punch ? transport.getPunchIn() : transport.getLoopStart();
-            if (start == 0) start = cursor;
-            if (punch) transport.placePunchRange (std::min (start, cursor), cursor);
-            else       transport.placeLoopRange (std::min (start, cursor), cursor);
+            const auto aEnd = a.timelineStart + a.lengthInSamples;
+            if (aEnd <= b.timelineStart) return 0;
+            return std::min (aEnd - b.timelineStart, std::min (a.lengthInSamples, b.lengthInSamples));
+        };
+        const auto fit = [] (bool& automatic, std::int64_t& samples, FadeShape& shape, std::int64_t against)
+        {
+            if (! automatic && samples != 0)
+                return;
+            if (against > 0)
+            {
+                samples = against;
+                if (shape == FadeShape::Linear) shape = FadeShape::EqualPower;
+                automatic = true;
+            }
+            else if (automatic)
+            {
+                samples = 0;
+                shape = FadeShape::Linear;
+                automatic = false;
+            }
+        };
+
+        auto& undo = engine.getUndoManager();
+        for (std::size_t pos = 0; pos < order.size(); ++pos)
+        {
+            const int index = order[pos];
+            auto& self = regions[static_cast<std::size_t> (index)];
+            if (self.locked) continue;
+            const auto overlapPrev = pos > 0 ? overlap (regions[static_cast<std::size_t> (order[pos - 1])], self) : 0;
+            const auto overlapNext = pos + 1 < order.size()
+                                   ? overlap (self, regions[static_cast<std::size_t> (order[pos + 1])]) : 0;
+
+            const AudioRegion before = self;
+            AudioRegion after = before;
+            fit (after.fadeInAuto, after.fadeInSamples, after.fadeInShape, overlapPrev);
+            fit (after.fadeOutAuto, after.fadeOutSamples, after.fadeOutShape, overlapNext);
+            after.fadeInSamples = clampTo (after.fadeInSamples, 0, after.lengthInSamples);
+            after.fadeOutSamples = clampTo (after.fadeOutSamples, 0, after.lengthInSamples - after.fadeInSamples);
+
+            if (after.fadeInSamples == before.fadeInSamples && after.fadeOutSamples == before.fadeOutSamples
+                && after.fadeInShape == before.fadeInShape && after.fadeOutShape == before.fadeOutShape
+                && after.fadeInAuto == before.fadeInAuto && after.fadeOutAuto == before.fadeOutAuto)
+                continue;
+            undo.perform (new RegionEditAction (session, engine, trackIdx, index, before, after));
         }
     }
 
@@ -794,28 +1403,415 @@ private:
         scrollSamples = std::clamp<std::int64_t> (rel - viewSamples() / 4, 0, maxScroll());
     }
 
-    void handleWavePointer (dw::Context& ctx)
+    // The ruler and the waveform are one gesture surface. Dear ImGui tracks the press
+    // so the toolbar cannot take a drag that wanders over it; which gesture a press
+    // starts is decided here, in the order the JUCE editor's mouseDown decided it.
+    void handlePointer()
     {
-        dw::hitArea (ctx, "##wave", layout.wave.tl(), layout.wave.br());
-        if (! ImGui::IsItemActivated() || ! ImGui::IsMouseClicked (ImGuiMouseButton_Left))
-            return;
+        const Box area { layout.ruler.x0, layout.ruler.y0, layout.wave.x1, layout.wave.y1 };
+        ImGui::SetCursorScreenPos (area.tl());
+        ImGui::InvisibleButton ("##gesture", ImVec2 (std::max (1.0f, area.width()), std::max (1.0f, area.height())),
+                                ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight
+                                    | ImGuiButtonFlags_MouseButtonMiddle);
+        gestureActive = ImGui::IsItemActive();
 
         const auto& io = ImGui::GetIO();
-        const auto hit = hitTest (io.MousePos);
-        if (hit.zone != Zone::wave)
-            return;
+        // A press that closes an open menu only closes it.
+        if (ImGui::IsItemActivated() && ! popupWasOpen)
+            for (const auto button : { ImGuiMouseButton_Left, ImGuiMouseButton_Right, ImGuiMouseButton_Middle })
+                if (io.MouseClicked[button])
+                {
+                    pointerDown (button, io.MousePos);
+                    break;
+                }
 
-        if (hit.region >= 0 && hit.region != regionIdx)
+        if (drag == Drag::none)
+            return;
+        if (ImGui::IsMousePosValid() && (nonZero (io.MousePos.x - dragLast.x) || nonZero (io.MousePos.y - dragLast.y)))
         {
-            regionIdx = hit.region;
-            const auto* r = region();
-            editCursorSample = r->sourceOffset
-                             + std::clamp<std::int64_t> (timelineForX (io.MousePos.x) - r->timelineStart,
-                                                         0, r->lengthInSamples);
+            dragLast = io.MousePos;
+            pointerDrag (io.MousePos);
+        }
+        if (! io.MouseDown[dragButton])
+            pointerUp();
+    }
+
+    Drag loopPunchEdgeAt (float x) const
+    {
+        const auto& transport = engine.getTransport();
+        const float tolerance = layout.s (6.0f);
+        const auto near = [&] (std::int64_t sample) { return std::abs (x - xForTimeline (sample)) <= tolerance; };
+        if (transport.getLoopEnd() > transport.getLoopStart())
+        {
+            if (near (transport.getLoopStart())) return Drag::loopIn;
+            if (near (transport.getLoopEnd())) return Drag::loopOut;
+        }
+        if (transport.getPunchOut() > transport.getPunchIn())
+        {
+            if (near (transport.getPunchIn())) return Drag::punchIn;
+            if (near (transport.getPunchOut())) return Drag::punchOut;
+        }
+        return Drag::none;
+    }
+
+    bool overGainLine (ImVec2 p) const
+    {
+        return layout.wave.contains (p) && std::abs (p.y - gainLineY()) <= layout.s (4.0f);
+    }
+
+    void pointerDown (ImGuiMouseButton button, ImVec2 p)
+    {
+        auto* r = region();
+        if (r == nullptr)
+            return;
+        const auto& io = ImGui::GetIO();
+        const bool command = io.KeyCtrl || io.KeySuper;
+        const bool inWave = layout.wave.contains (p);
+        const bool inRuler = layout.ruler.contains (p);
+        dragButton = button;
+        dragDown = dragLast = p;
+
+        if (button == ImGuiMouseButton_Middle)
+        {
+            if (inWave)
+            {
+                drag = Drag::pan;
+                panStartScroll = scrollSamples;
+            }
             return;
         }
-        if (region() != nullptr)
-            editCursorSample = snapFileSample (fileSampleForX (io.MousePos.x), io.KeyCtrl || io.KeySuper);
+
+        if (button == ImGuiMouseButton_Left && inRuler)
+            if (const auto edge = loopPunchEdgeAt (p.x); edge != Drag::none)
+            {
+                drag = edge;
+                return;
+            }
+
+        if (button == ImGuiMouseButton_Right)
+        {
+            if (! r->locked && (fadeInDisc().contains (p) || fadeOutDisc().contains (p)))
+            {
+                fadeMenuIsIn = fadeInDisc().contains (p);
+                ImGui::OpenPopup (kFadeMenu);
+                return;
+            }
+            if (inWave)
+                editCursorSample = snapFileSample (fileSampleForX (p.x), command);
+            ImGui::OpenPopup (kContextMenu);
+            return;
+        }
+
+        // A ruler click seeks, and dragging on from it selects a range.
+        if (inRuler)
+        {
+            engine.getTransport().locate (snapTimelineSample (timelineForX (p.x), command));
+            rangeStartSample = rangeEndSample = snapFileSample (fileSampleForX (p.x), command);
+            rangeActive = false;
+            drag = Drag::range;
+            return;
+        }
+
+        regionAtDragStart = *r;
+        dragOriginGainDb = r->gainDb;
+        if (! r->locked)
+        {
+            if (fadeInDisc().contains (p)) drag = Drag::fadeIn;
+            else if (fadeOutDisc().contains (p)) drag = Drag::fadeOut;
+            else if (trimStart().contains (p)) drag = Drag::trimStart;
+            else if (trimEnd().contains (p)) drag = Drag::trimEnd;
+            else if (overGainLine (p)) drag = Drag::gain;
+            if (drag != Drag::none)
+                return;
+        }
+
+        // Draw is the automation pencil and never moves the region.
+        if (session.editMode == EditMode::Draw || ! inWave)
+            return;
+        bodyDown (p, command, io.KeyShift);
+    }
+
+    void bodyDown (ImVec2 p, bool command, bool shift)
+    {
+        const int hit = regionIndexAtX (p.x);
+        const auto& regions = trackRegions();
+
+        if (command && hit >= 0)
+        {
+            if (hit != regionIdx)
+            {
+                const auto it = std::find (additional.begin(), additional.end(), hit);
+                if (it != additional.end()) additional.erase (it);
+                else                        additional.push_back (hit);
+            }
+            return;
+        }
+
+        // Shift-click selects every region between the focused one and the one clicked.
+        if (shift && hit >= 0 && hit != regionIdx)
+        {
+            const auto anchor = regions[static_cast<std::size_t> (regionIdx)].timelineStart;
+            const auto clicked = regions[static_cast<std::size_t> (hit)].timelineStart;
+            additional.clear();
+            for (int i = 0; i < static_cast<int> (regions.size()); ++i)
+            {
+                const auto t = regions[static_cast<std::size_t> (i)].timelineStart;
+                if (i != regionIdx && t >= std::min (anchor, clicked) && t <= std::max (anchor, clicked))
+                    additional.push_back (i);
+            }
+            return;
+        }
+
+        const auto mode = session.editMode;
+        // Cut splits the region under the click, which after one cut need not be the
+        // focused one.
+        if (mode == EditMode::Cut && hit >= 0)
+        {
+            if (! regions[static_cast<std::size_t> (hit)].locked)
+            {
+                const auto at = snapTimelineSample (timelineForX (p.x), command);
+                auto& undo = engine.getUndoManager();
+                undo.beginNewTransaction ("Split region");
+                undo.perform (new SplitRegionAction (session, engine, trackIdx, hit, at));
+                regionIdx = hit;
+            }
+            return;
+        }
+
+        if (mode == EditMode::Range || shift || hit < 0)
+        {
+            // The range belongs to the slice it was taken on, so focus that one first.
+            if (mode == EditMode::Range && hit >= 0 && hit != regionIdx)
+            {
+                additional.clear();
+                regionIdx = hit;
+                regionAtDragStart = *region();
+                editCursorSample = snapFileSample (fileSampleForX (p.x), command);
+            }
+            rangeStartSample = rangeEndSample = fileSampleForX (p.x);
+            rangeActive = false;
+            drag = Drag::range;
+            return;
+        }
+
+        const bool clickedSelected = hit == regionIdx
+                                  || std::find (additional.begin(), additional.end(), hit) != additional.end();
+        if (! clickedSelected)
+            additional.clear();
+
+        // A press on another slice focuses it and picks it up to move; on the focused
+        // slice it drops the cursor and only becomes a move once the pointer travels.
+        if (hit != regionIdx)
+        {
+            regionIdx = hit;
+            const auto* r = region();
+            regionAtDragStart = *r;
+            dragOriginGainDb = r->gainDb;
+            editCursorSample = r->sourceOffset
+                             + std::clamp<std::int64_t> (timelineForX (p.x) - r->timelineStart, 0, r->lengthInSamples);
+            drag = Drag::moveRegion;
+        }
+        else
+        {
+            editCursorSample = snapFileSample (fileSampleForX (p.x), command);
+            drag = Drag::moveCursor;
+        }
+        dragOriginTimeline = region()->timelineStart;
+        additionalOrigins.clear();
+        for (const int index : additional)
+            additionalOrigins.push_back (index >= 0 && index < static_cast<int> (regions.size())
+                                         ? regions[static_cast<std::size_t> (index)].timelineStart : 0);
+    }
+
+    void pointerDrag (ImVec2 p)
+    {
+        auto* r = region();
+        if (r == nullptr)
+            return;
+        const auto& io = ImGui::GetIO();
+        const bool bypass = io.KeyCtrl || io.KeySuper;
+        const bool snapping = ! bypass && session.audioEditorSnap;
+
+        if (drag == Drag::loopIn || drag == Drag::loopOut || drag == Drag::punchIn || drag == Drag::punchOut)
+        {
+            auto& transport = engine.getTransport();
+            const auto t = std::max<std::int64_t> (0, snapTimelineSample (timelineForX (p.x), bypass));
+            if (drag == Drag::loopIn)       transport.setLoopRange (std::min (t, transport.getLoopEnd()), transport.getLoopEnd());
+            else if (drag == Drag::loopOut) transport.setLoopRange (transport.getLoopStart(), std::max (t, transport.getLoopStart()));
+            else if (drag == Drag::punchIn) transport.setPunchRange (std::min (t, transport.getPunchOut()), transport.getPunchOut());
+            else                            transport.setPunchRange (transport.getPunchIn(), std::max (t, transport.getPunchIn()));
+            return;
+        }
+
+        if (drag == Drag::pan)
+        {
+            const auto samples = static_cast<std::int64_t> (std::llround (
+                -(p.x - dragDown.x) / std::max (1.0e-5f, pixelsPerSampleOnScreen())));
+            scrollSamples = std::clamp<std::int64_t> (panStartScroll + samples, 0,
+                                                      std::max<std::int64_t> (0, anchorLength - 1));
+            return;
+        }
+
+        const double sr = sampleRate();
+        // Snaps in timeline samples, where the ruler is read, and leaves the guide on
+        // the grid line it landed on.
+        const auto snapToGrid = [&] (std::int64_t fileSample)
+        {
+            snapGuide = -1;
+            if (! snapping)
+                return fileSample;
+            const auto fileToTimeline = r->timelineStart - r->sourceOffset;
+            const auto t = fileSample + fileToTimeline;
+            const auto snapped = snap::snapAbsoluteToGridUnchecked (t, session, sr);
+            if (snapped != t)
+                snapGuide = snapped;
+            return snapped - fileToTimeline;
+        };
+
+        if (drag == Drag::moveCursor)
+        {
+            if (r->locked || std::abs (p.x - dragDown.x) <= layout.s (3.0f))
+            {
+                editCursorSample = fileSampleForX (p.x);
+                return;
+            }
+            drag = Drag::moveRegion;
+        }
+
+        if (drag == Drag::moveRegion)
+        {
+            if (r->locked)
+                return;
+            const auto rawDelta = timelineForX (p.x) - timelineForX (dragDown.x);
+            const auto delta = snapping ? snap::snapDeltaToGridUnchecked (rawDelta, session, sr) : rawDelta;
+            r->timelineStart = std::max<std::int64_t> (0, dragOriginTimeline + delta);
+            snapGuide = snapping && delta != rawDelta ? r->timelineStart : -1;
+            auto& regions = session.track (trackIdx).regions;
+            for (std::size_t i = 0; i < additional.size() && i < additionalOrigins.size(); ++i)
+            {
+                const int index = additional[i];
+                if (index < 0 || index >= static_cast<int> (regions.size())) continue;
+                auto& other = regions[static_cast<std::size_t> (index)];
+                if (! other.locked)
+                    other.timelineStart = std::max<std::int64_t> (0, additionalOrigins[i] + delta);
+            }
+            return;
+        }
+
+        if (drag == Drag::range)
+        {
+            rangeEndSample = snapToGrid (fileSampleForX (p.x));
+            rangeActive = rangeEndSample != rangeStartSample;
+            return;
+        }
+
+        switch (drag)
+        {
+            case Drag::fadeIn:
+                r->fadeInSamples = clampTo (snapToGrid (fileSampleForX (p.x)) - r->sourceOffset, 0,
+                                            std::max<std::int64_t> (0, r->lengthInSamples - r->fadeOutSamples));
+                snapGuide = r->timelineStart + r->fadeInSamples;
+                break;
+            case Drag::fadeOut:
+                r->fadeOutSamples = clampTo (r->sourceOffset + r->lengthInSamples - snapToGrid (fileSampleForX (p.x)), 0,
+                                             std::max<std::int64_t> (0, r->lengthInSamples - r->fadeInSamples));
+                snapGuide = r->timelineStart + r->lengthInSamples - r->fadeOutSamples;
+                break;
+            case Drag::gain:
+                // 0.1 dB a pixel, the tape strip's Alt-drag rate.
+                snapGuide = -1;
+                r->gainDb = std::clamp (dragOriginGainDb + (dragDown.y - p.y) / layout.scale * 0.1f, -24.0f, 12.0f);
+                break;
+            case Drag::trimStart:
+            {
+                // The start slides along the file, so the audio under it stays put.
+                const auto& origin = regionAtDragStart;
+                const auto offset = clampTo (snapToGrid (fileSampleForX (p.x)), 0,
+                                             origin.sourceOffset + origin.lengthInSamples - 1);
+                const auto delta = offset - origin.sourceOffset;
+                r->sourceOffset = offset;
+                r->lengthInSamples = origin.lengthInSamples - delta;
+                r->timelineStart = origin.timelineStart + delta;
+                r->fadeInSamples = clampTo (r->fadeInSamples, 0, r->lengthInSamples);
+                r->fadeOutSamples = clampTo (r->fadeOutSamples, 0, r->lengthInSamples - r->fadeInSamples);
+                break;
+            }
+            case Drag::trimEnd:
+            {
+                const auto length = clampTo (snapToGrid (fileSampleForX (p.x)) - regionAtDragStart.sourceOffset, 1,
+                                             std::numeric_limits<std::int64_t>::max());
+                r->lengthInSamples = length;
+                r->fadeInSamples = clampTo (r->fadeInSamples, 0, length);
+                r->fadeOutSamples = clampTo (r->fadeOutSamples, 0, length - r->fadeInSamples);
+                break;
+            }
+            case Drag::none: case Drag::moveCursor: case Drag::range: case Drag::moveRegion: case Drag::pan:
+            case Drag::loopIn: case Drag::loopOut: case Drag::punchIn: case Drag::punchOut:
+                break;
+        }
+    }
+
+    void pointerUp()
+    {
+        const auto finished = std::exchange (drag, Drag::none);
+        snapGuide = -1;
+
+        if (finished == Drag::range)
+        {
+            if (rangeEndSample < rangeStartSample)
+                std::swap (rangeStartSample, rangeEndSample);
+            rangeActive = rangeEndSample > rangeStartSample;
+            return;
+        }
+
+        auto* r = region();
+        if (r == nullptr || finished == Drag::pan || finished == Drag::moveCursor
+            || finished == Drag::loopIn || finished == Drag::loopOut
+            || finished == Drag::punchIn || finished == Drag::punchOut)
+            return;
+
+        // A fade the user dragged is theirs; the crossfade pass leaves it alone.
+        AudioRegion after = *r;
+        if (finished == Drag::fadeIn) after.fadeInAuto = false;
+        if (finished == Drag::fadeOut) after.fadeOutAuto = false;
+
+        const auto& before = regionAtDragStart;
+        if (after.sourceOffset == before.sourceOffset && after.timelineStart == before.timelineStart
+            && after.lengthInSamples == before.lengthInSamples && after.fadeInSamples == before.fadeInSamples
+            && after.fadeOutSamples == before.fadeOutSamples && after.fadeInAuto == before.fadeInAuto
+            && after.fadeOutAuto == before.fadeOutAuto && ! nonZero (after.gainDb - before.gainDb))
+            return;
+
+        // The action's perform applies the after state, so the live edit is rolled
+        // back first and the stored before is the authoritative one.
+        *r = before;
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction (finished == Drag::fadeIn    ? "Fade-in"
+                                : finished == Drag::fadeOut   ? "Fade-out"
+                                : finished == Drag::gain      ? "Region gain"
+                                : finished == Drag::trimStart ? "Trim start"
+                                : finished == Drag::trimEnd   ? "Trim end"
+                                                              : "Move region");
+        undo.perform (new RegionEditAction (session, engine, trackIdx, regionIdx, before, after));
+
+        if (finished == Drag::moveRegion)
+        {
+            auto& regions = session.track (trackIdx).regions;
+            for (std::size_t i = 0; i < additional.size() && i < additionalOrigins.size(); ++i)
+            {
+                const int index = additional[i];
+                if (index < 0 || index >= static_cast<int> (regions.size())) continue;
+                auto& other = regions[static_cast<std::size_t> (index)];
+                if (other.locked || other.timelineStart == additionalOrigins[i]) continue;
+                const AudioRegion otherAfter = other;
+                AudioRegion otherBefore = otherAfter;
+                otherBefore.timelineStart = additionalOrigins[i];
+                other = otherBefore;
+                undo.perform (new RegionEditAction (session, engine, trackIdx, index, otherBefore, otherAfter));
+            }
+        }
+        if (finished == Drag::moveRegion || finished == Drag::trimStart || finished == Drag::trimEnd)
+            syncAutoCrossfades();
     }
 
     std::int64_t snapFileSample (std::int64_t fileSample, bool bypass) const
@@ -826,6 +1822,13 @@ private:
         const auto fileToTimeline = r->timelineStart - r->sourceOffset;
         return snap::snapAbsoluteToGridUnchecked (fileSample + fileToTimeline, session, sampleRate())
              - fileToTimeline;
+    }
+
+    std::int64_t snapTimelineSample (std::int64_t timelineSample, bool bypass) const
+    {
+        if (bypass || ! session.audioEditorSnap)
+            return timelineSample;
+        return snap::snapAbsoluteToGridUnchecked (timelineSample, session, sampleRate());
     }
 
     void splitAtCursor()
@@ -897,9 +1900,20 @@ private:
         commit (after.locked ? "Lock region" : "Unlock region", before, after);
     }
 
-    void addControl (const char* name, const Box& box, bool enabled)
+    void addControl (std::string name, const Box& box, bool enabled)
     {
-        controls.push_back ({ name, box, enabled });
+        controls.push_back ({ std::move (name), box, enabled });
+    }
+
+    // A release over the control that the press also landed on.
+    static bool releasedOn (bool hovered)
+    {
+        return hovered && ImGui::IsItemDeactivated();
+    }
+
+    static bool doubleClicked (dw::Context& ctx, const char* id, const Box& box)
+    {
+        return dw::hitArea (ctx, id, box.tl(), box.br()) && ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left);
     }
 
     bool iconButton (dw::Context& ctx, const char* name, const Box& box, Glyph glyph, bool enabled)
@@ -909,7 +1923,7 @@ private:
         std::snprintf (id, sizeof (id), "##icon-%s", name);
         const bool hovered = dw::hitArea (ctx, id, box.tl(), box.br());
         const bool down = hovered && ImGui::IsItemActive();
-        const bool clicked = enabled && hovered && ImGui::IsMouseReleased (ImGuiMouseButton_Left);
+        const bool clicked = enabled && releasedOn (hovered);
 
         auto* const dl = ctx.dl;
         const auto disc = box.reduced (ctx.s (2.0f), ctx.s (2.0f));
@@ -1078,16 +2092,24 @@ private:
             chase = ! chase;
 
         if (iconButton (ctx, "Undo", square (left (dia)), Glyph::undo, undo.canUndo()))
-            undo.undo();
+            undoStep (false);
         if (iconButton (ctx, "Redo", square (left (dia)), Glyph::redo, undo.canRedo()))
-            undo.redo();
+            undoStep (true);
         inner.takeLeft (gap);
         if (iconButton (ctx, "Split", square (left (dia)), Glyph::split, haveRegion))
             splitAtCursor();
         if (iconButton (ctx, "Normalize", square (left (dia)), Glyph::normalize, haveRegion))
             normalize();
-        iconButton (ctx, "Reverse", square (left (dia)), Glyph::reverse, haveRegion);
-        iconButton (ctx, "Properties", square (left (dia)), Glyph::properties, haveRegion);
+        const auto* focused = region();
+        if (iconButton (ctx, "Reverse", square (left (dia)), Glyph::reverse,
+                        focused != nullptr && ! focused->locked && ! trackFrozen()))
+            reverseRegion();
+        const auto propertiesBox = square (left (dia));
+        if (iconButton (ctx, "Properties", propertiesBox, Glyph::properties, haveRegion))
+        {
+            propertiesAnchor = ImVec2 (propertiesBox.x0, propertiesBox.y1);
+            ImGui::OpenPopup (kPropertiesMenu);
+        }
         inner.takeLeft (ctx.s (4.0f));
 
         drawModeGroup (ctx, inner.takeLeft (std::min (ctx.s (360.0f), std::max (0.0f, inner.width()))), dia);
@@ -1116,13 +2138,101 @@ private:
                          dw::brighter (argb (track.colour.getARGB()), 0.3f), name.c_str(), dw::Align::left);
 
             // Read again: the buttons above may have split or undone the region.
-            if (const auto* r = region())
+            const auto titleBox = inner.reduced (ctx.s (8.0f), ctx.s (2.0f));
+            if (! drawField (ctx, Field::title, titleBox) && ! drawField (ctx, Field::label, titleBox))
+                if (const auto* r = region())
+                {
+                    const auto title = r->label.isNotEmpty() ? r->label.toStdString()
+                                                             : r->file.getFileName().toStdString();
+                    clippedText (ctx, titleBox, ctx.fonts->title, 12.5f, argb (kReadoutText), title.c_str(),
+                                 dw::Align::left);
+                    addControl ("Title", titleBox, true);
+                    if (doubleClicked (ctx, "##title", titleBox))
+                        beginEdit (Field::title, title);
+                }
+        }
+    }
+
+    void beginEdit (Field field, const std::string& text)
+    {
+        editing = field;
+        fieldTakesFocus = true;
+        // Opened after the fields were laid out, so it shows from the next frame.
+        fieldDrawn = true;
+        std::snprintf (fieldText.data(), fieldText.size(), "%s", text.c_str());
+        fieldOriginal = fieldText.data();
+    }
+
+    // The inline editor over `box` while `field` is the one being edited. True if it
+    // drew, so the caller skips the readout underneath.
+    bool drawField (dw::Context& ctx, Field field, const Box& box)
+    {
+        if (editing != field)
+            return false;
+        fieldDrawn = true;
+        const auto result = dw::textField (ctx, "##editor-field", box.tl(), box.br(), fieldText.data(),
+                                           fieldText.size(), fieldTakesFocus);
+        fieldTakesFocus = false;
+        if (result.committed || result.cancelled)
+        {
+            editing = Field::none;
+            // Enter on the text as it opened is not an edit.
+            if (result.committed && fieldOriginal != fieldText.data())
+                commitField (field, fieldText.data());
+        }
+        return true;
+    }
+
+    void commitField (Field field, const std::string& text)
+    {
+        const auto* r = region();
+        if (r == nullptr)
+            return;
+        switch (field)
+        {
+            case Field::title:
+            case Field::label:
             {
-                const auto title = r->label.isNotEmpty() ? r->label.toStdString()
-                                                         : r->file.getFileName().toStdString();
-                clippedText (ctx, inner.reduced (ctx.s (8.0f), ctx.s (2.0f)), ctx.fonts->title, 12.5f,
-                             argb (kReadoutText), title.c_str(), dw::Align::left);
+                // Accepting the file name as shown leaves the region unlabelled, so the
+                // title keeps following the file.
+                auto label = field == Field::title ? dusk::text::trim (text) : text;
+                if (field == Field::title && label == r->file.getFileName().toStdString())
+                    label.clear();
+                const auto value = RegionLabel::fromUTF8 (label.c_str());
+                editFocused ("Rename region", [&value] (AudioRegion& a) { a.label = value; });
+                break;
             }
+            case Field::gain:
+            {
+                const auto digits = dusk::text::retainCharacters (dusk::text::trim (text), "0123456789.-+");
+                if (digits.empty())
+                    return;
+                const auto db = std::clamp (dusk::text::getFloatValue (digits), -24.0f, 12.0f);
+                editFocused ("Set region gain", [db] (AudioRegion& a) { a.gainDb = db; });
+                break;
+            }
+            case Field::fade:
+            {
+                // "IN / OUT", or one value for the fade-in alone, and the readout's own
+                // "fade ... ms" dressing is tolerated so it can be retyped as shown.
+                auto raw = dusk::text::toLowerCase (dusk::text::trim (text));
+                raw = dusk::text::replace (dusk::text::replace (raw, "fade", ""), "ms", "");
+                const auto slash = raw.find ('/');
+                const auto inMs = std::max (0.0, dusk::text::getDoubleValue (dusk::text::trim (raw.substr (0, slash))));
+                const auto outMs = slash == std::string::npos
+                                 ? 0.0 : std::max (0.0, dusk::text::getDoubleValue (dusk::text::trim (raw.substr (slash + 1))));
+                const double sr = sampleRate();
+                editFocused ("Set region fades", [inMs, outMs, sr] (AudioRegion& a)
+                {
+                    const auto length = std::max<std::int64_t> (0, a.lengthInSamples);
+                    a.fadeInSamples = clampTo (static_cast<std::int64_t> (std::llround (inMs * sr / 1000.0)), 0, length);
+                    a.fadeOutSamples = clampTo (static_cast<std::int64_t> (std::llround (outMs * sr / 1000.0)), 0,
+                                                length - a.fadeInSamples);
+                });
+                break;
+            }
+            case Field::none:
+                break;
         }
     }
 
@@ -1198,7 +2308,7 @@ private:
         }
         clippedText (ctx, Box { tick.x1 + ctx.s (5.0f), box.y0, box.x1, box.y1 }, ctx.fonts->band, 12.0f,
                      ink, name, dw::Align::left);
-        return enabled && hovered && ImGui::IsMouseReleased (ImGuiMouseButton_Left);
+        return enabled && releasedOn (hovered);
     }
 
     void drawStatusBar (dw::Context& ctx)
@@ -1244,14 +2354,36 @@ private:
 
         char text[96];
         std::snprintf (text, sizeof (text), "%.1f dB", static_cast<double> (r->gainDb));
-        readout (ctx, gain, text, dw::Align::left);
+        if (! drawField (ctx, Field::gain, gain))
+        {
+            readout (ctx, gain, text, dw::Align::left);
+            if (doubleClicked (ctx, "##gain-readout", gain))
+                beginEdit (Field::gain, text);
+        }
 
+        r = region();
+        if (r == nullptr)
+            return;
         std::snprintf (text, sizeof (text), "fade %.0f / %.0f ms",
                        static_cast<double> (r->fadeInSamples) * 1000.0 / sr,
                        static_cast<double> (r->fadeOutSamples) * 1000.0 / sr);
-        readout (ctx, fade, text, dw::Align::left);
+        if (! drawField (ctx, Field::fade, fade))
+        {
+            readout (ctx, fade, text, dw::Align::left);
+            if (doubleClicked (ctx, "##fade-readout", fade))
+                beginEdit (Field::fade, text);
+        }
 
-        std::snprintf (text, sizeof (text), "smp %lld", static_cast<long long> (cursor));
+        r = region();
+        if (r == nullptr)
+            return;
+        // Raw sample counts, for working out latency by hand.
+        if (rangeActive)
+            std::snprintf (text, sizeof (text), "smp %lld +%lld",
+                           static_cast<long long> (r->timelineStart + (std::min (rangeStartSample, rangeEndSample) - r->sourceOffset)),
+                           static_cast<long long> (std::abs (rangeEndSample - rangeStartSample)));
+        else
+            std::snprintf (text, sizeof (text), "smp %lld", static_cast<long long> (cursor));
         readout (ctx, samples, text, dw::Align::left);
 
         const double seconds = static_cast<double> (r->lengthInSamples) / sr;
@@ -1362,6 +2494,38 @@ private:
         }
 
         hline (dl, lanes.at (0.0f, 0.5f).y, lanes.x0, lanes.x1, argb (kBeatLine, 0.6f), ctx.s (1.0f));
+
+        // The regions a group edit would also touch.
+        for (const int index : additional)
+        {
+            if (index < 0 || index >= static_cast<int> (regions.size())) continue;
+            const auto& reg = regions[static_cast<std::size_t> (index)];
+            const auto a = std::max (reg.timelineStart, anchorStart);
+            const auto b = std::min (reg.timelineStart + reg.lengthInSamples, anchorStart + anchorLength);
+            if (b > a)
+                dl->AddRectFilled (ImVec2 (xForTimeline (a), lanes.y0), ImVec2 (xForTimeline (b), lanes.y1),
+                                   argb (kSelection, 0.18f));
+        }
+    }
+
+    void drawRange (const dw::Context& ctx) const
+    {
+        if (! rangeActive) return;
+        const float xa = std::floor (xForFileSample (std::min (rangeStartSample, rangeEndSample)));
+        const float xb = std::floor (xForFileSample (std::max (rangeStartSample, rangeEndSample)));
+        if (xb <= xa) return;
+        const auto& wave = layout.wave;
+        ctx.dl->AddRectFilled (ImVec2 (xa, wave.y0), ImVec2 (xb, wave.y1), argb (kRange, 0.18f));
+        vline (ctx.dl, xa, wave.y0, wave.y1, argb (kRange, 0.6f), ctx.s (1.0f));
+        vline (ctx.dl, xb, wave.y0, wave.y1, argb (kRange, 0.6f), ctx.s (1.0f));
+    }
+
+    void drawSnapGuide (const dw::Context& ctx) const
+    {
+        if (snapGuide < 0) return;
+        const float x = xForTimeline (snapGuide);
+        if (x >= layout.wave.x0 && x < layout.wave.x1)
+            vline (ctx.dl, x, layout.wave.y0, layout.wave.y1, argb (kSelection, 0.85f), ctx.s (1.0f));
     }
 
     void drawColumns (ImDrawList* dl, const Slice& slice, const WaveformSource::Snapshot& snapshot, ImU32 colour) const
@@ -1768,8 +2932,225 @@ private:
         ctx.dl->AddRectFilled (thumb.tl(), thumb.br(), argb (kScrollThumb, hot ? 1.0f : 0.8f), ctx.s (3.0f));
     }
 
+    bool menuItem (const char* label, bool enabled = true, bool checked = false)
+    {
+        const bool picked = ImGui::MenuItem (label, nullptr, checked, enabled);
+        addControl (std::string ("menu:") + label, Box { ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y,
+                                                         ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y },
+                    enabled);
+        return picked;
+    }
+
+    // The editor's menus are Dear ImGui popups, which the window keeps inside the
+    // child and so inside the plate.
+    void drawPopups (dw::Context& ctx)
+    {
+        const ScopedFormStyle form (ctx);
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (ctx.s (6.0f), ctx.s (6.0f)));
+        ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, ImVec2 (ctx.s (8.0f), ctx.s (5.0f)));
+        drawContextMenu();
+        drawFadeMenu();
+        drawPropertiesMenu();
+        ImGui::PopStyleVar (2);
+    }
+
+    // True when the popup is up and its region still exists; closes it otherwise.
+    bool beginMenu (const char* id)
+    {
+        if (! ImGui::BeginPopup (id))
+            return false;
+        if (region() != nullptr)
+            return true;
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return false;
+    }
+
+    void drawContextMenu()
+    {
+        if (! beginMenu (kContextMenu))
+            return;
+        const auto* r = region();
+        const bool editLocked = r->locked || trackFrozen();
+        const bool muted = r->muted;
+        const bool locked = r->locked;
+        if (menuItem ("Split at edit cursor")) splitAtCursor();
+        if (menuItem ("Cut range", rangeActive && ! editLocked)) cutRange();
+        if (menuItem ("Join selected regions", ! additional.empty())) joinSelected();
+        ImGui::Separator();
+        if (menuItem ("Reset gain (0 dB)"))
+            editFocused ("Reset gain", [] (AudioRegion& a) { a.gainDb = 0.0f; });
+        if (menuItem ("Reset fades"))
+            editFocused ("Reset fades", [] (AudioRegion& a)
+            {
+                a.fadeInSamples = a.fadeOutSamples = 0;
+                a.fadeInAuto = a.fadeOutAuto = false;
+            });
+        ImGui::Separator();
+        if (menuItem (muted ? "Unmute" : "Mute"))
+            editFocused (muted ? "Unmute" : "Mute", [] (AudioRegion& a) { a.muted = ! a.muted; });
+        if (menuItem (locked ? "Unlock" : "Lock"))
+            editFocused (locked ? "Unlock" : "Lock", [] (AudioRegion& a) { a.locked = ! a.locked; });
+        ImGui::Separator();
+        if (menuItem ("Reverse", ! editLocked)) reverseRegion();
+        ImGui::EndPopup();
+    }
+
+    void drawFadeMenu()
+    {
+        if (! beginMenu (kFadeMenu))
+            return;
+        const auto* r = region();
+        const auto current = fadeMenuIsIn ? r->fadeInShape : r->fadeOutShape;
+        for (const auto& entry : kFadeShapes)
+        {
+            if (! menuItem (entry.label, true, entry.shape == current))
+                continue;
+            // Picking the shape already in place still makes the fade the user's.
+            const AudioRegion before = *region();
+            AudioRegion after = before;
+            if (fadeMenuIsIn) { after.fadeInShape = entry.shape; after.fadeInAuto = false; }
+            else              { after.fadeOutShape = entry.shape; after.fadeOutAuto = false; }
+            if (after.fadeInShape != before.fadeInShape || after.fadeOutShape != before.fadeOutShape
+                || after.fadeInAuto != before.fadeInAuto || after.fadeOutAuto != before.fadeOutAuto)
+                commit (fadeMenuIsIn ? "Fade-in shape" : "Fade-out shape", before, after);
+        }
+        ImGui::EndPopup();
+    }
+
+    void drawPropertiesMenu()
+    {
+        // Hung from the button, as the menu it replaces was.
+        ImGui::SetNextWindowPos (propertiesAnchor, ImGuiCond_Appearing);
+        if (! beginMenu (kPropertiesMenu))
+            return;
+        const auto* r = region();
+        const bool muted = r->muted;
+        const bool locked = r->locked;
+        const auto label = r->label.toStdString();
+        const auto customColour = r->customColour;
+
+        char text[160];
+        std::snprintf (text, sizeof (text), "Track %d  region %d", trackIdx + 1, regionIdx + 1);
+        ImGui::TextDisabled ("%s", text);
+        ImGui::Separator();
+        if (menuItem (label.empty() ? "Add label..." : "Rename label..."))
+            beginEdit (Field::label, label);
+        ImGui::Separator();
+        if (menuItem (muted ? "Unmute region" : "Mute region")) toggleMute();
+        if (menuItem (locked ? "Unlock region" : "Lock region")) toggleLock();
+        ImGui::Separator();
+        const bool colourOpen = ImGui::BeginMenu ("Color");
+        addControl ("menu:Color", Box { ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y,
+                                        ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y }, true);
+        if (colourOpen)
+        {
+            for (const auto& entry : kPalette)
+            {
+                const bool current = entry.argb == 0 ? customColour.isTransparent()
+                                                     : customColour.getARGB() == entry.argb;
+                if (menuItem (entry.label, true, current))
+                    setColour (entry.argb);
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (menuItem ("Delete region")) deleteFocused();
+
+        if (const auto* shown = region())
+        {
+            ImGui::Separator();
+            const double seconds = static_cast<double> (shown->lengthInSamples) / sampleRate();
+            const int minutes = static_cast<int> (seconds / 60.0);
+            std::snprintf (text, sizeof (text), "%s  -  %d kHz  -  %dch  -  %d:%06.3f",
+                           shown->file.getFileName().toStdString().c_str(),
+                           static_cast<int> (std::lround (sampleRate() / 1000.0)), shown->numChannels, minutes,
+                           seconds - 60.0 * minutes);
+            ImGui::TextDisabled ("%s", text);
+        }
+        ImGui::EndPopup();
+    }
+
+    // Grab and Cut show their glyph over a region, where there is something to take
+    // hold of or to split; the system pointer is hidden there so only one shows. The
+    // handles and Range keep system cursors, which draw correctly on their own.
+    void drawPointerGlyph (const dw::Context& ctx)
+    {
+        const auto* r = region();
+        if (r == nullptr || ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)
+            || ! ImGui::IsMousePosValid()
+            || ! ImGui::IsWindowHovered (ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
+            return;
+        const auto p = ImGui::GetIO().MousePos;
+
+        switch (drag)
+        {
+            case Drag::fadeIn: case Drag::fadeOut: case Drag::trimStart: case Drag::trimEnd:
+            case Drag::loopIn: case Drag::loopOut: case Drag::punchIn: case Drag::punchOut:
+                ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeEW);
+                return;
+            case Drag::gain:  ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeNS); return;
+            case Drag::pan:   ImGui::SetMouseCursor (ImGuiMouseCursor_Hand); return;
+            case Drag::range: ImGui::SetMouseCursor (ImGuiMouseCursor_TextInput); return;
+            case Drag::none: case Drag::moveCursor: case Drag::moveRegion: break;
+        }
+
+        if (layout.ruler.contains (p))
+        {
+            if (loopPunchEdgeAt (p.x) != Drag::none)
+                ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeEW);
+            return;
+        }
+        if (! layout.wave.contains (p))
+            return;
+        if (! r->locked)
+        {
+            if (fadeInDisc().contains (p) || fadeOutDisc().contains (p) || trimStart().contains (p)
+                || trimEnd().contains (p))
+            {
+                ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeEW);
+                return;
+            }
+            if (overGainLine (p))
+            {
+                ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeNS);
+                return;
+            }
+        }
+
+        const auto mode = session.editMode;
+        if (mode == EditMode::Range)
+        {
+            ImGui::SetMouseCursor (ImGuiMouseCursor_TextInput);
+            return;
+        }
+        // Draw is the automation pencil, which has nothing to draw on until a lane is up.
+        if ((mode != EditMode::Grab && mode != EditMode::Cut)
+            || (regionIndexAtX (p.x) < 0 && drag != Drag::moveRegion))
+            return;
+
+        ImGui::SetMouseCursor (ImGuiMouseCursor_None);
+        ctx.dl->PushClipRect (layout.body.tl(), layout.body.br(), false);
+        if (mode == EditMode::Cut)
+        {
+            // Drawn where the split will land, which Snap may move off the pointer.
+            const float x = std::floor (xForTimeline (snapTimelineSample (timelineForX (p.x), false)));
+            drawCutLine (ctx.dl, x, layout.wave.y0, layout.wave.y1, ctx.scale);
+            drawScissorsGlyph (ctx.dl, ImVec2 (x, p.y), ctx.scale);
+        }
+        else
+        {
+            drawHandGlyph (ctx.dl, p, ctx.scale);
+        }
+        ctx.dl->PopClipRect();
+    }
+
     void finishFrame()
     {
+        // A field whose box was not laid out this frame could never be committed
+        // or cancelled, and would hold the keys forever.
+        if (! std::exchange (fieldDrawn, false))
+            editing = Field::none;
         popupOpen = ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     }
 };

@@ -8,10 +8,29 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace duskstudio::imgui
 {
+// A key and the modifiers held with it.
+struct KeyChord
+{
+    ImGuiKey key = ImGuiKey_None;
+    bool ctrl = false;
+    bool super = false;
+    bool shift = false;
+    bool alt = false;
+
+    // Cmd on macOS, Ctrl elsewhere; either one, the way the JUCE editors read it.
+    bool command() const noexcept { return ctrl || super; }
+};
+
+// Reads a key the way JUCE's KeyPress describes one: "ctrl + E", "shift + cursor left",
+// "delete", "]". "command" is Cmd on macOS and Ctrl elsewhere. Empty for a key or a
+// modifier it does not know.
+std::optional<KeyChord> parseKeyDescription (const std::string& description);
+
 // What a native panel implements. The view owns its parameters and draws into the
 // frame the window gives it; everything around the body - the dim, the panel plate,
 // dismissal, the shortcut gate - belongs to the window.
@@ -141,11 +160,21 @@ public:
     void setGeometry (Geometry geometry);
     void close();
     bool isOpen() const noexcept;
+    // GuiHost's pointer modifier bits.
+    enum ScenarioModifier : int
+    {
+        scenarioShift = 1,
+        scenarioCommand = 2,
+        scenarioRightButton = 4
+    };
+
     bool clickControlForScenario (const std::string& control);
+    // "scroll-down", or a key as parseKeyDescription reads it.
     bool inputForScenario (const std::string& input);
     // A vertical wheel at the window centre; negative scrolls down.
     bool scrollForScenario (float wheel);
-    bool pointerControlForScenario (const std::string& control, float position, bool pressed);
+    bool pointerControlForScenario (const std::string& control, float position, bool pressed,
+                                    int modifiers = 0);
 
 private:
     struct Impl;

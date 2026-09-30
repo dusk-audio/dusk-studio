@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <utility>
@@ -85,7 +86,185 @@ std::filesystem::path firstFrameMarkerPath (const std::string& logTag)
         return {};
     return cfg / (logTag + "-first-frame");
 }
+
+struct NamedKey
+{
+    const char* name;
+    ImGuiKey key;
+    unsigned int code;
+};
+
+const std::array<NamedKey, 22>& namedKeys()
+{
+    static const std::array<NamedKey, 22> keys { {
+        { "spacebar", ImGuiKey_Space, DGL::kKeySpace },
+        { "space", ImGuiKey_Space, DGL::kKeySpace },
+        { "return", ImGuiKey_Enter, DGL::kKeyEnter },
+        { "enter", ImGuiKey_Enter, DGL::kKeyEnter },
+        { "escape", ImGuiKey_Escape, DGL::kKeyEscape },
+        { "backspace", ImGuiKey_Backspace, DGL::kKeyBackspace },
+        { "delete", ImGuiKey_Delete, DGL::kKeyDelete },
+        { "tab", ImGuiKey_Tab, '\t' },
+        { "home", ImGuiKey_Home, DGL::kKeyHome },
+        { "end", ImGuiKey_End, DGL::kKeyEnd },
+        { "page up", ImGuiKey_PageUp, DGL::kKeyPageUp },
+        { "page down", ImGuiKey_PageDown, DGL::kKeyPageDown },
+        { "cursor left", ImGuiKey_LeftArrow, DGL::kKeyLeft },
+        { "cursor right", ImGuiKey_RightArrow, DGL::kKeyRight },
+        { "cursor up", ImGuiKey_UpArrow, DGL::kKeyUp },
+        { "cursor down", ImGuiKey_DownArrow, DGL::kKeyDown },
+        { "insert", ImGuiKey_Insert, DGL::kKeyInsert },
+        { "f11", ImGuiKey_F11, DGL::kKeyF11 },
+        { "numpad +", ImGuiKey_KeypadAdd, DGL::kKeyPadAdd },
+        { "numpad add", ImGuiKey_KeypadAdd, DGL::kKeyPadAdd },
+        { "numpad -", ImGuiKey_KeypadSubtract, DGL::kKeyPadSubtract },
+        { "numpad subtract", ImGuiKey_KeypadSubtract, DGL::kKeyPadSubtract },
+    } };
+    return keys;
+}
+
+// The printable keys, by the character the key carries unshifted.
+struct PrintableKey
+{
+    char character;
+    ImGuiKey key;
+};
+
+const std::array<PrintableKey, 11>& printableKeys()
+{
+    static const std::array<PrintableKey, 11> keys { {
+        { '[', ImGuiKey_LeftBracket }, { ']', ImGuiKey_RightBracket }, { '=', ImGuiKey_Equal },
+        { '-', ImGuiKey_Minus }, { '.', ImGuiKey_Period }, { ',', ImGuiKey_Comma },
+        { '/', ImGuiKey_Slash }, { ';', ImGuiKey_Semicolon }, { '\'', ImGuiKey_Apostrophe },
+        { '\\', ImGuiKey_Backslash }, { '`', ImGuiKey_GraveAccent },
+    } };
+    return keys;
+}
+
+// The framework's key code for a chord's key: the unshifted character for a printable
+// key, the framework's own code otherwise. Zero for a key it has no code for.
+unsigned int frameworkKeyCode (ImGuiKey key)
+{
+    if (key >= ImGuiKey_A && key <= ImGuiKey_Z)
+        return static_cast<unsigned int> ('a' + (key - ImGuiKey_A));
+    if (key >= ImGuiKey_0 && key <= ImGuiKey_9)
+        return static_cast<unsigned int> ('0' + (key - ImGuiKey_0));
+    for (const auto& printable : printableKeys())
+        if (printable.key == key)
+            return static_cast<unsigned char> (printable.character);
+    for (const auto& named : namedKeys())
+        if (named.key == key)
+            return named.code;
+    return 0;
+}
+
+// Pointer and key modifiers in the framework's bits. Cmd is the command key on macOS
+// and Ctrl everywhere else, as JUCE reads "command".
+unsigned int frameworkModifiers (bool shift, bool ctrl, bool super, bool alt)
+{
+    return (shift ? DGL::kModifierShift : 0u) | (ctrl ? DGL::kModifierControl : 0u)
+         | (super ? DGL::kModifierSuper : 0u) | (alt ? DGL::kModifierAlt : 0u);
+}
+
+bool commandIsSuper()
+{
+   #if defined (__APPLE__)
+    return true;
+   #else
+    return false;
+   #endif
+}
+
+DGL::MouseCursor frameworkCursor (ImGuiMouseCursor cursor)
+{
+    switch (cursor)
+    {
+        case ImGuiMouseCursor_None:       return DGL::kMouseCursorNone;
+        case ImGuiMouseCursor_TextInput:  return DGL::kMouseCursorCaret;
+        case ImGuiMouseCursor_ResizeAll:  return DGL::kMouseCursorAllScroll;
+        case ImGuiMouseCursor_ResizeNS:   return DGL::kMouseCursorUpDown;
+        case ImGuiMouseCursor_ResizeEW:   return DGL::kMouseCursorLeftRight;
+        case ImGuiMouseCursor_ResizeNESW: return DGL::kMouseCursorUpRightDownLeft;
+        case ImGuiMouseCursor_ResizeNWSE: return DGL::kMouseCursorUpLeftDownRight;
+        case ImGuiMouseCursor_Hand:       return DGL::kMouseCursorHand;
+        case ImGuiMouseCursor_NotAllowed: return DGL::kMouseCursorNotAllowed;
+        default:                          return DGL::kMouseCursorArrow;
+    }
+}
 } // namespace
+
+std::optional<KeyChord> parseKeyDescription (const std::string& description)
+{
+    std::vector<std::string> parts;
+    for (std::size_t start = 0;;)
+    {
+        const auto at = description.find (" + ", start);
+        parts.push_back (description.substr (start, at == std::string::npos ? std::string::npos : at - start));
+        if (at == std::string::npos)
+            break;
+        start = at + 3;
+    }
+
+    const auto lower = [] (std::string text)
+    {
+        for (auto& c : text)
+            c = static_cast<char> (std::tolower (static_cast<unsigned char> (c)));
+        return text;
+    };
+
+    KeyChord chord;
+    const auto name = parts.back();
+    parts.pop_back();
+    for (const auto& part : parts)
+    {
+        const auto modifier = lower (part);
+        if (modifier == "shift") chord.shift = true;
+        else if (modifier == "ctrl" || modifier == "control") chord.ctrl = true;
+        else if (modifier == "alt" || modifier == "option") chord.alt = true;
+        else if (modifier == "command" || modifier == "cmd")
+            (commandIsSuper() ? chord.super : chord.ctrl) = true;
+        else return std::nullopt;
+    }
+
+    if (name.size() == 1)
+    {
+        const char c = name.front();
+        const auto folded = static_cast<char> (std::tolower (static_cast<unsigned char> (c)));
+        if (folded >= 'a' && folded <= 'z')
+            chord.key = static_cast<ImGuiKey> (ImGuiKey_A + (folded - 'a'));
+        else if (c >= '0' && c <= '9')
+            chord.key = static_cast<ImGuiKey> (ImGuiKey_0 + (c - '0'));
+        else if (c == ' ')
+            chord.key = ImGuiKey_Space;
+        else
+        {
+            // Some platforms report the shifted glyph rather than the key under it.
+            static constexpr std::array<std::pair<char, char>, 4> shifted { {
+                { '{', '[' }, { '}', ']' }, { '+', '=' }, { '_', '-' } } };
+            char unshifted = c;
+            for (const auto& [glyph, base] : shifted)
+                if (c == glyph)
+                {
+                    unshifted = base;
+                    chord.shift = true;
+                }
+            for (const auto& printable : printableKeys())
+                if (printable.character == unshifted)
+                    chord.key = printable.key;
+        }
+    }
+    else
+    {
+        const auto lowered = lower (name);
+        for (const auto& named : namedKeys())
+            if (lowered == named.name)
+                chord.key = named.key;
+    }
+
+    if (chord.key == ImGuiKey_None)
+        return std::nullopt;
+    return chord;
+}
 
 bool operator!= (const DuskPanelWindow::Geometry& a, const DuskPanelWindow::Geometry& b)
 {
@@ -116,14 +295,23 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             releasePending = true;
         }
 
-        void pointerForScenario (ImVec2 point, bool pressed)
+        void pointerForScenario (ImVec2 point, bool pressed, int modifiers)
         {
+            const bool command = (modifiers & scenarioCommand) != 0;
+            const auto mods = frameworkModifiers ((modifiers & scenarioShift) != 0,
+                                                  command && ! commandIsSuper(),
+                                                  command && commandIsSuper(), false);
             MotionEvent motion;
+            motion.mod = mods;
             motion.pos = { point.x, point.y };
             motion.absolutePos = motion.pos;
             onMotion (motion);
             MouseEvent button;
-            button.button = DGL::kMouseButtonLeft;
+            if (pressed)
+                heldButton = (modifiers & scenarioRightButton) != 0 ? DGL::kMouseButtonRight
+                                                                     : DGL::kMouseButtonLeft;
+            button.button = heldButton;
+            button.mod = mods;
             button.pos = motion.pos;
             button.absolutePos = motion.pos;
             button.press = pressed;
@@ -150,13 +338,14 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 scrollForScenario (-20.0);
                 return true;
             }
+            const auto chord = parseKeyDescription (input);
+            if (! chord)
+                return false;
             KeyboardEvent key;
-            if (input == "home") key.key = DGL::kKeyHome;
-            else if (input == "end") key.key = DGL::kKeyEnd;
-            else if (input == "enter") key.key = DGL::kKeyEnter;
-            else if (input == "escape") key.key = DGL::kKeyEscape;
-            else if (input.size() == 1) key.key = static_cast<unsigned char> (input.front());
-            else return false;
+            key.key = frameworkKeyCode (chord->key);
+            if (key.key == 0)
+                return false;
+            key.mod = frameworkModifiers (chord->shift, chord->ctrl, chord->super, chord->alt);
             key.press = true;
             onKeyboard (key);
             keyReleases.push_back (key.key);
@@ -178,6 +367,12 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         {
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()),
                         static_cast<float> (getWindow().getScaleFactor()));
+            // The framework does not act on the cursor a view asks Dear ImGui for.
+            if (const auto cursor = ImGui::GetMouseCursor(); cursor != appliedCursor)
+            {
+                appliedCursor = cursor;
+                setCursor (frameworkCursor (cursor));
+            }
             for (const auto code : std::exchange (keyReleases, {}))
             {
                 KeyboardEvent key;
@@ -204,6 +399,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         Impl& owner;
         bool releasePending = false;
         std::vector<unsigned int> keyReleases;
+        DGL::MouseButton heldButton = DGL::kMouseButtonLeft;
+        ImGuiMouseCursor appliedCursor = ImGuiMouseCursor_Arrow;
     };
 
     Impl (std::string className, std::string logTag, std::string displayName)
@@ -512,12 +709,13 @@ bool DuskPanelWindow::scrollForScenario (float wheel)
     impl->scenarioWidget->scrollForScenario (wheel);
     return true;
 }
-bool DuskPanelWindow::pointerControlForScenario (const std::string& control, float position, bool pressed)
+bool DuskPanelWindow::pointerControlForScenario (const std::string& control, float position, bool pressed,
+                                                 int modifiers)
 {
     ImVec2 point;
     if (! isOpen() || impl->view == nullptr || impl->scenarioWidget == nullptr
         || ! impl->view->controlPointForScenario (control, point, position)) return false;
-    impl->scenarioWidget->pointerForScenario (point, pressed);
+    impl->scenarioWidget->pointerForScenario (point, pressed, modifiers);
     return true;
 }
 } // namespace duskstudio::imgui

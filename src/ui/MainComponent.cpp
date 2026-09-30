@@ -1300,6 +1300,13 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return false;
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The audio editor's keys land here whenever its child does not have the
+    // keyboard, which on Windows is always. It answers first, as it did when it
+    // was a JUCE component holding the focus; what it passes on is the shell's.
+    if (audioEditorShowing() && audioEditorView != nullptr
+        && audioEditorView->handleShellKey (key.getTextDescription().toStdString()))
+        return true;
+
     // The audio settings panel is a native child window with its own Escape
     // handling, which only runs when that window has the keyboard. On Windows
     // it never takes focus, so every key reaches this handler instead and the
