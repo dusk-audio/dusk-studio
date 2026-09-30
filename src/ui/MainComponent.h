@@ -2,6 +2,7 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include "EmbeddedModal.h"
@@ -550,6 +551,9 @@ private:
     // accessors. Null once the window has closed.
     imgui::AudioEditorView* audioEditorView = nullptr;
     std::unique_ptr<DimOverlay> audioEditorDim;
+    // A badge click opens the editor on its press, so the second press of a
+    // double-click lands on the new dim; the dim ignores presses until then.
+    std::chrono::steady_clock::time_point audioEditorDimArmedAt {};
     PluginEditorHider audioEditorHider;
     // Set between close() and the window's closed callback, while the child is still
     // mapped: a reopen in that window replaces it rather than reading as a toggle.

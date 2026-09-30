@@ -81,8 +81,9 @@ public:
     bool duplicateSelectedRegion();
     // Negative deltaSamples moves earlier. Clamped at zero.
     bool nudgeSelectedRegion (std::int64_t deltaSamples);
-    // Alt+T (forward) and Alt+Shift+T: see cycleTake.
-    bool cycleSelectedTake (bool forward);
+    // Alt+T (forward) and Alt+Shift+T step the selected MIDI region round
+    // its take stack; see cycleTake.
+    bool cycleSelectedMidiTake (bool forward);
 
     // Single-click is reserved for direct manipulation. Double-click
     // opens the dedicated editor - one mental model across audio + MIDI.
@@ -91,6 +92,9 @@ public:
     // A single click on a track's name in the label column, once it can no
     // longer turn into a double-click.
     std::function<void (int trackIdx)> onTrackLabelClicked;
+    // A click on the take-count badge in a track's label cell, with the
+    // double-click timeout the click was made under.
+    std::function<void (int trackIdx, int doubleClickMs)> onTrackTakesClicked;
 
     // CursorOverlay sink - MainComponent wires these so the strip can push
     // its local mouse position into the shared overlay (which can't poll
@@ -190,11 +194,19 @@ public:
     auto rulerPointForScenario (float fraction) const { return rulerBounds().getRelativePoint (fraction, 0.25f); }
     std::int64_t rulerSampleForScenario (float fraction) const { return sampleAtX (rulerPointForScenario (fraction).x); }
     std::uint32_t regionAccentForScenario (int track, int region) const;
-    // On the take badge but clear of the fade-in handle, which wins the
-    // badge's top-left corner in hitTestRegion.
-    auto takeBadgePointForScenario (int track, int region) const
+    // The badge pill at the right of the track's label cell; empty when the
+    // track shows none or its row is hidden.
+    auto takeBadgeBounds (int track) const
     {
-        return audioRegionScreenRect (track, region).getTopLeft().translated (kFadeHitPx + 5, kFadeHandleH + 1);
+        const auto row = rowBounds (track);
+        const int w = row.isEmpty() ? 0 : takeBadgeWidth (track);
+        const int h = std::min (10, row.getHeight() - 2);
+        return row.withX (labelColW - w - 3).withWidth (w).withSizeKeepingCentre (w, h);
+    }
+    auto takeBadgePointForScenario (int track) const { return takeBadgeBounds (track).getCentre(); }
+    std::string takeBadgeTextForScenario (int track) const
+    {
+        return takeBadgeBounds (track).isEmpty() ? std::string() : takeBadgeText (track);
     }
     // The flag's left edge, in the pill band, by the same placement
     // hitTestMarker uses. The index must name an existing marker.
@@ -223,6 +235,14 @@ private:
     void refreshLabelColumnWidth();
     // -1 when y falls in no row, including the gaps between rows.
     int trackAtLabelY (int y) const noexcept;
+
+    // "3 takes" when the track holds two or more takes, "1 take" when its one
+    // take has no region on the track to reach it from, empty otherwise.
+    std::string takeBadgeText (int track) const;
+    // 0 when the track shows no badge.
+    int takeBadgeWidth (int track) const;
+    // -1 unless (x, y) is on a badge in the label column.
+    int takeBadgeTrackAt (int x, int y) const;
 
     // In-place rename over a row's name cell. Only visible while editing.
     juce::Label nameEditor;
@@ -266,8 +286,8 @@ private:
     std::int64_t sampleAtX (int x) const noexcept;
     int xForSample (std::int64_t s) const noexcept;
 
-    // op = which sub-area (body / edges / fade handles / take badge).
-    enum class RegionOp { None, Move, TrimStart, TrimEnd, TakeBadge, FadeIn, FadeOut, AdjustGain };
+    // op = which sub-area (body / edges / fade handles).
+    enum class RegionOp { None, Move, TrimStart, TrimEnd, FadeIn, FadeOut, AdjustGain };
     static constexpr int kFadeHandleH = 6;
     static constexpr int kFadeHitPx   = 5;
     static constexpr int kEdgeHitPx = 6;
@@ -404,6 +424,7 @@ private:
     // motion - renaming a track wouldn't reflect until the next play.
     std::array<juce::String, Session::kNumTracks> lastNames;
     std::array<juce::Colour, Session::kNumTracks> lastColours;
+    std::array<std::string, Session::kNumTracks> lastTakeBadges;
 
     bool        lastLoopEnabled  = false;
     std::int64_t lastLoopStart    = -1;

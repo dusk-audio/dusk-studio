@@ -815,6 +815,16 @@ MainComponent::MainComponent()
     tapeStrip->setChaseEnabled (appconfig::getFollowPlayheadDefault());
     tapeStrip->onMidiRegionDoubleClicked  = [this] (int t, int r) { openPianoRoll   (t, r); };
     tapeStrip->onAudioRegionDoubleClicked = [this] (int t, int r) { openAudioEditor (t, r); };
+    tapeStrip->onTrackTakesClicked        = [this] (int t, int doubleClickMs)
+    {
+        openAudioEditorOnTakes (t);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (audioEditorShowing())
+            audioEditorDimArmedAt = std::chrono::steady_clock::now() + std::chrono::milliseconds (doubleClickMs);
+       #else
+        (void) doubleClickMs;
+       #endif
+    };
     // consoleView is rebuilt on session load and template apply, so look it up per click.
     tapeStrip->onTrackLabelClicked = [this] (int t) { if (consoleView != nullptr) consoleView->focusStrip (t); };
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
@@ -1429,7 +1439,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // TIMELINE toggle: T (or Cmd/Ctrl + \) shows / hides the tape strip.
     // Mirrors the TransportBar's TIMELINE button so the user can flip the
     // arrangement view without mousing. Plain T is the mnemonic ("Timeline");
-    // \\ is the Reaper / Pro Tools-style alias. (Alt+T is take cycling below.)
+    // \\ is the Reaper / Pro Tools-style alias. (Alt+T is MIDI take cycling below.)
     // X11 gives Ctrl+\ a control character for its text, so the key code is
     // what carries the backslash there; other platforms fill in the text.
     if ((code == 'T' && noMods)
@@ -1439,16 +1449,13 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // Take cycling. Alt+T = forward (next take), Alt+Shift+T = backward.
-    // Routes through TapeStrip's selection state; no-op when no region
-    // is selected or the selection has no take history. T (plain) is
-    // already claimed by split-at-playhead, hence the Alt modifier.
+    // MIDI take cycling. Alt+T = forward (next take), Alt+Shift+T = backward,
+    // on the selected MIDI region; no-op when none is selected or it has no
+    // take history. Plain T is the timeline toggle, hence the Alt modifier.
     if (code == 'T' && mods.isAltDown() && ! cmd)
     {
-        if (tapeStrip != nullptr)
-        {
-            if (tapeStrip->cycleSelectedTake (! shift)) return true;
-        }
+        if (tapeStrip != nullptr && tapeStrip->cycleSelectedMidiTake (! shift))
+            return true;
     }
 
     // TapeStrip zoom: '=' / '+' zoom in, '-' zoom out, '0' fit.
@@ -6293,7 +6300,10 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
     audioEditorClosing = false;
 
     audioEditorDim = std::make_unique<DimOverlay> (audioEditorWindow->dimAlpha());
-    audioEditorDim->onClick = [this] { closeAudioEditor(); };
+    audioEditorDim->onClick = [this]
+    {
+        if (std::chrono::steady_clock::now() >= audioEditorDimArmedAt) closeAudioEditor();
+    };
 
     imgui::DuskPanelWindow::Callbacks callbacks;
     callbacks.dismissed = [this] { closeAudioEditor(); };

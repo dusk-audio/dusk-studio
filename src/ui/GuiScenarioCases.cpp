@@ -2967,6 +2967,116 @@ const ScenarioRegistrar audioTakeDelete { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioTakeDelete (host, ctx); }
 } };
 
+// A track holding two or more takes shows their count in its tape-strip label
+// cell, and the count follows a take added, deleted in the editor and brought
+// back by undo. One take shows "1 take" only while no region on the track can
+// reach it; none shows nothing. A click on the count opens the audio editor on
+// that track's take lanes, except on a frozen track, which says so instead, and
+// the second click of a double-click leaves the editor open.
+std::optional<ScenarioResult> runTrackTakeBadge (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    auto& single = session.track (1);
+    auto& empty = session.track (2);
+    for (auto* other : { &single, &empty })
+    {
+        other->frozen.store (false);
+        other->mode.store ((int) Track::Mode::Mono);
+        other->regions.clear();
+        other->takes.clear();
+        other->midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+    }
+    const auto ids = addLevelTakes (ctx, track, 3);
+    const auto only = addLevelTake (ctx, single, "Take 1", 0, kTakeCaseLength, 0.3f);
+    if (! ids || ! only) return ScenarioResult::fail ("could not write take fixture");
+    promoteTakeRange (track, track.takes[2], 0, kTakeCaseLength);
+    promoteTakeRange (single, single.takes[0], 0, kTakeCaseLength);
+    const auto oldest = ids->front();
+    const auto expected = laneOrder (*ids);
+    const bool expanded = host.timelineViewMatches (true);
+    ctx.cleanup ([&host, expanded] { if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't'); });
+    if (! expanded) host.pressKey ("T", 't');
+
+    const auto badgeReads = [&host] (int t, std::string text) { return [&host, t, text] { return host.tapeTakeBadgeText (t) == text; }; };
+    const auto confirming = [&host] (TakeId take)
+    {
+        const auto state = host.audioEditorTakeState();
+        return state.size() == 5 && state[1] == (std::int64_t) take;
+    };
+    const auto press = [&host, &ctx, oldest] (const char* kind)
+    {
+        return [&host, &ctx, oldest, kind]
+        { ctx.expect (host.clickAudioEditorButton (takeControl (kind, oldest)), std::string ("no ") + kind + " control on the lane"); };
+    };
+    const auto shown = [&host, oldest] (const char* kind)
+    { return [&host, oldest, kind] { return host.audioEditorTakePoint (kind, oldest, 0).size() == 2; }; };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx, &single]
+    {
+        ctx.expect (host.tapeTakeBadgeText (1).empty(), "a track with one take shows a take count");
+        ctx.expect (host.tapeTakeBadgeText (2).empty(), "a track with no take shows a take count");
+        ctx.expect (! host.clickTapeTakeBadge (1), "a track with one take has a badge to click");
+        ctx.expect (addLevelTake (ctx, single, "Take 2", 0, kTakeCaseLength, 0.5f).has_value(),
+                    "could not write take fixture");
+    }, badgeReads (0, "3 takes"), "a track with three takes does not show \"3 takes\"" });
+    steps->push_back ({ 100, [&host, &ctx, &track]
+    {
+        track.frozen.store (true);
+        ctx.expect (host.clickTapeTakeBadge (0), "the badge did not take a click");
+    }, badgeReads (1, "2 takes"), "a second take did not bring up \"2 takes\"" });
+    steps->push_back ({ 100, [&host, &ctx, &track]
+    {
+        ctx.expect (! host.audioEditorOpen(), "the badge opened the editor on a frozen track");
+        host.closeTopModal();
+        track.frozen.store (false);
+    }, [&host] { return host.modalText().find ("Track is frozen") != std::string::npos; },
+       "the badge on a frozen track did not say it is frozen" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickTapeTakeBadge (0), "the badge did not take a click"); },
+    [&host] { return host.modalStackEmpty(); }, "the frozen notice did not close" });
+    steps->push_back ({ 100, [&host, oldest] { host.revealAudioEditorTake (oldest); },
+                        [&host, expected] { return host.audioEditorOpen() && host.audioEditorTakeLanes() == expected; },
+                        "the badge did not open the editor on the track's take lanes" });
+    steps->push_back ({ 100, press ("delete"), shown ("delete"), "the oldest take's header never came into view" });
+    steps->push_back ({ 100, press ("confirm"), [confirming, oldest] { return confirming (oldest); },
+                        "Delete did not ask to confirm" });
+    steps->push_back ({ 100, [&host] { host.closeAudioEditor(); },
+                        [&host] { return host.audioEditorTakeLanes().size() == 2; }, "Delete did not take the lane away" });
+    steps->push_back ({ 100, [&ctx] { ctx.engine().getUndoManager().undo(); },
+                        [&host, badgeReads] { return ! host.audioEditorOpen() && badgeReads (0, "2 takes")(); },
+                        "deleting a take in the editor did not bring the count to \"2 takes\"" });
+    auto lone = std::make_shared<TakeId> (0);
+    steps->push_back ({ 100, [&ctx, &track, &empty, ids, lone]
+    {
+        ctx.expect (track.takes.size() == ids->size(), "Undo did not bring the deleted take back");
+        const auto id = addLevelTake (ctx, empty, "Take 1", 0, kTakeCaseLength, 0.4f);
+        if (ctx.expect (id.has_value(), "could not write take fixture")) *lone = *id;
+    }, badgeReads (0, "3 takes"), "undoing the delete did not bring the count back to \"3 takes\"" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickTapeTakeBadge (2, 2), "the \"1 take\" badge did not take a double-click"); },
+    badgeReads (2, "1 take"), "a lone take with no region on its track does not show \"1 take\"" });
+    steps->push_back ({ 100, [] {},
+                        [&host, lone] { return host.audioEditorOpen() && host.audioEditorTakeLanes() == std::vector<std::uint64_t> { *lone }; },
+                        "a double-click on the \"1 take\" badge did not leave the editor open on that take's lane" });
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        ctx.expect (host.audioEditorOpen(), "the second click of a double-click on the badge closed the editor");
+        host.closeAudioEditor();
+    } });
+    steps->push_back ({ 100, [] {}, [&host] { return ! host.audioEditorOpen(); }, "the editor did not close" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar trackTakeBadge { Scenario {
+    "gui.track_take_badge", { "gui", "tape", "take", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTrackTakeBadge (host, ctx); }
+} };
+
 // Audition makes the track play one take alone in place of its regions, and moves a
 // stopped playhead to the take's start. Another lane's Audition replaces it, a second
 // press ends it, and closing the editor ends it too.
@@ -11752,36 +11862,55 @@ const ScenarioRegistrar regionMenuItems { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runRegionMenuItems (host, ctx); }
 } };
 
-// Alt+T and Alt+Shift+T step the selected region round its take ring, key
-// after key, the take badge steps it forward as one undo step, and the Takes
-// submenu brings a chosen take live.
+// Alt+T and Alt+Shift+T step the selected MIDI region round its take ring, key
+// after key, undo and redo drop the selection they step, and the Takes submenu
+// brings a chosen take live. An audio region carrying the same old history has
+// neither: the keys leave it alone and its menu has no Takes.
 std::optional<ScenarioResult> runRegionTakeControls (GuiHost& host, ScenarioContext& ctx)
 {
     AudioRegion live;
     if (auto early = seedTapeRegion (host, ctx, live)) return early;
-    auto& track = ctx.session().track (0);
+    auto& session = ctx.session();
+    auto& audioTrack = session.track (0);
     const double rate = ctx.engine().getCurrentSampleRate();
-    std::vector<std::string> files { live.file.getFullPathName().toStdString() };
-    for (const char* name : { "TakeB.wav", "TakeC.wav" })
+    const auto alternate = ctx.tempDir() / "TakeB.wav";
+    if (! writeRampFixture (alternate, rate, live.sourceOffset + live.lengthInSamples))
+        return ScenarioResult::fail ("could not write a take fixture");
+    TakeRef audioTake;
+    audioTake.file = decltype (audioTake.file) (alternate.u8string().c_str());
+    audioTake.sourceOffset = live.sourceOffset;
+    audioTake.lengthInSamples = live.lengthInSamples;
+    audioTrack.regions.front().previousTakes = { audioTake };
+    const auto liveFile = live.file.getFullPathName().toStdString();
+
+    auto& midiTrack = session.track (1);
+    midiTrack.frozen.store (false);
+    midiTrack.regions.clear();
+    midiTrack.mode.store ((int) Track::Mode::Midi);
+    const auto takeOf = [] (int pitch)
     {
-        const auto path = ctx.tempDir() / name;
-        if (! writeRampFixture (path, rate, live.sourceOffset + live.lengthInSamples))
-            return ScenarioResult::fail ("could not write a take fixture");
-        TakeRef take;
-        take.file = decltype (take.file) (path.u8string().c_str());
-        take.sourceOffset = live.sourceOffset;
-        take.lengthInSamples = live.lengthInSamples;
-        track.regions.front().previousTakes.push_back (take);
-        files.push_back (take.file.getFullPathName().toStdString());
-    }
-    const auto liveFile = [&track]
-    {
-        return track.regions.size() == 1 ? track.regions.front().file.getFullPathName().toStdString() : std::string();
+        MidiTakeRef take;
+        take.lengthInTicks = 3840;
+        take.notes = { { 1, pitch, 100, 0, 480 } };
+        return take;
     };
-    auto steps = std::make_shared<std::vector<Step>>();
-    const auto expectLive = [&ctx, liveFile, steps] (std::string file, std::string failure)
+    MidiRegion midi;
+    midi.timelineStart = live.timelineStart;
+    midi.lengthInTicks = 3840;
+    midi.lengthInSamples = live.lengthInSamples;
+    midi.notes = takeOf (60).notes;
+    midi.previousTakes = { takeOf (62), takeOf (64) };
+    midiTrack.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::initializer_list<MidiRegion> { midi }));
+    const auto livePitch = [&midiTrack]
     {
-        steps->push_back ({ 200, [&ctx, liveFile, file, failure] { ctx.expect (liveFile() == file, failure); } });
+        const auto& regions = midiTrack.midiRegions.current();
+        return regions.size() == 1 && regions.front().notes.size() == 1 ? regions.front().notes.front().noteNumber : -1;
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto expectPitch = [&ctx, livePitch, steps] (int pitch, std::string failure)
+    {
+        steps->push_back ({ 200, [&ctx, livePitch, pitch, failure] { ctx.expect (livePitch() == pitch, failure); } });
     };
     // One click: a take step keeps the region selected for the next key.
     const auto press = [&host, &ctx, steps] (std::string key, char text)
@@ -11790,35 +11919,61 @@ std::optional<ScenarioResult> runRegionTakeControls (GuiHost& host, ScenarioCont
         { ctx.expect (host.pressPeerKey (key, text), key + " was not handled"); } });
     };
     steps->push_back ({ 500, [&host, &ctx]
-    { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region with a timeline click"); } });
+    { ctx.expect (host.clickMidiRegion (1, 0), "could not select the MIDI region with a timeline click"); } });
     press ("alt + T", 't');
-    expectLive (files[1], "Alt+T did not bring the next take live");
+    expectPitch (62, "Alt+T did not bring the next MIDI take live");
     press ("alt + shift + T", 'T');
-    expectLive (files[0], "Alt+Shift+T did not step back to the previous take");
+    expectPitch (60, "Alt+Shift+T did not step back to the previous MIDI take");
     press ("alt + shift + T", 'T');
-    expectLive (files[2], "Alt+Shift+T did not wrap to the last take");
-    steps->push_back ({ 700, [&host, &ctx]
-    { ctx.expect (host.clickTakeBadge (0, 0), "the take badge did not take a click"); } });
-    expectLive (files[0], "the take badge did not step to the next take");
+    expectPitch (64, "Alt+Shift+T did not wrap to the last MIDI take");
     steps->push_back ({ 100, [&ctx] { ctx.engine().getUndoManager().undo(); } });
-    expectLive (files[2], "undo did not take back the badge's step");
+    expectPitch (60, "undo did not take back the last step");
     // Undo may have moved regions, so it drops the selection: Alt+T has
     // nothing to step until the region is clicked again.
     steps->push_back ({ 100, [&host] { host.pressPeerKey ("alt + T", 't'); } });
-    expectLive (files[2], "Alt+T stepped a region the undo left unselected");
+    expectPitch (60, "Alt+T stepped a region the undo left unselected");
     steps->push_back ({ 700, [&host, &ctx]
-    { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region with a timeline click"); } });
+    { ctx.expect (host.clickMidiRegion (1, 0), "could not select the MIDI region with a timeline click"); } });
     steps->push_back ({ 100, [&ctx] { ctx.engine().getUndoManager().redo(); } });
-    expectLive (files[0], "redo did not bring the badge's step back");
+    expectPitch (64, "redo did not bring the step back");
     steps->push_back ({ 100, [&host] { host.pressPeerKey ("alt + T", 't'); } });
-    expectLive (files[0], "Alt+T stepped a region the redo left unselected");
-    steps->push_back ({ 700, [&host, &ctx]
-    { ctx.expect (host.clickAudioRegion (0, 0, true), "the region did not take a right-click"); } });
+    expectPitch (64, "Alt+T stepped a region the redo left unselected");
+    auto secondTake = std::make_shared<int> (-1);
+    steps->push_back ({ 700, [&host, &ctx, &midiTrack, secondTake]
+    {
+        const auto& regions = midiTrack.midiRegions.current();
+        if (regions.size() == 1 && ! regions.front().previousTakes.empty()
+            && regions.front().previousTakes.front().notes.size() == 1)
+            *secondTake = regions.front().previousTakes.front().notes.front().noteNumber;
+        ctx.expect (host.clickMidiRegion (1, 0, true), "the MIDI region did not take a right-click");
+    } });
     steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.clickContextMenuItem ("Takes"), "the region menu has no Takes submenu"); } });
+    { ctx.expect (host.clickContextMenuItem ("Takes"), "the MIDI region menu has no Takes submenu"); } });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickContextMenuItem ("Take 2"), "the Takes submenu has no Take 2"); } });
-    expectLive (files[1], "Take 2 in the Takes submenu did not bring that take live");
+    steps->push_back ({ 200, [&ctx, livePitch, secondTake]
+    { ctx.expect (*secondTake >= 0 && livePitch() == *secondTake, "Take 2 in the Takes submenu did not bring that take live"); } });
+
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickAudioRegion (0, 0), "could not select the audio region with a timeline click"); } });
+    steps->push_back ({ 100, [&host, &ctx, &audioTrack, liveFile]
+    {
+        host.pressPeerKey ("alt + T", 't');
+        host.pressPeerKey ("alt + shift + T", 'T');
+        ctx.expect (audioTrack.regions.size() == 1
+                        && audioTrack.regions.front().file.getFullPathName().toStdString() == liveFile
+                        && audioTrack.regions.front().previousTakes.size() == 1,
+                    "Alt+T or Alt+Shift+T stepped an audio region's takes");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickAudioRegion (0, 0, true), "the audio region did not take a right-click"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        const auto items = host.contextMenuItems();
+        ctx.expect (! items.empty(), "the audio region menu did not open");
+        ctx.expect (std::find (items.begin(), items.end(), "Takes") == items.end(), "the audio region menu has a Takes submenu");
+        host.closeTopModal();
+    } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -13872,16 +14027,13 @@ std::optional<ScenarioResult> runEditKeys (GuiHost& host, ScenarioContext& ctx)
     steps->push_back ({ 500, click });
     steps->push_back ({ 150, [&host, &ctx, &track, second]
     {
-        ctx.expect (host.pressKey ("alt + " + keyCodeDescription ('t'), 't'), "Take cycling was not handled");
-        if (ctx.expect (track.regions.size() == 1, "take cycling changed the region count"))
-            ctx.expect (track.regions[0].lengthInSamples == second * 2
-                        && track.regions[0].sourceOffset == second,
-                        "Alt+T did not bring the alternate take forward");
-        ctx.expect (host.pressKey ("alt + shift + T", 'T'), "Backward take cycling was not handled");
-        if (ctx.expect (track.regions.size() == 1, "backward take cycling changed the region count"))
+        host.pressKey ("alt + " + keyCodeDescription ('t'), 't');
+        host.pressKey ("alt + shift + T", 'T');
+        if (ctx.expect (track.regions.size() == 1, "Alt+T changed the region count"))
             ctx.expect (track.regions[0].lengthInSamples == second * 4
-                        && track.regions[0].sourceOffset == 0,
-                        "Alt+Shift+T did not restore the original take");
+                        && track.regions[0].sourceOffset == 0
+                        && track.regions[0].previousTakes.size() == 1,
+                        "Alt+T or Alt+Shift+T stepped an audio region's takes");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;

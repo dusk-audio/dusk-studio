@@ -1857,13 +1857,30 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             && ! owner.tapeStrip->audioRegionScreenRect (track, region).isEmpty();
     }
 
-    bool clickTakeBadge (int track, int region) override
+    bool clickMidiRegion (int track, int region, bool right) override
+    {
+        if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;
+        const auto bounds = owner.tapeStrip->midiRegionScreenRect (track, region);
+        if (bounds.isEmpty()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
+        return clickAt (point.x, point.y, 1, right);
+    }
+
+    std::string tapeTakeBadgeText (int track) const override
     {
         auto* tape = owner.tapeStrip.get();
-        if (tape == nullptr || ! tape->isShowing() || tape->audioRegionScreenRect (track, region).isEmpty())
-            return false;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (tape, tape->takeBadgePointForScenario (track, region)).toFloat();
-        return clickAt (point.x, point.y, 1);
+        if (tape == nullptr || ! tape->isShowing()
+            || ! tape->getLocalBounds().withTrimmedTop (TapeStrip::kRulerH).contains (tape->takeBadgePointForScenario (track)))
+            return {};
+        return tape->takeBadgeTextForScenario (track);
+    }
+
+    bool clickTapeTakeBadge (int track, int clicks) override
+    {
+        if (tapeTakeBadgeText (track).empty()) return false;
+        auto* tape = owner.tapeStrip.get();
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (tape, tape->takeBadgePointForScenario (track)).toFloat();
+        return clickAt (point.x, point.y, clicks);
     }
 
     bool clickTapeMarker (int index, bool right) override

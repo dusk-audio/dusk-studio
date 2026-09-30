@@ -52,7 +52,7 @@ public:
                 { "K", "Virtual MIDI keyboard" }, { "T", "Show / hide timeline" },
                 { "U", "Tuner" }, { "Shift+M", "Time signature" },
                 { mod ('E'), "Split region at playhead / cursor" },
-                { "F11", "Fullscreen" }, { alt + "T", "Cycle take (Shift = back)" },
+                { "F11", "Fullscreen" }, { alt + "T", "Cycle MIDI take (Shift = back)" },
                 { "?", "This shortcut list" } } },
             { "Zoom", {
                 { "-", "Zoom out" }, { "=", "Zoom in" }, { mod ('0'), "Zoom to fit" } } },

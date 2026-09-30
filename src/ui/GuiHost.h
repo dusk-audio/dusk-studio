@@ -388,7 +388,11 @@ public:
     virtual bool pressPianoRollKey (const std::string& description) = 0;
     virtual bool doubleClickAudioRegion (int track, int region) = 0;
     virtual bool clickAudioRegion (int track, int region, bool right = false) = 0;
-    virtual bool clickTakeBadge (int track, int region) = 0;
+    virtual bool clickMidiRegion (int track, int region, bool right = false) = 0;
+    // The take-count badge in a track's label cell, as drawn ("3 takes"), and
+    // one or more clicks on it. Empty text and false when that track shows no badge.
+    virtual std::string tapeTakeBadgeText (int track) const = 0;
+    virtual bool clickTapeTakeBadge (int track, int clicks = 1) = 0;
     // A marker pill in the tape ruler: clicked, or dragged to a ruler fraction.
     virtual bool clickTapeMarker (int index, bool right) = 0;
     virtual bool dragTapeMarker (int index, float toFraction) = 0;
