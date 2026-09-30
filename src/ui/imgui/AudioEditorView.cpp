@@ -2102,14 +2102,23 @@ private:
         return compSeamNear (session.track (trackIdx), timelineForX (p.x), tolerance);
     }
 
-    // Whether the regions a seam drag holds are still the ones it picked up.
+    // Whether the regions a seam drag holds are still the ones it picked up: the same
+    // take and file, with the edges a seam move never touches where they were. Loop
+    // passes share a file, so the file alone could name a neighbour.
     bool seamStillHeld() const
     {
         const auto& regions = trackRegions();
         const auto count = static_cast<int> (regions.size());
-        return seamDragged.left >= 0 && seamDragged.left < count && seamDragged.right >= 0 && seamDragged.right < count
-            && regions[static_cast<std::size_t> (seamDragged.left)].file == seamLeftAtDragStart.file
-            && regions[static_cast<std::size_t> (seamDragged.right)].file == seamRightAtDragStart.file;
+        if (seamDragged.left < 0 || seamDragged.left >= count || seamDragged.right < 0 || seamDragged.right >= count)
+            return false;
+        const auto& left = regions[static_cast<std::size_t> (seamDragged.left)];
+        const auto& right = regions[static_cast<std::size_t> (seamDragged.right)];
+        const auto& leftWas = seamLeftAtDragStart;
+        const auto& rightWas = seamRightAtDragStart;
+        return left.file == leftWas.file && left.takeId == leftWas.takeId
+            && left.timelineStart == leftWas.timelineStart && left.sourceOffset == leftWas.sourceOffset
+            && right.file == rightWas.file && right.takeId == rightWas.takeId
+            && right.timelineStart + right.lengthInSamples == rightWas.timelineStart + rightWas.lengthInSamples;
     }
 
     // The drag edited both regions live; the release rolls them back and records the

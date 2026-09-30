@@ -318,15 +318,21 @@ std::int64_t clampSeamShift (const Track& track, CompSeam seam, std::int64_t del
     const auto* leftTake = findTake (track, left.takeId);
     const auto* rightTake = findTake (track, right.takeId);
 
-    // Later: the left region may read on to the end of its take; the right one must
-    // keep its fades and a sample.
-    auto most = right.lengthInSamples - right.fadeInSamples - right.fadeOutSamples - 1;
+    // Each region keeps its fades and the crossfade inside it, and a sample besides, so
+    // the right region always starts after the left one does.
+    const auto overlap = left.timelineStart + left.lengthInSamples - right.timelineStart;
+    const auto keep = [overlap] (const AudioRegion& r)
+    { return std::max (r.fadeInSamples + r.fadeOutSamples, overlap) + 1; };
+
+    // Later: the left region may read on to the end of its take.
+    auto most = right.lengthInSamples - keep (right);
     most = std::min (most, leftTake == nullptr ? 0
                            : leftTake->sourceOffset + leftTake->lengthInSamples - (left.sourceOffset + left.lengthInSamples));
-    // Earlier: the right region may read back to the start of its take; the left one
-    // must keep its fades and a sample.
-    auto least = left.fadeInSamples + left.fadeOutSamples + 1 - left.lengthInSamples;
-    least = std::max (least, rightTake == nullptr ? 0 : rightTake->sourceOffset - right.sourceOffset);
+    // Earlier: the right region may read back to the start of its take, and no
+    // further than the start of the timeline.
+    auto least = keep (left) - left.lengthInSamples;
+    least = std::max ({ least, rightTake == nullptr ? 0 : rightTake->sourceOffset - right.sourceOffset,
+                        -right.timelineStart });
     if (least > most) return 0;
     return std::clamp (delta, least, most);
 }

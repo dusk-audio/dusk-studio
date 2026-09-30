@@ -808,3 +808,26 @@ TEST_CASE ("Moving a comp seam moves both edges and stops where either region ru
         CHECK (clampSeamShift (track, seam, 5000) == 26000 - (25000 + kPunchFadeSamples));
     }
 }
+
+TEST_CASE ("A comp seam without fades still keeps its overlap inside both regions",
+           "[session][takes][seam]")
+{
+    Track track;
+    fillSeamTrack (track);
+    track.regions[0].fadeOutSamples = 0;
+    track.regions[1].fadeInSamples = 0;
+    const CompSeam seam { 0, 1 };
+    const auto overlap = kPunchFadeSamples;
+
+    // Earlier, the left region keeps the overlap and a sample, so the right one
+    // still starts after it.
+    const auto earliest = clampSeamShift (track, seam, -1'000'000);
+    CHECK (track.regions[0].lengthInSamples + earliest == overlap + 1);
+    shiftSeam (track, seam, -1'000'000);
+    CHECK (track.regions[1].timelineStart > track.regions[0].timelineStart);
+    CHECK (track.regions[1].timelineStart >= 0);
+
+    // Later, the right region keeps the overlap and a sample.
+    const auto latest = clampSeamShift (track, seam, 1'000'000);
+    CHECK (track.regions[1].lengthInSamples - latest == overlap + 1);
+}
