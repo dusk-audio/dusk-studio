@@ -589,3 +589,114 @@ TEST_CASE ("Loading a session drops the takes the previous one held",
 
     dir.deleteRecursively();
 }
+
+TEST_CASE ("Reversing a reversed region maps it back onto the span it reversed",
+           "[session][takes][reverse]")
+{
+    const auto source = juce::File ("/audio/source.wav");
+    const auto render = juce::File ("/takes/source-reversed.wav");
+
+    // A render of source samples [1000, 1600), played whole, with a short fade in
+    // on the render's head (the source's tail).
+    AudioRegion reversed;
+    reversed.file = render;
+    reversed.timelineStart = 48000;
+    reversed.sourceOffset = 0;
+    reversed.lengthInSamples = 600;
+    reversed.fadeInSamples = 40;
+    reversed.fadeInShape = FadeShape::EqualPower;
+    reversed.reversedFrom = AudioRegion::ReverseSource { render, source, 1000, 600, 7 };
+
+    SECTION ("the whole render")
+    {
+        const auto forward = forwardOfReversed (reversed);
+        REQUIRE (forward.has_value());
+        CHECK (forward->file == source);
+        CHECK (forward->sourceOffset == 1000);
+        CHECK (forward->lengthInSamples == 600);
+        CHECK (forward->timelineStart == 48000);
+        CHECK (forward->takeId == 7);
+        CHECK_FALSE (forward->reversedFrom.has_value());
+        CHECK (forward->fadeInSamples == 0);
+        CHECK (forward->fadeOutSamples == 40);
+        CHECK (forward->fadeOutShape == FadeShape::EqualPower);
+    }
+    SECTION ("a trimmed or split part of it")
+    {
+        // Render samples [100, 250) are source samples [1350, 1500).
+        auto part = reversed;
+        part.sourceOffset = 100;
+        part.lengthInSamples = 150;
+        const auto forward = forwardOfReversed (part);
+        REQUIRE (forward.has_value());
+        CHECK (forward->sourceOffset == 1350);
+        CHECK (forward->lengthInSamples == 150);
+    }
+    SECTION ("a region no longer playing the render, or reaching past it")
+    {
+        auto other = reversed;
+        other.file = juce::File ("/takes/normalized.wav");
+        CHECK_FALSE (forwardOfReversed (other).has_value());
+        auto past = reversed;
+        past.sourceOffset = 500;
+        past.lengthInSamples = 200;
+        CHECK_FALSE (forwardOfReversed (past).has_value());
+        auto plain = reversed;
+        plain.reversedFrom.reset();
+        CHECK_FALSE (forwardOfReversed (plain).has_value());
+    }
+}
+
+TEST_CASE ("SessionSerializer round-trips what a reversed region reversed",
+           "[session][serializer][takes][reverse]")
+{
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+    const auto source = dir.getChildFile ("audio").getChildFile ("source.wav");
+    const auto render = dir.getChildFile ("takes").getChildFile ("source-reversed.wav");
+
+    auto saved = std::make_unique<Session>();
+    saved->setSessionDirectory (dir);
+    AudioTake take;
+    take.id = saved->allocateTakeId();
+    take.file = dir.getChildFile ("audio").getChildFile ("take.wav");
+    take.lengthInSamples = 4800;
+    saved->track (2).takes.push_back (take);
+    AudioRegion reversed;
+    reversed.file = render;
+    reversed.lengthInSamples = 600;
+    reversed.reversedFrom = AudioRegion::ReverseSource { render, source, 1000, 600, take.id };
+    saved->track (2).regions.push_back (reversed);
+    REQUIRE (SessionSerializer::save (*saved, target));
+
+    // An earlier track holds a take under the same id, so this one gets a fresh
+    // id on load, and the reverse follows it there.
+    auto root = readJson (target);
+    root["tracks"][2]["takes"][0]["id"] = 30;
+    root["tracks"][2]["regions"][0]["reversed_from"]["take_id"] = 30;
+    root["tracks"][1]["takes"] = Json::array ({ { { "id", 30 }, { "file", "audio/other.wav" }, { "length", 10 } } });
+    writeJson (target, root);
+
+    auto loaded = std::make_unique<Session>();
+    loaded->setSessionDirectory (dir);
+    REQUIRE (SessionSerializer::load (*loaded, target));
+    REQUIRE (loaded->track (2).regions.size() == 1);
+    const auto& from = loaded->track (2).regions[0].reversedFrom;
+    REQUIRE (from.has_value());
+    CHECK (from->render == render);
+    CHECK (from->file == source);
+    CHECK (from->sourceOffset == 1000);
+    CHECK (from->lengthInSamples == 600);
+    REQUIRE (loaded->track (2).takes.size() == 1);
+    CHECK (loaded->track (2).takes[0].id != 30);
+    CHECK (from->takeId == loaded->track (2).takes[0].id);
+    // The render the region plays is missing; the source it would play reversed
+    // again is not reported, as nothing plays it now.
+    const auto& missing = loaded->missingAudioFilesAfterLoad;
+    CHECK (std::any_of (missing.begin(), missing.end(),
+                        [] (const juce::String& path) { return path.endsWith ("source-reversed.wav"); }));
+    CHECK_FALSE (std::any_of (missing.begin(), missing.end(),
+                              [] (const juce::String& path) { return path.endsWith ("source.wav"); }));
+
+    dir.deleteRecursively();
+}

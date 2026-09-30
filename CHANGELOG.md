@@ -46,6 +46,10 @@ Takes live on the track now, and the audio editor is where you comp them.
 
 ### Fixed
 
+- **Reversing a reversed region plays the original audio again.** It used to
+  render the render in reverse, one more "-reversed" file each time. Now the
+  region goes back to the audio it reversed, trims included, and names its take
+  again.
 - **An overdub that partly covered an older take no longer loses the covered
   part.** The older take stays whole on the track (#802).
 - **Deleting the top take's region no longer empties the track.** Every take

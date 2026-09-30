@@ -1236,7 +1236,7 @@ Only the newest pass is placed on the timeline. Where it lands over older region
 
 When a track has two or more takes, the tape strip shows the count, for example **3 takes**, beside the track name. A track with one take and no region on the timeline shows **1 take**, so a take whose region you deleted is still easy to reach. Click the count to open the audio editor on the track's take lanes. A frozen track refuses with **Track is frozen**; unfreeze it first.
 
-A region names its take only while it plays that take's audio. **Reverse region** and a join that has to render a new file make a region that names no take, and a pasted region keeps naming its take only on a track that holds that take.
+A region names its take only while it plays that take's audio. **Reverse region** and a join that has to render a new file make a region that names no take (reversing it back names the take again), and a pasted region keeps naming its take only on a track that holds that take.
 
 A region that names no take (an imported file, a reversed or rendered region, or a region an older session loads without one) first becomes a take of its own when something is recorded or put from a take lane over it, so the audio cut away from it can be put back. It gets a lane in the audio editor like any other take.
 
@@ -1328,7 +1328,7 @@ A right-click on any region shows a context menu:
 - **Label**: type a custom name.
 - **Mute** the region (silences it without deleting it).
 - **Lock** the region (prevents accidental edits).
-- **Reverse region** (non-destructive: renders a reversed copy into `takes/` and points the region at it; undoable).
+- **Reverse region** (non-destructive: renders a reversed copy into `takes/` and points the region at it; undoable). Reversing a reversed region plays the original audio forward again, trimmed the same way, without rendering anything.
 - **Color**: a palette of 8 accent hues plus **Reset to track colour**.
 - **Delete**.
 
@@ -1422,7 +1422,7 @@ You **cannot** edit individual samples. There is no zoom-to-sample, no spectral 
 
 ## Layout
 
-The top is a row of icon buttons:
+The top is a row of icon buttons. Hover over one for its name and shortcut:
 
 - **Undo / Redo** (also **Cmd+Z** and **Cmd+Shift+Z**).
 - **Split** at the edit cursor (also **Cmd/Ctrl+E**).

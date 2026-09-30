@@ -64,6 +64,7 @@ TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleano
     const auto mastering = writeWav (audio, "mixdown.wav", 512);
     const auto orphanA = writeWav (audio, "orphan_a.wav", 4096);
     const auto orphanB = writeWav (audio, "orphan_b.wav", 256);
+    const auto imported = writeWav (audio, "imported.wav", 640);
     // A freeze render and anything hand-dropped live a level down, which the
     // walk never descends into.
     const auto freezeDir = audio.getChildFile ("freeze");
@@ -87,6 +88,13 @@ TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleano
     pass.file = unplayed;
     session.track (9).takes.push_back (pass);
     session.mastering().sourceFile = mastering;
+    // A reversed region plays its render from takes/; reversing it again plays
+    // the file the render came from.
+    AudioRegion reversed;
+    reversed.file = dir.getChildFile ("takes").getChildFile ("imported-reversed.wav");
+    reversed.lengthInSamples = 480;
+    reversed.reversedFrom = AudioRegion::ReverseSource { reversed.file, imported, 0, 480, 0 };
+    session.track (6).regions.push_back (reversed);
 
     const auto found = duskstudio::findUnreferencedAudio (session);
     CHECK (found.files.size() == 2);
@@ -96,6 +104,7 @@ TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleano
     CHECK_FALSE (holds (found, older));
     CHECK_FALSE (holds (found, unplayed));
     CHECK_FALSE (holds (found, mastering));
+    CHECK_FALSE (holds (found, imported));
     CHECK_FALSE (holds (found, frozen));
     CHECK_FALSE (holds (found, notes));
     CHECK (found.totalBytes == orphanA.getSize() + orphanB.getSize());

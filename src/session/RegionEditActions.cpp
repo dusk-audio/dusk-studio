@@ -1843,6 +1843,7 @@ bool JoinRegionsAction::perform()
     merged.fadeOutShape    = latestEnding->fadeOutShape;
     merged.fadeOutAuto     = latestEnding->fadeOutAuto;
     merged.takeId          = 0;
+    merged.reversedFrom.reset();
     // Gain and mute are baked into the rendered file.
     merged.gainDb          = 0.0f;
     merged.muted           = false;
@@ -1949,11 +1950,22 @@ bool ReverseRegionAction::perform()
     if (session.track (trackIdx).regions[(size_t) regionIdx].locked) return false;   // locked region
 
     // First perform renders the reversed WAV + captures before/after; redo just
-    // re-applies the captured after-state.
+    // re-applies the captured after-state. A region already playing a reversed
+    // render goes back to the audio it reversed, with nothing rendered.
     if (! firstPerformDone)
     {
         beforeState = session.track (trackIdx).regions[(size_t) regionIdx];
-
+        if (auto forward = forwardOfReversed (beforeState);
+            forward && std::filesystem::exists (audioPath (forward->file)))
+        {
+            if (findTake (session.track (trackIdx), forward->takeId) == nullptr)
+                forward->takeId = 0;
+            afterState = std::move (*forward);
+            firstPerformDone = true;
+        }
+    }
+    if (! firstPerformDone)
+    {
         auto rdr = dusk::audio::FileReader::open (audioPath (beforeState.file));
         if (rdr == nullptr) return false;
 
@@ -2015,12 +2027,10 @@ bool ReverseRegionAction::perform()
         afterState.sourceOffset    = 0;
         afterState.lengthInSamples = len;
         afterState.numChannels     = chs;
-        // Reversed audio's head is the original tail, so swap the fades to keep
-        // each ramp on the same material.
-        std::swap (afterState.fadeInSamples, afterState.fadeOutSamples);
-        std::swap (afterState.fadeInShape,   afterState.fadeOutShape);
-        std::swap (afterState.fadeInAuto,    afterState.fadeOutAuto);
+        swapFadeEnds (afterState);
         afterState.takeId = 0;
+        afterState.reversedFrom = AudioRegion::ReverseSource { outFile, beforeState.file, beforeState.sourceOffset,
+                                                               len, beforeState.takeId };
         firstPerformDone = true;
     }
 

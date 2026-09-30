@@ -170,6 +170,12 @@ struct EditorKey
     bool repeats;
 };
 
+#if defined (__APPLE__)
+ #define DUSK_COMMAND_KEY "Cmd"
+#else
+ #define DUSK_COMMAND_KEY "Ctrl"
+#endif
+
 constexpr EditorKey kEditorKeys[] = {
     { ImGuiKey_Escape, false }, { ImGuiKey_LeftArrow, true }, { ImGuiKey_RightArrow, true },
     { ImGuiKey_Home, false }, { ImGuiKey_End, false }, { ImGuiKey_G, false }, { ImGuiKey_R, false },
@@ -2565,12 +2571,14 @@ private:
         return dw::hitArea (ctx, id, box.tl(), box.br()) && ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left);
     }
 
-    bool iconButton (dw::Context& ctx, const char* name, const Box& box, Glyph glyph, bool enabled)
+    bool iconButton (dw::Context& ctx, const char* name, const Box& box, Glyph glyph, bool enabled,
+                     const char* tip)
     {
         addControl (name, box, enabled);
         char id[48];
         std::snprintf (id, sizeof (id), "##icon-%s", name);
         const bool hovered = dw::hitArea (ctx, id, box.tl(), box.br());
+        formTooltip (tip);
         const bool down = hovered && ImGui::IsItemActive();
         const bool clicked = enabled && releasedOn (hovered);
 
@@ -2697,12 +2705,15 @@ private:
     }
 
     bool toggleButton (dw::Context& ctx, const char* name, const Box& box, const char* label,
-                       bool on, const dw::ButtonStyle& style)
+                       bool on, const dw::ButtonStyle& style, const char* tip = nullptr)
     {
         addControl (name, box, true);
         char id[48];
         std::snprintf (id, sizeof (id), "##button-%s", name);
-        return dw::textButton (ctx, id, box.tl(), box.br(), label, on, style).clicked;
+        const bool clicked = dw::textButton (ctx, id, box.tl(), box.br(), label, on, style).clicked;
+        if (tip != nullptr)
+            formTooltip (tip);
+        return clicked;
     }
 
     void drawToolbar (dw::Context& ctx)
@@ -2723,11 +2734,11 @@ private:
         const auto square = [dia] (const Box& b) { return b.sizedKeepingCentre (dia, dia); };
 
         const bool haveView = haveRegion || takeCount() > 0;
-        if (iconButton (ctx, "Zoom fit", square (right (dia)), Glyph::zoomFit, haveView))
+        if (iconButton (ctx, "Zoom fit", square (right (dia)), Glyph::zoomFit, haveView, "Zoom to fit the region (0)"))
             zoomFit();
-        if (iconButton (ctx, "Zoom in", square (right (dia)), Glyph::zoomIn, haveView))
+        if (iconButton (ctx, "Zoom in", square (right (dia)), Glyph::zoomIn, haveView, "Zoom in (=)"))
             zoomOnCursor (kZoomStep);
-        if (iconButton (ctx, "Zoom out", square (right (dia)), Glyph::zoomOut, haveView))
+        if (iconButton (ctx, "Zoom out", square (right (dia)), Glyph::zoomOut, haveView, "Zoom out (-)"))
             zoomOnCursor (1.0f / kZoomStep);
         inner.takeRight (ctx.s (8.0f));
 
@@ -2738,24 +2749,27 @@ private:
         chaseStyle.onText = argb (kChaseTextOn);
         chaseStyle.fontSize = 11.0f;
         if (toggleButton (ctx, "Chase", right (ctx.s (56.0f)).sizedKeepingCentre (ctx.s (56.0f), dia - ctx.s (8.0f)),
-                          "Chase", chase, chaseStyle))
+                          "Chase", chase, chaseStyle,
+                          "Scroll the view to follow the playhead when it leaves the visible window"))
             chase = ! chase;
 
-        if (iconButton (ctx, "Undo", square (left (dia)), Glyph::undo, undo.canUndo()))
+        if (iconButton (ctx, "Undo", square (left (dia)), Glyph::undo, undo.canUndo(), "Undo (" DUSK_COMMAND_KEY "+Z)"))
             undoStep (false);
-        if (iconButton (ctx, "Redo", square (left (dia)), Glyph::redo, undo.canRedo()))
+        if (iconButton (ctx, "Redo", square (left (dia)), Glyph::redo, undo.canRedo(), "Redo (" DUSK_COMMAND_KEY "+Shift+Z)"))
             undoStep (true);
         inner.takeLeft (gap);
-        if (iconButton (ctx, "Split", square (left (dia)), Glyph::split, haveRegion))
+        if (iconButton (ctx, "Split", square (left (dia)), Glyph::split, haveRegion, "Split at edit cursor (" DUSK_COMMAND_KEY "+E)"))
             splitAtCursor();
-        if (iconButton (ctx, "Normalize", square (left (dia)), Glyph::normalize, haveRegion))
+        if (iconButton (ctx, "Normalize", square (left (dia)), Glyph::normalize, haveRegion, "Normalize"))
             normalize();
         const auto* focused = region();
         if (iconButton (ctx, "Reverse", square (left (dia)), Glyph::reverse,
-                        focused != nullptr && ! focused->locked && ! trackFrozen()))
+                        focused != nullptr && ! focused->locked && ! trackFrozen(),
+                        focused != nullptr && forwardOfReversed (*focused) ? "Reverse back to the original audio"
+                                                                           : "Reverse region"))
             reverseRegion();
         const auto propertiesBox = square (left (dia));
-        if (iconButton (ctx, "Properties", propertiesBox, Glyph::properties, haveRegion))
+        if (iconButton (ctx, "Properties", propertiesBox, Glyph::properties, haveRegion, "Region properties"))
         {
             propertiesAnchor = ImVec2 (propertiesBox.x0, propertiesBox.y1);
             ImGui::OpenPopup (kPropertiesMenu);
@@ -2901,9 +2915,12 @@ private:
 
     void drawModeGroup (dw::Context& ctx, Box area, float dia)
     {
-        struct Mode { const char* name; EditMode mode; };
-        static constexpr Mode kModes[] = { { "Grab", EditMode::Grab }, { "Range", EditMode::Range },
-                                           { "Cut", EditMode::Cut }, { "Draw", EditMode::Draw } };
+        struct Mode { const char* name; EditMode mode; const char* tip; };
+        static constexpr Mode kModes[] = {
+            { "Grab", EditMode::Grab, "Grab mode: select, move and trim regions (G)" },
+            { "Range", EditMode::Range, "Range mode: select a time range (R)" },
+            { "Cut", EditMode::Cut, "Cut mode: click to split a region (C)" },
+            { "Draw", EditMode::Draw, "Draw mode: draw automation on the lane" } };
         const float h = dia - ctx.s (8.0f);
         dw::ButtonStyle style;
         style.fontSize = 11.0f;
@@ -2912,7 +2929,7 @@ private:
             if (area.width() < ctx.s (44.0f)) return;
             const auto box = area.takeLeft (ctx.s (44.0f)).sizedKeepingCentre (ctx.s (44.0f), h);
             area.takeLeft (ctx.s (2.0f));
-            if (toggleButton (ctx, mode.name, box, mode.name, session.editMode == mode.mode, style))
+            if (toggleButton (ctx, mode.name, box, mode.name, session.editMode == mode.mode, style, mode.tip))
                 session.editMode = mode.mode;
         }
         area.takeLeft (ctx.s (6.0f));
@@ -2920,7 +2937,8 @@ private:
         if (area.width() < ctx.s (44.0f)) return;
         const auto snapBox = area.takeLeft (ctx.s (44.0f)).sizedKeepingCentre (ctx.s (44.0f), h);
         area.takeLeft (ctx.s (4.0f));
-        if (toggleButton (ctx, "Snap", snapBox, "Snap", session.audioEditorSnap, style))
+        if (toggleButton (ctx, "Snap", snapBox, "Snap", session.audioEditorSnap, style,
+                          "Snap edits to the grid"))
             session.audioEditorSnap = ! session.audioEditorSnap;
 
         if (area.width() < ctx.s (60.0f)) return;
@@ -2932,6 +2950,7 @@ private:
         if (formCombo (ctx, "##snap-resolution", comboBox.tl(), comboBox.br(), kSnapLabels,
                        kSnapLabelCount, selected))
             session.snapResolution = static_cast<SnapResolution> (selected);
+        formTooltip ("Snap resolution (musical / triplet / dotted / timecode)");
     }
 
     void clippedText (const dw::Context& ctx, const Box& box, ImFont* font, float size, ImU32 colour,

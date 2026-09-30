@@ -1125,6 +1125,70 @@ ScenarioResult reverseNamesNoTake (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// Reversing a reversed region plays the audio it reversed forward again, naming
+// its take once more, with nothing rendered; undo goes back to the render. A
+// trimmed part of the render reverses back onto its own part of the take.
+ScenarioResult reverseTwiceRestoresTheSource (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& regs = session.track (kTrack).regions;
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto take = writtenTake (ctx, "reverse-twice", 4800, 9600);
+    if (! take) return ScenarioResult::fail ("could not write the take");
+    const auto original = *regionFromTake (*take, 4800, 14400);
+    regs.push_back (original);
+    const auto takesDir = std::filesystem::u8path (
+        session.getSessionDirectory().getChildFile ("takes").getFullPathName().toStdString());
+    const auto renders = [&takesDir]
+    {
+        std::error_code error;
+        std::size_t count = 0;
+        for (std::filesystem::directory_iterator it (takesDir, error), end; ! error && it != end; it.increment (error))
+            ++count;
+        return count;
+    };
+    const auto reverse = [&ctx, &session, &undo]
+    {
+        undo.beginNewTransaction();
+        return undo.perform (new ReverseRegionAction (session, ctx.engine(), kTrack, 0));
+    };
+
+    if (! ctx.expect (reverse(), "the first reverse was refused") || ! ctx.expect (regs.size() == 1, "the reverse changed the number of regions"))
+        return ctx.verdict();
+    const auto reversed = regs[0];
+    const auto rendered = renders();
+    ctx.expect (reversed.file != take->file && reversed.reversedFrom.has_value(),
+                "the first reverse did not play a render that remembers its source");
+
+    ctx.expect (reverse(), "the second reverse was refused");
+    ctx.expect (regs[0].file == take->file && regs[0].sourceOffset == original.sourceOffset
+                    && regs[0].lengthInSamples == original.lengthInSamples
+                    && regs[0].timelineStart == original.timelineStart,
+                "the second reverse did not play the take's audio forward again");
+    ctx.expect (regs[0].takeId == take->id && ! regs[0].reversedFrom.has_value(),
+                "the second reverse did not name the take again");
+    ctx.expect (renders() == rendered, "the second reverse rendered another file");
+
+    ctx.expect (undo.undo() && regs[0].file == reversed.file && regs[0].reversedFrom.has_value(),
+                "undoing the second reverse did not go back to the render");
+
+    auto trimmed = regs[0];
+    trimmed.sourceOffset += 1000;
+    trimmed.lengthInSamples -= 1000;
+    trimmed.timelineStart += 1000;
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new RegionEditAction (session, ctx.engine(), kTrack, 0, regs[0], trimmed)),
+                "the trim was refused");
+    ctx.expect (reverse(), "reversing the trimmed render was refused");
+    ctx.expect (regs[0].file == take->file && regs[0].sourceOffset == original.sourceOffset
+                    && regs[0].lengthInSamples == original.lengthInSamples - 1000
+                    && regs[0].timelineStart == original.timelineStart + 1000,
+                "the trimmed render did not reverse back onto its own part of the take");
+    ctx.expect (renders() == rendered, "reversing the trimmed render rendered another file");
+    return ctx.verdict();
+}
+
 // Join keeps a take only while the result still reads that take alone: two
 // halves of one take rejoin naming it, two loop passes that share a file and
 // abut join naming neither, and regions of two takes render into a new file
@@ -1360,6 +1424,9 @@ const ScenarioRegistrar renameTakeRegistrar { Scenario {
 const ScenarioRegistrar reverseRegistrar { Scenario {
     "take.reverse_names_no_take", { "take", "region", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (reverseNamesNoTake, ctx); } } };
+const ScenarioRegistrar reverseTwiceRegistrar { Scenario {
+    "take.reverse_twice_restores_the_source", { "take", "region", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (reverseTwiceRestoresTheSource, ctx); } } };
 const ScenarioRegistrar joinRegistrar { Scenario {
     "take.join_names_a_take_only_while_it_reads_it", { "take", "region", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (joinNamesATakeOnlyWhileItReadsIt, ctx); } } };

@@ -1099,6 +1099,16 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
         if (r.locked) rObj["locked"] = true;
         addTakeProvenance (rObj, r.provenance);
         if (r.takeId != 0) rObj["take_id"] = r.takeId;
+        if (const auto& from = r.reversedFrom)
+        {
+            JObj reversed;
+            reversed["render"]        = toStd (portablePath (from->render, sessionDir));
+            reversed["file"]          = toStd (portablePath (from->file, sessionDir));
+            reversed["source_offset"] = (std::int64_t) from->sourceOffset;
+            reversed["length"]        = (std::int64_t) from->lengthInSamples;
+            if (from->takeId != 0) reversed["take_id"] = from->takeId;
+            rObj["reversed_from"] = std::move (reversed);
+        }
 
         regions.push_back (std::move (rObj));
     }
@@ -1846,6 +1856,19 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
             r.locked          = json::getBool (rv, "locked", false);
             r.provenance      = parseTakeProvenance (rv);
             r.takeId          = parseTakeId (rv, "take_id");
+            if (const auto& reversed = json::child (rv, "reversed_from"); ! reversed.empty())
+            {
+                // A reverse's source is not audio the region plays, so it is not
+                // reported missing; a region whose source is gone renders instead.
+                std::remove_reference_t<decltype (missingFiles)> notPlayed;
+                AudioRegion::ReverseSource from;
+                from.render          = resolvePortablePath (json::getString (reversed, "render"), sessionDir, notPlayed);
+                from.file            = resolvePortablePath (json::getString (reversed, "file"), sessionDir, notPlayed);
+                from.sourceOffset    = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (reversed, "source_offset", 0));
+                from.lengthInSamples = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (reversed, "length", 0));
+                from.takeId          = parseTakeId (reversed, "take_id");
+                r.reversedFrom = std::move (from);
+            }
 
             t.regions.push_back (std::move (r));
         }
@@ -1990,10 +2013,16 @@ void repairTakeIds (Session& s)
             if (stored != 0)
                 storedToLive.emplace (stored, take.id);
         }
+        const auto live = [&storedToLive] (TakeId stored)
+        {
+            const auto it = storedToLive.find (stored);
+            return it != storedToLive.end() ? it->second : 0;
+        };
         for (auto& region : track.regions)
         {
-            const auto it = storedToLive.find (region.takeId);
-            region.takeId = it != storedToLive.end() ? it->second : 0;
+            region.takeId = live (region.takeId);
+            if (region.reversedFrom)
+                region.reversedFrom->takeId = live (region.reversedFrom->takeId);
         }
     }
 }

@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 #include "AtomicSnapshot.h"
 #include "MidiBindings.h"
@@ -970,7 +971,49 @@ struct AudioRegion
 
     // The take on the region's own track its audio came from.
     TakeId takeId = 0;
+
+    // Set while the region plays a reversed render: the render, the span of the
+    // file it reversed, and the take the region named then. Reversing the region
+    // again plays that span forward instead of rendering the render in reverse.
+    struct ReverseSource
+    {
+        decltype (file) render;
+        decltype (file) file;
+        std::int64_t sourceOffset = 0;
+        std::int64_t lengthInSamples = 0;
+        TakeId takeId = 0;
+    };
+    std::optional<ReverseSource> reversedFrom;
 };
+
+// Reversed audio's head is the original tail, so a reverse swaps the fades to keep
+// each ramp on the same material.
+inline void swapFadeEnds (AudioRegion& region)
+{
+    std::swap (region.fadeInSamples, region.fadeOutSamples);
+    std::swap (region.fadeInShape, region.fadeOutShape);
+    std::swap (region.fadeInAuto, region.fadeOutAuto);
+}
+
+// The region reversed back to the audio its render reversed, or nothing when it
+// plays no render it remembers. Trims and splits since the reverse carry across:
+// the render's sample s is sample length - 1 - s of the span it reversed.
+inline std::optional<AudioRegion> forwardOfReversed (const AudioRegion& region)
+{
+    if (! region.reversedFrom || region.file != region.reversedFrom->render)
+        return std::nullopt;
+    const auto& from = *region.reversedFrom;
+    const auto end = region.sourceOffset + region.lengthInSamples;
+    if (region.sourceOffset < 0 || region.lengthInSamples <= 0 || end > from.lengthInSamples)
+        return std::nullopt;
+    auto forward = region;
+    forward.file = from.file;
+    forward.sourceOffset = from.sourceOffset + (from.lengthInSamples - end);
+    forward.takeId = from.takeId;
+    forward.reversedFrom.reset();
+    swapFadeEnds (forward);
+    return forward;
+}
 
 struct Track
 {
