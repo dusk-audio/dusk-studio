@@ -522,6 +522,10 @@ public:
     // the shell has to be able to close it and to ask whether it is open.
     void closeBuiltinEditorPopup();
     bool isBuiltinEditorOpen() const noexcept;
+
+    // Before a track move: every editor and panel over this strip holds its
+    // slot's insert or parameters, which are about to belong to another track.
+    void closeEditorsForTrackMove();
     void openBuiltinEditorForCapture (const std::string& capturePath);
     void captureBuiltinPluginEditor (const std::string& capturePath);
 

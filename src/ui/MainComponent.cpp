@@ -47,6 +47,7 @@
 #include "UpdateChecker.h"
 #include "SystemStatusBar.h"
 #include "TapeStrip.h"
+#include "TrackMoveUndo.h"
 #include "MiniTimelineStrip.h"
 #include "TransportBar.h"
 #include "../session/MarkerEditActions.h"
@@ -818,6 +819,9 @@ MainComponent::MainComponent()
     tapeStrip->onAudioRegionDoubleClicked = [this] (int t, int r) { openAudioEditor (t, r); };
     // consoleView is rebuilt on session load and template apply, so look it up per click.
     tapeStrip->onTrackLabelClicked = [this] (int t) { if (consoleView != nullptr) consoleView->focusStrip (t); };
+    tapeStrip->onTrackMoveDropped = [this] (const TrackMovePlan& plan, int dragged) { dropTrackMove (plan, dragged); };
+    engine.onBeforeTracksMove = [this] (const TrackMovePlan& plan) { closeForTrackMove (plan); };
+    engine.onTracksMoved = [this] (const TrackMovePlan& plan) { followTrackMove (plan); };
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
                                           std::int64_t timelineStart,
                                           int trackHint)
@@ -1188,6 +1192,8 @@ MainComponent::~MainComponent()
     tearingDown = true;
     stopTimer();   // halt autosave before tearing down engine / session
     engine.setPluginRestoreAlertSink ({});
+    engine.onBeforeTracksMove = nullptr;
+    engine.onTracksMoved = nullptr;
 
     // Drop the modal hook before anything else: its closure holds a raw this,
     // and the teardown below can still raise an alert.
@@ -1284,6 +1290,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     const bool cmd     = mods.isCommandDown();   // Ctrl on Linux/Windows, Cmd on macOS
     const bool shift   = mods.isShiftDown();
     const bool escape  = code == juce::KeyPress::escapeKey;
+
+    if (escape && tapeStrip != nullptr && tapeStrip->cancelTrackMoveDrag())
+        return true;
 
     // Should an open modal's body lose the keyboard to this canvas, Escape
     // still closes it, taken bare as the modal's own handler takes it.
@@ -1460,10 +1469,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     }
 
     // Edit: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y
-    if (code == 'Z' && cmd && ! shift) { undoTransaction (engine); return true; }
+    if (code == 'Z' && cmd && ! shift) { undoOrRedo (false); return true; }
     if ((code == 'Z' && cmd && shift) || (code == 'Y' && cmd))
     {
-        redoTransaction (engine);
+        undoOrRedo (true);
         return true;
     }
 
@@ -6123,6 +6132,7 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     addAndMakeVisible (pianoRollDim.get());
 
     pianoRoll->onCloseRequested = [this] { closePianoRollAnimated(); };
+    pianoRoll->onUndoRequested = [this] (bool redo) { undoOrRedo (redo); };
     pianoRoll->onMouseMovedForCursor =
         [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
                 juce::Range<int> cutLine)
@@ -6155,7 +6165,7 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     animateEditorOpen (*pianoRoll, *pianoRollDim, rollBounds, startRect);
 }
 
-void MainComponent::closePianoRoll()
+void MainComponent::closePianoRoll (bool deferDestruction)
 {
     // Cancel any in-flight collapse animation BEFORE resetting - the
     // ComponentAnimator holds raw pointers and would tick into freed
@@ -6173,6 +6183,8 @@ void MainComponent::closePianoRoll()
     if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
     if (pianoRoll != nullptr) removeChildComponent (pianoRoll.get());
     if (pianoRollDim != nullptr) removeChildComponent (pianoRollDim.get());
+    if (deferDestruction && pianoRoll != nullptr)
+        dusk::callAsync ([doomed = std::shared_ptr<PianoRollComponent> (std::move (pianoRoll))] {});
     pianoRoll.reset();
     pianoRollDim.reset();
     pianoRollTrackIdx  = -1;
@@ -6263,6 +6275,7 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
     addAndMakeVisible (audioEditorDim.get());
 
     audioEditor->onCloseRequested = [this] { closeAudioEditorAnimated(); };
+    audioEditor->onUndoRequested = [this] (bool redo) { undoOrRedo (redo); };
     audioEditor->onMouseMovedForCursor =
         [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
                 juce::Range<int> cutLine)
@@ -6291,7 +6304,7 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
     animateEditorOpen (*audioEditor, *audioEditorDim, editorBounds, startRect);
 }
 
-void MainComponent::closeAudioEditor()
+void MainComponent::closeAudioEditor (bool deferDestruction)
 {
     // Cancel any in-flight collapse animation BEFORE resetting - the
     // ComponentAnimator holds raw pointers (see closePianoRoll).
@@ -6305,6 +6318,8 @@ void MainComponent::closeAudioEditor()
     if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
     if (audioEditor    != nullptr) removeChildComponent (audioEditor.get());
     if (audioEditorDim != nullptr) removeChildComponent (audioEditorDim.get());
+    if (deferDestruction && audioEditor != nullptr)
+        dusk::callAsync ([doomed = std::shared_ptr<AudioRegionEditor> (std::move (audioEditor))] {});
     audioEditor.reset();
     audioEditorDim.reset();
     audioEditorTrackIdx  = -1;
@@ -6443,6 +6458,64 @@ void MainComponent::closeTuner()
         dusk::callAsync ([trashTuner, trashDim]() mutable {});
     }
     session.tuneTrackIndex.store (-1, std::memory_order_relaxed);
+}
+
+std::string MainComponent::openRenderDialog() const
+{
+    if (mixdownModal.isOpen()) return "mixdown";
+    for (auto* modal : EmbeddedModal::activeModalStack())
+        if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody()))
+            return render->renderName();
+    return {};
+}
+
+void MainComponent::dropTrackMove (const TrackMovePlan& plan, int draggedTrack)
+{
+    // The engine cannot see a render's dialog, which holds tracks by slot.
+    if (const auto dialog = openRenderDialog(); ! dialog.empty())
+    {
+        explainTrackMoveRefused (*this, "Close the " + dialog + " dialog, then move the tracks again.");
+        return;
+    }
+    if (const auto refusal = trackMoveRefusalFor (session, engine, plan);
+        refusal.kind != TrackMoveRefusal::Kind::None)
+    {
+        explainTrackMoveRefused (*this, trackMoveRefusalMessage (refusal));
+        return;
+    }
+    if (! commitTrackMove (engine, plan)) return;
+    if (consoleView != nullptr && draggedTrack >= 0 && draggedTrack < Session::kNumTracks)
+        consoleView->focusStrip (plan.oldToNew[(size_t) draggedTrack], /*select*/ false);
+}
+
+void MainComponent::closeForTrackMove (const TrackMovePlan& plan)
+{
+    const auto moves = [&plan] (int t) { return t >= 0 && t < Session::kNumTracks && plan.oldToNew[(size_t) t] != t; };
+    if (tapeStrip != nullptr) tapeStrip->prepareForTrackMove();
+    // Either editor may be the one whose undo is moving the tracks.
+    if (pianoRoll != nullptr && moves (pianoRollTrackIdx)) closePianoRoll (true);
+    if (audioEditor != nullptr && moves (audioEditorTrackIdx)) closeAudioEditor (true);
+    if (tuner != nullptr && moves (session.tuneTrackIndex.load (std::memory_order_relaxed))) closeTuner();
+    if (consoleView != nullptr) consoleView->closeTrackEditors (plan);
+}
+
+void MainComponent::followTrackMove (const TrackMovePlan& plan)
+{
+    if (consoleView != nullptr && consoleView->followTrackMove (plan)) focusMainCanvas();
+    if (tapeStrip != nullptr) tapeStrip->followTrackMove (plan);
+}
+
+void MainComponent::undoOrRedo (bool redo)
+{
+    auto& um = engine.getUndoManager();
+    if ((redo ? um.getRedoDescription() : um.getUndoDescription()) == kMoveTracksTransaction)
+        if (const auto dialog = openRenderDialog(); ! dialog.empty())
+        {
+            explainTrackMoveRefused (*this, "Close the " + dialog + " dialog, then "
+                                                + (redo ? "redo" : "undo") + " the move again.");
+            return;
+        }
+    undoOrExplain (engine, *this, redo);
 }
 
 void MainComponent::closeVirtualKeyboard()

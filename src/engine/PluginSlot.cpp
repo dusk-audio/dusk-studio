@@ -1164,6 +1164,13 @@ void PluginSlot::loadFromDescriptorAsync (const PluginDescriptor& descriptor,
     // bails if a newer load / unload superseded it.
     currentLoadEpoch.fetch_add (1, std::memory_order_release);
     const auto epoch = currentLoadEpoch.load (std::memory_order_relaxed);
+    asyncLoadEpoch = epoch;
+    asyncLoadOutstanding = true;
+    onDone = [this, life = std::weak_ptr<char> (lifeToken), epoch, done = std::move (onDone)] (bool ok, auto error)
+    {
+        if (life.lock() && asyncLoadEpoch == epoch) asyncLoadOutstanding = false;
+        if (done) done (ok, std::move (error));
+    };
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     releaseShellInstance();

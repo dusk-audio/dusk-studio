@@ -563,6 +563,108 @@ void TapeStrip::commitTrackName()
     repaint();
 }
 
+void TapeStrip::startTrackMove()
+{
+    // No paging and no rename once the press has become a drag.
+    cancelTrackNameEdit();
+    trackMove.moving = trackMove.narrowOnRelease ? getSelectedTracks()
+                                                 : std::vector<int> { trackMove.pressed };
+    trackMove.narrowOnRelease = false;
+    selectedTrack = trackMove.pressed;
+    trackMove.active = true;
+}
+
+void TapeStrip::trackMovePointerAt (int y)
+{
+    trackMove.pointerY = y;
+    // Rows scrolled out of view only count once auto-scroll brings them in.
+    const int shownY = std::clamp (y, kRulerH, std::max (kRulerH, getHeight() - 1));
+    int gap = 0;
+    for (const int t : visibleTrackOrder)
+        if (rowBounds (t).getCentreY() < shownY) ++gap;
+    trackMove.gap = gap;
+    repaint();
+}
+
+void TapeStrip::autoScrollTrackMove()
+{
+    const int edge = std::max (4, rowHeight / 2);
+    int step = 0;
+    if (trackMove.pointerY < kRulerH + edge)        step = -std::max (1, rowHeight / 2);
+    else if (trackMove.pointerY > getHeight() - edge) step = std::max (1, rowHeight / 2);
+    if (step == 0) return;
+    const int was = rowScrollY;
+    rowScrollY += step;
+    clampRowScroll();
+    if (rowScrollY != was) trackMovePointerAt (trackMove.pointerY);
+}
+
+TrackMovePlan TapeStrip::trackMovePlanFor (const TrackMoveDrag& moveDrag) const
+{
+    // Right above a moving row the block stays put: going after the row above
+    // would jump it over the hidden tracks between the two.
+    const int rows = (int) visibleTrackOrder.size();
+    if (moveDrag.gap >= 0 && moveDrag.gap < rows)
+    {
+        const int below = visibleTrackOrder[(size_t) moveDrag.gap];
+        if (std::find (moveDrag.moving.begin(), moveDrag.moving.end(), below) != moveDrag.moving.end())
+            return planBlockMove (moveDrag.moving, below);
+    }
+    return planBlockMove (moveDrag.moving, insertionSlotForGap (visibleTrackOrder, moveDrag.gap));
+}
+
+int TapeStrip::trackMoveLineY() const
+{
+    if (! trackMove.active || visibleTrackOrder.empty() || trackMovePlanFor (trackMove).isIdentity()) return -1;
+    const int rows = (int) visibleTrackOrder.size();
+    const int gap = std::clamp (trackMove.gap, 0, rows);
+    return gap < rows ? rowBounds (visibleTrackOrder[(size_t) gap]).getY()
+                      : rowBounds (visibleTrackOrder.back()).getBottom() + kRowGap;
+}
+
+bool TapeStrip::cancelTrackMoveDrag()
+{
+    if (! trackMove.active) return false;
+    trackMove = {};
+    repaint();
+    return true;
+}
+
+void TapeStrip::prepareForTrackMove()
+{
+    cancelTrackNameEdit();
+    trackMove = {};
+    repaint();
+}
+
+void TapeStrip::followTrackMove (const TrackMovePlan& plan)
+{
+    const auto to = [&plan] (int t)
+    {
+        return t >= 0 && t < Session::kNumTracks ? plan.oldToNew[(size_t) t] : t;
+    };
+    auto picked = getSelectedTracks();
+    const int primary = to (selectedTrack);
+    const int anchor = to (trackAnchor);
+    clearAllSelections();
+    for (auto& t : picked) t = to (t);
+    std::sort (picked.begin(), picked.end());
+    selectedTracks = std::move (picked);
+    selectedTrack = primary;
+    trackAnchor = anchor;
+
+    // A region drag keeps its regions, which have gone with their track.
+    drag.track = to (drag.track);
+    for (auto& a : drag.additional) a.track = to (a.track);
+    midiDrag.track = to (midiDrag.track);
+    hoveredTrack = -1;
+    hoveredRegion = -1;
+
+    visibleTrackOrder.clear();
+    rebuildVisibleTrackOrder();
+    repaint();
+}
+
 juce::Rectangle<int> TapeStrip::rowBounds (int trackIdx) const noexcept
 {
     const int visualRow = visualRowForTrack (trackIdx);
@@ -1182,6 +1284,8 @@ void TapeStrip::timerCallback()
     // only triggers a relayout when something actually changed.
     rebuildVisibleTrackOrder();
 
+    if (trackMove.active) autoScrollTrackMove();
+
     if (stateChanged) repaint();
 
     // During recording the live take overlay grows with the playhead and the
@@ -1268,6 +1372,7 @@ void TapeStrip::updatePlayheadBand()
 
 void TapeStrip::mouseDown (const juce::MouseEvent& e)
 {
+    trackMove = {};
     auto col = tracksColumnBounds();
     auto ruler = rulerBounds();
 
@@ -1593,7 +1698,13 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         }
         labelPressTrack = track;
         if (labelPressTrack < 0) return;
-        selectOnlyTrack (labelPressTrack);
+        const auto picked = getSelectedTracks();
+        trackMove.pressed = track;
+        trackMove.pressY = e.y;
+        trackMove.pointerY = e.y;
+        trackMove.narrowOnRelease = picked.size() > 1
+                                 && std::binary_search (picked.begin(), picked.end(), track);
+        if (! trackMove.narrowOnRelease) selectOnlyTrack (labelPressTrack);
         repaint();
         labelClickTimer.startTimer (e.getDoubleClickTimeout());
         return;
@@ -1854,6 +1965,17 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
 
 void TapeStrip::mouseDrag (const juce::MouseEvent& e)
 {
+    if (trackMove.pressed >= 0)
+    {
+        if (! trackMove.active)
+        {
+            if (std::abs (e.y - trackMove.pressY) < kTrackMoveStartPx) return;
+            startTrackMove();
+        }
+        trackMovePointerAt (e.y);
+        return;
+    }
+
     // Keep the Grab glyph following a region MOVE drag - mouseDrag fires but
     // mouseMove doesn't, so without this the glyph freezes at the click point
     // while the region slides out from under it. Trim/fade/gain drags keep
@@ -2153,6 +2275,29 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
 
 void TapeStrip::mouseUp (const juce::MouseEvent& e)
 {
+    if (trackMove.pressed >= 0)
+    {
+        // The rows may have changed under a pointer that has not moved since.
+        if (trackMove.active) trackMovePointerAt (e.y);
+        const auto ended = std::exchange (trackMove, TrackMoveDrag {});
+        if (ended.active)
+        {
+            repaint();
+            const auto plan = trackMovePlanFor (ended);
+            if (! plan.isIdentity() && onTrackMoveDropped) onTrackMoveDropped (plan, ended.pressed);
+        }
+        else if (ended.narrowOnRelease)
+        {
+            selectOnlyTrack (ended.pressed);
+            repaint();
+            // Held past the double-click timeout, the wait ran out while
+            // several tracks were still picked, so the click pages now.
+            if (! labelClickTimer.isTimerRunning() && labelPressTrack == ended.pressed)
+                labelClickTimer.onExpired();
+        }
+        return;
+    }
+
     // Ruler-selection finalisation. A drag shorter than ≈1024 samples is a
     // click -> seek the playhead. A real drag pops a menu asking loop vs
     // punch - dragging itself never auto-commits transport state.
@@ -4247,19 +4392,35 @@ void TapeStrip::paint (juce::Graphics& g)
 
     // Rubber-band overlay (Shift/Cmd + drag box-select)
     // Drawn last so it sits on top of every region / playhead / marker.
+    const auto accent = juce::Colour (0xff70b0e0);   // Dusk Studio accent blue
     if (rubberBandActive && ! rubberBand.isEmpty())
     {
-        const auto highlight = juce::Colour (0xff70b0e0);   // Dusk Studio accent blue
-        g.setColour (highlight.withAlpha (0.15f));
+        g.setColour (accent.withAlpha (0.15f));
         g.fillRect (rubberBand);
-        g.setColour (highlight.withAlpha (0.85f));
+        g.setColour (accent.withAlpha (0.85f));
         g.drawRect (rubberBand, 1);
+    }
+
+    // Name drag: the tracks being moved, and the line they would land on.
+    if (trackMove.active)
+    {
+        g.setColour (accent.withAlpha (0.18f));
+        for (const int t : trackMove.moving)
+        {
+            const auto row = rowBounds (t);
+            const int top = std::max (row.getY(), kRulerH);
+            if (row.getBottom() > top) g.fillRect (0, top, getWidth(), row.getBottom() - top);
+        }
+        if (const int lineY = trackMoveLineY(); lineY >= 0)
+        {
+            g.setColour (accent.withAlpha (0.85f));
+            g.fillRect (0, std::max (kRulerH, lineY - 1), getWidth(), 2);
+        }
     }
 
     // File-drop visual feedback. Painted last so it overlays everything.
     if (dropAccepted)
     {
-        const auto accent = juce::Colour (0xff70b0e0);
         if (dropHoverTrack >= 0)
         {
             const auto row = rowBounds (dropHoverTrack);

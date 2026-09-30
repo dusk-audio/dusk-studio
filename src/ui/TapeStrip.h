@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
+#include "../session/TrackMove.h"
 #include "../foundation/MessageThread.h"
 #include "WheelScroll.h"
 
@@ -93,6 +94,18 @@ public:
     // A single click on a track's name in the label column, once it can no
     // longer turn into a double-click.
     std::function<void (int trackIdx)> onTrackLabelClicked;
+    // A name dragged to another row: the move it asks for, and the track whose
+    // name was dragged, by its slot before the move. The host commits it.
+    std::function<void (const TrackMovePlan& plan, int draggedTrack)> onTrackMoveDropped;
+    // Ends a name drag without moving anything; true when one was under way. A
+    // press that has not dragged yet is left to end as a click.
+    bool cancelTrackMoveDrag();
+    // Around every track move, its undo and redo included. Before: the rename
+    // and any name drag, which name tracks by slot, are dropped. After: the
+    // picked tracks and any region drag follow their tracks, region picks are
+    // cleared and the rows are rebuilt.
+    void prepareForTrackMove();
+    void followTrackMove (const TrackMovePlan& plan);
 
     // CursorOverlay sink - MainComponent wires these so the strip can push
     // its local mouse position into the shared overlay (which can't poll
@@ -222,6 +235,29 @@ public:
 private:
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
+
+    // A plain press on a name arms a track move; this much vertical travel
+    // starts it. gap counts the shown rows whose centre is above the pointer.
+    static constexpr int kTrackMoveStartPx = 4;
+    struct TrackMoveDrag
+    {
+        int pressed = -1;
+        int pressY = 0;
+        int pointerY = 0;
+        bool active = false;
+        // The pressed name is one of several picked. A click still narrows the
+        // pick to it, but on release, so that a drag carries all of them.
+        bool narrowOnRelease = false;
+        std::vector<int> moving;
+        int gap = 0;
+    };
+    TrackMoveDrag trackMove;
+    void startTrackMove();
+    void trackMovePointerAt (int y);
+    void autoScrollTrackMove();
+    TrackMovePlan trackMovePlanFor (const TrackMoveDrag& moveDrag) const;
+    // The drop line's y, -1 when a drop there would move nothing.
+    int trackMoveLineY() const;
 
     juce::Rectangle<int> labelColumnBounds() const noexcept;
     juce::Rectangle<int> rulerBounds() const noexcept;

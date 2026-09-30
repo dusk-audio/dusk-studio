@@ -177,6 +177,9 @@ TrackMoveRefusal trackMoveRefusalFor (const Session& session, AudioEngine& engin
     for (int from = 0; from < Session::kNumTracks; ++from)
         if (plan.oldToNew[(size_t) from] != from && anyPassOpen (session.track (from)))
             return { TrackMoveRefusal::Kind::Playing, -1 };
+    for (int from = 0; from < Session::kNumTracks; ++from)
+        if (plan.oldToNew[(size_t) from] != from && engine.getStrip (from).getPluginSlot().isAsyncLoadPending())
+            return { TrackMoveRefusal::Kind::Loading, -1 };
     return {};
 }
 
@@ -192,6 +195,8 @@ std::string trackMoveRefusalMessage (const TrackMoveRefusal& refusal, TrackMoveS
         case TrackMoveRefusal::Kind::Frozen:
             return "Unfreeze track " + std::to_string (refusal.frozenTrack + 1) + ", then " + retry
                  + ". A frozen track can't be moved or shifted.";
+        case TrackMoveRefusal::Kind::Loading:
+            return std::string ("Wait for the plug-in to finish loading, then ") + retry + ".";
         case TrackMoveRefusal::Kind::None:
             break;
     }

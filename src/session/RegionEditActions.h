@@ -446,10 +446,11 @@ constexpr const char* kMoveTracksTransaction = "Move tracks";
 // offline render drives the engine or its process gate is already held, or an
 // automation pass is still open on a track that moves. Frozen: frozenTrack (the
 // lowest) is frozen and would change slot; its baked audio and file are named
-// by the slot.
+// by the slot. Loading: a plug-in is still loading into the insert of a track
+// that moves, and its completion finishes the load for the slot it started in.
 struct TrackMoveRefusal
 {
-    enum class Kind { None, Playing, Frozen };
+    enum class Kind { None, Playing, Frozen, Loading };
     Kind kind = Kind::None;
     int frozenTrack = -1;
 };

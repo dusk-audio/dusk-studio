@@ -1077,12 +1077,13 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     refreshPrintButtonForMode();
 
     // Input selector
-    // -2 = follow track index; -1 = none; 0..N = explicit input. We populate
-    // a small set of options here; the device may have fewer inputs at runtime
+    // -2 = follow track index; -1 = none; 0..N = explicit input. One fixed item
+    // per track number, so the input a moved track kept from its old slot can
+    // be shown and picked again. The device may have fewer inputs at runtime
     // and we'll just route silence in that case.
     inputSelector.addItem ("In " + juce::String (trackIndex + 1) + " (follow)", 1);   // ID 1 = follow (-2)
     inputSelector.addItem ("None",                                  2); // ID 2 = -1
-    for (int i = 0; i < 16; ++i)
+    for (int i = 0; i < Session::kNumTracks; ++i)
         inputSelector.addItem ("In " + juce::String (i + 1) + " (fixed)", 100 + i);  // ID 100+i = explicit
 
     const int currentSrc = track.inputSource.load (std::memory_order_relaxed);
@@ -1117,7 +1118,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // Stereo R-channel input (mirrors the L selector's options)
     inputSelectorR.addItem ("In " + juce::String (trackIndex + 2) + " (follow)", 1);   // ID 1 = follow (-2 -> L+1)
     inputSelectorR.addItem ("None", 2);                                   // ID 2 = -1
-    for (int i = 0; i < 16; ++i)
+    for (int i = 0; i < Session::kNumTracks; ++i)
         inputSelectorR.addItem ("In " + juce::String (i + 1) + " (fixed)", 100 + i);
     {
         const int rSrc = track.inputSourceR.load (std::memory_order_relaxed);
@@ -3063,6 +3064,17 @@ void ChannelStripComponent::resetRemoteEditorEmbed()
 }
 #endif
 
+void ChannelStripComponent::closeEditorsForTrackMove()
+{
+    eqEditorModal.closeAndDeleteBodyNow();
+    auxEditorModal.closeAndDeleteBodyNow();
+    ioConfigModal.closeAndDeleteBodyNow();
+    hardwareInsertModal.closeAndDeleteBodyNow();
+    closeCompEditorPopup();
+    closeBuiltinEditorPopup();
+    dropPluginEditor (NativeEditorTeardown::Destroy);
+}
+
 void ChannelStripComponent::dropPluginEditor (NativeEditorTeardown teardown)
 {
     closePluginEditor();
@@ -3869,7 +3881,7 @@ void ChannelStripComponent::refreshInputAvailability()
     inputSelectorR.changeItemText (1, followR);
     if (followShown)
         inputSelectorR.setSelectedId (1, juce::dontSendNotification);
-    for (int i = 0; i < 16; ++i)
+    for (int i = 0; i < Session::kNumTracks; ++i)
     {
         inputSelector.setItemEnabled (100 + i, offered (i));
         inputSelectorR.setItemEnabled (100 + i, offered (i));
