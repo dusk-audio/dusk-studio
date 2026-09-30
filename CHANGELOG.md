@@ -33,6 +33,10 @@ Takes live on the track now, and the audio editor is where you comp them.
   the lane below on the focused region (or the selected range) and **Up** the
   one above, each one undo step; **T** auditions the take under the pointer or
   the focused region's, and **T** again stops it.
+- **Drag the seam between two takes.** In the audio editor, the join between
+  two takes' regions drags from the take stripe along the top of the waveform;
+  both edges move together, the crossfade keeps its length, and it is one undo
+  step.
 - **A take count beside the track name.** The tape strip shows "3 takes" on a
   track with several takes, or "1 take" when its only take has no region on the
   timeline. Click it to open the audio editor on the take lanes.

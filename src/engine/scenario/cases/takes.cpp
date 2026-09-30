@@ -1238,6 +1238,57 @@ ScenarioResult switchTakeStepsThroughCoveringTakes (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// Moving the seam where one take gives way to another is one step of two region
+// edits: the left region's end and the right one's start move together, the
+// crossfade keeps its length, and Undo puts both back.
+ScenarioResult seamMoveIsOneStep (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
+    auto& regs = track.regions;
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto first = writtenTake (ctx, "seam-first", 0, 96000);
+    const auto second = writtenTake (ctx, "seam-second", 0, 96000);
+    if (! first || ! second) return ScenarioResult::fail ("could not write the takes");
+    promoteTakeRange (session, track, *first, 0, 96000);
+    promoteTakeRange (session, track, *second, 48000, 96000);
+    const auto seam = compSeamNear (track, 48000, 16);
+    if (! ctx.expect (seam.has_value(), "no seam where the second take starts"))
+        return ctx.verdict();
+    const auto before = regs;
+    const auto overlap = regs[(std::size_t) seam->left].timelineStart + regs[(std::size_t) seam->left].lengthInSamples
+                       - regs[(std::size_t) seam->right].timelineStart;
+
+    const auto leftBefore = regs[(std::size_t) seam->left];
+    const auto rightBefore = regs[(std::size_t) seam->right];
+    shiftSeam (track, *seam, -12000);
+    const auto leftAfter = regs[(std::size_t) seam->left];
+    const auto rightAfter = regs[(std::size_t) seam->right];
+    regs[(std::size_t) seam->left] = leftBefore;
+    regs[(std::size_t) seam->right] = rightBefore;
+    undo.beginNewTransaction ("Move comp seam");
+    ctx.expect (undo.perform (new RegionEditAction (session, ctx.engine(), kTrack, seam->left, leftBefore, leftAfter))
+                    && undo.perform (new RegionEditAction (session, ctx.engine(), kTrack, seam->right, rightBefore,
+                                                           rightAfter)),
+                "the seam move was refused");
+    const auto& left = regs[(std::size_t) seam->left];
+    const auto& right = regs[(std::size_t) seam->right];
+    ctx.expect (right.timelineStart == 36000 && right.sourceOffset == 36000 && right.lengthInSamples == 60000,
+                "the second take's region did not start 12000 samples earlier, reading its take there");
+    ctx.expect (left.timelineStart + left.lengthInSamples - right.timelineStart == overlap,
+                "the crossfade changed length");
+    ctx.expect (takeCoverage (track, second->id)
+                    == std::vector<std::pair<std::int64_t, std::int64_t>> { { 36000, 96000 } },
+                "the second take's lane does not show the moved seam");
+    ctx.expect (undo.getUndoDescription() == "Move comp seam", "the move is not one \"Move comp seam\" step");
+    ctx.expect (undo.undo() && regs.size() == before.size()
+                    && regs[(std::size_t) seam->right].timelineStart == before[(std::size_t) seam->right].timelineStart
+                    && regs[(std::size_t) seam->left].lengthInSamples == before[(std::size_t) seam->left].lengthInSamples,
+                "one Undo did not put both regions back");
+    return ctx.verdict();
+}
+
 // Join keeps a take only while the result still reads that take alone: two
 // halves of one take rejoin naming it, two loop passes that share a file and
 // abut join naming neither, and regions of two takes render into a new file
@@ -1479,6 +1530,9 @@ const ScenarioRegistrar reverseTwiceRegistrar { Scenario {
 const ScenarioRegistrar switchTakeRegistrar { Scenario {
     "take.switch_region_take_steps_through_covering_takes", { "take", "comp", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (switchTakeStepsThroughCoveringTakes, ctx); } } };
+const ScenarioRegistrar seamMoveRegistrar { Scenario {
+    "take.seam_move_is_one_step", { "take", "comp", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (seamMoveIsOneStep, ctx); } } };
 const ScenarioRegistrar joinRegistrar { Scenario {
     "take.join_names_a_take_only_while_it_reads_it", { "take", "region", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (joinNamesATakeOnlyWhileItReadsIt, ctx); } } };

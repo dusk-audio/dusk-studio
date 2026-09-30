@@ -73,7 +73,8 @@ public:
     // Where a drag of `kind` starts for a timeline sample, in design pixels from the
     // body's top-left - the frame "at:<x>,<y>" addresses. "start" and "end" are the
     // trim handles, "gain" the gain line at that sample, "wave" the waveform point
-    // samplePointForScenario gives, "divider" the take lanes' caption.
+    // samplePointForScenario gives, "stripe" the take stripe along the waveform's top
+    // at that sample, "divider" the take lanes' caption.
     virtual bool gesturePointForScenario (const std::string& kind, std::int64_t timelineSample,
                                           ImVec2& point) const = 0;
 

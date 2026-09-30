@@ -1,6 +1,7 @@
 #include "TakeComp.h"
 
 #include <algorithm>
+#include <limits>
 #include <string_view>
 
 namespace duskstudio
@@ -270,5 +271,75 @@ TakeId steppedTake (const std::vector<TakeId>& covering, TakeId current, int ste
         return step > 0 ? covering.front() : covering.back();
     const int next = static_cast<int> (found - covering.begin()) + step;
     return next >= 0 && next < count ? covering[static_cast<std::size_t> (next)] : 0;
+}
+
+namespace
+{
+bool seamBetween (const AudioRegion& left, const AudioRegion& right)
+{
+    const auto overlap = left.timelineStart + left.lengthInSamples - right.timelineStart;
+    return left.takeId != 0 && right.takeId != 0 && left.timelineStart < right.timelineStart
+        && overlap >= 0 && overlap <= kPunchFadeSamples;
+}
+
+bool validSeam (const Track& track, CompSeam seam)
+{
+    const auto count = static_cast<int> (track.regions.size());
+    return seam.left >= 0 && seam.left < count && seam.right >= 0 && seam.right < count && seam.left != seam.right;
+}
+} // namespace
+
+std::optional<CompSeam> compSeamNear (const Track& track, std::int64_t at, std::int64_t tolerance)
+{
+    std::optional<CompSeam> nearest;
+    std::int64_t best = std::numeric_limits<std::int64_t>::max();
+    const auto& regs = track.regions;
+    for (int l = 0; l < static_cast<int> (regs.size()); ++l)
+        for (int r = 0; r < static_cast<int> (regs.size()); ++r)
+        {
+            if (l == r || ! seamBetween (regs[(std::size_t) l], regs[(std::size_t) r])) continue;
+            const auto from = regs[(std::size_t) r].timelineStart;
+            const auto to = regs[(std::size_t) l].timelineStart + regs[(std::size_t) l].lengthInSamples;
+            const auto distance = at < from ? from - at : at > to ? at - to : 0;
+            if (distance <= tolerance && distance < best)
+            {
+                best = distance;
+                nearest = CompSeam { l, r };
+            }
+        }
+    return nearest;
+}
+
+std::int64_t clampSeamShift (const Track& track, CompSeam seam, std::int64_t delta)
+{
+    if (! validSeam (track, seam)) return 0;
+    const auto& left = track.regions[(std::size_t) seam.left];
+    const auto& right = track.regions[(std::size_t) seam.right];
+    const auto* leftTake = findTake (track, left.takeId);
+    const auto* rightTake = findTake (track, right.takeId);
+
+    // Later: the left region may read on to the end of its take; the right one must
+    // keep its fades and a sample.
+    auto most = right.lengthInSamples - right.fadeInSamples - right.fadeOutSamples - 1;
+    most = std::min (most, leftTake == nullptr ? 0
+                           : leftTake->sourceOffset + leftTake->lengthInSamples - (left.sourceOffset + left.lengthInSamples));
+    // Earlier: the right region may read back to the start of its take; the left one
+    // must keep its fades and a sample.
+    auto least = left.fadeInSamples + left.fadeOutSamples + 1 - left.lengthInSamples;
+    least = std::max (least, rightTake == nullptr ? 0 : rightTake->sourceOffset - right.sourceOffset);
+    if (least > most) return 0;
+    return std::clamp (delta, least, most);
+}
+
+void shiftSeam (Track& track, CompSeam seam, std::int64_t delta)
+{
+    delta = clampSeamShift (track, seam, delta);
+    if (delta == 0) return;
+    auto& left = track.regions[(std::size_t) seam.left];
+    auto& right = track.regions[(std::size_t) seam.right];
+    left.lengthInSamples += delta;
+    right.timelineStart += delta;
+    right.sourceOffset += delta;
+    right.lengthInSamples -= delta;
 }
 } // namespace duskstudio

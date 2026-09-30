@@ -65,4 +65,25 @@ std::vector<TakeId> takesCovering (const Track& track, std::int64_t start, std::
 // or 0 past either end. A current take not among them stands just above the first
 // lane, so stepping down reaches the newest and stepping up the oldest.
 TakeId steppedTake (const std::vector<TakeId>& covering, TakeId current, int step);
+
+// Two regions of the comp that meet where one take gives way to the next: both name
+// a take, and the left one runs on past where the right one starts by no more than a
+// seam fade. Indices into the track's regions.
+struct CompSeam
+{
+    int left = -1;
+    int right = -1;
+};
+
+// The seam whose crossfade lies within `tolerance` samples of `at`, the nearest when
+// several do.
+std::optional<CompSeam> compSeamNear (const Track& track, std::int64_t at, std::int64_t tolerance);
+
+// `delta` cut to what both regions can give: neither reads past its take, and each
+// keeps its fades and a sample besides.
+std::int64_t clampSeamShift (const Track& track, CompSeam seam, std::int64_t delta);
+
+// Moves the seam by `delta` samples: the left region's end and the right region's
+// start move together, and the crossfade between them keeps its length and shape.
+void shiftSeam (Track& track, CompSeam seam, std::int64_t delta);
 } // namespace duskstudio

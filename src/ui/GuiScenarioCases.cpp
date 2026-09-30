@@ -2869,6 +2869,53 @@ std::optional<ScenarioResult> runAudioEditorTakeKeys (GuiHost& host, ScenarioCon
     return std::nullopt;
 }
 
+// The seam where one take gives way to the next drags from the take stripe along the
+// top of the waveform: both regions' edges move together as one "Move comp seam"
+// step, and one Undo puts them back.
+std::optional<ScenarioResult> runAudioEditorSeamDrag (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    const auto ids = addLevelTakes (ctx, track, 2);
+    if (! ids) return ScenarioResult::fail ("could not write take fixture");
+    promoteTakeRange (session, track, track.takes[0], 0, kTakeCaseLength);
+    promoteTakeRange (session, track, track.takes[1], kTakeCaseLength / 2, kTakeCaseLength);
+    session.audioEditorSnap = false;
+    const auto before = track.regions;
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        const auto from = host.audioEditorPoint ("stripe", kTakeCaseLength / 2);
+        const auto to = host.audioEditorPoint ("stripe", kTakeCaseLength / 4);
+        if (! ctx.expect (from.size() == 2 && to.size() == 2, "the take stripe has no geometry")) return;
+        ctx.expect (host.audioEditorPointer (from[0], from[1], true), "the seam did not take the press");
+        host.audioEditorPointer (to[0], to[1], true);
+        host.audioEditorPointer (to[0], to[1], false);
+    }, [&host] { return host.audioEditorTakeLanes().size() == 2; }, "the take lanes never showed" });
+    steps->push_back ({ 150, [&host, &ctx, &track, &engine = ctx.engine(), ids]
+    {
+        const auto second = takeCoverage (track, ids->at (1));
+        ctx.expect (second.size() == 1 && std::abs (second[0].first - kTakeCaseLength / 4) < 512
+                        && second[0].second == kTakeCaseLength,
+                    "dragging the seam did not move where the second take starts");
+        ctx.expect (undoDescription (engine) == "Move comp seam", "the drag is not one \"Move comp seam\" step");
+        ctx.expect (host.clickAudioEditorButton ("Undo"), "Undo unavailable after the seam drag");
+    } });
+    steps->push_back ({ 150, [&ctx, &track, before]
+    { ctx.expect (sameRegions (track.regions, before), "one Undo did not put both regions back"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorSeamDrag { Scenario {
+    "gui.audio_editor_seam_drag", { "gui", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorSeamDrag (host, ctx); }
+} };
+
 const ScenarioRegistrar audioEditorTakeKeys { Scenario {
     "gui.audio_editor_take_keys", { "gui", "keyboard", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,

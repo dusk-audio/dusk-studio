@@ -730,3 +730,81 @@ TEST_CASE ("Stepping a comp section's take moves one lane at a time and stops at
     CHECK (steppedTake (lanes, 9, -1) == 1);
     CHECK (steppedTake ({}, 3, 1) == 0);
 }
+
+namespace
+{
+// Take 1 plays up to a seam at 24000, crossfading over 64 samples into take 2, which
+// plays on to 96000.
+void fillSeamTrack (Track& track)
+{
+    track.takes.push_back ({ 1, "Take 1", {}, 0, 96000, 0, 1, {} });
+    track.takes.push_back ({ 2, "Take 2", {}, 0, 96000, 0, 1, {} });
+    AudioRegion left;
+    left.takeId = 1;
+    left.lengthInSamples = 24000 + kPunchFadeSamples;
+    left.fadeOutSamples = kPunchFadeSamples;
+    AudioRegion right;
+    right.takeId = 2;
+    right.timelineStart = right.sourceOffset = 24000;
+    right.lengthInSamples = 72000;
+    right.fadeInSamples = kPunchFadeSamples;
+    track.regions = { left, right };
+}
+} // namespace
+
+TEST_CASE ("A comp seam is found where one take's region crossfades into the next",
+           "[session][takes][seam]")
+{
+    Track track;
+    fillSeamTrack (track);
+    const auto seam = compSeamNear (track, 24030, 10);
+    REQUIRE (seam.has_value());
+    CHECK (seam->left == 0);
+    CHECK (seam->right == 1);
+    CHECK (compSeamNear (track, 23990, 10).has_value());
+    CHECK_FALSE (compSeamNear (track, 30000, 100).has_value());
+
+    SECTION ("regions that name no take meet at no seam")
+    {
+        track.regions[0].takeId = 0;
+        CHECK_FALSE (compSeamNear (track, 24030, 10).has_value());
+    }
+    SECTION ("regions apart by more than a seam fade meet at no seam")
+    {
+        track.regions[0].lengthInSamples = 24000 + 2 * kPunchFadeSamples;
+        CHECK_FALSE (compSeamNear (track, 24030, 10).has_value());
+    }
+}
+
+TEST_CASE ("Moving a comp seam moves both edges and stops where either region runs out",
+           "[session][takes][seam]")
+{
+    Track track;
+    fillSeamTrack (track);
+    const CompSeam seam { 0, 1 };
+
+    shiftSeam (track, seam, 1000);
+    CHECK (track.regions[0].lengthInSamples == 25000 + kPunchFadeSamples);
+    CHECK (track.regions[1].timelineStart == 25000);
+    CHECK (track.regions[1].sourceOffset == 25000);
+    CHECK (track.regions[1].lengthInSamples == 71000);
+    CHECK (track.regions[0].fadeOutSamples == kPunchFadeSamples);
+    CHECK (track.regions[1].fadeInSamples == kPunchFadeSamples);
+
+    // Later, the right region keeps its fade and a sample; earlier, the left one does.
+    CHECK (clampSeamShift (track, seam, 1'000'000) == 71000 - kPunchFadeSamples - 1);
+    CHECK (clampSeamShift (track, seam, -1'000'000) == kPunchFadeSamples + 1 - (25000 + kPunchFadeSamples));
+
+    SECTION ("a take that starts later holds the seam back to its start")
+    {
+        track.takes[1].timelineStart = 20000;
+        track.takes[1].sourceOffset = 0;
+        track.regions[1].sourceOffset = 5000;
+        CHECK (clampSeamShift (track, seam, -20000) == -5000);
+    }
+    SECTION ("a take that ends sooner holds the seam to its end")
+    {
+        track.takes[0].lengthInSamples = 26000;
+        CHECK (clampSeamShift (track, seam, 5000) == 26000 - (25000 + kPunchFadeSamples));
+    }
+}

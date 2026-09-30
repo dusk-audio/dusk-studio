@@ -116,6 +116,9 @@ constexpr std::uint32_t takeColour (std::uint64_t id) noexcept
 }
 
 constexpr float kLaneWheelPixels = 24.0f;
+// The stripe along the top of the waveform that names each region's take, where a
+// seam between two takes is picked up.
+constexpr float kTakeStripeHeight = 16.0f;
 // How long a refused take edit's explanation stays in the lane caption.
 constexpr double kNoticeSeconds = 5.0;
 
@@ -505,6 +508,7 @@ public:
         else if (kind == "start") point.x = trimStart().at (0.5f, 0.5f).x;
         else if (kind == "end") point.x = trimEnd().at (0.5f, 0.5f).x;
         else if (kind == "gain") point.y = gainLineY();
+        else if (kind == "stripe") point.y = layout.wave.y0 + layout.s (kTakeStripeHeight * 0.5f);
         else if (kind != "wave") return false;
         point = { (point.x - layout.body.x0) / layout.scale, (point.y - layout.body.y0) / layout.scale };
         return true;
@@ -742,13 +746,16 @@ private:
     // drag edits it live so the view follows, and the release rolls it back and
     // commits the whole gesture as one undo step.
     enum class Drag { none, fadeIn, fadeOut, gain, trimStart, trimEnd, moveCursor, range, moveRegion,
-                      pan, loopIn, loopOut, punchIn, punchOut, automationPoint, automationPaint, takeRange };
+                      pan, loopIn, loopOut, punchIn, punchOut, automationPoint, automationPaint, takeRange, seam };
     Drag drag = Drag::none;
     ImGuiMouseButton dragButton = ImGuiMouseButton_Left;
     ImVec2 dragDown;
     ImVec2 dragLast;
     bool gestureActive = false;
     AudioRegion regionAtDragStart;
+    // A seam drag holds the two regions as they were when it began.
+    CompSeam seamDragged;
+    AudioRegion seamLeftAtDragStart, seamRightAtDragStart;
     std::pair<std::int64_t, std::int64_t> edgeRangeAtDragStart;
     float dragOriginGainDb = 0.0f;
     std::int64_t dragOriginTimeline = 0;
@@ -2084,6 +2091,47 @@ private:
         return layout.wave.contains (p) && std::abs (p.y - gainLineY()) <= layout.s (4.0f);
     }
 
+    // The seam between two takes under a point in the take stripe along the top of the
+    // waveform.
+    std::optional<CompSeam> seamGripAt (ImVec2 p) const
+    {
+        const float perSample = pixelsPerSampleOnScreen();
+        if (! layout.wave.contains (p) || p.y > layout.wave.y0 + layout.s (kTakeStripeHeight) || perSample <= 0.0f)
+            return std::nullopt;
+        const auto tolerance = static_cast<std::int64_t> (layout.s (5.0f) / perSample);
+        return compSeamNear (session.track (trackIdx), timelineForX (p.x), tolerance);
+    }
+
+    // Whether the regions a seam drag holds are still the ones it picked up.
+    bool seamStillHeld() const
+    {
+        const auto& regions = trackRegions();
+        const auto count = static_cast<int> (regions.size());
+        return seamDragged.left >= 0 && seamDragged.left < count && seamDragged.right >= 0 && seamDragged.right < count
+            && regions[static_cast<std::size_t> (seamDragged.left)].file == seamLeftAtDragStart.file
+            && regions[static_cast<std::size_t> (seamDragged.right)].file == seamRightAtDragStart.file;
+    }
+
+    // The drag edited both regions live; the release rolls them back and records the
+    // move as one step of two region edits.
+    void commitSeamDrag()
+    {
+        if (! seamStillHeld())
+            return;
+        auto& regions = session.track (trackIdx).regions;
+        const auto leftAfter = regions[static_cast<std::size_t> (seamDragged.left)];
+        const auto rightAfter = regions[static_cast<std::size_t> (seamDragged.right)];
+        if (rightAfter.timelineStart == seamRightAtDragStart.timelineStart)
+            return;
+        regions[static_cast<std::size_t> (seamDragged.left)] = seamLeftAtDragStart;
+        regions[static_cast<std::size_t> (seamDragged.right)] = seamRightAtDragStart;
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction ("Move comp seam");
+        undo.perform (new RegionEditAction (session, engine, trackIdx, seamDragged.left, seamLeftAtDragStart, leftAfter));
+        undo.perform (new RegionEditAction (session, engine, trackIdx, seamDragged.right, seamRightAtDragStart,
+                                            rightAfter));
+    }
+
     void pointerDown (ImGuiMouseButton button, ImVec2 p)
     {
         auto* r = region();
@@ -2121,6 +2169,22 @@ private:
         // on a fade disc or the gain line.
         if (inWave && automationEditable() && automationDown (button, p, command))
             return;
+
+        if (button == ImGuiMouseButton_Left && ! trackFrozen())
+            if (const auto seam = seamGripAt (p))
+            {
+                const auto& regions = trackRegions();
+                const auto& left = regions[static_cast<std::size_t> (seam->left)];
+                const auto& right = regions[static_cast<std::size_t> (seam->right)];
+                if (! left.locked && ! right.locked)
+                {
+                    seamDragged = *seam;
+                    seamLeftAtDragStart = left;
+                    seamRightAtDragStart = right;
+                    drag = Drag::seam;
+                    return;
+                }
+            }
 
         if (button == ImGuiMouseButton_Right)
         {
@@ -2301,6 +2365,20 @@ private:
             return;
         }
 
+        if (drag == Drag::seam)
+        {
+            if (! seamStillHeld())
+                return;
+            auto& track = session.track (trackIdx);
+            track.regions[static_cast<std::size_t> (seamDragged.left)] = seamLeftAtDragStart;
+            track.regions[static_cast<std::size_t> (seamDragged.right)] = seamRightAtDragStart;
+            const auto raw = timelineForX (p.x);
+            const auto t = snapTimelineSample (raw, bypass);
+            snapGuide = t != raw ? t : -1;
+            shiftSeam (track, seamDragged, t - seamRightAtDragStart.timelineStart);
+            return;
+        }
+
         if (drag == Drag::pan)
         {
             const auto samples = static_cast<std::int64_t> (std::llround (
@@ -2405,7 +2483,7 @@ private:
             }
             case Drag::none: case Drag::moveCursor: case Drag::range: case Drag::moveRegion: case Drag::pan:
             case Drag::loopIn: case Drag::loopOut: case Drag::punchIn: case Drag::punchOut:
-            case Drag::automationPoint: case Drag::automationPaint: case Drag::takeRange:
+            case Drag::automationPoint: case Drag::automationPaint: case Drag::takeRange: case Drag::seam:
                 break;
         }
     }
@@ -2426,6 +2504,12 @@ private:
             if (rangeEndSample < rangeStartSample)
                 std::swap (rangeStartSample, rangeEndSample);
             rangeActive = rangeEndSample > rangeStartSample;
+            return;
+        }
+
+        if (finished == Drag::seam)
+        {
+            commitSeamDrag();
             return;
         }
 
@@ -2519,6 +2603,14 @@ private:
                 break;
             case Drag::takeRange:
                 dragTake = 0;
+                break;
+            case Drag::seam:
+                if (seamStillHeld())
+                {
+                    auto& regions = session.track (trackIdx).regions;
+                    regions[static_cast<std::size_t> (seamDragged.left)] = seamLeftAtDragStart;
+                    regions[static_cast<std::size_t> (seamDragged.right)] = seamRightAtDragStart;
+                }
                 break;
             case Drag::range:
                 rangeActive = false;
@@ -3276,13 +3368,22 @@ private:
             if (take == nullptr || slice.x1 <= slice.x0)
                 continue;
             const auto band = Box { static_cast<float> (slice.x0), lanes.y0, static_cast<float> (slice.x1),
-                                    lanes.y0 + ctx.s (16.0f) };
+                                    lanes.y0 + ctx.s (kTakeStripeHeight) };
             dl->AddRectFilled (band.tl(), ImVec2 (band.x1, band.y0 + ctx.s (3.0f)), argb (takeColour (take->id), 0.95f));
             // Clear of the fade discs in the region's top corners.
             if (band.width() >= ctx.s (80.0f))
                 clippedText (ctx, Box { band.x0 + ctx.s (20.0f), band.y0 + ctx.s (4.0f), band.x1 - ctx.s (20.0f), band.y1 },
                              ctx.fonts->value, 10.0f, argb (takeColour (take->id)), take->name.c_str(),
                              dw::Align::left);
+        }
+
+        const auto seam = drag == Drag::seam ? std::optional<CompSeam> (seamDragged)
+                        : drag == Drag::none && ImGui::IsMousePosValid() ? seamGripAt (ImGui::GetIO().MousePos)
+                                                                          : std::nullopt;
+        if (seam && seam->right >= 0 && seam->right < static_cast<int> (regions.size()))
+        {
+            const float x = xForTimeline (regions[static_cast<std::size_t> (seam->right)].timelineStart);
+            vline (dl, x, lanes.y0, lanes.y1, argb (kEditCursor, 0.75f), ctx.s (1.5f));
         }
 
         for (const auto& reg : regions)
@@ -3961,6 +4062,11 @@ private:
             ImGui::SetMouseCursor (ImGuiMouseCursor_TextInput);
             return;
         }
+        if (drag == Drag::none && ! trackFrozen() && seamGripAt (p))
+        {
+            ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeEW);
+            return;
+        }
         const auto* r = region();
         if (r == nullptr)
             return;
@@ -3968,7 +4074,7 @@ private:
         switch (drag)
         {
             case Drag::fadeIn: case Drag::fadeOut: case Drag::trimStart: case Drag::trimEnd:
-            case Drag::loopIn: case Drag::loopOut: case Drag::punchIn: case Drag::punchOut:
+            case Drag::loopIn: case Drag::loopOut: case Drag::punchIn: case Drag::punchOut: case Drag::seam:
                 ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeEW);
                 return;
             case Drag::gain:  ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeNS); return;
