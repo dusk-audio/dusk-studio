@@ -234,8 +234,7 @@ private:
     AudioEngine& engine;
     int trackIdx;
     TakeId takeId;
-    AudioTake removedTake;
-    std::size_t takeIndex = 0;
+    std::vector<AudioTake> beforeTakes;
     std::vector<AudioRegion> beforeRegions, afterRegions;
     bool firstPerformDone = false;
 };

@@ -1350,10 +1350,11 @@ private:
 
         // A key that edits the track would act on the region the drag holds half
         // changed, and the release would then commit that snapshot over whatever
-        // the key left there.
+        // the key left there. Escape cancels with any modifier down, as off-grid and
+        // range drags are held with one.
         if (drag != Drag::none)
         {
-            if (bare && is (ImGuiKey_Escape))
+            if (is (ImGuiKey_Escape))
                 cancelDrag();
             return true;
         }

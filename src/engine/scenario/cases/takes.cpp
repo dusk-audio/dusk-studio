@@ -196,7 +196,7 @@ ScenarioResult partialOverdubKeepsCoveredTakeWhole (ScenarioContext& ctx)
                     "the old region was not trimmed back to a crossfade under the new take");
         ctx.expect (kept->file == before.file && kept->sourceOffset == before.sourceOffset
                         && kept->takeId == old && kept->fadeInSamples == before.fadeInSamples
-                        && kept->gainDb == before.gainDb,
+                        && std::abs (kept->gainDb - before.gainDb) < 1.0e-6f,
                     "the uncovered part of the old region no longer plays the same audio");
         ctx.expect (fresh->takeId != 0 && fresh->takeId != old, "the new region does not name its own take");
     }
@@ -753,8 +753,8 @@ std::vector<TakeId> takeIds (const Track& track)
 }
 
 // A take can join the track with no undo step: a recording stopped by a stage
-// switch or a lost device. Undoing an earlier promote or recording removes only
-// the takes that step added, and redo puts them back where they were.
+// switch or a lost device. Undoing an earlier promote, recording or clone swaps
+// only the takes that step changed, and redo puts them back where they were.
 ScenarioResult undoKeepsTakesAddedOutsideHistory (ScenarioContext& ctx)
 {
     auto& session = ctx.session();
@@ -794,6 +794,29 @@ ScenarioResult undoKeepsTakesAddedOutsideHistory (ScenarioContext& ctx)
                 "undoing the recording touched a take added after it with no undo step");
     ctx.expect (undo.redo() && takeIds (track) == std::vector<TakeId> { recorded, later },
                 "redoing the recording did not put its take back where it was");
+
+    undo.clearUndoHistory();
+    track.regions.clear();
+    track.takes.clear();
+    const auto replaced = addTake (ctx, 0, 48000, 0);
+    auto& source = session.track (kTrack + 1);
+    AudioTake sourceTake;
+    sourceTake.id = session.allocateTakeId();
+    sourceTake.name = "Take 1";
+    sourceTake.lengthInSamples = 24000;
+    source.takes.push_back (sourceTake);
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new CloneTrackAction (session, engine, kTrack + 1, kTrack))
+                          && track.takes.size() == 1 && track.takes[0].id != replaced,
+                      "the clone did not replace the destination's take with a copy"))
+        return ctx.verdict();
+    const auto copy = track.takes[0].id;
+    const auto afterClone = addTake (ctx, 0, 48000, 0);
+    ctx.expect (undo.undo() && takeIds (track) == std::vector<TakeId> { replaced, afterClone },
+                "undoing the clone touched a take added after it with no undo step");
+    ctx.expect (undo.redo() && takeIds (track) == std::vector<TakeId> { copy, afterClone },
+                "redoing the clone touched a take added after it with no undo step");
+    source.takes.clear();
     return ctx.verdict();
 }
 

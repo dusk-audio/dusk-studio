@@ -409,8 +409,8 @@ bool migrateStripEqDialsToHz (nlohmann::json& root)
 // pass - becomes one of the track's takes, spanning all of the file that any
 // region or previous take used and sitting where the earliest of them put it,
 // or from sample 0 with the file start moved up to match when that would be
-// before the timeline starts. Only a region's take_id is added; what it plays
-// is left exactly as it was.
+// before the timeline starts. A recorded region names its take by take_id only
+// when its audio lies inside the take; what it plays is left exactly as it was.
 //
 // The takes are numbered oldest first. A history lists the newest displaced
 // take first under the region playing the newest of all, so walking each one
@@ -660,9 +660,9 @@ bool migrateSession (nlohmann::json& root, int from)
 
             case 8:
                 // v8 -> v9: audio take history moves off the regions onto the
-                // track. A region's previous_takes become track takes and each
-                // recorded region names its take by take_id; MIDI regions keep
-                // their previous_takes. The bump exists because a v8 build
+                // track. A region's previous_takes become track takes, and a
+                // recorded region names its take by take_id when its audio lies
+                // inside the take; MIDI regions keep their previous_takes. The bump exists because a v8 build
                 // would drop every track take on re-save.
                 if (root.is_object())
                 {

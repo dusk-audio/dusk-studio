@@ -3486,8 +3486,8 @@ const ScenarioRegistrar audioEditorStepsAsideForModals { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorStepsAsideForModals (host, ctx); }
 } };
 
-// Escape during a drag cancels the drag, whether the key reaches the editor's child
-// or the shell's window: the region, or the span dragged across a take, goes back to
+// Escape during a drag cancels the drag, with or without the modifier the drag is
+// held with, whether the key reaches the editor's child or the shell's window: the region, or the span dragged across a take, goes back to
 // where the press found it, nothing is recorded, and the editor stays up. Closing the
 // editor in the middle of a drag puts the region back the same way.
 std::optional<ScenarioResult> runAudioEditorEscapeCancelsDrag (GuiHost& host, ScenarioContext& ctx)
@@ -3511,13 +3511,16 @@ std::optional<ScenarioResult> runAudioEditorEscapeCancelsDrag (GuiHost& host, Sc
         return at.size() == 2 ? at : std::vector<int> { 0, 0 };
     };
     auto held = std::make_shared<std::vector<int>>();
-    const auto press = [&host, &ctx, held] (std::vector<int> from, std::vector<int> to)
+    auto heldModifiers = std::make_shared<int> (0);
+    const auto press = [&host, &ctx, held, heldModifiers] (std::vector<int> from, std::vector<int> to, int modifiers = 0)
     {
-        ctx.expect (host.audioEditorPointer (from[0], from[1], true), "the drag's press failed");
-        host.audioEditorPointer (to[0], to[1], true);
+        ctx.expect (host.audioEditorPointer (from[0], from[1], true, modifiers), "the drag's press failed");
+        host.audioEditorPointer (to[0], to[1], true, modifiers);
         *held = to;
+        *heldModifiers = modifiers;
     };
-    const auto release = [&host, held] { host.audioEditorPointer ((*held)[0], (*held)[1], false); };
+    const auto release = [&host, held, heldModifiers]
+    { host.audioEditorPointer ((*held)[0], (*held)[1], false, *heldModifiers); };
     const auto restored = [&ctx, &engine, &track, before] (const std::string& what)
     {
         ctx.expect (sameRegions (track.regions, before) && ! track.regions.empty()
@@ -3552,6 +3555,35 @@ std::optional<ScenarioResult> runAudioEditorEscapeCancelsDrag (GuiHost& host, Sc
     {
         ctx.expect (host.audioEditorOpen(), "Escape from the shell during a gain drag closed the editor");
         restored ("Escape from the shell during a gain drag");
+        release();
+    } });
+    constexpr int command = 2;
+    const auto trimmed = [region] { return region().lengthInSamples < kTakeCaseLength - 12000; };
+    steps->push_back ({ 150, [restored, press, point]
+    {
+        restored ("the release after a cancelled gain drag");
+        press (point ("end", kTakeCaseLength), point ("wave", 72000), command);
+    } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressAudioEditorKey ("command + escape"), "Cmd+Escape was not delivered to the editor"); },
+    trimmed, "the Cmd-held trim did not follow the pointer" });
+    steps->push_back ({ 150, [&host, &ctx, restored, release]
+    {
+        ctx.expect (host.audioEditorOpen(), "Cmd+Escape during a Cmd-held trim closed the editor");
+        restored ("Cmd+Escape during a Cmd-held trim");
+        release();
+    } });
+    steps->push_back ({ 150, [restored, press, point]
+    {
+        restored ("the release after a trim cancelled by Cmd+Escape");
+        press (point ("end", kTakeCaseLength), point ("wave", 72000), command);
+    } });
+    steps->push_back ({ 100, [&host] { host.pressPeerKey ("command + escape", 0); },
+                        trimmed, "the second Cmd-held trim did not follow the pointer" });
+    steps->push_back ({ 150, [&host, &ctx, restored, release]
+    {
+        ctx.expect (host.audioEditorOpen(), "Cmd+Escape from the shell during a Cmd-held trim closed the editor");
+        restored ("Cmd+Escape from the shell during a Cmd-held trim");
         release();
     } });
     steps->push_back ({ 150, [&host, press, other]

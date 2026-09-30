@@ -470,8 +470,7 @@ bool DeleteTakeAction::perform()
         if (std::any_of (track.regions.begin(), track.regions.end(),
                          [&cutFromIt] (const AudioRegion& r) { return r.locked && cutFromIt (r); }))
             return false;
-        removedTake = *it;
-        takeIndex = (std::size_t) (it - takes.begin());
+        beforeTakes = takes;
         beforeRegions = track.regions;
         afterRegions = beforeRegions;
         afterRegions.erase (std::remove_if (afterRegions.begin(), afterRegions.end(), cutFromIt),
@@ -495,8 +494,11 @@ bool DeleteTakeAction::undo()
     if (frozenLocked (session, trackIdx)) return false;
     auto& track = session.track (trackIdx);
     if (findTake (track, takeId) != nullptr) return false;
-    const auto at = std::min (takeIndex, track.takes.size());
-    track.takes.insert (track.takes.begin() + (std::ptrdiff_t) at, removedTake);
+    auto afterTakes = beforeTakes;
+    afterTakes.erase (std::remove_if (afterTakes.begin(), afterTakes.end(),
+                                      [this] (const AudioTake& take) { return take.id == takeId; }),
+                      afterTakes.end());
+    applyTakeChange (track.takes, afterTakes, beforeTakes);
     track.regions = beforeRegions;
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -1028,8 +1030,9 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     return s;
 }
 
+// Only the takes `replacedTakes` holds give way to the snapshot's; see applyTakeChange.
 void applyTrack (Track& t, AudioEngine& engine, int idx,
-                  const CloneTrackAction::Impl& s)
+                  const CloneTrackAction::Impl& s, const std::vector<AudioTake>& replacedTakes)
 {
     t.name   = s.name;
     t.colour = s.colour;
@@ -1135,7 +1138,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
 
     t.regions = s.regions;
     t.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (s.midiRegions));
-    t.takes = s.takes;
+    applyTakeChange (t.takes, replacedTakes, s.takes);
 
     // Persist the post-restore plugin state on Session so a save right
     // after a clone (with no manual edits in between) round-trips
@@ -1424,8 +1427,8 @@ bool CloneTrackAction::perform()
                 region.takeId = it->second;
     }
 
-    applyTrack (session.track (dstIdx), engine, dstIdx, *afterState);
-    // The destination's takes are gone; see DeleteTakeAction.
+    applyTrack (session.track (dstIdx), engine, dstIdx, *afterState, beforeState->takes);
+    // The destination's own takes are gone; see DeleteTakeAction.
     if (session.takeAudition.trackIdx == dstIdx)
         session.takeAudition = {};
     rebuildPlaybackIfStopped (engine);
@@ -1441,7 +1444,7 @@ bool CloneTrackAction::undo()
     // now-frozen destination would desync its baked WAV. Refuse - mirrors perform()'s
     // frozen guard. Unfreeze first to undo.
     if (session.track (dstIdx).frozen.load (std::memory_order_relaxed)) return false;
-    applyTrack (session.track (dstIdx), engine, dstIdx, *beforeState);
+    applyTrack (session.track (dstIdx), engine, dstIdx, *beforeState, afterState->takes);
     endAuditionOfMissingTake (session);
     rebuildPlaybackIfStopped (engine);
     return true;
