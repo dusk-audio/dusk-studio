@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -830,4 +831,23 @@ TEST_CASE ("A comp seam without fades still keeps its overlap inside both region
     // Later, the right region keeps the overlap and a sample.
     const auto latest = clampSeamShift (track, seam, 1'000'000);
     CHECK (track.regions[1].lengthInSamples - latest == overlap + 1);
+}
+
+TEST_CASE ("The comp section under a point is the region playing there, or the gap around it",
+           "[session][takes][comp]")
+{
+    Track track;
+    fillSeamTrack (track);
+    // Take 1 plays [0, 24064), take 2 [24000, 96000): the crossfade belongs to take 2.
+    CHECK (compSectionAt (track, 100) == std::pair<std::int64_t, std::int64_t> { 0, 24000 + kPunchFadeSamples });
+    CHECK (compSectionAt (track, 24030) == std::pair<std::int64_t, std::int64_t> { 24000, 96000 });
+    CHECK (compSectionAt (track, 50000) == std::pair<std::int64_t, std::int64_t> { 24000, 96000 });
+
+    // A hole between regions, and the open space past the last one.
+    track.regions[1].timelineStart = track.regions[1].sourceOffset = 40000;
+    track.regions[1].lengthInSamples = 20000;
+    CHECK (compSectionAt (track, 30000) == std::pair<std::int64_t, std::int64_t> { 24000 + kPunchFadeSamples, 40000 });
+    const auto after = compSectionAt (track, 70000);
+    CHECK (after.first == 60000);
+    CHECK (after.second == std::numeric_limits<std::int64_t>::max());
 }

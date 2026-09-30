@@ -289,6 +289,28 @@ bool validSeam (const Track& track, CompSeam seam)
 }
 } // namespace
 
+std::pair<std::int64_t, std::int64_t> compSectionAt (const Track& track, std::int64_t at)
+{
+    const AudioRegion* playing = nullptr;
+    for (const auto& r : track.regions)
+        if (r.lengthInSamples > 0 && r.timelineStart <= at && at < r.timelineStart + r.lengthInSamples
+            && (playing == nullptr || r.timelineStart > playing->timelineStart))
+            playing = &r;
+    if (playing != nullptr)
+        return { playing->timelineStart, playing->timelineStart + playing->lengthInSamples };
+
+    auto lo = std::numeric_limits<std::int64_t>::min();
+    auto hi = std::numeric_limits<std::int64_t>::max();
+    for (const auto& r : track.regions)
+    {
+        if (r.lengthInSamples <= 0) continue;
+        const auto end = r.timelineStart + r.lengthInSamples;
+        if (end <= at) lo = std::max (lo, end);
+        if (r.timelineStart > at) hi = std::min (hi, r.timelineStart);
+    }
+    return { lo, hi };
+}
+
 std::optional<CompSeam> compSeamNear (const Track& track, std::int64_t at, std::int64_t tolerance)
 {
     std::optional<CompSeam> nearest;

@@ -2910,6 +2910,75 @@ std::optional<ScenarioResult> runAudioEditorSeamDrag (GuiHost& host, ScenarioCon
     return std::nullopt;
 }
 
+// A click on a take lane gives that take the comp section under the click, as one
+// "Switch take" step; a click where the take has no audio says so; and a divider
+// drags from inside a lane as it does from the take stripe.
+std::optional<ScenarioResult> runAudioEditorLaneClick (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    const auto ids = addLevelTakes (ctx, track, 3);
+    const auto punch = addLevelTake (ctx, track, "Punch", 24000, 48000, 0.9f);
+    if (! ids || ! punch) return ScenarioResult::fail ("could not write take fixture");
+    promoteTakeRange (session, track, track.takes[2], 0, kTakeCaseLength);
+    promoteTakeRange (session, track, track.takes[3], 24000, 72000);
+    session.audioEditorSnap = false;
+    if (! host.openAudioEditorOnTakes (0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    using Span = std::pair<std::int64_t, std::int64_t>;
+    const auto clickLane = [&host, &ctx] (TakeId take, std::int64_t sample)
+    {
+        const auto at = host.audioEditorTakePoint ("lane", take, sample);
+        if (! ctx.expect (at.size() == 2, "take lane geometry unavailable")) return;
+        ctx.expect (host.audioEditorPointer (at[0], at[1], true), "the lane did not take the press");
+        host.audioEditorPointer (at[0], at[1], false);
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [clickLane, ids] { clickLane (ids->at (1), 10000); },
+                        [&host] { return host.audioEditorTakeLanes().size() == 4; }, "the take lanes never showed" });
+    steps->push_back ({ 150, [&ctx, &track, &engine = ctx.engine(), ids, punch, clickLane]
+    {
+        ctx.expect (takeCoverage (track, ids->at (1)) == std::vector<Span> { { 0, 24000 + kPunchFadeSamples } },
+                    "a click on Take 2 did not give it the first section");
+        ctx.expect (takeCoverage (track, *punch) == std::vector<Span> { { 24000, 72000 } }, "the punch lost its section");
+        ctx.expect (undoDescription (engine) == "Switch take", "the click is not one \"Switch take\" step");
+        clickLane (*punch, 10000);
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &track, punch]
+    {
+        ctx.expect (host.audioEditorTakeCaption().find ("has no audio here") != std::string::npos,
+                    "a click where the punch has no audio did not say so");
+        ctx.expect (takeCoverage (track, *punch) == std::vector<Span> { { 24000, 72000 } },
+                    "a click where the punch has no audio changed the comp");
+        // The divider where the punch gives way to Take 3, dragged from Take 3's lane.
+        const auto seam = compSeamNear (track, 72000, 128);
+        if (! ctx.expect (seam.has_value(), "no seam where the punch ends")) return;
+        const auto at = track.regions[(std::size_t) seam->right].timelineStart;
+        const auto from = host.audioEditorTakePoint ("lane", track.regions[(std::size_t) seam->right].takeId, at);
+        const auto to = host.audioEditorTakePoint ("lane", track.regions[(std::size_t) seam->right].takeId, at + 12000);
+        if (! ctx.expect (from.size() == 2 && to.size() == 2, "take lane geometry unavailable")) return;
+        ctx.expect (host.audioEditorPointer (from[0], from[1], true), "the divider did not take the press");
+        host.audioEditorPointer (to[0], to[1], true);
+        host.audioEditorPointer (to[0], to[1], false);
+    } });
+    steps->push_back ({ 150, [&ctx, &track, &engine = ctx.engine(), punch]
+    {
+        const auto moved = takeCoverage (track, *punch);
+        ctx.expect (moved.size() == 1 && moved[0].first == 24000 && std::abs (moved[0].second - 84000) < 512,
+                    "dragging the divider in a lane did not move where the punch ends");
+        ctx.expect (undoDescription (engine) == "Move comp seam", "the lane divider drag is not one step");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorLaneClick { Scenario {
+    "gui.audio_editor_lane_click", { "gui", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorLaneClick (host, ctx); }
+} };
+
 const ScenarioRegistrar audioEditorSeamDrag { Scenario {
     "gui.audio_editor_seam_drag", { "gui", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
@@ -3453,7 +3522,8 @@ std::optional<ScenarioResult> runAudioTakeAuditionWhileRolling (GuiHost& host, S
     const std::string pending = "Auditioning \"Take 2\" from the next Play: the track will play this take alone.";
     const std::string ending = "The audition ends at the next Play.";
     const std::string playing = "Auditioning \"Take 2\": the track plays this take alone.";
-    const std::string idle = "Drag across a take to use that part of it, or click its name to use all of it.";
+    const std::string idle = "Click a take to use it for that section, drag across it to pick any range, or drag a "
+                             "divider to move a split.";
 
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, [&engine] { engine.play(); },

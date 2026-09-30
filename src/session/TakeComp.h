@@ -66,6 +66,12 @@ std::vector<TakeId> takesCovering (const Track& track, std::int64_t start, std::
 // lane, so stepping down reaches the newest and stepping up the oldest.
 TakeId steppedTake (const std::vector<TakeId>& covering, TakeId current, int step);
 
+// The comp section at `at`: the span of the region playing there, the later-starting
+// one inside a crossfade. Between regions it is the gap from the end of the one
+// before to the start of the one after, open at either end past the first or last.
+// What a click on a take lane puts that take over.
+std::pair<std::int64_t, std::int64_t> compSectionAt (const Track& track, std::int64_t at);
+
 // Two regions of the comp that meet where one take gives way to the next: both name
 // a take, and the left one runs on past where the right one starts by no more than a
 // seam fade. Indices into the track's regions.

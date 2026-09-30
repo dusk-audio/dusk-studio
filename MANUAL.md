@@ -1470,16 +1470,19 @@ The **Properties** button opens a menu headed with the track and region number: 
 
 ![Audio editor with three take lanes under a comp drawn from all three.](docs/images/ed-06-take-lanes.png)
 
-When the track has takes, each take gets a lane under the waveform, newest at the top, on the same time axis as the regions above. A lane shows the take's colour, its name, its length, an **Audition** button and a **Delete** button. The parts of a take the track plays are drawn bright in the take's colour, with a line along their top edge; the rest of the take is dimmed. Each lane scales its take to fill the lane, by up to 12 dB, so a quiet take is as easy to read as a loud one. The caption above the lanes counts the takes and says what to do: "Drag across a take to use that part of it, or click its name to use all of it."
+When the track has takes, each take gets a lane under the waveform, newest at the top, on the same time axis as the regions above. A lane shows the take's colour, its name, its length, an **Audition** button and a **Delete** button. The parts of a take the track plays are drawn bright in the take's colour, with a line along their top edge; the rest of the take is dimmed. Each lane scales its take to fill the lane, by up to 12 dB, so a quiet take is as easy to read as a loud one. The caption above the lanes counts the takes and says what to do: "Click a take to use it for that section, drag across it to pick any range, or drag a divider to move a split."
+
+The regions the track plays are its comp, and each one is a section: lines at every section's edges run down through all the lanes, so every lane shows the same sections.
 
 Every region on the track that plays a take carries a stripe in that take's colour along its top, with the take's name when the region is wide enough, and an unlabelled region's title is its take's name. The lanes grow to fill their share of the editor, up to a height, and scroll when there are more than fit. Drag the caption up or down to give the lanes more or less of the editor; double-click it to put it back.
 
+- **Click a take** inside a section to have that take play the whole section, or the part of it the take covers (**Switch take**). Hovering a lane outlines the section a click would replace and says "Use Take 2 here". Clicking where the take has no audio says so in the caption. In a gap between sections, a click fills the gap from that take.
 - **Drag across a lane** to put that part of the take on the track, replacing whatever played there, with a short crossfade at each end. The span snaps to the grid when the editor's **Snap** is on; hold **Cmd/Ctrl** to drag off the grid. The undo step is **Promote take range**.
 - **Click a take's name** to put the whole take on the track (**Promote take**).
 - **Double-click a take's name** to rename it. Enter keeps the new name, Esc the old one (**Rename take**).
 - **Audition** plays that take alone on the track, in place of its regions, from the next Play. With the transport stopped the playhead moves to the take's start and the caption reads "Auditioning "Take 2": the track plays this take alone." Pressed while the transport rolls, it changes nothing you hear until the next Play, and the caption reads "Auditioning "Take 2" from the next Play: the track will play this take alone." Click **Audition** again to stop. Auditioning another lane replaces it, and closing the editor or deleting the take ends it. An audition ended while the transport rolls with its take playing also ends at the next Play: the take keeps playing until then, and the caption reads "The audition ends at the next Play." Pressing that take's **Audition** again before then keeps it playing. An audition started and ended in the same roll never played, so the caption goes back to saying what to do. Bounce, mixdown and freeze never hear an audition.
 - **Down** puts the take in the lane below on the focused region, and **Up** the take in the lane above, stepping only through takes that cover all of the region (**Switch take**). With a range selected, only the range changes. Past the last lane the caption says "No older take covers all of this." (or "No newer take...") and nothing changes.
-- **Drag a seam** to move where one take gives way to the next. Point at the join in the take stripe along the top of the waveform, where the cursor turns to a double arrow and a line marks the seam, and drag left or right. Both regions move their edge together and the crossfade keeps its length; the seam stops where either take runs out. The undo step is **Move comp seam**.
+- **Drag a divider** to move where one take gives way to the next. Point at the join in any lane, or in the take stripe along the top of the waveform, where the cursor turns to a double arrow and a line marks the seam through every lane, and drag left or right. Both regions move their edge together and the crossfade keeps its length; the seam stops where either take runs out. The undo step is **Move comp seam**.
 - **T** auditions the take in the lane under the pointer, or the focused region's take when the pointer is not over a lane, as **Audition** does. **T** again stops it.
 - **Delete** asks "Delete this take and the regions cut from it?" in the lane, with **Delete** and **Cancel**. Deleting takes the take and every region cut from it off the track. **Undo** puts both back (**Delete take**).
 
@@ -1489,7 +1492,7 @@ Every lane edit is one undo step and is saved with the session. An edit that can
 - "A region cut from this take is locked. Unlock it to delete the take."
 - "Unfreeze this track to change its takes."
 
-A track with takes but no region shows "No region plays on this track" in the waveform area, above "Drag across a take below, or click its name, to put it on the track."
+A track with takes but no region shows "No region plays on this track" in the waveform area, above "Click or drag across a take below to put it on the track."
 
 To build a comp, see *Splicing a vocal comp from multiple takes* in Tips and recipes.
 

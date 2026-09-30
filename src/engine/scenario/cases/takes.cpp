@@ -1328,6 +1328,41 @@ ScenarioResult cloneKeepsReverseTake (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// A click on a take inside a comp section gives that take the whole section: with
+// Take 3, a punch and Take 3 again, Take 2 takes over the first section alone, the
+// punch keeps its span, and one Undo puts Take 3 back.
+ScenarioResult clickSwitchesSection (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto one = writtenTake (ctx, "section-1", 0, 96000);
+    const auto two = writtenTake (ctx, "section-2", 0, 96000);
+    const auto three = writtenTake (ctx, "section-3", 0, 96000);
+    const auto punch = writtenTake (ctx, "section-punch", 24000, 48000);
+    if (! one || ! two || ! three || ! punch) return ScenarioResult::fail ("could not write the takes");
+    promoteTakeRange (session, track, *three, 0, 96000);
+    promoteTakeRange (session, track, *punch, 24000, 72000);
+
+    const auto section = compSectionAt (track, 10000);
+    ctx.expect (section == Span { 0, 24000 + kPunchFadeSamples }, "the first section is not Take 3's run up to the punch");
+    const auto punchBefore = takeCoverage (track, punch->id);
+
+    undo.beginNewTransaction ("Switch take");
+    ctx.expect (undo.perform (new PromoteTakeRangeAction (session, ctx.engine(), kTrack, two->id, section.first,
+                                                          section.second)),
+                "giving the first section to Take 2 was refused");
+    ctx.expect (takeCoverage (track, two->id) == std::vector<Span> { section }, "Take 2 does not play the first section");
+    ctx.expect (takeCoverage (track, punch->id) == punchBefore, "the punch lost part of its section");
+    ctx.expect (takeCoverage (track, three->id) == std::vector<Span> { { 72000 - kPunchFadeSamples, 96000 } },
+                "Take 3 still plays the first section, or lost the last");
+    ctx.expect (undo.undo() && takeCoverage (track, two->id).empty()
+                    && takeCoverage (track, three->id).size() == 2,
+                "one Undo did not give the first section back to Take 3");
+    return ctx.verdict();
+}
+
 // Join keeps a take only while the result still reads that take alone: two
 // halves of one take rejoin naming it, two loop passes that share a file and
 // abut join naming neither, and regions of two takes render into a new file
@@ -1575,6 +1610,9 @@ const ScenarioRegistrar seamMoveRegistrar { Scenario {
 const ScenarioRegistrar cloneReverseRegistrar { Scenario {
     "take.clone_keeps_reverse_take", { "take", "region", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (cloneKeepsReverseTake, ctx); } } };
+const ScenarioRegistrar clickSectionRegistrar { Scenario {
+    "take.click_switches_section", { "take", "comp", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (clickSwitchesSection, ctx); } } };
 const ScenarioRegistrar joinRegistrar { Scenario {
     "take.join_names_a_take_only_while_it_reads_it", { "take", "region", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (joinNamesATakeOnlyWhileItReadsIt, ctx); } } };

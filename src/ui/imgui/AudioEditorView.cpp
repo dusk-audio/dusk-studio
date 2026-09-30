@@ -117,6 +117,8 @@ constexpr std::uint32_t takeColour (std::uint64_t id) noexcept
 }
 
 constexpr float kLaneWheelPixels = 24.0f;
+// How far a press on a take lane may wander, in design pixels, and still be a click.
+constexpr float kClickSlop = 3.0f;
 // The stripe along the top of the waveform that names each region's take, where a
 // seam between two takes is picked up.
 constexpr float kTakeStripeHeight = 16.0f;
@@ -2100,14 +2102,44 @@ private:
     }
 
     // The seam between two takes under a point in the take stripe along the top of the
-    // waveform.
+    // waveform, or on a divider in any take lane.
     std::optional<CompSeam> seamGripAt (ImVec2 p) const
     {
         const float perSample = pixelsPerSampleOnScreen();
-        if (! layout.wave.contains (p) || p.y > layout.wave.y0 + layout.s (kTakeStripeHeight) || perSample <= 0.0f)
+        const bool inStripe = layout.wave.contains (p) && p.y <= layout.wave.y0 + layout.s (kTakeStripeHeight);
+        if ((! inStripe && laneWaveUnder (p) < 0) || perSample <= 0.0f)
             return std::nullopt;
         const auto tolerance = static_cast<std::int64_t> (layout.s (5.0f) / perSample);
         return compSeamNear (session.track (trackIdx), timelineForX (p.x), tolerance);
+    }
+
+    // Where the seam being dragged, or the one under the pointer, sits on screen.
+    std::optional<float> shownSeamX() const
+    {
+        const auto seam = drag == Drag::seam ? std::optional<CompSeam> (seamDragged)
+                        : drag == Drag::none && ImGui::IsMousePosValid() ? seamGripAt (ImGui::GetIO().MousePos)
+                                                                          : std::nullopt;
+        const auto& regions = trackRegions();
+        if (! seam || seam->right < 0 || seam->right >= static_cast<int> (regions.size()))
+            return std::nullopt;
+        return xForTimeline (regions[static_cast<std::size_t> (seam->right)].timelineStart);
+    }
+
+    // Picks a seam up, unless either region is locked.
+    bool beginSeamDrag (CompSeam seam, ImVec2 p)
+    {
+        const auto& regions = trackRegions();
+        const auto& left = regions[static_cast<std::size_t> (seam.left)];
+        const auto& right = regions[static_cast<std::size_t> (seam.right)];
+        if (left.locked || right.locked)
+            return false;
+        seamDragged = seam;
+        seamLeftAtDragStart = left;
+        seamRightAtDragStart = right;
+        drag = Drag::seam;
+        dragButton = ImGuiMouseButton_Left;
+        dragDown = dragLast = p;
+        return true;
     }
 
     // Whether the regions a seam drag holds are still the ones it picked up: the same
@@ -2188,20 +2220,8 @@ private:
             return;
 
         if (button == ImGuiMouseButton_Left && ! trackFrozen())
-            if (const auto seam = seamGripAt (p))
-            {
-                const auto& regions = trackRegions();
-                const auto& left = regions[static_cast<std::size_t> (seam->left)];
-                const auto& right = regions[static_cast<std::size_t> (seam->right)];
-                if (! left.locked && ! right.locked)
-                {
-                    seamDragged = *seam;
-                    seamLeftAtDragStart = left;
-                    seamRightAtDragStart = right;
-                    drag = Drag::seam;
-                    return;
-                }
-            }
+            if (const auto seam = seamGripAt (p); seam && beginSeamDrag (*seam, p))
+                return;
 
         if (button == ImGuiMouseButton_Right)
         {
@@ -3381,14 +3401,8 @@ private:
                              dw::Align::left);
         }
 
-        const auto seam = drag == Drag::seam ? std::optional<CompSeam> (seamDragged)
-                        : drag == Drag::none && ImGui::IsMousePosValid() ? seamGripAt (ImGui::GetIO().MousePos)
-                                                                          : std::nullopt;
-        if (seam && seam->right >= 0 && seam->right < static_cast<int> (regions.size()))
-        {
-            const float x = xForTimeline (regions[static_cast<std::size_t> (seam->right)].timelineStart);
-            vline (dl, x, lanes.y0, lanes.y1, argb (kEditCursor, 0.75f), ctx.s (1.5f));
-        }
+        if (const auto x = shownSeamX())
+            vline (dl, *x, lanes.y0, lanes.y1, argb (kEditCursor, 0.75f), ctx.s (1.5f));
 
         for (const auto& reg : regions)
         {
@@ -4059,16 +4073,16 @@ private:
             return;
         const auto p = ImGui::GetIO().MousePos;
 
+        if (drag == Drag::none && ! trackFrozen() && seamGripAt (p))
+        {
+            ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeEW);
+            return;
+        }
         // A take's waveform is a range to sweep across, as the Range tool's is.
         if (drag == Drag::takeRange
             || (drag == Drag::none && ! trackFrozen() && laneWaveUnder (p) >= 0))
         {
             ImGui::SetMouseCursor (ImGuiMouseCursor_TextInput);
-            return;
-        }
-        if (drag == Drag::none && ! trackFrozen() && seamGripAt (p))
-        {
-            ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeEW);
             return;
         }
         const auto* r = region();
@@ -4189,7 +4203,8 @@ private:
                      argb (kAudition) };
         if (playing != 0)
             return { "The audition ends at the next Play.", argb (kAudition) };
-        return { "Drag across a take to use that part of it, or click its name to use all of it.",
+        return { "Click a take to use it for that section, drag across it to pick any range, or drag a divider to "
+                 "move a split.",
                  argb (kHeaderText, 0.75f) };
     }
 
@@ -4232,6 +4247,8 @@ private:
             if (box.y1 > viewport.y0 && box.y0 < viewport.y1)
                 drawTakeLane (ctx, lane, *takeInLane (lane), action);
         }
+        if (const auto x = shownSeamX())
+            vline (dl, *x, viewport.y0, viewport.y1, argb (kEditCursor, 0.75f), ctx.s (1.5f));
         dl->PopClipRect();
 
         const float content = takelanes::contentHeight (count, layout.laneHeight);
@@ -4327,6 +4344,31 @@ private:
             const float x = xForTimeline (edge);
             if (x >= band.x0 && x <= band.x1)
                 vline (dl, x, band.y0, band.y1, argb (kSliceBoundary), ctx.s (1.0f));
+        }
+
+        // The comp's sections divide every lane alike, so it shows what a click reaches.
+        for (const auto& r : trackRegions())
+            for (const auto edge : { r.timelineStart, r.timelineStart + r.lengthInSamples })
+            {
+                const float x = xForTimeline (edge);
+                if (x > band.x0 && x < band.x1)
+                    vline (dl, x, band.y0, band.y1, argb (kHeaderText, 0.35f), ctx.s (1.0f));
+            }
+
+        // Under the pointer, the section a click would give this take.
+        if (drag == Drag::none && ! trackFrozen() && ImGui::IsMousePosValid())
+        {
+            const auto p = ImGui::GetIO().MousePos;
+            if (band.contains (p) && ! seamGripAt (p))
+                if (const auto section = sectionFor (take, timelineForX (p.x)))
+                {
+                    const float xa = clippedX (xForTimeline (section->first));
+                    const float xb = clippedX (xForTimeline (section->second));
+                    if (xb > xa)
+                        dl->AddRect (ImVec2 (xa, band.y0), ImVec2 (xb, band.y1), argb (colour, 0.9f), 0.0f, 0,
+                                     ctx.s (1.5f));
+                    ImGui::SetTooltip ("Use %s here", take.name.c_str());
+                }
         }
 
         if (drag == Drag::takeRange && dragTake == take.id)
@@ -4666,6 +4708,8 @@ private:
             showNotice (kFrozenNotice);
             return;
         }
+        if (const auto seam = seamGripAt (p); seam && beginSeamDrag (*seam, p))
+            return;
         const auto& io = ImGui::GetIO();
         confirmingDelete = 0;
         pendingPromoteTake = 0;
@@ -4692,10 +4736,49 @@ private:
         const auto* take = takeWithId (id);
         if (take == nullptr)
             return;
+        // A press that barely moved is a click: the take takes over the section there.
+        const float moved = std::hypot (dragLast.x - dragDown.x, dragLast.y - dragDown.y);
+        if (moved < layout.s (kClickSlop))
+        {
+            useTakeAt (*take, timelineForX (dragDown.x));
+            return;
+        }
         const auto [lo, hi] = takelanes::dragSpan (takeDragAnchor, takeDragEnd, take->timelineStart,
                                                    take->timelineStart + take->lengthInSamples);
         if (hi > lo)
             promoteTake (id, lo, hi, "Promote take range");
+    }
+
+    // The part of the comp section at `at` the take can play, or nothing when the take
+    // has no audio there or already plays the whole of it.
+    std::optional<std::pair<std::int64_t, std::int64_t>> sectionFor (const AudioTake& take, std::int64_t at) const
+    {
+        const auto takeEnd = take.timelineStart + take.lengthInSamples;
+        if (at < take.timelineStart || at >= takeEnd)
+            return std::nullopt;
+        const auto& track = session.track (trackIdx);
+        const auto [from, to] = compSectionAt (track, at);
+        const auto lo = std::max (from, take.timelineStart);
+        const auto hi = std::min (to, takeEnd);
+        if (hi <= lo)
+            return std::nullopt;
+        for (const auto& r : track.regions)
+            if (r.takeId == take.id && r.timelineStart <= lo && r.timelineStart + r.lengthInSamples >= hi)
+                return std::nullopt;
+        return std::pair<std::int64_t, std::int64_t> { lo, hi };
+    }
+
+    // A click on a take's lane: that take plays the comp section under the click, or
+    // the part of it the take covers.
+    void useTakeAt (const AudioTake& take, std::int64_t at)
+    {
+        if (at < take.timelineStart || at >= take.timelineStart + take.lengthInSamples)
+        {
+            showNotice ("\"" + take.name + "\" has no audio here.");
+            return;
+        }
+        if (const auto section = sectionFor (take, at))
+            promoteTake (take.id, section->first, section->second, "Switch take");
     }
 
     // Where a drag across a lane will land on the track, shaded over the regions.
@@ -4726,7 +4809,7 @@ private:
         dw::text (ctx, ctx.fonts->valueLarge, ctx.s (14.0f), ImVec2 (centre.x, centre.y - ctx.s (16.0f)),
                   layout.wave.width(), argb (kHeaderText), "No region plays on this track");
         dw::text (ctx, ctx.fonts->value, ctx.s (11.0f), ImVec2 (centre.x, centre.y + ctx.s (4.0f)), layout.wave.width(),
-                  argb (kHeaderText, 0.7f), "Drag across a take below, or click its name, to put it on the track.");
+                  argb (kHeaderText, 0.7f), "Click or drag across a take below to put it on the track.");
     }
 
     void finishFrame()
