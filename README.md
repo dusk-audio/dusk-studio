@@ -90,9 +90,9 @@ deeper accessibility.
 | Aux sends + reverb / delay returns (built-in DuskVerb 2, Tape Echo 2) | Working |
 | External hardware inserts (per channel + per aux, with auto-latency ping) | Working |
 | MIDI tracks + instrument plugins + piano roll editor | Working |
-| Audio region editor (non-destructive trim / fade / gain) + 8-take history | Working |
-| Take cycling + comping | Working |
-| Loop-record take stacking (each pass kept as its own take) | Working |
+| Audio region editor (non-destructive trim / fade / gain, automation lanes), in-window | Working |
+| Takes on the track + comping from take lanes in the audio editor | Working |
+| Loop-record take stacking (up to 1,024 passes kept as takes) | Working |
 | Cross-track plugin delay compensation (PDC) | Working |
 | Console automation (Write / Read / Touch on channels + aux + master) | Working |
 | MIDI Clock sync + MTC slave + master | Working |
@@ -218,7 +218,7 @@ src/
   foundation/  # framework-free primitives: text, paths, JSON, smoothing, FFT, MIDI
   session/     # session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
-    imgui/     # native surfaces: startup, audio settings, unit editors, keyboard
+    imgui/     # native surfaces: startup, audio settings, audio editor, unit editors, keyboard
   util/        # native log storage + CrashHandler signal reports
 tests/         # 1395 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds

@@ -72,6 +72,7 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 | `rec-01-arm-multiple.png`       | L1072  | ✅   | Eight tracks armed simultaneously, RECORDING stage.       |
 | `ed-04-region-editor-modal.png` | L1298  | ✅   | Region editor modal over a region with fade-in/out. Same frame as `np-10-region-editor.png`. |
 | `ed-05-piano-roll-full.png`     | L1350  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
+| `ed-06-take-lanes.png`          | L1449  | ✅   | Audio editor with three take lanes under a comp drawn from all three. The harness stages three takes over the same four seconds of the Vox track, comps them (take 1, then take 3, then take 2) and opens the editor on the lanes; the takes exist only for this figure. Native panel, same route as `np-10-region-editor.png`. |
 | `fx-01-eq.png`                  | L735   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
 | `fx-02-comp.png`                | L757   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
 | `vkb-01-virtual-keyboard.png`   | L567   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
@@ -98,17 +99,6 @@ menu; these figures document that collapsed presentation.
 | `cs-01-channel-compact.png`  | —      | ✅   | One channel strip in compact mode (EQ / COMP / AUX buttons). |
 | `cs-02-bus-compact.png`      | —      | ✅   | One bus strip in compact mode (EQ / COMP split buttons).     |
 | `cs-03-master-compact.png`   | —      | ✅   | Master strip in compact mode (EQ / COMP / TAPE split buttons). |
-
-## Take lanes (captured, not yet referenced by `MANUAL.md`)
-
-The harness stages three takes over the same four seconds of the Vox track,
-comps them from all three (take 1, then take 3, then take 2) and opens the audio
-editor on the track's take lanes. The takes exist only for this figure; the
-earlier figures show the demo session without them.
-
-| Filename                | Manual | Auto | What to capture                                                        |
-| ----------------------- | ------ | ---- | --------------------------------------------------------------------- |
-| `ed-06-take-lanes.png`  | —      | ✅   | Audio editor with three take lanes under a comp drawn from all three. Native panel, same route as `np-10-region-editor.png`. |
 
 ## I/O config popup (captured, not yet referenced by `MANUAL.md`)
 

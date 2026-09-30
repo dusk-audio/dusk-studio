@@ -5,6 +5,60 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.15.0] - Unreleased
+
+Takes live on the track now, and the audio editor is where you comp them.
+
+### Added
+
+- **Every recording pass is kept whole as a take on its track.** Takes are
+  named Take 1, Take 2 and so on, and later recording never trims one. Only the
+  newest pass is placed on the timeline; the regions under it are cut back to
+  meet it, and the takes they came from stay complete. Undo right after
+  recording removes the takes that pass added.
+- **Take lanes in the audio editor.** A track with takes shows one lane per
+  take under the regions, newest at the top, with the parts the track plays
+  drawn bright. Drag across a lane to put that part of the take on the track,
+  or click a take's name to use all of it. Double-click a name to rename the
+  take. Each lane has Audition, which plays that take alone from the next Play,
+  and Delete, which asks first and takes the take and its regions off the track.
+  Every lane edit is one undo step and is saved with the session.
+- **A take count beside the track name.** The tape strip shows "3 takes" on a
+  track with several takes, or "1 take" when its only take has no region on the
+  timeline. Click it to open the audio editor on the take lanes.
+- **Loop recording keeps up to 1,024 passes per track.** It used to keep the
+  nine newest. Passes past the limit are left out, never an earlier one, and the
+  alert at Stop says so.
+- **The audio region editor is a native panel inside the main window.** It
+  keeps the old editor's gestures, keys and menus, adds Reverse to the toolbar
+  and the right-click menu, renames a region from its title, and takes typed
+  gain and fade values in the status bar. The Auto pill shows an automation lane
+  over the waveform for adding, moving, deleting and drawing points.
+
+### Changed
+
+- **Audio regions no longer cycle takes.** The T 1/N pill, the Takes submenu
+  and Alt+T / Alt+Shift+T now work on MIDI regions only; audio takes are chosen
+  in the take lanes. MIDI take history is unchanged.
+- **Sessions are saved in format v9.** A session from 0.14 loads each region's
+  old take history as takes on its track, with the audio files untouched. An
+  older build cannot open a v9 session.
+
+### Fixed
+
+- **An overdub that partly covered an older take no longer loses the covered
+  part.** The older take stays whole on the track (#802).
+- **Deleting the top take's region no longer empties the track.** Every take
+  stays on the track, and the take count leads back to them (#802).
+- **Splitting a region no longer copies its whole take history to both
+  halves.** A split has no history to copy; both halves play the same take
+  (#802).
+- **A recorded take no longer stretches a region past its own audio.** When a
+  new take ended or started inside the short crossfade at an older region's
+  edge, the recorder could extend that region into the next loop pass or before
+  the start of its file. Recording now places a take with the same rule as the
+  take lanes.
+
 ## [0.14.0] - 2026-09-29
 
 The first five minutes of using Dusk Studio, offline instrument browsing,
