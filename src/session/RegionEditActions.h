@@ -88,7 +88,9 @@ private:
 };
 
 // Inserts a copy of a region at the end of a track's region list. perform()
-// records the index it was inserted at so undo() can erase the same slot.
+// records the index it was inserted at so undo() can erase the same slot. The
+// copy keeps its takeId only while that take is on the track and the copy
+// reads the take's file.
 class PasteRegionAction final : public UndoableAction
 {
 public:
@@ -259,11 +261,12 @@ private:
 //     file and the regions abut (or overlap) on the timeline, the join
 //     collapses them into a single AudioRegion by extending the leading
 //     region's lengthInSamples and erasing the rest. Source data and
-//     existing fades at the outer edges are preserved.
+//     existing fades at the outer edges are preserved, and so is the
+//     takeId when every region names the same take.
 //   - Slow path: when sources differ or there are gaps, the join renders
 //     a fresh WAV into <session>/takes/ that mixes every selected region
 //     across [minStart, maxEnd) and replaces the selection with one
-//     region pointing at that file.
+//     region pointing at that file, which names no take.
 // `indices` must list the track-relative region indices the user wants
 // joined; ctor sorts a copy by timelineStart so the action records a
 // stable order. perform() captures the before-state of every involved
@@ -291,9 +294,10 @@ private:
 // Reverses a single audio region's content non-destructively: reads the
 // region's source samples, reverses each channel, renders a fresh WAV into
 // <session>/takes/, and repoints the region at it (sourceOffset 0, fades
-// swapped so the envelope stays on the same material). The original file is
-// untouched; undo restores the pre-reverse region. Frozen tracks are
-// edit-locked (perform bails). Single region.
+// swapped so the envelope stays on the same material). The rendered file is no
+// take's, so the region names none. The original file is untouched; undo
+// restores the pre-reverse region. Frozen tracks are edit-locked (perform
+// bails). Single region.
 class ReverseRegionAction final : public UndoableAction
 {
 public:

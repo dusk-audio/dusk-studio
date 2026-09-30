@@ -576,6 +576,9 @@ private:
     bool audioEditorShowing() const noexcept;
     // True from open until the child has finished coming down.
     bool audioEditorOpen() const noexcept;
+    // Screenshot-harness only: ask the open editor to read its own steady frame back
+    // into `capturePath`.
+    void captureAudioEditorTo (const std::string& capturePath);
 
     // The edit tool (session.editMode) is global, but a modal editor changing
     // it (e.g. picking scissors in the audio editor) should not leak back to

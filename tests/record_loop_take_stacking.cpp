@@ -197,7 +197,6 @@ TEST_CASE ("Loop audio stores two full passes as one spool with exact take offse
     REQUIRE (region.provenance.loopPassOrdinal == 2);
     REQUIRE_FALSE (region.provenance.partialPass);
     REQUIRE (region.provenance.capturedAtMs > 0);
-    REQUIRE (region.previousTakes.empty());
 
     const auto& takes = session.track (0).takes;
     REQUIRE (takes.size() == 2);
@@ -339,7 +338,6 @@ TEST_CASE ("Loop audio keeps every pass as a take with no per-region history cap
     const auto& regions = session.track (0).regions;
     REQUIRE (regions.size() == 1);
     REQUIRE (regions[0].takeId == takes.back().id);
-    REQUIRE (regions[0].previousTakes.empty());
 }
 
 TEST_CASE ("Loop audio past the pass limit leaves the extra passes out and keeps every earlier pass",
@@ -468,7 +466,6 @@ TEST_CASE ("Loop punch inside a longer region keeps its take whole and splits it
     REQUIRE (punched.lengthInSamples == 10);
     REQUIRE (punched.fadeInSamples == fade);
     REQUIRE (punched.fadeOutSamples == fade);
-    REQUIRE (punched.previousTakes.empty());
 
     const auto left = std::find_if (regions.begin(), regions.end(), [] (const AudioRegion& r)
     {
@@ -491,7 +488,6 @@ TEST_CASE ("Loop punch inside a longer region keeps its take whole and splits it
     REQUIRE (right->timelineStart + right->lengthInSamples == 120);
     REQUIRE (right->fadeInSamples == fade);
     REQUIRE (right->fadeInShape == FadeShape::RaisedCosine);
-    REQUIRE (right->previousTakes.empty());
 }
 
 TEST_CASE ("Final partial audio pass over a region keeps both passes and the region's take whole",
@@ -978,7 +974,6 @@ TEST_CASE ("Loop commit diff snapshots provenance and takes for undo",
     REQUIRE (diff[0].audioAfter.size() == 1);
     REQUIRE (diff[0].audioAfter[0].provenance.loopPassOrdinal == 2);
     REQUIRE (diff[0].audioAfter[0].takeId == diff[0].takesAfter[2].id);
-    REQUIRE (diff[0].audioAfter[0].previousTakes.empty());
 }
 
 TEST_CASE ("Loop capture plan rejects an empty effective punch intersection",
@@ -1077,8 +1072,6 @@ TEST_CASE ("Three takes recorded over each other all stay complete on the track"
     const auto& third = regionOfTake (session, takes[2].id);
     REQUIRE (third.timelineStart == 2000);
     REQUIRE (third.lengthInSamples == 2000);
-    for (const auto& region : regions)
-        REQUIRE (region.previousTakes.empty());
 }
 
 TEST_CASE ("Deleting the last-recorded region removes no take",
@@ -1105,7 +1098,7 @@ TEST_CASE ("Deleting the last-recorded region removes no take",
     REQUIRE (takes[1].id == newest);
 }
 
-TEST_CASE ("A recorded region carries no take stack for a split to copy",
+TEST_CASE ("A take punched into a recorded region leaves both pieces naming the older take",
            "[recording][recordmanager][takes][regression]")
 {
     const auto temp = makeSessionDir ("dusk-split-recorded-take-");
@@ -1120,10 +1113,7 @@ TEST_CASE ("A recorded region carries no take stack for a split to copy",
     const auto& regions = session.track (0).regions;
     REQUIRE (regions.size() == 3);
     for (const auto& region : regions)
-    {
-        REQUIRE (region.previousTakes.empty());
         REQUIRE (region.takeId != 0);
-    }
     const auto& takes = session.track (0).takes;
     REQUIRE (takes.size() == 3);
     REQUIRE (regionOfTake (session, takes[2].id).timelineStart == 2000);

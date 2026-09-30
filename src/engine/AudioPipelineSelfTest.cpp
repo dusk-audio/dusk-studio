@@ -1703,7 +1703,6 @@ std::string AudioPipelineSelfTest::testLoopRecordTakeStacking()
                          && current.lengthInSamples == 56
                          && current.provenance.loopPassOrdinal == 3
                          && current.provenance.partialPass
-                         && current.previousTakes.empty()
                          && current.takeId == takes[2].id
                          && passIs (takes[0], 0, 125, 1, false)
                          && passIs (takes[1], 125, 125, 2, false)

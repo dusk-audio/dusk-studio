@@ -43,14 +43,13 @@ bool holds (const duskstudio::UnreferencedAudio& found, const juce::File& file)
 
 // Clean out offers to delete what past record passes left behind: WAVs in the
 // session's audio directory that nothing points at any more. Anything a region,
-// a take under a region, a track take or the loaded mastering source still names has to
-// survive, and so does everything outside that one directory level.
+// a track take or the loaded mastering source still names has to survive, and so
+// does everything outside that one directory level.
 TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleanout]")
 {
     using duskstudio::AudioRegion;
     using duskstudio::AudioTake;
     using duskstudio::Session;
-    using duskstudio::TakeRef;
 
     const auto dir = makeScratch();
     const auto audio = dir.getChildFile ("audio");
@@ -78,10 +77,11 @@ TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleano
     region.file = live;
     region.timelineStart = 0;
     region.lengthInSamples = 48000;
-    TakeRef take;
-    take.file = older;
-    region.previousTakes.push_back (take);
     session.track (4).regions.push_back (region);
+    AudioTake displaced;
+    displaced.id = session.allocateTakeId();
+    displaced.file = older;
+    session.track (4).takes.push_back (displaced);
     AudioTake pass;
     pass.id = session.allocateTakeId();
     pass.file = unplayed;

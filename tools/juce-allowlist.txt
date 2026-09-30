@@ -51,14 +51,12 @@ src/session/ParamEditAction.h	2
 src/session/RegionEditActions.cpp	32
 src/session/RegionEditActions.h	4
 src/session/Session.cpp	10
-src/session/Session.h	76
+src/session/Session.h	75
 src/session/SessionSerializer.cpp	77
 src/session/SessionSerializer.h	13
 src/session/SessionTemplates.cpp	3
 src/ui/AnalogVuMeter.cpp	113
 src/ui/AnalogVuMeter.h	7
-src/ui/AudioRegionEditor.cpp	333
-src/ui/AudioRegionEditor.h	78
 src/ui/AuxLaneComponent.cpp	146
 src/ui/AuxLaneComponent.h	28
 src/ui/AuxView.cpp	60
@@ -95,8 +93,8 @@ src/ui/DuskFileBrowser.h	12
 src/ui/DuskLabelEditor.h	3
 src/ui/DuskMenuBar.h	29
 src/ui/DuskStudioLookAndFeel.h	124
-src/ui/EditCursors.cpp	58
-src/ui/EditCursors.h	7
+src/ui/EditCursors.cpp	39
+src/ui/EditCursors.h	6
 src/ui/EditModeToolbar.cpp	48
 src/ui/EditModeToolbar.h	10
 src/ui/EmbeddedModal.h	62
@@ -134,7 +132,7 @@ src/ui/PluginPickerPanel.cpp	70
 src/ui/PluginPickerPanel.h	13
 src/ui/PluginScanModal.cpp	32
 src/ui/PluginScanModal.h	11
-src/ui/ScreenshotCapture.cpp	40
+src/ui/ScreenshotCapture.cpp	37
 src/ui/SectionPillButton.h	7
 src/ui/SelfTestPanel.cpp	10
 src/ui/SelfTestPanel.h	7

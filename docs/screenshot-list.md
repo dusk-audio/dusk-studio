@@ -22,8 +22,8 @@ their own steady frame back as a PPM and the script converts it. Their figures
 are taken at the end of the run, after the bounce phase, which leaves the input
 meter reading - so the harness parks the compressor panel's meters at rest
 before capturing it, because that figure is of the panel and not of a signal.
-The startup dialog, the virtual keyboard and the audio settings panel have no
-meters to settle. The settings panel is taller than a 1200 px display can grant,
+The startup dialog, the virtual keyboard, the audio settings panel and the audio
+editor have no meters to settle. The settings panel is taller than a 1200 px display can grant,
 so its figure is the panel scrolled to the top, which is what opening it shows.
 
 **Capture conventions (manual shots)**
@@ -61,7 +61,7 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 | `np-07-aux-view.png`                | L250   | ✅   | One aux lane shown full-width.                              |
 | `np-08-mastering-view.png`          | L263   | ✅   | Mastering chain.                                            |
 | `np-09-tape-strip.png`              | L278, L1181 | ✅ | Tape strip with regions, a marker, and a loop bracket. (Reused at both lines.) |
-| `np-10-region-editor.png`           | L293   | ✅   | Audio region editor modal.                                  |
+| `np-10-region-editor.png`           | L293   | ✅   | Audio region editor modal. Native panel: the app reads its own frame back and the script converts it. |
 | `np-11-piano-roll.png`              | L305   | ✅   | Piano roll modal.                                           |
 | `np-12-notepad.png`                 | pulled | ❌   | Notepad chart: title, section markers, chords over syllables. |
 
@@ -70,7 +70,7 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 | Filename                        | Manual | Auto | What to capture                                            |
 | ------------------------------- | ------ | ---- | --------------------------------------------------------- |
 | `rec-01-arm-multiple.png`       | L1072  | ✅   | Eight tracks armed simultaneously, RECORDING stage.       |
-| `ed-04-region-editor-modal.png` | L1298  | ✅   | Region editor modal over a region with fade-in/out.       |
+| `ed-04-region-editor-modal.png` | L1298  | ✅   | Region editor modal over a region with fade-in/out. Same frame as `np-10-region-editor.png`. |
 | `ed-05-piano-roll-full.png`     | L1350  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
 | `fx-01-eq.png`                  | L735   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
 | `fx-02-comp.png`                | L757   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
@@ -98,6 +98,17 @@ menu; these figures document that collapsed presentation.
 | `cs-01-channel-compact.png`  | —      | ✅   | One channel strip in compact mode (EQ / COMP / AUX buttons). |
 | `cs-02-bus-compact.png`      | —      | ✅   | One bus strip in compact mode (EQ / COMP split buttons).     |
 | `cs-03-master-compact.png`   | —      | ✅   | Master strip in compact mode (EQ / COMP / TAPE split buttons). |
+
+## Take lanes (captured, not yet referenced by `MANUAL.md`)
+
+The harness stages three takes over the same four seconds of the Vox track,
+comps them from all three (take 1, then take 3, then take 2) and opens the audio
+editor on the track's take lanes. The takes exist only for this figure; the
+earlier figures show the demo session without them.
+
+| Filename                | Manual | Auto | What to capture                                                        |
+| ----------------------- | ------ | ---- | --------------------------------------------------------------------- |
+| `ed-06-take-lanes.png`  | —      | ✅   | Audio editor with three take lanes under a comp drawn from all three. Native panel, same route as `np-10-region-editor.png`. |
 
 ## I/O config popup (captured, not yet referenced by `MANUAL.md`)
 

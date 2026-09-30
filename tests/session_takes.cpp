@@ -276,7 +276,6 @@ TEST_CASE ("Loading a v8 session turns audio take history into track takes",
     CHECK (vox.regions[1].takeId == 4);
     CHECK (vox.regions[2].takeId == 4);
     CHECK (vox.regions[3].takeId == 0);
-    CHECK (vox.regions[0].previousTakes.empty());
     CHECK (vox.regions[0].timelineStart == 48000);
     CHECK (vox.regions[0].lengthInSamples == 24000);
     CHECK (vox.regions[0].sourceOffset == 12000);

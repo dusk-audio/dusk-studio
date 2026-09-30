@@ -1558,8 +1558,7 @@ private:
         commit (fadeOut ? "Fade-out to selection" : "Fade-in to selection", before, after);
     }
 
-    // The range as a free-standing slice of the same file: no fades of its own and no
-    // takes, since a paste places it anew.
+    // The range as a free-standing slice of the same file, with no fades of its own.
     AudioRegion rangeChunk (const AudioRegion& r) const
     {
         AudioRegion chunk = r;
@@ -1568,7 +1567,6 @@ private:
         chunk.timelineStart = 0;
         chunk.fadeInSamples = 0;
         chunk.fadeOutSamples = 0;
-        chunk.previousTakes.clear();
         return chunk;
     }
 

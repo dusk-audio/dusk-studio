@@ -476,37 +476,10 @@ TEST_CASE ("SessionSerializer gives legacy v4 takes default provenance",
     dir.deleteRecursively();
 }
 
-TEST_CASE ("Take payload helpers keep provenance attached to audio and MIDI takes",
+TEST_CASE ("Take payload helpers keep provenance attached to MIDI takes",
            "[session][take-provenance]")
 {
     using namespace duskstudio;
-
-    AudioRegion audio;
-    audio.file = decltype (audio.file) ("/tmp/active-take.wav");
-    audio.sourceOffset = 11;
-    audio.lengthInSamples = 22;
-    audio.provenance = { 100, 1, false };
-
-    TakeRef priorAudio;
-    priorAudio.file = decltype (priorAudio.file) ("/tmp/prior-take.wav");
-    priorAudio.sourceOffset = 33;
-    priorAudio.lengthInSamples = 44;
-    priorAudio.provenance = { 200, 2, true };
-
-    swapAudioTakePayload (audio, priorAudio);
-    CHECK (audio.file.getFileName() == "prior-take.wav");
-    CHECK (audio.sourceOffset == 33);
-    CHECK (audio.provenance.loopPassOrdinal == 2);
-    CHECK (audio.provenance.partialPass);
-    CHECK (priorAudio.file.getFileName() == "active-take.wav");
-    CHECK (priorAudio.sourceOffset == 11);
-    CHECK (priorAudio.provenance.capturedAtMs == 100);
-
-    const auto copiedAudio = makeAudioTakeRef (audio);
-    AudioRegion restoredAudio;
-    applyAudioTakeRef (restoredAudio, copiedAudio);
-    CHECK (restoredAudio.lengthInSamples == 44);
-    CHECK (restoredAudio.provenance.capturedAtMs == 200);
 
     MidiRegion midi;
     midi.lengthInTicks = 960;

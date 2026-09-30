@@ -2,14 +2,9 @@
 
 namespace duskstudio
 {
-// Public glyph paint helpers
-// Used by makeXxxCursor (image cursor builders) AND by CursorOverlay
-// (direct paint, bypassing the platform cursor pipeline). Each helper
-// expects (cx, cy) to be the cursor hotspot in the supplied Graphics
-// context; the glyph's hotspot location relative to the bounding box
-// matches the corresponding makeXxxCursor's `juce::MouseCursor(img,
-// hotX, hotY)` so the overlay glyph lands on the same pixel as the
-// native cursor would.
+// Public glyph paint helpers, used by CursorOverlay (direct paint, bypassing
+// the platform cursor pipeline). Each helper expects (cx, cy) to be the
+// cursor hotspot in the supplied Graphics context.
 void paintScissorsGlyph (juce::Graphics& g, float cx, float cy)
 {
     // Full open-X with ring-loop handles at the bottom corners.
@@ -154,43 +149,6 @@ void paintHandGlyph (juce::Graphics& g, float cx, float cy)
     g.fillPath (hand);
 }
 
-namespace
-{
-juce::Image drawCursorImage (float hotX, float hotY,
-                              void (*paintFn) (juce::Graphics&, float, float),
-                              int kSz = 24)
-{
-    juce::Image img (juce::Image::ARGB, kSz, kSz, true);
-    juce::Graphics g (img);
-    paintFn (g, hotX, hotY);
-    return img;
-}
-
-juce::MouseCursor makeScissorsCursor()
-{
-    // Centre the glyph in the 24x24 image: paintScissorsGlyph draws +/-12 px
-    // around the hotspot (a + loopR + halo half-stroke = 11.8), so (20, 5)
-    // clipped the blades top/right. (12, 12) also puts the cut hotspot on the
-    // blade crossing and matches CursorOverlay's centred draw.
-    return juce::MouseCursor (drawCursorImage (12.0f, 12.0f, &paintScissorsGlyph), 12, 12);
-}
-
-juce::MouseCursor makePencilCursor()
-{
-    // Lead tip is the hotspot, near the lower-left; the body extends up-right.
-    // 36-px canvas fits the enlarged glyph (kSize 34) + halo without clipping.
-    return juce::MouseCursor (drawCursorImage (5.0f, 30.0f, &paintPencilGlyph, 36), 5, 30);
-}
-
-juce::MouseCursor makeHandCursor()
-{
-    // Hotspot = index fingertip. paintHandGlyph anchors the fingertip at the
-    // point it's passed, so draw it at (10, 2) to fit the hand (which hangs
-    // down-right) inside the 24×24 image, and set the same pixel as the hotspot.
-    return juce::MouseCursor (drawCursorImage (10.0f, 2.0f, &paintHandGlyph), 10, 2);
-}
-} // namespace
-
 void inheritCursorOnDescendants (juce::Component& root)
 {
     // setMouseCursor on a visible child forces a global cursor refresh
@@ -230,19 +188,4 @@ juce::MouseCursor invisibleCursor()
     return c;
 }
 
-juce::MouseCursor cursorForEditMode (EditMode m)
-{
-    static const juce::MouseCursor hand     = makeHandCursor();
-    static const juce::MouseCursor scissors = makeScissorsCursor();
-    static const juce::MouseCursor pencil   = makePencilCursor();
-    switch (m)
-    {
-        case EditMode::Grab:  return hand;
-        case EditMode::Range: return juce::MouseCursor::IBeamCursor;
-        case EditMode::Cut:   return scissors;
-        case EditMode::Grid:  return juce::MouseCursor::CrosshairCursor;
-        case EditMode::Draw:  return pencil;
-    }
-    return juce::MouseCursor::NormalCursor;
-}
 } // namespace duskstudio

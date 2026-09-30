@@ -11864,23 +11864,14 @@ const ScenarioRegistrar regionMenuItems { Scenario {
 
 // Alt+T and Alt+Shift+T step the selected MIDI region round its take ring, key
 // after key, undo and redo drop the selection they step, and the Takes submenu
-// brings a chosen take live. An audio region carrying the same old history has
-// neither: the keys leave it alone and its menu has no Takes.
+// brings a chosen take live. An audio region has neither: the keys leave it
+// alone and its menu has no Takes.
 std::optional<ScenarioResult> runRegionTakeControls (GuiHost& host, ScenarioContext& ctx)
 {
     AudioRegion live;
     if (auto early = seedTapeRegion (host, ctx, live)) return early;
     auto& session = ctx.session();
     auto& audioTrack = session.track (0);
-    const double rate = ctx.engine().getCurrentSampleRate();
-    const auto alternate = ctx.tempDir() / "TakeB.wav";
-    if (! writeRampFixture (alternate, rate, live.sourceOffset + live.lengthInSamples))
-        return ScenarioResult::fail ("could not write a take fixture");
-    TakeRef audioTake;
-    audioTake.file = decltype (audioTake.file) (alternate.u8string().c_str());
-    audioTake.sourceOffset = live.sourceOffset;
-    audioTake.lengthInSamples = live.lengthInSamples;
-    audioTrack.regions.front().previousTakes = { audioTake };
     const auto liveFile = live.file.getFullPathName().toStdString();
 
     auto& midiTrack = session.track (1);
@@ -11961,9 +11952,8 @@ std::optional<ScenarioResult> runRegionTakeControls (GuiHost& host, ScenarioCont
         host.pressPeerKey ("alt + T", 't');
         host.pressPeerKey ("alt + shift + T", 'T');
         ctx.expect (audioTrack.regions.size() == 1
-                        && audioTrack.regions.front().file.getFullPathName().toStdString() == liveFile
-                        && audioTrack.regions.front().previousTakes.size() == 1,
-                    "Alt+T or Alt+Shift+T stepped an audio region's takes");
+                        && audioTrack.regions.front().file.getFullPathName().toStdString() == liveFile,
+                    "Alt+T or Alt+Shift+T changed the audio region");
     } });
     steps->push_back ({ 700, [&host, &ctx]
     { ctx.expect (host.clickAudioRegion (0, 0, true), "the audio region did not take a right-click"); } });
@@ -13917,20 +13907,13 @@ std::optional<ScenarioResult> runEditKeys (GuiHost& host, ScenarioContext& ctx)
         return writer->write (channels, 1, frames) && writer->flush();
     };
     const auto firstTake = ctx.tempDir() / "edit-take-1.wav";
-    const auto alternate = ctx.tempDir() / "edit-take-2.wav";
-    if (! ctx.expect (write (firstTake, second * 6) && write (alternate, second * 6),
-                      "could not write the edit fixtures"))
+    if (! ctx.expect (write (firstTake, second * 6), "could not write the edit fixture"))
         return ctx.verdict();
     AudioRegion region;
     using File = std::decay_t<decltype (region.file)>;
     region.file = File (firstTake.u8string().c_str());
     region.timelineStart = second * 2;
     region.lengthInSamples = second * 4;
-    TakeRef take;
-    take.file = File (alternate.u8string().c_str());
-    take.sourceOffset = second;
-    take.lengthInSamples = second * 2;
-    region.previousTakes = { take };
     track.regions = { region };
     engine.getUndoManager().clearUndoHistory();
     engine.getRegionClipboard() = {};
@@ -13974,9 +13957,8 @@ std::optional<ScenarioResult> runEditKeys (GuiHost& host, ScenarioContext& ctx)
     {
         ctx.expect (command ('d'), "Duplicate was not handled");
         if (counted (2, "Duplicate did not add a region"))
-            ctx.expect (track.regions[1].timelineStart == second * 6
-                        && track.regions[1].previousTakes.empty(),
-                        "Duplicate did not follow the original or kept its take history");
+            ctx.expect (track.regions[1].timelineStart == second * 6,
+                        "Duplicate did not follow the original");
         ctx.expect (command ('z'), "Undo after Duplicate was not handled");
         counted (1, "Undo did not remove the duplicate");
         ctx.expect (host.pressKey ("command + shift + Z", controlCharacter ('z')), "Redo was not handled");
@@ -14031,9 +14013,8 @@ std::optional<ScenarioResult> runEditKeys (GuiHost& host, ScenarioContext& ctx)
         host.pressKey ("alt + shift + T", 'T');
         if (ctx.expect (track.regions.size() == 1, "Alt+T changed the region count"))
             ctx.expect (track.regions[0].lengthInSamples == second * 4
-                        && track.regions[0].sourceOffset == 0
-                        && track.regions[0].previousTakes.size() == 1,
-                        "Alt+T or Alt+Shift+T stepped an audio region's takes");
+                        && track.regions[0].sourceOffset == 0,
+                        "Alt+T or Alt+Shift+T changed the audio region");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -16205,10 +16186,7 @@ std::optional<ScenarioResult> runCleanOutWhileRecording (GuiHost& host, Scenario
         const auto add = [&files] (const auto& file)
         { files.push_back (fs::u8path (file.getFullPathName().toStdString()).lexically_normal()); };
         for (const auto& region : track.regions)
-        {
             add (region.file);
-            for (const auto& take : region.previousTakes) add (take.file);
-        }
         std::sort (files.begin(), files.end());
         files.erase (std::unique (files.begin(), files.end()), files.end());
         return files;

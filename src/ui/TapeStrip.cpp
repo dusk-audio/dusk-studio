@@ -2250,7 +2250,7 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
     }
     if (trackIdx < 0) return;
 
-    // Audio-region hit: open the AudioRegionEditor modal. Walk newest-
+    // Audio-region hit: open the audio editor. Walk newest-
     // first so overlaid regions prefer the most-recently-added (matches
     // the painter's draw order).
     {
@@ -4314,10 +4314,6 @@ bool TapeStrip::duplicateSelectedRegion()
         const auto& regs = session.track (id.track).regions;
         if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
         AudioRegion clone = regs[(size_t) id.regionIdx];
-        // Drop take history on the duplicate - it's a fresh region as
-        // far as the user is concerned; cycling alternate takes on the
-        // clone would be confusing. The original keeps its history.
-        clone.previousTakes.clear();
         clone.timelineStart = regs[(size_t) id.regionIdx].timelineStart
                              + regs[(size_t) id.regionIdx].lengthInSamples;
         um.perform (new PasteRegionAction (session, engine, id.track, clone));

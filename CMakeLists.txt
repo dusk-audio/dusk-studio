@@ -804,7 +804,6 @@ target_sources(DuskStudio PRIVATE
     src/util/SingleInstance.cpp
     src/ui/AnalogVuMeter.cpp
     src/ui/AppConfig.cpp
-    src/ui/AudioRegionEditor.cpp
     src/ui/AuxLaneComponent.cpp
     src/ui/DuskAlerts.cpp
     src/ui/DuskComboBox.cpp

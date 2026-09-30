@@ -165,7 +165,7 @@ const juce::Colour kNoteEdge      { 0xff141418 };
 // grid without competing.
 const juce::Colour kTransportPlayhead { 0xffffe8c0 };
 
-// Same palette TapeStrip + AudioRegionEditor use - keep all three
+// Same palette TapeStrip + the audio editor use - keep all three
 // surfaces in sync when colours change.
 struct PaletteEntry { const char* label; std::uint32_t argb; };
 constexpr PaletteEntry kPalette[] = {
@@ -322,7 +322,7 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     };
     addAndMakeVisible (keySnapToggle);
 
-    // Region-level mute / lock toggles - parity with AudioRegionEditor.
+    // Region-level mute / lock toggles - parity with the audio editor.
     // Submit through MidiRegionEditAction so Cmd+Z reverts.
     auto styleToggle = [] (juce::ToggleButton& t)
     {
@@ -405,7 +405,7 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     zoomFitButton.setTooltip ("Zoom to fit region");
     zoomFitButton.onClick = [this] { zoomFit(); };
 
-    // Edit-mode palette (shared with AudioRegionEditor + TapeStrip).
+    // Edit-mode palette (shared with the audio editor + TapeStrip).
     // PianoRoll only supports Grab (select / box-select) and Draw
     // (the pencil - sole note-creation tool); Range / Cut / Grid are
     // inert here so we hide them from the palette to keep the pencil
@@ -2346,7 +2346,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     if (rulerBand.contains (e.x, e.y) && ! e.mods.isPopupMenu())
     {
         // Plain ruler click seeks the transport playhead (Reaper / Ardour
-        // muscle memory), parity with AudioRegionEditor.
+        // muscle memory), parity with the audio editor.
         const auto tickHere = std::max<std::int64_t> (0, tickForX (e.x));
         const double sr  = engine.getCurrentSampleRate();
         const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);

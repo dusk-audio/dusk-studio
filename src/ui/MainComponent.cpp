@@ -6436,6 +6436,16 @@ bool MainComponent::audioEditorShowing() const noexcept
    #endif
 }
 
+void MainComponent::captureAudioEditorTo (const std::string& capturePath)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (audioEditorShowing())
+        audioEditorWindow->captureNextFrameTo (capturePath);
+   #else
+    (void) capturePath;
+   #endif
+}
+
 bool MainComponent::audioEditorOpen() const noexcept
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI

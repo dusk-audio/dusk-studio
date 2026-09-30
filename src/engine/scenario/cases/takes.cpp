@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -147,7 +148,6 @@ ScenarioResult fullCoverKeepsTheCoveredTake (ScenarioContext& ctx)
                     "the new take does not span the region it covered");
         ctx.expect (fresh != 0 && fresh != old && takeWithId (ctx, fresh) != nullptr,
                     "the new region does not name a take of its own");
-        ctx.expect (live.previousTakes.empty(), "the recording built a take stack on the region");
     }
     ctx.expect (takes.size() == 2 && takeIsWhole (ctx, old, 4800, 4800, 1000),
                 "the covered region's take did not stay on the track as it was");
@@ -239,13 +239,11 @@ ScenarioResult punchInsideNamesEveryTake (ScenarioContext& ctx)
     ctx.expect (fresh->takeId != 0 && fresh->takeId != old && takeWithId (ctx, fresh->takeId) != nullptr,
                 "the punch does not name a take of its own");
     ctx.expect (takeIsWhole (ctx, old, 4800, 19200, 0), "the punched-into take was cut down");
-    for (const auto& r : regs)
-        ctx.expect (r.previousTakes.empty(), "the punch built a take stack on a region");
     return ctx.verdict();
 }
 
 // Deleting a recorded region leaves its take on the track, and so does
-// splitting one: both halves name the take and neither carries a stack.
+// splitting one: both halves name the take.
 ScenarioResult editsLeaveRecordedTakes (ScenarioContext& ctx)
 {
     auto& regs = regionsOf (ctx);
@@ -270,8 +268,6 @@ ScenarioResult editsLeaveRecordedTakes (ScenarioContext& ctx)
     {
         ctx.expect (regs[0].takeId == newest && regs[1].takeId == newest,
                     "the split halves do not both name the take they came from");
-        ctx.expect (regs[0].previousTakes.empty() && regs[1].previousTakes.empty(),
-                    "the split gave a half a take stack");
     }
     ctx.expect (takes.size() == 2, "the split changed the track's takes");
 
@@ -816,6 +812,158 @@ std::optional<ScenarioResult> auditionNeverReachesBounce (ScenarioContext& ctx)
     return std::nullopt;
 }
 
+// A take on the track whose file really exists, a quiet ramp, so an edit that
+// renders can read it.
+std::optional<AudioTake> writtenTake (ScenarioContext& ctx, const std::string& name, std::int64_t start, int length)
+{
+    std::vector<float> ramp ((std::size_t) length);
+    for (int i = 0; i < length; ++i)
+        ramp[(std::size_t) i] = 0.5f * (float) i / (float) length;
+    const auto path = ctx.tempDir() / (name + ".wav");
+    if (! writeMono (path, ramp)) return std::nullopt;
+    AudioTake take;
+    take.id = ctx.session().allocateTakeId();
+    take.name = name;
+    take.file = SessionFile (path.u8string().c_str());
+    take.timelineStart = start;
+    take.lengthInSamples = length;
+    ctx.session().track (kTrack).takes.push_back (take);
+    return take;
+}
+
+// Reverse renders the region into a file of its own, which is no take's: the
+// result names no take, the take's lane stops showing it, and deleting the take
+// leaves it. Undo brings the region back naming its take.
+ScenarioResult reverseNamesNoTake (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
+    auto& regs = track.regions;
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto take = writtenTake (ctx, "reverse-take", 4800, 9600);
+    if (! take) return ScenarioResult::fail ("could not write the take");
+    regs.push_back (*regionFromTake (*take, 4800, 14400));
+
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new ReverseRegionAction (session, ctx.engine(), kTrack, 0)), "the reverse was refused")
+        || ! ctx.expect (regs.size() == 1, "the reverse changed the number of regions"))
+        return ctx.verdict();
+    ctx.expect (regs[0].file != take->file, "the reverse did not render a file of its own");
+    ctx.expect (regs[0].takeId == 0, "the reversed region still names the take it was rendered from");
+    ctx.expect (takeCoverage (track, take->id).empty(), "the take's lane still shows the reversed region");
+
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new DeleteTakeAction (session, ctx.engine(), kTrack, take->id)),
+                "deleting the take was refused");
+    ctx.expect (regs.size() == 1 && findTake (track, take->id) == nullptr,
+                "deleting the take took the reversed region with it");
+
+    ctx.expect (undo.undo() && undo.undo(), "undo of the delete and the reverse was refused");
+    ctx.expect (regs.size() == 1 && regs[0].file == take->file && regs[0].takeId == take->id,
+                "undoing the reverse did not bring the region back naming its take");
+    return ctx.verdict();
+}
+
+// Join keeps a take only while the result still reads that take alone: two
+// halves of one take rejoin naming it, two loop passes that share a file and
+// abut join naming neither, and regions of two takes render into a new file
+// that names none.
+ScenarioResult joinNamesATakeOnlyWhileItReadsIt (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& regs = regionsOf (ctx);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto first = writtenTake (ctx, "join-first", 0, 9600);
+    const auto second = writtenTake (ctx, "join-second", 0, 9600);
+    if (! first || ! second) return ScenarioResult::fail ("could not write the takes");
+
+    const auto join = [&] (const std::string& what)
+    {
+        undo.beginNewTransaction();
+        return ctx.expect (undo.perform (new JoinRegionsAction (session, ctx.engine(), kTrack, { 0, 1 })),
+                           "joining " + what + " was refused")
+            && ctx.expect (regs.size() == 1, "joining " + what + " did not leave one region");
+    };
+
+    regs = { *regionFromTake (*first, 0, 4800), *regionFromTake (*first, 4800, 9600) };
+    if (join ("two halves of one take"))
+        ctx.expect (regs[0].file == first->file && regs[0].takeId == first->id,
+                    "two halves of one take did not rejoin naming it");
+
+    AudioTake passOne = *first;
+    passOne.id = session.allocateTakeId();
+    passOne.timelineStart = 20000;
+    passOne.lengthInSamples = 4800;
+    AudioTake passTwo = passOne;
+    passTwo.id = session.allocateTakeId();
+    passTwo.sourceOffset = 4800;
+    session.track (kTrack).takes.push_back (passOne);
+    session.track (kTrack).takes.push_back (passTwo);
+    auto moved = *regionFromTake (passTwo, 20000, 24800);
+    moved.timelineStart = 24800;
+    regs = { *regionFromTake (passOne, 20000, 24800), moved };
+    if (join ("two loop passes of one file"))
+        ctx.expect (regs[0].file == first->file && regs[0].takeId == 0,
+                    "a join across two loop passes named one of them");
+
+    regs = { *regionFromTake (*first, 0, 4800), *regionFromTake (*second, 4800, 9600) };
+    if (join ("regions of two takes"))
+        ctx.expect (regs[0].file != first->file && regs[0].file != second->file && regs[0].takeId == 0,
+                    "a join rendered from two takes names one of them");
+    return ctx.verdict();
+}
+
+// A pasted copy names its take only while the take is on the track and the copy
+// reads its file: a copy on the take's own track keeps it, and a copy on another
+// track, a copy reading another file and a copy pasted after its take was
+// deleted do not.
+ScenarioResult pasteKeepsTheTakeWhileItReadsIt (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& regs = regionsOf (ctx);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto take = writtenTake (ctx, "paste-take", 0, 9600);
+    if (! take) return ScenarioResult::fail ("could not write the take");
+    regs.push_back (*regionFromTake (*take, 0, 9600));
+    auto copy = regs[0];
+    copy.timelineStart = 20000;
+
+    const auto paste = [&] (int track, const AudioRegion& region, const std::string& what) -> const AudioRegion*
+    {
+        undo.beginNewTransaction();
+        auto& target = session.track (track).regions;
+        const auto before = target.size();
+        if (! ctx.expect (undo.perform (new PasteRegionAction (session, ctx.engine(), track, region)),
+                          "pasting " + what + " was refused")
+            || ! ctx.expect (target.size() == before + 1, "pasting " + what + " added no region"))
+            return nullptr;
+        return &target.back();
+    };
+
+    if (const auto* pasted = paste (kTrack, copy, "a copy on its own track"))
+        ctx.expect (pasted->takeId == take->id, "a copy pasted on its take's track lost the take");
+
+    if (const auto* pasted = paste (kTrack + 1, copy, "a copy on another track"))
+        ctx.expect (pasted->takeId == 0, "a copy pasted on a track without the take still names it");
+
+    auto elsewhere = copy;
+    elsewhere.file = SessionFile ((ctx.tempDir() / "elsewhere.wav").u8string().c_str());
+    if (const auto* pasted = paste (kTrack, elsewhere, "a copy reading another file"))
+        ctx.expect (pasted->takeId == 0, "a copy reading another file names the take");
+
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new DeleteTakeAction (session, ctx.engine(), kTrack, take->id)),
+                "deleting the take was refused");
+    ctx.expect (regs.size() == 1 && regs[0].file == elsewhere.file,
+                "deleting the take did not remove exactly the original and the copy that names it");
+    if (const auto* pasted = paste (kTrack, copy, "a copy after its take was deleted"))
+        ctx.expect (pasted->takeId == 0, "a copy pasted after its take was deleted still names it");
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
@@ -943,6 +1091,15 @@ const ScenarioRegistrar auditionEndsRegistrar { Scenario {
 const ScenarioRegistrar renameTakeRegistrar { Scenario {
     "take.rename_take_round_trips_through_save", { "take", "session", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (renameTakeRoundTrips, ctx); } } };
+const ScenarioRegistrar reverseRegistrar { Scenario {
+    "take.reverse_names_no_take", { "take", "region", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (reverseNamesNoTake, ctx); } } };
+const ScenarioRegistrar joinRegistrar { Scenario {
+    "take.join_names_a_take_only_while_it_reads_it", { "take", "region", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (joinNamesATakeOnlyWhileItReadsIt, ctx); } } };
+const ScenarioRegistrar pasteRegistrar { Scenario {
+    "take.paste_keeps_the_take_while_it_reads_it", { "take", "region", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (pasteKeepsTheTakeWhileItReadsIt, ctx); } } };
 const ScenarioRegistrar auditionRegistrar { Scenario {
     "take.audition_never_reaches_bounce", { "take", "bounce", "playback" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return auditionNeverReachesBounce (ctx); }, 120000 } };

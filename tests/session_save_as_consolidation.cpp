@@ -60,10 +60,6 @@ TEST_CASE ("consolidateInto copies session audio and repoints the model",
         AudioRegion r;
         r.file            = take1;
         r.lengthInSamples = 1000;
-        TakeRef prior;
-        prior.file            = take0;
-        prior.lengthInSamples = 500;
-        r.previousTakes.push_back (prior);
         AudioTake live;
         live.id              = s.allocateTakeId();
         live.file            = take1;
@@ -73,7 +69,11 @@ TEST_CASE ("consolidateInto copies session audio and repoints the model",
         unplayed.id              = s.allocateTakeId();
         unplayed.file            = passB;
         unplayed.lengthInSamples = 800;
-        s.track (0).takes = { live, unplayed };
+        AudioTake older;
+        older.id              = s.allocateTakeId();
+        older.file            = take0;
+        older.lengthInSamples = 500;
+        s.track (0).takes = { live, unplayed, older };
         s.track (0).regions.push_back (r);
 
         s.track (1).frozen.store (true);
@@ -98,10 +98,9 @@ TEST_CASE ("consolidateInto copies session audio and repoints the model",
 
     // Model repointed into dirB.
     REQUIRE (s.track (0).regions[0].file == dirB.getChildFile ("audio/take1.wav"));
-    REQUIRE (s.track (0).regions[0].previousTakes[0].file
-                 == dirB.getChildFile ("audio/take0.wav"));
     REQUIRE (s.track (0).takes[0].file == dirB.getChildFile ("audio/take1.wav"));
     REQUIRE (s.track (0).takes[1].file == dirB.getChildFile ("audio/pass_b.wav"));
+    REQUIRE (s.track (0).takes[2].file == dirB.getChildFile ("audio/take0.wav"));
     REQUIRE (s.track (1).frozenAudioPath
                  == dirB.getChildFile ("audio/freeze/freeze_track02.wav").getFullPathName());
     REQUIRE (s.track (1).frozenRegion.file
@@ -121,8 +120,9 @@ TEST_CASE ("consolidateInto copies session audio and repoints the model",
     REQUIRE (SessionSerializer::load (loaded, target));
     REQUIRE (loaded.missingAudioFilesAfterLoad.empty());
     REQUIRE (loaded.track (0).regions[0].file == dirB.getChildFile ("audio/take1.wav"));
-    REQUIRE (loaded.track (0).takes.size() == 2);
+    REQUIRE (loaded.track (0).takes.size() == 3);
     REQUIRE (loaded.track (0).takes[1].file == dirB.getChildFile ("audio/pass_b.wav"));
+    REQUIRE (loaded.track (0).takes[2].file == dirB.getChildFile ("audio/take0.wav"));
 }
 
 TEST_CASE ("consolidateInto pulls external files into audio/ with collision suffixes",

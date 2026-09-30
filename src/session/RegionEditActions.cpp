@@ -237,9 +237,13 @@ bool PasteRegionAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
-    auto& regs = session.track (trackIdx).regions;
+    auto& track = session.track (trackIdx);
+    auto& regs = track.regions;
     insertedAt = (int) regs.size();
     regs.push_back (regionToInsert);
+    if (const auto* take = findTake (track, regionToInsert.takeId);
+        take == nullptr || take->file != regionToInsert.file)
+        regs.back().takeId = 0;
     rebuildPlaybackIfStopped (engine);
     return true;
 }
@@ -1497,6 +1501,10 @@ bool JoinRegionsAction::perform()
 
     if (sameFile && abuts && uniformGainMute)
     {
+        const auto sharedTake = beforeRegions.front().takeId;
+        const bool oneTake = std::all_of (beforeRegions.begin(), beforeRegions.end(),
+                                          [sharedTake] (const AudioRegion& r) { return r.takeId == sharedTake; });
+
         // Cheap merge: keep the leading region, extend its length, drop
         // the rest. Outer fadeIn from the first and fadeOut from the
         // latest-ending region are preserved; inner fades vanish along
@@ -1508,7 +1516,7 @@ bool JoinRegionsAction::perform()
         merged.fadeOutSamples  = latestEnding->fadeOutSamples;
         merged.fadeOutShape    = latestEnding->fadeOutShape;
         merged.fadeOutAuto     = latestEnding->fadeOutAuto;
-        merged.previousTakes   = beforeRegions.front().previousTakes;
+        merged.takeId          = oneTake ? sharedTake : 0;
 
         const int mergedIdx = eraseJoinedAndGetMergedSlot (regs, indices, sortedDesc);
         if (mergedIdx < 0)
@@ -1598,7 +1606,7 @@ bool JoinRegionsAction::perform()
     merged.fadeOutSamples  = latestEnding->fadeOutSamples;
     merged.fadeOutShape    = latestEnding->fadeOutShape;
     merged.fadeOutAuto     = latestEnding->fadeOutAuto;
-    merged.previousTakes.clear();
+    merged.takeId          = 0;
     // Gain and mute are baked into the rendered file.
     merged.gainDb          = 0.0f;
     merged.muted           = false;
@@ -1775,6 +1783,7 @@ bool ReverseRegionAction::perform()
         std::swap (afterState.fadeInSamples, afterState.fadeOutSamples);
         std::swap (afterState.fadeInShape,   afterState.fadeOutShape);
         std::swap (afterState.fadeInAuto,    afterState.fadeOutAuto);
+        afterState.takeId = 0;
         firstPerformDone = true;
     }
 

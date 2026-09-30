@@ -52,11 +52,7 @@ UnreferencedAudio findUnreferencedAudio (const Session& session)
     {
         const auto& track = session.track (t);
         for (const auto& region : track.regions)
-        {
             remember (pathOf (region.file));
-            for (const auto& take : region.previousTakes)
-                remember (pathOf (take.file));
-        }
         for (const auto& take : track.takes)
             remember (pathOf (take.file));
     }

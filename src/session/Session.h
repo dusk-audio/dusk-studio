@@ -490,16 +490,6 @@ struct TakeProvenance
 static_assert (std::is_trivially_copyable<TakeProvenance>::value,
                "TakeProvenance must remain trivially copyable");
 
-// Take-history slot - timeline position is NOT stored so rotating
-// preserves the region's timelineStart (same spot in the song).
-struct TakeRef
-{
-    juce::File file;
-    std::int64_t sourceOffset    = 0;
-    std::int64_t lengthInSamples = 0;
-    TakeProvenance provenance;
-};
-
 using TakeId = std::uint64_t;   // 0 = none
 
 // One complete recording pass on a track. Later recording never trims it;
@@ -833,7 +823,7 @@ struct MidiRegion
     std::vector<MidiCc>   ccs;
     TakeProvenance provenance;
 
-    // Front = next to surface on cycle. Same semantics as AudioRegion.
+    // Front = next to surface on cycle.
     std::vector<MidiTakeRef> previousTakes;
 
     juce::Colour customColour;
@@ -874,6 +864,30 @@ inline void swapMidiTakePayload (MidiRegion& region, MidiTakeRef& take)
     swap (region.provenance, take.provenance);
 }
 
+// Forward brings the front of the take stack live and sends the displaced take
+// to the back; backward is the mirror image, so the two directions step through
+// the same ring. False when the region has no history.
+inline bool cycleTake (MidiRegion& region, bool forward)
+{
+    auto& takes = region.previousTakes;
+    if (takes.empty()) return false;
+    if (forward)
+    {
+        auto chosen = std::move (takes.front());
+        takes.erase (takes.begin());
+        swapMidiTakePayload (region, chosen);
+        takes.push_back (std::move (chosen));
+    }
+    else
+    {
+        auto chosen = std::move (takes.back());
+        takes.pop_back();
+        swapMidiTakePayload (region, chosen);
+        takes.insert (takes.begin(), std::move (chosen));
+    }
+    return true;
+}
+
 // All shapes: shape(0)=0, shape(1)=1. EqualPower is constant-power for
 // crossfades. RaisedCosine has zero slope at both endpoints - the right
 // choice for very-short click-mask fades (punch in/out).
@@ -887,7 +901,7 @@ enum class FadeShape : int
     RaisedCosine = 5
 };
 
-// Used by PlaybackEngine for audio + AudioRegionEditor for envelope
+// Used by PlaybackEngine for audio + the audio editor for envelope
 // painting - keep in sync.
 inline float applyFadeShape (float t, FadeShape s) noexcept
 {
@@ -952,70 +966,9 @@ struct AudioRegion
     // playback. Right-click menu toggles; painter shows lock badge.
     bool locked = false;
 
-    // Front = next to surface on cycle.
-    std::vector<TakeRef> previousTakes;
-
     // The take on the region's own track its audio came from.
     TakeId takeId = 0;
 };
-
-inline TakeRef makeAudioTakeRef (const AudioRegion& region)
-{
-    return { region.file, region.sourceOffset, region.lengthInSamples,
-             region.provenance };
-}
-
-inline void applyAudioTakeRef (AudioRegion& region, const TakeRef& take)
-{
-    region.file = take.file;
-    region.sourceOffset = take.sourceOffset;
-    region.lengthInSamples = take.lengthInSamples;
-    region.provenance = take.provenance;
-}
-
-inline void swapAudioTakePayload (AudioRegion& region, TakeRef& take)
-{
-    using std::swap;
-    swap (region.file, take.file);
-    swap (region.sourceOffset, take.sourceOffset);
-    swap (region.lengthInSamples, take.lengthInSamples);
-    swap (region.provenance, take.provenance);
-}
-
-// Forward brings the front of the take stack live and sends the displaced take
-// to the back; backward is the mirror image, so the two directions step through
-// the same ring. False when the region has no history.
-template <typename Region, typename SwapPayload>
-bool cycleTakeStack (Region& region, bool forward, SwapPayload swapPayload)
-{
-    auto& takes = region.previousTakes;
-    if (takes.empty()) return false;
-    if (forward)
-    {
-        auto chosen = std::move (takes.front());
-        takes.erase (takes.begin());
-        swapPayload (region, chosen);
-        takes.push_back (std::move (chosen));
-    }
-    else
-    {
-        auto chosen = std::move (takes.back());
-        takes.pop_back();
-        swapPayload (region, chosen);
-        takes.insert (takes.begin(), std::move (chosen));
-    }
-    return true;
-}
-
-inline bool cycleTake (AudioRegion& region, bool forward)
-{
-    return cycleTakeStack (region, forward, swapAudioTakePayload);
-}
-
-inline bool cycleTake (MidiRegion& region, bool forward)
-{
-    return cycleTakeStack (region, forward, swapMidiTakePayload);
-}
 
 struct Track
 {

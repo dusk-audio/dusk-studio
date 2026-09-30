@@ -1123,9 +1123,9 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
             if (! r.tempoLock) rObj["tempo_lock"] = false;
             rObj["recorded_at_bpm"] = r.recordedAtBPM;
 
-            // MIDI take history mirrors audio: previously-recorded versions
-            // of the same range stack here when an overdub fully overlaps
-            // an existing region.
+            // MIDI take history: previously-recorded versions of the same
+            // range stack here when an overdub fully overlaps an existing
+            // region.
             if (! r.previousTakes.empty())
             {
                 JObj prior = JObj::array();
@@ -3174,11 +3174,7 @@ void forEachConsolidatedPath (Session& s, Visit&& visit)
     {
         auto& track = s.track (t);
         for (auto& r : track.regions)
-        {
             visit (r.file);
-            for (auto& take : r.previousTakes)
-                visit (take.file);
-        }
         for (auto& take : track.takes)
             visit (take.file);
         if (track.frozenAudioPath.isNotEmpty())
@@ -3277,11 +3273,7 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
     {
         auto& track = s.track (t);
         for (auto& r : track.regions)
-        {
             plan (r.file);
-            for (auto& take : r.previousTakes)
-                plan (take.file);
-        }
         for (auto& take : track.takes)
             plan (take.file);
         if (track.frozenAudioPath.isNotEmpty())

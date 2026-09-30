@@ -13,7 +13,7 @@ namespace duskstudio
 // forbids time-stretching).
 //
 // State is mirrored into session.editMode so it persists across reloads.
-// Mouse handlers in TapeStrip + AudioRegionEditor dispatch on the
+// Mouse handlers in TapeStrip + the audio editor dispatch on the
 // session value, not on the toolbar's local state, so the toolbar is
 // the single source of truth visually but session.editMode is the
 // source of truth behaviorally.
