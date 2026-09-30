@@ -618,7 +618,7 @@ public:
         const float waveWidth = layout.wave.width() / layout.scale;
         if (showable && std::abs (waveWidth - fittedWidth) > 0.5f)
         {
-            zoomFit();
+            fitView();
             fittedWidth = waveWidth;
         }
         if (showable && std::exchange (revealPending, false))
@@ -1300,6 +1300,20 @@ private:
         scrollSamples = std::clamp<std::int64_t> (r->timelineStart - anchorStart, 0,
                                                   std::max<std::int64_t> (0, anchorLength - fitSamples));
         editCursorSample = r->sourceOffset;
+    }
+
+    // With takes on the track the view fits all of them, so a take that starts past
+    // the focused region still shows in its lane; without takes it fits the region.
+    void fitView()
+    {
+        if (takeCount() == 0)
+        {
+            zoomFit();
+            return;
+        }
+        zoomToTrack();
+        if (const auto* r = region())
+            editCursorSample = r->sourceOffset;
     }
 
     // The whole track across the view, takes included.

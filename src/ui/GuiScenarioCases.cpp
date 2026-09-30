@@ -2711,6 +2711,50 @@ std::optional<ScenarioResult> runAudioTakeLanesOpen (GuiHost& host, ScenarioCont
     return std::nullopt;
 }
 
+// Opened on a region of a track with takes, the editor fits every take, so a punch
+// that starts past the region shows in its lane; 0 still fits the region alone.
+std::optional<ScenarioResult> runAudioEditorOpensOnEveryTake (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& track = ctx.session().track (0);
+    const auto whole = addLevelTake (ctx, track, "Take 1", 0, kTakeCaseLength, kWholeTakeLevel);
+    const auto punch = addLevelTake (ctx, track, "Take 2", 72000, 48000, kShortTakeLevel);
+    if (! whole || ! punch) return ScenarioResult::fail ("could not write take fixture");
+    auto region = regionFromTake (track.takes[0], 0, 24000);
+    if (! region) return ScenarioResult::fail ("could not cut the region fixture");
+    track.regions.push_back (*region);
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    const auto opened = std::make_shared<std::vector<double>>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx, opened]
+    {
+        *opened = host.audioEditorView();
+        const auto selection = host.audioEditorSelection();
+        ctx.expect (! selection.empty() && selection[0] == 0, "the editor did not keep the double-clicked region");
+        ctx.expect (opened->size() == 3 && (*opened)[2] == 0.0, "the edit cursor is not at the region's start");
+        ctx.expect (host.pressAudioEditorKey ("0"), "the fit key was not handled");
+    }, [&host] { return host.audioEditorTakeLanes().size() == 2; }, "the take lanes never showed" });
+    steps->push_back ({ 100, [&host, &ctx, opened]
+    {
+        // The track spans 120000 samples, the region 24000: fitting the region alone
+        // zooms in five times over what the editor opened on.
+        const auto fitted = host.audioEditorView();
+        const bool read = opened->size() == 3 && fitted.size() == 3 && (*opened)[0] > 0.0;
+        const double ratio = read ? fitted[0] / (*opened)[0] : 0.0;
+        ctx.expect (ratio > 4.5 && ratio < 5.5,
+                    "the editor did not open on every take (region fit over open zoom " + std::to_string (ratio) + ")");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorOpensOnEveryTake { Scenario {
+    "gui.audio_editor_opens_on_every_take", { "gui", "editor", "take" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorOpensOnEveryTake (host, ctx); }
+} };
+
 const ScenarioRegistrar audioTakeLanesOpen { Scenario {
     "gui.audio_take_lanes_open", { "gui", "region", "take" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,

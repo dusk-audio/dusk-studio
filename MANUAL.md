@@ -1409,7 +1409,7 @@ It is marked **experimental** because parts of the DP file format are reverse-en
 
 ![Region editor modal over a region with fades.](docs/images/ed-04-region-editor-modal.png)
 
-Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. Other keys do nothing until you let go. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
+Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. On a track with takes it opens zoomed out to show every take, so a take that starts later still shows in its lane; **0** zooms to the focused region. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. Other keys do nothing until you let go. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
 
 ## What's editable
 
