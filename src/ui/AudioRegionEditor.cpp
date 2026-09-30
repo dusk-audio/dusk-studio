@@ -78,8 +78,8 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
         b.setTooltip (tip);
         b.onClick = std::move (onClick);
     };
-    wireIcon (undoButton,       "Undo",                [this] { undoOrRedo (false); refreshStatusBarReadouts(); repaint(); });
-    wireIcon (redoButton,       "Redo",                [this] { undoOrRedo (true); refreshStatusBarReadouts(); repaint(); });
+    wireIcon (undoButton,       "Undo",                [this] { undoOrRedo (false); if (getParentComponent() == nullptr) return; refreshStatusBarReadouts(); repaint(); });
+    wireIcon (redoButton,       "Redo",                [this] { undoOrRedo (true); if (getParentComponent() == nullptr) return; refreshStatusBarReadouts(); repaint(); });
     wireIcon (splitButton,      "Split at edit cursor",[this] { splitAtCursor(); });
     wireIcon (normalizeButton,  "Normalize",           [this] { normalizeRegion(); });
     wireIcon (propertiesButton, "Region properties...", [this] { showRegionPropertiesPopup(); });
@@ -2717,6 +2717,9 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         if (cmdOrCtrl && (code == 'Z' || code == 'z'))
         {
             undoOrRedo (k.getModifiers().isShiftDown());
+            // A track move's undo closes this editor and leaves trackIdx
+            // naming a slot that now holds another track.
+            if (getParentComponent() == nullptr) return true;
             rangeActive = false;
             additionalSelectedRegions.clear();
             // Undo can shuffle region order (split-merge restores the

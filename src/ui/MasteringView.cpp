@@ -182,10 +182,10 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
 }
 namespace
 {
-// Loudness targets, one row per distinct LUFS / dBTP pair; platforms that
-// share a target share its row. Index 0 is the no-target case. Values are
-// integrated program loudness in LUFS and the true-peak ceiling in dBTP, from
-// the platforms' published mastering recommendations as of 2024.
+// Reference loudness targets, one row per distinct LUFS / dBTP pair; the
+// services named on a row share its target. Index 0 is the no-target case.
+// Values are integrated program loudness in LUFS and the true-peak ceiling in
+// dBTP.
 struct MasteringTarget { const char* name; float lufs; float ceilingDbTP; };
 constexpr MasteringTarget kMasteringTargets[] =
 {

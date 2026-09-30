@@ -3113,6 +3113,8 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         if (cmdOrCtrl && code == 'Z')
         {
             undoOrRedo (k.getModifiers().isShiftDown());
+            // A track move's undo closes this editor; its track index is stale.
+            if (getParentComponent() == nullptr) return true;
             rangeActive = false;
             clearSelection();
             refreshStatusBarReadouts();

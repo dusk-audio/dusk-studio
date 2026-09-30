@@ -22,7 +22,6 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
-#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
@@ -80,7 +79,7 @@ inline std::optional<PluginDescriptor> descriptorFromObject (
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 8;
+constexpr int kFormatVersion = 9;
 
 inline bool hasTakeProvenance (const TakeProvenance& provenance) noexcept
 {
@@ -505,6 +504,19 @@ bool migrateSession (nlohmann::json& root, int from)
                     return false;
                 if (root.is_object())
                     root["version"] = 8;
+                ++v;
+                break;
+
+            case 8:
+                // v8 -> v9: a moved track may carry lv2_state_tag, naming the
+                // LV2 file-state directory it kept from its old slot. Absent
+                // means the slot's own directory, so legacy payloads only need
+                // the version stamp advanced. The bump exists because a v8
+                // build would read a moved track's LV2 state from the slot's
+                // directory, which holds a neighbour's files, and overwrite
+                // them on the next save.
+                if (root.is_object())
+                    root["version"] = 9;
                 ++v;
                 break;
 
@@ -2101,19 +2113,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast["limiter_lookahead_ms"] = s.mastering().limiterLookaheadMs.load();
     mast["limiter_mode"]         = s.mastering().limiterMode.load();
     mast["limiter_stereo_link"]  = s.mastering().limiterStereoLink.load();
-    {
-        // Builds from before the grouped list read only target_preset, as an
-        // index into Off, Spotify, Apple Music, YouTube, Tidal, Broadcast (EBU
-        // R128). Writing it too keeps the target in those builds without a
-        // format bump that would lock them out of the whole session.
-        constexpr int kToPlatformList[] = { 0, 1, 2, 5 };
-        static_assert (std::size (kToPlatformList) == MasteringParams::kNumTargetPresets,
-                       "every loudness target needs a per-platform index");
-        const int target = std::clamp (s.mastering().targetPresetIndex.load(),
-                                       0, MasteringParams::kNumTargetPresets - 1);
-        mast["loudness_target"] = target;
-        mast["target_preset"]   = kToPlatformList[target];
-    }
+    mast["loudness_target"]      = s.mastering().targetPresetIndex.load();
     root["mastering"] = std::move (mast);
 
     // Transport (loop + punch). Mirrored onto Session by
