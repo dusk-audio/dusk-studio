@@ -7,6 +7,7 @@
 namespace duskstudio
 {
 class AudioEngine;
+using UndoableAction = juce::UndoableAction;
 
 // The plugin portion of a clone snapshot is one indivisible replay unit.
 // Keeping the structured descriptor, malformed legacy fallback, and state
@@ -42,7 +43,7 @@ struct ClonePluginSnapshot
 // Replaces a single AudioRegion's fields with new values. Used for the move
 // and trim drags, all of which collapse to "region X is now Y". perform()
 // applies the new state; undo() restores the original.
-class RegionEditAction final : public juce::UndoableAction
+class RegionEditAction final : public UndoableAction
 {
 public:
     RegionEditAction (Session& session, AudioEngine& engine,
@@ -66,7 +67,7 @@ private:
 // original shrinks to [start, splitAt); a new region is inserted at idx+1
 // covering [splitAt, originalEnd) with sourceOffset adjusted so the audio
 // is continuous across the split.
-class SplitRegionAction final : public juce::UndoableAction
+class SplitRegionAction final : public UndoableAction
 {
 public:
     SplitRegionAction (Session& session, AudioEngine& engine,
@@ -88,7 +89,7 @@ private:
 
 // Inserts a copy of a region at the end of a track's region list. perform()
 // records the index it was inserted at so undo() can erase the same slot.
-class PasteRegionAction final : public juce::UndoableAction
+class PasteRegionAction final : public UndoableAction
 {
 public:
     PasteRegionAction (Session& session, AudioEngine& engine,
@@ -111,7 +112,7 @@ private:
 // user can hand-author MIDI without first having to record. Undo
 // removes the region; redo re-inserts at the same position. Note pile
 // stays empty - the user adds notes via the piano roll separately.
-class CreateMidiRegionAction final : public juce::UndoableAction
+class CreateMidiRegionAction final : public UndoableAction
 {
 public:
     CreateMidiRegionAction (Session& session,
@@ -145,7 +146,7 @@ private:
 // notes / ccs vectors come along for free in the snapshot, which is
 // what makes this safe even if a recording committed new notes
 // between the drag start and finalise.
-class MidiRegionEditAction final : public juce::UndoableAction
+class MidiRegionEditAction final : public UndoableAction
 {
 public:
     MidiRegionEditAction (Session& session, AudioEngine& engine,
@@ -166,7 +167,7 @@ private:
 };
 
 // Removes a region; undo re-inserts it at its original index.
-class DeleteRegionAction final : public juce::UndoableAction
+class DeleteRegionAction final : public UndoableAction
 {
 public:
     DeleteRegionAction (Session& session, AudioEngine& engine,
@@ -185,6 +186,74 @@ private:
     bool        haveRemoved = false;
 };
 
+// Puts the take's audio on the timeline over [start, end), clamped to the take,
+// carving what the track played there (TakeComp's promoteTakeRange). The
+// track's regions are snapshotted whole before and after. Refused when a
+// locked region lies in the range, since carving would split or trim it.
+class PromoteTakeRangeAction final : public UndoableAction
+{
+public:
+    PromoteTakeRangeAction (Session& session, AudioEngine& engine, int trackIdx,
+                             TakeId takeId, std::int64_t start, std::int64_t end);
+
+    bool perform() override;
+    bool undo()    override;
+    int  getSizeInUnits() override { return 2; }
+
+private:
+    Session& session;
+    AudioEngine& engine;
+    int trackIdx;
+    TakeId takeId;
+    std::int64_t start, end;
+    std::vector<AudioRegion> beforeRegions, afterRegions;
+    bool firstPerformDone = false;
+};
+
+// Removes a take and every region cut from it, and ends an audition of it.
+// Undo puts the take and regions back with the same ids, the take at its place
+// in recording order; the audition stays off. Refused while a region cut from
+// the take is locked.
+class DeleteTakeAction final : public UndoableAction
+{
+public:
+    DeleteTakeAction (Session& session, AudioEngine& engine, int trackIdx, TakeId takeId);
+
+    bool perform() override;
+    bool undo()    override;
+    int  getSizeInUnits() override { return 2; }
+
+private:
+    Session& session;
+    AudioEngine& engine;
+    int trackIdx;
+    TakeId takeId;
+    AudioTake removedTake;
+    std::size_t takeIndex = 0;
+    std::vector<AudioRegion> beforeRegions, afterRegions;
+    bool firstPerformDone = false;
+};
+
+class RenameTakeAction final : public UndoableAction
+{
+public:
+    RenameTakeAction (Session& session, int trackIdx, TakeId takeId, std::string newName);
+
+    bool perform() override;
+    bool undo()    override;
+    int  getSizeInUnits() override { return 1; }
+
+private:
+    bool apply (const std::string& name);
+
+    Session& session;
+    int trackIdx;
+    TakeId takeId;
+    std::string newName;
+    std::string oldName;
+    bool firstPerformDone = false;
+};
+
 // Joins (glues) a set of audio regions on the same track into one.
 //   - Fast path: when every selected region references the same source
 //     file and the regions abut (or overlap) on the timeline, the join
@@ -199,7 +268,7 @@ private:
 // joined; ctor sorts a copy by timelineStart so the action records a
 // stable order. perform() captures the before-state of every involved
 // region so undo() can restore the full pre-join layout.
-class JoinRegionsAction final : public juce::UndoableAction
+class JoinRegionsAction final : public UndoableAction
 {
 public:
     JoinRegionsAction (Session& session, AudioEngine& engine,
@@ -225,7 +294,7 @@ private:
 // swapped so the envelope stays on the same material). The original file is
 // untouched; undo restores the pre-reverse region. Frozen tracks are
 // edit-locked (perform bails). Single region.
-class ReverseRegionAction final : public juce::UndoableAction
+class ReverseRegionAction final : public UndoableAction
 {
 public:
     ReverseRegionAction (Session& session, AudioEngine& engine,
@@ -248,7 +317,7 @@ private:
 // MIDI counterpart to DeleteRegionAction. Erase/insert reshape the
 // vector, so both go through mutate() (copy + publish) - never
 // currentMutable() while the audio thread iterates the snapshot.
-class DeleteMidiRegionAction final : public juce::UndoableAction
+class DeleteMidiRegionAction final : public UndoableAction
 {
 public:
     DeleteMidiRegionAction (Session& session, AudioEngine& engine,
@@ -280,7 +349,7 @@ private:
 // asks the destination slot to restoreFromSavedState. Undo replays the
 // captured before-state through the same path so the dest slot returns
 // to whatever plugin (if any) was loaded before.
-class CloneTrackAction final : public juce::UndoableAction
+class CloneTrackAction final : public UndoableAction
 {
 public:
     CloneTrackAction (Session& session, AudioEngine& engine,
@@ -326,7 +395,7 @@ private:
 // the before-snapshot. WAV files on disk are NOT deleted on undo -
 // the user can redo to re-attach the take, and orphaned files are
 // reclaimed via the existing "Clean Out" menu action.
-class RecordCommitAction final : public juce::UndoableAction
+class RecordCommitAction final : public UndoableAction
 {
 public:
     struct TrackDiff
@@ -358,7 +427,7 @@ private:
 // starting tempo) collapses to "the points were X, now Y", so one action type
 // covers them all. perform()/undo() publish the after/before set through the
 // engine's lock-free tempo snapshot.
-class SetTempoMapAction final : public juce::UndoableAction
+class SetTempoMapAction final : public UndoableAction
 {
 public:
     SetTempoMapAction (AudioEngine& engine,
@@ -379,7 +448,7 @@ private:
 // the point vector and republish it to the audio thread via a release-store
 // on the track's automationMode (the Session.h lane-sync contract). Lane
 // editing is gated on transport=Stopped, same as the live edit path.
-class AutomationLaneEditAction final : public juce::UndoableAction
+class AutomationLaneEditAction final : public UndoableAction
 {
 public:
     AutomationLaneEditAction (Session& session, int trackIdx, int paramIdx,

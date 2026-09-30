@@ -19,6 +19,7 @@
 #include "FaderBindingMap.h"
 #include "CompModeMap.h"
 #include "../session/RegionEditActions.h"
+#include "../session/TakeComp.h"
 #include "DeviceFallbackMessage.h"
 #include "LegacyStateBase64.h"
 #include "../foundation/AppConfigDir.h"
@@ -1398,7 +1399,7 @@ void AudioEngine::commitFreeze (int trackIndex, const juce::File& outFile, std::
     track.frozen.store (true, std::memory_order_release);
 
     // Open the frozen WAV reader (and rebuild every track's readers).
-    playbackEngine.preparePlayback();
+    playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
 }
 
 void AudioEngine::unfreezeTrack (int trackIndex)
@@ -1418,7 +1419,7 @@ void AudioEngine::unfreezeTrack (int trackIndex)
 
     // Rebuild readers without the frozen stream (closes the frozen WAV handle)
     // BEFORE deleting the file.
-    playbackEngine.preparePlayback();
+    playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
 
     // Delete the baked WAV - but only one we created: inside the session's audio
     // dir and named like our freeze output. A corrupt session could otherwise
@@ -1668,6 +1669,26 @@ void AudioEngine::drainCallbackDiagnostics()
     }
 }
 
+void AudioEngine::setTakeAudition (int trackIndex, TakeId takeId)
+{
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks
+        || findTake (session.track (trackIndex), takeId) == nullptr)
+    {
+        clearTakeAudition();
+        return;
+    }
+    session.takeAudition = { trackIndex, takeId };
+    if (transport.isStopped())
+        playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
+}
+
+void AudioEngine::clearTakeAudition()
+{
+    session.takeAudition = {};
+    if (transport.isStopped())
+        playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
+}
+
 void AudioEngine::play()
 {
     if (transport.isPlaying() || transport.isRecording()) return;
@@ -1690,7 +1711,7 @@ void AudioEngine::play()
     }
 
     transport.setRollStart (transport.getPlayhead());
-    playbackEngine.preparePlayback();
+    playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
     transport.setState (Transport::State::Playing);
 }
 
@@ -2075,7 +2096,7 @@ void AudioEngine::record()
     if (transport.isStopped())
         transport.setRollStart (startSample);
 
-    playbackEngine.preparePlayback();  // un-armed tracks still play through
+    playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);  // un-armed tracks still play through
     transport.setState (Transport::State::Recording);
 }
 

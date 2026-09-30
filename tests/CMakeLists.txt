@@ -95,6 +95,7 @@ add_executable(dusk-studio-tests
     session_freeze_roundtrip.cpp
     session_region_bounds.cpp
     session_takes.cpp
+    take_comp.cpp
     session_transport_bounds.cpp
     session_corrupted_recovery.cpp
     session_clamp_corrupt_values.cpp
@@ -191,6 +192,7 @@ add_executable(dusk-studio-tests
     record_offset_placement.cpp
     record_stop_waits_for_audio.cpp
     playback_loop_read.cpp
+    playback_take_audition.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PlaybackEngine.cpp
     mastering_player_resample.cpp
     mastering_player_file_release.cpp
@@ -221,6 +223,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/MidiSyncReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/session/MidiBindingsPreset.cpp
     ${CMAKE_SOURCE_DIR}/src/session/UnreferencedAudio.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/TakeComp.cpp
     session_templates.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionTemplates.cpp)
 

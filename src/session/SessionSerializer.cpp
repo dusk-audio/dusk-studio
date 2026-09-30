@@ -2444,6 +2444,7 @@ bool SessionSerializer::load (Session& s, const File& source)
     // has to undo a failed load (the session directory moves before this runs)
     // can rely on a false return leaving the model exactly as it was.
     s.missingAudioFilesAfterLoad.clear();
+    s.takeAudition = {};
     s.masteringSourceMissingAfterLoad = false;
 
     // Unconditional (reset-when-absent): a pre-SR-aware file must not inherit

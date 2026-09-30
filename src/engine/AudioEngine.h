@@ -318,6 +318,13 @@ public:
     }
 
     void play();
+
+    // Plays one take alone on its track in place of the track's regions,
+    // until cleared. Stopped, it applies at once; rolling, at the next Play.
+    // Bounce and freeze renders never hear it. Naming a take the track does
+    // not hold clears the audition instead. Message thread only.
+    void setTakeAudition (int trackIndex, TakeId takeId);
+    void clearTakeAudition();
     // Halts the transport and commits any take without moving the playhead.
     // For stops the user did not ask for as a transport press: session
     // switch, shutdown, bounce, external sync.

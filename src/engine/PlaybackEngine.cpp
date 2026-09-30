@@ -1,6 +1,7 @@
 #include "PlaybackEngine.h"
 #include "Transport.h"
 #include "../foundation/Decibels.h"
+#include "../session/TakeComp.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -63,7 +64,7 @@ void PlaybackEngine::refreshLiveRegionParams()
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& stream = streams[(size_t) t];
-        if (stream == nullptr) continue;
+        if (stream == nullptr || t == auditionedTrack) continue;
         const auto& regs = session.track (t).regions;
 
         // Streams are sorted by timelineStart in preparePlayback; the
@@ -85,9 +86,11 @@ void PlaybackEngine::refreshLiveRegionParams()
     }
 }
 
-void PlaybackEngine::preparePlayback()
+void PlaybackEngine::preparePlayback (Audition audition)
 {
     stopPlayback();
+    auditionedTrack = -1;
+    const auto& takeAudition = session.takeAudition;
 
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
@@ -97,11 +100,27 @@ void PlaybackEngine::preparePlayback()
         // (their audio is baked into the WAV). frozenRegion is populated by
         // commitFreeze / on session load before this runs. Everything downstream
         // (reader open, fades, readForTrack) is identical to a normal region.
-        const bool frozen = session.track (t).frozen.load (std::memory_order_acquire);
-        const std::vector<AudioRegion> frozenOne =
-            frozen ? std::vector<AudioRegion> { session.track (t).frozenRegion }
-                   : std::vector<AudioRegion> {};
-        const auto& regions = frozen ? frozenOne : session.track (t).regions;
+        //
+        // An auditioned take stands in for the regions the same way, whole and
+        // unfaded, unless the track is frozen or the take is gone.
+        const auto& track = session.track (t);
+        const bool frozen = track.frozen.load (std::memory_order_acquire);
+        std::vector<AudioRegion> substitute;
+        if (frozen)
+        {
+            substitute.push_back (track.frozenRegion);
+        }
+        else if (audition == Audition::Honour && takeAudition.trackIdx == t)
+        {
+            if (const auto* take = findTake (track, takeAudition.takeId))
+                if (auto whole = regionFromTake (*take, take->timelineStart,
+                                                 take->timelineStart + take->lengthInSamples))
+                {
+                    substitute.push_back (std::move (*whole));
+                    auditionedTrack = t;
+                }
+        }
+        const auto& regions = substitute.empty() ? track.regions : substitute;
         if (regions.empty()) continue;
 
         auto stream = std::make_unique<PerTrackStream>();

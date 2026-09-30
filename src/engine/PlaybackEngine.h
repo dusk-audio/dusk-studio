@@ -31,8 +31,10 @@ public:
     void bindTransport (const Transport& t) noexcept { transport = &t; }
 
     // Open readers for every region. Regions sorted by timelineStart so
-    // the audio thread can early-out past blocks.
-    void preparePlayback();
+    // the audio thread can early-out past blocks. Honour plays the session's
+    // take audition in place of that track's regions; renders never pass it.
+    enum class Audition { Ignore, Honour };
+    void preparePlayback (Audition audition = Audition::Ignore);
     void stopPlayback();
 
     // Hot-update region gain + mute on the live snapshot without
@@ -109,6 +111,12 @@ private:
     };
 
     std::array<std::unique_ptr<PerTrackStream>, Session::kNumTracks> streams;
+
+    // The track whose streams play an auditioned take, which
+    // refreshLiveRegionParams must leave alone. Same threads as streams
+    // (the message thread, or a render's worker with the device detached);
+    // never read by the audio thread.
+    int auditionedTrack = -1;
 
     // One linear (non-wrapping) read span summed into the output at
     // outOffset. The public readForTrack handles clearing, the in-flight

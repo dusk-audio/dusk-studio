@@ -1786,6 +1786,15 @@ public:
     TakeId allocateTakeId() noexcept                     { return ++lastTakeId; }
     void   seedTakeIdAllocator (TakeId highestInUse) noexcept { lastTakeId = highestInUse; }
 
+    // A take played alone in place of its track's regions. Not saved; read
+    // only by PlaybackEngine::preparePlayback. Message thread only.
+    struct TakeAudition
+    {
+        int    trackIdx = -1;
+        TakeId takeId   = 0;
+    };
+    TakeAudition takeAudition;
+
     // -2 = follow track index, -1 = no input.
     int resolveInputForTrack (int trackIndex) const noexcept;
     // -1 in Mono / Midi mode (second channel meaningless).

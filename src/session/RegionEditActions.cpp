@@ -1,4 +1,5 @@
 #include "RegionEditActions.h"
+#include "TakeComp.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/LegacyStateBase64.h"
 #include "../engine/PlaybackEngine.h"
@@ -27,7 +28,7 @@ void rebuildPlaybackIfStopped (AudioEngine& engine)
 {
     if (engine.getTransport().getState() == Transport::State::Stopped)
     {
-        engine.getPlaybackEngine().preparePlayback();
+        engine.getPlaybackEngine().preparePlayback (PlaybackEngine::Audition::Honour);
     }
     else
     {
@@ -340,6 +341,140 @@ bool DeleteRegionAction::undo()
     regs.insert (regs.begin() + insertAt, removed);
     rebuildPlaybackIfStopped (engine);
     return true;
+}
+
+// PromoteTakeRangeAction
+
+PromoteTakeRangeAction::PromoteTakeRangeAction (Session& s, AudioEngine& e, int t,
+                                                TakeId id, std::int64_t from, std::int64_t to)
+    : session (s), engine (e), trackIdx (t), takeId (id), start (from), end (to)
+{}
+
+bool PromoteTakeRangeAction::perform()
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
+    auto& track = session.track (trackIdx);
+    if (! firstPerformDone)
+    {
+        const auto* take = findTake (track, takeId);
+        const auto placed = take != nullptr ? regionFromTake (*take, start, end) : std::nullopt;
+        if (! placed) return false;
+        const std::int64_t from = placed->timelineStart;
+        const std::int64_t to   = from + placed->lengthInSamples;
+        if (std::any_of (track.regions.begin(), track.regions.end(),
+                         [from, to] (const AudioRegion& r)
+                         {
+                             return r.locked && r.timelineStart < to
+                                 && r.timelineStart + r.lengthInSamples > from;
+                         }))
+            return false;
+        beforeRegions = track.regions;
+        promoteTakeRange (track, *take, start, end);
+        afterRegions = track.regions;
+        firstPerformDone = true;
+    }
+    else
+    {
+        track.regions = afterRegions;
+    }
+    rebuildPlaybackIfStopped (engine);
+    return true;
+}
+
+bool PromoteTakeRangeAction::undo()
+{
+    if (! firstPerformDone) return false;
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
+    session.track (trackIdx).regions = beforeRegions;
+    rebuildPlaybackIfStopped (engine);
+    return true;
+}
+
+// DeleteTakeAction
+
+DeleteTakeAction::DeleteTakeAction (Session& s, AudioEngine& e, int t, TakeId id)
+    : session (s), engine (e), trackIdx (t), takeId (id)
+{}
+
+bool DeleteTakeAction::perform()
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
+    auto& track = session.track (trackIdx);
+    auto& takes = track.takes;
+    const auto it = std::find_if (takes.begin(), takes.end(),
+                                  [this] (const AudioTake& take) { return take.id == takeId; });
+    if (takeId == 0 || it == takes.end()) return false;
+
+    if (! firstPerformDone)
+    {
+        const auto cutFromIt = [this] (const AudioRegion& r) { return r.takeId == takeId; };
+        if (std::any_of (track.regions.begin(), track.regions.end(),
+                         [&cutFromIt] (const AudioRegion& r) { return r.locked && cutFromIt (r); }))
+            return false;
+        removedTake = *it;
+        takeIndex = (std::size_t) (it - takes.begin());
+        beforeRegions = track.regions;
+        afterRegions = beforeRegions;
+        afterRegions.erase (std::remove_if (afterRegions.begin(), afterRegions.end(), cutFromIt),
+                            afterRegions.end());
+        firstPerformDone = true;
+    }
+    takes.erase (it);
+    track.regions = afterRegions;
+    // Left set, the audition would come back with the take on undo and play
+    // in place of the track's regions without being asked for again.
+    if (session.takeAudition.trackIdx == trackIdx && session.takeAudition.takeId == takeId)
+        session.takeAudition = {};
+    rebuildPlaybackIfStopped (engine);
+    return true;
+}
+
+bool DeleteTakeAction::undo()
+{
+    if (! firstPerformDone) return false;
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
+    auto& track = session.track (trackIdx);
+    if (findTake (track, takeId) != nullptr) return false;
+    const auto at = std::min (takeIndex, track.takes.size());
+    track.takes.insert (track.takes.begin() + (std::ptrdiff_t) at, removedTake);
+    track.regions = beforeRegions;
+    rebuildPlaybackIfStopped (engine);
+    return true;
+}
+
+// RenameTakeAction
+
+RenameTakeAction::RenameTakeAction (Session& s, int t, TakeId id, std::string name)
+    : session (s), trackIdx (t), takeId (id), newName (std::move (name))
+{}
+
+// A name plays no part in playback, so neither direction rebuilds readers.
+bool RenameTakeAction::apply (const std::string& name)
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
+    auto& takes = session.track (trackIdx).takes;
+    const auto it = std::find_if (takes.begin(), takes.end(),
+                                  [this] (const AudioTake& take) { return take.id == takeId; });
+    if (takeId == 0 || it == takes.end()) return false;
+    if (! firstPerformDone)
+    {
+        oldName = it->name;
+        firstPerformDone = true;
+    }
+    it->name = name;
+    return true;
+}
+
+bool RenameTakeAction::perform() { return apply (newName); }
+
+bool RenameTakeAction::undo()
+{
+    return firstPerformDone && apply (oldName);
 }
 
 // DeleteMidiRegionAction
@@ -1234,6 +1369,9 @@ bool CloneTrackAction::perform()
     }
 
     applyTrack (session.track (dstIdx), engine, dstIdx, *afterState);
+    // The destination's takes are gone; see DeleteTakeAction.
+    if (session.takeAudition.trackIdx == dstIdx)
+        session.takeAudition = {};
     rebuildPlaybackIfStopped (engine);
     return true;
 }

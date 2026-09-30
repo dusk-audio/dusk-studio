@@ -162,6 +162,7 @@ void ScenarioWorld::reset()
     }
 
     sessionRef.getMarkers().clear();
+    sessionRef.takeAudition = {};
     // Recorded and edited actions hold track and region indices into this
     // session, which the next scenario rebuilds from nothing.
     engineRef.getUndoManager().clearUndoHistory();
