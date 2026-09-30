@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/RecordManager.h"
+#include "engine/audiofile/FileReader.h"
 #include "session/Session.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -310,7 +311,7 @@ TEST_CASE ("Loop audio keeps every pass as a take with no per-region history cap
     RecordManager manager (session);
     const auto plan = loopPlan();
     REQUIRE (manager.startRecording (48000.0, 100, 0, plan));
-    constexpr int passes = 9;
+    constexpr int passes = 20;
     for (int ordinal = 1; ordinal <= passes; ++ordinal)
         writeAudioPass (manager, ordinal, 100, 8);
     manager.stopRecording (108);
@@ -323,19 +324,69 @@ TEST_CASE ("Loop audio keeps every pass as a take with no per-region history cap
         REQUIRE (takes[i].file == earlier[i].file);
         REQUIRE (takes[i].lengthInSamples == 8);
     }
+    const auto spool = takes[earlier.size()].file;
     for (int pass = 0; pass < passes; ++pass)
     {
         const auto& take = takes[earlier.size() + (size_t) pass];
         REQUIRE (take.provenance.loopPassOrdinal == pass + 1);
-        REQUIRE (take.sourceOffset == 8 * pass);
-        REQUIRE (take.lengthInSamples == 8);
+        REQUIRE_FALSE (take.provenance.partialPass);
+        REQUIRE (take.file == spool);
+        REQUIRE (takeMatches (take, 100, 8, 8 * pass));
         REQUIRE (take.name == "Take " + std::to_string (earlier.size() + (size_t) pass + 1));
     }
+    REQUIRE (manager.getLastRecordErrors().empty());
 
     const auto& regions = session.track (0).regions;
     REQUIRE (regions.size() == 1);
     REQUIRE (regions[0].takeId == takes.back().id);
     REQUIRE (regions[0].previousTakes.empty());
+}
+
+TEST_CASE ("Loop audio past the pass limit leaves the extra passes out and keeps every earlier pass",
+           "[recording][recordmanager][loop-takes][failure]")
+{
+    const auto temp = makeSessionDir ("dusk-loop-audio-pass-limit-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    RecordManager manager (session);
+    const auto plan = loopPlan();
+    REQUIRE (manager.startRecording (48000.0, 100, 0, plan));
+
+    constexpr int limit = RecordManager::kMaxLoopPassesPerGesture;
+    for (int ordinal = 1; ordinal <= limit; ++ordinal)
+        writeAudioPass (manager, ordinal, 100, 8);
+    // Two passes over the limit, each arriving as two callbacks.
+    for (int ordinal = limit + 1; ordinal <= limit + 2; ++ordinal)
+    {
+        writeAudioPass (manager, ordinal, 100, 4, 0.75f);
+        writeAudioPass (manager, ordinal, 104, 4, 0.75f);
+    }
+    manager.stopRecording (108);
+
+    const auto& takes = session.track (0).takes;
+    REQUIRE (takes.size() == (size_t) limit);
+    for (int pass = 0; pass < limit; ++pass)
+    {
+        const auto& take = takes[(size_t) pass];
+        REQUIRE (take.provenance.loopPassOrdinal == pass + 1);
+        REQUIRE_FALSE (take.provenance.partialPass);
+        REQUIRE (takeMatches (take, 100, 8, 8 * pass));
+    }
+
+    const auto& region = loopAudioRegion (session);
+    REQUIRE (region.takeId == takes.back().id);
+    REQUIRE (region.provenance.loopPassOrdinal == limit);
+
+    const auto& errors = manager.getLastRecordErrors();
+    REQUIRE (errors.size() == 1);
+    REQUIRE (errors[0].trackIndex == 0);
+    REQUIRE (errors[0].kind == RecordManager::RecordErrorKind::LoopPassLimit);
+    REQUIRE (errors[0].count == 2);
+
+    const auto reader = dusk::audio::FileReader::open (
+        takes.back().file.getFullPathName().toStdString());
+    REQUIRE (reader != nullptr);
+    REQUIRE (reader->info().numFrames == (std::int64_t) limit * 8);
 }
 
 TEST_CASE ("Loop audio retains a silent pass and trims latency per pass",
@@ -589,11 +640,15 @@ TEST_CASE ("Loop MIDI finalization is bounded to the retained high-ordinal passe
     const auto plan = loopPlan();
     REQUIRE (manager.startRecording (960.0, 100, 0, plan));
 
-    constexpr int firstOrdinal = 99992;
+    constexpr int firstOrdinal = 99981;
     constexpr int lastOrdinal = 100000;
     for (int ordinal = firstOrdinal; ordinal <= lastOrdinal; ++ordinal)
-        writeMidiPass (manager, ordinal, 100,
-                       oneNote (60 + ordinal - firstOrdinal), 8);
+    {
+        auto events = oneNote (60 + ordinal - firstOrdinal);
+        if (ordinal == firstOrdinal)
+            addController (events, 1, 64, 127, 2);
+        writeMidiPass (manager, ordinal, 100, std::move (events), 8);
+    }
     manager.stopRecording (108);
 
     const auto region = session.track (0).midiRegions.current().at (0);
@@ -602,6 +657,14 @@ TEST_CASE ("Loop MIDI finalization is bounded to the retained high-ordinal passe
     for (int i = 0; i < 8; ++i)
         REQUIRE (region.previousTakes[(size_t) i].provenance.loopPassOrdinal
                  == lastOrdinal - 1 - i);
+
+    // The sustain was pressed in a pass outside the kept nine; the oldest
+    // kept take still starts with it.
+    const auto& oldestKept = region.previousTakes.back();
+    REQUIRE_FALSE (oldestKept.ccs.empty());
+    REQUIRE (oldestKept.ccs.front().controller == 64);
+    REQUIRE (oldestKept.ccs.front().value == 127);
+    REQUIRE (oldestKept.ccs.front().atTick == 0);
 }
 
 TEST_CASE ("Loop MIDI closes and retriggers a note crossing the seam",

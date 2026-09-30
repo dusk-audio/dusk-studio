@@ -121,8 +121,13 @@ public:
         return lastSetupFailures;
     }
 
-    // Mid-take errors latched at stopRecording.
-    enum class RecordErrorKind { WavWrite, MidiOverflow, OffsetConsumedTake };
+    // Loop passes one gesture can keep per audio track. The pass bounds are
+    // sized with the writer at startRecording; a pass past the limit is not
+    // written and is reported as LoopPassLimit, and no earlier pass is dropped.
+    static constexpr int kMaxLoopPassesPerGesture = 1024;
+
+    // Mid-take errors latched at stopRecording. LoopPassLimit counts passes.
+    enum class RecordErrorKind { WavWrite, MidiOverflow, OffsetConsumedTake, LoopPassLimit };
     struct RecordError
     {
         int trackIndex;
@@ -188,13 +193,11 @@ private:
 
     Session& session;
 
-    static constexpr int kRetainedLoopPasses = 9; // current + eight prior
     struct PassDescriptor
     {
-        int passOrdinal = 0;
-        std::int64_t timelineStart = 0;
         std::int64_t sourceOffset = 0;
         std::int64_t lengthInSamples = 0;
+        int passOrdinal = 0;
         bool endsPass = false;
         bool writeFailed = false;
     };
@@ -206,8 +209,12 @@ private:
         std::int64_t framesWritten = 0;
         int numChannels = 1;
         std::atomic<std::uint64_t> writeFailures { 0 };
-        std::array<PassDescriptor, kRetainedLoopPasses> loopPasses {};
+        std::array<PassDescriptor, kMaxLoopPassesPerGesture> loopPasses {};
         int loopPassCount = 0;
+        // Audio thread only; stopRecording reads them after audioInFlight
+        // drains, the same handoff that publishes loopPasses.
+        std::uint64_t droppedLoopPasses = 0;
+        int lastDroppedPassOrdinal = 0;
     };
 
     std::array<std::unique_ptr<PerTrackWriter>, Session::kNumTracks> writers;
@@ -288,8 +295,13 @@ private:
 
     LoopCapturePlan loopPlan;
     LoopCaptureSpan currentLoopSpan;
-    std::array<PassDescriptor, kRetainedLoopPasses> loopPasses {};
-    int loopPassCount = 0;
+    // MIDI regions keep at most eight previous takes, so only the newest nine
+    // passes of a gesture can survive as MIDI takes. Older bounds are evicted
+    // here; their events still seed held notes and controllers at the first
+    // kept boundary.
+    static constexpr int kMidiLoopPassWindow = 9;
+    std::array<PassDescriptor, kMidiLoopPassWindow> midiLoopPasses {};
+    int midiLoopPassCount = 0;
     std::int64_t gestureCapturedAtMs = 0;
 
     // Subtracted from committed audio region starts; may be negative. The

@@ -955,6 +955,8 @@ void TransportBar::notifyRecordStopped()
     const auto& errs = engine.getRecordManager().getLastRecordErrors();
     if (errs.empty()) return;
 
+    static_assert (RecordManager::kMaxLoopPassesPerGesture == 1024,
+                   "the loop pass limit message quotes the limit");
     juce::String body =
         "The last take captured with errors. Listed tracks may be partial "
         "or missing audio / MIDI data:\n\n";
@@ -965,6 +967,8 @@ void TransportBar::notifyRecordStopped()
                 ? "WAV write failed (disk full / I/O error)"
             : e.kind == RecordManager::RecordErrorKind::OffsetConsumedTake
                 ? "take discarded (recording offset exceeds its length)"
+            : e.kind == RecordManager::RecordErrorKind::LoopPassLimit
+                ? "loop passes not recorded (past 1,024 in one take)"
                 : "MIDI events dropped (capture buffer full)";
         body += "    Track " + juce::String (e.trackIndex + 1)
               + " - " + kind + " ("

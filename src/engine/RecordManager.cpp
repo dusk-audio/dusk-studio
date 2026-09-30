@@ -240,7 +240,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     recordLatencyOffsetSamples = latencyOffsetSamples;
     loopPlan = loopCapturePlan;
     currentLoopSpan = {};
-    loopPassCount = 0;
+    midiLoopPassCount = 0;
     gestureCapturedAtMs = std::chrono::duration_cast<std::chrono::milliseconds> (
         std::chrono::system_clock::now().time_since_epoch()).count();
 
@@ -464,22 +464,22 @@ void RecordManager::beginLoopCaptureSpan (const LoopCaptureSpan& span) noexcept
         return;
 
     PassDescriptor* descriptor = nullptr;
-    if (loopPassCount > 0
-        && loopPasses[(size_t) (loopPassCount - 1)].passOrdinal == span.passOrdinal)
+    if (midiLoopPassCount > 0
+        && midiLoopPasses[(size_t) (midiLoopPassCount - 1)].passOrdinal == span.passOrdinal)
     {
-        descriptor = &loopPasses[(size_t) (loopPassCount - 1)];
+        descriptor = &midiLoopPasses[(size_t) (midiLoopPassCount - 1)];
     }
     else
     {
-        if (loopPassCount == kRetainedLoopPasses)
+        if (midiLoopPassCount == kMidiLoopPassWindow)
         {
-            std::move (loopPasses.begin() + 1, loopPasses.end(), loopPasses.begin());
-            --loopPassCount;
+            std::move (midiLoopPasses.begin() + 1, midiLoopPasses.end(),
+                       midiLoopPasses.begin());
+            --midiLoopPassCount;
         }
-        descriptor = &loopPasses[(size_t) loopPassCount++];
+        descriptor = &midiLoopPasses[(size_t) midiLoopPassCount++];
         *descriptor = {};
         descriptor->passOrdinal = span.passOrdinal;
-        descriptor->timelineStart = loopPlan.captureStartSample;
     }
     descriptor->lengthInSamples += span.numSamples;
     descriptor->endsPass = descriptor->endsPass || span.endsPass;
@@ -510,6 +510,9 @@ void RecordManager::stopRecording (std::int64_t endSample)
             const auto fails = w->writeFailures.load (std::memory_order_relaxed);
             if (fails > 0)
                 lastRecordErrors.push_back ({ t, RecordErrorKind::WavWrite, fails });
+            if (w->droppedLoopPasses > 0)
+                lastRecordErrors.push_back ({ t, RecordErrorKind::LoopPassLimit,
+                                              w->droppedLoopPasses });
         }
         if (auto& cap = midiCaptures[(size_t) t])
         {
@@ -596,8 +599,10 @@ void RecordManager::stopRecording (std::int64_t endSample)
             std::array<ActiveNote, 16 * 128> activeNotes {};
             std::array<int, 16 * 128> controllerState {};
             controllerState.fill (-1);
+            static_assert (kMidiLoopPassWindow == kMaxMidiTakesPerRegion + 1,
+                           "the MIDI pass window holds the current take plus the capped history");
             std::vector<MidiRegion> nonemptyPasses;
-            nonemptyPasses.reserve ((size_t) kRetainedLoopPasses);
+            nonemptyPasses.reserve ((size_t) kMidiLoopPassWindow);
             const auto captureLength = loopPlan.captureEndSample
                                      - loopPlan.captureStartSample;
             size_t drainedIndex = 0;
@@ -626,14 +631,14 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 }
             };
 
-            for (int passIndex = 0; passIndex < loopPassCount; ++passIndex)
+            for (int passIndex = 0; passIndex < midiLoopPassCount; ++passIndex)
             {
-                const auto& pass = loopPasses[(size_t) passIndex];
+                const auto& pass = midiLoopPasses[(size_t) passIndex];
                 if (pass.lengthInSamples <= 0) continue;
 
-                // Consume discarded older passes once to recover held-note and
-                // controller state at the first retained boundary. The outer
-                // loop is capped at current + eight prior takes.
+                // Consume evicted older passes once to recover held-note and
+                // controller state at the first kept boundary. The outer loop
+                // is capped at current + eight prior takes.
                 while (drainedIndex < drained.size()
                        && drained[drainedIndex].passOrdinal < pass.passOrdinal)
                     seedState (drained[drainedIndex++]);
@@ -737,7 +742,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     passRegion.notes.push_back (committed);
                 }
 
-                if (passIndex + 1 < loopPassCount)
+                if (passIndex + 1 < midiLoopPassCount)
                 {
                     for (int key = 0; key < (int) controllerState.size(); ++key)
                     {
@@ -753,11 +758,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 }
 
                 if (! passRegion.notes.empty() || ! passRegion.ccs.empty())
-                {
-                    if ((int) nonemptyPasses.size() == kRetainedLoopPasses)
-                        nonemptyPasses.erase (nonemptyPasses.begin());
                     nonemptyPasses.push_back (std::move (passRegion));
-                }
             }
 
             if (nonemptyPasses.empty())
@@ -1320,18 +1321,22 @@ void RecordManager::writeInputBlock (int trackIndex,
         {
             descriptor = &slot->loopPasses[(size_t) (slot->loopPassCount - 1)];
         }
+        else if (slot->loopPassCount == kMaxLoopPassesPerGesture)
+        {
+            // Earlier passes are never evicted, so a pass with no room for its
+            // bounds is left out whole: nothing spooled, counted once per pass.
+            if (selectedLoopSpan.passOrdinal != slot->lastDroppedPassOrdinal)
+            {
+                slot->lastDroppedPassOrdinal = selectedLoopSpan.passOrdinal;
+                ++slot->droppedLoopPasses;
+            }
+            return;
+        }
         else
         {
-            if (slot->loopPassCount == kRetainedLoopPasses)
-            {
-                std::move (slot->loopPasses.begin() + 1, slot->loopPasses.end(),
-                           slot->loopPasses.begin());
-                --slot->loopPassCount;
-            }
             descriptor = &slot->loopPasses[(size_t) slot->loopPassCount++];
             *descriptor = {};
             descriptor->passOrdinal = selectedLoopSpan.passOrdinal;
-            descriptor->timelineStart = loopPlan.captureStartSample;
             descriptor->sourceOffset = sourceOffset;
         }
     }
