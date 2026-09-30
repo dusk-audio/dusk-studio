@@ -57,7 +57,7 @@ src/session/SessionSerializer.h	13
 src/session/SessionTemplates.cpp	3
 src/ui/AnalogVuMeter.cpp	113
 src/ui/AnalogVuMeter.h	7
-src/ui/AudioRegionEditor.cpp	334
+src/ui/AudioRegionEditor.cpp	333
 src/ui/AudioRegionEditor.h	78
 src/ui/AuxLaneComponent.cpp	146
 src/ui/AuxLaneComponent.h	28

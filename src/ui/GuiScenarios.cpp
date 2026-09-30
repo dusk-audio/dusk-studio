@@ -571,7 +571,19 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
        #endif
     }
-    std::vector<int> audioAutomationPoint (std::int64_t, float) const override { return {}; }
+    std::vector<int> audioAutomationPoint (std::int64_t sample, float value) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        ImVec2 point;
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr
+            && owner.audioEditorView->automationPointForScenario (sample, value, point))
+            return { static_cast<int> (std::lround (point.x)), static_cast<int> (std::lround (point.y)) };
+       #else
+        (void) sample;
+        (void) value;
+       #endif
+        return {};
+    }
     bool openPiano (int track, int region) override
     {
         if (owner.pianoRoll != nullptr) return false;

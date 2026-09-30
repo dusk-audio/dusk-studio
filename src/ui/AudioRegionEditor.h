@@ -5,6 +5,7 @@
 #include "../foundation/MessageThread.h"
 #include "WheelScroll.h"
 #include <functional>
+#include "../session/AutomationLaneEdit.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -285,8 +286,7 @@ private:
     // Freehand pencil (DragMode::AutomationPaint) trackers: last point laid
     // down this stroke, so each step overwrites the swept band and throttles
     // new-point density.
-    std::int64_t automationPaintLastT = 0;
-    int  automationPaintLastX = -1;
+    AutomationStroke automationStroke;
     // Lay/update one automation point under (x,y) for the freehand pencil.
     // first = gesture start (no swept-band erase). Overwrites pre-existing
     // points in the band swept since the last step.

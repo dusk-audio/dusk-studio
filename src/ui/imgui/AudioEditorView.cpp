@@ -9,9 +9,21 @@
 #include "../../foundation/PlanarBuffer.h"
 #include "../../foundation/Text.h"
 #include "../../foundation/VectorOps.h"
+#include "../../session/AutomationLaneEdit.h"
 #include "../../session/RegionEditActions.h"
 #include "../../session/Session.h"
 #include "../../session/SnapHelpers.h"
+
+// The input trail is only in Dear ImGui's internal header, which this target's
+// warning set would otherwise flag.
+#if defined (__GNUC__)
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wsign-conversion"
+#endif
+#include <DearImGui/imgui_internal.h>
+#if defined (__GNUC__)
+ #pragma GCC diagnostic pop
+#endif
 
 #include <algorithm>
 #include <array>
@@ -86,6 +98,28 @@ constexpr std::uint32_t kSelection = 0xff80c0ff;
 constexpr const char* kContextMenu = "##editor-context";
 constexpr const char* kFadeMenu = "##editor-fade-shape";
 constexpr const char* kPropertiesMenu = "##editor-properties";
+constexpr const char* kAutomationMenu = "##editor-automation";
+
+constexpr std::uint32_t kAutomationDotRim = 0xff0a0a0a;
+// The pencil lays a point once the pointer has moved this far, in design pixels.
+constexpr float kPaintStepPixels = 4.0f;
+constexpr float kAutomationHitRadius = 8.0f;
+
+struct AutomationLaneEntry
+{
+    AutomationParam param;
+    const char* name;
+    std::uint32_t colour;
+};
+
+// In AutomationParam order, so a param indexes its own entry.
+constexpr AutomationLaneEntry kAutomationLanes[] = {
+    { AutomationParam::FaderDb, "Fader (dB)", 0xff5fc46f }, { AutomationParam::Pan, "Pan", 0xffe07a40 },
+    { AutomationParam::Mute, "Mute", 0xffd05050 }, { AutomationParam::Solo, "Solo", 0xff909098 },
+    { AutomationParam::AuxSend1, "Aux 1", 0xff60a8d8 }, { AutomationParam::AuxSend2, "Aux 2", 0xff70b0c0 },
+    { AutomationParam::AuxSend3, "Aux 3", 0xff8090d0 }, { AutomationParam::AuxSend4, "Aux 4", 0xffa080c0 },
+};
+static_assert (std::size (kAutomationLanes) == static_cast<std::size_t> (kNumAutomationParams));
 
 using RegionColour = decltype (AudioRegion::customColour);
 using RegionLabel = decltype (AudioRegion::label);
@@ -299,6 +333,28 @@ void drawScissorsGlyph (ImDrawList* dl, ImVec2 at, float scale)
     }
 }
 
+// The Draw pencil, lead tip on the hotspot and eraser up to the right, built along
+// the barrel's axis in the JUCE glyph's 24-unit grid drawn 34 px wide.
+void drawPencilGlyph (ImDrawList* dl, ImVec2 at, float scale)
+{
+    constexpr float kUnit = 34.0f / 24.0f;
+    constexpr float kInv = 0.70710678f;
+    const float g = 0.85f * scale * kUnit;
+    const auto p = [at, g] (float t, float w)
+    { return ImVec2 (at.x + (kInv * t + kInv * w) * g, at.y + (-kInv * t + kInv * w) * g); };
+    constexpr float kHalfWidth = 3.0f, kLeadWidth = 1.2f;
+    constexpr float kLead = 2.4f, kWood = 5.8f, kBody = 16.0f, kFerrule = 18.6f, kEnd = 21.0f;
+
+    const ImVec2 outline[] = { p (0.0f, 0.0f), p (kWood, -kHalfWidth), p (kEnd, -kHalfWidth),
+                               p (kEnd, kHalfWidth), p (kWood, kHalfWidth) };
+    const auto ink = IM_COL32 (0, 0, 0, 217);
+    dl->AddPolyline (outline, 5, ink, ImDrawFlags_Closed, 3.0f * 0.85f * scale);
+    dl->AddConvexPolyFilled (outline, 5, IM_COL32_WHITE);
+    dl->AddTriangleFilled (p (0.0f, 0.0f), p (kLead, -kLeadWidth), p (kLead, kLeadWidth), ink);
+    for (const float t : { kWood, kBody, kFerrule })
+        dl->AddLine (p (t, -kHalfWidth), p (t, kHalfWidth), ink, 1.3f * 0.85f * scale);
+}
+
 // Where a Cut click would split: a dashed line down the waveform, dark under light so
 // it reads over the audio.
 void drawCutLine (ImDrawList* dl, float x, float y0, float y1, float scale)
@@ -406,6 +462,15 @@ public:
         return true;
     }
 
+    bool automationPointForScenario (std::int64_t timelineSample, float value, ImVec2& point) const override
+    {
+        if (! laidOut || region() == nullptr)
+            return false;
+        point = { (xForTimeline (timelineSample) - layout.body.x0) / layout.scale,
+                  (automationYForValue (value) - layout.body.y0) / layout.scale };
+        return true;
+    }
+
     std::vector<std::int64_t> selectionForScenario() const override
     {
         return { regionIdx, rangeActive ? 1 : 0, rangeStartSample, rangeEndSample };
@@ -509,6 +574,7 @@ public:
         drawRange (ctx);
         drawEditCursor (ctx);
         drawPlayhead (ctx);
+        drawAutomation (ctx);
         drawSnapGuide (ctx);
         dl->PopClipRect();
 
@@ -551,7 +617,7 @@ private:
     // drag edits it live so the view follows, and the release rolls it back and
     // commits the whole gesture as one undo step.
     enum class Drag { none, fadeIn, fadeOut, gain, trimStart, trimEnd, moveCursor, range, moveRegion,
-                      pan, loopIn, loopOut, punchIn, punchOut };
+                      pan, loopIn, loopOut, punchIn, punchOut, automationPoint, automationPaint };
     Drag drag = Drag::none;
     ImGuiMouseButton dragButton = ImGuiMouseButton_Left;
     ImVec2 dragDown;
@@ -575,6 +641,16 @@ private:
 
     bool fadeMenuIsIn = true;
     ImVec2 propertiesAnchor;
+    ImVec2 automationAnchor;
+
+    // The lane the picker shows, or -1 for none. An automation gesture edits a copy of
+    // the lane and publishes it as one undo step on release, so the lane the audio
+    // thread reads never changes under it.
+    int automationParam = -1;
+    std::vector<AutomationPoint> automationBefore;
+    std::vector<AutomationPoint> automationWorking;
+    int draggedPoint = -1;
+    AutomationStroke automationStroke;
 
     enum class Field { none, title, label, gain, fade };
     Field editing = Field::none;
@@ -733,6 +809,156 @@ private:
     {
         const float frac = std::clamp (region()->gainDb, -24.0f, 12.0f) / 24.0f;
         return layout.lanes.at (0.0f, 0.5f).y - std::round (frac * layout.lanes.height() * 0.5f);
+    }
+
+    const AutomationLaneEntry* automationEntry() const
+    {
+        if (automationParam < 0 || automationParam >= kNumAutomationParams) return nullptr;
+        return &kAutomationLanes[automationParam];
+    }
+
+    AutomationLane& automationLane() const
+    {
+        return session.track (trackIdx).automationLanes[static_cast<std::size_t> (automationParam)];
+    }
+
+    bool automationGesture() const noexcept
+    {
+        return drag == Drag::automationPoint || drag == Drag::automationPaint;
+    }
+
+    const std::vector<AutomationPoint>& shownAutomationPoints() const
+    {
+        return automationGesture() ? automationWorking : automationLane().pointsConst();
+    }
+
+    // The audio thread reads the lane while the transport rolls, so it is edited
+    // only while stopped.
+    bool automationEditable() const
+    {
+        return automationEntry() != nullptr && engine.getTransport().isStopped();
+    }
+
+    // The lane shares the waveform's box, for painting and for hit-testing alike.
+    float automationYForValue (float v01) const
+    {
+        return layout.lanes.y1 - std::clamp (v01, 0.0f, 1.0f) * layout.lanes.height();
+    }
+
+    float automationValueForY (float y) const
+    {
+        if (layout.lanes.height() <= 0.0f) return 0.0f;
+        return std::clamp ((layout.lanes.y1 - y) / layout.lanes.height(), 0.0f, 1.0f);
+    }
+
+    float automationValueAt (float y) const
+    {
+        return quantizeAutomationValue (static_cast<AutomationParam> (automationParam), automationValueForY (y));
+    }
+
+    // A timeline sample inside the focused region, as the region's other edits snap.
+    std::int64_t automationTimeForX (float x, bool bypassSnap) const
+    {
+        const auto* r = region();
+        return std::max<std::int64_t> (0, snapFileSample (fileSampleForX (x), bypassSnap)
+                                              + (r->timelineStart - r->sourceOffset));
+    }
+
+    int automationPointAt (ImVec2 p) const
+    {
+        const auto& points = shownAutomationPoints();
+        const float radius = layout.s (kAutomationHitRadius);
+        for (int i = 0; i < static_cast<int> (points.size()); ++i)
+        {
+            const auto& point = points[static_cast<std::size_t> (i)];
+            if (std::abs (xForTimeline (point.timeSamples) - p.x) <= radius
+                && std::abs (automationYForValue (point.value) - p.y) <= radius)
+                return i;
+        }
+        return -1;
+    }
+
+    float tempo() const { return session.tempoBpm.load (std::memory_order_relaxed); }
+
+    // Drawing makes the lane play back on the next Play.
+    void armAutomationRead()
+    {
+        auto& mode = session.track (trackIdx).automationMode;
+        const auto next = automationModeAfterEdit (static_cast<AutomationMode> (mode.load (std::memory_order_acquire)));
+        mode.store (static_cast<int> (next), std::memory_order_release);
+    }
+
+    void deleteAutomationPoint (int index)
+    {
+        auto before = automationLane().pointsConst();
+        auto after = before;
+        after.erase (after.begin() + index);
+        auto& undo = engine.getUndoManager();
+        undo.beginNewTransaction ("Delete automation point");
+        undo.perform (new AutomationLaneEditAction (session, trackIdx, automationParam, std::move (before),
+                                                    std::move (after)));
+    }
+
+    // A press on the lane: right on a point deletes it, Draw starts a pencil stroke,
+    // a press on a point picks it up and one on empty lane adds a point there. False
+    // when the press is the region's to handle.
+    bool automationDown (ImGuiMouseButton button, ImVec2 p, bool command)
+    {
+        const int hit = automationPointAt (p);
+        if (button == ImGuiMouseButton_Right)
+        {
+            if (hit < 0)
+                return false;
+            deleteAutomationPoint (hit);
+            return true;
+        }
+
+        automationBefore = automationLane().pointsConst();
+        automationWorking = automationBefore;
+        if (session.editMode == EditMode::Draw)
+        {
+            automationStroke = {};
+            drag = Drag::automationPaint;
+            paintAutomation (p, command);
+            armAutomationRead();
+            return true;
+        }
+        drag = Drag::automationPoint;
+        if (hit >= 0)
+        {
+            draggedPoint = hit;
+            return true;
+        }
+        AutomationPoint point;
+        point.timeSamples = automationTimeForX (p.x, command);
+        point.value = automationValueAt (p.y);
+        point.recordedAtBPM = tempo();
+        draggedPoint = insertAutomationPoint (automationWorking, point);
+        armAutomationRead();
+        return true;
+    }
+
+    void paintAutomation (ImVec2 p, bool bypassSnap)
+    {
+        paintAutomationStep (automationWorking, automationStroke, automationTimeForX (p.x, bypassSnap),
+                             automationValueAt (p.y), tempo(), p.x / layout.scale, kPaintStepPixels);
+    }
+
+    void automationUp (bool painted)
+    {
+        if (painted)
+            thinAutomationLane (automationWorking, static_cast<AutomationParam> (automationParam), 0.002);
+        if (automationWorking != automationBefore)
+        {
+            auto& undo = engine.getUndoManager();
+            undo.beginNewTransaction ("Edit automation");
+            undo.perform (new AutomationLaneEditAction (session, trackIdx, automationParam,
+                                                        std::move (automationBefore), std::move (automationWorking)));
+        }
+        automationBefore.clear();
+        automationWorking.clear();
+        draggedPoint = -1;
+        automationStroke = {};
     }
 
     Source* sourceFor (const std::string& path)
@@ -1427,6 +1653,16 @@ private:
 
         if (drag == Drag::none)
             return;
+        // Every move since the last frame, not only where the pointer ended up, so a
+        // quick stroke keeps its shape.
+        if (drag == Drag::automationPaint)
+            for (const auto& event : GImGui->InputEventsTrail)
+                if (event.Type == ImGuiInputEventType_MousePos
+                    && (nonZero (event.MousePos.PosX - dragLast.x) || nonZero (event.MousePos.PosY - dragLast.y)))
+                {
+                    dragLast = ImVec2 (event.MousePos.PosX, event.MousePos.PosY);
+                    pointerDrag (dragLast);
+                }
         if (ImGui::IsMousePosValid() && (nonZero (io.MousePos.x - dragLast.x) || nonZero (io.MousePos.y - dragLast.y)))
         {
             dragLast = io.MousePos;
@@ -1487,6 +1723,11 @@ private:
                 drag = edge;
                 return;
             }
+
+        // A lane takes presses before the region's handles, so a point can be placed
+        // on a fade disc or the gain line.
+        if (inWave && automationEditable() && automationDown (button, p, command))
+            return;
 
         if (button == ImGuiMouseButton_Right)
         {
@@ -1632,6 +1873,19 @@ private:
         const bool bypass = io.KeyCtrl || io.KeySuper;
         const bool snapping = ! bypass && session.audioEditorSnap;
 
+        if (drag == Drag::automationPaint)
+        {
+            paintAutomation (p, bypass);
+            return;
+        }
+        if (drag == Drag::automationPoint)
+        {
+            if (draggedPoint >= 0)
+                draggedPoint = moveAutomationPoint (automationWorking, draggedPoint, automationTimeForX (p.x, bypass),
+                                                    automationValueAt (p.y));
+            return;
+        }
+
         if (drag == Drag::loopIn || drag == Drag::loopOut || drag == Drag::punchIn || drag == Drag::punchOut)
         {
             auto& transport = engine.getTransport();
@@ -1747,6 +2001,7 @@ private:
             }
             case Drag::none: case Drag::moveCursor: case Drag::range: case Drag::moveRegion: case Drag::pan:
             case Drag::loopIn: case Drag::loopOut: case Drag::punchIn: case Drag::punchOut:
+            case Drag::automationPoint: case Drag::automationPaint:
                 break;
         }
     }
@@ -1755,6 +2010,12 @@ private:
     {
         const auto finished = std::exchange (drag, Drag::none);
         snapGuide = -1;
+
+        if (finished == Drag::automationPoint || finished == Drag::automationPaint)
+        {
+            automationUp (finished == Drag::automationPaint);
+            return;
+        }
 
         if (finished == Drag::range)
         {
@@ -2123,8 +2384,15 @@ private:
             pill.offText = argb (kReadoutText);
             pill.fontSize = 11.0f;
             const auto box = inner.takeLeft (w).sizedKeepingCentre (w, dia - ctx.s (6.0f));
+            const auto* entry = automationEntry();
+            const auto label = std::string ("Auto: ") + (entry != nullptr ? entry->name : "Off");
             addControl ("Auto", box, true);
-            toggleButton (ctx, "Auto: Off", box, "Auto: Off", false, pill);
+            if (toggleButton (ctx, label.c_str(), box, label.c_str(), false, pill))
+            {
+                automationAnchor = ImVec2 (box.x0, box.y1);
+                ImGui::OpenPopup (kAutomationMenu);
+            }
+            formTooltip ("Pick a parameter lane to draw automation on.");
             inner.takeLeft (gap);
         }
 
@@ -2951,6 +3219,7 @@ private:
         drawContextMenu();
         drawFadeMenu();
         drawPropertiesMenu();
+        drawAutomationMenu();
         ImGui::PopStyleVar (2);
     }
 
@@ -3071,9 +3340,74 @@ private:
         ImGui::EndPopup();
     }
 
+    void drawAutomationMenu()
+    {
+        ImGui::SetNextWindowPos (automationAnchor, ImGuiCond_Appearing);
+        if (! ImGui::BeginPopup (kAutomationMenu))
+            return;
+        ImGui::TextDisabled ("Automate parameter");
+        if (menuItem ("Off", true, automationParam < 0))
+            automationParam = -1;
+        ImGui::Separator();
+        for (const auto& entry : kAutomationLanes)
+            if (menuItem (entry.name, true, automationParam == static_cast<int> (entry.param)))
+                automationParam = static_cast<int> (entry.param);
+        ImGui::EndPopup();
+    }
+
+    // The lane over the waveform: its name, the points joined as the engine plays
+    // them - held for Mute and Solo, ramped otherwise - and a dot on each point. Only
+    // the points around the view are drawn, which a long Write pass needs.
+    void drawAutomation (const dw::Context& ctx) const
+    {
+        const auto* entry = automationEntry();
+        if (entry == nullptr)
+            return;
+        auto* const dl = ctx.dl;
+        const auto& lanes = layout.lanes;
+        // Clear of the fade-in disc a fitted region puts at the top-left corner.
+        const auto header = std::string ("AUTO: ") + entry->name;
+        dw::text (ctx, ctx.fonts->value, ctx.s (11.0f), ImVec2 (layout.wave.x0 + ctx.s (20.0f), layout.wave.y0 + ctx.s (2.0f)),
+                  layout.wave.width() - ctx.s (26.0f), argb (entry->colour, 0.85f), header.c_str(), dw::Align::left);
+
+        const auto& points = shownAutomationPoints();
+        if (points.empty())
+        {
+            hline (dl, lanes.at (0.0f, 0.5f).y, lanes.x0, lanes.x1, argb (entry->colour, 0.25f), ctx.s (1.0f));
+            return;
+        }
+
+        const auto byTime = [] (const AutomationPoint& point, std::int64_t t) { return point.timeSamples < t; };
+        auto first = std::lower_bound (points.begin(), points.end(), timelineForX (layout.wave.x0), byTime);
+        auto last = std::lower_bound (first, points.end(), timelineForX (layout.wave.x1), byTime);
+        if (first != points.begin()) --first;
+        if (last != points.end()) ++last;
+
+        const bool stepped = ! isContinuousParam (entry->param);
+        std::vector<ImVec2> line;
+        line.reserve (static_cast<std::size_t> (std::distance (first, last)) * (stepped ? 2u : 1u));
+        for (auto it = first; it != last; ++it)
+        {
+            const ImVec2 at (xForTimeline (it->timeSamples), automationYForValue (it->value));
+            if (stepped && ! line.empty())
+                line.emplace_back (at.x, line.back().y);
+            line.push_back (at);
+        }
+        dl->AddPolyline (line.data(), static_cast<int> (line.size()), argb (entry->colour, 0.9f), ImDrawFlags_None,
+                         ctx.s (1.6f));
+
+        for (auto it = first; it != last; ++it)
+        {
+            const ImVec2 at (xForTimeline (it->timeSamples), automationYForValue (it->value));
+            dl->AddCircleFilled (at, ctx.s (5.0f), argb (kAutomationDotRim), 16);
+            dl->AddCircleFilled (at, ctx.s (3.5f), argb (entry->colour), 16);
+        }
+    }
+
     // Grab and Cut show their glyph over a region, where there is something to take
-    // hold of or to split; the system pointer is hidden there so only one shows. The
-    // handles and Range keep system cursors, which draw correctly on their own.
+    // hold of or to split, and Draw its pencil over a lane that can be edited; the
+    // system pointer is hidden there so only one shows. The handles and Range keep
+    // system cursors, which draw correctly on their own.
     void drawPointerGlyph (const dw::Context& ctx)
     {
         const auto* r = region();
@@ -3092,7 +3426,8 @@ private:
             case Drag::gain:  ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeNS); return;
             case Drag::pan:   ImGui::SetMouseCursor (ImGuiMouseCursor_Hand); return;
             case Drag::range: ImGui::SetMouseCursor (ImGuiMouseCursor_TextInput); return;
-            case Drag::none: case Drag::moveCursor: case Drag::moveRegion: break;
+            case Drag::automationPoint: ImGui::SetMouseCursor (ImGuiMouseCursor_Hand); return;
+            case Drag::none: case Drag::moveCursor: case Drag::moveRegion: case Drag::automationPaint: break;
         }
 
         if (layout.ruler.contains (p))
@@ -3101,8 +3436,26 @@ private:
                 ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeEW);
             return;
         }
-        if (! layout.wave.contains (p))
+        if (! layout.wave.contains (p) && drag != Drag::automationPaint)
             return;
+
+        // A live lane takes the presses the handles and the tools would otherwise.
+        if (automationEditable())
+        {
+            if (session.editMode == EditMode::Draw)
+            {
+                ImGui::SetMouseCursor (ImGuiMouseCursor_None);
+                ctx.dl->PushClipRect (layout.body.tl(), layout.body.br(), false);
+                drawPencilGlyph (ctx.dl, p, ctx.scale);
+                ctx.dl->PopClipRect();
+            }
+            else if (automationPointAt (p) >= 0)
+            {
+                ImGui::SetMouseCursor (ImGuiMouseCursor_Hand);
+            }
+            return;
+        }
+
         if (! r->locked)
         {
             if (fadeInDisc().contains (p) || fadeOutDisc().contains (p) || trimStart().contains (p)
@@ -3124,7 +3477,8 @@ private:
             ImGui::SetMouseCursor (ImGuiMouseCursor_TextInput);
             return;
         }
-        // Draw is the automation pencil, which has nothing to draw on until a lane is up.
+        // Draw is the automation pencil, which has nothing to draw on until a lane is up
+        // and the transport stops.
         if ((mode != EditMode::Grab && mode != EditMode::Cut)
             || (regionIndexAtX (p.x) < 0 && drag != Drag::moveRegion))
             return;

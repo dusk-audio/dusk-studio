@@ -787,6 +787,7 @@ target_sources(DuskStudio PRIVATE
     src/dsp/Metronome.cpp
     src/session/MarkerEditActions.cpp
     src/session/RecentSessions.cpp
+    src/session/AutomationLaneEdit.cpp
     src/session/AutomationRecorder.cpp
     src/session/RegionEditActions.cpp
     src/session/TakeComp.cpp

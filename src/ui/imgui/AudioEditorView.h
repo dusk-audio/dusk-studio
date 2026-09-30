@@ -66,6 +66,10 @@ public:
     virtual bool gesturePointForScenario (const std::string& kind, std::int64_t timelineSample,
                                           ImVec2& point) const = 0;
 
+    // Where the automation lane shows a normalised value at a timeline sample, in the
+    // same body-relative design pixels as gesturePointForScenario.
+    virtual bool automationPointForScenario (std::int64_t timelineSample, float value, ImVec2& point) const = 0;
+
     // { regionIndex, rangeActive, rangeStart, rangeEnd }.
     virtual std::vector<std::int64_t> selectionForScenario() const = 0;
 };
