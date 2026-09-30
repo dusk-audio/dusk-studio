@@ -194,6 +194,28 @@ void encodeUtf8 (std::uint32_t c, char (&out)[8])
     }
 }
 
+// The code point starting at `at`, advancing past it. A malformed sequence yields
+// U+FFFD and consumes one byte.
+std::uint32_t decodeUtf8 (const std::string& text, std::size_t& at)
+{
+    const auto lead = static_cast<unsigned char> (text[at++]);
+    if (lead < 0x80)
+        return lead;
+    const int extra = lead >= 0xf0 && lead < 0xf8 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : -1;
+    if (extra < 0 || at + static_cast<std::size_t> (extra) > text.size())
+        return 0xfffd;
+    std::uint32_t c = lead & (0x3fu >> extra);
+    for (int i = 0; i < extra; ++i)
+    {
+        const auto next = static_cast<unsigned char> (text[at + static_cast<std::size_t> (i)]);
+        if ((next & 0xc0) != 0x80)
+            return 0xfffd;
+        c = (c << 6) | (next & 0x3fu);
+    }
+    at += static_cast<std::size_t> (extra);
+    return c;
+}
+
 bool commandIsSuper()
 {
    #if defined (__APPLE__)
@@ -361,8 +383,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
         void typeForScenario (const std::string& text)
         {
-            for (const char c : text)
-                type (static_cast<unsigned char> (c));
+            for (std::size_t at = 0; at < text.size();)
+                type (decodeUtf8 (text, at));
         }
 
         bool inputForScenario (const std::string& input)

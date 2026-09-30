@@ -2156,6 +2156,13 @@ private:
                                   || std::find (additional.begin(), additional.end(), hit) != additional.end();
         if (! clickedSelected)
             additional.clear();
+        else if (hit != regionIdx)
+        {
+            // The pressed slice trades places with the focus, so the selection keeps both.
+            additional.erase (std::remove (additional.begin(), additional.end(), hit), additional.end());
+            if (regionIdx >= 0)
+                additional.push_back (regionIdx);
+        }
 
         // A press on another slice focuses it and picks it up to move; on the focused
         // slice it drops the cursor and only becomes a move once the pointer travels.

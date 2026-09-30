@@ -734,6 +734,7 @@ ScenarioResult auditionEndsWhenItsTakeGoes (ScenarioContext& ctx)
 
     armTrack (ctx);
     if (! recordSpan (ctx, 30000, 36000)) return ctx.verdict();
+    if (! ctx.expect (! track.takes.empty(), "the recording left no take")) return ctx.verdict();
     const auto recorded = track.takes.back().id;
     engine.setTakeAudition (kTrack, recorded);
     ctx.expect (auditioning (recorded), "the recorded take could not be auditioned");
