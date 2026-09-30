@@ -1470,7 +1470,9 @@ The **Properties** button opens a menu headed with the track and region number: 
 
 ![Audio editor with three take lanes under a comp drawn from all three.](docs/images/ed-06-take-lanes.png)
 
-When the track has takes, each take gets a lane under the waveform, newest at the top, on the same time axis as the regions above. A lane shows the take's name, its length, an **Audition** button and a **Delete** button. The parts of a take the track plays are drawn bright, with a line along their top edge; the rest of the take is dimmed. The caption above the lanes counts the takes and says what to do: "Drag across a take to use that part of it, or click its name to use all of it."
+When the track has takes, each take gets a lane under the waveform, newest at the top, on the same time axis as the regions above. A lane shows the take's colour, its name, its length, an **Audition** button and a **Delete** button. The parts of a take the track plays are drawn bright in the take's colour, with a line along their top edge; the rest of the take is dimmed. Each lane scales its take to fill the lane, by up to 12 dB, so a quiet take is as easy to read as a loud one. The caption above the lanes counts the takes and says what to do: "Drag across a take to use that part of it, or click its name to use all of it."
+
+Every region on the track that plays a take carries a stripe in that take's colour along its top, with the take's name when the region is wide enough, and an unlabelled region's title is its take's name. The lanes grow to fill their share of the editor, up to a height, and scroll when there are more than fit. Drag the caption up or down to give the lanes more or less of the editor; double-click it to put it back.
 
 - **Drag across a lane** to put that part of the take on the track, replacing whatever played there, with a short crossfade at each end. The span snaps to the grid when the editor's **Snap** is on; hold **Cmd/Ctrl** to drag off the grid. The undo step is **Promote take range**.
 - **Click a take's name** to put the whole take on the track (**Promote take**).

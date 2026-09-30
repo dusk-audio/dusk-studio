@@ -2749,6 +2749,61 @@ std::optional<ScenarioResult> runAudioEditorOpensOnEveryTake (GuiHost& host, Sce
     return std::nullopt;
 }
 
+// Dragging the take lanes' caption hands the lanes more or less of the editor, and
+// each lane grows or shrinks with its share.
+std::optional<ScenarioResult> runAudioEditorLaneDivider (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& track = ctx.session().track (0);
+    const auto ids = addLevelTakes (ctx, track, 4);
+    if (! ids) return ScenarioResult::fail ("could not write take fixture");
+    promoteTakeRange (ctx.session(), track, track.takes[3], 0, kTakeCaseLength);
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    // The distance between the two newest lanes' waveforms: one lane and its gap.
+    const auto pitch = [&host, ids]
+    {
+        const auto top = host.audioEditorTakePoint ("lane", ids->at (3), kTakeCaseLength / 2);
+        const auto next = host.audioEditorTakePoint ("lane", ids->at (2), kTakeCaseLength / 2);
+        return top.size() == 2 && next.size() == 2 ? next[1] - top[1] : -1;
+    };
+    const auto dragBy = [&host, &ctx] (int dy)
+    {
+        const auto from = host.audioEditorPoint ("divider", 0);
+        if (! ctx.expect (from.size() == 2, "the lane divider has no geometry")) return;
+        ctx.expect (host.audioEditorPointer (from[0], from[1], true), "the divider did not take the press");
+        host.audioEditorPointer (from[0], from[1] + dy, true);
+        host.audioEditorPointer (from[0], from[1] + dy, false);
+    };
+    const auto opened = std::make_shared<int> (-1);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&ctx, pitch, opened, dragBy]
+    {
+        *opened = pitch();
+        ctx.expect (*opened > 0, "the lanes have no geometry");
+        dragBy (-120);
+    }, [&host] { return host.audioEditorTakeLanes().size() == 4; }, "the take lanes never showed" });
+    steps->push_back ({ 150, [&ctx, pitch, opened, dragBy]
+    {
+        ctx.expect (pitch() > *opened, "dragging the divider up did not make the lanes taller ("
+                                           + std::to_string (*opened) + " to " + std::to_string (pitch()) + ")");
+        dragBy (400);
+    } });
+    steps->push_back ({ 150, [&ctx, pitch, opened]
+    {
+        ctx.expect (pitch() > 0 && pitch() < *opened, "dragging the divider down did not make the lanes shorter ("
+                                                          + std::to_string (*opened) + " to " + std::to_string (pitch()) + ")");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorLaneDivider { Scenario {
+    "gui.audio_editor_lane_divider", { "gui", "editor", "take" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorLaneDivider (host, ctx); }
+} };
+
 const ScenarioRegistrar audioEditorOpensOnEveryTake { Scenario {
     "gui.audio_editor_opens_on_every_take", { "gui", "editor", "take" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,

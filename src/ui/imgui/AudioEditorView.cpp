@@ -104,6 +104,17 @@ constexpr std::uint32_t kAudition = 0xff60b0e0;
 constexpr std::uint32_t kNotice = 0xffe0a050;
 constexpr std::uint32_t kDanger = 0xff803838;
 
+// A take's colour, the same in its lane and on the regions cut from it. Keyed by id,
+// so deleting one take leaves the others' colours as they were.
+constexpr std::uint32_t kTakePalette[] = { 0xff6aa6e8, 0xffe39a4f, 0xff79c28a, 0xffdd7a9b,
+                                           0xffa98be0, 0xff4fc3c7, 0xffc9b36a, 0xffe07a64 };
+
+constexpr std::uint32_t takeColour (std::uint64_t id) noexcept
+{
+    constexpr auto count = sizeof (kTakePalette) / sizeof (kTakePalette[0]);
+    return kTakePalette[(id + count - 1) % count];
+}
+
 constexpr float kLaneWheelPixels = 24.0f;
 // How long a refused take edit's explanation stays in the lane caption.
 constexpr double kNoticeSeconds = 5.0;
@@ -259,6 +270,8 @@ struct Layout
     Box body, icons, ruler, wave, lanes, scroll, status;
     // The take lanes' caption and their scrolling viewport, both empty with no takes.
     Box takesCaption, takeLanes;
+    // Each take lane's height in design pixels, grown into the lanes' share of the body.
+    float laneHeight = takelanes::kMinLaneHeight;
 
     float s (float v) const noexcept { return v * scale; }
 };
@@ -483,7 +496,13 @@ public:
     {
         if (! samplePointForScenario (timelineSample, point) || region() == nullptr)
             return false;
-        if (kind == "start") point.x = trimStart().at (0.5f, 0.5f).x;
+        if (kind == "divider")
+        {
+            if (layout.takesCaption.height() <= 0.0f)
+                return false;
+            point = layout.takesCaption.at (0.25f, 0.5f);
+        }
+        else if (kind == "start") point.x = trimStart().at (0.5f, 0.5f).x;
         else if (kind == "end") point.x = trimEnd().at (0.5f, 0.5f).x;
         else if (kind == "gain") point.y = gainLineY();
         else if (kind != "wave") return false;
@@ -610,9 +629,9 @@ public:
         popupWasOpen = popupOpen;
         ++frame;
         controls.clear();
-        layout = layoutFor (origin, size, ctx.scale, takeCount());
+        layout = layoutFor (origin, size, ctx.scale, takeCount(), laneShare);
         laidOut = true;
-        laneScroll = takelanes::clampScroll (laneScroll, laneViewport(), takeCount());
+        laneScroll = takelanes::clampScroll (laneScroll, laneViewport(), takeCount(), layout.laneHeight);
 
         const bool showable = region() != nullptr || takeCount() > 0;
         const float waveWidth = layout.wave.width() / layout.scale;
@@ -625,7 +644,7 @@ public:
         {
             zoomToTrack();
             const int lane = std::max (0, laneOfTake (revealTake));
-            laneScroll = takelanes::revealScroll (lane, laneScroll, laneViewport(), takeCount());
+            laneScroll = takelanes::revealScroll (lane, laneScroll, laneViewport(), takeCount(), layout.laneHeight);
         }
 
         if (const auto* r = region())
@@ -773,6 +792,9 @@ private:
 
     // The take lanes' vertical scroll, in design pixels.
     float laneScroll = 0.0f;
+    // The lanes' share of the body under the ruler, set by dragging their caption.
+    float laneShare = takelanes::kDefaultLaneShare;
+    float dividerGrab = 0.0f;
     bool revealPending = false;
     std::uint64_t revealTake = 0;
     // A drag across a lane, from where it was pressed to where it is, in timeline
@@ -826,6 +848,14 @@ private:
 
     int takeCount() const { return static_cast<int> (trackTakes().size()); }
 
+    // What an unlabelled region is called: the take it plays, else its file.
+    std::string defaultTitle (const AudioRegion& r) const
+    {
+        if (const auto* take = takeWithId (r.takeId); take != nullptr && ! take->name.empty())
+            return take->name;
+        return r.file.getFileName().toStdString();
+    }
+
     const AudioTake* takeWithId (std::uint64_t id) const
     {
         for (const auto& take : trackTakes())
@@ -856,8 +886,8 @@ private:
 
     Box laneBox (int lane) const
     {
-        const float top = layout.takeLanes.y0 + layout.s (takelanes::laneTop (lane, laneScroll));
-        return { layout.lanes.x0, top, layout.lanes.x1, top + layout.s (takelanes::kLaneHeight) };
+        const float top = layout.takeLanes.y0 + layout.s (takelanes::laneTop (lane, laneScroll, layout.laneHeight));
+        return { layout.lanes.x0, top, layout.lanes.x1, top + layout.s (layout.laneHeight) };
     }
 
     Box laneHeader (int lane) const
@@ -879,7 +909,8 @@ private:
     {
         if (! layout.takeLanes.contains (p) || p.x < layout.lanes.x0 || p.x >= layout.lanes.x1)
             return -1;
-        const int lane = takelanes::laneAt ((p.y - layout.takeLanes.y0) / layout.scale, laneScroll, takeCount());
+        const int lane = takelanes::laneAt ((p.y - layout.takeLanes.y0) / layout.scale, laneScroll, takeCount(),
+                                            layout.laneHeight);
         return lane >= 0 && laneWave (lane).contains (p) ? lane : -1;
     }
 
@@ -916,7 +947,7 @@ private:
         undo.perform (new RegionEditAction (session, engine, trackIdx, regionIdx, before, after));
     }
 
-    static Layout layoutFor (ImVec2 origin, ImVec2 size, float scale, int takes)
+    static Layout layoutFor (ImVec2 origin, ImVec2 size, float scale, int takes, float laneShare)
     {
         Layout l;
         l.scale = scale;
@@ -929,7 +960,8 @@ private:
         l.wave = { l.body.x0, l.ruler.y1, l.body.x1, bottom };
         if (takes > 0)
         {
-            const auto split = takelanes::split ((bottom - l.ruler.y1) / scale, takes);
+            const auto split = takelanes::split ((bottom - l.ruler.y1) / scale, takes, laneShare);
+            l.laneHeight = split.laneHeight;
             l.wave.y1 = l.ruler.y1 + l.s (split.region);
             l.takesCaption = { l.body.x0, l.wave.y1, l.body.x1, std::min (bottom, l.wave.y1 + l.s (split.caption)) };
             l.takeLanes = { l.body.x0, l.takesCaption.y1, l.body.x1, bottom };
@@ -1946,10 +1978,10 @@ private:
 
         // Over lanes that overflow, the wheel scrolls them; a sideways wheel still pans.
         if (layout.takeLanes.contains (io.MousePos) && ! nonZero (io.MouseWheelH)
-            && takelanes::maxScroll (laneViewport(), takeCount()) > 0.0f)
+            && takelanes::maxScroll (laneViewport(), takeCount(), layout.laneHeight) > 0.0f)
         {
             laneScroll = takelanes::clampScroll (laneScroll - io.MouseWheel * kLaneWheelPixels, laneViewport(),
-                                                 takeCount());
+                                                 takeCount(), layout.laneHeight);
             return;
         }
 
@@ -2831,8 +2863,7 @@ private:
             if (! drawField (ctx, Field::title, titleBox) && ! drawField (ctx, Field::label, titleBox))
                 if (const auto* r = region())
                 {
-                    const auto title = r->label.isNotEmpty() ? r->label.toStdString()
-                                                             : r->file.getFileName().toStdString();
+                    const auto title = r->label.isNotEmpty() ? r->label.toStdString() : defaultTitle (*r);
                     clippedText (ctx, titleBox, ctx.fonts->title, 12.5f, argb (kReadoutText), title.c_str(),
                                  dw::Align::left);
                     addControl ("Title", titleBox, true);
@@ -2887,10 +2918,10 @@ private:
             case Field::title:
             case Field::label:
             {
-                // Accepting the file name as shown leaves the region unlabelled, so the
-                // title keeps following the file.
+                // Accepting the title as shown leaves the region unlabelled, so the
+                // title keeps following its take or file.
                 auto label = field == Field::title ? dusk::text::trim (text) : text;
-                if (field == Field::title && label == r->file.getFileName().toStdString())
+                if (field == Field::title && label == defaultTitle (*r))
                     label.clear();
                 const auto value = RegionLabel::fromUTF8 (label.c_str());
                 editFocused ("Rename region", [&value] (AudioRegion& a) { a.label = value; });
@@ -3222,7 +3253,24 @@ private:
             if (! snapshot->info)
                 continue;
             const auto colour = withBrightness (base, focused ? 1.05f : 0.55f, focused ? 1.0f : 0.85f);
-            drawColumns (dl, slice, *snapshot, lanes.y0, lanes.y1, [colour] (int) { return colour; });
+            drawColumns (dl, slice, *snapshot, lanes.y0, lanes.y1, 1.0f, [colour] (int) { return colour; });
+        }
+
+        // Which take each region plays, in that take's lane colour.
+        for (const auto& slice : slices)
+        {
+            const auto& reg = regions[static_cast<std::size_t> (slice.region)];
+            const auto* take = reg.takeId != 0 ? takeWithId (reg.takeId) : nullptr;
+            if (take == nullptr || slice.x1 <= slice.x0)
+                continue;
+            const auto band = Box { static_cast<float> (slice.x0), lanes.y0, static_cast<float> (slice.x1),
+                                    lanes.y0 + ctx.s (16.0f) };
+            dl->AddRectFilled (band.tl(), ImVec2 (band.x1, band.y0 + ctx.s (3.0f)), argb (takeColour (take->id), 0.95f));
+            // Clear of the fade discs in the region's top corners.
+            if (band.width() >= ctx.s (80.0f))
+                clippedText (ctx, Box { band.x0 + ctx.s (20.0f), band.y0 + ctx.s (4.0f), band.x1 - ctx.s (20.0f), band.y1 },
+                             ctx.fonts->value, 10.0f, argb (takeColour (take->id)), take->name.c_str(),
+                             dw::Align::left);
         }
 
         for (const auto& reg : regions)
@@ -3272,7 +3320,7 @@ private:
     // in the colour colourAt gives its x.
     template <typename ColourAt>
     void drawColumns (ImDrawList* dl, const Slice& slice, const WaveformSource::Snapshot& snapshot, float top,
-                      float bottom, ColourAt&& colourAt) const
+                      float bottom, float gain, ColourAt&& colourAt) const
     {
         const auto& info = *snapshot.info;
         std::size_t detailIndex = 0;
@@ -3304,9 +3352,9 @@ private:
                         peak = snapshot.peaks->query (channel, range->first, range->second);
                 if (! peak || (peak->minimum >= 0.0f && peak->maximum <= 0.0f))
                     continue;
-                const float y1 = std::clamp (centre - std::clamp (peak->maximum, -1.0f, 1.0f) * span - pad,
+                const float y1 = std::clamp (centre - std::clamp (peak->maximum * gain, -1.0f, 1.0f) * span - pad,
                                              bandTop, bandBottom);
-                const float y2 = std::clamp (centre - std::clamp (peak->minimum, -1.0f, 1.0f) * span + pad,
+                const float y2 = std::clamp (centre - std::clamp (peak->minimum * gain, -1.0f, 1.0f) * span + pad,
                                              bandTop, bandBottom);
                 const int x = slice.x0 + column;
                 dl->AddRectFilled (ImVec2 (static_cast<float> (x), y1),
@@ -4031,8 +4079,13 @@ private:
         if (count == 0 || caption.height() <= 0.0f)
             return;
         auto* const dl = ctx.dl;
-        dl->AddRectFilled (caption.tl(), caption.br(), argb (kHeaderFill));
-        hline (dl, caption.y0, caption.x0, caption.x1, argb (kBarLine), ctx.s (1.0f));
+        const bool dividerLive = dragDivider (ctx, caption);
+        dl->AddRectFilled (caption.tl(), caption.br(), argb (kHeaderFill, dividerLive ? 1.0f : 0.92f));
+        hline (dl, caption.y0, caption.x0, caption.x1, argb (kBarLine), ctx.s (dividerLive ? 2.0f : 1.0f));
+        const ImVec2 grip (caption.x1 - ctx.s (28.0f), caption.at (0.5f, 0.5f).y);
+        for (const float dy : { -2.0f, 2.0f })
+            hline (dl, grip.y + ctx.s (dy), grip.x - ctx.s (14.0f), grip.x + ctx.s (14.0f), argb (kHeaderText, 0.5f),
+                   ctx.s (1.0f));
 
         auto line = caption.reduced (ctx.s (8.0f), 0.0f);
         char title[32];
@@ -4059,7 +4112,7 @@ private:
         }
         dl->PopClipRect();
 
-        const float content = takelanes::contentHeight (count);
+        const float content = takelanes::contentHeight (count, layout.laneHeight);
         const float shown = laneViewport();
         if (content > shown && content > 0.0f)
         {
@@ -4074,6 +4127,39 @@ private:
         runLaneAction (action);
     }
 
+    // A lane draws its take scaled up to fill the lane, so a quiet take is as easy to
+    // read as a loud one; at most 12 dB, so near-silence stays near-silent.
+    static float laneGain (const AudioTake& take, const WaveformSource::Snapshot& snapshot)
+    {
+        if (! snapshot.peaks || ! snapshot.info)
+            return 1.0f;
+        float peak = 0.0f;
+        for (int channel = 0; channel < std::max (1, snapshot.info->numChannels); ++channel)
+            if (const auto p = snapshot.peaks->query (channel, take.sourceOffset, take.sourceOffset + take.lengthInSamples))
+                peak = std::max ({ peak, std::abs (p->minimum), std::abs (p->maximum) });
+        return peak > 0.0f ? std::clamp (0.9f / peak, 1.0f, 4.0f) : 1.0f;
+    }
+
+    // The lane caption is the divider between the region view and the lanes: dragging
+    // it moves the split and a double-click puts it back. True while hovered or held.
+    bool dragDivider (dw::Context& ctx, const Box& caption)
+    {
+        addControl ("Lane divider", caption, true);
+        const bool hovered = dw::hitArea (ctx, "##lane-divider", caption.tl(), caption.br());
+        const bool held = ImGui::IsItemActive();
+        const float mouseY = ImGui::GetIO().MousePos.y;
+        if (ImGui::IsItemActivated())
+            dividerGrab = mouseY - caption.y0;
+        if (hovered && ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left))
+            laneShare = takelanes::kDefaultLaneShare;
+        else if (held)
+            laneShare = takelanes::shareForCaptionAt ((mouseY - dividerGrab - layout.ruler.y1) / layout.scale,
+                                                      (layout.scroll.y0 - layout.ruler.y1) / layout.scale);
+        if (hovered || held)
+            ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeNS);
+        return hovered || held;
+    }
+
     void drawTakeLane (dw::Context& ctx, int lane, const AudioTake& take, LaneAction& action)
     {
         auto* const dl = ctx.dl;
@@ -4083,14 +4169,15 @@ private:
         dl->AddRectFilled (box.tl(), box.br(), argb (kLaneFill));
 
         const auto spans = takeCoverage (session.track (trackIdx), take.id);
+        const auto colour = takeColour (take.id);
         const auto clippedX = [&band] (float x) { return std::clamp (x, band.x0, band.x1); };
         for (const auto& [from, to] : spans)
         {
             const float xa = clippedX (xForTimeline (from));
             const float xb = clippedX (xForTimeline (to));
             if (xb <= xa) continue;
-            dl->AddRectFilled (ImVec2 (xa, band.y0), ImVec2 (xb, band.y1), argb (kWaveformFill, 0.10f));
-            dl->AddRectFilled (ImVec2 (xa, band.y0), ImVec2 (xb, band.y0 + ctx.s (2.0f)), argb (kWaveformFill, 0.9f));
+            dl->AddRectFilled (ImVec2 (xa, band.y0), ImVec2 (xb, band.y1), argb (colour, 0.12f));
+            dl->AddRectFilled (ImVec2 (xa, band.y0), ImVec2 (xb, band.y0 + ctx.s (3.0f)), argb (colour, 0.95f));
         }
 
         const auto found = std::find_if (takeSlices.begin(), takeSlices.end(),
@@ -4098,14 +4185,14 @@ private:
         if (found != takeSlices.end())
         {
             const auto& slice = found->slice;
-            const auto bright = withBrightness (argb (kWaveformFill), 1.05f, 1.0f);
-            const auto dim = withBrightness (argb (kWaveformFill), 0.45f, 0.55f);
+            const auto bright = withBrightness (argb (colour), 1.1f, 1.0f);
+            const auto dim = withBrightness (argb (colour), 0.6f, 0.7f);
             const auto* snapshot = slice.source != nullptr ? &slice.source->snapshot : nullptr;
             if (snapshot == nullptr || snapshot->state == WaveformSource::State::Failed)
                 dl->AddRectFilled (ImVec2 (static_cast<float> (slice.x0), band.y0),
                                    ImVec2 (static_cast<float> (slice.x1), band.y1), dim);
             else if (snapshot->info)
-                drawColumns (dl, slice, *snapshot, band.y0 + ctx.s (2.0f), band.y1, [&] (int x)
+                drawColumns (dl, slice, *snapshot, band.y0 + ctx.s (3.0f), band.y1, laneGain (take, *snapshot), [&] (int x)
                 {
                     const auto t = timelineForX (static_cast<float> (x) + 0.5f);
                     const bool used = std::any_of (spans.begin(), spans.end(), [t] (const auto& span)
@@ -4185,6 +4272,9 @@ private:
         }
         inner.takeRight (ctx.s (4.0f));
 
+        const auto chip = inner.takeLeft (ctx.s (10.0f)).sizedKeepingCentre (ctx.s (8.0f), ctx.s (8.0f));
+        ctx.dl->AddRectFilled (chip.tl(), chip.br(), argb (takeColour (take.id), used ? 1.0f : 0.6f), ctx.s (2.0f));
+        inner.takeLeft (ctx.s (4.0f));
         const auto nameBox = inner.takeLeft (std::min (ctx.s (220.0f), inner.width()));
         if (live && editing == Field::takeName && renamingTake == take.id)
         {

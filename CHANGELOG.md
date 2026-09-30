@@ -23,6 +23,12 @@ Takes live on the track now, and the audio editor is where you comp them.
   take. Each lane has Audition, which plays that take alone from the next Play,
   and Delete, which asks first and takes the take and its regions off the track.
   Every lane edit is one undo step and is saved with the session.
+- **Takes are easier to tell apart in the editor.** Each take has a colour,
+  shown in its lane and as a stripe with the take's name on every region cut
+  from it; an unlabelled region is titled by its take. Lanes scale quiet takes
+  up to be readable, grow to fill their part of the editor, and the caption
+  above them drags to give the lanes more or less room. The editor opens
+  zoomed out to every take, so a punch that starts later shows in its lane.
 - **A take count beside the track name.** The tape strip shows "3 takes" on a
   track with several takes, or "1 take" when its only take has no region on the
   timeline. Click it to open the audio editor on the take lanes.
