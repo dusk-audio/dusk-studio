@@ -111,6 +111,8 @@ public:
     auto namePointForScenario() const { return nameLabel.getBounds().getCentre(); }
     auto printPointForScenario() const { return printButton.getBounds().getCentre(); }
     std::string insertLabelForScenario() const { return pluginSlotButton.getButtonText().toStdString(); }
+    std::string inputTextForScenario() const { return inputSelector.getText().toStdString(); }
+    const class PluginSlot* pluginSlotForScenario() const noexcept { return &pluginSlot; }
     bool builtinPointerForScenario (const std::string& control, float position, bool pressed);
     void closeBuiltinForScenario() { closeBuiltinEditorPopup(); }
     bool hasOpenBuiltinEditorForScenario() const noexcept { return isBuiltinEditorOpen(); }

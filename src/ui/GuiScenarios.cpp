@@ -33,6 +33,7 @@
 #include "SaveTargetChecks.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/SuiteRunner.h"
+#include "../session/TrackMove.h"
 #include "../foundation/Fs.h"
 
 #include <algorithm>
@@ -43,7 +44,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -463,6 +466,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             check (! track.recordArmed.load(), "first launch armed a track");
             check (strip (index) != nullptr, "first launch omitted a channel strip");
             launch.trackMode[(std::size_t) index] = track.mode.load();
+            launch.stripOrder[(std::size_t) index] = &owner.engine.getChannelStrip (index);
         }
 
         launch.uiScale = uiScale();
@@ -1866,6 +1870,91 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.consoleView != nullptr ? owner.consoleView->getFocusedStrip() : -1;
     }
+    std::string stripInputText (int track) const override
+    {
+        auto* component = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
+        return component != nullptr ? component->inputTextForScenario() : std::string();
+    }
+    std::vector<int> consoleStripsOffTheirSlot() const override
+    {
+        std::vector<int> off;
+        for (int track = 0; track < Session::kNumTracks; ++track)
+        {
+            auto* component = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
+            if (component == nullptr
+                || component->pluginSlotForScenario() != &owner.engine.getChannelStrip (track).getPluginSlot())
+                off.push_back (track);
+        }
+        return off;
+    }
+
+    // A point in the tape strip's name column, in window coordinates, when it
+    // is on screen below the ruler.
+    template <typename LocalPoint>
+    bool tapeNameColumnPoint (LocalPoint point, float& x, float& y) const
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()
+            || ! tape->getLocalBounds().withTrimmedTop (TapeStrip::kRulerH).contains (point)) return false;
+        const auto at = owner.getTopLevelComponent()->getLocalPoint (tape, point).toFloat();
+        x = at.x;
+        y = at.y;
+        return true;
+    }
+    bool tapePointer (float x, float y, bool down, std::int64_t time)
+    {
+        auto* peer = owner.getPeer();
+        if (peer == nullptr) return false;
+        using Peer = std::remove_pointer_t<decltype (peer)>;
+        dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, down, time);
+        return true;
+    }
+    static std::int64_t pointerTime()
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds> (
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+    bool dragTapeTrackName (int track, int gap, bool release) override
+    {
+        if (owner.tapeStrip == nullptr) return false;
+        float fromX = 0, fromY = 0, toX = 0, toY = 0;
+        if (! tapeNameColumnPoint (owner.tapeStrip->labelPointForScenario (track), fromX, fromY)
+            || ! tapeNameColumnPoint (owner.tapeStrip->trackMoveGapPointForScenario (gap), toX, toY)) return false;
+        const auto time = pointerTime();
+        if (! tapePointer (fromX, fromY, true, time)) return false;
+        heldTapePress = { fromX, fromY };
+        tapePointer (toX, toY, true, time + 40);
+        return ! release || releaseTapeTrackName (gap);
+    }
+    // Off screen, the button still comes up, where it went down.
+    bool releaseTapeTrackName (int gap) override
+    {
+        float x = 0, y = 0;
+        const bool atGap = owner.tapeStrip != nullptr
+                        && tapeNameColumnPoint (owner.tapeStrip->trackMoveGapPointForScenario (gap), x, y);
+        if (! atGap && heldTapePress) std::tie (x, y) = *heldTapePress;
+        const bool released = (atGap || heldTapePress) && tapePointer (x, y, false, pointerTime());
+        heldTapePress.reset();
+        return atGap && released;
+    }
+    bool nudgeTapeTrackName (int track, int pixels) override
+    {
+        float x = 0, y = 0;
+        if (owner.tapeStrip == nullptr
+            || ! tapeNameColumnPoint (owner.tapeStrip->labelPointForScenario (track), x, y)) return false;
+        const auto time = pointerTime();
+        const float to = y + (float) pixels;
+        return tapePointer (x, y, true, time) && tapePointer (x, to, true, time + 40)
+            && tapePointer (x, to, false, time + 80);
+    }
+    int tapeMoveLineY() const override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()) return -1;
+        const int local = tape->trackMoveLineYForScenario();
+        return local < 0 ? -1
+                         : owner.getTopLevelComponent()->getLocalPoint (tape, tape->getLocalBounds().getTopLeft().withY (local)).y;
+    }
 
     bool dragTapeMarker (int index, float toFraction) override
     {
@@ -2111,11 +2200,20 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                 lines.push_back ("tape selects " + std::to_string (picked.size()) + " tracks");
             if (owner.tapeStrip->nameEditorOpenForScenario())
                 lines.push_back ("tape name editor open");
+            if (owner.tapeStrip->trackMovePressedForScenario())
+                lines.push_back ("tape name press or drag still held");
         }
 
         const auto& transport = owner.engine.getTransport();
         if (! transport.isStopped())
             lines.push_back (transport.isRecording() ? "transport is recording" : "transport is playing");
+
+        if (const auto back = moveBackToLaunch())
+        {
+            const int slot = back->lo;
+            lines.push_back ("tracks moved: the strip built for track " + std::to_string (slot + 1)
+                             + " runs track " + std::to_string (back->newToOld[(std::size_t) slot] + 1));
+        }
 
         for (int index = 0; index < Session::kNumTracks; ++index)
         {
@@ -2201,7 +2299,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.closePianoRoll();
         owner.closeAudioEditor();
         owner.closeAudioSettings();
-        if (owner.tapeStrip != nullptr) owner.tapeStrip->cancelTrackNameEdit();
+        // Cancelled before the button comes up, so the release drops nothing.
+        if (owner.tapeStrip != nullptr)
+        {
+            owner.tapeStrip->cancelTrackNameEdit();
+            owner.tapeStrip->cancelTrackMoveDrag();
+        }
+        if (heldTapePress) releaseTapeTrackName (-1);
         closeStartupDialog();
         owner.closeVirtualKeyboard();
         owner.closeTuner();
@@ -2215,6 +2319,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             }
 
         owner.stopTransportForSessionSwitch();
+        // Only another move hands the strips back to the slots they launched
+        // in, and the tracks' data goes with them.
+        if (const auto back = moveBackToLaunch()) owner.engine.moveTracks (*back);
         for (int track = 0; track < Session::kNumTracks; ++track)
             owner.session.setTrackArmed (track, false);
 
@@ -2258,6 +2365,24 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         }
     }
 
+    // The move that gives every slot back the strip it launched with; nullopt
+    // when none has moved.
+    std::optional<TrackMovePlan> moveBackToLaunch() const
+    {
+        std::array<int, Session::kNumTracks> newToOld {};
+        bool moved = false;
+        for (int track = 0; track < Session::kNumTracks; ++track)
+        {
+            int now = 0;
+            while (now < Session::kNumTracks - 1
+                   && &owner.engine.getChannelStrip (now) != launch.stripOrder[(std::size_t) track])
+                ++now;
+            newToOld[(std::size_t) track] = now;
+            moved = moved || now != track;
+        }
+        return moved ? trackMoveFromNewToOld (newToOld) : std::nullopt;
+    }
+
     // What the window held before the first scenario ran. Everything the suite
     // runner puts back, and everything it measures drift against.
     struct LaunchState
@@ -2272,6 +2397,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         int consoleFocus = -1;
         std::array<int, 4> window { 0, 0, 0, 0 };
         std::array<int, Session::kNumTracks> trackMode {};
+        std::array<const ChannelStrip*, Session::kNumTracks> stripOrder {};
         std::string masteringSource;
         std::filesystem::path sessionDir;
         bool sessionOnDisk = false;
@@ -2279,6 +2405,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     MainComponent& owner;
     LaunchState launch;
+    // Where a name drag went down, while the button is held.
+    std::optional<std::pair<float, float>> heldTapePress;
     std::vector<std::string> startupErrors;
     std::string startupChoiceMade;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;

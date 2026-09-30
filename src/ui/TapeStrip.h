@@ -202,6 +202,18 @@ public:
     // Stands in for the Alt key a drop reads; nullopt goes back to the key.
     void setDropAtMouseForScenario (std::optional<bool> atMouse) { dropAtMouseOverride = atMouse; }
     auto labelPointForScenario (int track) const { return rowBounds (track).getCentre().withX (labelColW / 2); }
+    // In the name column, in the gap before the gap-th shown row; the row count
+    // is the gap after the last.
+    auto trackMoveGapPointForScenario (int gap) const
+    {
+        const int rows = (int) visibleTrackOrder.size();
+        const int at = std::clamp (gap, 0, rows);
+        const auto row = rowBounds (visibleTrackOrder[(size_t) std::min (at, rows - 1)]);
+        const int y = at == 0 ? row.getY() + 1 : at < rows ? row.getY() : row.getBottom();
+        return row.getCentre().withX (labelColW / 2).withY (y);
+    }
+    int trackMoveLineYForScenario() const { return trackMoveLineY(); }
+    bool trackMovePressedForScenario() const noexcept { return trackMove.pressed >= 0; }
     bool nameEditorOpenForScenario() const { return nameEditor.isBeingEdited(); }
     // The track whose row the open name editor sits on, -1 when it is closed
     // or off that row.

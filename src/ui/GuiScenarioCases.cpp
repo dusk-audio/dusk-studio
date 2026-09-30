@@ -11921,6 +11921,444 @@ const ScenarioRegistrar timelineTrackMultiselect { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runTimelineTrackMultiselect (host, ctx); }
 } };
 
+// Dragging a track's name to another row of the tape strip moves the track
+// there, the tracks in between shifting a slot: its name, regions, strip and
+// insert go with it, it keeps the input it followed, the selection follows it
+// and the console pages to it. Several picked names move as one block in their
+// order. With empty rows hidden, a drop goes right after the row above it,
+// unless that would carry the dragged track past the hidden ones just above
+// it. A click, even one that drifts a little, still only selects and pages.
+// Escape drops the drag, a drop that moves nothing does nothing, and a running
+// transport, a frozen track in the way or a plug-in still loading refuses with
+// the reason. The move is one undo step, refused with the reason while the
+// transport runs or a render's dialog is open, and its undo closes an editor
+// open on a track it moves.
+std::optional<ScenarioResult> runTimelineTrackMove (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion region;
+    if (auto early = seedTapeRegion (host, ctx, region)) return early;
+    // Back before the session reopen, whose new console would follow the
+    // surface bank this case published.
+    ctx.cleanup (host.preserveKeyboardFocus());
+    const int pages = host.consolePageCount();
+    if (pages < 2) return ScenarioResult::skip ("requires a console with more than one page");
+    static constexpr int kick = 17;
+    static constexpr int frozenTrack = 5;
+    static constexpr int renderTrack = 20;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+
+    std::array<const ChannelStrip*, Session::kNumTracks> launched {};
+    for (int t = 0; t < Session::kNumTracks; ++t) launched[(std::size_t) t] = &engine.getChannelStrip (t);
+
+    auto& kickStrip = engine.getChannelStrip (kick);
+    std::string error;
+    engine.suspendProcessing();
+    const bool loaded = kickStrip.loadBuiltin ("dusk.builtin.utility", error);
+    engine.resumeProcessing();
+    if (! loaded) return ScenarioResult::fail ("could not load Utility: " + error);
+    ctx.cleanup ([&engine, &kickStrip]
+    {
+        engine.suspendProcessing();
+        kickStrip.unloadBuiltin();
+        engine.resumeProcessing();
+    });
+    // Before the session reopen seedTapeRegion set up, which would otherwise
+    // land in slots the strips have left.
+    ctx.cleanup ([&host, &engine, &session, &transport, launched]
+    {
+        drainModals (host);
+        transport.setState (Transport::State::Stopped);
+        transport.setPlayhead (0);
+        session.track (frozenTrack).frozen.store (false);
+        if (session.track (renderTrack).frozen.load()) engine.unfreezeTrack (renderTrack);
+        std::array<int, Session::kNumTracks> newToOld {};
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            int now = 0;
+            while (now < Session::kNumTracks - 1 && &engine.getChannelStrip (now) != launched[(std::size_t) t]) ++now;
+            newToOld[(std::size_t) t] = now;
+        }
+        if (const auto back = trackMoveFromNewToOld (newToOld)) engine.moveTracks (*back);
+        engine.getUndoManager().clearUndoHistory();
+    });
+
+    for (int t = 0; t < kick; ++t) session.track (t).name = ("T" + std::to_string (t + 1)).c_str();
+    session.track (kick).name = "kick";
+    session.track (kick).inputSource.store (kInputFollowsTrack);
+    auto kickRegion = region;
+    kickRegion.timelineStart = region.timelineStart + region.lengthInSamples;
+    session.track (kick).regions = { kickRegion };
+    auto view = host.tapeView();
+    if (view.size() != 7) return ScenarioResult::fail ("the tape strip is missing");
+    view[5] = 0.0;
+    host.restoreTapeView (view);
+
+    // Bindings name a slot, and keep naming it whichever track lands there.
+    const auto bindingsWere = session.midiBindings.current();
+    ctx.cleanup ([&session, bindingsWere]
+    { session.midiBindings.publish (std::make_unique<std::vector<MidiBinding>> (bindingsWere)); });
+    std::vector<MidiBinding> slotBindings;
+    for (const auto target : { MidiBindingTarget::TrackFader, MidiBindingTarget::TrackPluginParam })
+    {
+        MidiBinding binding;
+        binding.dataNumber = 20 + (int) slotBindings.size();
+        binding.target = target;
+        binding.targetIndex = 0;
+        slotBindings.push_back (binding);
+    }
+    session.midiBindings.publish (std::make_unique<std::vector<MidiBinding>> (slotBindings));
+    // The group master is the member in the lowest slot, so a move can change it.
+    static constexpr int groupMate = 5;
+    session.track (groupMate).strip.faderGroupId.store (1);
+    session.track (kick).strip.faderGroupId.store (1);
+    const auto groupMaster = [&host] (int strip)
+    {
+        std::string text;
+        int master = -1;
+        bool filled = false;
+        host.groupChipView (strip, text, master, filled);
+        return master;
+    };
+
+    // from[t] is the slot the track now at t launched in: its name and its strip.
+    const auto order = [&ctx, &session, &engine, launched] (std::vector<int> from, const std::string& failure)
+    {
+        std::string got;
+        bool held = true;
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            const int was = t < (int) from.size() ? from[(std::size_t) t] : t;
+            const auto expected = was == kick ? std::string ("kick") : was < kick ? "T" + std::to_string (was + 1)
+                                                                                  : session.track (t).name.toStdString();
+            held = held && session.track (t).name.toStdString() == expected
+                        && &engine.getChannelStrip (t) == launched[(std::size_t) was];
+            if (t <= kick) got += " " + session.track (t).name.toStdString();
+        }
+        ctx.expect (held, failure + " (tracks from 1:" + got + ")");
+    };
+    const auto identity = [] { std::vector<int> v; for (int t = 0; t < Session::kNumTracks; ++t) v.push_back (t); return v; };
+    // The slots after a block of `moving` lands before insertBefore.
+    const auto moved = [] (std::vector<int> moving, int insertBefore)
+    {
+        const auto plan = planBlockMove (moving, insertBefore);
+        return std::vector<int> (plan.newToOld.begin(), plan.newToOld.end());
+    };
+    const auto picked = [&host, &ctx] (std::vector<int> expected, int primary, const std::string& failure)
+    {
+        const auto tracks = host.tapeSelectedTracks();
+        std::string got;
+        for (const int t : tracks) got += " " + std::to_string (t);
+        ctx.expect (tracks == expected && host.tapeSelectedTrack() == primary,
+                    failure + " (selected:" + got + ", primary " + std::to_string (host.tapeSelectedTrack()) + ")");
+    };
+    const auto pageShown = [&host, pages]
+    {
+        for (int p = 0; p < pages; ++p)
+            if (host.consolePageMatches (p)) return p;
+        return -1;
+    };
+    const auto kickPage = std::make_shared<int> (-1);
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto alerted = [&host, &ctx, steps] (const std::string& how, const std::string& expected)
+    {
+        steps->push_back ({ 300, [&host, &ctx, how, expected]
+        {
+            ctx.expect (host.modalText() == expected, how + ": the alert read '" + host.modalText() + "'");
+            ctx.expect (host.clickModalButton ("OK"), how + ": the alert has no OK button");
+        } });
+    };
+
+    // A click that drifts under the drag threshold is still a click. The kick's
+    // region reaches the rows on the strip's next poll, but their height only
+    // on the window's next layout, which a page change runs.
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.pressKey ("2", '2') && host.pressKey ("1", '1') && host.consolePageMatches (0),
+                    "the console did not go to its first page");
+        ctx.expect (host.tapeTrackRowY (kick) >= 0, "the kick's row is not in the tape strip");
+        ctx.expect (host.nudgeTapeTrackName (kick, 2), "the kick's name did not take a click");
+    } });
+    steps->push_back ({ 700, [&host, &ctx, order, identity, picked, pageShown, kickPage, groupMaster]
+    {
+        order (identity(), "a click moved the tracks");
+        ctx.expect (groupMaster (kick) == groupMate, "the kick's fader group is not mastered by its lowest member");
+        picked ({ kick }, kick, "a click did not select its track");
+        *kickPage = pageShown();
+        ctx.expect (*kickPage >= 0 && host.consoleFocusedStrip() == kick,
+                    "a click that drifted a little did not page the console to its track");
+        if (*kickPage == 0) ctx.note ("the kick's strip is on the first page, so the drop's paging proves less");
+    } });
+
+    // The kick from the last shown row to the top.
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.dragTapeTrackName (kick, 0), "the kick's name did not take a drag"); } });
+    steps->push_back ({ 300, [&host, &ctx, &session, &engine, order, moved, picked, region, kickRegion, groupMaster]
+    {
+        ctx.expect (host.modalStackEmpty(), "the move raised '" + host.modalText() + "'");
+        order (moved ({ kick }, 0), "dragging the kick to the top did not move it there and shift the rest down");
+        const auto& top = session.track (0).regions;
+        const auto& second = session.track (1).regions;
+        ctx.expect (top.size() == 1 && top.front().timelineStart == kickRegion.timelineStart
+                        && second.size() == 1 && second.front().timelineStart == region.timelineStart,
+                    "the regions did not go with their tracks");
+        ctx.expect (engine.getChannelStrip (0).isBuiltinLoaded() && ! engine.getChannelStrip (kick).isBuiltinLoaded(),
+                    "the insert did not go with its track");
+        const auto off = host.consoleStripsOffTheirSlot();
+        ctx.expect (off.empty(), "the console still drives the old insert on " + std::to_string (off.size()) + " strips");
+        picked ({ 0 }, 0, "the selection did not follow the moved track");
+        ctx.expect (host.consolePageMatches (0) && host.consoleFocusedStrip() == 0,
+                    "the drop did not page the console to the moved track");
+        ctx.expect (session.track (0).inputSource.load() == kick && host.stripInputText (0) == "In 18 (fixed)",
+                    "the moved track did not keep its input: the strip shows '" + host.stripInputText (0) + "'");
+        ctx.expect (engine.getUndoManager().getUndoDescription() == kMoveTracksTransaction,
+                    "the move is not the undo step");
+        ctx.expect (groupMaster (0) == 0 && groupMaster (groupMate + 1) == 0,
+                    "the moved kick, now the group's lowest member, did not become its master");
+        const auto& bindings = session.midiBindings.current();
+        ctx.expect (bindings.size() == 2 && bindings[0].targetIndex == 0 && bindings[1].targetIndex == 0,
+                    "the move took the MIDI bindings off track 1's slot");
+    } });
+
+    // Undo is refused while playing, and the history stays.
+    steps->push_back ({ 300, [&host, &ctx, &transport]
+    {
+        transport.setState (Transport::State::Playing);
+        ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+    } });
+    alerted ("undo while playing", "Can't move tracks\nStop playback, then undo the move again.");
+    steps->push_back ({ 300, [&ctx, &engine, &transport, order, moved]
+    {
+        order (moved ({ kick }, 0), "a refused undo moved the tracks");
+        ctx.expect (engine.getUndoManager().getUndoDescription() == kMoveTracksTransaction,
+                    "a refused undo dropped the move from the history");
+        transport.setState (Transport::State::Stopped);
+        transport.setPlayhead (0);
+    } });
+
+    // Undo from an editor open on a moved track closes it; redo and undo again.
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.openAudioEditor (0, 0), "the audio editor did not open on the moved region"); } });
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.pressAudioEditorKey ("command + Z"), "the audio editor did not handle Undo"); } });
+    steps->push_back ({ 300, [&host, &ctx, &session, order, identity, picked]
+    {
+        order (identity(), "Undo did not put the tracks back");
+        ctx.expect (session.track (kick).inputSource.load() == kInputFollowsTrack
+                        && host.stripInputText (kick) == "In 18 (follow)",
+                    "Undo did not set the kick's input back to following its track: the strip shows '"
+                        + host.stripInputText (kick) + "'");
+        ctx.expect (! host.audioEditorOpen(), "the audio editor stayed open on a track the undo moved");
+        ctx.expect (host.modalStackEmpty(), "the undo raised '" + host.modalText() + "'");
+        ctx.expect (host.consoleStripsOffTheirSlot().empty(), "the console drives the wrong inserts after the undo");
+        picked ({ kick }, kick, "the selection did not follow the track back");
+        ctx.expect (host.consolePageMatches (0), "the undo paged the console");
+        ctx.expect (host.pressKey ("command + shift + Z"), "Redo was not handled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, order, moved]
+    {
+        order (moved ({ kick }, 0), "Redo did not move the kick back to the top");
+        ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+    } });
+    steps->push_back ({ 300, [order, identity] { order (identity(), "the second undo did not put the tracks back"); } });
+
+    // Two picked names move as one block, in their order.
+    steps->push_back ({ 300, [&host, &ctx, picked]
+    {
+        ctx.expect (host.clickTapeTrackName (2, 1, 2), "the name did not take a Cmd-click");
+        picked ({ 2, kick }, 2, "Cmd did not add the track to the selection");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.dragTapeTrackName (2, 0), "the picked name did not take a drag"); } });
+    steps->push_back ({ 300, [&host, &ctx, order, moved, picked]
+    {
+        order (moved ({ 2, kick }, 0), "the two picked tracks did not move to the top in their order");
+        picked ({ 0, 1 }, 0, "the selection did not follow the block");
+        ctx.expect (host.consolePageMatches (0) && host.consoleFocusedStrip() == 0,
+                    "the block drop did not page the console to the dragged track");
+        ctx.expect (host.consoleStripsOffTheirSlot().empty(), "the console drives the wrong inserts after the block move");
+        ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+    } });
+    steps->push_back ({ 300, [order, identity, picked]
+    {
+        order (identity(), "Undo did not take the block back");
+        picked ({ 2, kick }, 2, "the selection did not follow the block back");
+    } });
+    // A plain click on one of several picked names narrows the pick to it.
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.nudgeTapeTrackName (kick, 1), "the kick's name did not take a click"); } });
+    steps->push_back ({ 700, [&host, &ctx, order, identity, picked, kickPage]
+    {
+        order (identity(), "a click on a picked name moved the tracks");
+        picked ({ kick }, kick, "a click on a picked name did not narrow the selection to it");
+        ctx.expect (host.consolePageMatches (*kickPage), "a click on a picked name did not page the console to it");
+        ctx.expect (host.pressKey ("1", '1') && host.consolePageMatches (0), "the console did not go back to its first page");
+    } });
+
+    // With empty rows hidden, a drop right after a shown row keeps the hidden
+    // tracks under that row below the moved one. The first page is narrower
+    // than the tracks before the kick, as the page count above requires.
+    const auto rowsAbove = std::make_shared<int> (-1);
+    steps->push_back ({ 700, [&host, &ctx, rowsAbove]
+    {
+        int shown = 0;
+        for (int t = 0; t < kick; ++t) shown += host.tapeTrackRowY (t) >= 0 ? 1 : 0;
+        if (! ctx.expect (shown >= 2 && shown < kick && host.tapeTrackRowY (shown - 1) >= 0
+                              && host.tapeTrackRowY (shown) < 0,
+                          "the first page shows " + std::to_string (shown)
+                              + " rows before the kick, with no hidden track after them"))
+            return;
+        *rowsAbove = shown;
+        ctx.expect (host.dragTapeTrackName (0, shown, false), "track 1's name did not take a drag");
+        ctx.expect (host.tapeMoveLineY() >= 0, "no drop line shows between the last row before the hidden tracks and the kick");
+        ctx.expect (host.releaseTapeTrackName (shown), "the drag could not be released");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, order, moved, rowsAbove]
+    {
+        if (*rowsAbove < 0) return;
+        order (moved ({ 0 }, *rowsAbove), "a drop after the last shown row did not land before the hidden tracks");
+        ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, order, identity]
+    {
+        order (identity(), "Undo did not take the hidden-row drop back");
+        ctx.expect (host.pressKey ("1", '1') && host.consolePageMatches (0), "the console did not go back to its first page");
+        ctx.expect (engine.getUndoManager().getRedoDescription() == kMoveTracksTransaction,
+                    "the undone move is not the redo step");
+    } });
+    // A press on the kick that drifts up past the drag threshold, into the gap
+    // above it, drops the kick where it is: not after the shown row above, which
+    // would move it over the hidden tracks, and not a step that clears history.
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.nudgeTapeTrackName (kick, -4), "the kick's name did not take a press"); } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, order, identity]
+    {
+        order (identity(), "a drift into the gap above the kick moved it past the hidden tracks");
+        ctx.expect (host.modalStackEmpty(), "the drift raised '" + host.modalText() + "'");
+        ctx.expect (engine.getUndoManager().getRedoDescription() == kMoveTracksTransaction,
+                    "the drift cleared the undo history");
+        ctx.expect (host.pressKey ("1", '1') && host.consolePageMatches (0), "the console did not go back to its first page");
+    } });
+
+    // Escape drops the drag; a drop that moves nothing shows no line and does nothing.
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        ctx.expect (host.dragTapeTrackName (kick, 0, false), "the kick's name did not take a drag");
+        ctx.expect (host.tapeMoveLineY() >= 0, "no drop line shows while the name is dragged");
+        ctx.expect (host.pressKey ("escape"), "Escape was not handled during the drag");
+        ctx.expect (host.tapeMoveLineY() < 0, "the drop line stayed after Escape");
+        ctx.expect (host.releaseTapeTrackName (0), "the drag could not be released");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, order, identity]
+    {
+        order (identity(), "a drag dropped by Escape moved the tracks");
+        ctx.expect (host.modalStackEmpty(), "Escape left '" + host.modalText() + "'");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        int rows = 0;
+        for (int t = 0; t < Session::kNumTracks; ++t) rows += host.tapeTrackRowY (t) >= 0 ? 1 : 0;
+        ctx.expect (host.dragTapeTrackName (kick, rows, false), "the kick's name did not take a drag");
+        ctx.expect (host.tapeMoveLineY() < 0, "a drop line shows where the kick already is");
+        ctx.expect (host.releaseTapeTrackName (rows), "the drag could not be released");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, order, identity]
+    {
+        order (identity(), "a drop where the kick already is moved the tracks");
+        ctx.expect (host.modalStackEmpty(), "a drop that moves nothing raised '" + host.modalText() + "'");
+    } });
+
+    // Refused while a plug-in is still loading into a track in the way: the
+    // load's completion would land on the slot it started in. A plug-in file
+    // that is not there fails, but only once the load has come back.
+    steps->push_back ({ 700, [&host, &ctx, &engine]
+    {
+        auto& slot = engine.getChannelStrip (0).getPluginSlot();
+        PluginDescriptor missing;
+        missing.name = "Missing";
+        missing.formatName = "VST3";
+        missing.location = (ctx.tempDir() / "Missing.vst3").string();
+        slot.loadFromDescriptorAsync (missing, [] (bool, auto) {});
+        if (! ctx.expect (slot.isAsyncLoadPending(), "the load came back before the drag could start")) return;
+        ctx.expect (host.dragTapeTrackName (kick, 0), "the kick's name did not take a drag");
+    } });
+    alerted ("while a plug-in loads", "Can't move tracks\nWait for the plug-in to finish loading, then move the tracks again.");
+    Step loadDone { 100, [order, identity] { order (identity(), "a move while a plug-in loads ran anyway"); } };
+    loadDone.until = [&engine] { return ! engine.getChannelStrip (0).getPluginSlot().isAsyncLoadPending(); };
+    loadDone.timeout = "the missing plug-in's load never came back";
+    steps->push_back (std::move (loadDone));
+    steps->push_back ({ 300, [&host, &ctx] { dismissAlert (host); ctx.expect (host.modalStackEmpty(), "the failed load left '" + host.modalText() + "' up"); } });
+
+    // Refused while playing, and with a frozen track in the way.
+    steps->push_back ({ 700, [&host, &ctx, &transport]
+    {
+        transport.setState (Transport::State::Playing);
+        ctx.expect (host.dragTapeTrackName (kick, 0), "the kick's name did not take a drag");
+    } });
+    alerted ("while playing", "Can't move tracks\nStop playback, then move the tracks again.");
+    steps->push_back ({ 300, [&session, &transport, order, identity]
+    {
+        order (identity(), "a move while playing ran anyway");
+        transport.setState (Transport::State::Stopped);
+        transport.setPlayhead (0);
+        session.track (frozenTrack).frozen.store (true);
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.dragTapeTrackName (kick, 0), "the kick's name did not take a drag"); } });
+    alerted ("with a frozen track", "Can't move tracks\nUnfreeze track 6, then move the tracks again. "
+                                    "A frozen track can't be moved or shifted.");
+    steps->push_back ({ 300, [&session, order, identity]
+    {
+        order (identity(), "a move over a frozen track ran anyway");
+        session.track (frozenTrack).frozen.store (false);
+    } });
+
+    // A render's dialog holds tracks by slot, so the move's undo waits for it.
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.dragTapeTrackName (kick, 0), "the kick's name did not take a drag"); } });
+    steps->push_back ({ 300, [&host, &ctx, &session, order, moved, region]
+    {
+        order (moved ({ kick }, 0), "the kick did not move to the top again");
+        session.track (renderTrack).regions = { region };
+        ctx.expect (host.pressKey ("2", '2') && host.pressKey ("1", '1'), "the console did not change page");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickTapeTrackName (renderTrack, 1), "the rendered track's name did not take a click"); } });
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        ctx.expect (host.clickStripControl (GuiHost::StripKind::Channel, renderTrack, "print", 1, false),
+                    "the rendered track has no FREEZE button to click");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressKey ("command + Z"), "Undo was not handled over the freeze dialog"); } });
+    alerted ("undo over the freeze dialog", "Can't move tracks\nClose the freeze dialog, then undo the move again.");
+    steps->push_back ({ 100, [&host, order, moved]
+    {
+        order (moved ({ kick }, 0), "the undo ran over the freeze dialog");
+        if (host.renderRunning()) host.clickModalButton ("Cancel");
+    } });
+    Step closed { 300, [&host, &ctx] { ctx.expect (host.clickModalButton ("Close"), "the freeze dialog did not offer Close"); } };
+    closed.until = [&host] { return ! host.renderRunning(); };
+    closed.timeout = "the freeze did not stop";
+    steps->push_back (std::move (closed));
+    steps->push_back ({ 300, [&host, &ctx, &session, &engine]
+    {
+        ctx.expect (host.modalStackEmpty(), "the freeze left '" + host.modalText() + "' up");
+        if (session.track (renderTrack).frozen.load()) engine.unfreezeTrack (renderTrack);
+        ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+    } });
+    steps->push_back ({ 300, [order, identity] { order (identity(), "Undo after the freeze did not put the tracks back"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar timelineTrackMove { Scenario {
+    "gui.timeline_track_move", { "gui", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 40000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTimelineTrackMove (host, ctx); }
+} };
+
 // A file dropped on the tape strip lands at the playhead, where the drop line
 // stands while the file is held over the strip. With Alt held it lands, and
 // the line stands, under the pointer. With the landing point scrolled out of

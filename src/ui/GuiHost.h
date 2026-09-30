@@ -397,8 +397,24 @@ public:
     virtual std::vector<int> tapeSelectedTracks() const = 0;
     // Where a track's row sits in the window, as a y; -1 when the row is not shown.
     virtual int tapeTrackRowY (int track) const = 0;
+    // Presses a track's name and drags it to the gap before the gap-th shown
+    // row (the row count is the gap after the last), releasing there unless
+    // release is false. False when either point is not on screen.
+    virtual bool dragTapeTrackName (int track, int gap, bool release = true) = 0;
+    // Lets go of a name drag in the gap-th gap. With that gap off screen it
+    // lets go where the drag went down, and returns false.
+    virtual bool releaseTapeTrackName (int gap) = 0;
+    // A click on a track's name whose pointer drifts `pixels` down while held.
+    virtual bool nudgeTapeTrackName (int track, int pixels) = 0;
+    // The window y of the line a name drag would drop on; -1 when none shows.
+    virtual int tapeMoveLineY() const = 0;
     // The strip carrying the console's focus ring, -1 when none does.
     virtual int consoleFocusedStrip() const = 0;
+    // What a channel strip's input selector shows; empty when it is not built.
+    virtual std::string stripInputText (int track) const = 0;
+    // The console strips whose insert is not the one the engine runs in their
+    // slot, ascending.
+    virtual std::vector<int> consoleStripsOffTheirSlot() const = 0;
     virtual bool audioEditorOpen() const = 0;
     virtual int audioEditorRegion() const = 0;
     virtual bool clickAudioEditorWaveform() = 0;
