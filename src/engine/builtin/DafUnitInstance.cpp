@@ -132,7 +132,10 @@ DafUnitInstance::DafUnitInstance (std::string stateId, std::unique_ptr<DafPlugin
 
     layout = makeLayout (plugin->numInputs(), plugin->numOutputs(), plugin->isInstrument());
     if (plugin->isInstrument())
+    {
         events.resize (DafMidiEvent::kMaxPerBlock);
+        mirrorBeforeRun.resize (params.size());
+    }
 }
 
 DafUnitInstance::~DafUnitInstance() = default;
@@ -213,7 +216,26 @@ void DafUnitInstance::processBlock (const hosting::PortBuffers& io) noexcept
         plugin->setTimePosition (*io.transport);
 
     const std::uint32_t eventCount = events.empty() ? 0 : gatherEvents (io.midiIn, io.numFrames);
+    const bool programChange = std::any_of (events.begin(), events.begin() + eventCount,
+                                            [] (const DafMidiEvent& e)
+                                            { return (e.data[0] & 0xF0) == 0xC0; });
+    if (programChange)
+        for (std::size_t i = 0; i < values.size(); ++i)
+            mirrorBeforeRun[i] = values[i].load (std::memory_order_relaxed);
+
     plugin->run (io.mainIn, io.mainOut, (std::uint32_t) io.numFrames, events.data(), eventCount);
+
+    // A program change rewrites the plug-in's parameters inside run. The mirror
+    // takes them, except where the message thread wrote a newer value meanwhile:
+    // that write is queued and reaches the plug-in next block.
+    if (programChange)
+        for (std::size_t i = 0; i < values.size(); ++i)
+        {
+            float expected = mirrorBeforeRun[i];
+            values[i].compare_exchange_strong (expected,
+                                               plugin->getParameterValue ((std::uint32_t) i),
+                                               std::memory_order_relaxed);
+        }
 
     for (const auto index : outputIndices)
         values[index].store (plugin->getParameterValue (index), std::memory_order_relaxed);
@@ -229,7 +251,9 @@ void DafUnitInstance::playEditorNote (std::uint8_t channel, std::uint8_t note,
 
 std::uint32_t DafUnitInstance::gatherEvents (const dusk::MidiBuffer* midi, int numFrames) noexcept
 {
-    const auto capacity = (std::uint32_t) events.size();
+    // The last slot is kept for an all-notes-off, so a block too full to carry
+    // every event cannot strand a note whose release it dropped.
+    const auto capacity = (std::uint32_t) events.size() - 1;
     std::uint32_t count = 0;
     editorNotes.drain ([&] (const EditorNote& n)
     {
@@ -249,11 +273,19 @@ std::uint32_t DafUnitInstance::gatherEvents (const dusk::MidiBuffer* midi, int n
     int last = 0;
     for (const auto meta : *midi)
     {
-        if (count == capacity)
-            break;
         if (meta.data == nullptr || meta.numBytes <= 0
             || meta.numBytes > (int) DafMidiEvent::kMaxBytes)
             continue;
+        if (count == capacity)
+        {
+            auto& e = events[count++];
+            e.frame = (std::uint32_t) (numFrames - 1);
+            e.size = 3;
+            e.data[0] = 0xB0;
+            e.data[1] = 123;
+            e.data[2] = 0;
+            break;
+        }
 
         last = std::clamp (meta.samplePosition, last, numFrames - 1);
         auto& e = events[count++];

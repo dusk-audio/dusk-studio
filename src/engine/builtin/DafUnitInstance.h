@@ -109,6 +109,7 @@ private:
     hosting::SpscRing<EditorNote, kNoteRingSize> editorNotes;
     // Sized once for an instrument and left empty for an effect, which plays no MIDI.
     std::vector<DafMidiEvent> events;
+    std::vector<float> mirrorBeforeRun;
     std::atomic<bool> resyncAll { false };
     hosting::PortLayout layout;
     std::atomic<bool> active { false };

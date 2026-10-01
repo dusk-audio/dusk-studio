@@ -1829,7 +1829,7 @@ Dusk Audio's Sunset Circuits plug-in, compiled into Dusk Studio with the plug-in
 
 Every control the plug-in has is in its editor, and the editor's preset menu holds the plug-in's factory presets and any you save yourself. The keyboard in the editor plays the instrument: click a key to hear it. Its **Oversampling** switch (1x, 2x or 4x, 2x by default) costs a few samples of latency above 1x, which the unit reports and delay compensation covers. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Sunset load with their settings, and everything that panel did not have starts at the plug-in's defaults.
 
-It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and channel and polyphonic aftertouch, and it stops cleanly when the transport does.
+It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and channel and polyphonic aftertouch, and it stops cleanly when the transport does. A MIDI program change loads the factory preset with that number, counting from 0, and the session saves the preset it loaded.
 
 ![The Sunset instrument's editor.](docs/images/bi-05-sunset.png)
 

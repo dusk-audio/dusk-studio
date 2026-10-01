@@ -273,6 +273,39 @@ TEST_CASE ("synth unit restores a session saved with the knob synth unit", "[bui
                   WithinAbs (slot.paramInfo (width)->defaultValue, 1e-6));
 }
 
+TEST_CASE ("synth unit loads a factory preset on a program change and saves it",
+           "[builtin][synth]")
+{
+    NativeBuiltinSlot slot;
+    loadSynth (slot);
+    std::vector<float> defaults;
+    for (int i = 0; i < slot.paramCount(); ++i)
+        defaults.push_back (slot.getParamValue (i));
+
+    dusk::MidiBuffer program;
+    const std::uint8_t bytes[2] = { 0xC0, 1 };
+    program.addEvent (bytes, 2, 0);
+    renderPeak (slot, 1, &program);
+
+    int changed = 0;
+    for (int i = 0; i < slot.paramCount(); ++i)
+        if (! slot.paramInfo (i)->hidden && std::abs (slot.getParamValue (i) - defaults[(size_t) i]) > 1e-6f)
+            ++changed;
+    REQUIRE (changed > 0);
+
+    std::vector<std::uint8_t> blob;
+    REQUIRE (slot.saveState (blob));
+    NativeBuiltinSlot loader;
+    loadSynth (loader);
+    REQUIRE (loader.loadState (blob));
+    for (int i = 0; i < slot.paramCount(); ++i)
+    {
+        if (slot.paramInfo (i)->hidden) continue;
+        INFO (slot.paramInfo (i)->id);
+        REQUIRE_THAT (loader.getParamValue (i), WithinAbs (slot.getParamValue (i), 1e-6));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Sample-accurate event timing. The core's note and controller calls take no
 // offset, so the unit has to split the block at each event; these pin that the

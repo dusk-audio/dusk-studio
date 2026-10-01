@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -154,7 +155,19 @@ public:
         heard.assign (events, events + eventCount);
         ++runs;
         if (instrument)
+        {
+            // A program change rewrites the plug-in's own parameters, the way
+            // Sunset Circuits loads a factory preset.
+            for (std::uint32_t e = 0; e < eventCount; ++e)
+                if ((events[e].data[0] & 0xF0) == 0xC0)
+                {
+                    held[kGain] = 0.5f * (float) events[e].data[1];
+                    held[kSteps] = 4.0f;
+                }
+            if (duringRun)
+                duringRun();
             return;
+        }
 
         float peak = 0.0f;
         for (std::uint32_t c = 0; c < 2; ++c)
@@ -184,6 +197,7 @@ public:
     std::vector<DafParamDesc> descs;
     std::array<float, kNumFakeParams> held {};
     std::vector<DafMidiEvent> heard;
+    std::function<void()> duringRun;
     std::vector<Write> log;
     std::vector<std::string> stateKeys;
     std::vector<std::string> stateDefaults;
@@ -713,4 +727,53 @@ TEST_CASE ("an effect DAF unit's editor has no keyboard to play", "[builtin][daf
     rig.activate();
     auto& editor = rig.openEditor();
     REQUIRE_FALSE (editor.callbacks.noteSent);
+}
+
+TEST_CASE ("an instrument DAF unit's mirror follows a program change the plug-in made",
+           "[builtin][daf][midi]")
+{
+    Rig rig (false, true);
+    rig.activate();
+
+    dusk::MidiBuffer midi;
+    const std::uint8_t program[] = { 0xC0, 3 };
+    REQUIRE (midi.addEvent (program, 2, 10));
+    rig.play (&midi);
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.5, 1e-9));
+    REQUIRE_THAT (rig.unit->getParamValue (kSteps), WithinAbs (4.0, 1e-9));
+
+    // A value the host writes while that block runs is newer than the program's,
+    // so the mirror keeps it and the plug-in takes it next block.
+    rig.fake->duringRun = [&rig] { rig.unit->setParamValue (kSteps, 2.0f); };
+    rig.play (&midi);
+    rig.fake->duringRun = nullptr;
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.5, 1e-9));
+    REQUIRE_THAT (rig.unit->getParamValue (kSteps), WithinAbs (2.0, 1e-9));
+    rig.play();
+    REQUIRE_THAT (rig.fake->held[kSteps], WithinAbs (2.0, 1e-9));
+}
+
+TEST_CASE ("an instrument DAF unit whose block overflows ends it with all notes off",
+           "[builtin][daf][midi]")
+{
+    Rig rig (false, true);
+    rig.activate();
+
+    dusk::MidiBuffer midi;
+    for (int i = 0; i < (int) DafMidiEvent::kMaxPerBlock + 40; ++i)
+    {
+        const std::uint8_t on[] = { 0x90, (std::uint8_t) (i % 128), 100 };
+        REQUIRE (midi.addEvent (on, 3, i % kBlock));
+    }
+    const std::uint8_t off[] = { 0x80, 5, 0 };
+    REQUIRE (midi.addEvent (off, 3, kBlock - 1));
+    rig.play (&midi);
+
+    const auto& heard = rig.fake->heard;
+    REQUIRE (heard.size() == DafMidiEvent::kMaxPerBlock);
+    REQUIRE (heard.back().frame == kBlock - 1);
+    REQUIRE (heard.back().data[0] == 0xB0);
+    REQUIRE (heard.back().data[1] == 123);
+    for (std::size_t i = 1; i < heard.size(); ++i)
+        REQUIRE (heard[i].frame >= heard[i - 1].frame);
 }
