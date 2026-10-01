@@ -45,6 +45,11 @@ public:
         callbacks.stateEdited (key, value);
     }
 
+    void playNote (std::uint8_t channel, std::uint8_t note, std::uint8_t velocity)
+    {
+        callbacks.noteSent (channel, note, velocity);
+    }
+
     DafEditorCallbacks callbacks;
 };
 
@@ -54,7 +59,8 @@ public:
     struct Write { std::uint32_t index; float value; };
     struct StateWrite { std::string key; std::string value; };
 
-    explicit FakePlugin (bool withStates = false)
+    explicit FakePlugin (bool withStates = false, bool asInstrument = false)
+        : instrument (asInstrument)
     {
         descs.resize (kNumFakeParams);
         auto set = [this] (FakeParam i, const char* symbol, float lo, float hi, float def)
@@ -90,8 +96,9 @@ public:
     }
 
     const std::vector<DafParamDesc>& params() const noexcept override { return descs; }
-    int numInputs() const noexcept override  { return 2; }
+    int numInputs() const noexcept override  { return instrument ? 0 : 2; }
     int numOutputs() const noexcept override { return 2; }
+    bool isInstrument() const noexcept override { return instrument; }
 
     void activate (double, int) override { ++activations; activeNow = true; }
     void deactivate() override { activeNow = false; }
@@ -141,8 +148,14 @@ public:
         lastBpm = position.bpm;
     }
 
-    void run (const float* const* in, float* const* out, std::uint32_t frames) noexcept override
+    void run (const float* const* in, float* const* out, std::uint32_t frames,
+              const DafMidiEvent* events, std::uint32_t eventCount) noexcept override
     {
+        heard.assign (events, events + eventCount);
+        ++runs;
+        if (instrument)
+            return;
+
         float peak = 0.0f;
         for (std::uint32_t c = 0; c < 2; ++c)
             for (std::uint32_t i = 0; i < frames; ++i)
@@ -151,7 +164,6 @@ public:
                 peak = std::max (peak, std::abs (out[c][i]));
             }
         held[kMeter] = peak;
-        ++runs;
     }
 
     int latencySamples() const noexcept override { return latency; }
@@ -168,8 +180,10 @@ public:
         return editor;
     }
 
+    const bool instrument;
     std::vector<DafParamDesc> descs;
     std::array<float, kNumFakeParams> held {};
+    std::vector<DafMidiEvent> heard;
     std::vector<Write> log;
     std::vector<std::string> stateKeys;
     std::vector<std::string> stateDefaults;
@@ -186,9 +200,9 @@ public:
 
 struct Rig
 {
-    explicit Rig (bool withStates = false)
+    explicit Rig (bool withStates = false, bool instrument = false)
     {
-        auto owned = std::make_unique<FakePlugin> (withStates);
+        auto owned = std::make_unique<FakePlugin> (withStates, instrument);
         fake = owned.get();
         unit = std::make_unique<DafUnitInstance> (kId, std::move (owned));
     }
@@ -223,6 +237,18 @@ struct Rig
         io.transport = transport;
         unit->processBlock (io);
         return outL[0];
+    }
+
+    // One block of an instrument, which takes MIDI and no audio.
+    void play (const dusk::MidiBuffer* midi = nullptr)
+    {
+        float* outs[2] = { outL.data(), outR.data() };
+        hosting::PortBuffers io;
+        io.mainOut = outs;
+        io.mainOutChannels = 2;
+        io.numFrames = kBlock;
+        io.midiIn = midi;
+        unit->processBlock (io);
     }
 
     FakePlugin* fake = nullptr;
@@ -596,4 +622,95 @@ TEST_CASE ("a DAF unit refuses a blob it cannot read", "[builtin][daf]")
     REQUIRE_FALSE (rig.unit->loadState (blob (
         R"({"id":"dusk.builtin.fake","version":4,"params":{"gain":1.5}})")));
     REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (0.3, 1e-6));
+}
+
+TEST_CASE ("an instrument DAF unit takes MIDI in and no audio", "[builtin][daf][midi]")
+{
+    Rig effect;
+    REQUIRE_FALSE (effect.unit->portLayout().isInstrument);
+    REQUIRE_FALSE (effect.unit->portLayout().acceptsMidi());
+
+    Rig synth (false, true);
+    const auto& layout = synth.unit->portLayout();
+    REQUIRE (layout.isInstrument);
+    REQUIRE (layout.acceptsMidi());
+    REQUIRE (layout.mainInIndex < 0);
+    REQUIRE (layout.outputs.size() == 1);
+    REQUIRE (layout.outputs[0].channelCount == 2);
+}
+
+TEST_CASE ("an instrument DAF unit hands the plug-in the block's MIDI at its frames",
+           "[builtin][daf][midi]")
+{
+    Rig rig (false, true);
+    rig.activate();
+
+    dusk::MidiBuffer midi;
+    midi.reserveBytes (256);
+    const std::uint8_t noteOn[] = { 0x91, 60, 100 };
+    const std::uint8_t sysex[] = { 0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7 };
+    const std::uint8_t bend[] = { 0xE1, 0x00, 0x50 };
+    const std::uint8_t noteOff[] = { 0x81, 60, 0 };
+    REQUIRE (midi.addEvent (noteOn, 3, 5));
+    REQUIRE (midi.addEvent (sysex, 6, 9));
+    REQUIRE (midi.addEvent (bend, 3, 20));
+    REQUIRE (midi.addEvent (noteOff, 3, kBlock + 30));
+    rig.play (&midi);
+
+    // The system exclusive message does not reach it, and an offset past the
+    // block lands on its last frame.
+    const auto& heard = rig.fake->heard;
+    REQUIRE (heard.size() == 3);
+    REQUIRE (heard[0].frame == 5);
+    REQUIRE (heard[0].size == 3);
+    REQUIRE (heard[0].data[0] == 0x91);
+    REQUIRE (heard[0].data[1] == 60);
+    REQUIRE (heard[0].data[2] == 100);
+    REQUIRE (heard[1].frame == 20);
+    REQUIRE (heard[1].data[0] == 0xE1);
+    REQUIRE (heard[2].frame == kBlock - 1);
+    REQUIRE (heard[2].data[0] == 0x81);
+
+    rig.play();
+    REQUIRE (rig.fake->heard.empty());
+}
+
+TEST_CASE ("an instrument DAF unit plays its editor's keyboard at the next block",
+           "[builtin][daf][midi]")
+{
+    Rig rig (false, true);
+    rig.activate();
+    auto& editor = rig.openEditor();
+    REQUIRE (editor.callbacks.noteSent);
+
+    editor.playNote (2, 64, 90);
+    REQUIRE (rig.fake->heard.empty());
+
+    dusk::MidiBuffer midi;
+    midi.reserveBytes (64);
+    const std::uint8_t cc[] = { 0xB0, 1, 64 };
+    REQUIRE (midi.addEvent (cc, 3, 0));
+    rig.play (&midi);
+
+    // The keyboard's note comes first, ahead of the block's own MIDI.
+    REQUIRE (rig.fake->heard.size() == 2);
+    REQUIRE (rig.fake->heard[0].frame == 0);
+    REQUIRE (rig.fake->heard[0].data[0] == 0x92);
+    REQUIRE (rig.fake->heard[0].data[1] == 64);
+    REQUIRE (rig.fake->heard[0].data[2] == 90);
+    REQUIRE (rig.fake->heard[1].data[0] == 0xB0);
+
+    editor.playNote (2, 64, 0);
+    rig.play();
+    REQUIRE (rig.fake->heard.size() == 1);
+    REQUIRE (rig.fake->heard[0].data[0] == 0x82);
+    REQUIRE (rig.fake->heard[0].data[2] == 0);
+}
+
+TEST_CASE ("an effect DAF unit's editor has no keyboard to play", "[builtin][daf][midi]")
+{
+    Rig rig;
+    rig.activate();
+    auto& editor = rig.openEditor();
+    REQUIRE_FALSE (editor.callbacks.noteSent);
 }

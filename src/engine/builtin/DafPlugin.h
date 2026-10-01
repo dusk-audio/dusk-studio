@@ -37,6 +37,19 @@ struct LegacyParam
     const char* symbol;
 };
 
+// A short MIDI message for an instrument plug-in, at its frame in the block.
+// Longer messages (system exclusive) do not reach a built-in plug-in, and nor do
+// events past kMaxPerBlock in one block.
+struct DafMidiEvent
+{
+    static constexpr std::uint32_t kMaxBytes = 3;
+    static constexpr std::uint32_t kMaxPerBlock = 512;
+
+    std::uint32_t frame = 0;
+    std::uint32_t size = 0;
+    std::uint8_t data[kMaxBytes] {};
+};
+
 // What a plug-in's editor tells the host as the user works it. Message thread.
 struct DafEditorCallbacks
 {
@@ -47,6 +60,8 @@ struct DafEditorCallbacks
     std::function<void (const std::string& key, const std::string& value)> stateEdited;
     // The editor asking for a size of its own.
     std::function<void (std::uint32_t width, std::uint32_t height)> sizeRequested;
+    // A note played on the editor's own keyboard; velocity zero releases it.
+    std::function<void (std::uint8_t channel, std::uint8_t note, std::uint8_t velocity)> noteSent;
 };
 
 // A plug-in's own editor, embedded in a native parent the host owns. Every call is
@@ -94,6 +109,8 @@ public:
     virtual const std::vector<DafParamDesc>& params() const noexcept = 0;
     virtual int numInputs() const noexcept = 0;
     virtual int numOutputs() const noexcept = 0;
+    // An instrument plays MIDI, and takes no audio in.
+    virtual bool isInstrument() const noexcept = 0;
 
     virtual void activate (double sampleRate, int maxBlockFrames) = 0;
     virtual void deactivate() = 0;
@@ -108,8 +125,11 @@ public:
     virtual std::string getStateValue (const std::string& key) const = 0;
     virtual void setState (const std::string& key, const std::string& value) = 0;
     virtual void  setTimePosition (const dusk::TransportPosition& position) noexcept = 0;
+    // events are ordered by frame, each inside the block. A plug-in that takes
+    // no MIDI ignores them.
     virtual void  run (const float* const* inputs, float* const* outputs,
-                       std::uint32_t frames) noexcept = 0;
+                       std::uint32_t frames, const DafMidiEvent* events,
+                       std::uint32_t eventCount) noexcept = 0;
 
     virtual int latencySamples() const noexcept = 0;
 

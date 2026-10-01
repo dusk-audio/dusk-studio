@@ -2,6 +2,7 @@
 
 #include "BuiltinUnit.h"
 #include "DafPlugin.h"
+#include "../../foundation/MidiBuffer.h"
 #include "../hosting/INativeInstance.h"
 #include "../hosting/SpscRing.h"
 
@@ -68,6 +69,7 @@ public:
 
     static constexpr int kStateVersion = 3;
     static constexpr std::uint32_t kWriteRingSize = 1024;
+    static constexpr std::uint32_t kNoteRingSize = 256;
 
 private:
     struct ParamWrite
@@ -75,6 +77,19 @@ private:
         std::uint32_t index;
         float value;
     };
+
+    struct EditorNote
+    {
+        std::uint8_t status;
+        std::uint8_t note;
+        std::uint8_t velocity;
+    };
+
+    // Message thread: a note from the editor's keyboard, played at the top of the
+    // next block.
+    void playEditorNote (std::uint8_t channel, std::uint8_t note, std::uint8_t velocity) noexcept;
+    // Audio thread: the editor's notes, then the block's own MIDI, into events.
+    std::uint32_t gatherEvents (const dusk::MidiBuffer* midi, int numFrames) noexcept;
 
     // The audio thread, or the message thread while the audio thread is fenced.
     void pushAllParams() noexcept;
@@ -91,6 +106,9 @@ private:
     std::vector<std::atomic<float>> values;
     std::vector<std::uint32_t> outputIndices;
     hosting::SpscRing<ParamWrite, kWriteRingSize> writes;
+    hosting::SpscRing<EditorNote, kNoteRingSize> editorNotes;
+    // Sized once for an instrument and left empty for an effect, which plays no MIDI.
+    std::vector<DafMidiEvent> events;
     std::atomic<bool> resyncAll { false };
     hosting::PortLayout layout;
     std::atomic<bool> active { false };

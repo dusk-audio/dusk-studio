@@ -18,10 +18,22 @@ constexpr int kParameterOnlyStateVersion = 2;
 // stays a knob, whose value the plug-in rounds.
 constexpr int kMaxSwitchPositions = 32;
 
-hosting::PortLayout makeLayout (int inputs, int outputs)
+hosting::PortLayout makeLayout (int inputs, int outputs, bool isInstrument)
 {
     hosting::PortLayout layout;
-    if (inputs > 0)
+    if (isInstrument)
+    {
+        hosting::BusInfo events;
+        events.kind = hosting::BusInfo::Kind::Event;
+        events.dir = hosting::BusInfo::Direction::Input;
+        events.carriesMidi = true;
+        events.active = true;
+        events.name = "MIDI In";
+        layout.inputs.push_back (std::move (events));
+        layout.eventInIndex = 0;
+        layout.isInstrument = true;
+    }
+    else if (inputs > 0)
     {
         hosting::BusInfo in;
         in.dir = hosting::BusInfo::Direction::Input;
@@ -118,7 +130,9 @@ DafUnitInstance::DafUnitInstance (std::string stateId, std::unique_ptr<DafPlugin
             outputIndices.push_back ((std::uint32_t) i);
     }
 
-    layout = makeLayout (plugin->numInputs(), plugin->numOutputs());
+    layout = makeLayout (plugin->numInputs(), plugin->numOutputs(), plugin->isInstrument());
+    if (plugin->isInstrument())
+        events.resize (DafMidiEvent::kMaxPerBlock);
 }
 
 DafUnitInstance::~DafUnitInstance() = default;
@@ -131,6 +145,11 @@ std::unique_ptr<DafEditor> DafUnitInstance::createEditor (
     {
         applyEditorState (key, value);
     };
+    if (plugin->isInstrument())
+        callbacks.noteSent = [this] (std::uint8_t channel, std::uint8_t note, std::uint8_t velocity)
+        {
+            playEditorNote (channel, note, velocity);
+        };
     return plugin->createEditor (nativeParent, width, height, scaleFactor,
                                  std::move (callbacks), errorOut);
 }
@@ -152,6 +171,7 @@ bool DafUnitInstance::activate (double sampleRate, int maxBlockFrames, std::stri
     writes.drain ([] (const ParamWrite&) {});
     resyncAll.store (false, std::memory_order_relaxed);
     pushAllParams();
+    editorNotes.drain ([] (const EditorNote&) {});
 
     plugin->activate (sampleRate, maxBlockFrames);
     preparedFrames = maxBlockFrames;
@@ -192,10 +212,56 @@ void DafUnitInstance::processBlock (const hosting::PortBuffers& io) noexcept
     if (io.transport != nullptr)
         plugin->setTimePosition (*io.transport);
 
-    plugin->run (io.mainIn, io.mainOut, (std::uint32_t) io.numFrames);
+    const std::uint32_t eventCount = events.empty() ? 0 : gatherEvents (io.midiIn, io.numFrames);
+    plugin->run (io.mainIn, io.mainOut, (std::uint32_t) io.numFrames, events.data(), eventCount);
 
     for (const auto index : outputIndices)
         values[index].store (plugin->getParameterValue (index), std::memory_order_relaxed);
+}
+
+void DafUnitInstance::playEditorNote (std::uint8_t channel, std::uint8_t note,
+                                      std::uint8_t velocity) noexcept
+{
+    const auto kind = (std::uint8_t) (velocity > 0 ? 0x90 : 0x80);
+    editorNotes.push ({ (std::uint8_t) (kind | (channel & 0x0F)), (std::uint8_t) (note & 0x7F),
+                        (std::uint8_t) (velocity & 0x7F) });
+}
+
+std::uint32_t DafUnitInstance::gatherEvents (const dusk::MidiBuffer* midi, int numFrames) noexcept
+{
+    const auto capacity = (std::uint32_t) events.size();
+    std::uint32_t count = 0;
+    editorNotes.drain ([&] (const EditorNote& n)
+    {
+        auto& e = events[count++];
+        e.frame = 0;
+        e.size = 3;
+        e.data[0] = n.status;
+        e.data[1] = n.note;
+        e.data[2] = n.velocity;
+    }, capacity);
+
+    if (midi == nullptr)
+        return count;
+
+    // The engine hands MIDI over sorted. An offset out of order or outside the
+    // block lands on the nearest frame that keeps the events in order.
+    int last = 0;
+    for (const auto meta : *midi)
+    {
+        if (count == capacity)
+            break;
+        if (meta.data == nullptr || meta.numBytes <= 0
+            || meta.numBytes > (int) DafMidiEvent::kMaxBytes)
+            continue;
+
+        last = std::clamp (meta.samplePosition, last, numFrames - 1);
+        auto& e = events[count++];
+        e.frame = (std::uint32_t) last;
+        e.size = (std::uint32_t) meta.numBytes;
+        std::copy (meta.data, meta.data + meta.numBytes, e.data);
+    }
+    return count;
 }
 
 void DafUnitInstance::pushAllParams() noexcept
