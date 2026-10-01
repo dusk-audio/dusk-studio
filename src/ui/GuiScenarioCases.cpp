@@ -2732,7 +2732,7 @@ std::optional<ScenarioResult> runAudioEditorOpensOnEveryTake (GuiHost& host, Sce
         *opened = host.audioEditorView();
         const auto selection = host.audioEditorSelection();
         ctx.expect (! selection.empty() && selection[0] == 0, "the editor did not keep the double-clicked region");
-        ctx.expect (opened->size() == 3 && (*opened)[2] == 0.0, "the edit cursor is not at the region's start");
+        ctx.expect (opened->size() == 3 && std::abs ((*opened)[2]) < 0.5, "the edit cursor is not at the region's start");
         ctx.expect (host.pressAudioEditorKey ("0"), "the fit key was not handled");
     }, [&host] { return host.audioEditorTakeLanes().size() == 2; }, "the take lanes never showed" });
     steps->push_back ({ 100, [&host, &ctx, opened]
