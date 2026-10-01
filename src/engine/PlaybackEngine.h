@@ -63,6 +63,10 @@ public:
     // finished with. Message thread, called often while the transport rolls.
     void service();
 
+    // Whether a rebuild is waiting to be handed over or the audio thread has
+    // handed streams back, so service() still has something to do.
+    bool hasPendingWork() const noexcept;
+
     // Tests only: open every reader without its background thread and fill it
     // at once, so a rebuild is warm the moment it is built.
     void setSynchronousReadersForTest (bool synchronous) noexcept { synchronousReaders = synchronous; }

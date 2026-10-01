@@ -398,6 +398,19 @@ void PlaybackEngine::service()
             delete retired.exchange (nullptr, std::memory_order_acq_rel);
 }
 
+bool PlaybackEngine::hasPendingWork() const noexcept
+{
+    for (const auto& swap : pending)
+        if (swap.stream != nullptr) return true;
+    for (const auto& slot : slots)
+    {
+        if (slot.incoming.load (std::memory_order_acquire) != nullptr) return true;
+        for (const auto& retired : slot.retired)
+            if (retired.load (std::memory_order_acquire) != nullptr) return true;
+    }
+    return false;
+}
+
 void PlaybackEngine::publish (int t)
 {
     auto& swap = pending[(size_t) t];

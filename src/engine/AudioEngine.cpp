@@ -1771,16 +1771,53 @@ void AudioEngine::setTakeAudition (int trackIndex, TakeId takeId)
         clearTakeAudition();
         return;
     }
+    TrackSlotMask tracks {};
+    if (const int was = session.takeAudition.trackIdx; was >= 0 && was < Session::kNumTracks)
+        tracks[(size_t) was] = true;
+    tracks[(size_t) trackIndex] = true;
     session.takeAudition = { trackIndex, takeId };
-    if (transport.isStopped())
-        playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
+    refreshPlayback (tracks);
 }
 
 void AudioEngine::clearTakeAudition()
 {
+    TrackSlotMask tracks {};
+    if (const int was = session.takeAudition.trackIdx; was >= 0 && was < Session::kNumTracks)
+        tracks[(size_t) was] = true;
     session.takeAudition = {};
+    refreshPlayback (tracks);
+}
+
+void AudioEngine::refreshPlayback (const TrackSlotMask& tracks)
+{
     if (transport.isStopped())
+    {
         playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
+        return;
+    }
+    if (! offlineRenderActive.load (std::memory_order_acquire))
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            if (tracks[(size_t) t]
+                && ! (transport.isRecording() && session.track (t).recordArmed.load (std::memory_order_relaxed)))
+                playbackEngine.refreshTrackPlayback (t, PlaybackEngine::Audition::Honour);
+    playbackEngine.refreshLiveRegionParams();
+    if (playbackEngine.hasPendingWork())
+    {
+        playbackIdleTicks = 0;
+        if (! playbackServiceTimer.isTimerRunning())
+            playbackServiceTimer.startTimer (10);
+    }
+}
+
+void AudioEngine::servicePlayback()
+{
+    playbackEngine.service();
+    // A swap the audio thread has taken is still fading for a few milliseconds
+    // before it hands the old streams back, so the timer outlasts the last work.
+    if (playbackEngine.hasPendingWork())
+        playbackIdleTicks = 0;
+    else if (++playbackIdleTicks >= 50)
+        playbackServiceTimer.stopTimer();
 }
 
 void AudioEngine::play (PlaybackEngine::Audition audition)

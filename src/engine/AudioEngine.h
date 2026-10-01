@@ -339,11 +339,18 @@ public:
     void play (PlaybackEngine::Audition audition = PlaybackEngine::Audition::Honour);
 
     // Plays one take alone on its track in place of the track's regions,
-    // until cleared. Stopped, it applies at once; rolling, at the next Play.
-    // Bounce and freeze renders never hear it. Naming a take the track does
-    // not hold clears the audition instead. Message thread only.
+    // until cleared, heard at once whether stopped or rolling. Bounce and
+    // freeze renders never hear it. Naming a take the track does not hold
+    // clears the audition instead. Message thread only.
     void setTakeAudition (int trackIndex, TakeId takeId);
     void clearTakeAudition();
+
+    // Brings playback up to date after the regions or takes of `tracks`
+    // changed. Stopped, every track's streams are rebuilt. Rolling, the tracks
+    // named are rebuilt live and crossfaded in, so the edit is heard at once,
+    // except a track being recorded and anything while an offline render runs;
+    // the rest pick up gain and mute changes. Message thread only.
+    void refreshPlayback (const TrackSlotMask& tracks);
     // Halts the transport and commits any take without moving the playhead.
     // For stops the user did not ask for as a transport press: session
     // switch, shutdown, bounce, external sync.
@@ -990,6 +997,18 @@ private:
         AudioEngine& owner;
     };
     MidiHotplugTimer midiHotplugTimer { *this };
+
+    // Hands live rebuilds to the audio thread and frees what it hands back;
+    // runs while either has anything left to do.
+    void servicePlayback();
+    struct PlaybackServiceTimer : dusk::Timer
+    {
+        explicit PlaybackServiceTimer (AudioEngine& o) : owner (o) {}
+        void timerCallback() override { owner.servicePlayback(); }
+        AudioEngine& owner;
+    };
+    PlaybackServiceTimer playbackServiceTimer { *this };
+    int playbackIdleTicks = 0;
 
     // Outlives the engine so a hop still queued when it dies is a no-op instead
     // of a use-after-free: the poll thread posts those, and joining it in the

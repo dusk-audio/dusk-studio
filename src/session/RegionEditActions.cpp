@@ -33,30 +33,31 @@ std::filesystem::path audioPath (const FileType& file)
 
 // Per thread, so a batch the message thread holds open never holds back an
 // action another thread runs.
-thread_local int  rebuildBatchDepth = 0;
-thread_local bool rebuildHeldBack   = false;
+thread_local int           rebuildBatchDepth = 0;
+thread_local bool          rebuildHeldBack   = false;
+thread_local TrackSlotMask rebuildTracks {};
 
-void rebuildPlaybackIfStopped (AudioEngine& engine)
+// Brings playback up to date after the regions or takes of `tracks` changed,
+// heard at once whether stopped or rolling (AudioEngine::refreshPlayback).
+// Inside a RegionRebuildBatch the tracks are collected and refreshed once.
+void refreshPlayback (AudioEngine& engine, const TrackSlotMask& tracks)
 {
     if (rebuildBatchDepth > 0)
     {
+        for (std::size_t t = 0; t < tracks.size(); ++t)
+            rebuildTracks[t] = rebuildTracks[t] || tracks[t];
         rebuildHeldBack = true;
         return;
     }
-    if (engine.getTransport().getState() == Transport::State::Stopped)
-    {
-        engine.getPlaybackEngine().preparePlayback (PlaybackEngine::Audition::Honour);
-    }
-    else
-    {
-        // Transport rolling: full preparePlayback would tear down
-        // readers mid-stream. Push the latest gain / mute through
-        // the lightweight live-refresh path instead so Normalize +
-        // gain-handle drags become audible immediately. Structural
-        // changes (move / trim / split / join) won't take effect
-        // until the next Stop+Play, by design.
-        engine.getPlaybackEngine().refreshLiveRegionParams();
-    }
+    engine.refreshPlayback (tracks);
+}
+
+void refreshPlayback (AudioEngine& engine, int trackIdx)
+{
+    TrackSlotMask tracks {};
+    if (trackIdx >= 0 && trackIdx < Session::kNumTracks)
+        tracks[(std::size_t) trackIdx] = true;
+    refreshPlayback (engine, tracks);
 }
 
 bool indexValid (Session& s, int trackIdx, int regionIdx)
@@ -166,7 +167,7 @@ RegionRebuildBatch::RegionRebuildBatch (AudioEngine& e) noexcept
 RegionRebuildBatch::~RegionRebuildBatch()
 {
     if (--rebuildBatchDepth > 0 || ! std::exchange (rebuildHeldBack, false)) return;
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, std::exchange (rebuildTracks, TrackSlotMask {}));
 }
 
 bool undoTransaction (AudioEngine& engine)
@@ -322,7 +323,7 @@ bool RegionEditAction::perform()
     if (! indexValid (session, trackIdx, regionIdx)) return false;
     if (frozenLocked (session, trackIdx)) return false;
     session.track (trackIdx).regions[(size_t) regionIdx] = afterState;
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -331,7 +332,7 @@ bool RegionEditAction::undo()
     if (! indexValid (session, trackIdx, regionIdx)) return false;
     if (frozenLocked (session, trackIdx)) return false;
     session.track (trackIdx).regions[(size_t) regionIdx] = beforeState;
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -371,7 +372,7 @@ bool MidiRegionEditAction::apply (bool forward)
             else
                 for (auto c = changes.rbegin(); c != changes.rend(); ++c) mregs[(size_t) c->regionIdx] = c->before;
         });
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -415,7 +416,7 @@ bool SplitRegionAction::perform()
 
     regs.insert (regs.begin() + regionIdx + 1, right);
 
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -433,7 +434,7 @@ bool SplitRegionAction::undo()
     regs.erase (regs.begin() + regionIdx + 1);
     regs[(size_t) regionIdx] = originalState;
 
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -455,7 +456,7 @@ bool PasteRegionAction::perform()
     if (const auto* take = findTake (track, regionToInsert.takeId);
         take == nullptr || take->file != regionToInsert.file)
         regs.back().takeId = 0;
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -467,7 +468,7 @@ bool PasteRegionAction::undo()
     auto& regs = session.track (trackIdx).regions;
     if (insertedAt >= (int) regs.size()) return false;
     regs.erase (regs.begin() + insertedAt);
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -541,7 +542,7 @@ bool DeleteRegionAction::perform()
     removed = regs[(size_t) regionIdx];
     haveRemoved = true;
     regs.erase (regs.begin() + regionIdx);
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -554,7 +555,7 @@ bool DeleteRegionAction::undo()
 
     const int insertAt = std::min (regionIdx, (int) regs.size());
     regs.insert (regs.begin() + insertAt, removed);
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -596,7 +597,7 @@ bool PromoteTakeRangeAction::perform()
         track.regions = afterRegions;
         applyTakeChange (track.takes, beforeTakes, afterTakes);
     }
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -608,7 +609,7 @@ bool PromoteTakeRangeAction::undo()
     session.track (trackIdx).regions = beforeRegions;
     applyTakeChange (session.track (trackIdx).takes, afterTakes, beforeTakes);
     endAuditionOfMissingTake (session);
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -647,7 +648,7 @@ bool DeleteTakeAction::perform()
     // in place of the track's regions without being asked for again.
     if (session.takeAudition.trackIdx == trackIdx && session.takeAudition.takeId == takeId)
         session.takeAudition = {};
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -664,7 +665,7 @@ bool DeleteTakeAction::undo()
                       afterTakes.end());
     applyTakeChange (track.takes, afterTakes, beforeTakes);
     track.regions = beforeRegions;
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -731,7 +732,7 @@ bool DeleteMidiRegionAction::perform()
             for (const int idx : indices)
                 mregs.erase (mregs.begin() + idx);
         });
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -750,7 +751,7 @@ bool DeleteMidiRegionAction::undo()
                 mregs.insert (mregs.begin() + insertAt, removed[i]);
             }
         });
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -1621,7 +1622,7 @@ bool CloneTrackAction::perform()
     // The destination's own takes are gone; see DeleteTakeAction.
     if (session.takeAudition.trackIdx == dstIdx)
         session.takeAudition = {};
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, dstIdx);
     return true;
 }
 
@@ -1636,7 +1637,7 @@ bool CloneTrackAction::undo()
     if (session.track (dstIdx).frozen.load (std::memory_order_relaxed)) return false;
     applyTrack (session.track (dstIdx), engine, dstIdx, *beforeState, afterState->takes);
     endAuditionOfMissingTake (session);
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, dstIdx);
     return true;
 }
 
@@ -1769,7 +1770,7 @@ bool JoinRegionsAction::perform()
             return false;
         resultInsertedAt = mergedIdx;
         regs[(size_t) resultInsertedAt] = merged;
-        rebuildPlaybackIfStopped (engine);
+        refreshPlayback (engine, trackIdx);
         return true;
     }
 
@@ -1866,7 +1867,7 @@ bool JoinRegionsAction::perform()
     }
     resultInsertedAt = mergedIdx;
     regs[(size_t) resultInsertedAt] = merged;
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -1896,7 +1897,7 @@ bool JoinRegionsAction::undo()
         if (idx < 0 || idx > (int) regs.size()) return false;
         regs.insert (regs.begin() + idx, reg);
     }
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -1926,7 +1927,11 @@ bool RecordCommitAction::perform()
         session.track (d.trackIndex).midiRegions.mutate (
             [&d] (std::vector<MidiRegion>& mregs) { mregs = d.midiAfter; });
     }
-    rebuildPlaybackIfStopped (engine);
+    TrackSlotMask tracks {};
+    for (const auto& d : diffs)
+        if (d.trackIndex >= 0 && d.trackIndex < Session::kNumTracks)
+            tracks[(std::size_t) d.trackIndex] = true;
+    refreshPlayback (engine, tracks);
     return true;
 }
 
@@ -1942,7 +1947,11 @@ bool RecordCommitAction::undo()
             [&d] (std::vector<MidiRegion>& mregs) { mregs = d.midiBefore; });
     }
     endAuditionOfMissingTake (session);
-    rebuildPlaybackIfStopped (engine);
+    TrackSlotMask tracks {};
+    for (const auto& d : diffs)
+        if (d.trackIndex >= 0 && d.trackIndex < Session::kNumTracks)
+            tracks[(std::size_t) d.trackIndex] = true;
+    refreshPlayback (engine, tracks);
     return true;
 }
 
@@ -2046,7 +2055,7 @@ bool ReverseRegionAction::perform()
 
     if (! indexValid (session, trackIdx, regionIdx)) return false;
     session.track (trackIdx).regions[(size_t) regionIdx] = afterState;
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
@@ -2055,7 +2064,7 @@ bool ReverseRegionAction::undo()
     if (! indexValid (session, trackIdx, regionIdx)) return false;
     if (frozenLocked (session, trackIdx)) return false;
     session.track (trackIdx).regions[(size_t) regionIdx] = beforeState;
-    rebuildPlaybackIfStopped (engine);
+    refreshPlayback (engine, trackIdx);
     return true;
 }
 
