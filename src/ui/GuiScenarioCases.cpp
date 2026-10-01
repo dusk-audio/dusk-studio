@@ -11208,11 +11208,9 @@ void browseCrowdedFolder (GuiHost& host, ScenarioContext& ctx, int files, std::f
         typeReplacing (host, crowded.string());
         host.pressPeerKey ("Return", 0);
     } });
-    steps->push_back ({ 200, [&host, &ctx, crowded]
-    {
-        ctx.expect (host.fileBrowserFolder().lexically_normal() == crowded.lexically_normal(),
-                    "the browser did not move to the crowded folder");
-    } });
+    steps->push_back ({ 200, [] {}, [&host, crowded]
+                        { return host.fileBrowserFolder().lexically_normal() == crowded.lexically_normal(); },
+                        "the browser did not move to the crowded folder" });
     runSteps (ctx, steps, std::move (then));
 }
 
