@@ -3886,7 +3886,7 @@ std::optional<ScenarioResult> runAudioEditorEscapeCancelsDrag (GuiHost& host, Sc
         restored ("Escape from the shell during a gain drag");
         release();
     } });
-    constexpr int command = 2;
+    static constexpr int command = 2;
     const auto trimmed = [region] { return region().lengthInSamples < kTakeCaseLength - 12000; };
     steps->push_back ({ 150, [restored, press, point]
     {
@@ -4162,8 +4162,8 @@ std::optional<ScenarioResult> runAudioEditorMoveSelection (GuiHost& host, Scenar
     auto& track = session.track (0);
     if (! addLevelTake (ctx, track, "Fixture", 0, kTakeCaseLength, 0.5f))
         return ScenarioResult::fail ("could not write region fixture");
-    constexpr std::int64_t kFirst = 0;
-    constexpr std::int64_t kSecond = 60000;
+    static constexpr std::int64_t kFirst = 0;
+    static constexpr std::int64_t kSecond = 60000;
     for (const auto& [from, to] : { std::pair<std::int64_t, std::int64_t> { kFirst, 36000 }, { kSecond, kTakeCaseLength } })
         if (auto region = regionFromTake (track.takes.front(), from, to))
             track.regions.push_back (*region);
@@ -4185,7 +4185,7 @@ std::optional<ScenarioResult> runAudioEditorMoveSelection (GuiHost& host, Scenar
         ctx.expect (at.size() == 2, "editor geometry unavailable");
         return at.size() == 2 ? at : std::vector<int> { 0, 0 };
     };
-    constexpr int command = 2;
+    static constexpr int command = 2;
     auto held = std::make_shared<std::vector<int>>();
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, [&host, &ctx, point]

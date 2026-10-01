@@ -919,9 +919,9 @@ std::filesystem::path pathOf (const SessionFile& file)
 // pumped blocks, as a device would clock it.
 std::optional<ScenarioResult> auditionNeverReachesBounce (ScenarioContext& ctx)
 {
-    constexpr int kTrackIdx = 0;
-    constexpr std::int64_t kStart = 12000;
-    constexpr int kLength = 24000;
+    static constexpr int kTrackIdx = 0;
+    static constexpr std::int64_t kStart = 12000;
+    static constexpr int kLength = 24000;
     constexpr int kProbe = ScenarioContext::kBlockSize;
     auto& engine = ctx.engine();
     auto& session = ctx.session();

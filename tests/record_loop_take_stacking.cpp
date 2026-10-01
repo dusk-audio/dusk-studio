@@ -462,7 +462,7 @@ TEST_CASE ("Loop punch inside a longer region keeps its take whole and splits it
 
     const auto& regions = session.track (0).regions;
     REQUIRE (regions.size() == 3);
-    constexpr std::int64_t fade = 5;
+    static constexpr std::int64_t fade = 5;
     const auto& punched = loopAudioRegion (session);
     REQUIRE (punched.takeId == takes[1].id);
     REQUIRE (punched.timelineStart == 100);

@@ -385,7 +385,7 @@ void drawScissorsGlyph (ImDrawList* dl, ImVec2 at, float scale)
 void drawPencilGlyph (ImDrawList* dl, ImVec2 at, float scale)
 {
     constexpr float kUnit = 34.0f / 24.0f;
-    constexpr float kInv = 0.70710678f;
+    static constexpr float kInv = 0.70710678f;
     const float g = 0.85f * scale * kUnit;
     const auto p = [at, g] (float t, float w)
     { return ImVec2 (at.x + (kInv * t + kInv * w) * g, at.y + (-kInv * t + kInv * w) * g); };
