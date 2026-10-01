@@ -805,6 +805,7 @@ private:
     // The lanes' share of the body under the ruler, set by dragging their caption.
     float laneShare = takelanes::kDefaultLaneShare;
     float dividerGrab = 0.0f;
+    bool dividerDragging = false;
     bool revealPending = false;
     std::uint64_t revealTake = 0;
     // A drag across a lane, from where it was pressed to where it is, in timeline
@@ -4311,15 +4312,28 @@ private:
     {
         addControl ("Lane divider", caption, true);
         const bool hovered = dw::hitArea (ctx, "##lane-divider", caption.tl(), caption.br());
-        const bool held = ImGui::IsItemActive();
-        const float mouseY = ImGui::GetIO().MousePos.y;
+        const auto& io = ImGui::GetIO();
         if (ImGui::IsItemActivated())
-            dividerGrab = mouseY - caption.y0;
+        {
+            dividerDragging = true;
+            dividerGrab = io.MousePos.y - caption.y0;
+        }
         if (hovered && ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left))
+        {
             laneShare = takelanes::kDefaultLaneShare;
-        else if (held)
-            laneShare = takelanes::shareForCaptionAt ((mouseY - dividerGrab - layout.ruler.y1) / layout.scale,
-                                                      (layout.scroll.y0 - layout.ruler.y1) / layout.scale);
+            dividerDragging = false;
+        }
+        // Followed by its own state rather than the item's: a move and the release
+        // can land in one frame, after the item has already let go.
+        const bool held = dividerDragging;
+        if (dividerDragging)
+        {
+            if (ImGui::IsMousePosValid())
+                laneShare = takelanes::shareForCaptionAt ((io.MousePos.y - dividerGrab - layout.ruler.y1) / layout.scale,
+                                                          (layout.scroll.y0 - layout.ruler.y1) / layout.scale);
+            if (! io.MouseDown[ImGuiMouseButton_Left])
+                dividerDragging = false;
+        }
         if (hovered || held)
             ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeNS);
         return hovered || held;

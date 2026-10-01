@@ -2452,6 +2452,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     void resetForScenario() override
     {
+        // A scenario's own windows, or anything else on the desktop, can take the
+        // front from the main window; injected input needs it back.
+        if (auto* peer = owner.getPeer(); peer != nullptr && ! peer->isFocused())
+            platform::bringWindowToFront (*peer);
+
         auto& stack = EmbeddedModal::activeModalStack();
         for (int guard = 0; guard < 32 && ! stack.empty(); ++guard)
             stack.back()->close();
@@ -2604,6 +2609,12 @@ void MainComponent::runGuiScenarios (std::string spec)
 {
     auto& run = activeGuiRun();
     if (run != nullptr) return;
+
+    // Injected input is dispatched through the window, and on macOS a window that
+    // is not the active app's frontmost one has no keyboard focus and loses
+    // clicks to whatever covers it.
+    if (auto* peer = getPeer())
+        platform::bringWindowToFront (*peer);
 
     run = std::make_unique<GuiRun>();
     run->host = std::make_unique<ScenarioGuiHost> (*this);

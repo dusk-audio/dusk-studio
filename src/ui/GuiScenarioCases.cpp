@@ -2951,12 +2951,13 @@ std::optional<ScenarioResult> runAudioEditorLaneClick (GuiHost& host, ScenarioCo
                     "a click where the punch has no audio did not say so");
         ctx.expect (takeCoverage (track, *punch) == std::vector<Span> { { 24000, 72000 } },
                     "a click where the punch has no audio changed the comp");
-        // The divider where the punch gives way to Take 3, dragged from Take 3's lane.
+        // The divider where the punch gives way to Take 3, dragged earlier from Take 3's
+        // lane: the punch ends where its take does, so it can only give ground.
         const auto seam = compSeamNear (track, 72000, 128);
         if (! ctx.expect (seam.has_value(), "no seam where the punch ends")) return;
         const auto at = track.regions[(std::size_t) seam->right].timelineStart;
         const auto from = host.audioEditorTakePoint ("lane", track.regions[(std::size_t) seam->right].takeId, at);
-        const auto to = host.audioEditorTakePoint ("lane", track.regions[(std::size_t) seam->right].takeId, at + 12000);
+        const auto to = host.audioEditorTakePoint ("lane", track.regions[(std::size_t) seam->right].takeId, at - 12000);
         if (! ctx.expect (from.size() == 2 && to.size() == 2, "take lane geometry unavailable")) return;
         ctx.expect (host.audioEditorPointer (from[0], from[1], true), "the divider did not take the press");
         host.audioEditorPointer (to[0], to[1], true);
@@ -2965,7 +2966,7 @@ std::optional<ScenarioResult> runAudioEditorLaneClick (GuiHost& host, ScenarioCo
     steps->push_back ({ 150, [&ctx, &track, &engine = ctx.engine(), punch]
     {
         const auto moved = takeCoverage (track, *punch);
-        ctx.expect (moved.size() == 1 && moved[0].first == 24000 && std::abs (moved[0].second - 84000) < 512,
+        ctx.expect (moved.size() == 1 && moved[0].first == 24000 && std::abs (moved[0].second - 60000) < 512,
                     "dragging the divider in a lane did not move where the punch ends");
         ctx.expect (undoDescription (engine) == "Move comp seam", "the lane divider drag is not one step");
     } });
@@ -4701,7 +4702,7 @@ std::optional<ScenarioResult> runAudioEditorFocusDropsRange (GuiHost& host, Scen
     region.file = decltype (region.file) (source.string());
     region.lengthInSamples = 48000;
     track.regions.push_back (region);
-    region.timelineStart = 96000;
+    region.timelineStart = 60000;
     track.regions.push_back (region);
     session.audioEditorSnap = false;
     if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
@@ -4718,21 +4719,30 @@ std::optional<ScenarioResult> runAudioEditorFocusDropsRange (GuiHost& host, Scen
     const auto selection = [&host, &ctx] (int focused, bool range, const std::string& failure)
     {
         const auto state = host.audioEditorSelection();
-        ctx.expect (state.size() == 4 && state[0] == focused && (state[1] != 0) == range, failure);
+        const auto view = host.audioEditorView();
+        ctx.expect (state.size() == 4 && state[0] == focused && (state[1] != 0) == range,
+                    failure + " (focused " + (state.size() == 4 ? std::to_string (state[0]) : "-") + ", range "
+                        + (state.size() == 4 ? std::to_string (state[1]) : "-") + ", pixels per sample "
+                        + (view.size() == 3 ? std::to_string (view[0]) : "-") + ")");
     };
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 400, [&session, press] { session.editMode = EditMode::Range; press (12000, 30000); } });
+    // Zoomed out far enough that both regions are on screen, a key a frame: presses
+    // within one frame read as one.
+    for (int i = 0; i < 6; ++i)
+        steps->push_back ({ i == 0 ? 400 : 80, [&host, &ctx]
+        { ctx.expect (host.pressAudioEditorKey ("-"), "the zoom-out key was not handled"); } });
+    steps->push_back ({ 150, [&session, press] { session.editMode = EditMode::Range; press (12000, 30000); } });
     steps->push_back ({ 150, [&session, selection, press]
     {
         selection (0, true, "the Range drag did not select a range on the first region");
         session.editMode = EditMode::Grab;
-        press (120000, 120000);
+        press (80000, 80000);
     } });
     steps->push_back ({ 150, [&session, selection, press]
     {
         selection (1, false, "a Grab click on another region kept the first region's range");
         session.editMode = EditMode::Range;
-        press (100000, 110000);
+        press (70000, 90000);
     } });
     steps->push_back ({ 150, [&session, selection, press]
     {
