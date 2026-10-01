@@ -187,13 +187,13 @@ TEST_CASE ("BufferedFileReader prefetch warms a span the audio thread has not as
     auto r = manualReader (path);
     REQUIRE (r != nullptr);
 
-    const std::int64_t far = kFrames - kWindow;
-    r->prefetch (far);
+    const std::int64_t lastWindow = kFrames - kWindow;
+    r->prefetch (lastWindow);
     r->fillNow();
 
     Block warm (kBlock);
-    REQUIRE (r->readRt (warm.ptrs.data(), kChannels, far, kBlock));
-    REQUIRE (matchesSource (warm, far, kBlock));
+    REQUIRE (r->readRt (warm.ptrs.data(), kChannels, lastWindow, kBlock));
+    REQUIRE (matchesSource (warm, lastWindow, kBlock));
 
     // Backwards, over a span the window has already left behind.
     r->prefetch (0);
