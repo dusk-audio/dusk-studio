@@ -2787,7 +2787,10 @@ std::optional<ScenarioResult> runAudioEditorLaneDivider (GuiHost& host, Scenario
     {
         ctx.expect (pitch() > *opened, "dragging the divider up did not make the lanes taller ("
                                            + std::to_string (*opened) + " to " + std::to_string (pitch()) + ")");
-        dragBy (400);
+        // Past where the lanes opened but short of the divider's floor: at the floor an
+        // editor on a 900 px screen has room for the newest lane only, and the pitch
+        // needs two.
+        dragBy (200);
     } });
     steps->push_back ({ 150, [&ctx, pitch, opened]
     {
