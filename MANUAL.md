@@ -1825,9 +1825,9 @@ The editor's preset bar holds the plug-in's factory presets and any you save you
 
 ### Sunset
 
-A polyphonic synthesiser: six engines (Cosmos, Oracle, Mono, Modular, Prism and Acid), two oscillators plus sub and noise, a resonant filter, two envelopes, unison and glide. It is an **instrument**, so it appears only on a MIDI track's picker, and loading it converts an audio track to MIDI the way a soundfont does.
+Dusk Audio's Sunset Circuits plug-in, compiled into Dusk Studio with the plug-in's own DSP and editor. A polyphonic synthesiser: six engines (Cosmos, Oracle, Mono, Modular, Prism and Acid), each with its own oscillators, filter, envelopes, LFOs, modulation matrix and effects, plus unison, glide and an arpeggiator. It is an **instrument**, so it appears only on a MIDI track's picker, and loading it converts an audio track to MIDI the way a soundfont does.
 
-The editor exposes the two dozen controls a player reaches for, grouped as Global, Oscillators, Filter and Envelopes. The engine carries a great many more, which stay at the values its own init patch sets.
+Every control the plug-in has is in its editor, and the editor's preset menu holds the plug-in's factory presets and any you save yourself. The keyboard in the editor plays the instrument: click a key to hear it. Its **Oversampling** switch (1x, 2x or 4x, 2x by default) costs a few samples of latency above 1x, which the unit reports and delay compensation covers. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Sunset load with their settings, and everything that panel did not have starts at the plug-in's defaults.
 
 It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and channel and polyphonic aftertouch, and it stops cleanly when the transport does.
 
@@ -1837,15 +1837,15 @@ It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and c
 
 Picking a unit from the picker opens its editor. After that, on a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, or click the slot again, to dismiss it.
 
-**DuskVerb 2, Tape Echo 2 and Tape Machine 2 open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. Utility and Sunset have no editor of their own, so Dusk Studio draws them from their parameter table as a panel of knobs, switch banks, drop-down lists and toggles.
+**DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. Utility has no editor of its own, so Dusk Studio draws it from its parameter table as a panel of knobs and toggles.
 
 On an aux lane there is nothing to open: the unit's controls are always on screen, filling the lane under the slot header. DuskVerb 2, Tape Echo 2 and Tape Machine 2 sit there as their own editors, centred and scaled down to fit the lane while keeping their shape, the way a plug-in's editor does. The knob panels are grouped the way the unit's front panel would be: Utility shows Level and Image. Their knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
 
-On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Choices, such as Sunset's **Mode**, are drop-down lists. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
+On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Choices are drop-down lists. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
 
 The transport keys keep working while an editor is open. A click into a plug-in's editor gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again.
 
-**MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in DuskVerb 2's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot, choose **MIDI Learn last-touched parameter**, and choose **MIDI Learn (this track)...** in the next menu. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
+**MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in a unit's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot, choose **MIDI Learn last-touched parameter**, and choose **MIDI Learn (this track)...** in the next menu. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
 
 ## Opening the editor
 

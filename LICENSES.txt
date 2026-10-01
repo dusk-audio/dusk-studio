@@ -168,7 +168,7 @@ Dusk Audio plugins (donor DSP cores)
     - tape-echo    (Tape Echo 2 DSP and editor)
     - TapeMachine  (full tape emulation)
     - DuskVerb     (DuskVerb 2 DSP and editor)
-    - sunset-circuits (Sunset synth core)
+    - sunset-circuits (Sunset Circuits DSP and editor)
     - shared/AnalogEmulation (TubeEmulation, TransformerEmulation, etc.)
     - shared-daf/fonts/BarlowCondensed (Regular and SemiBold font data embedded
       in the DuskVerb 2 editor; SIL Open Font License 1.1, Copyright 2017 The

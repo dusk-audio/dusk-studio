@@ -1722,7 +1722,7 @@ const ScenarioRegistrar fileKeys { Scenario {
 } };
 
 std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContext& ctx, const std::string& unitId,
-                                                   const std::string& control, float position)
+                                                   const std::string& control, float position, bool ownEditor = false)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
     return ScenarioResult::skip ("requires native UI");
@@ -1765,6 +1765,8 @@ std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContex
     if (loaded) strip.insertMode.store (ChannelStrip::kInsertPlugin);
     engine.resumeProcessing();
     if (! loaded) return ScenarioResult::fail ("could not load " + unitId + ": " + error);
+    if (ownEditor && ! strip.getBuiltinSlot().hasPluginEditor())
+        return ScenarioResult::fail (unitId + " brought no editor of its own");
     int paramIndex = -1;
     for (int i = 0; i < strip.getBuiltinSlot().paramCount(); ++i)
         if (const auto* info = strip.getBuiltinSlot().paramInfo (i);
@@ -1836,7 +1838,19 @@ const ScenarioRegistrar duskverbMidiLearn { Scenario {
     {
         if (! host.canEmbedPluginEditors())
             return ScenarioResult::skip ("requires a window the unit's editor can embed into");
-        return runBuiltinMidiLearn (host, ctx, "dusk.builtin.reverb", "mix", 0.8f);
+        return runBuiltinMidiLearn (host, ctx, "dusk.builtin.reverb", "mix", 0.8f, true);
+    }
+} };
+
+// Sunset is an instrument, and its editor is the plug-in's own too.
+const ScenarioRegistrar sunsetMidiLearn { Scenario {
+    "gui.sunset_midi_learn", { "gui", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+        if (! host.canEmbedPluginEditors())
+            return ScenarioResult::skip ("requires a window the unit's editor can embed into");
+        return runBuiltinMidiLearn (host, ctx, "dusk.builtin.synth", "filterCutoff", 0.25f, true);
     }
 } };
 

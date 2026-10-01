@@ -325,29 +325,21 @@ target_link_libraries(dusk-studio-tests PRIVATE dusk_sndfile)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sodium)
 
 if(DUSK_PLUGINS_PATH)
-    # Built-in units backed by donor cores. Gated on the donor being available,
-    # so a no-donor build doesn't try to compile tests whose includes can't be
-    # resolved.
-    target_sources(dusk-studio-tests PRIVATE
-        builtin_synth_unit.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/builtin/SynthUnit.cpp
-        ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp)
-    target_include_directories(dusk-studio-tests SYSTEM PRIVATE
-        ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core)
-    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DONOR_UNITS=1)
-
-    # DAF built-ins are the app's own static libraries, defined beside the app.
+    # Built-in units are the app's own static libraries of the donor's DAF
+    # plug-ins, defined beside the app, so a no-donor build has none to test.
     if(TARGET dusk_daf_tape_echo_2 AND TARGET dusk_daf_duskverb_2
-       AND TARGET dusk_daf_tape_machine_2)
+       AND TARGET dusk_daf_tape_machine_2 AND TARGET dusk_daf_sunset)
         target_sources(dusk-studio-tests PRIVATE
             builtin_tape_echo_2.cpp
             builtin_duskverb_2.cpp
-            builtin_tape_unit.cpp)
+            builtin_tape_unit.cpp
+            builtin_synth_unit.cpp)
         target_include_directories(dusk-studio-tests SYSTEM PRIVATE
             ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core)
         target_link_libraries(dusk-studio-tests PRIVATE
             dusk_daf_tape_echo_2
-            dusk_daf_duskverb_2)
+            dusk_daf_duskverb_2
+            dusk_daf_sunset)
         target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
     endif()
 endif()

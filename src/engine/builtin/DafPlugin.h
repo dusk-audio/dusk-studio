@@ -153,4 +153,5 @@ public:
 std::unique_ptr<DafPlugin> createTapeEcho2();
 std::unique_ptr<DafPlugin> createDuskVerb2();
 std::unique_ptr<DafPlugin> createTapeMachine2();
+std::unique_ptr<DafPlugin> createSunset();
 } // namespace duskstudio::builtin

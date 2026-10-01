@@ -1,9 +1,6 @@
 #include "BuiltinRegistry.h"
 
 #include "UtilityUnit.h"
-#if DUSKSTUDIO_HAS_DONOR_UNITS
- #include "SynthUnit.h"
-#endif
 
 namespace duskstudio::builtin
 {
@@ -30,6 +27,37 @@ const std::vector<LegacyParam> kTapeKnobParams
     { "auto_cal",    "autoCal" },
     { "auto_comp",   "autoComp" },
 };
+
+// The knob synth unit's controls, which Sunset Circuits took over under its id.
+const std::vector<LegacyParam> kSynthKnobParams
+{
+    { "mode",          "mode" },
+    { "master_vol",    "masterVol" },
+    { "master_tune",   "masterTune" },
+    { "pb_range",      "pbRange" },
+    { "portamento",    "portaTime" },
+    { "unison_voices", "unisonVoices" },
+    { "unison_detune", "unisonDetune" },
+    { "osc1_wave",     "osc1Wave" },
+    { "osc1_level",    "osc1Level" },
+    { "osc2_wave",     "osc2Wave" },
+    { "osc2_level",    "osc2Level" },
+    { "osc2_detune",   "osc2Detune" },
+    { "osc2_semi",     "osc2Semi" },
+    { "sub_level",     "subLevel" },
+    { "noise_level",   "noiseLevel" },
+    { "cutoff",        "filterCutoff" },
+    { "resonance",     "filterRes" },
+    { "filter_env",    "filterEnvAmt" },
+    { "amp_attack",    "ampA" },
+    { "amp_decay",     "ampD" },
+    { "amp_sustain",   "ampS" },
+    { "amp_release",   "ampR" },
+    { "filt_attack",   "filtA" },
+    { "filt_decay",    "filtD" },
+    { "filt_sustain",  "filtS" },
+    { "filt_release",  "filtR" },
+};
 #endif
 } // namespace
 
@@ -44,10 +72,8 @@ const std::vector<UnitInfo>& registry()
         { "dusk.builtin.delay", "Tape Echo 2", "Fx|Delay", false, nullptr, &createTapeEcho2 },
         { "dusk.builtin.tape", "Tape Machine 2", "Fx|Distortion", false, nullptr,
           &createTapeMachine2, &kTapeKnobParams },
-#endif
-#if DUSKSTUDIO_HAS_DONOR_UNITS
-        { "dusk.builtin.synth", "Sunset", "Instrument|Synth", true,
-          [] () -> std::unique_ptr<BuiltinUnit> { return std::make_unique<SynthUnit>(); } },
+        { "dusk.builtin.synth", "Sunset", "Instrument|Synth", true, nullptr, &createSunset,
+          &kSynthKnobParams },
 #endif
     };
     return units;

@@ -62,6 +62,11 @@ Takes live on the track now, and the audio editor is where you comp them.
 
 ### Changed
 
+- **Sunset opens its own editor** (#808). The built-in Sunset is now the Sunset
+  Circuits plug-in, compiled in with its own DSP and editor in place of the
+  knob panel: every control, the factory and user presets, and a keyboard that
+  plays it. Sessions saved with the knob panel keep their settings. Above 1x,
+  its oversampling reports latency, which delay compensation covers.
 - **Audio regions no longer cycle takes.** The T 1/N pill, the Takes submenu
   and Alt+T / Alt+Shift+T now work on MIDI regions only; audio takes are chosen
   in the take lanes. MIDI take history is unchanged.

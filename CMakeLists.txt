@@ -1459,8 +1459,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
-        "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp"
-        "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core")
+        "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp")
 
     # Compile multi-comp's processor + editor + shared LEDMeter so
     # UniversalCompressor links cleanly. Editor sources are linked but not
@@ -1473,8 +1472,6 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # the Tape Machine 2 built-in below, which exists only under
     # DUSK_PLUGINS_PATH.
     target_sources(DuskStudio PRIVATE
-        src/engine/builtin/SynthUnit.cpp
-        "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp"
         src/dsp/MasterTape.cpp
         "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
         "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
@@ -1484,11 +1481,8 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp")
 
     # DUSKSTUDIO_HAS_DUSK_DSP gates the donor's framework-era processors as
-    # well as its cores; DUSKSTUDIO_HAS_DONOR_UNITS gates only the built-in
-    # units, so the narrow-link test target can enable those alone.
-    target_compile_definitions(DuskStudio PRIVATE
-        DUSKSTUDIO_HAS_DUSK_DSP=1
-        DUSKSTUDIO_HAS_DONOR_UNITS=1)
+    # well as its cores.
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DUSK_DSP=1)
 
     # Built-in units that are Dusk's own DAF plug-ins, run in process. Each is a
     # static library of the plug-in, its DSP core and DAF's static-target entry
@@ -1508,6 +1502,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
         set(_duskstudio_tape_echo_2_dir "${DUSK_PLUGINS_PATH}/plugins/tape-echo/daf-plugin")
         set(_duskstudio_duskverb_2_dir "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/daf-plugin")
         set(_duskstudio_tape_machine_2_dir "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/daf-plugin")
+        set(_duskstudio_sunset_dir "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/daf-plugin")
         if(NOT EXISTS "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp")
             message(FATAL_ERROR
                 "Dusk plugins donor lacks the Tape Echo 2 plug-in; "
@@ -1521,6 +1516,11 @@ if(DEFINED DUSK_PLUGINS_PATH)
         if(NOT EXISTS "${_duskstudio_tape_machine_2_dir}/TapeMachinePlugin.cpp")
             message(FATAL_ERROR
                 "Dusk plugins donor lacks the Tape Machine 2 plug-in; "
+                "use the revision pinned by the build workflows")
+        endif()
+        if(NOT EXISTS "${_duskstudio_sunset_dir}/MultiSynthPlugin.cpp")
+            message(FATAL_ERROR
+                "Dusk plugins donor lacks the Sunset Circuits plug-in; "
                 "use the revision pinned by the build workflows")
         endif()
 
@@ -1646,6 +1646,31 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
             COMPILE_DEFINITIONS ${_duskstudio_tape_machine_2_definitions}
             UI_SOURCE "${_duskstudio_tape_machine_2_dir}/TapeMachineUI.cpp")
 
+        # The plug-in's version is the default its own CMake falls back to; the
+        # editor shows it.
+        file(STRINGS "${_duskstudio_sunset_dir}/CMakeLists.txt"
+             _duskstudio_sunset_version REGEX "^set\\(SUNSETCIRCUITS_DEFAULT_VERSION ")
+        if(NOT _duskstudio_sunset_version MATCHES "\"([0-9]+)\\.([0-9]+)\\.([0-9]+)\"")
+            message(FATAL_ERROR "Cannot read the Sunset Circuits version from the donor")
+        endif()
+        set(_duskstudio_sunset_definitions
+            SC_VERSION_MAJOR=${CMAKE_MATCH_1}
+            SC_VERSION_MINOR=${CMAKE_MATCH_2}
+            SC_VERSION_PATCH=${CMAKE_MATCH_3})
+        set(_duskstudio_sunset_dsp_sources
+            "${_duskstudio_sunset_dir}/MultiSynthPlugin.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp")
+        set(_duskstudio_sunset_includes
+            "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core")
+        duskstudio_add_daf_builtin_library(
+            dusk_daf_sunset OFF DuskSunset
+            "${_duskstudio_sunset_dir}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/Sunset.cpp"
+            DSP_SOURCES ${_duskstudio_sunset_dsp_sources}
+            INCLUDE_DIRS ${_duskstudio_sunset_includes}
+            COMPILE_DEFINITIONS ${_duskstudio_sunset_definitions}
+            UI_SOURCE "${_duskstudio_sunset_dir}/MultiSynthUI.cpp")
+
         set(_duskstudio_duskverb_2_engine_sources "")
         foreach(_verbSource IN ITEMS
                 FDNReverb OctaveGEQDesign DattorroTank QuadTank SixAPTankEngine
@@ -1731,15 +1756,25 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
                 INCLUDE_DIRS ${_duskstudio_tape_machine_2_includes}
                 COMPILE_DEFINITIONS ${_duskstudio_tape_machine_2_definitions}
                 UI_SOURCE "${_duskstudio_tape_machine_2_dir}/TapeMachineUI.cpp")
+            duskstudio_add_daf_builtin_library(
+                dusk_daf_sunset_ui ON DuskSunset
+                "${_duskstudio_sunset_dir}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/Sunset.cpp"
+                DSP_SOURCES ${_duskstudio_sunset_dsp_sources}
+                INCLUDE_DIRS ${_duskstudio_sunset_includes}
+                COMPILE_DEFINITIONS ${_duskstudio_sunset_definitions}
+                UI_SOURCE "${_duskstudio_sunset_dir}/MultiSynthUI.cpp")
             target_link_libraries(DuskStudio PRIVATE
                 dusk_daf_tape_echo_2_ui
                 dusk_daf_duskverb_2_ui
-                dusk_daf_tape_machine_2_ui)
+                dusk_daf_tape_machine_2_ui
+                dusk_daf_sunset_ui)
         else()
             target_link_libraries(DuskStudio PRIVATE
                 dusk_daf_tape_echo_2
                 dusk_daf_duskverb_2
-                dusk_daf_tape_machine_2)
+                dusk_daf_tape_machine_2
+                dusk_daf_sunset)
         endif()
         target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
     else()

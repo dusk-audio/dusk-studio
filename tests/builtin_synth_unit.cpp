@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <utility>
 #include <vector>
 
 // The Sunset instrument is the only built-in unit the mixer routes MIDI to, so
@@ -73,7 +74,24 @@ TEST_CASE ("synth unit is registered as an instrument", "[builtin][synth]")
     loadSynth (slot);
     REQUIRE (slot.displayName() == "Sunset");
     REQUIRE (slot.isLoadedInstrument());
+}
+
+TEST_CASE ("synth unit reports the latency of its own oversampling", "[builtin][synth]")
+{
+    NativeBuiltinSlot slot;
+    loadSynth (slot);
+    const int oversampling = paramIndex (slot, "oversampling");
+    REQUIRE_THAT (slot.getParamValue (oversampling), WithinAbs (1.0, 1e-9));
+    const int atTwice = slot.getLatencySamples();
+    REQUIRE (atTwice > 0);
+
+    slot.setParamValue (oversampling, 0.0f);
+    renderPeak (slot, 2, nullptr);
     REQUIRE (slot.getLatencySamples() == 0);
+
+    slot.setParamValue (oversampling, 2.0f);
+    renderPeak (slot, 2, nullptr);
+    REQUIRE (slot.getLatencySamples() > atTwice);
 }
 
 TEST_CASE ("synth unit reaches an instrument picker and not an effect one",
@@ -120,7 +138,7 @@ TEST_CASE ("synth unit stops on the transport's all-notes-off", "[builtin][synth
     NativeBuiltinSlot slot;
     loadSynth (slot);
     // A short release so the tail is gone well inside the settle below.
-    slot.setParamValue (paramIndex (slot, "amp_release"), 0.01f);
+    slot.setParamValue (paramIndex (slot, "ampR"), 0.01f);
 
     dusk::MidiBuffer noteOn;
     addMessage (noteOn, 0x90, 64, 110);
@@ -163,7 +181,7 @@ TEST_CASE ("synth unit answers pitch bend, mod wheel and sustain", "[builtin][sy
 {
     NativeBuiltinSlot slot;
     loadSynth (slot);
-    slot.setParamValue (paramIndex (slot, "amp_release"), 0.01f);
+    slot.setParamValue (paramIndex (slot, "ampR"), 0.01f);
 
     // Sustain down, note on, note off: the pedal has to hold the voice.
     dusk::MidiBuffer held;
@@ -191,9 +209,9 @@ TEST_CASE ("synth unit state round-trips", "[builtin][synth]")
 {
     NativeBuiltinSlot saver;
     loadSynth (saver);
-    const int cutoffIdx = paramIndex (saver, "cutoff");
-    const int resIdx    = paramIndex (saver, "resonance");
-    const int waveIdx   = paramIndex (saver, "osc1_wave");
+    const int cutoffIdx = paramIndex (saver, "filterCutoff");
+    const int resIdx    = paramIndex (saver, "filterRes");
+    const int waveIdx   = paramIndex (saver, "osc1Wave");
     saver.setParamValue (cutoffIdx, 1250.0f);
     saver.setParamValue (resIdx, 0.72f);
     saver.setParamValue (waveIdx, 2.0f);
@@ -212,6 +230,47 @@ TEST_CASE ("synth unit state round-trips", "[builtin][synth]")
     std::string error;
     REQUIRE (tape.loadUnit ("dusk.builtin.tape", kSampleRate, kBlock, error));
     REQUIRE_FALSE (tape.loadState (blob));
+}
+
+TEST_CASE ("synth unit restores a session saved with the knob synth unit", "[builtin][synth]")
+{
+    // The knob unit's blob: its own control ids, version 1.
+    const std::string text =
+        R"({"id":"dusk.builtin.synth","version":1,"params":{)"
+        R"("mode":3,"master_vol":-6,"master_tune":12,"pb_range":7,"portamento":0.25,)"
+        R"("unison_voices":4,"unison_detune":20,"osc1_wave":2,"osc1_level":0.6,)"
+        R"("osc2_wave":1,"osc2_level":0.4,"osc2_detune":-9,"osc2_semi":-12,)"
+        R"("sub_level":0.3,"noise_level":0.1,"cutoff":1500,"resonance":0.65,)"
+        R"("filter_env":-0.4,"amp_attack":0.05,"amp_decay":0.6,"amp_sustain":0.5,)"
+        R"("amp_release":1.2,"filt_attack":0.02,"filt_decay":0.9,"filt_sustain":0.2,)"
+        R"("filt_release":0.7}})";
+    const std::vector<std::uint8_t> legacy (text.begin(), text.end());
+
+    NativeBuiltinSlot slot;
+    loadSynth (slot);
+    REQUIRE (slot.loadState (legacy));
+
+    const std::pair<const char*, float> expected[] =
+    {
+        { "mode", 3.0f }, { "masterVol", -6.0f }, { "masterTune", 12.0f },
+        { "pbRange", 7.0f }, { "portaTime", 0.25f }, { "unisonVoices", 4.0f },
+        { "unisonDetune", 20.0f }, { "osc1Wave", 2.0f }, { "osc1Level", 0.6f },
+        { "osc2Wave", 1.0f }, { "osc2Level", 0.4f }, { "osc2Detune", -9.0f },
+        { "osc2Semi", -12.0f }, { "subLevel", 0.3f }, { "noiseLevel", 0.1f },
+        { "filterCutoff", 1500.0f }, { "filterRes", 0.65f }, { "filterEnvAmt", -0.4f },
+        { "ampA", 0.05f }, { "ampD", 0.6f }, { "ampS", 0.5f }, { "ampR", 1.2f },
+        { "filtA", 0.02f }, { "filtD", 0.9f }, { "filtS", 0.2f }, { "filtR", 0.7f },
+    };
+    for (const auto& [symbol, value] : expected)
+    {
+        INFO (symbol);
+        REQUIRE_THAT (slot.getParamValue (paramIndex (slot, symbol)), WithinAbs (value, 1e-5));
+    }
+
+    // A control the knob unit never had restores as the plug-in's default.
+    const int width = paramIndex (slot, "stereoWidth");
+    REQUIRE_THAT (slot.getParamValue (width),
+                  WithinAbs (slot.paramInfo (width)->defaultValue, 1e-6));
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +353,7 @@ void renderStream (NativeBuiltinSlot& slot, const std::vector<TimedEvent>& event
 void primeHeldNote (NativeBuiltinSlot& slot)
 {
     loadSynthAt (slot, kTimingBlock);
-    slot.setParamValue (paramIndex (slot, "amp_attack"), 0.001f);
+    slot.setParamValue (paramIndex (slot, "ampA"), 0.001f);
 
     std::vector<float> l ((size_t) kTimingBlock), r ((size_t) kTimingBlock);
     dusk::MidiBuffer on;
@@ -308,7 +367,7 @@ TEST_CASE ("synth unit starts a note at its sample offset", "[builtin][synth][ti
 {
     NativeBuiltinSlot slot;
     loadSynthAt (slot, kTimingBlock);
-    slot.setParamValue (paramIndex (slot, "amp_attack"), 0.001f);
+    slot.setParamValue (paramIndex (slot, "ampA"), 0.001f);
 
     dusk::MidiBuffer midi;
     addMessageAt (midi, 0x90, 60, 100, 768);
@@ -328,8 +387,8 @@ TEST_CASE ("synth unit renders a note that opens and closes inside one block",
 {
     NativeBuiltinSlot slot;
     loadSynthAt (slot, kTimingBlock);
-    slot.setParamValue (paramIndex (slot, "amp_attack"), 0.001f);
-    slot.setParamValue (paramIndex (slot, "amp_release"), 0.01f);
+    slot.setParamValue (paramIndex (slot, "ampA"), 0.001f);
+    slot.setParamValue (paramIndex (slot, "ampR"), 0.01f);
 
     dusk::MidiBuffer midi;
     addMessageAt (midi, 0x90, 60, 100, 768);
@@ -393,8 +452,8 @@ TEST_CASE ("synth unit renders the same audio at any block size",
     loadSynthAt (fine,   kTimingBlock);
     for (auto* slot : { &coarse, &fine })
     {
-        slot->setParamValue (paramIndex (*slot, "amp_attack"), 0.001f);
-        slot->setParamValue (paramIndex (*slot, "amp_release"), 0.01f);
+        slot->setParamValue (paramIndex (*slot, "ampA"), 0.001f);
+        slot->setParamValue (paramIndex (*slot, "ampR"), 0.01f);
     }
 
     std::vector<float> coarseL, coarseR, fineL, fineR;
