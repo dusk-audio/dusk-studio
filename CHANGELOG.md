@@ -20,7 +20,7 @@ Takes live on the track now, and the audio editor is where you comp them.
   take under the regions, newest at the top, with the parts the track plays
   drawn bright. Drag across a lane to put that part of the take on the track,
   or click a take's name to use all of it. Double-click a name to rename the
-  take. Each lane has a solo button (S), which plays that take alone from the next Play,
+  take. Each lane has a solo button (S), which plays that take alone at once,
   and Delete, which asks first and takes the take and its regions off the track.
   Every lane edit is one undo step and is saved with the session.
 - **Takes are easier to tell apart in the editor.** Each take has a colour,
@@ -41,6 +41,10 @@ Takes live on the track now, and the audio editor is where you comp them.
   one take gives way to the next drags from any take lane or from the take
   stripe along the top of the waveform; both edges move together, the
   crossfade keeps its length, and it is one undo step.
+- **Comp edits are heard while playing.** Clicking or dragging a take, Up and
+  Down, a seam drag, undo and redo, and a take solo all change what you hear
+  within milliseconds while the transport rolls, crossfaded so there is no
+  click, instead of at the next Play.
 - **A take count beside the track name.** The tape strip shows "3 takes" on a
   track with several takes, or "1 take" when its only take has no region on the
   timeline. Click it to open the audio editor on the take lanes.

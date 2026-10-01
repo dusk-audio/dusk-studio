@@ -3497,11 +3497,9 @@ const ScenarioRegistrar audioTakeAudition { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioTakeAudition (host, ctx); }
 } };
 
-// Audition changes what plays only from the next Play, so pressed while the transport
-// rolls the caption says so. Ending it while rolling says the take plays on until
-// then only when the take is what plays: pressed on and off in one roll it never
-// played, and the caption goes back to its hint. Stopped, the caption says the track
-// plays the take alone, and pressed again while that take still plays it says so.
+// A solo pressed while the transport rolls is heard at once: the track's streams
+// switch to the take within moments and the caption says the track plays only it.
+// Pressed again it ends at once, and the caption goes back to its hint.
 std::optional<ScenarioResult> runAudioTakeAuditionWhileRolling (GuiHost& host, ScenarioContext& ctx)
 {
     if (auto early = beginTakeCase (host, ctx)) return early;
@@ -3516,39 +3514,36 @@ std::optional<ScenarioResult> runAudioTakeAuditionWhileRolling (GuiHost& host, S
 
     auto& transport = engine.getTransport();
     const auto newest = ids->back();
-    const auto audition = [&host, &ctx, newest]
+    const auto solo = [&host, &ctx, newest]
     { ctx.expect (host.clickAudioEditorButton (takeControl ("audition", newest)), "no solo on the take's lane"); };
-    const auto auditioning = [&session, newest] { return session.takeAudition.trackIdx == 0 && session.takeAudition.takeId == newest; };
-    const auto captionReads = [&host] (std::string text) { return [&host, text] { return host.audioEditorTakeCaption() == text; }; };
-    const std::string pending = "Solo \"Take 2\" from the next Play: the track will play only this take.";
-    const std::string ending = "The solo ends at the next Play.";
-    const std::string playing = "Solo \"Take 2\": the track plays only this take.";
+    const auto streamsPlay = [&engine] (TakeId take)
+    {
+        return [&engine, take]
+        {
+            const auto playing = engine.getPlaybackEngine().playingAudition();
+            return take == 0 ? playing.trackIdx == -1 : playing.trackIdx == 0 && playing.takeId == take;
+        };
+    };
+    const std::string soloed = "Solo \"Take 2\": the track plays only this take.";
     const std::string idle = "Click a take to use it for that section, drag across it to pick any range, or drag a "
                              "divider to move a split.";
 
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, [&engine] { engine.play(); },
                         [&host] { return host.audioEditorTakeLanes().size() == 2; }, "the take lanes never showed" });
-    steps->push_back ({ 100, audition, [&transport] { return transport.isPlaying(); }, "the transport did not start" });
-    steps->push_back ({ 100, [&ctx, &host, pending]
+    steps->push_back ({ 100, solo, [&transport] { return transport.isPlaying(); }, "the transport did not start" });
+    steps->push_back ({ 100, [&ctx, &host, soloed]
     {
-        ctx.expect (host.audioEditorTakeCaption() == pending,
-                    "Audition pressed while rolling reads '" + host.audioEditorTakeCaption() + "'");
-    }, auditioning, "the solo did not solo the take" });
-    steps->push_back ({ 100, audition });
-    steps->push_back ({ 100, [&engine] { engine.stop(); }, captionReads (idle),
-                        "an audition pressed on and off in one roll did not bring the caption back to its hint" });
-    steps->push_back ({ 100, audition, [&transport] { return transport.isStopped(); }, "the transport did not stop" });
-    steps->push_back ({ 100, [&engine] { engine.play(); }, captionReads (playing),
-                        "Audition pressed while stopped did not say the take plays alone" });
-    steps->push_back ({ 100, audition, [&transport, &host, playing]
-    { return transport.isPlaying() && host.audioEditorTakeCaption() == playing; },
-      "the auditioned take did not play on the next Play" });
-    steps->push_back ({ 100, audition, captionReads (ending),
-                        "ending an audition that plays while rolling did not say it ends at the next Play" });
-    steps->push_back ({ 100, [&engine] { engine.stop(); }, captionReads (playing),
-                        "Audition pressed again while its take still plays did not say the take plays alone" });
-    steps->push_back ({ 100, [] {}, captionReads (playing), "stopping changed what the caption says" });
+        ctx.expect (host.audioEditorTakeCaption() == soloed,
+                    "a solo pressed while rolling reads '" + host.audioEditorTakeCaption() + "'");
+    }, streamsPlay (newest), "a solo pressed while rolling was not heard before the next Play" });
+    steps->push_back ({ 100, solo });
+    steps->push_back ({ 100, [&ctx, &host, idle, &transport]
+    {
+        ctx.expect (transport.isPlaying(), "ending the solo stopped the transport");
+        ctx.expect (host.audioEditorTakeCaption() == idle,
+                    "ending a solo while rolling reads '" + host.audioEditorTakeCaption() + "'");
+    }, streamsPlay (0), "ending a solo while rolling was not heard before the next Play" });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }

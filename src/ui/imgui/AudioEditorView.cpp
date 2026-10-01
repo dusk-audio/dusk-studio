@@ -4189,20 +4189,10 @@ private:
     {
         if (noticeShowing())
             return { notice, argb (kNotice) };
-        // An audition started or ended while the transport rolls changes what plays
-        // only from the next Play, so the caption compares the ask with what plays.
         const AudioTake* auditioned = session.takeAudition.trackIdx == trackIdx
                                     ? takeWithId (session.takeAudition.takeId) : nullptr;
-        const bool stopped = engine.getTransport().isStopped();
-        const auto streams = engine.getPlaybackEngine().playingAudition();
-        const TakeId playing = ! stopped && streams.trackIdx == trackIdx ? streams.takeId : 0;
-        if (auditioned != nullptr && (stopped || playing == auditioned->id))
-            return { "Solo \"" + auditioned->name + "\": the track plays only this take.", argb (kAudition) };
         if (auditioned != nullptr)
-            return { "Solo \"" + auditioned->name + "\" from the next Play: the track will play only this take.",
-                     argb (kAudition) };
-        if (playing != 0)
-            return { "The solo ends at the next Play.", argb (kAudition) };
+            return { "Solo \"" + auditioned->name + "\": the track plays only this take.", argb (kAudition) };
         return { "Click a take to use it for that section, drag across it to pick any range, or drag a divider to "
                  "move a split.",
                  argb (kHeaderText, 0.75f) };
