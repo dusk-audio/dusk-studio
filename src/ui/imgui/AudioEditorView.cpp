@@ -3900,6 +3900,8 @@ private:
         const bool editLocked = r->locked || trackFrozen();
         const bool muted = r->muted;
         const bool locked = r->locked;
+        if (menuItem (rangeActive ? "Loop selection" : "Loop region")) loopSelection();
+        ImGui::Separator();
         if (menuItem ("Split at edit cursor")) splitAtCursor();
         if (menuItem ("Cut range", rangeActive && ! editLocked)) cutRange();
         if (menuItem ("Join selected regions", ! additional.empty())) joinSelected();
@@ -3920,6 +3922,40 @@ private:
         ImGui::Separator();
         if (menuItem ("Reverse", ! editLocked)) reverseRegion();
         ImGui::EndPopup();
+    }
+
+    // The transport loop over the range, or over every selected region, or the
+    // focused region alone; looping on, the playhead at its start.
+    void loopSelection()
+    {
+        const auto* r = region();
+        if (r == nullptr)
+            return;
+        auto from = r->timelineStart;
+        auto to = from + r->lengthInSamples;
+        if (rangeActive)
+        {
+            const auto fileToTimeline = r->timelineStart - r->sourceOffset;
+            from = std::min (rangeStartSample, rangeEndSample) + fileToTimeline;
+            to = std::max (rangeStartSample, rangeEndSample) + fileToTimeline;
+        }
+        else
+        {
+            const auto& regions = trackRegions();
+            for (const int index : additional)
+                if (index >= 0 && index < static_cast<int> (regions.size()))
+                {
+                    const auto& other = regions[static_cast<std::size_t> (index)];
+                    from = std::min (from, other.timelineStart);
+                    to = std::max (to, other.timelineStart + other.lengthInSamples);
+                }
+        }
+        if (to <= from)
+            return;
+        auto& transport = engine.getTransport();
+        transport.setLoopRange (from, to);
+        transport.setLoopEnabled (true);
+        transport.locate (from);
     }
 
     void drawFadeMenu()

@@ -4442,6 +4442,74 @@ const ScenarioRegistrar audioEditorMenus { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorMenus (host, ctx); }
 } };
 
+// The waveform's right-click menu loops what is selected: the focused region alone
+// ("Loop region"), or a range when one is drawn ("Loop selection"). Either turns
+// looping on and puts the playhead at the loop's start.
+std::optional<ScenarioResult> runAudioEditorLoopSelection (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginEditorRegionCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    auto& transport = ctx.engine().getTransport();
+    ctx.cleanup ([&session, &transport, mode = session.editMode, enabled = transport.isLoopEnabled(),
+                  loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd()]
+    {
+        session.editMode = mode;
+        transport.setLoopRange (loopStart, loopEnd);
+        transport.setLoopEnabled (enabled);
+    });
+    transport.setLoopEnabled (false);
+    transport.setPlayhead (60000);
+    session.editMode = EditMode::Grab;
+
+    const auto rightClick = [&host, &ctx] (std::int64_t sample)
+    {
+        return [&host, &ctx, sample]
+        {
+            const auto at = host.audioEditorPoint ("wave", sample);
+            if (! ctx.expect (at.size() == 2, "editor geometry unavailable")) return;
+            constexpr int rightButton = 4;
+            host.audioEditorPointer (at[0], at[1], true, rightButton);
+            host.audioEditorPointer (at[0], at[1], false, rightButton);
+        };
+    };
+    const auto pick = [&host, &ctx] (std::string item)
+    { return [&host, &ctx, item] { ctx.expect (host.clickContextMenuItem (item), "the menu has no " + item); }; };
+    const auto loops = [&transport] (std::int64_t from, std::int64_t to)
+    {
+        return [&transport, from, to]
+        {
+            return transport.isLoopEnabled() && std::abs (transport.getLoopStart() - from) < 256
+                && std::abs (transport.getLoopEnd() - to) < 256 && transport.getPlayhead() == transport.getLoopStart();
+        };
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, rightClick (24000),
+                        [&host] { return host.audioEditorPoint ("wave", 48000).size() == 2; }, "the editor never laid out" });
+    steps->push_back ({ 150, pick ("Loop region") });
+    steps->push_back ({ 150, [&host, &ctx, &session]
+    {
+        session.editMode = EditMode::Range;
+        const auto from = host.audioEditorPoint ("wave", 24000);
+        const auto to = host.audioEditorPoint ("wave", 48000);
+        if (! ctx.expect (from.size() == 2 && to.size() == 2, "editor geometry unavailable")) return;
+        host.audioEditorPointer (from[0], from[1], true);
+        host.audioEditorPointer (to[0], to[1], true);
+        host.audioEditorPointer (to[0], to[1], false);
+    }, loops (0, kTakeCaseLength), "Loop region did not loop the region with the playhead at its start" });
+    steps->push_back ({ 150, rightClick (36000) });
+    steps->push_back ({ 150, pick ("Loop selection") });
+    steps->push_back ({ 150, [] {}, loops (24000, 48000), "Loop selection did not loop the range" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorLoopSelection { Scenario {
+    "gui.audio_editor_loop_selection", { "gui", "editor", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorLoopSelection (host, ctx); }
+} };
+
 // = and - zoom the editor in and out a step about the edit cursor and 0 fits the track,
 // typed at the editor's child.
 std::optional<ScenarioResult> runAudioEditorZoomKeys (GuiHost& host, ScenarioContext& ctx)

@@ -1462,7 +1462,7 @@ Below the toolbar:
 
 ## Menus
 
-Right-click the waveform for **Split at edit cursor**, **Cut range**, **Join selected regions**, **Reset gain (0 dB)**, **Reset fades**, **Mute** / **Unmute**, **Lock** / **Unlock** and **Reverse**. **Cut range** and **Reverse** are unavailable on a locked region or a frozen track. Right-click a fade disc for its curve shape.
+Right-click the waveform for **Loop region** (or **Loop selection** with a range drawn, looping the range; with several regions selected it loops from the first to the last), which sets the transport loop, turns looping on and moves the playhead to its start; then **Split at edit cursor**, **Cut range**, **Join selected regions**, **Reset gain (0 dB)**, **Reset fades**, **Mute** / **Unmute**, **Lock** / **Unlock** and **Reverse**. **Cut range** and **Reverse** are unavailable on a locked region or a frozen track. Right-click a fade disc for its curve shape.
 
 The **Properties** button opens a menu headed with the track and region number: **Add label...** (or **Rename label...**), **Mute region**, **Lock region**, **Color** and **Delete region**, with the file name, sample rate, channel count and length below.
 

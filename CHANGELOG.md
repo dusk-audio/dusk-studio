@@ -45,6 +45,9 @@ Takes live on the track now, and the audio editor is where you comp them.
   Down, a seam drag, undo and redo, and a take solo all change what you hear
   within milliseconds while the transport rolls, crossfaded so there is no
   click, instead of at the next Play.
+- **Loop a selection from the audio editor.** The waveform's right-click menu
+  has Loop region, or Loop selection over a drawn range, which sets the
+  transport loop, turns it on and moves the playhead to its start.
 - **A take count beside the track name.** The tape strip shows "3 takes" on a
   track with several takes, or "1 take" when its only take has no region on the
   timeline. Click it to open the audio editor on the take lanes.
