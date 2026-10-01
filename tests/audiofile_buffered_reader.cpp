@@ -2,6 +2,7 @@
 
 #include "engine/audiofile/BufferedFileReader.h"
 #include "engine/audiofile/FileWriter.h"
+#include "TestTempDirectory.h"
 
 #include <cmath>
 #include <filesystem>
@@ -25,7 +26,8 @@ float sample (int ch, std::int64_t f)
 
 std::filesystem::path tmp (const char* name)
 {
-    return std::filesystem::temp_directory_path() / name;
+    static const duskstudio::test::TempDirectory dir ("dusk_bfr");
+    return dir.path() / name;
 }
 
 // Non-throwing, and only ever called once the readers are released: Windows
