@@ -1854,6 +1854,109 @@ const ScenarioRegistrar sunsetMidiLearn { Scenario {
     }
 } };
 
+// Sunset's editor follows a MIDI program change by replaying the preset into
+// the unit. A new editor is built on every open, and one that replays the
+// change it found already applied wipes every edit made since.
+std::optional<ScenarioResult> runSunsetReopenKeepsEdit (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    return ScenarioResult::skip ("requires native UI");
+   #endif
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("requires a window the unit's editor can embed into");
+    static constexpr std::uint8_t kProgram = 5;
+    static constexpr float kPresetCutoffHz = 2000.0f;
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (0);
+    auto& strip = engine.getChannelStrip (0);
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getMidiInputDevices().empty()) return ScenarioResult::skip ("requires an enumerated MIDI input for injection");
+    if (strip.getPluginSlot().isLoaded() || strip.isBuiltinLoaded() || strip.isNativeClapLoaded()
+        || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded() || strip.isNativeAuLoaded()
+        || strip.isNativeMultisampleLoaded() || strip.builtinReloadFailed())
+        return ScenarioResult::skip ("requires an empty first insert");
+    ctx.keep (track.mode);
+    ctx.keep (track.midiInputIndex);
+    ctx.keep (track.midiChannel);
+    const auto mode = strip.insertMode.load();
+    const auto stage = engine.getStage();
+    ctx.cleanup ([&host, &engine, &strip, mode, stage]
+    {
+        drainModals (host);
+        host.closeBuiltin (0);
+        engine.suspendProcessing();
+        strip.unloadBuiltin();
+        strip.insertMode.store (mode);
+        engine.resumeProcessing();
+        if (auto* handle = host.strip (0)) handle->refreshInsertButton();
+        host.switchToStage (guiStage (stage));
+    });
+    host.switchToStage (GuiHost::Stage::Mixing);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.midiInputIndex.store (0);
+    track.midiChannel.store (0);
+    std::string error;
+    engine.suspendProcessing();
+    const bool loaded = strip.loadBuiltin ("dusk.builtin.synth", error);
+    if (loaded) strip.insertMode.store (ChannelStrip::kInsertPlugin);
+    engine.resumeProcessing();
+    if (! loaded) return ScenarioResult::fail ("could not load Sunset: " + error);
+    if (! strip.getBuiltinSlot().hasPluginEditor()) return ScenarioResult::fail ("Sunset brought no editor of its own");
+    int cutoff = -1;
+    for (int i = 0; i < strip.getBuiltinSlot().paramCount(); ++i)
+        if (const auto* info = strip.getBuiltinSlot().paramInfo (i);
+            info != nullptr && info->id != nullptr && std::string ("filterCutoff") == info->id) cutoff = i;
+    if (cutoff < 0) return ScenarioResult::fail ("Sunset has no filterCutoff parameter");
+    if (auto* handle = host.strip (0)) handle->refreshInsertButton();
+
+    const auto cutoffHz = [&strip, cutoff] { return strip.getBuiltinSlot().getParamValue (cutoff); };
+    const auto editorUp = [&host] { auto* s = host.strip (0); return s != nullptr && s->hasOpenBuiltinEditor(); };
+    auto edited = std::make_shared<float> (0.0f);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&engine]
+    {
+        dusk::MidiBuffer midi;
+        const std::uint8_t program[] = { 0xc0, kProgram };
+        midi.addEvent (program, 2, 0);
+        engine.stageTestMidiInjection (0, std::move (midi));
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickInsert (0, false), "insert button unavailable"); },
+                       [cutoffHz] { return std::abs (cutoffHz() - kPresetCutoffHz) < 1.0f; },
+                       "the program change did not load preset 5" });
+    steps->push_back ({ 500, [&host, &ctx, cutoffHz, edited]
+    {
+        ctx.expect (host.builtinPointer (0, "filterCutoff", 0.25f, true)
+                    && host.builtinPointer (0, "filterCutoff", 0.25f, false), "the editor took no filterCutoff edit");
+        *edited = cutoffHz();
+        ctx.expect (std::abs (*edited - kPresetCutoffHz) > 100.0f, "the edit did not move filterCutoff off the preset");
+    }, editorUp, "the editor did not open" });
+    steps->push_back ({ 500, [&host, &ctx, cutoffHz, edited]
+    {
+        ctx.expect (std::abs (cutoffHz() - *edited) < 1.0f, "the open editor did not keep the edit");
+        host.closeBuiltin (0);
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickInsert (0, false), "insert button unavailable for the reopen"); },
+                       [editorUp] { return ! editorUp(); }, "the editor did not close" });
+    steps->push_back ({ 0, [] {}, editorUp, "the editor did not reopen" });
+    steps->push_back ({ 1000, [&ctx, cutoffHz, edited]
+    {
+        ctx.expect (std::abs (cutoffHz() - *edited) < 1.0f,
+                    "reopening the editor put filterCutoff back to the preset ("
+                        + std::to_string (cutoffHz()) + " Hz, edited to " + std::to_string (*edited) + " Hz)");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar sunsetReopenKeepsEdit { Scenario {
+    "gui.sunset_reopen_keeps_edit", { "gui", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSunsetReopenKeepsEdit (host, ctx); }
+} };
+
 // ------------------------------------------- MIDI Learn on a native host
 
 // The manual promises "MIDI Learn last-touched parameter" for every native
