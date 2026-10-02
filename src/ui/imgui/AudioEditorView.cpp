@@ -1028,7 +1028,7 @@ private:
 
     int columnForTimeline (std::int64_t timelineSample) const
     {
-        constexpr float kLimit = 1.0e9f;
+        static constexpr float kLimit = 1.0e9f;
         return static_cast<int> (std::lround (std::clamp (xForTimeline (timelineSample), -kLimit, kLimit)));
     }
 
@@ -3449,7 +3449,7 @@ private:
     {
         // A column is an int, and a long region zoomed in can reach past one, so the
         // stretch is cut to the part within a margin of the lanes before it is placed.
-        constexpr int kMargin = 1 << 20;
+        static constexpr int kMargin = 1 << 20;
         const auto keepFrom = timelineForX (static_cast<float> (clipX0 - kMargin));
         const auto keepTo = timelineForX (static_cast<float> (clipX1 + kMargin));
         if (timelineStart < keepFrom)

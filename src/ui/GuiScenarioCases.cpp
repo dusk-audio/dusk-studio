@@ -4197,7 +4197,7 @@ std::optional<ScenarioResult> runAudioEditorClipboardKeys (GuiHost& host, Scenar
         const auto from = host.audioEditorPoint ("wave", 12000);
         const auto to = host.audioEditorPoint ("wave", 24000);
         if (! ctx.expect (from.size() == 2 && to.size() == 2, "editor geometry unavailable")) return;
-        constexpr int shift = 1;
+        static constexpr int shift = 1;
         host.audioEditorPointer (from[0], from[1], true, shift);
         host.audioEditorPointer (to[0], to[1], true, shift);
         host.audioEditorPointer (to[0], to[1], false, shift);

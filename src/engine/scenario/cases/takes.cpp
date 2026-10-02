@@ -1443,7 +1443,7 @@ std::optional<ScenarioResult> beginRollingTakes (ScenarioContext& ctx, const Aud
 // it falls only where the level does.
 float quietestStretch (ScenarioContext& ctx, int blocks)
 {
-    constexpr std::size_t kStretch = 128;
+    static constexpr std::size_t kStretch = 128;
     float lowest = std::numeric_limits<float>::max();
     for (int b = 0; b < blocks; ++b)
     {
@@ -1656,7 +1656,7 @@ ScenarioResult seamMoveWhileRollingSwapsOnce (ScenarioContext& ctx)
 // not start one.
 ScenarioResult editsWhileRecordingLeaveTheCapturedTrack (ScenarioContext& ctx)
 {
-    constexpr int kOther = kTrack + 1;
+    static constexpr int kOther = kTrack + 1;
     auto& session = ctx.session();
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
