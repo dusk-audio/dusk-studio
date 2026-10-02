@@ -407,10 +407,11 @@ bool migrateStripEqDialsToHz (nlohmann::json& root)
 // Up to format 8 an audio region carried the recordings it had displaced as
 // previous_takes. Each distinct recording pass on a track - one file and loop
 // pass - becomes one of the track's takes, spanning all of the file that any
-// region or previous take used and sitting where the earliest of them put it,
-// or from sample 0 with the file start moved up to match when that would be
-// before the timeline starts. A recorded region names its take by take_id only
-// when its audio lies inside the take; what it plays is left exactly as it was.
+// region or previous take used and sitting where the earliest of them put it
+// that leaves the take inside the timeline, or at sample 0 when none does. The
+// take is never cut short to fit, since a previous take may be the only thing
+// still reaching that audio. A recorded region names its take by take_id; what
+// it plays is left exactly as it was.
 //
 // The takes are numbered oldest first. A history lists the newest displaced
 // take first under the region playing the newest of all, so walking each one
@@ -436,8 +437,8 @@ void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
             int loopPass = 0;
             std::int64_t capturedAtMs = 0;
             std::int64_t fileStart = 0, fileEnd = 0;
-            // Timeline position of the file's first sample.
-            std::int64_t origin = 0;
+            // Timeline position of the file's first sample, per piece.
+            std::vector<std::int64_t> origins;
             int numChannels = 1;
             nlohmann::json provenance;
         };
@@ -461,7 +462,7 @@ void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
                 if (pass.file != file || pass.loopPass != provenance.loopPassOrdinal) continue;
                 pass.fileStart = std::min (pass.fileStart, offset);
                 pass.fileEnd   = std::max (pass.fileEnd, end);
-                pass.origin    = std::min (pass.origin, origin);
+                pass.origins.push_back (origin);
                 return i;
             }
 
@@ -471,7 +472,7 @@ void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
             pass.capturedAtMs = provenance.capturedAtMs;
             pass.fileStart = offset;
             pass.fileEnd = end;
-            pass.origin = origin;
+            pass.origins.push_back (origin);
             pass.numChannels = numChannels;
             if (const auto it = source.find ("take_provenance"); it != source.end() && it->is_object())
                 pass.provenance = *it;
@@ -513,38 +514,31 @@ void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
             order[timedPlaces[k]] = timed[k];
 
         std::vector<TakeId> ids (passes.size());
-        std::vector<std::int64_t> takeFileStarts (passes.size());
         auto takes = nlohmann::json::array();
         for (std::size_t n = 0; n < order.size(); ++n)
         {
             const auto& pass = passes[order[n]];
             ids[order[n]] = ++lastId;
-            auto fileStart = pass.fileStart;
-            auto timelineStart = pass.origin + pass.fileStart;
-            if (timelineStart < 0)
-            {
-                fileStart -= timelineStart;
-                timelineStart = 0;
-            }
-            takeFileStarts[order[n]] = fileStart;
+            const auto lowest = -pass.fileStart;
+            auto origin = kMaxSample;
+            for (const auto o : pass.origins)
+                if (o >= lowest) origin = std::min (origin, o);
+            if (origin == kMaxSample) origin = lowest;
             nlohmann::json take;
             take["id"]             = lastId;
             take["name"]           = "Take " + std::to_string (n + 1);
             take["file"]           = pass.file;
-            take["timeline_start"] = timelineStart;
-            take["length"]         = pass.fileEnd - fileStart;
-            take["source_offset"]  = fileStart;
+            take["timeline_start"] = origin + pass.fileStart;
+            take["length"]         = pass.fileEnd - pass.fileStart;
+            take["source_offset"]  = pass.fileStart;
             if (pass.numChannels != 1)
                 take["num_channels"] = pass.numChannels;
             if (! pass.provenance.is_null())
                 take["take_provenance"] = pass.provenance;
             takes.push_back (std::move (take));
         }
-        // A region reading file from before where its take now starts names
-        // no take, so the next carve over it makes it one.
         for (const auto& [region, pass] : regionPasses)
-            if (std::max ((std::int64_t) 0, json::getInt64 (*region, "source_offset", 0)) >= takeFileStarts[pass])
-                (*region)["take_id"] = ids[pass];
+            (*region)["take_id"] = ids[pass];
         track["takes"] = std::move (takes);
     }
 }
@@ -674,10 +668,9 @@ bool migrateSession (nlohmann::json& root, int from)
             case 9:
                 // v9 -> v10: audio take history moves off the regions onto the
                 // track. A region's previous_takes become track takes, and a
-                // recorded region names its take by take_id when its audio lies
-                // inside the take; MIDI regions keep their previous_takes. The
-                // bump exists because a v9 build would drop every track take on
-                // re-save.
+                // recorded region names its take by take_id; MIDI regions keep
+                // their previous_takes. The bump exists because a v9 build
+                // would drop every track take on re-save.
                 if (root.is_object())
                 {
                     migrateAudioTakeHistoryToTrackTakes (root);

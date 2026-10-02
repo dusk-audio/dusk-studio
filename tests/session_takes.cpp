@@ -421,11 +421,12 @@ TEST_CASE ("Loading a v8 session numbers each track's takes oldest first",
     dir.deleteRecursively();
 }
 
-TEST_CASE ("Loading a v8 session starts no take before the timeline and keeps it under its regions",
+TEST_CASE ("Loading a v8 session starts no take before the timeline and keeps it whole",
            "[session][serializer][migration][takes]")
 {
     // One pass split in two, its right half moved near the start: where that
-    // half puts the file, the pass would begin 3000 samples before zero.
+    // half puts the file, the pass would begin 3000 samples before zero, so it
+    // sits where the left half puts it instead.
     const Json root {
         { "version", 8 },
         { "tracks", Json::array ({
@@ -440,9 +441,9 @@ TEST_CASE ("Loading a v8 session starts no take before the timeline and keeps it
     REQUIRE (migrateSession (migrated, 8));
     const auto& saved = migrated["tracks"][0]["takes"];
     REQUIRE (saved.size() == 1);
-    CHECK (saved[0]["timeline_start"].get<std::int64_t>() == 0);
-    CHECK (saved[0]["source_offset"].get<std::int64_t>() == 3000);
-    CHECK (saved[0]["length"].get<std::int64_t>() == 9000);
+    CHECK (saved[0]["timeline_start"].get<std::int64_t>() == 100000);
+    CHECK (saved[0]["source_offset"].get<std::int64_t>() == 0);
+    CHECK (saved[0]["length"].get<std::int64_t>() == 12000);
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
@@ -455,16 +456,16 @@ TEST_CASE ("Loading a v8 session starts no take before the timeline and keeps it
     REQUIRE (track.takes.size() == 1);
     REQUIRE (track.regions.size() == 2);
     const auto& take = track.takes[0];
+    const auto& left = track.regions[0];
+    CHECK (left.takeId == take.id);
+    CHECK (take.timelineStart + (left.sourceOffset - take.sourceOffset) == left.timelineStart);
+
+    // The moved half still names the take, counted at the part of it its audio
+    // comes from.
     const auto& moved = track.regions[1];
     CHECK (moved.takeId == take.id);
-    CHECK (take.timelineStart + (moved.sourceOffset - take.sourceOffset) == moved.timelineStart);
-    CHECK (take.timelineStart + take.lengthInSamples == 9000);
-
-    // The left region reads file [0, 5000), which starts before the take now
-    // does: it names no take, so a carve over it makes it one.
-    const auto& left = track.regions[0];
-    CHECK (left.takeId == 0);
-    CHECK (takeCoverage (track, take.id) == std::vector<std::pair<std::int64_t, std::int64_t>> { { 2000, 9000 } });
+    CHECK (moved.timelineStart == 2000);
+    CHECK (takeCoverage (track, take.id) == std::vector<std::pair<std::int64_t, std::int64_t>> { { 100000, 112000 } });
 
     auto& carved = loaded->track (0);
     detail::carveRegions (*loaded, carved, 101000, 102000);
@@ -479,6 +480,74 @@ TEST_CASE ("Loading a v8 session starts no take before the timeline and keeps it
         INFO ("region at " << region.timelineStart);
         CHECK (findTake (carved, region.takeId) != nullptr);
     }
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("Loading a v8 session keeps take audio only a region's history holds",
+           "[session][serializer][migration][takes]")
+{
+    // Recorded in 0.14: C at 48000, then A over it, A split at 96000, A's right
+    // half moved to 10000, then B exactly over A's left half. A's left half now
+    // lives only in B's history, and where the moved half puts A's file it
+    // would begin 38000 samples before zero.
+    const auto piece = [] (const char* file, std::int64_t offset, std::int64_t length, std::int64_t capturedAtMs)
+    {
+        return Json { { "file", file }, { "source_offset", offset }, { "length", length },
+                      { "take_provenance", { { "captured_at_ms", capturedAtMs } } } };
+    };
+    auto overLeft = piece ("audio/b.wav", 0, 48000, 3000);
+    overLeft["timeline_start"] = 48000;
+    overLeft["previous_takes"] = Json::array ({ piece ("audio/a.wav", 0, 48000, 2000),
+                                                piece ("audio/c.wav", 0, 48000, 1000) });
+    auto movedRight = piece ("audio/a.wav", 48000, 96000, 2000);
+    movedRight["timeline_start"] = 10000;
+    movedRight["previous_takes"] = Json::array ({ piece ("audio/c.wav", 48000, 96000, 1000) });
+    const Json root {
+        { "version", 8 },
+        { "tracks", Json::array ({ { { "regions", Json::array ({ overLeft, movedRight }) } } }) }
+    };
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+    writeJson (target, root);
+    auto loaded = std::make_unique<Session>();
+    loaded->setSessionDirectory (dir);
+    REQUIRE (SessionSerializer::load (*loaded, target));
+
+    const auto& track = loaded->track (0);
+    const auto takeOf = [&track] (const char* name) -> const AudioTake*
+    {
+        for (const auto& take : track.takes)
+            if (take.file.getFileName() == name) return &take;
+        return nullptr;
+    };
+    for (const auto& take : track.takes)
+        CHECK (take.timelineStart >= 0);
+
+    const struct { const char* file; std::int64_t end; } reached[] {
+        { "a.wav", 144000 }, { "b.wav", 48000 }, { "c.wav", 144000 } };
+    for (const auto& span : reached)
+    {
+        INFO (span.file);
+        const auto* take = takeOf (span.file);
+        REQUIRE (take != nullptr);
+        CHECK (take->sourceOffset == 0);
+        CHECK (take->sourceOffset + take->lengthInSamples == span.end);
+    }
+
+    // Choosing A over B's span plays what cycling B back played in 0.14.
+    const auto* a = takeOf ("a.wav");
+    REQUIRE (a != nullptr);
+    const auto underB = regionFromTake (*a, 48000, 96000);
+    REQUIRE (underB.has_value());
+    CHECK (underB->sourceOffset == 0);
+    CHECK (underB->lengthInSamples == 48000);
+
+    REQUIRE (track.regions.size() == 2);
+    CHECK (track.regions[0].takeId == takeOf ("b.wav")->id);
+    CHECK (track.regions[1].takeId == a->id);
+    CHECK (track.regions[1].timelineStart == 10000);
+    CHECK (track.regions[1].sourceOffset == 48000);
     dir.deleteRecursively();
 }
 
