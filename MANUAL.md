@@ -1409,7 +1409,7 @@ It is marked **experimental** because parts of the DP file format are reverse-en
 
 ![Region editor modal over a region with fades.](docs/images/ed-04-region-editor-modal.png)
 
-Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. On a track with takes it opens zoomed out to show every take, so a take that starts later still shows in its lane; **0** zooms to the focused region. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. Other keys do nothing until you let go. While the editor is up, a key it has no use for does nothing: **S**, **M**, a page digit and the timeline's other shortcuts never reach the timeline behind it. **Space**, **.**, **L**, **P** and **F11** still work, and **?** closes the editor to open the shortcut list. Holding a key does its job once, so holding **Delete** deletes one region; only **Left** and **Right**, the zoom keys and **Cmd+Z** repeat while held. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
+Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. On a track with takes it opens zoomed out to show every take, so a take that starts later still shows in its lane; **0** zooms to the focused region. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. Other keys do nothing until you let go. A region drag ends where it is if a recording stops under it, from a punch that ends on its own or a Stop sent over MIDI: the new take stays as it landed, and letting go records nothing. While the editor is up, a key it has no use for does nothing: **S**, **M**, a page digit and the timeline's other shortcuts never reach the timeline behind it. **Space**, **.**, **L**, **P** and **F11** still work, and **?** closes the editor to open the shortcut list. Holding a key does its job once, so holding **Delete** deletes one region; only **Left** and **Right**, the zoom keys and **Cmd+Z** repeat while held. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
 
 ## What's editable
 
@@ -1418,6 +1418,8 @@ Double-click an audio region in the tape strip to open the audio region editor. 
 - **Gain** adjustment (−24 to +12 dB, non-destructive).
 - **Position** of the region on the timeline.
 
+A locked region takes none of these edits. The editor won't split, normalize, reverse or delete it either: those buttons and menu items are unavailable, its gain and fade readouts don't open for typing, and **Delete** passes it by when other regions are selected with it. Its mute, lock, label and colour still change. A frozen track refuses every region edit until you unfreeze it.
+
 You **cannot** edit individual samples. There is no zoom-to-sample, no spectral edit and no destructive trim, and the **Draw** tool's pencil draws automation, never audio. The portastudio philosophy is that you commit to good takes and work non-destructively from there.
 
 ## Layout
@@ -1425,8 +1427,8 @@ You **cannot** edit individual samples. There is no zoom-to-sample, no spectral 
 The top is a row of icon buttons. Hover over one for its name and shortcut:
 
 - **Undo / Redo** (also **Cmd+Z** and **Cmd+Shift+Z**).
-- **Split** at the edit cursor (also **Cmd/Ctrl+E**).
-- **Normalize** (adjusts gain toward a peak just below 0 dBFS, within the gain limits).
+- **Split** at the edit cursor (also **Cmd/Ctrl+E**; unavailable on a locked region or a frozen track).
+- **Normalize** (adjusts gain toward a peak just below 0 dBFS, within the gain limits; unavailable on a locked region or a frozen track).
 - **Reverse** (the same non-destructive reverse as the tape strip's **Reverse region**; unavailable on a locked region or a frozen track).
 - **Properties** (label, mute, lock, colour and delete actions, with file name, sample rate, channel count and length shown below).
 - **Grab**, **Range**, **Cut**, **Draw**, then the editor's own **Snap** toggle and grid resolution, set apart from the timeline's.
@@ -1458,13 +1460,13 @@ Below the toolbar:
 - **Drag the gain line** (the solid green line through the waveform): adjusts the region's gain from −24 to +12 dB. Its value chip and the status bar display the level.
 - **Shift+drag** on the waveform: select a time range (yellow highlight).
 - **Cmd/Ctrl+]** / **Cmd/Ctrl+[**: navigate to the next / previous region on the same track without closing the modal.
-- **Delete**: delete the selected range when one is active; otherwise delete the selected region or regions.
+- **Delete**: delete the selected range when one is active; otherwise delete the selected region or regions, leaving any that are locked.
 
 ## Menus
 
-Right-click the waveform for **Loop region** (or **Loop selection** with a range drawn, looping the range; with several regions selected it loops from the first to the last), which sets the transport loop, turns looping on and moves the playhead to its start; then **Split at edit cursor**, **Cut range**, **Join selected regions**, **Reset gain (0 dB)**, **Reset fades**, **Mute** / **Unmute**, **Lock** / **Unlock** and **Reverse**. **Cut range** and **Reverse** are unavailable on a locked region or a frozen track. Right-click a fade disc for its curve shape.
+Right-click the waveform for **Loop region** (or **Loop selection** with a range drawn, looping the range; with several regions selected it loops from the first to the last), which sets the transport loop, turns looping on and moves the playhead to its start; then **Split at edit cursor**, **Cut range**, **Join selected regions**, **Reset gain (0 dB)**, **Reset fades**, **Mute** / **Unmute**, **Lock** / **Unlock** and **Reverse**. **Split at edit cursor**, **Cut range**, **Reset gain (0 dB)**, **Reset fades** and **Reverse** are unavailable on a locked region or a frozen track. Right-click a fade disc for its curve shape.
 
-The **Properties** button opens a menu headed with the track and region number: **Add label...** (or **Rename label...**), **Mute region**, **Lock region**, **Color** and **Delete region**, with the file name, sample rate, channel count and length below.
+The **Properties** button opens a menu headed with the track and region number: **Add label...** (or **Rename label...**), **Mute region**, **Lock region**, **Color** and **Delete region**, with the file name, sample rate, channel count and length below. **Delete region** is unavailable on a locked region or a frozen track.
 
 ## Take lanes
 
@@ -1478,7 +1480,7 @@ Every region on the track that plays a take carries a stripe in that take's colo
 
 - **Click a take** inside a section to have that take play the whole section, or the part of it the take covers (**Switch take**). Hovering a lane outlines the section a click would replace and says "Use Take 2 here". Clicking where the take has no audio says so in the caption. In a gap between sections, a click fills the gap from that take.
 - **Drag across a lane** to put that part of the take on the track, replacing whatever played there, with a short crossfade at each end. The span snaps to the grid when the editor's **Snap** is on; hold **Cmd/Ctrl** to drag off the grid. The undo step is **Promote take range**.
-- **Click a take's name** to put the whole take on the track (**Promote take**).
+- **Click a take's name** to put the whole take on the track (**Promote take**). The promote waits out the double-click time, and a drag started before then cancels it.
 - **Double-click a take's name** to rename it. Enter keeps the new name, Esc the old one (**Rename take**).
 - **S** solos that take: the track plays only that take, in place of its regions, heard at once whether the transport is stopped or rolling. The playhead stays where it is, and the caption reads "Solo "Take 2": the track plays only this take." Click **S** again to stop, also heard at once. Soloing another lane replaces it, and closing the editor or deleting the take ends it. Bounce, mixdown and freeze never hear a solo.
 - **Down** puts the take in the lane below on the focused region, and **Up** the take in the lane above, stepping only through takes that cover all of the region (**Switch take**). With a range selected, only the range changes. Past the last lane the caption says "No older take covers all of this." (or "No newer take...") and nothing changes.

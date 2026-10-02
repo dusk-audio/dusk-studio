@@ -755,15 +755,22 @@ private:
 
     // A pointer gesture from press to release. The press snapshots the region, the
     // drag edits it live so the view follows, and the release rolls it back and
-    // commits the whole gesture as one undo step.
+    // commits the whole gesture as one undo step. A region drag the track was
+    // reshaped under is dropped: it does nothing more, and keys still wait for the
+    // release.
     enum class Drag { none, fadeIn, fadeOut, gain, trimStart, trimEnd, moveCursor, range, moveRegion,
-                      pan, loopIn, loopOut, punchIn, punchOut, automationPoint, automationPaint, takeRange, seam };
+                      pan, loopIn, loopOut, punchIn, punchOut, automationPoint, automationPaint, takeRange, seam,
+                      dropped };
     Drag drag = Drag::none;
     ImGuiMouseButton dragButton = ImGuiMouseButton_Left;
     ImVec2 dragDown;
     ImVec2 dragLast;
     bool gestureActive = false;
     AudioRegion regionAtDragStart;
+    // The regions a region drag edits, by index, as its last frame left them: the
+    // focused one, then a move's selection. A record stop or a take promote can
+    // reshape the track mid-drag, and the drag must not write over what it left.
+    std::vector<std::pair<int, AudioRegion>> heldRegions;
     // A seam drag holds the two regions as they were when it began.
     CompSeam seamDragged;
     AudioRegion seamLeftAtDragStart, seamRightAtDragStart;
@@ -1656,27 +1663,46 @@ private:
         return session.track (trackIdx).frozen.load (std::memory_order_relaxed);
     }
 
+    bool focusedEditable() const
+    {
+        const auto* r = region();
+        return r != nullptr && ! r->locked && ! trackFrozen();
+    }
+
+    // Splits a region as part of the open transaction. The right piece goes in just
+    // after the region it was cut from, so the selected indices past that one move
+    // up to keep naming the regions the user picked.
+    void splitRegion (int index, std::int64_t at)
+    {
+        const auto count = trackRegions().size();
+        engine.getUndoManager().perform (new SplitRegionAction (session, engine, trackIdx, index, at));
+        if (trackRegions().size() == count)
+            return;
+        for (auto& selected : additional)
+            if (selected > index)
+                ++selected;
+    }
+
     // Splits at both edges of the range, the right one first so the left edge's index
     // still names the same region.
     void splitRange()
     {
+        if (! focusedEditable()) return;
         const auto* r = region();
-        if (r == nullptr) return;
         const auto a = std::min (rangeStartSample, rangeEndSample);
         const auto b = std::max (rangeStartSample, rangeEndSample);
         const auto tlA = r->timelineStart + (a - r->sourceOffset);
         const auto tlB = r->timelineStart + (b - r->sourceOffset);
-        auto& undo = engine.getUndoManager();
-        undo.beginNewTransaction ("Split range");
-        undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
-        undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
+        engine.getUndoManager().beginNewTransaction ("Split range");
+        splitRegion (regionIdx, tlB);
+        splitRegion (regionIdx, tlA);
         rangeActive = false;
     }
 
     void fadeToSelection (bool fadeOut)
     {
+        if (! focusedEditable()) return;
         const auto* r = region();
-        if (r == nullptr) return;
         const auto length = std::abs (rangeEndSample - rangeStartSample);
         const AudioRegion before = *r;
         AudioRegion after = before;
@@ -1801,15 +1827,28 @@ private:
             return;
         }
 
-        // Highest index first, so each delete leaves the indices still to go intact.
-        std::vector<int> doomed = additional;
-        doomed.push_back (regionIdx);
+        // Locked regions stay, as they do on the timeline. Highest index first, so
+        // each delete leaves the indices still to go intact.
+        const auto& regions = trackRegions();
+        std::vector<int> doomed;
+        for (const int index : additional)
+            if (index >= 0 && index < static_cast<int> (regions.size())
+                && ! regions[static_cast<std::size_t> (index)].locked)
+                doomed.push_back (index);
+        const bool focusStays = r->locked;
+        if (! focusStays)
+            doomed.push_back (regionIdx);
+        if (doomed.empty())
+            return;
         std::sort (doomed.begin(), doomed.end(), std::greater<int>());
         doomed.erase (std::unique (doomed.begin(), doomed.end()), doomed.end());
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction (doomed.size() > 1 ? "Delete regions" : "Delete region");
         for (const int index : doomed)
             undo.perform (new DeleteRegionAction (session, engine, trackIdx, index));
+        if (focusStays)
+            regionIdx -= static_cast<int> (std::count_if (doomed.begin(), doomed.end(),
+                                                          [this] (int index) { return index < regionIdx; }));
         reanchorOrClose();
     }
 
@@ -1904,7 +1943,7 @@ private:
 
     void deleteFocused()
     {
-        if (region() == nullptr) return;
+        if (! focusedEditable()) return;
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction ("Delete region");
         undo.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx));
@@ -2061,9 +2100,18 @@ private:
                 if (io.MouseClicked[button])
                 {
                     pointerDown (button, io.MousePos);
+                    if (editsRegions (drag))
+                        holdRegions();
                     break;
                 }
 
+        // Whatever reshaped the track under a region drag stands: nothing more is
+        // written and the release records nothing.
+        if (editsRegions (drag) && ! regionsStillHeld())
+        {
+            drag = Drag::dropped;
+            snapGuide = -1;
+        }
         if (drag == Drag::none || drag == Drag::takeRange)
             return;
         // Every move since the last frame, not only where the pointer ended up, so a
@@ -2080,6 +2128,8 @@ private:
         {
             dragLast = io.MousePos;
             pointerDrag (io.MousePos);
+            if (editsRegions (drag))
+                holdRegions();
         }
         if (! io.MouseDown[dragButton])
             pointerUp();
@@ -2166,6 +2216,45 @@ private:
             && left.timelineStart == leftWas.timelineStart && left.sourceOffset == leftWas.sourceOffset
             && right.file == rightWas.file && right.takeId == rightWas.takeId
             && right.timelineStart + right.lengthInSamples == rightWas.timelineStart + rightWas.lengthInSamples;
+    }
+
+    static bool editsRegions (Drag d)
+    {
+        return d == Drag::fadeIn || d == Drag::fadeOut || d == Drag::gain || d == Drag::trimStart
+            || d == Drag::trimEnd || d == Drag::moveCursor || d == Drag::moveRegion;
+    }
+
+    void holdRegions()
+    {
+        heldRegions.clear();
+        const auto& regions = trackRegions();
+        const auto hold = [this, &regions] (int index)
+        {
+            if (index >= 0 && index < static_cast<int> (regions.size()))
+                heldRegions.emplace_back (index, regions[static_cast<std::size_t> (index)]);
+        };
+        hold (regionIdx);
+        if (drag == Drag::moveCursor || drag == Drag::moveRegion)
+            for (const int index : additional)
+                hold (index);
+    }
+
+    bool regionsStillHeld() const
+    {
+        const auto& regions = trackRegions();
+        if (heldRegions.empty() || heldRegions.front().first != regionIdx)
+            return false;
+        return std::all_of (heldRegions.begin(), heldRegions.end(), [&regions] (const auto& held)
+        {
+            if (held.first < 0 || held.first >= static_cast<int> (regions.size()))
+                return false;
+            const auto& r = regions[static_cast<std::size_t> (held.first)];
+            const auto& was = held.second;
+            return r.file == was.file && r.takeId == was.takeId && r.timelineStart == was.timelineStart
+                && r.sourceOffset == was.sourceOffset && r.lengthInSamples == was.lengthInSamples
+                && r.fadeInSamples == was.fadeInSamples && r.fadeOutSamples == was.fadeOutSamples
+                && ! nonZero (r.gainDb - was.gainDb);
+        });
     }
 
     // The drag edited both regions live; the release rolls them back and records the
@@ -2312,11 +2401,13 @@ private:
             if (! regions[static_cast<std::size_t> (hit)].locked)
             {
                 const auto at = snapTimelineSample (timelineForX (p.x), command);
-                auto& undo = engine.getUndoManager();
-                undo.beginNewTransaction ("Split region");
-                undo.perform (new SplitRegionAction (session, engine, trackIdx, hit, at));
+                engine.getUndoManager().beginNewTransaction ("Split region");
+                splitRegion (hit, at);
                 if (hit != regionIdx)
+                {
                     rangeActive = false;
+                    additional.erase (std::remove (additional.begin(), additional.end(), hit), additional.end());
+                }
                 regionIdx = hit;
             }
             return;
@@ -2379,7 +2470,7 @@ private:
     void pointerDrag (ImVec2 p)
     {
         auto* r = region();
-        if (r == nullptr)
+        if (r == nullptr || drag == Drag::dropped)
             return;
         const auto& io = ImGui::GetIO();
         const bool bypass = io.KeyCtrl || io.KeySuper;
@@ -2515,6 +2606,7 @@ private:
             case Drag::none: case Drag::moveCursor: case Drag::range: case Drag::moveRegion: case Drag::pan:
             case Drag::loopIn: case Drag::loopOut: case Drag::punchIn: case Drag::punchOut:
             case Drag::automationPoint: case Drag::automationPaint: case Drag::takeRange: case Drag::seam:
+            case Drag::dropped:
                 break;
         }
     }
@@ -2545,7 +2637,7 @@ private:
         }
 
         auto* r = region();
-        if (r == nullptr || finished == Drag::pan || finished == Drag::moveCursor
+        if (r == nullptr || finished == Drag::dropped || finished == Drag::pan || finished == Drag::moveCursor
             || finished == Drag::loopIn || finished == Drag::loopOut
             || finished == Drag::punchIn || finished == Drag::punchOut)
             return;
@@ -2556,15 +2648,30 @@ private:
         if (finished == Drag::fadeOut) after.fadeOutAuto = false;
 
         const auto& before = regionAtDragStart;
-        if (after.sourceOffset == before.sourceOffset && after.timelineStart == before.timelineStart
-            && after.lengthInSamples == before.lengthInSamples && after.fadeInSamples == before.fadeInSamples
-            && after.fadeOutSamples == before.fadeOutSamples && after.fadeInAuto == before.fadeInAuto
-            && after.fadeOutAuto == before.fadeOutAuto && ! nonZero (after.gainDb - before.gainDb))
+        const bool focusedChanged = after.sourceOffset != before.sourceOffset
+                                 || after.timelineStart != before.timelineStart
+                                 || after.lengthInSamples != before.lengthInSamples
+                                 || after.fadeInSamples != before.fadeInSamples
+                                 || after.fadeOutSamples != before.fadeOutSamples
+                                 || after.fadeInAuto != before.fadeInAuto || after.fadeOutAuto != before.fadeOutAuto
+                                 || nonZero (after.gainDb - before.gainDb);
+
+        // A group move can leave the focused region clamped at 0 while the rest of the
+        // selection moves.
+        auto& regions = session.track (trackIdx).regions;
+        std::vector<std::size_t> othersMoved;
+        if (finished == Drag::moveRegion)
+            for (std::size_t i = 0; i < additional.size() && i < additionalOrigins.size(); ++i)
+            {
+                const int index = additional[i];
+                if (index < 0 || index >= static_cast<int> (regions.size())) continue;
+                const auto& other = regions[static_cast<std::size_t> (index)];
+                if (! other.locked && other.timelineStart != additionalOrigins[i])
+                    othersMoved.push_back (i);
+            }
+        if (! focusedChanged && othersMoved.empty())
             return;
 
-        // The action's perform applies the after state, so the live edit is rolled
-        // back first and the stored before is the authoritative one.
-        *r = before;
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction (finished == Drag::fadeIn    ? "Fade-in"
                                 : finished == Drag::fadeOut   ? "Fade-out"
@@ -2572,23 +2679,22 @@ private:
                                 : finished == Drag::trimStart ? "Trim start"
                                 : finished == Drag::trimEnd   ? "Trim end"
                                                               : "Move region");
-        undo.perform (new RegionEditAction (session, engine, trackIdx, regionIdx, before, after));
-
-        if (finished == Drag::moveRegion)
+        // The action's perform applies the after state, so the live edit is rolled
+        // back first and the stored before is the authoritative one.
+        if (focusedChanged)
         {
-            auto& regions = session.track (trackIdx).regions;
-            for (std::size_t i = 0; i < additional.size() && i < additionalOrigins.size(); ++i)
-            {
-                const int index = additional[i];
-                if (index < 0 || index >= static_cast<int> (regions.size())) continue;
-                auto& other = regions[static_cast<std::size_t> (index)];
-                if (other.locked || other.timelineStart == additionalOrigins[i]) continue;
-                const AudioRegion otherAfter = other;
-                AudioRegion otherBefore = otherAfter;
-                otherBefore.timelineStart = additionalOrigins[i];
-                other = otherBefore;
-                undo.perform (new RegionEditAction (session, engine, trackIdx, index, otherBefore, otherAfter));
-            }
+            *r = before;
+            undo.perform (new RegionEditAction (session, engine, trackIdx, regionIdx, before, after));
+        }
+        for (const auto i : othersMoved)
+        {
+            const int index = additional[i];
+            auto& other = regions[static_cast<std::size_t> (index)];
+            const AudioRegion otherAfter = other;
+            AudioRegion otherBefore = otherAfter;
+            otherBefore.timelineStart = additionalOrigins[i];
+            other = otherBefore;
+            undo.perform (new RegionEditAction (session, engine, trackIdx, index, otherBefore, otherAfter));
         }
         if (finished == Drag::moveRegion || finished == Drag::trimStart || finished == Drag::trimEnd)
             syncAutoCrossfades();
@@ -2607,9 +2713,9 @@ private:
             case Drag::fadeIn: case Drag::fadeOut: case Drag::gain: case Drag::trimStart: case Drag::trimEnd:
             case Drag::moveRegion:
             {
-                // Whatever replaced the track's regions meanwhile is left alone.
+                // Whatever reshaped the track's regions meanwhile is left alone.
                 auto* r = region();
-                if (r == nullptr || r->file != regionAtDragStart.file)
+                if (r == nullptr || ! regionsStillHeld())
                     break;
                 *r = regionAtDragStart;
                 auto& regions = session.track (trackIdx).regions;
@@ -2649,7 +2755,7 @@ private:
             case Drag::pan:
                 scrollSamples = panStartScroll;
                 break;
-            case Drag::none: case Drag::moveCursor:
+            case Drag::none: case Drag::moveCursor: case Drag::dropped:
                 break;
         }
     }
@@ -2673,19 +2779,19 @@ private:
 
     void splitAtCursor()
     {
+        if (! focusedEditable()) return;
         const auto* r = region();
-        if (r == nullptr) return;
         const auto at = r->timelineStart + (editCursorSample - r->sourceOffset);
-        auto& undo = engine.getUndoManager();
-        undo.beginNewTransaction ("Split region");
-        undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, at));
+        engine.getUndoManager().beginNewTransaction ("Split region");
+        splitRegion (regionIdx, at);
     }
 
     // Non-destructive: raises the region gain so the slice's peak lands at 0.99.
     void normalize()
     {
+        if (! focusedEditable()) return;
         const auto* r = region();
-        if (r == nullptr || ! r->file.existsAsFile() || r->lengthInSamples <= 0) return;
+        if (! r->file.existsAsFile() || r->lengthInSamples <= 0) return;
 
         auto reader = dusk::audio::FileReader::open (
             std::filesystem::u8path (r->file.getFullPathName().toStdString()));
@@ -2943,13 +3049,13 @@ private:
         if (iconButton (ctx, "Redo", square (left (dia)), Glyph::redo, undo.canRedo(), "Redo (" DUSK_COMMAND_KEY "+Shift+Z)"))
             undoStep (true);
         inner.takeLeft (gap);
-        if (iconButton (ctx, "Split", square (left (dia)), Glyph::split, haveRegion, "Split at edit cursor (" DUSK_COMMAND_KEY "+E)"))
+        if (iconButton (ctx, "Split", square (left (dia)), Glyph::split, focusedEditable(),
+                        "Split at edit cursor (" DUSK_COMMAND_KEY "+E)"))
             splitAtCursor();
-        if (iconButton (ctx, "Normalize", square (left (dia)), Glyph::normalize, haveRegion, "Normalize"))
+        if (iconButton (ctx, "Normalize", square (left (dia)), Glyph::normalize, focusedEditable(), "Normalize"))
             normalize();
         const auto* focused = region();
-        if (iconButton (ctx, "Reverse", square (left (dia)), Glyph::reverse,
-                        focused != nullptr && ! focused->locked && ! trackFrozen(),
+        if (iconButton (ctx, "Reverse", square (left (dia)), Glyph::reverse, focusedEditable(),
                         focused != nullptr && forwardOfReversed (*focused) ? "Reverse back to the original audio"
                                                                            : "Reverse region"))
             reverseRegion();
@@ -3064,6 +3170,8 @@ private:
             }
             case Field::gain:
             {
+                if (! focusedEditable())
+                    return;
                 const auto digits = dusk::text::retainCharacters (dusk::text::trim (text), "0123456789.-+");
                 if (digits.empty())
                     return;
@@ -3073,6 +3181,8 @@ private:
             }
             case Field::fade:
             {
+                if (! focusedEditable())
+                    return;
                 // "IN / OUT", or one value for the fade-in alone, and the readout's own
                 // "fade ... ms" dressing is tolerated so it can be retyped as shown.
                 auto raw = dusk::text::toLowerCase (dusk::text::trim (text));
@@ -3223,8 +3333,8 @@ private:
         if (! drawField (ctx, Field::gain, gain))
         {
             readout (ctx, gain, text, dw::Align::left);
-            addControl ("Gain", gain, true);
-            if (doubleClicked (ctx, "##gain-readout", gain))
+            addControl ("Gain", gain, focusedEditable());
+            if (doubleClicked (ctx, "##gain-readout", gain) && focusedEditable())
                 beginEdit (Field::gain, text);
         }
 
@@ -3237,8 +3347,8 @@ private:
         if (! drawField (ctx, Field::fade, fade))
         {
             readout (ctx, fade, text, dw::Align::left);
-            addControl ("Fades", fade, true);
-            if (doubleClicked (ctx, "##fade-readout", fade))
+            addControl ("Fades", fade, focusedEditable());
+            if (doubleClicked (ctx, "##fade-readout", fade) && focusedEditable())
                 beginEdit (Field::fade, text);
         }
 
@@ -3909,13 +4019,13 @@ private:
         const bool locked = r->locked;
         if (menuItem (rangeActive ? "Loop selection" : "Loop region")) loopSelection();
         ImGui::Separator();
-        if (menuItem ("Split at edit cursor")) splitAtCursor();
+        if (menuItem ("Split at edit cursor", ! editLocked)) splitAtCursor();
         if (menuItem ("Cut range", rangeActive && ! editLocked)) cutRange();
         if (menuItem ("Join selected regions", ! additional.empty())) joinSelected();
         ImGui::Separator();
-        if (menuItem ("Reset gain (0 dB)"))
+        if (menuItem ("Reset gain (0 dB)", ! editLocked))
             editFocused ("Reset gain", [] (AudioRegion& a) { a.gainDb = 0.0f; });
-        if (menuItem ("Reset fades"))
+        if (menuItem ("Reset fades", ! editLocked))
             editFocused ("Reset fades", [] (AudioRegion& a)
             {
                 a.fadeInSamples = a.fadeOutSamples = 0;
@@ -4024,7 +4134,7 @@ private:
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (menuItem ("Delete region")) deleteFocused();
+        if (menuItem ("Delete region", ! locked && ! trackFrozen())) deleteFocused();
 
         if (const auto* shown = region())
         {
@@ -4143,7 +4253,7 @@ private:
             case Drag::range: ImGui::SetMouseCursor (ImGuiMouseCursor_TextInput); return;
             case Drag::automationPoint: ImGui::SetMouseCursor (ImGuiMouseCursor_Hand); return;
             case Drag::none: case Drag::moveCursor: case Drag::moveRegion: case Drag::automationPaint:
-            case Drag::takeRange:
+            case Drag::takeRange: case Drag::dropped:
                 break;
         }
 
@@ -4563,6 +4673,10 @@ private:
 
     void firePendingPromote()
     {
+        // A press since the name click started a drag, whose regions the promote
+        // would replace under it.
+        if (drag != Drag::none)
+            pendingPromoteTake = 0;
         if (pendingPromoteTake == 0
             || ImGui::GetTime() - pendingPromoteAt < static_cast<double> (ImGui::GetIO().MouseDoubleClickTime))
             return;
