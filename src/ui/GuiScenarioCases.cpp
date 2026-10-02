@@ -2744,7 +2744,11 @@ std::optional<ScenarioResult> runAudioEditorOpensOnEveryTake (GuiHost& host, Sce
         const double ratio = read ? fitted[0] / (*opened)[0] : 0.0;
         ctx.expect (ratio > 4.5 && ratio < 5.5,
                     "the editor did not open on every take (region fit over open zoom " + std::to_string (ratio) + ")");
-    } });
+    }, [&host, opened]
+    {
+        const auto view = host.audioEditorView();
+        return view.size() == 3 && opened->size() == 3 && std::abs (view[0] - (*opened)[0]) > 1.0e-9 * (*opened)[0];
+    }, "the fit key never changed the zoom" });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
