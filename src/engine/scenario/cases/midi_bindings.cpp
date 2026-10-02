@@ -503,14 +503,14 @@ ScenarioResult runLearn (ScenarioContext& ctx)
 // parameter it was learned on, not whatever the plug-in keeps at that index.
 ScenarioResult runKnobSynthBindings (ScenarioContext& ctx)
 {
-    constexpr const char* kSynth = "dusk.builtin.synth";
+    static constexpr const char* kSynth = "dusk.builtin.synth";
     if (builtin::findUnit (kSynth) == nullptr)
         return ScenarioResult::skip ("this build has no Sunset");
 
     auto& engine = ctx.engine();
     auto& session = ctx.session();
-    constexpr int kTrack = 9;
-    constexpr int kCutoff = 15, kUnison = 5;   // the knob unit's indices
+    static constexpr int kTrack = 9;
+    static constexpr int kCutoff = 15, kUnison = 5;   // the knob unit's indices
     auto& track = session.track (kTrack);
     auto& strip = engine.getChannelStrip (kTrack);
 

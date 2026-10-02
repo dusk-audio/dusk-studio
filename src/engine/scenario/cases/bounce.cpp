@@ -984,7 +984,7 @@ int oversamplingParam (const builtin::NativeBuiltinSlot& slot)
 RecordingMidiBackend* sunsetsIntoRecorders (ScenarioContext& ctx, const std::vector<float>& oversampling,
                                             const std::vector<std::pair<int, std::int64_t>>& notes)
 {
-    constexpr const char* kSunset = "dusk.builtin.synth";
+    static constexpr const char* kSunset = "dusk.builtin.synth";
     auto& session = ctx.session();
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
@@ -1011,7 +1011,7 @@ RecordingMidiBackend* sunsetsIntoRecorders (ScenarioContext& ctx, const std::vec
     });
 
     const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
-    constexpr std::int64_t kNoteTicks = kMidiTicksPerQuarter / 8;
+    static constexpr std::int64_t kNoteTicks = kMidiTicksPerQuarter / 8;
     for (int t = 0; t < numTracks; ++t)
     {
         auto& track = session.track (t);
@@ -1134,7 +1134,7 @@ void expectHanded (ScenarioContext& ctx, const std::string& track, const PortTal
 // audio.
 ScenarioResult sunsetLandsWithAudio (ScenarioContext& ctx)
 {
-    constexpr const char* kSunset = "dusk.builtin.synth";
+    static constexpr const char* kSunset = "dusk.builtin.synth";
     if (builtin::findUnit (kSunset) == nullptr)
         return ScenarioResult::skip ("this build has no Sunset");
 
@@ -1144,7 +1144,7 @@ ScenarioResult sunsetLandsWithAudio (ScenarioContext& ctx)
     // after the seam of the very block that wraps.
     static constexpr std::int64_t kLoopStart = kAt - 128;
     static constexpr std::int64_t kLoopEnd = kLoopStart + 93 * ScenarioContext::kBlockSize + 16;
-    constexpr int kAudioTrack = 0, kSynthTrack = 1;
+    static constexpr int kAudioTrack = 0, kSynthTrack = 1;
     auto& session = ctx.session();
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
@@ -1268,21 +1268,21 @@ ScenarioResult sunsetLandsWithAudio (ScenarioContext& ctx)
 // every note-on and note-off, and each note has to die away once it ends.
 std::optional<ScenarioResult> sunsetOversamplingFlipsMidRoll (ScenarioContext& ctx)
 {
-    constexpr const char* kSunset = "dusk.builtin.synth";
+    static constexpr const char* kSunset = "dusk.builtin.synth";
     if (builtin::findUnit (kSunset) == nullptr)
         return ScenarioResult::skip ("this build has no Sunset");
 
-    constexpr int kTrack = 0;
-    constexpr int kBlock = ScenarioContext::kBlockSize;
+    static constexpr int kTrack = 0;
+    static constexpr int kBlock = ScenarioContext::kBlockSize;
     // A flip lands inside the block it is pumped with, so the schedule moves
     // from the next one: note A ends 5 samples into kUpBlock, the first block
     // scheduled at 2x, and note B starts 5 samples into kDownBlock, the first
     // back at 1x.
-    constexpr std::int64_t kUpBlock = 40;
-    constexpr std::int64_t kDownBlock = 1000;
-    constexpr int kIntoBlock = 5;
-    constexpr int kNoteA = 60, kNoteB = 64;
-    constexpr float kQuietDb = -60.0f;
+    static constexpr std::int64_t kUpBlock = 40;
+    static constexpr std::int64_t kDownBlock = 1000;
+    static constexpr int kIntoBlock = 5;
+    static constexpr int kNoteA = 60, kNoteB = 64;
+    static constexpr float kQuietDb = -60.0f;
 
     auto& session = ctx.session();
     auto& engine = ctx.engine();
@@ -1316,7 +1316,7 @@ std::optional<ScenarioResult> sunsetOversamplingFlipsMidRoll (ScenarioContext& c
         return ctx.verdict();
 
     const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
-    constexpr std::int64_t kNoteTicks = kMidiTicksPerQuarter / 4;
+    static constexpr std::int64_t kNoteTicks = kMidiTicksPerQuarter / 4;
     const auto noteSamples = ticksToSamples (kNoteTicks, kRate, bpm);
     const auto noteRegion = [&] (int pitch, std::int64_t onAt)
     {
@@ -1422,25 +1422,25 @@ std::optional<ScenarioResult> sunsetOversamplingFlipsMidRoll (ScenarioContext& c
 // a seam.
 std::optional<ScenarioResult> sunsetLoopSeamResetsOnce (ScenarioContext& ctx)
 {
-    constexpr const char* kSunset = "dusk.builtin.synth";
+    static constexpr const char* kSunset = "dusk.builtin.synth";
     if (builtin::findUnit (kSunset) == nullptr)
         return ScenarioResult::skip ("this build has no Sunset");
 
-    constexpr int kBlock = ScenarioContext::kBlockSize;
-    constexpr int kLatentTrack = 0, kPlainTrack = 1, kNumTracks = 2;
+    static constexpr int kBlock = ScenarioContext::kBlockSize;
+    static constexpr int kLatentTrack = 0, kPlainTrack = 1, kNumTracks = 2;
     // Whole blocks long and rolled from a block boundary, so the end lands
     // this far into a block on every pass.
-    constexpr int kSeamIntoBlock = 5;
-    constexpr std::int64_t kLoopEnd = 40 * kBlock + kSeamIntoBlock;
-    constexpr std::int64_t kLoopStart = kLoopEnd - 32 * kBlock;
+    static constexpr int kSeamIntoBlock = 5;
+    static constexpr std::int64_t kLoopEnd = 40 * kBlock + kSeamIntoBlock;
+    static constexpr std::int64_t kLoopStart = kLoopEnd - 32 * kBlock;
     // The block whose window at 2x starts past the loop end, and the one
     // before it, whose window crosses the end.
-    constexpr std::int64_t kSeamBlock = kLoopEnd - kSeamIntoBlock;
-    constexpr std::int64_t kCrossingBlock = kSeamBlock - kBlock;
+    static constexpr std::int64_t kSeamBlock = kLoopEnd - kSeamIntoBlock;
+    static constexpr std::int64_t kCrossingBlock = kSeamBlock - kBlock;
     // Mid-pass the loop end moves in to just past the block about to roll,
     // which keeps the loop whole blocks long.
-    constexpr std::int64_t kEditBlock = kLoopStart + (kBlock - kSeamIntoBlock) + 24 * kBlock;
-    constexpr int kHeld = 60, kOnStart = 64;
+    static constexpr std::int64_t kEditBlock = kLoopStart + (kBlock - kSeamIntoBlock) + 24 * kBlock;
+    static constexpr int kHeld = 60, kOnStart = 64;
 
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
@@ -1526,20 +1526,20 @@ std::optional<ScenarioResult> sunsetLoopSeamResetsOnce (ScenarioContext& ctx)
 // both tracks are silent.
 std::optional<ScenarioResult> sunsetLoopSeamOnBlockBoundary (ScenarioContext& ctx)
 {
-    constexpr const char* kSunset = "dusk.builtin.synth";
+    static constexpr const char* kSunset = "dusk.builtin.synth";
     if (builtin::findUnit (kSunset) == nullptr)
         return ScenarioResult::skip ("this build has no Sunset");
 
-    constexpr int kBlock = ScenarioContext::kBlockSize;
-    constexpr int kPlainTrack = 0, kLatentTrack = 1, kNumTracks = 2;
-    constexpr std::int64_t kLoopStart = 16 * kBlock;
-    constexpr std::int64_t kLoopEnd = kLoopStart + 128 * kBlock;
-    constexpr int kSeams = 3;
-    constexpr int kHeld = 60, kOnStart = 64, kOverEnd = 67;
+    static constexpr int kBlock = ScenarioContext::kBlockSize;
+    static constexpr int kPlainTrack = 0, kLatentTrack = 1, kNumTracks = 2;
+    static constexpr std::int64_t kLoopStart = 16 * kBlock;
+    static constexpr std::int64_t kLoopEnd = kLoopStart + 128 * kBlock;
+    static constexpr int kSeams = 3;
+    static constexpr int kHeld = 60, kOnStart = 64, kOverEnd = 67;
     // Every note but the one over the loop end, which is still to come, ended
     // over half a second before, longer than Sunset's release takes to die.
-    constexpr std::int64_t kQuietAt = kLoopEnd - 8 * kBlock;
-    constexpr float kQuietDb = -60.0f;
+    static constexpr std::int64_t kQuietAt = kLoopEnd - 8 * kBlock;
+    static constexpr float kQuietDb = -60.0f;
 
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
@@ -1613,21 +1613,21 @@ std::optional<ScenarioResult> sunsetLoopSeamOnBlockBoundary (ScenarioContext& ct
 // straight through.
 std::optional<ScenarioResult> sunsetLoopOffPastTheSeam (ScenarioContext& ctx)
 {
-    constexpr const char* kSunset = "dusk.builtin.synth";
+    static constexpr const char* kSunset = "dusk.builtin.synth";
     if (builtin::findUnit (kSunset) == nullptr)
         return ScenarioResult::skip ("this build has no Sunset");
 
-    constexpr int kBlock = ScenarioContext::kBlockSize;
-    constexpr int kPlainTrack = 0, kLatentTrack = 1, kNumTracks = 2;
-    constexpr int kSeamIntoBlock = 5;
-    constexpr std::int64_t kLoopStart = 16 * kBlock;
-    constexpr std::int64_t kLoopEnd = kLoopStart + 32 * kBlock + kSeamIntoBlock;
+    static constexpr int kBlock = ScenarioContext::kBlockSize;
+    static constexpr int kPlainTrack = 0, kLatentTrack = 1, kNumTracks = 2;
+    static constexpr int kSeamIntoBlock = 5;
+    static constexpr std::int64_t kLoopStart = 16 * kBlock;
+    static constexpr std::int64_t kLoopEnd = kLoopStart + 32 * kBlock + kSeamIntoBlock;
     // The block whose window at 2x starts past the loop end.
-    constexpr std::int64_t kSeamBlock = kLoopEnd - kSeamIntoBlock;
+    static constexpr std::int64_t kSeamBlock = kLoopEnd - kSeamIntoBlock;
     // A third of a second after the note over the loop end has ended.
-    constexpr std::int64_t kQuietAt = kSeamBlock + 64 * kBlock;
-    constexpr int kHeld = 60, kOnStart = 64, kOverEnd = 67;
-    constexpr float kQuietDb = -60.0f;
+    static constexpr std::int64_t kQuietAt = kSeamBlock + 64 * kBlock;
+    static constexpr int kHeld = 60, kOnStart = 64, kOverEnd = 67;
+    static constexpr float kQuietDb = -60.0f;
 
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
