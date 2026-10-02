@@ -233,3 +233,24 @@ TEST_CASE ("Stopping frees every stream a track holds, taken or waiting", "[play
     rig.rebuildWith (rig.a);
     CHECK (PlaybackEngine::liveStreamCountForTest() == outside);
 }
+
+TEST_CASE ("A stop whose drain gives up leaves no old rebuild to swap in", "[playback][live-swap]")
+{
+    Rig rig;
+    rig.play (1);
+    rig.rebuildWith (rig.c);    // handed over, not yet taken
+    rig.rebuildOnly (rig.b);    // built, not yet handed over
+
+    rig.session->track (kTrack).regions = { wholeRegion (rig.a) };
+    rig.engine.holdAudioReadForTest (true);
+    rig.engine.preparePlayback();
+    rig.engine.holdAudioReadForTest (false);
+
+    rig.engine.service();
+    const auto out = rig.play (4);
+    for (std::size_t i = 0; i < out.size(); ++i)
+    {
+        INFO ("sample " << i);
+        REQUIRE_THAT (out[i], WithinAbs (kLevelA, 1e-4));
+    }
+}

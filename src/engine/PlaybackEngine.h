@@ -80,6 +80,11 @@ public:
     void setSynchronousReadersForTest (bool synchronous) noexcept { synchronousReaders = synchronous; }
     // How many track stream sets exist, for tests that prove none leak.
     static int liveStreamCountForTest() noexcept;
+    // Tests only: hold the audio thread in flight, as a callback stuck mid-read does.
+    void holdAudioReadForTest (bool hold) noexcept
+    {
+        audioInFlight.fetch_add (hold ? 1 : -1, std::memory_order_seq_cst);
+    }
 
     // Hot-update region gain + mute on the live snapshot without
     // rebuilding readers. Matches streams to AudioRegion entries by

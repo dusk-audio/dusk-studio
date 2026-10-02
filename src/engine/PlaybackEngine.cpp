@@ -337,6 +337,14 @@ void PlaybackEngine::stopPlayback()
 {
     streamsActive.store (false, std::memory_order_seq_cst);
 
+    // Neither of these is the audio thread's: pending is message-thread only, and
+    // a stream it has not exchanged out of incoming it never will. Dropped before
+    // the drain, so a drain that gives up cannot leave a pre-stop rebuild to swap
+    // in over the streams the next preparePlayback builds.
+    for (auto& swap : pending) swap.stream.reset();
+    for (auto& slot : slots)
+        delete slot.incoming.exchange (nullptr, std::memory_order_acq_rel);
+
     // Drain in-flight readForTrack calls before destroying the readers.
     // The audio callback latches the transport state once per block, so
     // it can still be mid-sum when the message thread gets here. Time-
@@ -364,7 +372,6 @@ void PlaybackEngine::stopPlayback()
     }
 
     for (auto& slot : slots) freeSlot (slot);
-    for (auto& swap : pending) swap.stream.reset();
 }
 
 void PlaybackEngine::refreshTrackPlayback (int trackIndex, Audition audition)
