@@ -1527,6 +1527,7 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
     const auto stripsWere = strips;
     const auto midiInputsWere = lastMidiInputIndex;
     const auto midiAheadWas = midiScheduledAhead;
+    const auto midiUpToWas = midiScheduledUpTo;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto from = (size_t) plan.newToOld[(size_t) t];
@@ -1534,6 +1535,7 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
         strips[(size_t) t] = strip;
         lastMidiInputIndex[(size_t) t] = midiInputsWere[from];
         midiScheduledAhead[(size_t) t] = midiAheadWas[from];
+        midiScheduledUpTo[(size_t) t] = midiUpToWas[from];
         strip->bind (session.track (t).strip);
         strip->bindHardwareInsert (session.track (t).hardwareInsert);
     }
@@ -5925,6 +5927,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // left alone. Only a rise past kMaxMidiLatencyBridge is a locate,
         // released and chased the way a playhead jump is.
         const bool schedulesTimelineMidi = midiTrack && willReadFromDisk && ! isFrozen;
+        const int scheduledAhead = midiScheduledAhead[(size_t) t];
         int instrumentLatency = 0;
         int midiWindowAhead = 0;
         bool latencyLocate = false;
@@ -5932,8 +5935,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         {
             instrumentLatency = std::clamp (strips[(size_t) t]->getInsertPluginLatencySamples(),
                                             0, ChannelStrip::kMaxPdcSamples);
-            const int ahead = midiScheduledAhead[(size_t) t];
-            midiWindowAhead = (ahead < 0 || flushHangingMidi) ? instrumentLatency : ahead;
+            midiWindowAhead = (scheduledAhead < 0 || flushHangingMidi) ? instrumentLatency
+                                                                      : scheduledAhead;
             if (instrumentLatency - midiWindowAhead > kMaxMidiLatencyBridge)
             {
                 latencyLocate = true;
@@ -5947,6 +5950,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             midiScheduledAhead[(size_t) t] = -1;
         }
         const bool perTrackFlush = flushHangingMidi || midiInputSwapped || latencyLocate;
+        const bool midiWindowContinues = schedulesTimelineMidi && scheduledAhead >= 0
+                                      && ! perTrackFlush;
 
         perTrackMidi[(size_t) t].clear();
         liveRecordMidiScratch.clear();
@@ -6144,15 +6149,30 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // consume their bytes. At the supported 8192-frame maximum, plus a
             // bridged latency rise of up to kMaxMidiLatencyBridge, and the
             // 128-sample minimum loop this is at most 73 complete resets.
+            //
+            // A window that starts past the loop end is reported as wrapping at
+            // its head. When it carries on from where the last window ended,
+            // the last window already crossed that seam and sent its reset and
+            // chase.
+            bool headSeamSent = false;
             if (midiTrack)
             {
                 int futureSeamResetCount = 0;
+                auto& scheduledUpTo = midiScheduledUpTo[(size_t) t];
+                const auto lastWindowEnd = scheduledUpTo;
                 forEachLoopTimelineSpan (
                     windowStart, windowLength, midiLoopActive, loopReadStart, loopReadEnd,
                     [&] (const LoopTimelineSpan& span) noexcept
                     {
                         if (span.wrappedBefore)
-                            ++futureSeamResetCount;
+                        {
+                            if (span.bufferOffset == 0 && midiWindowContinues
+                                && span.timelineStart == lastWindowEnd)
+                                headSeamSent = true;
+                            else
+                                ++futureSeamResetCount;
+                        }
+                        scheduledUpTo = span.timelineStart + span.length;
                     });
                 const bool reserved = generatedMidiBudget.reserveStructural (
                     futureSeamResetCount * kHangingResetBytes);
@@ -6171,11 +6191,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 windowStart, windowLength, midiLoopActive, loopReadStart, loopReadEnd,
                 [&] (const LoopTimelineSpan& span) noexcept
                 {
+                    const bool seam = span.wrappedBefore
+                                   && ! (headSeamSent && span.bufferOffset == 0);
                     // Structural resets are emitted before every overload
                     // bailout. Their capacity was reserved exactly above, so
                     // an exhausted musical-event or scan budget cannot suppress
                     // this or any later seam reset.
-                    if (midiTrack && span.wrappedBefore
+                    if (midiTrack && seam
                         && ! emitHangingMidiReset (bufferOffsetOf (span.bufferOffset)))
                     {
                         midiBufferOverflow = true;
@@ -6187,7 +6209,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                         || midiScheduleScansRemaining <= 0)
                         return;
 
-                    const bool chase = midiTrack && (span.wrappedBefore
+                    const bool chase = midiTrack && (seam
                                     || (span.bufferOffset == 0
                                         && (flushHangingMidi || latencyLocate)));
                     const int chaseOffset = bufferOffsetOf (span.bufferOffset);

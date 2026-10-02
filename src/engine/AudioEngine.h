@@ -995,6 +995,13 @@ private:
     // thread, except that a track move remaps it with the callback suspended.
     std::array<int, Session::kNumTracks> midiScheduledAhead {};
 
+    // The same window's end on the timeline the instrument heard, after any
+    // loop wraps - the loop end itself when it ran right up to a seam. A next
+    // window that starts there continues it, so a seam the loop reports at its
+    // head was already crossed. Read only while midiScheduledAhead is not -1;
+    // same threading.
+    std::array<std::int64_t, Session::kNumTracks> midiScheduledUpTo {};
+
     // MIDI hot-plug. The backend's MIDI thread reports that the OS port set
     // moved; noteMidiDeviceChange arms a single delayed pass so one plug (a
     // client arrival plus a port arrival per port) costs one rebuild, and
