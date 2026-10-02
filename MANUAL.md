@@ -1242,13 +1242,13 @@ A region that names no take (an imported file, a reversed or rendered region, or
 
 MIDI tracks keep their own take history. Each MIDI region holds up to **8 previous takes**; see *Take count and MIDI take cycling* under The tape strip.
 
-Sessions saved by Dusk Studio 0.14 load with each region's old take history as takes on its track, numbered oldest first. The audio files are not touched.
+Sessions saved by Dusk Studio 0.14 load with each region's old take history as takes on its track, numbered oldest first. The audio files are not touched. Sessions are now saved in format v10, which Dusk Studio 0.14 and earlier cannot open, so keep a copy of a 0.14 session if you still need to open it there.
 
 ## Recording errors
 
 If Dusk Studio can't open a file for writing (full disk, permission denied, missing audio directory), the error is captured at record start and displayed as an alert before the take begins, listing the affected tracks. You don't lose a take thinking it was captured.
 
-If something goes wrong mid-take (ring-buffer overrun on a stressed disk, MIDI FIFO overflow), an alert appears when you press Stop. The portion of the take that was written successfully is preserved.
+If something goes wrong mid-take (ring-buffer overrun on a stressed disk, MIDI FIFO overflow), an alert appears when you press Stop. The portion of the take that was written successfully is preserved. In a loop take, a pass that hit a failed write is dropped whole, and the other passes are kept.
 
 A loop take keeps up to 1,024 passes per track. Passes past that are not recorded, and the same alert at Stop lists the track with "loop passes not recorded (past 1,024 in one take)". Every earlier pass is kept.
 
@@ -1435,7 +1435,7 @@ The top is a row of icon buttons. Hover over one for its name and shortcut:
 - **Properties** (label, mute, lock, colour and delete actions, with file name, sample rate, channel count and length shown below).
 - **Grab**, **Range**, **Cut**, **Draw**, then the editor's own **Snap** toggle and grid resolution, set apart from the timeline's.
 - **Auto: Off**, which picks an automation lane to show over the waveform (see *Editing breakpoints in the region editor* under Mixing).
-- The track name and the region's title. Double-click the title to rename the region in place; Enter keeps the new name, Esc keeps the old one, and accepting the file name as shown leaves the region unlabelled.
+- The track name and the region's title. Double-click the title to rename the region in place; Enter keeps the new name, Esc keeps the old one, and accepting the title as shown (the take's name, or the file name for a region with no named take) leaves the region unlabelled.
 - **Chase** and **Zoom out / Zoom in / Zoom fit** at the right (also **−**, **+**, **0**). Zoom in stops at one sample per pixel. Resizing the window keeps the zoom and the edit cursor where they are; **Zoom fit** fits the view to the new size.
 
 The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. The range belongs to the region you drew it on: clicking another region with Grab or Cut clears it. Cut splits the region at every click. Draw is the automation pencil: with an automation lane selected (see below) it draws a freehand breakpoint curve; with no lane selected it does nothing (it never moves the region).
@@ -2603,7 +2603,7 @@ The format for each entry:
 - **When**: A take finishes, but at least one track had a write error or MIDI overflow mid-take.
 - **Text**: "The last take captured with errors. Listed tracks may be partial or missing audio / MIDI data:" and then one line per problem, "Track [n] - [what went wrong] ([count])", where what went wrong is "WAV write failed (disk full / I/O error)", "take discarded (recording offset exceeds its length)", "loop passes not recorded (past 1,024 in one take)" or "MIDI events dropped (capture buffer full)". When a WAV write failed the alert ends "Check the session's audio folder for free space and the session log for I/O details before continuing."
 - **Buttons**: OK.
-- **Action**: After a failed WAV write, check disk space and the session log. The partial take is kept as a take on its track, with every earlier take, so you can choose what plays in the audio editor's take lanes and re-record the bad parts. A track listed with "loop passes not recorded (past 1,024 in one take)" kept its first 1,024 passes and left the rest out. A take discarded for the recording offset would have landed entirely before the start of the timeline; see **Recording offset** under *Configuring audio*. Dropped MIDI events are missing from that take's MIDI region; record the part again if they matter.
+- **Action**: After a failed WAV write, check disk space and the session log. The partial take is kept as a take on its track, with every earlier take (in a loop take, a pass that hit the failed write is dropped and the other passes are kept), so you can choose what plays in the audio editor's take lanes and re-record the bad parts. A track listed with "loop passes not recorded (past 1,024 in one take)" kept its first 1,024 passes and left the rest out. A take discarded for the recording offset would have landed entirely before the start of the timeline; see **Recording offset** under *Configuring audio*. Dropped MIDI events are missing from that take's MIDI region; record the part again if they matter.
 
 ## Session
 
