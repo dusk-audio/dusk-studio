@@ -273,6 +273,10 @@ public:
     // platform delivers one.
     virtual bool holdPeerKey (const std::string& description, char text = 0) = 0;
     virtual void releasePeerKey() = 0;
+    // Leaves no component holding the keyboard, as Windows leaves the window once a
+    // native child takes it, so keys at the window reach the window itself. Returns
+    // what gives the keyboard back.
+    virtual std::function<void()> unfocusWindow() = 0;
     virtual bool clickModalAt (float xFraction, float yFraction) = 0;
     virtual bool clickFader (int index, bool readout, bool right = false) = 0;
     virtual bool faderEditing (int index) const = 0;

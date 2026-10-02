@@ -718,6 +718,12 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (auto* peer = owner.getPeer())
             peer->handleKeyUpOrDown (false);
     }
+    std::function<void()> unfocusWindow() override
+    {
+        if (auto* top = owner.getTopLevelComponent())
+            top->giveAwayKeyboardFocus();
+        return [this] { owner.focusCanvasOrTopModal(); };
+    }
     bool pointerAt (float x, float y, bool down, int modifiers = 0)
     {
         auto* peer = owner.getPeer();

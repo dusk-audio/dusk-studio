@@ -109,7 +109,8 @@ public:
                                        std::int64_t timelineSample, ImVec2& point) const = 0;
 
     // { renamingTake, confirmingDeleteTake, draggedTake, dragStart, dragEnd }, 0 for
-    // none; the drag ends are timeline samples, snapped as the drag snaps them.
+    // none; renamingTake once its name field has the keyboard, and the drag ends are
+    // timeline samples, snapped as the drag snaps them.
     virtual std::vector<std::int64_t> takeStateForScenario() const = 0;
 
     // What the lane caption says about the last refused take edit; empty when nothing.

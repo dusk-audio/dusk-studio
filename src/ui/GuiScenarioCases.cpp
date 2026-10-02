@@ -3386,7 +3386,12 @@ std::optional<ScenarioResult> runTrackTakeBadge (GuiHost& host, ScenarioContext&
     const auto oldest = ids->front();
     const auto expected = laneOrder (*ids);
     const bool expanded = host.timelineViewMatches (true);
-    ctx.cleanup ([&host, expanded] { if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't'); });
+    // An editor left open would take the T.
+    ctx.cleanup ([&host, expanded]
+    {
+        host.closeAudioEditor();
+        if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+    });
     if (! expanded) host.pressKey ("T", 't');
 
     const auto badgeReads = [&host] (int t, std::string text) { return [&host, t, text] { return host.tapeTakeBadgeText (t) == text; }; };
@@ -3431,7 +3436,7 @@ std::optional<ScenarioResult> runTrackTakeBadge (GuiHost& host, ScenarioContext&
                         [&host, expected] { return host.audioEditorOpen() && host.audioEditorTakeLanes() == expected; },
                         "the badge did not open the editor on the track's take lanes" });
     steps->push_back ({ 100, press ("delete"), shown ("delete"), "the oldest take's header never came into view" });
-    steps->push_back ({ 100, press ("confirm"), [confirming, oldest] { return confirming (oldest); },
+    steps->push_back ({ 100, press ("confirm"), [confirming, shown, oldest] { return confirming (oldest) && shown ("confirm")(); },
                         "Delete did not ask to confirm" });
     steps->push_back ({ 100, [&host] { host.closeAudioEditor(); },
                         [&host] { return host.audioEditorTakeLanes().size() == 2; }, "Delete did not take the lane away" });
@@ -4291,8 +4296,9 @@ const ScenarioRegistrar audioEditorClipboardKeys { Scenario {
 // A key held at the shell's window repeats only where it repeats at the editor's
 // child. Delete held deletes one region, the auto-repeats that follow doing nothing
 // until the key comes up, and the next press deletes one more; Right held nudges the
-// region once per repeat.
-std::optional<ScenarioResult> runAudioEditorHeldKeys (GuiHost& host, ScenarioContext& ctx)
+// region once per repeat. Unfocused, the keys reach the window with no component
+// holding the keyboard, as on Windows once the editor's child has taken it.
+std::optional<ScenarioResult> runAudioEditorHeldKeys (GuiHost& host, ScenarioContext& ctx, bool unfocused)
 {
     if (auto early = beginTakeCase (host, ctx)) return early;
     auto& engine = ctx.engine();
@@ -4321,8 +4327,11 @@ std::optional<ScenarioResult> runAudioEditorHeldKeys (GuiHost& host, ScenarioCon
                     what + " left " + std::to_string (track.regions.size()) + " regions, not " + std::to_string (expected));
     };
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.holdPeerKey ("delete"), "the press of Delete was not handled"); },
-                        [&host] { return host.audioEditorPoint ("wave", 1000).size() == 2; }, "the editor never laid out" });
+    steps->push_back ({ 100, [&host, &ctx, unfocused]
+    {
+        if (unfocused) ctx.cleanup (host.unfocusWindow());
+        ctx.expect (host.holdPeerKey ("delete"), "the press of Delete was not handled");
+    }, [&host] { return host.audioEditorPoint ("wave", 1000).size() == 2; }, "the editor never laid out" });
     steps->push_back ({ 100, [&host, counted]
     {
         counted (3, "the press of Delete");
@@ -4375,7 +4384,13 @@ std::optional<ScenarioResult> runAudioEditorHeldKeys (GuiHost& host, ScenarioCon
 const ScenarioRegistrar audioEditorHeldKeys { Scenario {
     "gui.audio_editor_held_keys", { "gui", "keyboard", "editor", "undo" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
-    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorHeldKeys (host, ctx); }
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorHeldKeys (host, ctx, false); }
+} };
+
+const ScenarioRegistrar audioEditorHeldKeysUnfocused { Scenario {
+    "gui.audio_editor_held_keys_unfocused", { "gui", "keyboard", "editor", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorHeldKeys (host, ctx, true); }
 } };
 
 // With the editor up, a key it does not take at the shell's window goes nowhere, as at

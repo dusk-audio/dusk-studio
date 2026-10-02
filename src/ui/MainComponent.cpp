@@ -1339,13 +1339,14 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (audioEditorShowing() && audioEditorView != nullptr)
     {
         const auto description = key.getTextDescription().toStdString();
+        if (audioEditorWindow->offerShellKey (description, static_cast<std::uint32_t> (key.getTextCharacter())))
+            return true;
         // A lost release costs at most a second of presses read as repeats.
         const auto now = std::chrono::steady_clock::now();
         const bool repeat = description == editorKeyHeld && now - editorKeyHeldAt < std::chrono::seconds (1);
         editorKeyHeld = description;
         editorKeyHeldAt = now;
-        if (audioEditorWindow->offerShellKey (description, static_cast<std::uint32_t> (key.getTextCharacter()))
-            || audioEditorView->handleShellKey (description, repeat))
+        if (audioEditorView->handleShellKey (description, repeat))
             return true;
         const auto chord = imgui::parseKeyDescription (description);
         const auto shortcut = chord ? imgui::shellShortcutFor (*chord) : std::nullopt;

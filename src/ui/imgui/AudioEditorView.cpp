@@ -599,7 +599,7 @@ public:
     std::vector<std::int64_t> takeStateForScenario() const override
     {
         const bool dragging = drag == Drag::takeRange;
-        return { editing == Field::takeName ? static_cast<std::int64_t> (renamingTake) : 0,
+        return { editing == Field::takeName && fieldActive ? static_cast<std::int64_t> (renamingTake) : 0,
                  static_cast<std::int64_t> (confirmingDelete),
                  dragging ? static_cast<std::int64_t> (dragTake) : 0,
                  dragging ? takeDragAnchor : 0, dragging ? takeDragEnd : 0 };
@@ -826,6 +826,8 @@ private:
     Field editing = Field::none;
     bool fieldTakesFocus = false;
     bool fieldDrawn = false;
+    // The field takes the keyboard a frame or two after it opens; keys before that are lost.
+    bool fieldActive = false;
     std::array<char, 256> fieldText {};
     std::string fieldOriginal;
 
@@ -3161,6 +3163,7 @@ private:
     {
         editing = field;
         fieldTakesFocus = true;
+        fieldActive = false;
         // Opened after the fields were laid out, so it shows from the next frame.
         fieldDrawn = true;
         std::snprintf (fieldText.data(), fieldText.size(), "%s", text.c_str());
@@ -3177,6 +3180,7 @@ private:
         const auto result = dw::textField (ctx, "##editor-field", box.tl(), box.br(), fieldText.data(),
                                            fieldText.size(), fieldTakesFocus);
         fieldTakesFocus = false;
+        fieldActive = result.active;
         if (result.committed || result.cancelled)
         {
             editing = Field::none;
