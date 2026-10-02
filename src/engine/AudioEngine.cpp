@@ -2767,6 +2767,19 @@ void AudioEngine::consumePluginStateAfterLoad()
         return unit != nullptr ? std::string (unit->name) : unitId;
     };
 
+    // Only for a blob the slot takes: a failed restore keeps the knob unit's blob
+    // for the next save, and bindings moved beside it would move again on the
+    // next load.
+    auto adoptKnobUnitBindings = [this] (MidiBindingTarget target, int targetIndex,
+                                         const std::vector<int>& knobIndices)
+    {
+        if (knobIndices.empty()) return;
+        session.midiBindings.mutate ([&] (std::vector<MidiBinding>& binds)
+        {
+            remapPluginParamBindings (binds, target, targetIndex, knobIndices);
+        });
+    };
+
     auto rejectUnreadableTrackState = [&] (
         const DecodedStateBlob& state, ChannelStrip& strip,
         auto&& markRestoreFailed, const std::string& location,
@@ -3140,6 +3153,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     builtinName (unitId), "built-in"))
                 continue;
             auto& blob = decoded.bytes;
+            const auto knobIndices = builtin::knobUnitParamIndices (unitId, blob);
             if (strip.isPrepared())
             {
                 suspendProcessing();
@@ -3163,9 +3177,14 @@ void AudioEngine::consumePluginStateAfterLoad()
                         dusk::text::format ("Track %d", t + 1),
                         builtinName (unitId), "built-in", reason });
                 }
+                else
+                {
+                    adoptKnobUnitBindings (MidiBindingTarget::TrackPluginParam, t, knobIndices);
+                }
             }
             else
             {
+                adoptKnobUnitBindings (MidiBindingTarget::TrackPluginParam, t, knobIndices);
                 strip.unloadNativeClap();   // see the CLAP pending branch above
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
@@ -3502,6 +3521,9 @@ void AudioEngine::consumePluginStateAfterLoad()
                         builtinName (unitId), "built-in"))
                     continue;
                 auto& blob = decoded.bytes;
+                // An aux binding drives the lane's first slot only.
+                const auto knobIndices = s == 0 ? builtin::knobUnitParamIndices (unitId, blob)
+                                                : std::vector<int>();
                 if (strip.isPrepared())
                 {
                     suspendProcessing();
@@ -3526,9 +3548,14 @@ void AudioEngine::consumePluginStateAfterLoad()
                             dusk::text::format ("Aux %d slot %d", a + 1, s + 1),
                             builtinName (unitId), "built-in", reason });
                     }
+                    else
+                    {
+                        adoptKnobUnitBindings (MidiBindingTarget::AuxPluginParam, a, knobIndices);
+                    }
                 }
                 else
                 {
+                    adoptKnobUnitBindings (MidiBindingTarget::AuxPluginParam, a, knobIndices);
                     strip.unloadNativeClap (s);
                     strip.unloadNativeLv2 (s);
                     strip.unloadNativeVst3 (s);

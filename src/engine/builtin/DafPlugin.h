@@ -30,11 +30,14 @@ struct DafParamDesc
 
 // A control of the knob unit a DAF plug-in replaced under the same unit id, and
 // the plug-in parameter that took it over, so a session saved with the knob unit
-// restores into the plug-in. The ranges must agree.
+// restores into the plug-in. The ranges must agree. `truncates` marks a control
+// whose fraction the knob unit's DSP dropped, so a saved fraction restores as
+// the step it played rather than the nearest one.
 struct LegacyParam
 {
     const char* knobId;
     const char* symbol;
+    bool truncates = false;
 };
 
 // A short MIDI message for an instrument plug-in, at its frame in the block.

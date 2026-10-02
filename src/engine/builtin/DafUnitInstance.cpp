@@ -407,10 +407,14 @@ bool DafUnitInstance::loadState (const std::vector<std::uint8_t>& in)
     {
         const auto& p = descs[i];
         if (p.isOutput) continue;
-        const char* key = version == 1 ? legacyKnobId (p.symbol) : p.symbol.c_str();
-        const float value = key != nullptr
-                          ? dusk::json::getFiniteFloat (savedParams, key, p.defaultValue)
-                          : p.defaultValue;
+        const auto* knob = version == 1 ? legacyParam (p.symbol) : nullptr;
+        const char* key = version == 1 ? (knob != nullptr ? knob->knobId : nullptr)
+                                       : p.symbol.c_str();
+        float value = key != nullptr
+                    ? dusk::json::getFiniteFloat (savedParams, key, p.defaultValue)
+                    : p.defaultValue;
+        if (knob != nullptr && knob->truncates)
+            value = std::trunc (value);
         plugin->setParameterValue ((std::uint32_t) i, conform (p, value));
     }
 
@@ -418,12 +422,12 @@ bool DafUnitInstance::loadState (const std::vector<std::uint8_t>& in)
     return true;
 }
 
-const char* DafUnitInstance::legacyKnobId (const std::string& symbol) const noexcept
+const LegacyParam* DafUnitInstance::legacyParam (const std::string& symbol) const noexcept
 {
     if (legacy != nullptr)
         for (const auto& l : *legacy)
             if (symbol == l.symbol)
-                return l.knobId;
+                return &l;
     return nullptr;
 }
 

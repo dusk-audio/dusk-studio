@@ -6,6 +6,7 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace duskstudio
@@ -323,6 +324,30 @@ struct MidiBinding
         return true;
     }
 };
+
+// For a plug-in whose parameter order changed under the bindings on its slot
+// (`target` / `targetIndex`): a binding to parameter i moves to newIndexOf[i].
+// One with no new index (the old order had no parameter i, or nothing replaced
+// it) is dropped rather than left driving whatever now sits at its index. An
+// empty table leaves every binding as it is.
+inline void remapPluginParamBindings (std::vector<MidiBinding>& binds, MidiBindingTarget target,
+                                      int targetIndex, const std::vector<int>& newIndexOf)
+{
+    if (newIndexOf.empty()) return;
+    std::vector<MidiBinding> kept;
+    for (auto b : binds)
+    {
+        if (b.target == target && b.targetIndex == targetIndex)
+        {
+            const bool known = b.paramIndex >= 0 && b.paramIndex < (int) newIndexOf.size()
+                            && newIndexOf[(std::size_t) b.paramIndex] >= 0;
+            if (! known) continue;
+            b.paramIndex = newIndexOf[(std::size_t) b.paramIndex];
+        }
+        kept.push_back (b);
+    }
+    binds = std::move (kept);
+}
 
 // Audio thread sets when a binding hits transport; message-thread timer
 // drains (engine.play/stop/record aren't RT-safe).

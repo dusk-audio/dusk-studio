@@ -3,9 +3,17 @@
 
 #include "engine/builtin/BuiltinScanRows.h"
 #include "engine/builtin/NativeBuiltinSlot.h"
+#include "foundation/Base64.h"
+#include "session/MidiBindings.h"
+#include "session/Session.h"
+#include "session/SessionSerializer.h"
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -271,6 +279,95 @@ TEST_CASE ("synth unit restores a session saved with the knob synth unit", "[bui
     const int width = paramIndex (slot, "stereoWidth");
     REQUIRE_THAT (slot.getParamValue (width),
                   WithinAbs (slot.paramInfo (width)->defaultValue, 1e-6));
+}
+
+TEST_CASE ("synth unit plays a knob synth session's fractional steps as the knob unit did",
+           "[builtin][synth]")
+{
+    // The knob unit's sliders saved fractions. Its core dropped the fraction of
+    // the mode, the waves, the unison count and the semitone offset, and bent
+    // by the exact PB range, which the plug-in can only hold to the nearest step.
+    const std::string text =
+        R"({"id":"dusk.builtin.synth","version":1,"params":{)"
+        R"("mode":2.6,"osc2_wave":3.5,"osc2_semi":-6.6,"unison_voices":3.6,"pb_range":11.9}})";
+    const std::vector<std::uint8_t> legacy (text.begin(), text.end());
+
+    NativeBuiltinSlot slot;
+    loadSynth (slot);
+    REQUIRE (slot.loadState (legacy));
+
+    const std::pair<const char*, float> expected[] =
+    {
+        { "mode", 2.0f }, { "osc2Wave", 3.0f }, { "osc2Semi", -6.0f },
+        { "unisonVoices", 3.0f }, { "pbRange", 12.0f },
+    };
+    for (const auto& [symbol, value] : expected)
+    {
+        INFO (symbol);
+        CHECK_THAT (slot.getParamValue (paramIndex (slot, symbol)), WithinAbs (value, 1e-6));
+    }
+}
+
+TEST_CASE ("synth unit keeps the MIDI bindings a knob synth session learned",
+           "[builtin][synth][session]")
+{
+    using duskstudio::MidiBinding;
+    using duskstudio::MidiBindingTarget;
+
+    // As 0.14 saved it: Sunset on track 3 with CC 74 on Cutoff and CC 75 on
+    // Unison, by the knob unit's indices 15 and 5; CC 76 on an index the knob
+    // unit never had; and CC 77 on another track's plug-in, which is not Sunset's.
+    const std::string blob = R"({"id":"dusk.builtin.synth","version":1,"params":{"cutoff":1500}})";
+    const auto state = dusk::base64::encode ((const std::uint8_t*) blob.data(), blob.size());
+    const std::string text =
+        R"({"version":8,"tracks":[{},{},{"builtin_id":"dusk.builtin.synth","builtin_state":")"
+        + state + R"("}],"transport":{"midi_bindings":[)"
+        R"({"channel":1,"data":74,"trigger":0,"target":110,"target_idx":2,"param_idx":15},)"
+        R"({"channel":1,"data":75,"trigger":0,"target":110,"target_idx":2,"param_idx":5},)"
+        R"({"channel":1,"data":76,"trigger":0,"target":110,"target_idx":2,"param_idx":40},)"
+        R"({"channel":1,"data":77,"trigger":0,"target":110,"target_idx":4,"param_idx":15}]}})";
+
+    std::random_device entropy;
+    const auto dir = std::filesystem::temp_directory_path()
+                   / ("dusk-knob-synth-bindings-" + std::to_string (entropy()));
+    std::filesystem::create_directories (dir);
+    const auto file = dir / "session.json";
+    std::ofstream (file) << text;
+
+    auto session = std::make_unique<duskstudio::Session>();
+    const bool loaded = duskstudio::SessionSerializer::load (*session, file);
+    std::error_code ec;
+    std::filesystem::remove_all (dir, ec);
+    REQUIRE (loaded);
+
+    // What the engine does once the track's blob is restored.
+    const auto& track = session->track (2);
+    const auto restored = dusk::base64::decode (track.builtinStateBase64.data(),
+                                                track.builtinStateBase64.size());
+    const auto indices = knobUnitParamIndices (track.builtinUnitId, restored);
+    session->midiBindings.mutate ([&] (std::vector<MidiBinding>& binds)
+    {
+        duskstudio::remapPluginParamBindings (binds, MidiBindingTarget::TrackPluginParam, 2,
+                                              indices);
+    });
+
+    NativeBuiltinSlot slot;
+    loadSynth (slot);
+    const auto paramOn = [&] (int cc) -> int
+    {
+        for (const auto& b : session->midiBindings.current())
+            if (b.dataNumber == cc) return b.paramIndex;
+        return -1;
+    };
+    CHECK (paramOn (74) == paramIndex (slot, "filterCutoff"));
+    CHECK (paramOn (75) == paramIndex (slot, "unisonVoices"));
+    CHECK (paramOn (76) == -1);
+    CHECK (paramOn (77) == 15);
+
+    // A blob the plug-in wrote names its own indices already.
+    std::vector<std::uint8_t> current;
+    REQUIRE (slot.saveState (current));
+    CHECK (knobUnitParamIndices ("dusk.builtin.synth", current).empty());
 }
 
 TEST_CASE ("synth unit loads a factory preset on a program change and saves it",

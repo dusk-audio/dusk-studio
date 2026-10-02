@@ -95,7 +95,7 @@ private:
     void pushAllParams() noexcept;
     void refreshParamMirrors() noexcept;
     void applyEditorState (const std::string& key, const std::string& value);
-    const char* legacyKnobId (const std::string& symbol) const noexcept;
+    const LegacyParam* legacyParam (const std::string& symbol) const noexcept;
 
     std::string id;
     std::unique_ptr<DafPlugin> plugin;

@@ -1,6 +1,9 @@
 #include "../Scenario.h"
 #include "../ScenarioContext.h"
 #include "../../AudioEngine.h"
+#include "../../builtin/BuiltinRegistry.h"
+#include "../../../dsp/ChannelStrip.h"
+#include "../../../foundation/Base64.h"
 #include "../../../session/MidiBindings.h"
 #include "../../../session/Session.h"
 
@@ -494,6 +497,71 @@ ScenarioResult runLearn (ScenarioContext& ctx)
 
     return ctx.verdict();
 }
+
+// A session saved while Sunset was the knob unit binds MIDI to the knob unit's
+// parameter indices. Restored into the plug-in, each binding drives the
+// parameter it was learned on, not whatever the plug-in keeps at that index.
+ScenarioResult runKnobSynthBindings (ScenarioContext& ctx)
+{
+    constexpr const char* kSynth = "dusk.builtin.synth";
+    if (builtin::findUnit (kSynth) == nullptr)
+        return ScenarioResult::skip ("this build has no Sunset");
+
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    constexpr int kTrack = 9;
+    constexpr int kCutoff = 15, kUnison = 5;   // the knob unit's indices
+    auto& track = session.track (kTrack);
+    auto& strip = engine.getChannelStrip (kTrack);
+
+    restoreBindings (ctx);
+    ctx.keep (strip.insertMode);
+    engine.publishPluginStateForSave (true);
+    ctx.cleanup ([&strip, &track, unitWas = track.builtinUnitId,
+                  stateWas = track.builtinStateBase64]
+    {
+        strip.unloadBuiltin();
+        track.builtinUnitId = unitWas;
+        track.builtinStateBase64 = stateWas;
+    });
+
+    const std::string blob = R"({"id":"dusk.builtin.synth","version":1,"params":{"cutoff":1500}})";
+    track.builtinUnitId = kSynth;
+    track.builtinStateBase64 = dusk::base64::encode ((const std::uint8_t*) blob.data(), blob.size());
+    auto cutoff = ccBinding (74, MidiBindingTarget::TrackPluginParam, kTrack);
+    cutoff.paramIndex = kCutoff;
+    auto unison = ccBinding (75, MidiBindingTarget::TrackPluginParam, kTrack);
+    unison.paramIndex = kUnison;
+    publish (session, { cutoff, unison });
+
+    engine.consumePluginStateAfterLoad();
+    if (! ctx.expect (strip.isBuiltinLoaded(), "Sunset did not restore from the knob unit's state"))
+        return ctx.verdict();
+
+    const auto& slot = strip.getBuiltinSlot();
+    const auto boundTo = [&session, &slot] (int number) -> std::string
+    {
+        for (const auto& b : session.midiBindings.current())
+            if (b.dataNumber == number)
+            {
+                const auto* info = slot.paramInfo (b.paramIndex);
+                return info != nullptr && info->id != nullptr ? info->id : "(none)";
+            }
+        return "(unbound)";
+    };
+    ctx.note ("CC 74 drives " + boundTo (74) + ", CC 75 drives " + boundTo (75));
+    ctx.expect (boundTo (74) == "filterCutoff", "the knob unit's Cutoff binding moved off the cutoff");
+    ctx.expect (boundTo (75) == "unisonVoices", "the knob unit's Unison binding moved off the unison count");
+    return ctx.verdict();
+}
+
+const ScenarioRegistrar knobSynthBindings { Scenario {
+    "midi.knob_synth_bindings_follow_sunset",
+    { "midi", "bindings", "builtin" },
+    Needs::Engine,
+    {},
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runKnobSynthBindings (ctx); }
+} };
 
 const ScenarioRegistrar targets { Scenario {
     "midi.bindings_reach_their_targets",
