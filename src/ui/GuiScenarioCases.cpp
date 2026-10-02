@@ -5039,6 +5039,114 @@ const ScenarioRegistrar audioEditorDragYieldsToReshape { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorDragYieldsToReshape (host, ctx); }
 } };
 
+// A recording that stops under a region drag on the recorded track, from a Stop sent
+// over MIDI or a sync stop, puts the region back as the drag found it before the take
+// lands. The take's one "Record" step undoes to the region as it was before the drag,
+// and the release records nothing.
+std::optional<ScenarioResult> runAudioEditorRecordStopCancelsDrag (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! engine.isAudioCallbackRegistered() || session.deviceCaptureChannels.load() <= 0)
+        return ScenarioResult::skip ("requires a running audio device with an input to record from");
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& track = session.track (0);
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Recording);
+    ctx.keep (track.mode);
+    ctx.keep (track.inputSource);
+    ctx.keep (session.countInEnabled);
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        const bool armed = session.track (index).recordArmed.load();
+        ctx.cleanup ([&session, index, armed] { session.setTrackArmed (index, armed); });
+        session.setTrackArmed (index, false);
+    }
+    ctx.cleanup ([&engine, &transport, loop = transport.isLoopEnabled(), punch = transport.isPunchEnabled(),
+                  at = transport.getPlayhead()]
+    {
+        engine.stop();
+        transport.setLoopEnabled (loop);
+        transport.setPunchEnabled (punch);
+        transport.setPlayhead (at);
+    });
+    applySessionDirectory (session, ctx.tempDir() / "Record stop session");
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    session.countInEnabled.store (false);
+    track.mode.store ((int) Track::Mode::Mono);
+    track.inputSource.store (0);
+    session.setTrackArmed (0, true);
+    if (! track.recordArmed.load())
+        return ScenarioResult::fail ("track 1 would not arm on input 1");
+    if (! addLevelTake (ctx, track, "Take 1", 0, kTakeCaseLength, kWholeTakeLevel))
+        return ScenarioResult::fail ("could not write take fixture");
+    promoteTakeRange (session, track, track.takes[0], 0, kTakeCaseLength);
+    const auto before = track.regions;
+    const auto takesBefore = track.takes;
+    session.audioEditorSnap = false;
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    struct Pass { std::string label; const char* from; std::int64_t at; std::int64_t to; PendingTransportAction stop; };
+    const std::vector<Pass> passes {
+        { "a trim stopped over MIDI", "start", 0, 12000, PendingTransportAction::Stop },
+        { "a move stopped by sync", "wave", 24000, 36000, PendingTransportAction::SyncStop },
+    };
+
+    auto held = std::make_shared<std::vector<int>>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [] {}, [&host] { return host.audioEditorTakeLanes().size() == 1; },
+                        "the take lanes never showed" });
+    for (const auto& pass : passes)
+    {
+        steps->push_back ({ 150, [&ctx, &engine, &transport, &track, before, takesBefore, label = pass.label]
+        {
+            track.regions = before;
+            track.takes = takesBefore;
+            engine.getUndoManager().clearUndoHistory();
+            transport.setPlayhead (48000);
+            engine.record();
+            ctx.expect (transport.isRecording(), label + ": the armed track did not start recording");
+        } });
+        steps->push_back ({ 300, [&host, &ctx, held, pass]
+        {
+            const auto from = host.audioEditorPoint (pass.from, pass.at);
+            *held = host.audioEditorPoint ("wave", pass.to);
+            if (! ctx.expect (from.size() == 2 && held->size() == 2, pass.label + ": editor geometry unavailable")) return;
+            ctx.expect (host.audioEditorPointer (from[0], from[1], true), pass.label + ": the press did not land");
+            host.audioEditorPointer ((*held)[0], (*held)[1], true);
+        } });
+        steps->push_back ({ 100, [&session, stop = pass.stop]
+        { session.pendingTransportAction.store ((int) stop, std::memory_order_release); },
+                            [&track] { return ! track.regions.empty() && track.regions[0].timelineStart > 6000; },
+                            pass.label + ": the drag did not follow the pointer" });
+        steps->push_back ({ 100, [&host, &ctx, &engine, &track, held, label = pass.label]
+        {
+            ctx.expect (undoDescription (engine) == "Record", label + ": the stop did not record one \"Record\" step");
+            ctx.expect (track.takes.size() == 2, label + ": the stop did not land the take");
+            if (held->size() == 2) host.audioEditorPointer ((*held)[0], (*held)[1], false);
+        },
+        [&transport] { return transport.isStopped(); }, pass.label + ": the stop request did not stop the take" });
+        steps->push_back ({ 200, [&ctx, &engine, &track, before, label = pass.label]
+        {
+            ctx.expect (undoDescription (engine) == "Record", label + ": the release after the stop recorded a step");
+            engine.getUndoManager().undo();
+            ctx.expect (sameRegions (track.regions, before),
+                        label + ": undoing the take did not put the region back as it was before the drag");
+            ctx.expect (! engine.getUndoManager().canUndo(), label + ": the stop left more than the take to undo");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorRecordStopCancelsDrag { Scenario {
+    "gui.audio_editor_record_stop_cancels_drag", { "gui", "editor", "transport", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorRecordStopCancelsDrag (host, ctx); }
+} };
+
 // A region fixture for the editor cases below: one mono region of a steady level over
 // the first two seconds of track 1, its own file, naming no take.
 std::optional<ScenarioResult> beginEditorRegionCase (GuiHost& host, ScenarioContext& ctx)

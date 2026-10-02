@@ -494,6 +494,14 @@ public:
         confirmingDelete = 0;
     }
 
+    void yieldDragToRecordCommit() override
+    {
+        if (! editsRegions (drag) && drag != Drag::seam)
+            return;
+        cancelDrag();
+        drag = Drag::dropped;
+    }
+
     std::vector<double> viewForScenario() const override
     {
         return { static_cast<double> (pixelsPerSample), static_cast<double> (scrollSamples),

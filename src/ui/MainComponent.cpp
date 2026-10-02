@@ -832,6 +832,14 @@ MainComponent::MainComponent()
     tapeStrip->onTrackMoveDropped = [this] (const TrackMovePlan& plan, int dragged) { dropTrackMove (plan, dragged); };
     engine.onBeforeTracksMove = [this] (const TrackMovePlan& plan) { closeForTrackMove (plan); };
     engine.onTracksMoved = [this] (const TrackMovePlan& plan) { followTrackMove (plan); };
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    engine.onBeforeRecordCommit = [this] (std::uint32_t capturedTracks)
+    {
+        if (audioEditorView != nullptr && audioEditorTrackIdx >= 0 && audioEditorTrackIdx < Session::kNumTracks
+            && (capturedTracks & (std::uint32_t { 1 } << audioEditorTrackIdx)) != 0)
+            audioEditorView->yieldDragToRecordCommit();
+    };
+   #endif
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
                                           std::int64_t timelineStart,
                                           int trackHint)
@@ -1205,6 +1213,7 @@ MainComponent::~MainComponent()
     engine.setPluginRestoreAlertSink ({});
     engine.onBeforeTracksMove = nullptr;
     engine.onTracksMoved = nullptr;
+    engine.onBeforeRecordCommit = nullptr;
 
     // Drop the modal hook before anything else: its closure holds a raw this,
     // and the teardown below can still raise an alert.

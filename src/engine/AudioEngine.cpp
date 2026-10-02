@@ -1898,6 +1898,8 @@ void AudioEngine::stop()
 
         if (wasRecording)
         {
+            if (onBeforeRecordCommit)
+                onBeforeRecordCommit (recordManager.getActiveCaptureTrackMask());
             recordManager.stopRecording (transport.getPlayhead());
             activeRecordStart.store (std::numeric_limits<std::int64_t>::min(),
                                       std::memory_order_relaxed);

@@ -164,6 +164,12 @@ public:
     std::function<void (const TrackMovePlan&)> onBeforeTracksMove;
     std::function<void (const TrackMovePlan&)> onTracksMoved;
 
+    // Called by stop() just before the recorder commits, with the mask of tracks
+    // it captured, so an edit held half done on one of them is put back first:
+    // the commit stores the regions as it finds them as the take's undo state.
+    // Message thread.
+    std::function<void (std::uint32_t capturedTracks)> onBeforeRecordCommit;
+
     Session&          getSession()        noexcept { return session; }
     const Session&    getSession() const   noexcept { return session; }
     Transport&        getTransport()      noexcept { return transport; }

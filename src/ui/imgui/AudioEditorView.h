@@ -54,6 +54,12 @@ public:
     // its regions and takes. Any drag or open field is dropped.
     virtual void followTrack (int trackIndex) = 0;
 
+    // A recording on the editor's track is about to commit. A drag that edits
+    // regions puts them back as it found them, as Escape does, so the take's undo
+    // step holds them that way; the drag then waits out the release and records
+    // nothing.
+    virtual void yieldDragToRecordCommit() = 0;
+
     virtual bool chaseEnabled() const = 0;
 
     // A key the shell received while the editor is up, as JUCE's KeyPress describes it
