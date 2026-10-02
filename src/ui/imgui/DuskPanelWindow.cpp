@@ -316,6 +316,27 @@ std::optional<KeyChord> parseKeyDescription (const std::string& description)
     return chord;
 }
 
+std::optional<ShellShortcut> shellShortcutFor (const KeyChord& chord)
+{
+    if (chord.ctrl || chord.super || chord.alt)
+        return std::nullopt;
+    for (const auto& binding : shortcutBindings())
+    {
+        if (binding.key != chord.key)
+            continue;
+        if (! chord.shift)
+            return binding.shortcut;
+        // Shift turns the bracket keys into the punch pair, the way the shell's own
+        // bindings read the shifted glyph.
+        if (binding.shortcut == ShellShortcut::setLoopIn)
+            return ShellShortcut::setPunchIn;
+        if (binding.shortcut == ShellShortcut::setLoopOut)
+            return ShellShortcut::setPunchOut;
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 bool operator!= (const DuskPanelWindow::Geometry& a, const DuskPanelWindow::Geometry& b)
 {
     return a.x != b.x || a.y != b.y || a.width != b.width || a.height != b.height
@@ -657,28 +678,14 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             return;
 
         const auto& io = ImGui::GetIO();
-        if (io.KeyCtrl || io.KeySuper || io.KeyAlt)
-            return;
-
         for (const auto& binding : shortcutBindings())
         {
             if (! ImGui::IsKeyPressed (binding.key, false))
                 continue;
-            // Shift turns the bracket keys into the punch pair, the way the shell's
-            // own bindings read the shifted glyph.
-            auto shortcut = binding.shortcut;
-            if (io.KeyShift)
-            {
-                if (shortcut == ShellShortcut::setLoopIn)
-                    shortcut = ShellShortcut::setPunchIn;
-                else if (shortcut == ShellShortcut::setLoopOut)
-                    shortcut = ShellShortcut::setPunchOut;
-                else
-                    continue;
-            }
-            if (view != nullptr && view->claimsShortcut (shortcut))
+            const auto shortcut = shellShortcutFor ({ binding.key, io.KeyCtrl, io.KeySuper, io.KeyShift, io.KeyAlt });
+            if (! shortcut || (view != nullptr && view->claimsShortcut (*shortcut)))
                 continue;
-            callbacks.shortcut (shortcut);
+            callbacks.shortcut (*shortcut);
         }
     }
 

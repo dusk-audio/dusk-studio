@@ -1409,7 +1409,7 @@ It is marked **experimental** because parts of the DP file format are reverse-en
 
 ![Region editor modal over a region with fades.](docs/images/ed-04-region-editor-modal.png)
 
-Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. On a track with takes it opens zoomed out to show every take, so a take that starts later still shows in its lane; **0** zooms to the focused region. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. Other keys do nothing until you let go. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
+Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. On a track with takes it opens zoomed out to show every take, so a take that starts later still shows in its lane; **0** zooms to the focused region. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. Other keys do nothing until you let go. While the editor is up, a key it has no use for does nothing: **S**, **M**, a page digit and the timeline's other shortcuts never reach the timeline behind it. **Space**, **.**, **L**, **P** and **F11** still work, and **?** closes the editor to open the shortcut list. Holding a key does its job once, so holding **Delete** deletes one region; only **Left** and **Right**, the zoom keys and **Cmd+Z** repeat while held. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
 
 ## What's editable
 
@@ -2326,6 +2326,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **Cmd+E**             | Split at edit cursor                               |
 | **G**                 | Grab (move / select) edit mode (used inside the region / piano-roll editors) |
 | **Cmd+]** / **Cmd+[** | Next / previous region                             |
+| **Cmd+C** / **Cmd+X** / **Cmd+V** | Copy / cut the selected range, or the focused region; paste onto this track at the edit cursor |
 | **=** / **−** / **0** | Zoom in / zoom out / zoom fit                      |
 | **Down** / **Up**     | Put the take in the lane below / above on the focused region, or on the selected range |
 | **T**                 | Solo the take under the pointer, or the focused region's; again to stop |

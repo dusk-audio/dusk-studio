@@ -31,6 +31,10 @@ struct KeyChord
 // modifier it does not know.
 std::optional<KeyChord> parseKeyDescription (const std::string& description);
 
+// The shell shortcut a panel passes on for a key: a bare transport key, or Shift with
+// a bracket for the punch pair. Empty for every other key, which the panel keeps.
+std::optional<ShellShortcut> shellShortcutFor (const KeyChord& chord);
+
 // What a native panel implements. The view owns its parameters and draws into the
 // frame the window gives it; everything around the body - the dim, the panel plate,
 // dismissal, the shortcut gate - belongs to the window.

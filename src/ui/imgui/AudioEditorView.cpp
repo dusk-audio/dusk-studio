@@ -204,6 +204,12 @@ constexpr EditorKey kEditorKeys[] = {
     { ImGuiKey_0, false }, { ImGuiKey_UpArrow, false }, { ImGuiKey_DownArrow, false }, { ImGuiKey_T, false },
 };
 
+bool repeatsWhenHeld (ImGuiKey key) noexcept
+{
+    return std::any_of (std::begin (kEditorKeys), std::end (kEditorKeys),
+                        [key] (const EditorKey& entry) { return entry.key == key && entry.repeats; });
+}
+
 // std::clamp, but tolerant of an upper bound below the lower one.
 std::int64_t clampTo (std::int64_t value, std::int64_t lo, std::int64_t hi) noexcept
 {
@@ -458,9 +464,11 @@ public:
     int regionIndex() const override { return regionIdx; }
     bool chaseEnabled() const override { return chase; }
 
-    bool handleShellKey (const std::string& description) override
+    bool handleShellKey (const std::string& description, bool repeat) override
     {
         const auto chord = parseKeyDescription (description);
+        if (repeat && ! (chord && repeatsWhenHeld (chord->key)))
+            return true;
         if (drag != Drag::none)
             return chord ? handleKey (*chord) : true;
         return chord && keysAvailable && handleKey (*chord);
@@ -1731,11 +1739,9 @@ private:
             pasted.timelineStart = r->timelineStart + (editCursorSample - r->sourceOffset);
         else
             pasted.timelineStart = engine.getTransport().getPlayhead();
-        const int target = clip.sourceTrack >= 0 && clip.sourceTrack < Session::kNumTracks
-                         ? clip.sourceTrack : trackIdx;
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction ("Paste region");
-        undo.perform (new PasteRegionAction (session, engine, target, pasted));
+        undo.perform (new PasteRegionAction (session, engine, trackIdx, pasted));
     }
 
     // Removes the range from the focused region: split at whichever edges are inside

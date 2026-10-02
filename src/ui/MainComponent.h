@@ -41,6 +41,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override;
     void parentHierarchyChanged() override;
     void focusGained (FocusChangeType cause) override;
 
@@ -562,6 +563,10 @@ private:
     // mapped: a reopen in that window replaces it rather than reading as a toggle.
     bool audioEditorClosing = false;
     void finishAudioEditorClose();
+    // The last key the shell offered the editor and when, cleared by its release: an
+    // auto-repeat arrives as another press with no release between.
+    std::string editorKeyHeld;
+    std::chrono::steady_clock::time_point editorKeyHeldAt {};
    #endif
     int audioEditorTrackIdx  = -1;
     int audioEditorRegionIdx = -1;

@@ -497,7 +497,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     bool pressKey (const std::string& description, char text) override
     {
-        return dispatchKey (owner, &MainComponent::keyPressed, description, text);
+        const bool handled = dispatchKey (owner, &MainComponent::keyPressed, description, text);
+        owner.keyStateChanged (false);
+        return handled;
     }
 
     std::function<void()> preserveKeyboardFocus() override
@@ -700,10 +702,21 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     void closePiano() override { owner.closePianoRoll(); }
     bool pressPeerKey (const std::string& description, char text) override
     {
+        const bool handled = holdPeerKey (description, text);
+        releasePeerKey();
+        return handled;
+    }
+    bool holdPeerKey (const std::string& description, char text) override
+    {
         auto* peer = owner.getPeer();
         if (peer == nullptr) return false;
         using Peer = std::remove_pointer_t<decltype (peer)>;
         return dispatchKey (*peer, &Peer::handleKeyPress, description, text);
+    }
+    void releasePeerKey() override
+    {
+        if (auto* peer = owner.getPeer())
+            peer->handleKeyUpOrDown (false);
     }
     bool pointerAt (float x, float y, bool down, int modifiers = 0)
     {

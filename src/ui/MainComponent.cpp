@@ -1324,12 +1324,24 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // The audio editor's keys land here whenever its child does not have the
     // keyboard, which on Windows is always. While one of its fields or menus is
     // open every key is the editor's, typed into it; otherwise the editor answers
-    // first and what it passes on is the shell's.
+    // first. Of what it declines the shell takes only the transport keys the child
+    // would pass on, Escape, which closes the editor, and '?', whose list replaces
+    // it; the timeline behind the dim gets nothing.
     if (audioEditorShowing() && audioEditorView != nullptr)
     {
         const auto description = key.getTextDescription().toStdString();
+        // A lost release costs at most a second of presses read as repeats.
+        const auto now = std::chrono::steady_clock::now();
+        const bool repeat = description == editorKeyHeld && now - editorKeyHeldAt < std::chrono::seconds (1);
+        editorKeyHeld = description;
+        editorKeyHeldAt = now;
         if (audioEditorWindow->offerShellKey (description, static_cast<std::uint32_t> (key.getTextCharacter()))
-            || audioEditorView->handleShellKey (description))
+            || audioEditorView->handleShellKey (description, repeat))
+            return true;
+        const auto chord = imgui::parseKeyDescription (description);
+        const auto shortcut = chord ? imgui::shellShortcutFor (*chord) : std::nullopt;
+        const bool passedOn = shortcut && ! audioEditorView->claimsShortcut (*shortcut);
+        if (! passedOn && ! escape && key.getTextCharacter() != '?')
             return true;
     }
 
@@ -2864,6 +2876,15 @@ void MainComponent::focusCanvasOrTopModal()
 void MainComponent::parentHierarchyChanged()
 {
     takePendingCanvasFocus();
+}
+
+bool MainComponent::keyStateChanged ([[maybe_unused]] bool isKeyDown)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (! isKeyDown)
+        editorKeyHeld.clear();
+   #endif
+    return false;
 }
 
 // A window that gets the keyboard back from a native child restores it to
@@ -6341,9 +6362,12 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
         finishAudioEditorClose();
         reclaimFocusFromNotepad();
     };
-    callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
+    // The child keeps the release of a key it passes on.
+    callbacks.shortcut = [this] (imgui::ShellShortcut shortcut)
     {
-        return dispatchShellShortcut (shortcut);
+        const bool handled = dispatchShellShortcut (shortcut);
+        editorKeyHeld.clear();
+        return handled;
     };
     // The editor fills the window less an inset that shrinks on small windows, so
     // the dim still frames it.

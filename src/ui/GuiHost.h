@@ -266,7 +266,13 @@ public:
     // their text.
     virtual std::vector<std::string> contextMenuItems() const = 0;
 
+    // pressKey and pressPeerKey tap a key: the press, then its release.
     virtual bool pressPeerKey (const std::string& description, char text = 0) = 0;
+    // A key held down at the window: the first call presses it, and each further call
+    // before releasePeerKey is an auto-repeat, a press with no release between, as the
+    // platform delivers one.
+    virtual bool holdPeerKey (const std::string& description, char text = 0) = 0;
+    virtual void releasePeerKey() = 0;
     virtual bool clickModalAt (float xFraction, float yFraction) = 0;
     virtual bool clickFader (int index, bool readout, bool right = false) = 0;
     virtual bool faderEditing (int index) const = 0;

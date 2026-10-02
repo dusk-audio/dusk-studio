@@ -60,8 +60,10 @@ public:
     // ("ctrl + E", "delete"). The editor's child only has the keyboard once it takes
     // focus, which a Windows child never does, so the shell offers keys here first,
     // after DuskPanelWindow::offerShellKey has taken those typed into an open field
-    // or menu. False when the editor has no use for it.
-    virtual bool handleShellKey (const std::string& description) = 0;
+    // or menu. `repeat` marks a key held down, which JUCE delivers as another press;
+    // the editor takes it only for a key that repeats at its child too. False when the
+    // editor has no use for the key.
+    virtual bool handleShellKey (const std::string& description, bool repeat) = 0;
 
     // { pixelsPerSample, scrollSamples, editCursorSample }. Pixels are design pixels.
     virtual std::vector<double> viewForScenario() const = 0;
