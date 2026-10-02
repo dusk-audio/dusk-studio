@@ -4183,12 +4183,12 @@ std::optional<ScenarioResult> runAudioEditorClipboardKeys (GuiHost& host, Scenar
     if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
 
     const auto laidOut = [&host] { return host.audioEditorPoint ("wave", 1000).size() == 2; };
-    const auto near = [] (std::int64_t a, std::int64_t b) { return std::abs (a - b) < 128; };
-    const auto chunkOnClipboard = [&ctx, &engine, near] (const std::string& what)
+    const auto closeTo = [] (std::int64_t a, std::int64_t b) { return std::abs (a - b) < 128; };
+    const auto chunkOnClipboard = [&ctx, &engine, closeTo] (const std::string& what)
     {
         const auto& clip = engine.getRegionClipboard();
-        ctx.expect (clip.hasContent && clip.sourceTrack == 0 && near (clip.region.sourceOffset, 12000)
-                    && near (clip.region.lengthInSamples, 12000), what + " did not put the range on the clipboard");
+        ctx.expect (clip.hasContent && clip.sourceTrack == 0 && closeTo (clip.region.sourceOffset, 12000)
+                    && closeTo (clip.region.lengthInSamples, 12000), what + " did not put the range on the clipboard");
     };
     const auto cursor = std::make_shared<std::int64_t> (-1);
     auto steps = std::make_shared<std::vector<Step>>();

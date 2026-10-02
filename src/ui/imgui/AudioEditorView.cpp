@@ -2174,16 +2174,16 @@ private:
     {
         const auto& transport = engine.getTransport();
         const float tolerance = layout.s (6.0f);
-        const auto near = [&] (std::int64_t sample) { return std::abs (x - xForTimeline (sample)) <= tolerance; };
+        const auto closeTo = [&] (std::int64_t sample) { return std::abs (x - xForTimeline (sample)) <= tolerance; };
         if (transport.getLoopEnd() > transport.getLoopStart())
         {
-            if (near (transport.getLoopStart())) return Drag::loopIn;
-            if (near (transport.getLoopEnd())) return Drag::loopOut;
+            if (closeTo (transport.getLoopStart())) return Drag::loopIn;
+            if (closeTo (transport.getLoopEnd())) return Drag::loopOut;
         }
         if (transport.getPunchOut() > transport.getPunchIn())
         {
-            if (near (transport.getPunchIn())) return Drag::punchIn;
-            if (near (transport.getPunchOut())) return Drag::punchOut;
+            if (closeTo (transport.getPunchIn())) return Drag::punchIn;
+            if (closeTo (transport.getPunchOut())) return Drag::punchOut;
         }
         return Drag::none;
     }
