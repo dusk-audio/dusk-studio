@@ -1540,7 +1540,7 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
         regionClipboard.sourceTrack = plan.oldToNew[(size_t) regionClipboard.sourceTrack];
     nativeParamDrain->followTrackMove (plan);
     recomputePdc();
-    playbackEngine.preparePlayback();
+    playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
 
     if (onTracksMoved) onTracksMoved (plan);
     return true;
@@ -1725,6 +1725,7 @@ AudioEngine::~AudioEngine()
     midiHotplugAlive->store (false, std::memory_order_release);
     changeListenersAlive->store (false, std::memory_order_release);
     deviceCallbacksAlive->store (false, std::memory_order_release);
+    playbackServiceAlive->store (false, std::memory_order_release);
     changeListeners.clear();
     midiHotplugTimer.stopTimer();
     diagTimer.stopTimer();
@@ -1790,27 +1791,57 @@ void AudioEngine::clearTakeAudition()
 
 void AudioEngine::refreshPlayback (const TrackSlotMask& tracks)
 {
+    // A render's worker owns the streams from its first preparePlayback to its
+    // last stopPlayback, and Play builds them afresh after it.
+    if (offlineRenderActive.load (std::memory_order_acquire))
+        return;
     if (transport.isStopped())
     {
         playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
         return;
     }
-    if (! offlineRenderActive.load (std::memory_order_acquire))
-        for (int t = 0; t < Session::kNumTracks; ++t)
-            if (tracks[(size_t) t]
-                && ! (transport.isRecording() && session.track (t).recordArmed.load (std::memory_order_relaxed)))
-                playbackEngine.refreshTrackPlayback (t, PlaybackEngine::Audition::Honour);
+    // A track the recorder captures plays its input, not its streams, until Stop,
+    // whatever its arm button says since the take started.
+    const auto captured = transport.isRecording() && recordManager.isActive()
+                        ? recordManager.getActiveCaptureTrackMask() : std::uint32_t { 0 };
+    bool rebuilt = false;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (tracks[(size_t) t] && (captured & (std::uint32_t { 1 } << t)) == 0)
+        {
+            playbackEngine.refreshTrackPlayback (t, PlaybackEngine::Audition::Honour);
+            rebuilt = true;
+        }
     playbackEngine.refreshLiveRegionParams();
-    if (playbackEngine.hasPendingWork())
+    if (rebuilt)
+        schedulePlaybackService();
+}
+
+// Posted rather than run here: an edit of several actions refreshes once per
+// action, and only the last rebuild of the track may reach the audio thread.
+void AudioEngine::schedulePlaybackService()
+{
+    playbackIdleTicks = 0;
+    if (! playbackServiceTimer.isTimerRunning())
+        playbackServiceTimer.startTimer (10);
+    if (std::exchange (playbackServicePosted, true)) return;
+    auto alive = playbackServiceAlive;
+    const bool queued = dusk::callAsync ([this, alive]
     {
-        playbackIdleTicks = 0;
-        if (! playbackServiceTimer.isTimerRunning())
-            playbackServiceTimer.startTimer (10);
-    }
+        if (! alive->load (std::memory_order_acquire)) return;
+        playbackServicePosted = false;
+        servicePlayback();
+    });
+    if (! queued) playbackServicePosted = false;
 }
 
 void AudioEngine::servicePlayback()
 {
+    // Leaves the streams to a render's worker. The worker raises the flag before
+    // the hop to this thread that starts its render and lowers it after its last
+    // stopPlayback, so a pass that finds it lowered runs wholly before the
+    // worker's first touch of the streams or after its last.
+    if (offlineRenderActive.load (std::memory_order_acquire))
+        return;
     playbackEngine.service();
     // A swap the audio thread has taken is still fading for a few milliseconds
     // before it hands the old streams back, so the timer outlasts the last work.

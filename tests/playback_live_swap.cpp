@@ -5,6 +5,7 @@
 #include "engine/PlaybackEngine.h"
 #include "engine/Transport.h"
 #include "engine/audiofile/FileWriter.h"
+#include "foundation/Decibels.h"
 #include "session/Session.h"
 
 #include <filesystem>
@@ -82,11 +83,19 @@ struct Rig
         return out;
     }
 
-    void rebuildWith (const juce::File& file)
+    // One action of an edit: the track now plays `file`, rebuilt but not handed over.
+    void rebuildOnly (const juce::File& file)
     {
         transport.setPlayhead (playhead);
         session->track (kTrack).regions = { wholeRegion (file) };
         engine.refreshTrackPlayback (kTrack, PlaybackEngine::Audition::Honour);
+    }
+
+    // A whole edit: rebuilt, then serviced as the message loop does once the edit is done.
+    void rebuildWith (const juce::File& file)
+    {
+        rebuildOnly (file);
+        engine.service();
     }
 };
 
@@ -155,12 +164,55 @@ TEST_CASE ("A rebuild the audio thread has not taken yet gives way to a newer on
     requireFade (out, 0, kLevelA, kLevelC);
 }
 
+TEST_CASE ("The audio thread never takes a rebuild made part-way through an edit",
+           "[playback][live-swap]")
+{
+    Rig rig;
+    rig.play (1);
+    const auto swaps = rig.engine.swapCount();
+
+    // Two actions of one edit, with the audio thread running blocks between them
+    // as it can while the message thread is still inside the edit.
+    rig.rebuildOnly (rig.b);
+    const auto between = rig.play (2);
+    rig.rebuildOnly (rig.c);
+    rig.engine.service();
+    const auto out = rig.play (4);
+
+    for (std::size_t i = 0; i < between.size(); ++i)
+    {
+        INFO ("sample " << i);
+        REQUIRE_THAT (between[i], WithinAbs (kLevelA, 1e-4));
+    }
+    requireFade (out, 0, kLevelA, kLevelC);
+    CHECK (rig.engine.swapCount() == swaps + 1);
+}
+
+TEST_CASE ("A gain change on a track whose rebuild is waiting arrives through the crossfade",
+           "[playback][live-swap]")
+{
+    Rig rig;
+    rig.play (1);
+    rig.transport.setPlayhead (rig.playhead);
+    rig.session->track (kTrack).regions.front().gainDb = -6.0f;
+    rig.engine.refreshTrackPlayback (kTrack, PlaybackEngine::Audition::Honour);
+    rig.engine.refreshLiveRegionParams();
+    const auto waiting = rig.play (1);
+    CHECK_THAT (waiting.front(), WithinAbs (kLevelA, 1e-4));
+    CHECK_THAT (waiting.back(), WithinAbs (kLevelA, 1e-4));
+
+    rig.engine.service();
+    const auto out = rig.play (4);
+    requireFade (out, 0, kLevelA, kLevelA * dusk::audio::decibelsToGain (-6.0f, -60.0f));
+}
+
 TEST_CASE ("A track rebuilt with nothing to play fades to silence", "[playback][live-swap]")
 {
     Rig rig;
     rig.play (1);
     rig.session->track (kTrack).regions.clear();
     rig.engine.refreshTrackPlayback (kTrack, PlaybackEngine::Audition::Honour);
+    rig.engine.service();
     const auto out = rig.play (4);
     requireFade (out, 0, kLevelA, 0.0f);
     CHECK_THAT (out.back(), WithinAbs (0.0f, 1e-6));

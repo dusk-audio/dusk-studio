@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1364,8 +1365,10 @@ ScenarioResult clickSwitchesSection (ScenarioContext& ctx)
 }
 
 // A whole take holding a steady 440 Hz tone, so how loud the track plays names the
-// take. A tone, not a constant: the strip filters a constant out as DC.
-std::optional<AudioTake> levelTake (ScenarioContext& ctx, const std::string& name, float level)
+// take. A tone, not a constant: the strip filters a constant out as DC. Every one
+// starts its tone at the same phase, so two at one level sound alike.
+std::optional<AudioTake> levelTake (ScenarioContext& ctx, const std::string& name, float level,
+                                    int trackIdx = kTrack)
 {
     const auto path = ctx.tempDir() / (name + ".wav");
     std::vector<float> tone (96000);
@@ -1377,13 +1380,13 @@ std::optional<AudioTake> levelTake (ScenarioContext& ctx, const std::string& nam
     take.name = name;
     take.file = SessionFile (path.u8string().c_str());
     take.lengthInSamples = 96000;
-    ctx.session().track (kTrack).takes.push_back (take);
+    ctx.session().track (trackIdx).takes.push_back (take);
     return take;
 }
 
-// Rolling, with only kTrack sounding through a flat master, readers that warm as
-// they open and kTrack playing `quiet`.
-std::optional<ScenarioResult> beginRollingTakes (ScenarioContext& ctx, const AudioTake& quiet)
+// Readers that warm as they open and a flat master, so a track's level is what
+// its streams play; the transport is stopped when the case ends.
+void flatWarmPlayback (ScenarioContext& ctx)
 {
     auto& session = ctx.session();
     auto& engine = ctx.engine();
@@ -1399,16 +1402,62 @@ std::optional<ScenarioResult> beginRollingTakes (ScenarioContext& ctx, const Aud
         ctx.keep (*flag);
         flag->store (false);
     }
+}
+
+// Rolling from `from` as flatWarmPlayback sets it up, with only kTrack sounding
+// and playing what `lay` puts on it.
+std::optional<ScenarioResult> beginRolling (ScenarioContext& ctx, const std::function<void (Track&)>& lay,
+                                            std::int64_t from = 0)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    flatWarmPlayback (ctx);
     auto& track = session.track (kTrack);
     track.mode.store ((int) Track::Mode::Mono);
     track.inputMonitor.store (false);
     session.setTrackArmed (kTrack, false);
-    promoteTakeRange (session, track, quiet, 0, 96000);
-    engine.getTransport().setPlayhead (0);
+    lay (track);
+    engine.getTransport().setPlayhead (from);
     engine.play();
     if (! engine.getTransport().isPlaying())
         return ScenarioResult::fail ("the transport did not roll");
     return std::nullopt;
+}
+
+// Hands the edit's rebuilds to the audio thread, as the message loop does once the
+// turn that made the edit is over. A case runs inside one turn, so it stands in.
+void handOver (ScenarioContext& ctx)
+{
+    ctx.engine().getPlaybackEngine().service();
+}
+
+// Rolling, with kTrack playing `quiet`.
+std::optional<ScenarioResult> beginRollingTakes (ScenarioContext& ctx, const AudioTake& quiet)
+{
+    auto& session = ctx.session();
+    return beginRolling (ctx, [&session, &quiet] (Track& track) { promoteTakeRange (session, track, quiet, 0, 96000); });
+}
+
+// Blocks pumped one at a time: the lowest peak any 128-sample stretch of them
+// reaches. A 440 Hz cycle fits in one, so on a steady tone this is its level, and
+// it falls only where the level does.
+float quietestStretch (ScenarioContext& ctx, int blocks)
+{
+    constexpr std::size_t kStretch = 128;
+    float lowest = std::numeric_limits<float>::max();
+    for (int b = 0; b < blocks; ++b)
+    {
+        ctx.pump (1);
+        const auto& out = ctx.lastBlock (0);
+        for (std::size_t from = 0; from + kStretch <= out.size(); from += kStretch)
+        {
+            float peak = 0.0f;
+            for (std::size_t i = from; i < from + kStretch; ++i)
+                peak = std::max (peak, std::abs (out[i]));
+            lowest = std::min (lowest, peak);
+        }
+    }
+    return lowest;
 }
 
 // Blocks pumped one at a time: the loudest sample, and the largest step between
@@ -1449,6 +1498,7 @@ ScenarioResult editsHeardWhileRolling (ScenarioContext& ctx)
     undo.beginNewTransaction ("Switch take");
     ctx.expect (undo.perform (new PromoteTakeRangeAction (session, engine, kTrack, loud->id, 0, 96000)),
                 "switching to the loud take was refused");
+    handOver (ctx);
     const auto [crossing, step] = pumpWatchingSteps (ctx, 4);
     const float after = ctx.pump (4);
     ctx.expect (after > before * 3.5f && after < before * 4.5f,
@@ -1460,11 +1510,13 @@ ScenarioResult editsHeardWhileRolling (ScenarioContext& ctx)
                     + std::to_string (crossing) + " for " + std::to_string (after) + ")");
 
     engine.setTakeAudition (kTrack, quiet->id);
+    handOver (ctx);
     ctx.pump (4);
     const float soloed = ctx.pump (4);
     ctx.expect (std::abs (soloed - before) < before * 0.1f, "a solo while rolling was not heard at once ("
                                                                 + std::to_string (soloed) + " for " + std::to_string (before) + ")");
     engine.clearTakeAudition();
+    handOver (ctx);
     ctx.pump (4);
     const float cleared = ctx.pump (4);
     ctx.expect (std::abs (cleared - after) < after * 0.1f, "clearing the solo while rolling was not heard at once");
@@ -1492,6 +1544,7 @@ ScenarioResult rapidSwitchesWhileRolling (ScenarioContext& ctx)
     {
         undo.beginNewTransaction ("Switch take");
         undo.perform (new PromoteTakeRangeAction (session, engine, kTrack, i % 2 == 0 ? loud->id : quiet->id, 0, 96000));
+        handOver (ctx);
         ctx.pump (1);
     }
     ctx.pump (8);
@@ -1503,6 +1556,229 @@ ScenarioResult rapidSwitchesWhileRolling (ScenarioContext& ctx)
                 "switching while rolling left stream sets behind (" + std::to_string (PlaybackEngine::liveStreamCountForTest())
                     + " for " + std::to_string (streams) + ")");
     return ctx.verdict();
+}
+
+// A comp seam moved while rolling swaps the track's streams once and never drops
+// out. The move is two region edits, and the first heard alone would already end
+// the left region where the seam goes while the right one still began where it
+// was: a gap, here under the playhead. A block runs between the two edits, as the
+// audio thread can while the message thread is still inside them. Undo and Redo
+// of the move swap once each too, rebuilding once through the batch the app's own
+// undo opens and once per region edit without it.
+ScenarioResult seamMoveWhileRollingSwapsOnce (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (kTrack);
+    auto& regs = track.regions;
+    auto& playback = engine.getPlaybackEngine();
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    const auto first = levelTake (ctx, "seam-rolling-first", 0.25f);
+    const auto second = levelTake (ctx, "seam-rolling-second", 0.25f);
+    if (! first || ! second) return ScenarioResult::fail ("could not write the takes");
+    const auto lay = [&session, &first, &second] (Track& t)
+    {
+        promoteTakeRange (session, t, *first, 0, 96000);
+        promoteTakeRange (session, t, *second, 48000, 96000);
+    };
+    if (auto early = beginRolling (ctx, lay, 40000)) return *early;
+
+    const auto seam = compSeamNear (track, 48000, 16);
+    if (! ctx.expect (seam.has_value(), "no seam where the second take starts")) return ctx.verdict();
+    const auto left = (std::size_t) seam->left;
+    const auto right = (std::size_t) seam->right;
+    const auto leftBefore = regs[left];
+    const auto rightBefore = regs[right];
+    shiftSeam (track, *seam, -12000);
+    const auto leftAfter = regs[left];
+    const auto rightAfter = regs[right];
+    regs[left] = leftBefore;
+    regs[right] = rightBefore;
+
+    ctx.pump (8);
+    const float level = quietestStretch (ctx, 4);
+    if (! ctx.expect (level > 1.0e-3f, "the comp is not heard")) return ctx.verdict();
+    const auto playhead = engine.getTransport().getPlayhead();
+    if (! ctx.expect (playhead > leftAfter.timelineStart + leftAfter.lengthInSamples
+                          && playhead + 9 * ScenarioContext::kBlockSize < rightBefore.timelineStart,
+                      "the playhead is not where the left edit alone leaves a gap"))
+        return ctx.verdict();
+
+    const auto swaps = playback.swapCount();
+    undo.beginNewTransaction ("Move comp seam");
+    ctx.expect (undo.perform (new RegionEditAction (session, engine, kTrack, seam->left, leftBefore, leftAfter)),
+                "moving the left region's end was refused");
+    float lowest = quietestStretch (ctx, 1);
+    ctx.expect (undo.perform (new RegionEditAction (session, engine, kTrack, seam->right, rightBefore, rightAfter)),
+                "moving the right region's start was refused");
+    handOver (ctx);
+    lowest = std::min (lowest, quietestStretch (ctx, 8));
+    ctx.expect (playback.swapCount() - swaps == 1,
+                "the move swapped the track's streams " + std::to_string (playback.swapCount() - swaps) + " times");
+    ctx.expect (lowest > level * 0.9f, "the move dropped out while rolling (" + std::to_string (lowest) + " for "
+                                           + std::to_string (level) + ")");
+
+    struct Leg
+    {
+        const char* name;
+        std::function<bool()> run;
+        std::uint64_t rebuilds;
+    };
+    const Leg legs[] {
+        { "Undo", [&undo] { return undo.undo(); }, 2 },
+        { "Redo", [&undo] { return undo.redo(); }, 2 },
+        { "The app's Undo", [&engine] { return undoTransaction (engine); }, 1 },
+        { "The app's Redo", [&engine] { return redoTransaction (engine); }, 1 },
+    };
+    for (const auto& leg : legs)
+    {
+        const auto swapsBefore = playback.swapCount();
+        const auto rebuildsBefore = playback.rebuildCount();
+        if (! ctx.expect (leg.run(), std::string (leg.name) + " of the move was refused")) return ctx.verdict();
+        handOver (ctx);
+        const float quietest = quietestStretch (ctx, 8);
+        const auto swapped = playback.swapCount() - swapsBefore;
+        const auto rebuilt = playback.rebuildCount() - rebuildsBefore;
+        ctx.expect (swapped == 1 && rebuilt == leg.rebuilds,
+                    std::string (leg.name) + " of the move rebuilt the track " + std::to_string (rebuilt)
+                        + " times and swapped it " + std::to_string (swapped) + " times");
+        ctx.expect (quietest > level * 0.9f, std::string (leg.name) + " of the move dropped out while rolling");
+    }
+    ctx.expect (regs[right].timelineStart == rightAfter.timelineStart, "the move did not end where it was made");
+    return ctx.verdict();
+}
+
+// While recording, an edit on the track the take captures leaves its streams alone,
+// since the track plays its input rather than its regions, and one on any other
+// track is heard at once. Which tracks those are is fixed when the take starts:
+// disarming the captured track does not end its capture, and arming another does
+// not start one.
+ScenarioResult editsWhileRecordingLeaveTheCapturedTrack (ScenarioContext& ctx)
+{
+    constexpr int kOther = kTrack + 1;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto& playback = engine.getPlaybackEngine();
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    const auto capturedQuiet = levelTake (ctx, "captured-quiet", 0.1f);
+    const auto capturedLoud = levelTake (ctx, "captured-loud", 0.4f);
+    const auto otherQuiet = levelTake (ctx, "other-quiet", 0.1f, kOther);
+    const auto otherLoud = levelTake (ctx, "other-loud", 0.4f, kOther);
+    if (! capturedQuiet || ! capturedLoud || ! otherQuiet || ! otherLoud)
+        return ScenarioResult::fail ("could not write the takes");
+
+    flatWarmPlayback (ctx);
+    armTrack (ctx);
+    session.deviceCaptureChannels.store (kOther + 1);
+    auto& captured = session.track (kTrack);
+    auto& other = session.track (kOther);
+    captured.inputMonitor.store (false);
+    other.mode.store ((int) Track::Mode::Mono);
+    other.inputMonitor.store (false);
+    promoteTakeRange (session, captured, *capturedQuiet, 0, 96000);
+    promoteTakeRange (session, other, *otherQuiet, 0, 96000);
+    transport.setPlayhead (0);
+    engine.record();
+    if (! ctx.expect (transport.isRecording(), "Record did not start with the track armed")) return ctx.verdict();
+
+    const float before = ctx.pump (8);
+    if (! ctx.expect (before > 1.0e-3f, "the other track is not heard while recording")) return ctx.verdict();
+
+    const auto counts = [&playback] { return std::make_pair (playback.rebuildCount(), playback.swapCount()); };
+    const auto switchTo = [&] (int t, TakeId id)
+    {
+        undo.beginNewTransaction ("Switch take");
+        const bool done = undo.perform (new PromoteTakeRangeAction (session, engine, t, id, 0, 96000));
+        handOver (ctx);
+        ctx.pump (4);
+        handOver (ctx);
+        return done;
+    };
+
+    auto was = counts();
+    ctx.expect (switchTo (kTrack, capturedLoud->id), "switching the recording track's take was refused");
+    ctx.expect (counts() == was, "an edit on the track being recorded rebuilt its streams");
+
+    session.setTrackArmed (kTrack, false);
+    was = counts();
+    ctx.expect (switchTo (kTrack, capturedQuiet->id), "switching the disarmed track's take was refused");
+    ctx.expect (counts() == was && ! playback.hasPendingWork(),
+                "disarming the track mid-take let an edit on it rebuild streams it does not play until Stop");
+
+    session.setTrackArmed (kOther, true);
+    if (! ctx.expect (other.recordArmed.load(), "the other track did not arm")) return ctx.verdict();
+    was = counts();
+    ctx.expect (switchTo (kOther, otherLoud->id), "switching the other track's take was refused");
+    const float after = ctx.pump (4);
+    ctx.expect (counts().second == was.second + 1 && after > before * 3.5f && after < before * 4.5f,
+                "arming a track the take does not capture kept an edit on it from being heard ("
+                    + std::to_string (before) + " to " + std::to_string (after) + ")");
+    return ctx.verdict();
+}
+
+// An offline mixdown started straight after an edit made while rolling prints the
+// edit. The playback service the edit started is still running when the render's
+// worker takes the streams over, and has to leave them alone until the render is
+// done; only the thread sanitizer sees it if it does not.
+std::optional<ScenarioResult> renderAfterARollingEdit (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    const auto quiet = levelTake (ctx, "render-quiet", 0.1f);
+    const auto loud = levelTake (ctx, "render-loud", 0.4f);
+    if (! quiet || ! loud) return ScenarioResult::fail ("could not write the takes");
+    if (auto early = beginRollingTakes (ctx, *quiet)) return *early;
+
+    const float quietLevel = ctx.pump (8);
+    undo.beginNewTransaction ("Switch take");
+    ctx.expect (undo.perform (new PromoteTakeRangeAction (session, engine, kTrack, loud->id, 0, 96000)),
+                "switching to the loud take was refused");
+    ctx.pump (4);
+    engine.stop();
+
+    auto run = std::make_shared<AuditionRender>();
+    run->bounce = std::make_unique<BounceEngine> (engine, session);
+    ctx.cleanup ([run] { run->bounce.reset(); });
+    run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+    {
+        raw->error = std::move (error);
+        raw->ok.store (ok);
+        raw->finished.store (true, std::memory_order_release);
+    };
+    run->printed = ctx.sessionDir() / "after-rolling-edit.wav";
+    const SessionFile outFile (run->printed.u8string().c_str());
+    if (! ctx.expect (run->bounce->start (outFile, ScenarioContext::kSampleRate, 1024, 1.0, BounceEngine::Mode::MasterMix,
+                                          BounceEngine::Format::Wav, 320, 24),
+                      "the mixdown refused to start: " + run->bounce->getLastError()))
+        return ctx.verdict();
+
+    ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
+                   90000,
+                   [&ctx, &engine, run, quietLevel]
+                   {
+                       auto reader = dusk::audio::FileReader::open (run->printed);
+                       if (ctx.expect (run->ok.load(), "the mixdown failed: " + run->error)
+                           && ctx.expect (reader != nullptr, "the mixdown wrote no readable file"))
+                       {
+                           std::vector<float> printed (48000);
+                           float* dest[] = { printed.data() };
+                           reader->read (dest, 1, 24000, (std::int64_t) printed.size());
+                           ctx.expect (peakOf (printed) > quietLevel * 2.5f,
+                                       "the mixdown did not print the edit (" + std::to_string (peakOf (printed))
+                                           + " against " + std::to_string (quietLevel) + " before it)");
+                       }
+                       // An offline render hands the engine back to the device,
+                       // whose restart re-prepares it; this world has no device.
+                       engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+                       ctx.complete (ctx.verdict());
+                   },
+                   "the mixdown never finished");
+    return std::nullopt;
 }
 
 // Join keeps a take only while the result still reads that take alone: two
@@ -1761,6 +2037,15 @@ const ScenarioRegistrar rollingEditsRegistrar { Scenario {
 const ScenarioRegistrar rapidSwitchesRegistrar { Scenario {
     "take.rapid_switches_while_rolling", { "take", "comp", "playback" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (rapidSwitchesWhileRolling, ctx); } } };
+const ScenarioRegistrar rollingSeamRegistrar { Scenario {
+    "take.seam_move_while_rolling_swaps_once", { "take", "comp", "playback", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (seamMoveWhileRollingSwapsOnce, ctx); } } };
+const ScenarioRegistrar recordingEditsRegistrar { Scenario {
+    "take.edits_while_recording_leave_the_captured_track", { "take", "comp", "playback", "record" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (editsWhileRecordingLeaveTheCapturedTrack, ctx); } } };
+const ScenarioRegistrar renderAfterEditRegistrar { Scenario {
+    "take.render_after_a_rolling_edit", { "take", "comp", "playback", "bounce" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return renderAfterARollingEdit (ctx); }, 120000 } };
 const ScenarioRegistrar joinRegistrar { Scenario {
     "take.join_names_a_take_only_while_it_reads_it", { "take", "region", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (joinNamesATakeOnlyWhileItReadsIt, ctx); } } };

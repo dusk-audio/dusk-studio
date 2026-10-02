@@ -38,9 +38,14 @@ public:
     enum class Audition { Ignore, Honour };
     void preparePlayback (Audition audition = Audition::Ignore);
     void stopPlayback();
-    // How many times preparePlayback has run. Message thread; lets a check
-    // prove that an edit over many regions rebuilt once.
+    // How many times streams have been built: every track's by preparePlayback,
+    // or one track's by refreshTrackPlayback. Message thread; lets a check prove
+    // that an edit over many regions rebuilt once.
     std::uint64_t rebuildCount() const noexcept { return rebuilds; }
+    // How many rebuilds service() has handed to the audio thread. Message
+    // thread; lets a check prove that an edit of several actions swapped a
+    // track's streams once.
+    std::uint64_t swapCount() const noexcept { return swaps; }
 
     // The take the streams play in place of its track's regions, as the last
     // preparePlayback left them; none when they play no audition. Message thread.
@@ -55,12 +60,15 @@ public:
     // service() hands them to the audio thread once their readers hold the audio
     // at the playhead, or after a short wait regardless. The audio thread then
     // crossfades from the old streams to the new ones. A newer rebuild of the
-    // same track replaces one still waiting. Message thread; does nothing unless
-    // the streams are live.
+    // same track replaces one still waiting, so nothing built here reaches the
+    // audio thread before service() runs: an edit of several actions, each
+    // rebuilding the track, is heard as its last rebuild and never as one made
+    // part-way through. Message thread; does nothing unless the streams are live.
     void refreshTrackPlayback (int trackIndex, Audition audition);
 
     // Hands warmed rebuilds to the audio thread and frees the streams it has
-    // finished with. Message thread, called often while the transport rolls.
+    // finished with. Message thread, called often while the transport rolls,
+    // and never inside an edit.
     void service();
 
     // Whether a rebuild is waiting to be handed over or the audio thread has
@@ -98,6 +106,7 @@ private:
     Session& session;
     const Transport* transport = nullptr;
     std::uint64_t rebuilds = 0;
+    std::uint64_t swaps = 0;
 
     struct RegionStream
     {

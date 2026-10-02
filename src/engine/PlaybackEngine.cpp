@@ -93,11 +93,14 @@ void PlaybackEngine::refreshLiveRegionParams()
     // timeline position + length; structural mismatches (split / join
     // / move) leave the stream untouched and the next preparePlayback
     // rebuilds. Single field overwrites are hardware-atomic for the
-    // naturally-aligned scalar types involved.
+    // naturally-aligned scalar types involved. A track with a rebuild
+    // waiting to be handed over is left alone: the rebuild already carries
+    // these values, and the crossfade to it brings them in without a step.
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto* stream = slots[(size_t) t].current.load (std::memory_order_acquire);
-        if (stream == nullptr || t == auditionedTrack.load (std::memory_order_relaxed)) continue;
+        if (stream == nullptr || pending[(size_t) t].stream != nullptr
+            || t == auditionedTrack.load (std::memory_order_relaxed)) continue;
         const auto& regs = session.track (t).regions;
 
         // Streams are sorted by timelineStart in preparePlayback; the
@@ -368,6 +371,7 @@ void PlaybackEngine::refreshTrackPlayback (int trackIndex, Audition audition)
 {
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks || ! streamsActive.load (std::memory_order_acquire))
         return;
+    ++rebuilds;
     const std::int64_t playhead = transport != nullptr ? transport->getPlayhead() : 0;
     auto& swap = pending[(size_t) trackIndex];
     swap.stream = buildTrackStream (trackIndex, audition, playhead, swap.auditioned);
@@ -375,7 +379,6 @@ void PlaybackEngine::refreshTrackPlayback (int trackIndex, Audition audition)
     if (swap.stream == nullptr)
         swap.stream = std::make_unique<PerTrackStream>();
     swap.deadline = std::chrono::steady_clock::now() + kSwapWarmWait;
-    service();
 }
 
 void PlaybackEngine::service()
@@ -424,6 +427,7 @@ void PlaybackEngine::publish (int t)
         auditionedTrack.store (-1, std::memory_order_relaxed);
         auditionedTake.store (0, std::memory_order_relaxed);
     }
+    ++swaps;
     // Streams the audio thread never took are this thread's to free.
     delete slots[(size_t) t].incoming.exchange (swap.stream.release(), std::memory_order_acq_rel);
 }

@@ -1638,9 +1638,9 @@ private:
         if (host.undo)
             host.undo (redo);
         else if (redo)
-            engine.getUndoManager().redo();
+            redoTransaction (engine);
         else
-            engine.getUndoManager().undo();
+            undoTransaction (engine);
         rangeActive = false;
         additional.clear();
         if (const int same = focused ? indexOfRegion (*focused) : -1; same >= 0)
@@ -1694,6 +1694,7 @@ private:
         const auto tlA = r->timelineStart + (a - r->sourceOffset);
         const auto tlB = r->timelineStart + (b - r->sourceOffset);
         engine.getUndoManager().beginNewTransaction ("Split range");
+        const RegionRebuildBatch batch (engine);
         splitRegion (regionIdx, tlB);
         splitRegion (regionIdx, tlA);
         rangeActive = false;
@@ -1786,6 +1787,7 @@ private:
 
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction (transaction);
+        const RegionRebuildBatch batch (engine);
         if (needRight)
             undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
         int doomed = regionIdx;
@@ -1844,6 +1846,7 @@ private:
         doomed.erase (std::unique (doomed.begin(), doomed.end()), doomed.end());
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction (doomed.size() > 1 ? "Delete regions" : "Delete region");
+        const RegionRebuildBatch batch (engine);
         for (const int index : doomed)
             undo.perform (new DeleteRegionAction (session, engine, trackIdx, index));
         if (focusStays)
@@ -1882,6 +1885,7 @@ private:
 
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction (delta < 0 ? "Nudge region left" : "Nudge region right");
+        const RegionRebuildBatch batch (engine);
         const auto nudgeOne = [&] (int index)
         {
             auto& regions = session.track (trackIdx).regions;
@@ -2272,6 +2276,7 @@ private:
         regions[static_cast<std::size_t> (seamDragged.right)] = seamRightAtDragStart;
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction ("Move comp seam");
+        const RegionRebuildBatch batch (engine);
         undo.perform (new RegionEditAction (session, engine, trackIdx, seamDragged.left, seamLeftAtDragStart, leftAfter));
         undo.perform (new RegionEditAction (session, engine, trackIdx, seamDragged.right, seamRightAtDragStart,
                                             rightAfter));
@@ -2679,6 +2684,7 @@ private:
                                 : finished == Drag::trimStart ? "Trim start"
                                 : finished == Drag::trimEnd   ? "Trim end"
                                                               : "Move region");
+        const RegionRebuildBatch batch (engine);
         // The action's perform applies the after state, so the live edit is rolled
         // back first and the stored before is the authoritative one.
         if (focusedChanged)

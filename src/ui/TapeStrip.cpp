@@ -1210,7 +1210,7 @@ void TapeStrip::rebuildPlaybackIfStopped()
     // thread is safe at rest but risks an xrun mid-transport.
     auto& transport = engine.getTransport();
     if (transport.getState() == Transport::State::Stopped)
-        engine.getPlaybackEngine().preparePlayback();
+        engine.getPlaybackEngine().preparePlayback (PlaybackEngine::Audition::Honour);
 }
 
 void TapeStrip::resized()
@@ -2564,6 +2564,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                                                     "Trim region";
             auto& um = engine.getUndoManager();
             um.beginNewTransaction (label);
+            const RegionRebuildBatch batch (engine);
             performInPlace (new RegionEditAction (session, engine,
                                                     drag.track, drag.regionIdx,
                                                     beforeState, afterState));
@@ -4710,6 +4711,7 @@ bool TapeStrip::duplicateSelectedRegion()
     auto& um = engine.getUndoManager();
     um.beginNewTransaction (selection.size() == 1 ? "Duplicate region"
                                                     : "Duplicate regions");
+    const RegionRebuildBatch batch (engine);
     for (const auto& id : selection)
     {
         const auto& regs = session.track (id.track).regions;
@@ -4753,6 +4755,7 @@ bool TapeStrip::nudgeSelectedRegion (std::int64_t deltaSamples)
     auto& um = engine.getUndoManager();
     um.beginNewTransaction (deltaSamples > 0 ? "Nudge regions right"
                                               : "Nudge regions left");
+    const RegionRebuildBatch batch (engine);
     for (const auto& id : selection)
     {
         const auto& regs = session.track (id.track).regions;

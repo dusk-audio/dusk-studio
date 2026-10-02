@@ -347,9 +347,10 @@ public:
 
     // Brings playback up to date after the regions or takes of `tracks`
     // changed. Stopped, every track's streams are rebuilt. Rolling, the tracks
-    // named are rebuilt live and crossfaded in, so the edit is heard at once,
-    // except a track being recorded and anything while an offline render runs;
-    // the rest pick up gain and mute changes. Message thread only.
+    // named are rebuilt live and crossfaded in once the message thread is done
+    // with the edit, so an edit of several actions is heard whole, except a
+    // track the recorder is capturing; the rest pick up gain and mute changes.
+    // Does nothing while an offline render runs. Message thread only.
     void refreshPlayback (const TrackSlotMask& tracks);
     // Halts the transport and commits any take without moving the playhead.
     // For stops the user did not ask for as a transport press: session
@@ -1001,6 +1002,9 @@ private:
     // Hands live rebuilds to the audio thread and frees what it hands back;
     // runs while either has anything left to do.
     void servicePlayback();
+    // Services playback as soon as the message thread is done with the edit
+    // that rebuilt a track, then on the timer until it has nothing left.
+    void schedulePlaybackService();
     struct PlaybackServiceTimer : dusk::Timer
     {
         explicit PlaybackServiceTimer (AudioEngine& o) : owner (o) {}
@@ -1009,6 +1013,7 @@ private:
     };
     PlaybackServiceTimer playbackServiceTimer { *this };
     int playbackIdleTicks = 0;
+    bool playbackServicePosted = false;
 
     // Outlives the engine so a hop still queued when it dies is a no-op instead
     // of a use-after-free: the poll thread posts those, and joining it in the
@@ -1036,6 +1041,9 @@ private:
     // from a change broadcast; either can be sitting in the queue when a quit
     // tears the engine down.
     std::shared_ptr<std::atomic<bool>> deviceCallbacksAlive
+        { std::make_shared<std::atomic<bool>> (true) };
+    // And for the playback service a live rebuild posts.
+    std::shared_ptr<std::atomic<bool>> playbackServiceAlive
         { std::make_shared<std::atomic<bool>> (true) };
     void broadcastChange();
     void fireChangeListeners();

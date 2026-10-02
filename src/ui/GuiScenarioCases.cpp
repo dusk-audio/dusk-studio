@@ -2888,23 +2888,29 @@ std::optional<ScenarioResult> runAudioEditorSeamDrag (GuiHost& host, ScenarioCon
     const auto before = track.regions;
     if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
 
+    // Playback rebuilds when the drag lets go: the two region edits it records are
+    // one rebuild.
+    auto rebuildsBefore = std::make_shared<std::uint64_t>();
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 100, [&host, &ctx]
+    steps->push_back ({ 100, [&host, &ctx, rebuildsBefore]
     {
         const auto from = host.audioEditorPoint ("stripe", kTakeCaseLength / 2);
         const auto to = host.audioEditorPoint ("stripe", kTakeCaseLength / 4);
         if (! ctx.expect (from.size() == 2 && to.size() == 2, "the take stripe has no geometry")) return;
         ctx.expect (host.audioEditorPointer (from[0], from[1], true), "the seam did not take the press");
         host.audioEditorPointer (to[0], to[1], true);
+        *rebuildsBefore = ctx.engine().getPlaybackEngine().rebuildCount();
         host.audioEditorPointer (to[0], to[1], false);
     }, [&host] { return host.audioEditorTakeLanes().size() == 2; }, "the take lanes never showed" });
-    steps->push_back ({ 150, [&host, &ctx, &track, &engine = ctx.engine(), ids]
+    steps->push_back ({ 150, [&host, &ctx, &track, &engine = ctx.engine(), ids, rebuildsBefore]
     {
         const auto second = takeCoverage (track, ids->at (1));
         ctx.expect (second.size() == 1 && std::abs (second[0].first - kTakeCaseLength / 4) < 512
                         && second[0].second == kTakeCaseLength,
                     "dragging the seam did not move where the second take starts");
         ctx.expect (undoDescription (engine) == "Move comp seam", "the drag is not one \"Move comp seam\" step");
+        const auto rebuilt = engine.getPlaybackEngine().rebuildCount() - *rebuildsBefore;
+        ctx.expect (rebuilt == 1, "letting go of the seam rebuilt playback " + std::to_string (rebuilt) + " times");
         ctx.expect (host.clickAudioEditorButton ("Undo"), "Undo unavailable after the seam drag");
     } });
     steps->push_back ({ 150, [&ctx, &track, before]
