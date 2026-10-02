@@ -122,6 +122,9 @@ constexpr float kClickSlop = 3.0f;
 // The stripe along the top of the waveform that names each region's take, where a
 // seam between two takes is picked up.
 constexpr float kTakeStripeHeight = 16.0f;
+// The fade discs' top edge below the waveform's. The discs overlap the stripe and
+// take a press there before a seam does.
+constexpr float kFadeDiscTop = 4.0f;
 // How long a refused take edit's explanation stays in the lane caption.
 constexpr double kNoticeSeconds = 5.0;
 
@@ -519,7 +522,9 @@ public:
         else if (kind == "start") point.x = trimStart().at (0.5f, 0.5f).x;
         else if (kind == "end") point.x = trimEnd().at (0.5f, 0.5f).x;
         else if (kind == "gain") point.y = gainLineY();
-        else if (kind == "stripe") point.y = layout.wave.y0 + layout.s (kTakeStripeHeight * 0.5f);
+        else if (kind == "stripe") point.y = layout.wave.y0 + layout.s (kFadeDiscTop * 0.5f);
+        else if (kind == "fadeIn") point = fadeInDisc().at (0.5f, 0.5f);
+        else if (kind == "fadeOut") point = fadeOutDisc().at (0.5f, 0.5f);
         else if (kind != "wave") return false;
         point = { (point.x - layout.body.x0) / layout.scale, (point.y - layout.body.y0) / layout.scale };
         return true;
@@ -650,10 +655,15 @@ public:
 
         const bool showable = region() != nullptr || takeCount() > 0;
         const float waveWidth = layout.wave.width() / layout.scale;
-        if (showable && std::abs (waveWidth - fittedWidth) > 0.5f)
+        if (showable && std::abs (waveWidth - viewWidth) > 0.5f)
         {
-            fitView();
-            fittedWidth = waveWidth;
+            // Fitted once, when the view first shows; a resize keeps the zoom and the
+            // edit cursor.
+            if (viewWidth < 0.0f)
+                fitView();
+            else
+                scrollSamples = std::clamp<std::int64_t> (scrollSamples, 0, maxScroll());
+            viewWidth = waveWidth;
         }
         if (showable && std::exchange (revealPending, false))
         {
@@ -736,7 +746,7 @@ private:
     ImVec2 available { 1000.0f, 640.0f };
     Layout layout;
     bool laidOut = false;
-    float fittedWidth = -1.0f;
+    float viewWidth = -1.0f;
 
     // The view spans the whole track, [anchorStart, anchorStart + anchorLength), in
     // timeline samples; the edit cursor is a file sample of the focused region.
@@ -1010,7 +1020,8 @@ private:
 
     int columnForTimeline (std::int64_t timelineSample) const
     {
-        return static_cast<int> (std::lround (xForTimeline (timelineSample)));
+        constexpr float kLimit = 1.0e9f;
+        return static_cast<int> (std::lround (std::clamp (xForTimeline (timelineSample), -kLimit, kLimit)));
     }
 
     std::int64_t timelineForX (float x) const
@@ -1074,16 +1085,16 @@ private:
     {
         const auto* r = region();
         const float x = xForFileSample (r->sourceOffset + r->fadeInSamples);
-        return { x - layout.s (9.0f), layout.wave.y0 + layout.s (4.0f),
-                 x + layout.s (9.0f), layout.wave.y0 + layout.s (22.0f) };
+        return { x - layout.s (9.0f), layout.wave.y0 + layout.s (kFadeDiscTop),
+                 x + layout.s (9.0f), layout.wave.y0 + layout.s (kFadeDiscTop + 18.0f) };
     }
 
     Box fadeOutDisc() const
     {
         const auto* r = region();
         const float x = xForFileSample (r->sourceOffset + r->lengthInSamples - r->fadeOutSamples);
-        return { x - layout.s (9.0f), layout.wave.y0 + layout.s (4.0f),
-                 x + layout.s (9.0f), layout.wave.y0 + layout.s (22.0f) };
+        return { x - layout.s (9.0f), layout.wave.y0 + layout.s (kFadeDiscTop),
+                 x + layout.s (9.0f), layout.wave.y0 + layout.s (kFadeDiscTop + 18.0f) };
     }
 
     Box trimStart() const
@@ -1360,7 +1371,8 @@ private:
         anchorLength = std::max<std::int64_t> (1, hi - lo);
 
         const float width = std::max (1.0f, layout.wave.width() / layout.scale - 2.0f * kLaneInset);
-        pixelsPerSample = width / static_cast<float> (std::max<std::int64_t> (1, r->lengthInSamples));
+        pixelsPerSample = std::clamp (width / static_cast<float> (std::max<std::int64_t> (1, r->lengthInSamples)),
+                                      kMinPixelsPerSample, kMaxPixelsPerSample);
         const auto fitSamples = static_cast<std::int64_t> (std::llround (width / pixelsPerSample));
         scrollSamples = std::clamp<std::int64_t> (r->timelineStart - anchorStart, 0,
                                                   std::max<std::int64_t> (0, anchorLength - fitSamples));
@@ -1902,9 +1914,20 @@ private:
             nudgeOne (index);
     }
 
+    bool joinable() const
+    {
+        if (additional.empty() || ! focusedEditable()) return false;
+        const auto& regions = trackRegions();
+        return std::none_of (additional.begin(), additional.end(), [&regions] (int index)
+        {
+            return index < 0 || index >= static_cast<int> (regions.size())
+                || regions[static_cast<std::size_t> (index)].locked;
+        });
+    }
+
     void joinSelected()
     {
-        if (additional.empty()) return;
+        if (! joinable()) return;
         std::vector<int> indices = additional;
         indices.push_back (regionIdx);
         auto& undo = engine.getUndoManager();
@@ -2162,13 +2185,19 @@ private:
         return layout.wave.contains (p) && std::abs (p.y - gainLineY()) <= layout.s (4.0f);
     }
 
+    bool overLiveFadeDisc (ImVec2 p) const
+    {
+        const auto* r = region();
+        return r != nullptr && ! r->locked && (fadeInDisc().contains (p) || fadeOutDisc().contains (p));
+    }
+
     // The seam between two takes under a point in the take stripe along the top of the
-    // waveform, or on a divider in any take lane.
+    // waveform, short of a fade disc there, or on a divider in any take lane.
     std::optional<CompSeam> seamGripAt (ImVec2 p) const
     {
         const float perSample = pixelsPerSampleOnScreen();
         const bool inStripe = layout.wave.contains (p) && p.y <= layout.wave.y0 + layout.s (kTakeStripeHeight);
-        if ((! inStripe && laneWaveUnder (p) < 0) || perSample <= 0.0f)
+        if ((! inStripe && laneWaveUnder (p) < 0) || perSample <= 0.0f || (inStripe && overLiveFadeDisc (p)))
             return std::nullopt;
         const auto tolerance = static_cast<std::int64_t> (layout.s (5.0f) / perSample);
         return compSeamNear (session.track (trackIdx), timelineForX (p.x), tolerance);
@@ -2326,7 +2355,7 @@ private:
 
         if (button == ImGuiMouseButton_Right)
         {
-            if (! r->locked && (fadeInDisc().contains (p) || fadeOutDisc().contains (p)))
+            if (overLiveFadeDisc (p))
             {
                 fadeMenuIsIn = fadeInDisc().contains (p);
                 ImGui::OpenPopup (kFadeMenu);
@@ -3410,6 +3439,22 @@ private:
     std::optional<Slice> sliceFor (const std::string& path, std::int64_t timelineStart, std::int64_t length,
                                    std::int64_t sourceOffset, int clipX0, int clipX1)
     {
+        // A column is an int, and a long region zoomed in can reach past one, so the
+        // stretch is cut to the part within a margin of the lanes before it is placed.
+        constexpr int kMargin = 1 << 20;
+        const auto keepFrom = timelineForX (static_cast<float> (clipX0 - kMargin));
+        const auto keepTo = timelineForX (static_cast<float> (clipX1 + kMargin));
+        if (timelineStart < keepFrom)
+        {
+            const auto cut = std::min (length, keepFrom - timelineStart);
+            timelineStart += cut;
+            sourceOffset += cut;
+            length -= cut;
+        }
+        length = std::min (length, keepTo - timelineStart);
+        if (length <= 0)
+            return std::nullopt;
+
         Slice slice;
         slice.xa = columnForTimeline (timelineStart);
         slice.xb = columnForTimeline (timelineStart + length);
@@ -4027,7 +4072,7 @@ private:
         ImGui::Separator();
         if (menuItem ("Split at edit cursor", ! editLocked)) splitAtCursor();
         if (menuItem ("Cut range", rangeActive && ! editLocked)) cutRange();
-        if (menuItem ("Join selected regions", ! additional.empty())) joinSelected();
+        if (menuItem ("Join selected regions", joinable())) joinSelected();
         ImGui::Separator();
         if (menuItem ("Reset gain (0 dB)", ! editLocked))
             editFocused ("Reset gain", [] (AudioRegion& a) { a.gainDb = 0.0f; });

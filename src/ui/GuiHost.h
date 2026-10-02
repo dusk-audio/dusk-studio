@@ -307,6 +307,9 @@ public:
     // may be sized to, all in interface units before the UI scale. Empty
     // without a window.
     virtual std::vector<int> mainWindowSize() const = 0;
+    // Sizes the main window, in the units mainWindowSize gives; the runner puts the
+    // launch size back after the case.
+    virtual bool resizeMainWindow (int width, int height) = 0;
     virtual int tapeExpansionState() const = 0;
     virtual int timelineChaseState() const = 0;
     virtual bool openRegionEditor (int track, int region, bool midi) = 0;
@@ -414,7 +417,8 @@ public:
     virtual void closePianoRoll() = 0;
     virtual bool pressPianoRollKey (const std::string& description) = 0;
     virtual bool doubleClickAudioRegion (int track, int region) = 0;
-    virtual bool clickAudioRegion (int track, int region, bool right = false) = 0;
+    // Modifiers as pianoNotePointer takes them: 1 Shift, 2 Cmd/Ctrl.
+    virtual bool clickAudioRegion (int track, int region, bool right = false, int modifiers = 0) = 0;
     virtual bool clickMidiRegion (int track, int region, bool right = false) = 0;
     // The take-count badge in a track's label cell, as drawn ("3 takes"), and
     // one or more clicks on it. Empty text and false when that track shows no badge.

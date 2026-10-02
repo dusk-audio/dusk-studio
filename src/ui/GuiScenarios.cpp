@@ -1395,6 +1395,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (limits == nullptr) return {};
         return { window->getWidth(), window->getHeight(), limits->getMinimumWidth(), limits->getMinimumHeight() };
     }
+    bool resizeMainWindow (int width, int height) override
+    {
+        auto* window = owner.getTopLevelComponent();
+        if (window == nullptr || window->getPeer() == nullptr) return false;
+        window->setSize (width, height);
+        return window->getWidth() == width && window->getHeight() == height;
+    }
     int tapeExpansionState() const override
     {
         const bool displayed = owner.tapeStrip->isVisible() && ! owner.tapeStrip->getBounds().isEmpty();
@@ -1904,13 +1911,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return true;
     }
 
-    bool clickAudioRegion (int track, int region, bool right) override
+    bool clickAudioRegion (int track, int region, bool right, int modifiers) override
     {
         if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;
         const auto bounds = owner.tapeStrip->audioRegionScreenRect (track, region);
         if (bounds.isEmpty()) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
-        return clickAt (point.x, point.y, 1, right);
+        return clickWith (point.x, point.y, 1, (right ? 4 : 0) | modifiers);
     }
 
     bool clickStripControl (StripKind kind, int index, const std::string& control, int clicks, bool right) override

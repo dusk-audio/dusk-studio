@@ -3023,8 +3023,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
 
     const auto& region = session.track (hit.track).regions[(size_t) hit.regionIdx];
     const auto regionEnd = region.timelineStart + region.lengthInSamples;
-    const bool playheadInside =
-        playhead > region.timelineStart && playhead < regionEnd;
+    const RegionId hitId { hit.track, hit.regionIdx };
 
     juce::PopupMenu m;
     m.addSectionHeader (juce::String::formatted ("Track %d region %d",
@@ -3041,42 +3040,40 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                     tr.locate (regionStart);
                     safeThis->repaint();
                 });
-    m.addItem ("Split at playhead", playheadInside,
+    m.addItem ("Split at playhead", ! splittableAudioRegions ({ hitId }, playhead).empty(),
                 false /*ticked*/,
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
-                 hitCopy = hit, playhead]
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this), hitId, playhead]
                 {
-                    if (safeThis == nullptr) return;
+                    if (safeThis == nullptr || safeThis->splittableAudioRegions ({ hitId }, playhead).empty()) return;
                     auto& um = safeThis->engine.getUndoManager();
                     um.beginNewTransaction ("Split region");
                     um.perform (new SplitRegionAction (safeThis->session, safeThis->engine,
-                                                         hitCopy.track,
-                                                         hitCopy.regionIdx,
+                                                         hitId.track,
+                                                         hitId.regionIdx,
                                                          playhead));
                     safeThis->repaint();
                 });
 
     // Join regions: enabled when at least two regions on this track are
-    // selected (counting the primary + additional). Same-source abutting
-    // selections collapse cheaply; everything else renders a glued WAV.
-    int joinCount = 0;
-    std::vector<int> joinIdxs;
+    // selected (counting the primary + additional) and none is locked.
+    // Same-source abutting selections collapse cheaply; everything else
+    // renders a glued WAV.
+    std::vector<RegionId> joinIds;
     if (selectedTrack == hit.track && selectedRegion >= 0)
-    {
-        joinIdxs.push_back (selectedRegion);
-        ++joinCount;
-    }
+        joinIds.push_back ({ hit.track, selectedRegion });
     for (const auto& id : additionalSelections)
         if (id.track == hit.track)
-        {
-            joinIdxs.push_back (id.regionIdx);
-            ++joinCount;
-        }
-    m.addItem ("Join selected regions", joinCount >= 2, false,
+            joinIds.push_back (id);
+    std::vector<int> joinIdxs;
+    for (const auto& id : joinIds)
+        joinIdxs.push_back (id.regionIdx);
+    const auto joinable = [joinIds] (const TapeStrip& strip)
+    { return joinIds.size() >= 2 && strip.editableAudioRegions (joinIds).size() == joinIds.size(); };
+    m.addItem ("Join selected regions", joinable (*this), false,
                 [safeThis = juce::Component::SafePointer<TapeStrip> (this),
-                 track = hit.track, joinIdxs]
+                 track = hit.track, joinIdxs, joinable]
                 {
-                    if (safeThis == nullptr) return;
+                    if (safeThis == nullptr || ! joinable (*safeThis)) return;
                     auto& um = safeThis->engine.getUndoManager();
                     um.beginNewTransaction (
                         juce::String ("Join ") + juce::String ((int) joinIdxs.size())
@@ -3191,16 +3188,15 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
     m.addSubMenu ("Color", regionColourMenu (region.customColour.getARGB()));
 
     m.addSeparator();
-    m.addItem ("Delete region",
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
-                 hitCopy = hit]
+    m.addItem ("Delete region", ! editableAudioRegions ({ hitId }).empty(), false,
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this), hitId]
                 {
-                    if (safeThis == nullptr) return;
+                    if (safeThis == nullptr || safeThis->editableAudioRegions ({ hitId }).empty()) return;
                     auto& um = safeThis->engine.getUndoManager();
                     um.beginNewTransaction ("Delete region");
                     um.perform (new DeleteRegionAction (safeThis->session, safeThis->engine,
-                                                          hitCopy.track,
-                                                          hitCopy.regionIdx));
+                                                          hitId.track,
+                                                          hitId.regionIdx));
                     safeThis->repaint();
                 });
 

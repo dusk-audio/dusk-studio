@@ -76,7 +76,8 @@ public:
     // body's top-left - the frame "at:<x>,<y>" addresses. "start" and "end" are the
     // trim handles, "gain" the gain line at that sample, "wave" the waveform point
     // samplePointForScenario gives, "stripe" the take stripe along the waveform's top
-    // at that sample, "divider" the take lanes' caption.
+    // at that sample, above the fade discs, "divider" the take lanes' caption, and
+    // "fadeIn" and "fadeOut" the focused region's fade discs wherever they sit.
     virtual bool gesturePointForScenario (const std::string& kind, std::int64_t timelineSample,
                                           ImVec2& point) const = 0;
 

@@ -1330,7 +1330,9 @@ A right-click on any region shows a context menu:
 - **Lock** the region (prevents accidental edits).
 - **Reverse region** (non-destructive: renders a reversed copy into `takes/` and points the region at it; undoable). Reversing a reversed region plays the original audio forward again, trimmed the same way, without rendering anything.
 - **Color**: a palette of 8 accent hues plus **Reset to track colour**.
-- **Delete**.
+- **Delete region**.
+
+On a locked region, **Split at playhead** and **Delete region** are unavailable, and **Join selected regions** is unavailable while any of the selected regions is locked.
 
 Normalize is not on this menu — it lives in the audio region editor (double-click the region).
 
@@ -1418,7 +1420,7 @@ Double-click an audio region in the tape strip to open the audio region editor. 
 - **Gain** adjustment (−24 to +12 dB, non-destructive).
 - **Position** of the region on the timeline.
 
-A locked region takes none of these edits. The editor won't split, normalize, reverse or delete it either: those buttons and menu items are unavailable, its gain and fade readouts don't open for typing, and **Delete** passes it by when other regions are selected with it. Its mute, lock, label and colour still change. A frozen track refuses every region edit until you unfreeze it.
+A locked region takes none of these edits. The editor won't split, normalize, reverse, join or delete it either: those buttons and menu items are unavailable, its gain and fade readouts don't open for typing, and **Delete** passes it by when other regions are selected with it. Its mute, lock, label and colour still change. A frozen track refuses every region edit until you unfreeze it.
 
 You **cannot** edit individual samples. There is no zoom-to-sample, no spectral edit and no destructive trim, and the **Draw** tool's pencil draws automation, never audio. The portastudio philosophy is that you commit to good takes and work non-destructively from there.
 
@@ -1434,7 +1436,7 @@ The top is a row of icon buttons. Hover over one for its name and shortcut:
 - **Grab**, **Range**, **Cut**, **Draw**, then the editor's own **Snap** toggle and grid resolution, set apart from the timeline's.
 - **Auto: Off**, which picks an automation lane to show over the waveform (see *Editing breakpoints in the region editor* under Mixing).
 - The track name and the region's title. Double-click the title to rename the region in place; Enter keeps the new name, Esc keeps the old one, and accepting the file name as shown leaves the region unlabelled.
-- **Chase** and **Zoom out / Zoom in / Zoom fit** at the right (also **−**, **+**, **0**).
+- **Chase** and **Zoom out / Zoom in / Zoom fit** at the right (also **−**, **+**, **0**). Zoom in stops at one sample per pixel. Resizing the window keeps the zoom and the edit cursor where they are; **Zoom fit** fits the view to the new size.
 
 The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. The range belongs to the region you drew it on: clicking another region with Grab or Cut clears it. Cut splits the region at every click. Draw is the automation pencil: with an automation lane selected (see below) it draws a freehand breakpoint curve; with no lane selected it does nothing (it never moves the region).
 
@@ -1464,7 +1466,7 @@ Below the toolbar:
 
 ## Menus
 
-Right-click the waveform for **Loop region** (or **Loop selection** with a range drawn, looping the range; with several regions selected it loops from the first to the last), which sets the transport loop, turns looping on and moves the playhead to its start; then **Split at edit cursor**, **Cut range**, **Join selected regions**, **Reset gain (0 dB)**, **Reset fades**, **Mute** / **Unmute**, **Lock** / **Unlock** and **Reverse**. **Split at edit cursor**, **Cut range**, **Reset gain (0 dB)**, **Reset fades** and **Reverse** are unavailable on a locked region or a frozen track. Right-click a fade disc for its curve shape.
+Right-click the waveform for **Loop region** (or **Loop selection** with a range drawn, looping the range; with several regions selected it loops from the first to the last), which sets the transport loop, turns looping on and moves the playhead to its start; then **Split at edit cursor**, **Cut range**, **Join selected regions**, **Reset gain (0 dB)**, **Reset fades**, **Mute** / **Unmute**, **Lock** / **Unlock** and **Reverse**. **Split at edit cursor**, **Cut range**, **Reset gain (0 dB)**, **Reset fades** and **Reverse** are unavailable on a locked region or a frozen track, and **Join selected regions** while any of the selected regions is locked or the track is frozen. Right-click a fade disc for its curve shape.
 
 The **Properties** button opens a menu headed with the track and region number: **Add label...** (or **Rename label...**), **Mute region**, **Lock region**, **Color** and **Delete region**, with the file name, sample rate, channel count and length below. **Delete region** is unavailable on a locked region or a frozen track.
 
@@ -1484,7 +1486,7 @@ Every region on the track that plays a take carries a stripe in that take's colo
 - **Double-click a take's name** to rename it. Enter keeps the new name, Esc the old one (**Rename take**).
 - **S** solos that take: the track plays only that take, in place of its regions, heard at once whether the transport is stopped or rolling. The playhead stays where it is, and the caption reads "Solo "Take 2": the track plays only this take." Click **S** again to stop, also heard at once. Soloing another lane replaces it, and closing the editor or deleting the take ends it. Bounce, mixdown and freeze never hear a solo.
 - **Down** puts the take in the lane below on the focused region, and **Up** the take in the lane above, stepping only through takes that cover all of the region (**Switch take**). With a range selected, only the range changes. Past the last lane the caption says "No older take covers all of this." (or "No newer take...") and nothing changes.
-- **Drag a divider** to move where one take gives way to the next. Point at the join in any lane, or in the take stripe along the top of the waveform, where the cursor turns to a double arrow and a line marks the seam through every lane, and drag left or right. Both regions move their edge together and the crossfade keeps its length; the seam stops where either take runs out. The undo step is **Move comp seam**.
+- **Drag a divider** to move where one take gives way to the next. Point at the join in any lane, or in the take stripe along the top of the waveform, where the cursor turns to a double arrow and a line marks the seam through every lane, and drag left or right. Where a fade disc sits on the join, the disc takes the drag; point above it in the stripe, or in a lane, to move the seam. Both regions move their edge together and the crossfade keeps its length; the seam stops where either take runs out. The undo step is **Move comp seam**.
 - **T** solos the take in the lane under the pointer, or the focused region's take when the pointer is not over a lane, as **S** does. **T** again stops it.
 - **Delete** asks "Delete this take and the regions cut from it?" in the lane, with **Delete** and **Cancel**. Deleting takes the take and every region cut from it off the track. **Undo** puts both back (**Delete take**).
 

@@ -2995,6 +2995,55 @@ const ScenarioRegistrar audioEditorSeamDrag { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorSeamDrag (host, ctx); }
 } };
 
+// Where a fade disc sits on a comp seam the disc keeps its drag: a press on the
+// focused region's fade-out disc at the seam sets its fade-out as one "Fade-out"
+// step and leaves the seam where it was.
+std::optional<ScenarioResult> runAudioEditorFadeDiscAtSeam (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    const auto ids = addLevelTakes (ctx, track, 2);
+    if (! ids) return ScenarioResult::fail ("could not write take fixture");
+    promoteTakeRange (session, track, track.takes[0], 0, kTakeCaseLength);
+    promoteTakeRange (session, track, track.takes[1], kTakeCaseLength / 2, kTakeCaseLength);
+    session.audioEditorSnap = false;
+    const auto before = track.regions;
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    auto fadeBefore = std::make_shared<std::int64_t> (-1);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx, &track, fadeBefore]
+    {
+        const auto disc = host.audioEditorPoint ("fadeOut", 0);
+        const auto seam = host.audioEditorPoint ("stripe", kTakeCaseLength / 2);
+        const auto selection = host.audioEditorSelection();
+        if (! ctx.expect (disc.size() == 2 && seam.size() == 2 && ! selection.empty(), "the editor has no geometry")) return;
+        if (! ctx.expect (std::abs (disc[0] - seam[0]) <= 4, "the focused region's fade-out disc is not on the seam")) return;
+        *fadeBefore = track.regions[(std::size_t) selection[0]].fadeOutSamples;
+        ctx.expect (host.audioEditorPointer (disc[0], disc[1], true), "the fade-out disc did not take the press");
+        host.audioEditorPointer (disc[0] - 40, disc[1], true);
+        host.audioEditorPointer (disc[0] - 40, disc[1], false);
+    }, [&host] { return host.audioEditorTakeLanes().size() == 2; }, "the take lanes never showed" });
+    steps->push_back ({ 150, [&host, &ctx, &track, &engine = ctx.engine(), before, fadeBefore]
+    {
+        const auto selection = host.audioEditorSelection();
+        ctx.expect (undoDescription (engine) == "Fade-out",
+                    "the press on the fade-out disc at the seam made \"" + undoDescription (engine) + "\", not \"Fade-out\"");
+        ctx.expect (sameRegions (track.regions, before), "the press on the fade-out disc moved the seam");
+        ctx.expect (! selection.empty() && track.regions[(std::size_t) selection[0]].fadeOutSamples > *fadeBefore,
+                    "dragging the fade-out disc at the seam did not lengthen the fade-out");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorFadeDiscAtSeam { Scenario {
+    "gui.audio_editor_fade_disc_at_seam", { "gui", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorFadeDiscAtSeam (host, ctx); }
+} };
+
 const ScenarioRegistrar audioEditorTakeKeys { Scenario {
     "gui.audio_editor_take_keys", { "gui", "keyboard", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
@@ -4757,9 +4806,9 @@ const ScenarioRegistrar audioEditorSplitKeepsSelection { Scenario {
 
 // A locked region refuses every edit the editor offers it: Delete, Cmd+E, the
 // toolbar's Split and Normalize, the menu's Split at edit cursor, Reset gain and
-// Reset fades, typed gain and fades, and Properties > Delete region, each leaving
-// the region as it was and no undo step. With an unlocked region selected beside
-// it, Delete takes that one alone.
+// Reset fades, typed gain and fades, Properties > Delete region, and Join selected
+// regions with an unlocked region selected beside it, each leaving the region as it
+// was and no undo step. With the unlocked region selected, Delete takes that one alone.
 std::optional<ScenarioResult> runAudioEditorLockRefusesEdits (GuiHost& host, ScenarioContext& ctx)
 {
     static constexpr std::int64_t kLocked = 0;
@@ -4847,7 +4896,17 @@ std::optional<ScenarioResult> runAudioEditorLockRefusesEdits (GuiHost& host, Sce
         untouched ("Properties > Delete region");
         clickEditorWave (host, ctx, 78000, command);
     } });
-    steps->push_back ({ 150, [&host, &ctx] { ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not handled"); } });
+    steps->push_back ({ 150, [&host, &ctx] { clickEditorWave (host, ctx, 12000, rightButton); } });
+    steps->push_back ({ 150, [&host, &ctx, refusedItem]
+    {
+        refusedItem ("Join selected regions");
+        ctx.expect (host.clickContextMenuItem ("Loop region"), "the waveform menu did not open");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, untouched]
+    {
+        untouched ("Join selected regions");
+        ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not handled");
+    } });
     steps->push_back ({ 200, [&ctx, &engine, &track, held]
     {
         const auto* region = regionPlaying (track, kLocked);
@@ -5295,6 +5354,98 @@ const ScenarioRegistrar audioEditorZoomKeys { Scenario {
     "gui.audio_editor_zoom_keys", { "gui", "keyboard", "editor" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorZoomKeys (host, ctx); }
+} };
+
+// The editor never zooms past one sample a pixel: it opens on a region a few samples
+// long at that zoom, and = holds it there.
+std::optional<ScenarioResult> runAudioEditorTinyRegionZoom (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& track = ctx.session().track (0);
+    if (! addLevelTake (ctx, track, "Fixture", 0, kTakeCaseLength, 0.5f))
+        return ScenarioResult::fail ("could not write region fixture");
+    auto region = regionFromTake (track.takes.front(), 1000, 1008);
+    track.takes.clear();
+    if (! region) return ScenarioResult::fail ("could not cut the region fixture");
+    region->takeId = 0;
+    track.regions.push_back (*region);
+    ctx.session().audioEditorSnap = false;
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    const auto zoomAtMost = [&host, &ctx] (const std::string& when)
+    {
+        const auto view = host.audioEditorView();
+        ctx.expect (view.size() == 3 && view[0] > 0.0 && view[0] <= 1.0 + 1.0e-6,
+                    when + " the editor shows " + (view.size() == 3 ? std::to_string (view[0]) : std::string ("no"))
+                        + " pixels a sample");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx, zoomAtMost]
+    {
+        zoomAtMost ("opened on an 8-sample region,");
+        ctx.expect (host.pressAudioEditorKey ("="), "= was not delivered");
+    }, [&host] { return host.audioEditorPoint ("wave", 1004).size() == 2; }, "the editor never laid out" });
+    steps->push_back ({ 150, [zoomAtMost] { zoomAtMost ("after =,"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorTinyRegionZoom { Scenario {
+    "gui.audio_editor_tiny_region_zoom", { "gui", "editor" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorTinyRegionZoom (host, ctx); }
+} };
+
+// Resizing the window keeps the editor's zoom and edit cursor; 0 then fits the
+// region to the new width.
+std::optional<ScenarioResult> runAudioEditorResizeKeepsZoom (GuiHost& host, ScenarioContext& ctx)
+{
+    const auto window = host.mainWindowSize();
+    if (window.size() < 4) return ScenarioResult::fail ("the main window reported no size");
+    if (auto early = beginEditorRegionCase (host, ctx)) return early;
+    ctx.cleanup ([&host, window] { host.resizeMainWindow (window[0], window[1]); });
+    auto fitted = std::make_shared<std::vector<double>>();
+    auto zoomed = std::make_shared<std::vector<double>>();
+    const auto press = [&host, &ctx] (const char* key)
+    { return [&host, &ctx, key] { ctx.expect (host.pressAudioEditorKey (key), std::string (key) + " was not delivered"); }; };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx, fitted]
+    {
+        *fitted = host.audioEditorView();
+        clickEditorWave (host, ctx, 60000);
+    }, [&host] { return host.audioEditorPoint ("wave", 48000).size() == 2; }, "the editor never laid out" });
+    steps->push_back ({ 150, press ("=") });
+    steps->push_back ({ 150, [&host, &ctx, fitted, zoomed, window]
+    {
+        *zoomed = host.audioEditorView();
+        if (! ctx.expect (fitted->size() == 3 && zoomed->size() == 3 && (*zoomed)[0] > (*fitted)[0] * 1.1
+                              && std::abs ((*zoomed)[2] - 60000.0) < 512.0,
+                          "the click and = did not move the edit cursor and zoom in")) return;
+        const int width = window[0] - 240 >= window[2] ? window[0] - 240 : window[0] + 240;
+        ctx.expect (host.resizeMainWindow (width, window[1]), "the main window did not take the new width");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, zoomed, press]
+    {
+        const auto view = host.audioEditorView();
+        ctx.expect (view.size() == 3 && std::abs (view[0] - (*zoomed)[0]) <= (*zoomed)[0] * 1.0e-6,
+                    "resizing the window changed the zoom");
+        ctx.expect (view.size() == 3 && std::abs (view[2] - (*zoomed)[2]) < 0.5, "resizing the window moved the edit cursor");
+        press ("0")();
+    } });
+    steps->push_back ({ 150, [&host, &ctx, fitted]
+    {
+        const auto view = host.audioEditorView();
+        ctx.expect (view.size() == 3 && std::abs (view[0] / (*fitted)[0] - 1.0) > 0.02,
+                    "0 after the resize did not fit the region to the new width");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorResizeKeepsZoom { Scenario {
+    "gui.audio_editor_resize_keeps_zoom", { "gui", "editor" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorResizeKeepsZoom (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runAudioEditorGestures (GuiHost& host, ScenarioContext& ctx)
@@ -14097,6 +14248,73 @@ const ScenarioRegistrar regionMenuItems { Scenario {
     "gui.region_menu_items", { "gui", "region" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runRegionMenuItems (host, ctx); }
+} };
+
+// A locked region's right-click menu offers neither Split at playhead nor Delete
+// region, and Join selected regions is unavailable while a selected region is
+// locked; the track keeps its regions and no undo step is recorded.
+std::optional<ScenarioResult> runRegionMenuLockedRefuses (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion original;
+    if (auto early = seedTapeRegion (host, ctx, original)) return early;
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (0);
+    auto neighbour = original;
+    neighbour.timelineStart = original.timelineStart + original.lengthInSamples;
+    track.regions.push_back (neighbour);
+    track.regions.front().locked = true;
+    host.pressKey ("0", '0');
+    const auto before = track.regions;
+    const auto playhead = original.timelineStart + original.lengthInSamples / 2;
+
+    const auto untouched = [&ctx, &engine, &track, before] (const std::string& what)
+    {
+        ctx.expect (sameRegions (track.regions, before) && track.regions.front().locked,
+                    what + " changed the track's regions");
+        ctx.expect (! engine.getUndoManager().canUndo(), what + " recorded an undo step");
+    };
+    const auto refused = [&host, &ctx] (const char* item, const std::string& when)
+    { ctx.expect (! host.contextMenuItemEnabled (item), std::string (item) + " is offered " + when); };
+    const auto closeMenu = [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Loop region"), "the region menu did not open"); };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 500, [&host, &ctx, &transport = engine.getTransport(), playhead]
+    {
+        transport.locate (playhead);
+        ctx.expect (host.clickAudioRegion (0, 0, true), "the locked region did not take a right-click");
+    } });
+    steps->push_back ({ 200, [refused, closeMenu]
+    {
+        refused ("Split at playhead", "on a locked region");
+        refused ("Delete region", "on a locked region");
+        closeMenu();
+    } });
+    steps->push_back ({ 300, [&host, &ctx, untouched]
+    {
+        untouched ("the locked region's menu");
+        ctx.expect (host.clickAudioRegion (0, 0), "could not select the locked region");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickAudioRegion (0, 1, false, 2), "the neighbour did not take a Cmd-click"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickAudioRegion (0, 1, true), "the neighbour did not take a right-click"); } });
+    steps->push_back ({ 200, [&host, &ctx, refused, closeMenu]
+    {
+        ctx.expect (host.contextMenuItemEnabled ("Split at playhead") || host.contextMenuItemEnabled ("Delete region"),
+                    "the neighbour's menu offers neither Split at playhead nor Delete region");
+        refused ("Join selected regions", "with a locked region selected");
+        closeMenu();
+    } });
+    steps->push_back ({ 300, [untouched] { untouched ("Join selected regions"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar regionMenuLockedRefuses { Scenario {
+    "gui.region_menu_locked_refuses", { "gui", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRegionMenuLockedRefuses (host, ctx); }
 } };
 
 // Alt+T and Alt+Shift+T step the selected MIDI region round its take ring, key
