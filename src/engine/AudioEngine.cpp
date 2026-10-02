@@ -6050,16 +6050,17 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // tempo changes); when null/empty this is the exact constant-bpm path.
             const TempoMap* tm = rtTempoMap.load (std::memory_order_acquire);
             const bool useMap = (tm != nullptr && ! tm->empty());
-            // Plugin latency comp for instrument tracks: shift the scheduling
-            // window forward by the plugin's reported latency so the
-            // delayed audio output aligns to the correct timeline sample.
-            // 0 latency = no shift (the common case for synths). Audio
-            // tracks have no instrument plugin so latency is 0 even when
-            // the slot is loaded with an effect.
-            const std::int64_t pluginLatency = midiTrack
-                ? (std::int64_t) strips[(size_t) t]->getPluginSlot().getLatencySamples()
+            // A MIDI track reports 0 to PDC (recomputePdc), so its instrument's
+            // latency comes out here: the scheduling window runs that far ahead
+            // and the delayed output lands on the note's timeline sample. The
+            // insert-wide read, not the plug-in slot's, so native and built-in
+            // instruments count too. Audio tracks never shift - an effect's
+            // latency is PDC's to align.
+            const std::int64_t instrumentLatency = midiTrack
+                ? (std::int64_t) std::clamp (strips[(size_t) t]->getInsertPluginLatencySamples(),
+                                             0, ChannelStrip::kMaxPdcSamples)
                 : 0;
-            const auto schedStart = blockStartSamples + pluginLatency;
+            const auto schedStart = blockStartSamples + instrumentLatency;
 
             // Acquire-load the track's MIDI region snapshot once for the
             // block. Mutated on the message thread by RecordManager (when

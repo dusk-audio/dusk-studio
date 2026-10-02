@@ -3,6 +3,7 @@
 #include "../../AudioEngine.h"
 #include "../../BounceEngine.h"
 #include "../../MasteringPlayer.h"
+#include "../../builtin/BuiltinRegistry.h"
 #include "../../audiofile/FileReader.h"
 #include "../../audiofile/FileWriter.h"
 #include "../../../dsp/ChannelStrip.h"
@@ -935,6 +936,168 @@ ScenarioResult busRoutedLandsWithDirect (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// The lag, within +/-maxLag, at which `signal` best matches `reference` over
+// `length` samples from `from`; positive when `signal` plays later.
+std::int64_t bestLag (const std::vector<float>& reference, const std::vector<float>& signal,
+                      std::int64_t from, int length, int maxLag)
+{
+    std::int64_t best = 0;
+    double bestSum = 0.0;
+    for (int lag = -maxLag; lag <= maxLag; ++lag)
+    {
+        double sum = 0.0;
+        for (int i = 0; i < length; ++i)
+        {
+            const auto r = from + i, s = r + lag;
+            if (r >= 0 && s >= 0 && r < (std::int64_t) reference.size()
+                && s < (std::int64_t) signal.size())
+                sum += (double) reference[(std::size_t) r] * (double) signal[(std::size_t) s];
+        }
+        if (lag == -maxLag || sum > bestSum)
+        {
+            bestSum = sum;
+            best = lag;
+        }
+    }
+    return best;
+}
+
+// Live, a Sunset note plays where it sits on the timeline, level with an
+// impulse an audio track holds at the same sample, at every setting of
+// Sunset's own Oversampling switch - straight through, and on the pass after
+// a loop wraps, where the note's scheduling wraps that latency ahead of the
+// audio.
+ScenarioResult sunsetLandsWithAudio (ScenarioContext& ctx)
+{
+    constexpr const char* kSunset = "dusk.builtin.synth";
+    if (builtin::findUnit (kSunset) == nullptr)
+        return ScenarioResult::skip ("this build has no Sunset");
+
+    static constexpr std::int64_t kAt = 24000;
+    // The loop ends 16 samples into a block, so the note, clear of the audio
+    // seam's declick 128 samples past the loop start, is scheduled in the span
+    // after the seam of the very block that wraps.
+    static constexpr std::int64_t kLoopStart = kAt - 128;
+    static constexpr std::int64_t kLoopEnd = kLoopStart + 93 * ScenarioContext::kBlockSize + 16;
+    constexpr int kAudioTrack = 0, kSynthTrack = 1;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const auto source = ctx.tempDir() / "impulse.wav";
+    if (! writeMono (source, impulse (4800, 0)))
+        return ScenarioResult::fail ("could not write the impulse");
+    placeRegion (ctx, kAudioTrack, source, kAt, 4800);
+
+    auto& strip = engine.getChannelStrip (kSynthTrack);
+    ctx.cleanup ([&strip, &transport]
+    {
+        transport.setLoopEnabled (false);
+        strip.unloadBuiltin();
+    });
+    session.track (kSynthTrack).mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+    std::string error;
+    if (! ctx.expect (strip.loadBuiltin (kSunset, error), "could not load Sunset: " + error))
+        return ctx.verdict();
+    auto& slot = strip.getBuiltinSlot();
+    int oversampling = -1;
+    for (int i = 0; i < slot.paramCount(); ++i)
+        if (const auto* info = slot.paramInfo (i);
+            info != nullptr && std::string (info->id) == "oversampling")
+            oversampling = i;
+    if (! ctx.expect (oversampling >= 0, "Sunset has no Oversampling parameter"))
+        return ctx.verdict();
+
+    // Short enough that its release has died away before the loop wraps.
+    MidiRegion region;
+    region.timelineStart = kAt;
+    region.lengthInTicks = kMidiTicksPerQuarter;
+    region.lengthInSamples = ticksToSamples (region.lengthInTicks, kRate,
+                                             session.tempoBpm.load (std::memory_order_relaxed));
+    region.notes.push_back ({ 1, 60, 127, 0, kMidiTicksPerQuarter / 4 });
+    session.track (kSynthTrack).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (1, region));
+
+    // Plays with one of the two tracks audible and returns the left master
+    // output, then lets the note's release die away. Straight through it plays
+    // from the top; looped, from the loop start through one wrap.
+    const auto play = [&] (int audibleTrack, bool looped)
+    {
+        for (const int t : { kAudioTrack, kSynthTrack })
+            session.track (t).strip.mute.store (t != audibleTrack, std::memory_order_relaxed);
+        session.recomputeRtCounters();
+        transport.setLoopRange (kLoopStart, kLoopEnd);
+        transport.setLoopEnabled (looped);
+        transport.setPlayhead (looped ? kLoopStart : 0);
+        engine.play();
+        std::vector<float> out;
+        const auto frames = looped ? kLoopEnd - kLoopStart : kAt;
+        for (int block = 0; block < (int) (frames / ScenarioContext::kBlockSize) + 24; ++block)
+        {
+            ctx.pump (1);
+            const auto& o = ctx.lastBlock (0);
+            out.insert (out.end(), o.begin(), o.end());
+        }
+        engine.stop();
+        transport.setLoopEnabled (false);
+        ctx.pump (400);
+        return out;
+    };
+
+    // At 1x Sunset has no latency and its attack starts on the impulse's
+    // sample. That render is the reference the other two must line up with.
+    for (const bool looped : { false, true })
+    {
+        const std::string leg = looped ? "after the loop wraps" : "straight through";
+        // Where the note plays in the render; looped, on the second pass.
+        const std::int64_t noteAt = looped ? (kLoopEnd - kLoopStart) + (kAt - kLoopStart) : kAt;
+        std::vector<float> atUnity;
+        std::int64_t audioAtUnity = 0;
+        for (const int setting : { 0, 1, 2 })
+        {
+            slot.setParamValue (oversampling, (float) setting);
+            ctx.pump (1);
+            const int latency = slot.getLatencySamples();
+            const auto audio = play (kAudioTrack, looped);
+            const auto synth = play (kSynthTrack, looped);
+            const auto audioAt = noteAt - 512
+                + argmaxAbs (std::vector<float> (audio.begin() + (noteAt - 512), audio.end()));
+            const std::string factor = std::to_string (1 << setting) + "x";
+            if (setting == 0)
+            {
+                // The first sample to rise clear of the floor ahead of the note.
+                // How hard the attack starts depends on the voice's history, so
+                // the floor sets the bar, not the note.
+                float noiseFloor = 0.0f;
+                for (std::int64_t i = noteAt - 512; i < noteAt - 64; ++i)
+                    noiseFloor = std::max (noiseFloor, std::abs (synth[(std::size_t) i]));
+                std::int64_t onset = -1;
+                for (std::int64_t i = noteAt - 64; i < (std::int64_t) synth.size() && onset < 0; ++i)
+                    if (std::abs (synth[(std::size_t) i]) > 3.0f * noiseFloor)
+                        onset = i;
+                ctx.note (leg + ", 1x: impulse at " + std::to_string (audioAt)
+                          + ", note starts at " + std::to_string (onset));
+                ctx.expect (latency == 0, "at 1x Sunset reports " + std::to_string (latency)
+                                              + " samples of latency");
+                ctx.expect (onset == audioAt, leg + ", at 1x the note started "
+                                                  + std::to_string (onset - audioAt)
+                                                  + " samples from the impulse");
+                atUnity = synth;
+                audioAtUnity = audioAt;
+                continue;
+            }
+            const auto lag = bestLag (atUnity, synth, audioAtUnity - 64, 2048, 32)
+                           - (audioAt - audioAtUnity);
+            ctx.note (leg + ", " + factor + ": Sunset reports " + std::to_string (latency)
+                      + " samples, the note plays " + std::to_string (lag) + " from the 1x note");
+            ctx.expect (latency > 0, "at " + factor + " Sunset reports no latency to compensate");
+            ctx.expect (std::abs (lag) <= kFractionalSlack,
+                        leg + ", at " + factor + " the note played " + std::to_string (lag)
+                            + " samples after where it sits on the timeline");
+        }
+    }
+    return ctx.verdict();
+}
+
 // ---------------------------------------------------------- Export master
 
 // Export master renders the mastering chain on the loaded mix: the file is
@@ -1183,6 +1346,9 @@ const ScenarioRegistrar exportInPlaceCompRegistrar { Scenario {
 const ScenarioRegistrar busAlignRegistrar { Scenario {
     "mix.bus_routed_lands_with_direct", { "mix", "pdc" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return busRoutedLandsWithDirect (ctx); } } };
+const ScenarioRegistrar sunsetAlignRegistrar { Scenario {
+    "mix.sunset_lands_with_audio", { "mix", "pdc", "builtin" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return sunsetLandsWithAudio (ctx); } } };
 const ScenarioRegistrar cancelRegistrar { Scenario {
     "bounce.cancel_leaves_no_file", { "bounce" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return cancelLeavesNoFile (ctx); }, 120000 } };
