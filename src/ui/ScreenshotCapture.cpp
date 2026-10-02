@@ -15,7 +15,6 @@
 #include "TapeStrip.h"
 #include "AuxView.h"
 #include "MasteringView.h"
-#include "AudioRegionEditor.h"
 #include "PianoRollComponent.h"
 #include "ChannelEqEditor.h"
 #include "MidiBindingsPanel.h"
@@ -29,6 +28,7 @@
 #include "../foundation/PlanarBuffer.h"
 
 #include "../session/Session.h"
+#include "../session/TakeComp.h"
 #include "../engine/AudioEngine.h"
 
 #include <algorithm>
@@ -87,22 +87,26 @@ void snapshotComponent (juce::Component* c, const juce::File& outDir,
 
 // Generate a short stereo WAV so audio regions have a real file for the
 // thumbnail to load. Two detuned sines with an amplitude envelope read as a
-// plausible recorded take.
-juce::File writeDemoWav (const juce::File& dir, double sampleRate)
+// plausible recorded take; a nonzero `swellHz` pulses the level so takes of the
+// same passage look different side by side.
+juce::File writeDemoWav (const juce::File& dir, const char* name, double sampleRate,
+                         double seconds, double hz, double swellHz)
 {
     dir.createDirectory();
-    auto file = dir.getChildFile ("demo-take.wav");
+    auto file = dir.getChildFile (name);
 
     const int numCh     = 2;
-    const int numFrames = (int) (sampleRate * 1.8);
+    const int numFrames = (int) (sampleRate * seconds);
     dusk::audio::PlanarBuffer buf;
     if (! buf.setSize (numCh, numFrames)) return {};
+    const double pi = std::acos (-1.0);
     for (int n = 0; n < numFrames; ++n)
     {
-        const double t   = (double) n / sampleRate;
-        const double env = std::sin (juce::MathConstants<double>::pi * (double) n / numFrames);
-        buf.channel (0)[n] = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * 196.0 * t));
-        buf.channel (1)[n] = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * 198.0 * t));
+        const double t     = (double) n / sampleRate;
+        const double swell = swellHz > 0.0 ? 0.55 + 0.45 * std::sin (2.0 * pi * swellHz * t) : 1.0;
+        const double env   = swell * std::sin (pi * (double) n / numFrames);
+        buf.channel (0)[n] = (float) (env * 0.6 * std::sin (2.0 * pi * hz * t));
+        buf.channel (1)[n] = (float) (env * 0.6 * std::sin (2.0 * pi * (hz + 2.0) * t));
     }
 
     file.deleteFile();
@@ -141,7 +145,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     }
 
     // Audio regions on tracks 0 and 1 (bank 0, visible on the tape strip).
-    const auto wav = writeDemoWav (outDir.getChildFile ("_demo"), sr);
+    const auto wav = writeDemoWav (outDir.getChildFile ("_demo"), "demo-take.wav", sr, 1.8, 196.0, 0.0);
     if (wav == juce::File())
     {
         std::fprintf (stderr, "[Dusk Studio/capture] demo WAV write failed - aborting capture\n");
@@ -356,17 +360,13 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         removeChildComponent (&m);
     };
 
-    // np-10/ed-04 and np-11/ed-05 are the same figure under two names: render
-    // once, copy to the alias.
+    // np-11/ed-05 are the same figure under two names: render once, copy to the
+    // alias. np-10/ed-04, the audio editor, is a native panel captured in
+    // captureNativePanels below.
     auto alias = [&] (const juce::String& from, const juce::String& to)
     {
         outDir.getChildFile (from).copyFileTo (outDir.getChildFile (to));
     };
-    {
-        AudioRegionEditor ed (session, engine, 0, 0);
-        modalShot (ed, 1000, 640, "np-10-region-editor.png", 500);
-    }
-    alias ("np-10-region-editor.png", "ed-04-region-editor-modal.png");
     {
         PianoRollComponent pr (session, engine, 8, 0);
         modalShot (pr, 1100, 680, "np-11-piano-roll.png", 500);
@@ -471,6 +471,8 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
 
 namespace
 {
+constexpr int kTakeLanesTrack = 6;
+
 // One PPM a framework child read its own frame back into, pasted into a JUCE snapshot
 // at the rectangle the child covers. Under the harness the window is unscaled, so the
 // two are the same pixels; a scaled run is letterboxed rather than skewed.
@@ -665,6 +667,67 @@ void MainComponent::captureNativePanels (std::string outDir)
             self.engine.resumeProcessing();
         } });
     }
+
+    // The audio editor on the first region, whose fades the figure shows. The
+    // capture is asked for once the waveform peaks have had time to load.
+    steps->push_back ({ 400, [] (MainComponent& self) { self.openAudioEditor (0, 0); } });
+    steps->push_back ({ 1000, [outDir] (MainComponent& self)
+    {
+        self.captureAudioEditorTo (outDir + "/np-10-region-editor.ppm");
+    } });
+    steps->push_back ({ 1500, [dir] (MainComponent& self)
+    {
+        self.closeAudioEditor();
+        dir.getChildFile ("np-10-region-editor.ppm")
+           .copyFileTo (dir.getChildFile ("ed-04-region-editor-modal.ppm"));
+    } });
+    // Take lanes: three passes over the same four seconds of the Vox track, comped
+    // from all three. Staged only here, so the earlier figures show the demo
+    // session without them.
+    steps->push_back ({ 400, [dir] (MainComponent& self)
+    {
+        auto& track = self.session.track (kTakeLanesTrack);
+        const double sr = self.engine.getCurrentSampleRate() > 0 ? self.engine.getCurrentSampleRate() : 48000.0;
+        const auto length = (std::int64_t) (sr * 4.0);
+        const struct { const char* file; double hz, swellHz; } passes[] = {
+            { "vox-take-1.wav", 220.0, 1.5 },
+            { "vox-take-2.wav", 247.0, 3.0 },
+            { "vox-take-3.wav", 262.0, 5.0 },
+        };
+        track.takes.clear();
+        track.regions.clear();
+        for (const auto& pass : passes)
+        {
+            AudioTake take;
+            take.id = self.session.allocateTakeId();
+            take.name = "Take " + std::to_string (track.takes.size() + 1);
+            take.file = writeDemoWav (dir.getChildFile ("_demo"), pass.file, sr, 4.0, pass.hz, pass.swellHz);
+            take.lengthInSamples = length;
+            take.numChannels = 2;
+            if (! take.file.existsAsFile())
+            {
+                std::fprintf (stderr, "[Dusk Studio/capture] %s write failed - skipping the take lanes\n", pass.file);
+                track.takes.clear();
+                return;
+            }
+            track.takes.push_back (take);
+        }
+        promoteTakeRange (self.session, track, track.takes[2], 0, length);
+        promoteTakeRange (self.session, track, track.takes[0], 0, (std::int64_t) (sr * 1.4));
+        promoteTakeRange (self.session, track, track.takes[1], (std::int64_t) (sr * 2.6), length);
+        self.openAudioEditorOnTakes (kTakeLanesTrack);
+    } });
+    steps->push_back ({ 1000, [outDir] (MainComponent& self)
+    {
+        self.captureAudioEditorTo (outDir + "/ed-06-take-lanes.ppm");
+    } });
+    steps->push_back ({ 1500, [] (MainComponent& self) { self.closeAudioEditor(); } });
+    steps->push_back ({ 400, [] (MainComponent& self)
+    {
+        auto& track = self.session.track (kTakeLanesTrack);
+        track.regions.clear();
+        track.takes.clear();
+    } });
 
     steps->push_back ({ 400, [outDir] (MainComponent& self)
     {

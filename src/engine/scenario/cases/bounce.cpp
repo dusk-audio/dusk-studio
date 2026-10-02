@@ -1,14 +1,17 @@
+#include "../RecordingMidiBackend.h"
 #include "../Scenario.h"
 #include "../ScenarioContext.h"
 #include "../../AudioEngine.h"
 #include "../../BounceEngine.h"
 #include "../../MasteringPlayer.h"
+#include "../../builtin/BuiltinRegistry.h"
 #include "../../audiofile/FileReader.h"
 #include "../../audiofile/FileWriter.h"
 #include "../../../dsp/ChannelStrip.h"
 #include "../../../session/Session.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cmath>
@@ -17,11 +20,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
 #include <system_error>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::scenario
@@ -935,6 +940,757 @@ ScenarioResult busRoutedLandsWithDirect (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// The lag, within +/-maxLag, at which `signal` best matches `reference` over
+// `length` samples from `from`; positive when `signal` plays later.
+std::int64_t bestLag (const std::vector<float>& reference, const std::vector<float>& signal,
+                      std::int64_t from, int length, int maxLag)
+{
+    std::int64_t best = 0;
+    double bestSum = 0.0;
+    for (int lag = -maxLag; lag <= maxLag; ++lag)
+    {
+        double sum = 0.0;
+        for (int i = 0; i < length; ++i)
+        {
+            const auto r = from + i, s = r + lag;
+            if (r >= 0 && s >= 0 && r < (std::int64_t) reference.size()
+                && s < (std::int64_t) signal.size())
+                sum += (double) reference[(std::size_t) r] * (double) signal[(std::size_t) s];
+        }
+        if (lag == -maxLag || sum > bestSum)
+        {
+            bestSum = sum;
+            best = lag;
+        }
+    }
+    return best;
+}
+
+// Where Sunset's Oversampling switch sits among the slot's parameters, or -1.
+int oversamplingParam (const builtin::NativeBuiltinSlot& slot)
+{
+    for (int i = 0; i < slot.paramCount(); ++i)
+        if (const auto* info = slot.paramInfo (i);
+            info != nullptr && std::string (info->id) == "oversampling")
+            return i;
+    return -1;
+}
+
+// Sunset on tracks 0, 1, ..., one for each Oversampling setting given, each
+// playing `notes` - a key and the timeline sample it starts on, an eighth of a
+// beat long in a region twice that. Each track's MIDI out carries exactly what
+// its Sunset is handed, into a recorder port of its own. Null, with the reason
+// recorded, when any of that cannot be set up.
+RecordingMidiBackend* sunsetsIntoRecorders (ScenarioContext& ctx, const std::vector<float>& oversampling,
+                                            const std::vector<std::pair<int, std::int64_t>>& notes)
+{
+    static constexpr const char* kSunset = "dusk.builtin.synth";
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const int numTracks = (int) oversampling.size();
+
+    auto owned = std::make_unique<RecordingMidiBackend> (numTracks);
+    auto* const recorder = owned.get();
+    engine.installMidiOutputBackend (std::move (owned));
+    bool opened = engine.getMidiOutputDevices().size() >= (std::size_t) numTracks;
+    for (int t = 0; t < numTracks && opened; ++t)
+        opened = engine.ensureMidiOutputOpen (t);
+    if (! ctx.expect (opened, "the recording MIDI outputs would not open"))
+        return nullptr;
+
+    ctx.cleanup ([&engine, &session, &transport, numTracks]
+    {
+        engine.stop();
+        transport.setLoopEnabled (false);
+        for (int t = 0; t < numTracks; ++t)
+        {
+            session.track (t).midiOutputIndex.store (-1, std::memory_order_relaxed);
+            engine.getChannelStrip (t).unloadBuiltin();
+        }
+    });
+
+    const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
+    static constexpr std::int64_t kNoteTicks = kMidiTicksPerQuarter / 8;
+    for (int t = 0; t < numTracks; ++t)
+    {
+        auto& track = session.track (t);
+        track.mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+        auto& strip = engine.getChannelStrip (t);
+        std::string error;
+        if (! ctx.expect (strip.loadBuiltin (kSunset, error), "could not load Sunset: " + error))
+            return nullptr;
+        auto& slot = strip.getBuiltinSlot();
+        const int param = oversamplingParam (slot);
+        if (! ctx.expect (param >= 0, "Sunset has no Oversampling parameter"))
+            return nullptr;
+        slot.setParamValue (param, oversampling[(std::size_t) t]);
+        auto regions = std::make_unique<std::vector<MidiRegion>>();
+        for (const auto& [pitch, onAt] : notes)
+        {
+            MidiRegion region;
+            region.timelineStart = onAt;
+            region.lengthInTicks = 2 * kNoteTicks;
+            region.lengthInSamples = ticksToSamples (region.lengthInTicks, kRate, bpm);
+            region.notes.push_back ({ 1, pitch, 100, 0, kNoteTicks });
+            regions->push_back (region);
+        }
+        track.midiRegions.publish (std::move (regions));
+        track.midiOutputIndex.store (t, std::memory_order_relaxed);
+    }
+    ctx.pump (1);
+    return recorder;
+}
+
+// The bank hands blocks to its pump thread, so a recorder's count settles a
+// little after the last block rather than inside it. Once it has, `check` is
+// handed everything recorded and the scenario completes with the verdict.
+void whenRecorderSettles (ScenarioContext& ctx, const RecordingMidiBackend* recorder,
+                          std::function<void (const std::vector<RecordingMidiBackend::Message>&)> check)
+{
+    struct Drain
+    {
+        std::size_t lastCount = 0;
+        int stablePolls = 0;
+    };
+    auto drain = std::make_shared<Drain>();
+    ctx.waitUntil ([drain, recorder]
+                   {
+                       const auto count = recorder->count();
+                       if (count == drain->lastCount) ++drain->stablePolls;
+                       else { drain->lastCount = count; drain->stablePolls = 0; }
+                       return drain->stablePolls >= 3;
+                   },
+                   5000,
+                   [&ctx, recorder, check = std::move (check)]
+                   {
+                       check (recorder->captured());
+                       ctx.expect (! recorder->hasDropped(), "the MIDI recorder ran out of room");
+                       ctx.complete (ctx.verdict());
+                   },
+                   "the MIDI output recorder never stopped receiving events");
+}
+
+// What one recorder port was handed: its resets, each counted by the All Sound
+// Off on channel 1 and listed at its block offset, and its note-ons by key.
+struct PortTally
+{
+    int resets = 0;
+    std::string resetOffsets;
+    std::array<int, 128> noteOns {};
+};
+
+PortTally tallyPort (const std::vector<RecordingMidiBackend::Message>& messages, int port)
+{
+    PortTally tally;
+    for (const auto& m : messages)
+    {
+        if (m.port != port || m.numBytes != 3)
+            continue;
+        if ((m.bytes[0] & 0xF0) == 0x90 && m.bytes[2] > 0)
+            ++tally.noteOns[(std::size_t) (m.bytes[1] & 0x7F)];
+        else if (m.bytes[0] == 0xB0 && m.bytes[1] == 120)
+        {
+            ++tally.resets;
+            tally.resetOffsets += " " + std::to_string (m.sampleOffset);
+        }
+    }
+    return tally;
+}
+
+// How many times a note on a recorder port should have been attacked.
+struct Attacks
+{
+    const char* note;
+    int key;
+    int expected;
+};
+
+void expectHanded (ScenarioContext& ctx, const std::string& track, const PortTally& tally,
+                   int expectedResets, std::initializer_list<Attacks> attacks)
+{
+    std::string line = track + ": " + std::to_string (tally.resets) + " resets, at block offsets"
+                     + tally.resetOffsets;
+    for (const auto& a : attacks)
+        line += "; " + std::string (a.note) + " attacked "
+              + std::to_string (tally.noteOns[(std::size_t) a.key]) + " times";
+    ctx.note (line);
+    ctx.expect (tally.resets == expectedResets,
+                track + ", Sunset was reset " + std::to_string (tally.resets) + " times, not "
+                    + std::to_string (expectedResets));
+    for (const auto& a : attacks)
+    {
+        const int attacked = tally.noteOns[(std::size_t) a.key];
+        ctx.expect (attacked == a.expected,
+                    track + ", " + a.note + " was attacked " + std::to_string (attacked) + " times, not "
+                        + std::to_string (a.expected));
+    }
+}
+
+// Live, a Sunset note plays where it sits on the timeline, level with an
+// impulse an audio track holds at the same sample, at every setting of
+// Sunset's own Oversampling switch - straight through, and on the pass after
+// a loop wraps, where the note's scheduling wraps that latency ahead of the
+// audio.
+ScenarioResult sunsetLandsWithAudio (ScenarioContext& ctx)
+{
+    static constexpr const char* kSunset = "dusk.builtin.synth";
+    if (builtin::findUnit (kSunset) == nullptr)
+        return ScenarioResult::skip ("this build has no Sunset");
+
+    static constexpr std::int64_t kAt = 24000;
+    // The loop ends 16 samples into a block, so the note, clear of the audio
+    // seam's declick 128 samples past the loop start, is scheduled in the span
+    // after the seam of the very block that wraps.
+    static constexpr std::int64_t kLoopStart = kAt - 128;
+    static constexpr std::int64_t kLoopEnd = kLoopStart + 93 * ScenarioContext::kBlockSize + 16;
+    static constexpr int kAudioTrack = 0, kSynthTrack = 1;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const auto source = ctx.tempDir() / "impulse.wav";
+    if (! writeMono (source, impulse (4800, 0)))
+        return ScenarioResult::fail ("could not write the impulse");
+    placeRegion (ctx, kAudioTrack, source, kAt, 4800);
+
+    auto& strip = engine.getChannelStrip (kSynthTrack);
+    ctx.cleanup ([&strip, &transport]
+    {
+        transport.setLoopEnabled (false);
+        strip.unloadBuiltin();
+    });
+    session.track (kSynthTrack).mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+    std::string error;
+    if (! ctx.expect (strip.loadBuiltin (kSunset, error), "could not load Sunset: " + error))
+        return ctx.verdict();
+    auto& slot = strip.getBuiltinSlot();
+    const int oversampling = oversamplingParam (slot);
+    if (! ctx.expect (oversampling >= 0, "Sunset has no Oversampling parameter"))
+        return ctx.verdict();
+
+    // Short enough that its release has died away before the loop wraps.
+    MidiRegion region;
+    region.timelineStart = kAt;
+    region.lengthInTicks = kMidiTicksPerQuarter;
+    region.lengthInSamples = ticksToSamples (region.lengthInTicks, kRate,
+                                             session.tempoBpm.load (std::memory_order_relaxed));
+    region.notes.push_back ({ 1, 60, 127, 0, kMidiTicksPerQuarter / 4 });
+    session.track (kSynthTrack).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (1, region));
+
+    // Plays with one of the two tracks audible and returns the left master
+    // output, then lets the note's release die away. Straight through it plays
+    // from the top; looped, from the loop start through one wrap.
+    const auto play = [&] (int audibleTrack, bool looped)
+    {
+        for (const int t : { kAudioTrack, kSynthTrack })
+            session.track (t).strip.mute.store (t != audibleTrack, std::memory_order_relaxed);
+        session.recomputeRtCounters();
+        transport.setLoopRange (kLoopStart, kLoopEnd);
+        transport.setLoopEnabled (looped);
+        transport.setPlayhead (looped ? kLoopStart : 0);
+        engine.play();
+        std::vector<float> out;
+        const auto frames = looped ? kLoopEnd - kLoopStart : kAt;
+        for (int block = 0; block < (int) (frames / ScenarioContext::kBlockSize) + 24; ++block)
+        {
+            ctx.pump (1);
+            const auto& o = ctx.lastBlock (0);
+            out.insert (out.end(), o.begin(), o.end());
+        }
+        engine.stop();
+        transport.setLoopEnabled (false);
+        ctx.pump (400);
+        return out;
+    };
+
+    // At 1x Sunset has no latency and its attack starts on the impulse's
+    // sample. That render is the reference the other two must line up with.
+    for (const bool looped : { false, true })
+    {
+        const std::string leg = looped ? "after the loop wraps" : "straight through";
+        // Where the note plays in the render; looped, on the second pass.
+        const std::int64_t noteAt = looped ? (kLoopEnd - kLoopStart) + (kAt - kLoopStart) : kAt;
+        std::vector<float> atUnity;
+        std::int64_t audioAtUnity = 0;
+        for (const int setting : { 0, 1, 2 })
+        {
+            slot.setParamValue (oversampling, (float) setting);
+            ctx.pump (1);
+            const int latency = slot.getLatencySamples();
+            const auto audio = play (kAudioTrack, looped);
+            const auto synth = play (kSynthTrack, looped);
+            const auto audioAt = noteAt - 512
+                + argmaxAbs (std::vector<float> (audio.begin() + (noteAt - 512), audio.end()));
+            const std::string factor = std::to_string (1 << setting) + "x";
+            if (setting == 0)
+            {
+                // The first sample to rise clear of the floor ahead of the note.
+                // How hard the attack starts depends on the voice's history, so
+                // the floor sets the bar, not the note.
+                float noiseFloor = 0.0f;
+                for (std::int64_t i = noteAt - 512; i < noteAt - 64; ++i)
+                    noiseFloor = std::max (noiseFloor, std::abs (synth[(std::size_t) i]));
+                std::int64_t onset = -1;
+                for (std::int64_t i = noteAt - 64; i < (std::int64_t) synth.size() && onset < 0; ++i)
+                    if (std::abs (synth[(std::size_t) i]) > 3.0f * noiseFloor)
+                        onset = i;
+                ctx.note (leg + ", 1x: impulse at " + std::to_string (audioAt)
+                          + ", note starts at " + std::to_string (onset));
+                ctx.expect (latency == 0, "at 1x Sunset reports " + std::to_string (latency)
+                                              + " samples of latency");
+                ctx.expect (onset == audioAt, leg + ", at 1x the note started "
+                                                  + std::to_string (onset - audioAt)
+                                                  + " samples from the impulse");
+                atUnity = synth;
+                audioAtUnity = audioAt;
+                continue;
+            }
+            const auto lag = bestLag (atUnity, synth, audioAtUnity - 64, 2048, 32)
+                           - (audioAt - audioAtUnity);
+            ctx.note (leg + ", " + factor + ": Sunset reports " + std::to_string (latency)
+                      + " samples, the note plays " + std::to_string (lag) + " from the 1x note");
+            ctx.expect (latency > 0, "at " + factor + " Sunset reports no latency to compensate");
+            ctx.expect (std::abs (lag) <= kFractionalSlack,
+                        leg + ", at " + factor + " the note played " + std::to_string (lag)
+                            + " samples after where it sits on the timeline");
+        }
+    }
+    return ctx.verdict();
+}
+
+// Sunset's Oversampling switch moves the latency a MIDI track's notes are
+// scheduled ahead by, and flipping it while the transport rolls must not move
+// the schedule over any event. Up from 1x the window would jump 12 samples past
+// a note-off due in that gap and leave the note hanging; back down it would go
+// over 12 samples already sent and play a note-on twice. The track's MIDI out
+// carries exactly what the instrument is handed, so a recorder there counts
+// every note-on and note-off, and each note has to die away once it ends.
+std::optional<ScenarioResult> sunsetOversamplingFlipsMidRoll (ScenarioContext& ctx)
+{
+    static constexpr const char* kSunset = "dusk.builtin.synth";
+    if (builtin::findUnit (kSunset) == nullptr)
+        return ScenarioResult::skip ("this build has no Sunset");
+
+    static constexpr int kTrack = 0;
+    static constexpr int kBlock = ScenarioContext::kBlockSize;
+    // A flip lands inside the block it is pumped with, so the schedule moves
+    // from the next one: note A ends 5 samples into kUpBlock, the first block
+    // scheduled at 2x, and note B starts 5 samples into kDownBlock, the first
+    // back at 1x.
+    static constexpr std::int64_t kUpBlock = 40;
+    static constexpr std::int64_t kDownBlock = 1000;
+    static constexpr int kIntoBlock = 5;
+    static constexpr int kNoteA = 60, kNoteB = 64;
+    static constexpr float kQuietDb = -60.0f;
+
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto& track = session.track (kTrack);
+
+    auto owned = std::make_unique<RecordingMidiBackend>();
+    auto* const recorder = owned.get();
+    engine.installMidiOutputBackend (std::move (owned));
+    if (engine.getMidiOutputDevices().empty() || ! engine.ensureMidiOutputOpen (0))
+        return ScenarioResult::fail ("the recording MIDI output would not open");
+
+    auto& strip = engine.getChannelStrip (kTrack);
+    ctx.cleanup ([&engine, &strip, &track]
+    {
+        engine.stop();
+        track.midiOutputIndex.store (-1, std::memory_order_relaxed);
+        strip.unloadBuiltin();
+    });
+    track.mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+    std::string error;
+    if (! ctx.expect (strip.loadBuiltin (kSunset, error), "could not load Sunset: " + error))
+        return ctx.verdict();
+    auto& slot = strip.getBuiltinSlot();
+    const int oversampling = oversamplingParam (slot);
+    if (! ctx.expect (oversampling >= 0, "Sunset has no Oversampling parameter"))
+        return ctx.verdict();
+    slot.setParamValue (oversampling, 0.0f);
+    ctx.pump (1);
+    if (! ctx.expect (slot.getLatencySamples() == 0, "at 1x Sunset reports latency"))
+        return ctx.verdict();
+
+    const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
+    static constexpr std::int64_t kNoteTicks = kMidiTicksPerQuarter / 4;
+    const auto noteSamples = ticksToSamples (kNoteTicks, kRate, bpm);
+    const auto noteRegion = [&] (int pitch, std::int64_t onAt)
+    {
+        MidiRegion region;
+        region.timelineStart = onAt;
+        region.lengthInTicks = 2 * kNoteTicks;
+        region.lengthInSamples = ticksToSamples (region.lengthInTicks, kRate, bpm);
+        region.notes.push_back ({ 1, pitch, 100, 0, kNoteTicks });
+        return region;
+    };
+    const std::int64_t offA = kUpBlock * kBlock + kIntoBlock;
+    const std::int64_t onB = kDownBlock * kBlock + kIntoBlock;
+    auto regions = std::make_unique<std::vector<MidiRegion>>();
+    regions->push_back (noteRegion (kNoteA, offA - noteSamples));
+    regions->push_back (noteRegion (kNoteB, onB));
+    track.midiRegions.publish (std::move (regions));
+    track.midiOutputIndex.store (0, std::memory_order_relaxed);
+
+    std::int64_t block = 0;
+    float loudestDb = -100.0f;
+    const auto pumpTo = [&] (std::int64_t end)
+    {
+        for (; block < end; ++block)
+        {
+            ctx.pump (1);
+            loudestDb = std::max (loudestDb, strip.getOutLDb());
+        }
+    };
+    // The block the track's output first reads quiet, or -1 if it is still
+    // sounding at `limit`.
+    const auto quietBy = [&] (std::int64_t limit)
+    {
+        for (; block < limit; pumpTo (block + 1))
+            if (strip.getOutLDb() <= kQuietDb)
+                return block;
+        return std::int64_t { -1 };
+    };
+
+    transport.setLoopEnabled (false);
+    transport.setPlayhead (0);
+    engine.play();
+
+    pumpTo (kUpBlock - 1);
+    slot.setParamValue (oversampling, 1.0f);
+    pumpTo (kUpBlock);
+    const int raised = slot.getLatencySamples();
+    ctx.note ("at 2x Sunset reports " + std::to_string (raised) + " samples");
+    ctx.expect (raised > kIntoBlock, "the switch to 2x opened no gap over note A's note-off");
+    pumpTo (kUpBlock + 1);
+    ctx.note ("note A peaked at " + std::to_string (loudestDb) + " dB");
+    ctx.expect (loudestDb > kQuietDb + 20.0f, "note A never sounded");
+    const auto quietA = quietBy (kDownBlock - 8);
+    ctx.note ("note A was quiet by block " + std::to_string (quietA));
+    ctx.expect (quietA >= 0, "note A is still sounding: its note-off, due in the gap the "
+                             "switch to 2x opened, never reached Sunset");
+
+    pumpTo (kDownBlock - 1);
+    slot.setParamValue (oversampling, 0.0f);
+    pumpTo (kDownBlock);
+    ctx.expect (slot.getLatencySamples() == 0, "the switch back to 1x left latency behind");
+    pumpTo ((onB + noteSamples) / kBlock + 1);
+    const auto quietB = quietBy (kDownBlock + 600);
+    ctx.note ("note B was quiet by block " + std::to_string (quietB));
+    ctx.expect (quietB >= 0, "note B is still sounding after its note-off");
+    engine.stop();
+    ctx.pump (4);
+
+    whenRecorderSettles (ctx, recorder, [&ctx] (const std::vector<RecordingMidiBackend::Message>& messages)
+    {
+        std::array<int, 128> ons {}, offs {};
+        for (const auto& m : messages)
+        {
+            const int kind = m.bytes[0] & 0xF0;
+            if (m.numBytes != 3 || (kind != 0x80 && kind != 0x90))
+                continue;
+            auto& tally = (kind == 0x90 && m.bytes[2] > 0) ? ons : offs;
+            ++tally[(std::size_t) (m.bytes[1] & 0x7F)];
+        }
+        for (const int pitch : { kNoteA, kNoteB })
+        {
+            const auto name = std::string (pitch == kNoteA ? "note A" : "note B");
+            const int on = ons[(std::size_t) pitch], off = offs[(std::size_t) pitch];
+            ctx.note (name + ": " + std::to_string (on) + " note-on, "
+                      + std::to_string (off) + " note-off");
+            ctx.expect (on == 1, name + " was handed " + std::to_string (on) + " note-ons, not one");
+            ctx.expect (off == 1, name + " was handed " + std::to_string (off) + " note-offs, not one");
+        }
+    });
+    return std::nullopt;
+}
+
+// A MIDI track's window runs its instrument's latency ahead of the block, so
+// with Sunset at 2x it crosses the loop end a block before the transport does
+// whenever the end falls just past a block boundary. The next window starts
+// past the end but carries on from the last one, so the seam's reset, and the
+// chase that re-attacks what the loop start holds, must not go out again. Each
+// track's MIDI out carries exactly what its instrument is handed, into a
+// recorder port of its own; a second track at 1x, with no latency, is the
+// control. Every pass hands each instrument one reset and one note-on for each
+// of two notes, one held into the loop start and one on it. The loop coming
+// on, and its end moving in, while the 2x window is already past the end are
+// jumps that do need their reset; Sunset's latency also rises and falls across
+// a seam.
+std::optional<ScenarioResult> sunsetLoopSeamResetsOnce (ScenarioContext& ctx)
+{
+    static constexpr const char* kSunset = "dusk.builtin.synth";
+    if (builtin::findUnit (kSunset) == nullptr)
+        return ScenarioResult::skip ("this build has no Sunset");
+
+    static constexpr int kBlock = ScenarioContext::kBlockSize;
+    static constexpr int kLatentTrack = 0, kPlainTrack = 1, kNumTracks = 2;
+    // Whole blocks long and rolled from a block boundary, so the end lands
+    // this far into a block on every pass.
+    static constexpr int kSeamIntoBlock = 5;
+    static constexpr std::int64_t kLoopEnd = 40 * kBlock + kSeamIntoBlock;
+    static constexpr std::int64_t kLoopStart = kLoopEnd - 32 * kBlock;
+    // The block whose window at 2x starts past the loop end, and the one
+    // before it, whose window crosses the end.
+    static constexpr std::int64_t kSeamBlock = kLoopEnd - kSeamIntoBlock;
+    static constexpr std::int64_t kCrossingBlock = kSeamBlock - kBlock;
+    // Mid-pass the loop end moves in to just past the block about to roll,
+    // which keeps the loop whole blocks long.
+    static constexpr std::int64_t kEditBlock = kLoopStart + (kBlock - kSeamIntoBlock) + 24 * kBlock;
+    static constexpr int kHeld = 60, kOnStart = 64;
+
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto* const recorder = sunsetsIntoRecorders (ctx, { 1.0f, 0.0f },
+                                                 { { kHeld, kLoopStart - 1000 }, { kOnStart, kLoopStart } });
+    if (recorder == nullptr)
+        return ctx.verdict();
+    auto& latentSlot = engine.getChannelStrip (kLatentTrack).getBuiltinSlot();
+    const int latentOversampling = oversamplingParam (latentSlot);
+    const int latency = latentSlot.getLatencySamples();
+    ctx.note ("at 2x Sunset reports " + std::to_string (latency) + " samples");
+    ctx.expect (latency > kSeamIntoBlock, "at 2x Sunset's window does not reach the loop end a block early");
+    ctx.expect (engine.getChannelStrip (kPlainTrack).getBuiltinSlot().getLatencySamples() == 0,
+                "at 1x Sunset reports latency");
+
+    int wraps = 0;
+    bool onPlan = true;
+    const auto pumpBlock = [&]
+    {
+        const auto at = transport.getPlayhead();
+        ctx.pump (1);
+        if (transport.getPlayhead() < at)
+            ++wraps;
+    };
+    // Rolls one block, then on until the next block starts at `at`.
+    const auto rollTo = [&] (std::int64_t at)
+    {
+        pumpBlock();
+        for (int guard = 0; transport.getPlayhead() != at && guard < 64; ++guard)
+            pumpBlock();
+        onPlan = onPlan && transport.getPlayhead() == at;
+    };
+
+    transport.setLoopRange (kLoopStart, kLoopEnd);
+    transport.setLoopEnabled (false);
+    transport.setPlayhead (0);
+    engine.play();
+
+    rollTo (kSeamBlock);
+    transport.setLoopEnabled (true);
+    rollTo (kSeamBlock);
+    rollTo (kCrossingBlock);
+    // The switch lands in the block it is pumped with, so the window that
+    // starts past the end is the first at 4x, stretched; a pass on, the first
+    // back at 2x, shortened.
+    latentSlot.setParamValue (latentOversampling, 2.0f);
+    rollTo (kCrossingBlock);
+    const int raised = latentSlot.getLatencySamples();
+    latentSlot.setParamValue (latentOversampling, 1.0f);
+    rollTo (kSeamBlock);
+    rollTo (kSeamBlock);
+    rollTo (kEditBlock);
+    transport.setLoopRange (kLoopStart, kEditBlock + kSeamIntoBlock);
+    rollTo (kEditBlock);
+    for (int i = 0; i < 8; ++i)
+        pumpBlock();
+    engine.stop();
+    ctx.pump (4);
+
+    ctx.note ("at 4x Sunset reports " + std::to_string (raised) + " samples");
+    ctx.expect (raised > latency, "the switch to 4x raised no latency");
+    ctx.expect (onPlan, "a block did not start where the passes were planned");
+
+    // The roll's start and Stop reset Sunset too.
+    whenRecorderSettles (ctx, recorder, [&ctx, wraps] (const std::vector<RecordingMidiBackend::Message>& messages)
+    {
+        for (int t = 0; t < kNumTracks; ++t)
+            expectHanded (ctx, t == kLatentTrack ? "at 2x" : "at 1x", tallyPort (messages, t), wraps + 2,
+                          { { "the note held into the loop start", kHeld, wraps + 1 },
+                            { "the note on the loop start", kOnStart, wraps + 1 } });
+    });
+    return std::nullopt;
+}
+
+// At no latency a MIDI track's window is its block, so a loop end on a block
+// boundary never falls inside one: the block before the seam ends on it, and
+// the transport has wrapped before the next. The seam still resets the
+// instrument and chases what the loop start holds, once, at the head of the
+// block after it, so a note sounding into the loop end stops there instead of
+// hanging until Stop. Sunset at 2x, whose window crosses the same seam inside
+// a block, is the control. On every pass, once the notes in the loop's first
+// half have died away and before the one over the loop end comes round again,
+// both tracks are silent.
+std::optional<ScenarioResult> sunsetLoopSeamOnBlockBoundary (ScenarioContext& ctx)
+{
+    static constexpr const char* kSunset = "dusk.builtin.synth";
+    if (builtin::findUnit (kSunset) == nullptr)
+        return ScenarioResult::skip ("this build has no Sunset");
+
+    static constexpr int kBlock = ScenarioContext::kBlockSize;
+    static constexpr int kPlainTrack = 0, kLatentTrack = 1, kNumTracks = 2;
+    static constexpr std::int64_t kLoopStart = 16 * kBlock;
+    static constexpr std::int64_t kLoopEnd = kLoopStart + 128 * kBlock;
+    static constexpr int kSeams = 3;
+    static constexpr int kHeld = 60, kOnStart = 64, kOverEnd = 67;
+    // Every note but the one over the loop end, which is still to come, ended
+    // over half a second before, longer than Sunset's release takes to die.
+    static constexpr std::int64_t kQuietAt = kLoopEnd - 8 * kBlock;
+    static constexpr float kQuietDb = -60.0f;
+
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto* const recorder = sunsetsIntoRecorders (
+        ctx, { 0.0f, 1.0f },
+        { { kHeld, kLoopStart - 1000 }, { kOnStart, kLoopStart }, { kOverEnd, kLoopEnd - 2000 } });
+    if (recorder == nullptr)
+        return ctx.verdict();
+    ctx.expect (engine.getChannelStrip (kPlainTrack).getBuiltinSlot().getLatencySamples() == 0,
+                "at 1x Sunset reports latency");
+    ctx.expect (engine.getChannelStrip (kLatentTrack).getBuiltinSlot().getLatencySamples() > 0,
+                "at 2x Sunset reports no latency");
+
+    transport.setLoopRange (kLoopStart, kLoopEnd);
+    transport.setLoopEnabled (true);
+    transport.setPlayhead (kLoopStart);
+    engine.play();
+
+    const auto name = [] (int t) { return std::string (t == kLatentTrack ? "at 2x" : "at 1x"); };
+    int wraps = 0, passes = 0;
+    std::array<float, kNumTracks> loudestDb { -100.0f, -100.0f };
+    for (int guard = 0; passes <= kSeams && guard < (kSeams + 2) * 128; ++guard)
+    {
+        const auto at = transport.getPlayhead();
+        ctx.pump (1);
+        if (transport.getPlayhead() < at)
+            ++wraps;
+        for (int t = 0; t < kNumTracks; ++t)
+            loudestDb[(std::size_t) t] = std::max (loudestDb[(std::size_t) t],
+                                                   engine.getChannelStrip (t).getOutLDb());
+        if (transport.getPlayhead() != kQuietAt)
+            continue;
+        ++passes;
+        for (int t = 0; t < kNumTracks; ++t)
+        {
+            const float level = engine.getChannelStrip (t).getOutLDb();
+            const auto where = name (t) + ", pass " + std::to_string (passes);
+            ctx.note (where + ": " + std::to_string (level) + " dB before the note over the loop end");
+            ctx.expect (level <= kQuietDb, where + ": Sunset still sounds at " + std::to_string (level)
+                                               + " dB after every note in the pass has ended");
+        }
+    }
+    engine.stop();
+    ctx.pump (4);
+    ctx.expect (wraps == kSeams, "the transport wrapped " + std::to_string (wraps) + " times, not "
+                                     + std::to_string (kSeams));
+    for (int t = 0; t < kNumTracks; ++t)
+        ctx.expect (loudestDb[(std::size_t) t] > kQuietDb + 20.0f, name (t) + ", Sunset never sounded");
+
+    // The roll's start and Stop reset Sunset too, and the run stops short of
+    // the note over the loop end on the last pass.
+    whenRecorderSettles (ctx, recorder, [&ctx, name, wraps] (const std::vector<RecordingMidiBackend::Message>& messages)
+    {
+        for (int t = 0; t < kNumTracks; ++t)
+            expectHanded (ctx, name (t), tallyPort (messages, t), wraps + 2,
+                          { { "the note held into the loop start", kHeld, wraps + 1 },
+                            { "the note on the loop start", kOnStart, wraps + 1 },
+                            { "the note over the loop end", kOverEnd, wraps } });
+    });
+    return std::nullopt;
+}
+
+// Sunset at 2x is scheduled its latency ahead, so with the loop end just past
+// a block boundary its window crosses the seam a block before the transport
+// does: it resets Sunset there and starts what the loop start holds. Switched
+// off before that next block, the loop never wraps the transport, which runs
+// straight on through the loop end. What Sunset was started from the loop
+// start must not hang there, and the note sounding over the loop end must come
+// back: the next block resets Sunset again and chases that note, which then
+// ends on its own. At 1x the window had not reached the seam, and Sunset plays
+// straight through.
+std::optional<ScenarioResult> sunsetLoopOffPastTheSeam (ScenarioContext& ctx)
+{
+    static constexpr const char* kSunset = "dusk.builtin.synth";
+    if (builtin::findUnit (kSunset) == nullptr)
+        return ScenarioResult::skip ("this build has no Sunset");
+
+    static constexpr int kBlock = ScenarioContext::kBlockSize;
+    static constexpr int kPlainTrack = 0, kLatentTrack = 1, kNumTracks = 2;
+    static constexpr int kSeamIntoBlock = 5;
+    static constexpr std::int64_t kLoopStart = 16 * kBlock;
+    static constexpr std::int64_t kLoopEnd = kLoopStart + 32 * kBlock + kSeamIntoBlock;
+    // The block whose window at 2x starts past the loop end.
+    static constexpr std::int64_t kSeamBlock = kLoopEnd - kSeamIntoBlock;
+    // A third of a second after the note over the loop end has ended.
+    static constexpr std::int64_t kQuietAt = kSeamBlock + 64 * kBlock;
+    static constexpr int kHeld = 60, kOnStart = 64, kOverEnd = 67;
+    static constexpr float kQuietDb = -60.0f;
+
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto* const recorder = sunsetsIntoRecorders (
+        ctx, { 0.0f, 1.0f },
+        { { kHeld, kLoopStart - 1000 }, { kOnStart, kLoopStart }, { kOverEnd, kLoopEnd - 2000 } });
+    if (recorder == nullptr)
+        return ctx.verdict();
+    ctx.expect (engine.getChannelStrip (kPlainTrack).getBuiltinSlot().getLatencySamples() == 0,
+                "at 1x Sunset reports latency");
+    ctx.expect (engine.getChannelStrip (kLatentTrack).getBuiltinSlot().getLatencySamples() > kSeamIntoBlock,
+                "at 2x Sunset's window does not reach the loop end a block early");
+
+    const auto name = [] (int t) { return std::string (t == kLatentTrack ? "at 2x" : "at 1x"); };
+    std::array<float, kNumTracks> loudestDb { -100.0f, -100.0f };
+    bool onPlan = true;
+    const auto rollTo = [&] (std::int64_t at)
+    {
+        for (int guard = 0; transport.getPlayhead() != at && guard < 128; ++guard)
+        {
+            ctx.pump (1);
+            for (int t = 0; t < kNumTracks; ++t)
+                loudestDb[(std::size_t) t] = std::max (loudestDb[(std::size_t) t],
+                                                       engine.getChannelStrip (t).getOutLDb());
+        }
+        onPlan = onPlan && transport.getPlayhead() == at;
+    };
+
+    transport.setLoopRange (kLoopStart, kLoopEnd);
+    transport.setLoopEnabled (true);
+    transport.setPlayhead (kLoopStart);
+    engine.play();
+    rollTo (kSeamBlock);
+    transport.setLoopEnabled (false);
+    rollTo (kQuietAt);
+    for (int t = 0; t < kNumTracks; ++t)
+    {
+        const float level = engine.getChannelStrip (t).getOutLDb();
+        ctx.note (name (t) + ": " + std::to_string (level) + " dB after the last note");
+        ctx.expect (level <= kQuietDb, name (t) + ": Sunset still sounds at " + std::to_string (level)
+                                           + " dB a third of a second after the last note ended");
+        ctx.expect (loudestDb[(std::size_t) t] > kQuietDb + 20.0f, name (t) + ", Sunset never sounded");
+    }
+    engine.stop();
+    ctx.pump (4);
+    ctx.expect (onPlan, "a block did not start where the roll was planned");
+
+    // At 2x the roll's start, the seam, the return to the timeline past the
+    // loop end, and Stop each reset Sunset; at 1x only the start and Stop do.
+    whenRecorderSettles (ctx, recorder, [&ctx] (const std::vector<RecordingMidiBackend::Message>& messages)
+    {
+        expectHanded (ctx, "at 2x", tallyPort (messages, kLatentTrack), 4,
+                      { { "the note held into the loop start", kHeld, 2 },
+                        { "the note on the loop start", kOnStart, 2 },
+                        { "the note over the loop end", kOverEnd, 2 } });
+        expectHanded (ctx, "at 1x", tallyPort (messages, kPlainTrack), 2,
+                      { { "the note held into the loop start", kHeld, 1 },
+                        { "the note on the loop start", kOnStart, 1 },
+                        { "the note over the loop end", kOverEnd, 1 } });
+    });
+    return std::nullopt;
+}
+
 // ---------------------------------------------------------- Export master
 
 // Export master renders the mastering chain on the loaded mix: the file is
@@ -1183,6 +1939,21 @@ const ScenarioRegistrar exportInPlaceCompRegistrar { Scenario {
 const ScenarioRegistrar busAlignRegistrar { Scenario {
     "mix.bus_routed_lands_with_direct", { "mix", "pdc" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return busRoutedLandsWithDirect (ctx); } } };
+const ScenarioRegistrar sunsetAlignRegistrar { Scenario {
+    "mix.sunset_lands_with_audio", { "mix", "pdc", "builtin" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return sunsetLandsWithAudio (ctx); } } };
+const ScenarioRegistrar sunsetOversamplingRegistrar { Scenario {
+    "mix.sunset_oversampling_mid_roll", { "mix", "midi", "builtin" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return sunsetOversamplingFlipsMidRoll (ctx); }, 120000 } };
+const ScenarioRegistrar sunsetLoopSeamRegistrar { Scenario {
+    "mix.sunset_loop_seam_resets_once", { "mix", "midi", "builtin" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return sunsetLoopSeamResetsOnce (ctx); }, 120000 } };
+const ScenarioRegistrar sunsetBlockBoundarySeamRegistrar { Scenario {
+    "mix.sunset_loop_seam_on_block_boundary", { "mix", "midi", "builtin" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return sunsetLoopSeamOnBlockBoundary (ctx); }, 120000 } };
+const ScenarioRegistrar sunsetLoopOffRegistrar { Scenario {
+    "mix.sunset_loop_off_past_the_seam", { "mix", "midi", "builtin" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return sunsetLoopOffPastTheSeam (ctx); }, 120000 } };
 const ScenarioRegistrar cancelRegistrar { Scenario {
     "bounce.cancel_leaves_no_file", { "bounce" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return cancelLeavesNoFile (ctx); }, 120000 } };

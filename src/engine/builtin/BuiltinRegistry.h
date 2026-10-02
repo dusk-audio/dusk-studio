@@ -3,6 +3,7 @@
 #include "BuiltinUnit.h"
 #include "DafPlugin.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -22,7 +23,8 @@ struct UnitInfo
     bool isInstrument;
     std::unique_ptr<BuiltinUnit> (*create)();
     std::unique_ptr<DafPlugin> (*createPlugin)() = nullptr;
-    // For a plug-in unit that replaced a knob unit under this id.
+    // For a plug-in unit that replaced a knob unit under this id, in the knob
+    // unit's parameter order, which is the index a binding saved against it names.
     const std::vector<LegacyParam>* legacyParams = nullptr;
 };
 
@@ -36,6 +38,13 @@ const UnitInfo* findUnit (const std::string& id);
 // nullptr for an unknown id or a DAF plug-in unit. Message thread - the unit
 // allocates.
 std::unique_ptr<BuiltinUnit> createUnit (const std::string& id);
+
+// When `state` is a blob the knob unit wrote before a plug-in took over its id:
+// for each of the knob unit's parameters, in its order, the index of the plug-in
+// parameter that replaced it, or -1. Empty for any other state. Message thread -
+// it builds the plug-in to read its parameter order.
+std::vector<int> knobUnitParamIndices (const std::string& unitId,
+                                       const std::vector<std::uint8_t>& state);
 
 // What picker rows and the session's "which plugin is this" surfaces show.
 constexpr const char* kManufacturer = "Dusk Audio";

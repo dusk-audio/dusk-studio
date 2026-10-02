@@ -2,6 +2,7 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -25,6 +26,7 @@ namespace imgui
 {
 class DuskPanelWindow;
 class StartupView;
+class AudioEditorView;
 struct RecentSession;
 }
 
@@ -39,6 +41,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override;
     void parentHierarchyChanged() override;
     void focusGained (FocusChangeType cause) override;
 
@@ -544,14 +547,46 @@ private:
     void closePianoRoll (bool deferDestruction = false);
     void closePianoRollAnimated();  // collapse into region rect, then teardown
 
-    // Mutually exclusive with the piano roll (opening one closes the other).
-    std::unique_ptr<class DimOverlay>           audioEditorDim;
-    std::unique_ptr<class AudioRegionEditor>    audioEditor;
+    // Mutually exclusive with the piano roll (opening one closes the other). A native
+    // panel: a framework child over the window with a dim sibling behind it.
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    std::unique_ptr<imgui::DuskPanelWindow> audioEditorWindow;
+    // The window owns the view; this reaches it for the geometry and the scenario
+    // accessors. Null once the window has closed.
+    imgui::AudioEditorView* audioEditorView = nullptr;
+    std::unique_ptr<DimOverlay> audioEditorDim;
+    // A badge click opens the editor on its press, so the second press of a
+    // double-click lands on the new dim; the dim ignores presses until then.
+    std::chrono::steady_clock::time_point audioEditorDimArmedAt {};
+    PluginEditorHider audioEditorHider;
+    // Set between close() and the window's closed callback, while the child is still
+    // mapped: a reopen in that window replaces it rather than reading as a toggle.
+    bool audioEditorClosing = false;
+    void finishAudioEditorClose();
+    // The last key the shell offered the editor and when, cleared by its release: an
+    // auto-repeat arrives as another press with no release between.
+    std::string editorKeyHeld;
+    std::chrono::steady_clock::time_point editorKeyHeldAt {};
+   #endif
     int audioEditorTrackIdx  = -1;
     int audioEditorRegionIdx = -1;
     void openAudioEditor  (int trackIdx, int regionIdx);
-    void closeAudioEditor (bool deferDestruction = false);
-    void closeAudioEditorAnimated();
+    // The editor on a track's take lanes, focused on the track's first region, or on
+    // none when only takes are left. Already open on the track, it keeps its region
+    // and scrolls to the lanes.
+    void openAudioEditorOnTakes (int trackIdx);
+    // Deferred: the child comes down over the next two event-pump ticks.
+    void closeAudioEditor();
+    // Immediate, for a swap to another region or to the piano roll. Never from inside
+    // the editor's own frame.
+    void destroyAudioEditor();
+    // True while the editor is up and not on its way down.
+    bool audioEditorShowing() const noexcept;
+    // True from open until the child has finished coming down.
+    bool audioEditorOpen() const noexcept;
+    // Screenshot-harness only: ask the open editor to read its own steady frame back
+    // into `capturePath`.
+    void captureAudioEditorTo (const std::string& capturePath);
 
     // The edit tool (session.editMode) is global, but a modal editor changing
     // it (e.g. picking scissors in the audio editor) should not leak back to

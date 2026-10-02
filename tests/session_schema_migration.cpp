@@ -85,7 +85,7 @@ TEST_CASE ("migrateSession advances a mock v1 root to the current schema",
     // every step.
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() == 9);
+    REQUIRE (root["version"].get<int>() == 10);
     REQUIRE (root.contains ("tempo"));
     REQUIRE (root["tempo"].get<double>() == 98.5);
 }
@@ -102,7 +102,7 @@ TEST_CASE ("migrateSession carries v5 AUX-send bypass data to the current schema
 
     auto migrated = root;
     REQUIRE (duskstudio::migrateSession (migrated, 5));
-    REQUIRE (migrated["version"].get<int>() == 9);
+    REQUIRE (migrated["version"].get<int>() == 10);
     REQUIRE (migrated["tracks"][0]["aux_sends_bypassed"].get<bool>());
 
     const auto dir = makeTempMigrationDir();
@@ -116,7 +116,7 @@ TEST_CASE ("migrateSession carries v5 AUX-send bypass data to the current schema
 
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    REQUIRE (saved["version"].get<int>() == 9);
+    REQUIRE (saved["version"].get<int>() == 10);
     REQUIRE (saved["tracks"][0]["aux_sends_bypassed"].get<bool>());
     dir.deleteRecursively();
 }
@@ -139,7 +139,7 @@ TEST_CASE ("migrateSession carries an ordinary v6 session to the current format"
 
     auto migrated = root;
     REQUIRE (duskstudio::migrateSession (migrated, 6));
-    CHECK (migrated["version"].get<int>() == 9);
+    CHECK (migrated["version"].get<int>() == 10);
     CHECK (migrated["tracks"][0]["name"].get<std::string>() == "Legacy strip");
     CHECK_FALSE (migrated["tracks"][0].contains ("builtin_id"));
 
@@ -155,7 +155,7 @@ TEST_CASE ("migrateSession carries an ordinary v6 session to the current format"
     REQUIRE (SessionSerializer::save (*session, target));
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    CHECK (saved["version"].get<int>() == 9);
+    CHECK (saved["version"].get<int>() == 10);
 
     dir.deleteRecursively();
 }
@@ -187,7 +187,7 @@ TEST_CASE ("migrateSession rewrites only the channel EQ frequencies of a v7 sess
 
     const auto original = root;
     REQUIRE (duskstudio::migrateSession (root, 7));
-    CHECK (root["version"].get<int>() == 9);
+    CHECK (root["version"].get<int>() == 10);
 
     const auto& eq = root["tracks"][0]["eq"];
     CHECK (std::abs (eq["lf"]["freq"].get<double>() - 100.0) > 1.0);
@@ -197,7 +197,7 @@ TEST_CASE ("migrateSession rewrites only the channel EQ frequencies of a v7 sess
     CHECK (root["tracks"][1]["lpf"]["freq"].get<double>() > 9000.0);
 
     auto expected = original;
-    expected["version"] = 9;
+    expected["version"] = 10;
     for (const char* band : { "lf", "hm", "hf" })
     {
         expected["tracks"][0]["eq"][band]["freq"] = eq[band]["freq"];
@@ -211,11 +211,12 @@ TEST_CASE ("migrateSession rewrites only the channel EQ frequencies of a v7 sess
     CHECK (root == expected);
 }
 
-TEST_CASE ("migrateSession carries a v8 session to v9 with its LV2 state tags",
+TEST_CASE ("migrateSession carries a v8 session's LV2 state tags to the current format",
            "[session][serializer][migration]")
 {
     // v8 -> v9 only advances the stamp: lv2_state_tag, which a moved track
-    // carries, is what a v8 build would lose, so the payload passes through.
+    // carries, is what a v8 build would lose. With no regions, v9 -> v10 has no
+    // take history to move, so the payload passes through.
     nlohmann::json root {
         { "version", 8 },
         { "tracks", nlohmann::json::array ({
@@ -224,7 +225,7 @@ TEST_CASE ("migrateSession carries a v8 session to v9 with its LV2 state tags",
         }) }
     };
     auto expected = root;
-    expected["version"] = 9;
+    expected["version"] = 10;
     REQUIRE (duskstudio::migrateSession (root, 8));
     CHECK (root == expected);
 }
@@ -262,7 +263,7 @@ TEST_CASE ("Loading a v6 session clears built-ins the live session was holding",
     REQUIRE (SessionSerializer::save (live, target));
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    CHECK (saved["version"].get<int>() == 9);
+    CHECK (saved["version"].get<int>() == 10);
     CHECK_FALSE (saved["tracks"][0].contains ("builtin_id"));
 
     dir.deleteRecursively();
@@ -291,7 +292,7 @@ TEST_CASE ("SessionSerializer loads a v1-tagged session file end-to-end",
     auto root = nlohmann::json::parse (target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() == 9);
+    REQUIRE (root["version"].get<int>() == 10);
 
     dir.deleteRecursively();
 }
@@ -326,7 +327,7 @@ TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a current
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (saved.is_object());
-    CHECK (saved["version"].get<int>() == 9);
+    CHECK (saved["version"].get<int>() == 10);
     CHECK (saved["tracks"][0]["plugin_desc_xml"].get<std::string>() == legacyXml);
     CHECK (saved["tracks"][0]["plugin_state"].get<std::string>()
            == "bGVnYWN5LXN0YXRl");
@@ -338,11 +339,11 @@ TEST_CASE ("SessionSerializer round-trips active and historical take provenance"
            "[session][serializer][migration][take-provenance]")
 {
     using duskstudio::AudioRegion;
+    using duskstudio::AudioTake;
     using duskstudio::MidiRegion;
     using duskstudio::MidiTakeRef;
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
-    using duskstudio::TakeRef;
 
     const auto dir = makeTempMigrationDir();
     const auto target = dir.getChildFile ("session.json");
@@ -352,12 +353,13 @@ TEST_CASE ("SessionSerializer round-trips active and historical take provenance"
     audio.lengthInSamples = 4096;
     audio.sourceOffset = 32;
     audio.provenance = { 101, 2, true };
-    TakeRef priorAudio;
+    source->track (0).regions.push_back (audio);
+    AudioTake priorAudio;
+    priorAudio.id = source->allocateTakeId();
     priorAudio.lengthInSamples = 2048;
     priorAudio.sourceOffset = 64;
     priorAudio.provenance = { 102, 3, false };
-    audio.previousTakes.push_back (priorAudio);
-    source->track (0).regions.push_back (audio);
+    source->track (0).takes.push_back (priorAudio);
 
     MidiRegion midi;
     midi.lengthInSamples = 8192;
@@ -373,12 +375,13 @@ TEST_CASE ("SessionSerializer round-trips active and historical take provenance"
     REQUIRE (SessionSerializer::save (*source, target));
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    REQUIRE (saved["version"].get<int>() == 9);
+    REQUIRE (saved["version"].get<int>() == 10);
     const auto& savedAudio = saved["tracks"][0]["regions"][0];
     CHECK (savedAudio["take_provenance"]["captured_at_ms"].get<std::int64_t>() == 101);
     CHECK (savedAudio["take_provenance"]["loop_pass"].get<int>() == 2);
     CHECK (savedAudio["take_provenance"]["partial"].get<bool>());
-    const auto& savedPriorAudio = savedAudio["previous_takes"][0];
+    CHECK_FALSE (savedAudio.contains ("previous_takes"));
+    const auto& savedPriorAudio = saved["tracks"][0]["takes"][0];
     CHECK (savedPriorAudio["take_provenance"]["captured_at_ms"].get<std::int64_t>() == 102);
     CHECK (savedPriorAudio["take_provenance"]["loop_pass"].get<int>() == 3);
     CHECK_FALSE (savedPriorAudio["take_provenance"].contains ("partial"));
@@ -397,10 +400,11 @@ TEST_CASE ("SessionSerializer round-trips active and historical take provenance"
     CHECK (loadedAudio.provenance.capturedAtMs == 101);
     CHECK (loadedAudio.provenance.loopPassOrdinal == 2);
     CHECK (loadedAudio.provenance.partialPass);
-    REQUIRE (loadedAudio.previousTakes.size() == 1);
-    CHECK (loadedAudio.previousTakes[0].provenance.capturedAtMs == 102);
-    CHECK (loadedAudio.previousTakes[0].provenance.loopPassOrdinal == 3);
-    CHECK_FALSE (loadedAudio.previousTakes[0].provenance.partialPass);
+    const auto& loadedTakes = loaded->track (0).takes;
+    REQUIRE (loadedTakes.size() == 1);
+    CHECK (loadedTakes[0].provenance.capturedAtMs == 102);
+    CHECK (loadedTakes[0].provenance.loopPassOrdinal == 3);
+    CHECK_FALSE (loadedTakes[0].provenance.partialPass);
     const auto& loadedMidi = loaded->track (1).midiRegions.current()[0];
     CHECK (loadedMidi.provenance.capturedAtMs == 103);
     CHECK (loadedMidi.provenance.loopPassOrdinal == 4);
@@ -421,7 +425,6 @@ TEST_CASE ("SessionSerializer gives legacy v4 takes default provenance",
     using duskstudio::MidiTakeRef;
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
-    using duskstudio::TakeRef;
 
     const auto dir = makeTempMigrationDir();
     const auto target = dir.getChildFile ("session.json");
@@ -429,7 +432,6 @@ TEST_CASE ("SessionSerializer gives legacy v4 takes default provenance",
 
     AudioRegion audio;
     audio.lengthInSamples = 256;
-    audio.previousTakes.push_back (TakeRef {});
     source->track (0).regions.push_back (audio);
     MidiRegion midi;
     midi.lengthInSamples = 512;
@@ -442,8 +444,9 @@ TEST_CASE ("SessionSerializer gives legacy v4 takes default provenance",
     auto legacy = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE_FALSE (legacy["tracks"][0]["regions"][0].contains ("take_provenance"));
-    REQUIRE_FALSE (legacy["tracks"][0]["regions"][0]["previous_takes"][0]
-                       .contains ("take_provenance"));
+    legacy["tracks"][0]["regions"][0]["file"] = "audio/live.wav";
+    legacy["tracks"][0]["regions"][0]["previous_takes"] = nlohmann::json::array ({
+        { { "file", "audio/prior.wav" }, { "length", 128 } } });
     REQUIRE_FALSE (legacy["tracks"][1]["midi_regions"][0].contains ("take_provenance"));
     REQUIRE_FALSE (legacy["tracks"][1]["midi_regions"][0]["previous_takes"][0]
                        .contains ("take_provenance"));
@@ -456,10 +459,14 @@ TEST_CASE ("SessionSerializer gives legacy v4 takes default provenance",
     CHECK (loadedAudio.provenance.capturedAtMs == 0);
     CHECK (loadedAudio.provenance.loopPassOrdinal == 0);
     CHECK_FALSE (loadedAudio.provenance.partialPass);
-    REQUIRE (loadedAudio.previousTakes.size() == 1);
-    CHECK (loadedAudio.previousTakes[0].provenance.capturedAtMs == 0);
-    CHECK (loadedAudio.previousTakes[0].provenance.loopPassOrdinal == 0);
-    CHECK_FALSE (loadedAudio.previousTakes[0].provenance.partialPass);
+    const auto& loadedTakes = loaded->track (0).takes;
+    REQUIRE (loadedTakes.size() == 2);
+    for (const auto& take : loadedTakes)
+    {
+        CHECK (take.provenance.capturedAtMs == 0);
+        CHECK (take.provenance.loopPassOrdinal == 0);
+        CHECK_FALSE (take.provenance.partialPass);
+    }
     const auto& loadedMidi = loaded->track (1).midiRegions.current()[0];
     CHECK (loadedMidi.provenance.capturedAtMs == 0);
     CHECK (loadedMidi.provenance.loopPassOrdinal == 0);
@@ -483,42 +490,15 @@ TEST_CASE ("SessionSerializer gives legacy v4 takes default provenance",
     REQUIRE (SessionSerializer::save (*clamped, target));
     const auto upgraded = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    CHECK (upgraded["version"].get<int>() == 9);
+    CHECK (upgraded["version"].get<int>() == 10);
 
     dir.deleteRecursively();
 }
 
-TEST_CASE ("Take payload helpers keep provenance attached to audio and MIDI takes",
+TEST_CASE ("Take payload helpers keep provenance attached to MIDI takes",
            "[session][take-provenance]")
 {
     using namespace duskstudio;
-
-    AudioRegion audio;
-    audio.file = decltype (audio.file) ("/tmp/active-take.wav");
-    audio.sourceOffset = 11;
-    audio.lengthInSamples = 22;
-    audio.provenance = { 100, 1, false };
-
-    TakeRef priorAudio;
-    priorAudio.file = decltype (priorAudio.file) ("/tmp/prior-take.wav");
-    priorAudio.sourceOffset = 33;
-    priorAudio.lengthInSamples = 44;
-    priorAudio.provenance = { 200, 2, true };
-
-    swapAudioTakePayload (audio, priorAudio);
-    CHECK (audio.file.getFileName() == "prior-take.wav");
-    CHECK (audio.sourceOffset == 33);
-    CHECK (audio.provenance.loopPassOrdinal == 2);
-    CHECK (audio.provenance.partialPass);
-    CHECK (priorAudio.file.getFileName() == "active-take.wav");
-    CHECK (priorAudio.sourceOffset == 11);
-    CHECK (priorAudio.provenance.capturedAtMs == 100);
-
-    const auto copiedAudio = makeAudioTakeRef (audio);
-    AudioRegion restoredAudio;
-    applyAudioTakeRef (restoredAudio, copiedAudio);
-    CHECK (restoredAudio.lengthInSamples == 44);
-    CHECK (restoredAudio.provenance.capturedAtMs == 200);
 
     MidiRegion midi;
     midi.lengthInTicks = 960;

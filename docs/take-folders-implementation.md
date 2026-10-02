@@ -1,5 +1,7 @@
 # Take folders: implementation mapping (draft v1, 2026-09-15)
 
+> **Superseded by the shipped model (0.15).** Takes live on the track (`Track::takes`, one `AudioTake` per recording pass, never trimmed) and the track's regions are the comp: each region names the take it plays through `AudioRegion::takeId`, and the audio editor's take lanes promote take ranges into regions. See `src/session/TakeComp.h` and MANUAL.md, *Takes* and *Take lanes*.
+
 Read-only mapping of `docs/take-folders-plan.md` onto the codebase. Target: 1.1.
 
 **Superseded ordering:** the phase table in §8 builds all model/engine layers for

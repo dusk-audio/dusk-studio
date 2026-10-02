@@ -94,6 +94,10 @@ add_executable(dusk-studio-tests
     session_tape_migration.cpp
     session_freeze_roundtrip.cpp
     session_region_bounds.cpp
+    session_takes.cpp
+    take_comp.cpp
+    take_lane_layout.cpp
+    region_trim.cpp
     session_transport_bounds.cpp
     session_corrupted_recovery.cpp
     session_clamp_corrupt_values.cpp
@@ -137,6 +141,8 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/MidiClockEmitter.cpp
     smpte_wrap.cpp
     automation_thinning.cpp
+    automation_lane_edit.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/AutomationLaneEdit.cpp
     automation_lane_snapshot.cpp
     pdc_math.cpp
     session_midi_tempolock_roundtrip.cpp
@@ -192,6 +198,8 @@ add_executable(dusk-studio-tests
     record_offset_placement.cpp
     record_stop_waits_for_audio.cpp
     playback_loop_read.cpp
+    playback_take_audition.cpp
+    playback_live_swap.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PlaybackEngine.cpp
     mastering_player_resample.cpp
     mastering_player_file_release.cpp
@@ -222,6 +230,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/MidiSyncReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/session/MidiBindingsPreset.cpp
     ${CMAKE_SOURCE_DIR}/src/session/UnreferencedAudio.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/TakeComp.cpp
     session_templates.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionTemplates.cpp)
 
@@ -316,29 +325,21 @@ target_link_libraries(dusk-studio-tests PRIVATE dusk_sndfile)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sodium)
 
 if(DUSK_PLUGINS_PATH)
-    # Built-in units backed by donor cores. Gated on the donor being available,
-    # so a no-donor build doesn't try to compile tests whose includes can't be
-    # resolved.
-    target_sources(dusk-studio-tests PRIVATE
-        builtin_synth_unit.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/builtin/SynthUnit.cpp
-        ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp)
-    target_include_directories(dusk-studio-tests SYSTEM PRIVATE
-        ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core)
-    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DONOR_UNITS=1)
-
-    # DAF built-ins are the app's own static libraries, defined beside the app.
+    # Built-in units are the app's own static libraries of the donor's DAF
+    # plug-ins, defined beside the app, so a no-donor build has none to test.
     if(TARGET dusk_daf_tape_echo_2 AND TARGET dusk_daf_duskverb_2
-       AND TARGET dusk_daf_tape_machine_2)
+       AND TARGET dusk_daf_tape_machine_2 AND TARGET dusk_daf_sunset)
         target_sources(dusk-studio-tests PRIVATE
             builtin_tape_echo_2.cpp
             builtin_duskverb_2.cpp
-            builtin_tape_unit.cpp)
+            builtin_tape_unit.cpp
+            builtin_synth_unit.cpp)
         target_include_directories(dusk-studio-tests SYSTEM PRIVATE
             ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core)
         target_link_libraries(dusk-studio-tests PRIVATE
             dusk_daf_tape_echo_2
-            dusk_daf_duskverb_2)
+            dusk_daf_duskverb_2
+            dusk_daf_sunset)
         target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
     endif()
 endif()

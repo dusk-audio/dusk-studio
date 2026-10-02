@@ -89,14 +89,19 @@ struct DafEditorHost::Impl final : private dusk::Timer
         builtin::DafEditorCallbacks editorCallbacks;
         editorCallbacks.gesture = [this] (std::uint32_t index, bool started)
         {
+            if (! turn.open)
+            {
+                deliver ({ false, started ? (int) index : -1, false, ! started });
+                return;
+            }
             if (started)
             {
-                if (unit.noteTouched)
-                    unit.noteTouched ((int) index);
+                turn.several = turn.several || (turn.started >= 0 && turn.started != (int) index);
+                turn.started = (int) index;
             }
-            else if (callbacks.gestureEnded)
+            else
             {
-                callbacks.gestureEnded();
+                turn.ended = true;
             }
         };
         editorCallbacks.parameterEdited = [this] (std::uint32_t index, float value)
@@ -177,7 +182,10 @@ struct DafEditorHost::Impl final : private dusk::Timer
     {
         if (editor != nullptr)
         {
-            if (! editor->idle())
+            turn = Turn { true };
+            const bool alive = editor->idle();
+            const auto worked = std::exchange (turn, Turn {});
+            if (! alive)
             {
                 // The editor quit, or its graphics stack failed inside its own
                 // pump. Either way it goes, and the unit keeps every value.
@@ -196,6 +204,8 @@ struct DafEditorHost::Impl final : private dusk::Timer
                 firstFrameConfirmed = true;
                 probe.disarm();
             }
+
+            deliver (worked);
         }
 
         // A close is asked for from the host boundary; the editor goes only after
@@ -224,6 +234,30 @@ struct DafEditorHost::Impl final : private dusk::Timer
     }
 
     void timerCallback() override { tick(); }
+
+    // The gestures of one turn of the editor's own loop. A hand works one control
+    // at a time, so a turn that opens gestures on several parameters is a program
+    // being loaded - a preset picked in the editor or a MIDI program change synced
+    // into it, a gesture per parameter - and is neither a touch for MIDI Learn nor
+    // a drag to hand the keyboard back from, which would take it from a preset
+    // name being typed.
+    struct Turn
+    {
+        bool open = false;
+        int started = -1;
+        bool several = false;
+        bool ended = false;
+    };
+
+    void deliver (const Turn& worked)
+    {
+        if (worked.several)
+            return;
+        if (worked.started >= 0 && unit.noteTouched)
+            unit.noteTouched (worked.started);
+        if (worked.ended && callbacks.gestureEnded)
+            callbacks.gestureEnded();
+    }
 
     void applyEdit (int index, float value)
     {
@@ -293,6 +327,7 @@ struct DafEditorHost::Impl final : private dusk::Timer
     // A copy of what the open editor was handed, so a scenario can work a
     // control through the same callbacks a drag in the editor calls.
     builtin::DafEditorCallbacks handedCallbacks;
+    Turn turn;
     std::vector<float> pushedValues;
     Geometry lastGeometry;
     std::uintptr_t embeddedParent = 0;

@@ -139,7 +139,7 @@ That round-trip — **UI writes atom → audio reads atom → audio writes meter
 | The overall window layout / view switching | [src/ui/MainComponent.cpp](../src/ui/MainComponent.cpp) |
 | The arrangement / timeline / regions | [src/ui/TapeStrip.cpp](../src/ui/TapeStrip.cpp) |
 | The MIDI piano-roll editor | [src/ui/PianoRollComponent.cpp](../src/ui/PianoRollComponent.cpp) |
-| The audio region editor (fades/trim) | [src/ui/AudioRegionEditor.cpp](../src/ui/AudioRegionEditor.cpp) |
+| The audio region editor (fades/trim/take lanes) | [src/ui/imgui/AudioEditorView.cpp](../src/ui/imgui/AudioEditorView.cpp) |
 | Transport buttons / clock / tempo | [src/ui/TransportBar.cpp](../src/ui/TransportBar.cpp), [src/engine/Transport.h](../src/engine/Transport.h) |
 | Recording to disk | [src/engine/RecordManager.cpp](../src/engine/RecordManager.cpp) |
 | Playing regions back | [src/engine/PlaybackEngine.cpp](../src/engine/PlaybackEngine.cpp) |
@@ -164,7 +164,7 @@ DuskStudioApp (JUCE app)              src/DuskStudioApp.cpp
               ├── MasteringView
               ├── TransportBar
               ├── TapeStrip
-              └── (modals: PianoRoll, AudioRegionEditor, AudioSettings, plugin editors)
+              └── (modals: PianoRoll, AudioEditorView, AudioSettings, plugin editors)
 ```
 
 `MainComponent` owns both the `Session` and the `AudioEngine`, and hands references to both down to the view tree. The `AudioEngine` constructor **binds** each DSP strip to its matching parameter struct in the `Session` (see Part 3). Nothing is copied — the DSP holds references to the session's atomics and reads them live.
@@ -388,7 +388,7 @@ Each platform primitive has three implementations (`*_Linux.cpp`, `*_Mac.cpp`, `
 
 ### Saving is crash-safe
 
-[src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) writes JSON to a temp file, fsyncs, then atomically renames over `session.json`, so a crash mid-save never leaves a half-written session. There's a `kFormatVersion` (currently 9) and a `migrateSession()` path that walks an older file forward one version at a time; unknown keys are ignored, and a file newer than `kFormatVersion` is refused outright before anything is written into the live session. Bump the version whenever an older build could accept a newer file and then discard state it has no model for on the next save - v7 exists because v6 builds (up to the released v0.13.2) would have erased built-in insert identities and patches that way. MIDI devices are saved by stable string identifier (not index) so a USB replug still resolves. Autosave and all save/load happen on the message thread only.
+[src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) writes JSON to a temp file, fsyncs, then atomically renames over `session.json`, so a crash mid-save never leaves a half-written session. There's a `kFormatVersion` (currently 10) and a `migrateSession()` path that walks an older file forward one version at a time; unknown keys are ignored, and a file newer than `kFormatVersion` is refused outright before anything is written into the live session. Bump the version whenever an older build could accept a newer file and then discard state it has no model for on the next save - v7 exists because v6 builds (up to the released v0.13.2) would have erased built-in insert identities and patches that way. MIDI devices are saved by stable string identifier (not index) so a USB replug still resolves. Autosave and all save/load happen on the message thread only.
 
 ### Edits are undoable actions
 

@@ -2,6 +2,7 @@
 
 #include "engine/audiofile/BufferedFileReader.h"
 #include "engine/audiofile/FileWriter.h"
+#include "TestTempDirectory.h"
 
 #include <cmath>
 #include <filesystem>
@@ -25,7 +26,8 @@ float sample (int ch, std::int64_t f)
 
 std::filesystem::path tmp (const char* name)
 {
-    return std::filesystem::temp_directory_path() / name;
+    static const duskstudio::test::TempDirectory dir ("dusk_bfr");
+    return dir.path() / name;
 }
 
 // Non-throwing, and only ever called once the readers are released: Windows
@@ -185,13 +187,13 @@ TEST_CASE ("BufferedFileReader prefetch warms a span the audio thread has not as
     auto r = manualReader (path);
     REQUIRE (r != nullptr);
 
-    const std::int64_t far = kFrames - kWindow;
-    r->prefetch (far);
+    const std::int64_t lastWindow = kFrames - kWindow;
+    r->prefetch (lastWindow);
     r->fillNow();
 
     Block warm (kBlock);
-    REQUIRE (r->readRt (warm.ptrs.data(), kChannels, far, kBlock));
-    REQUIRE (matchesSource (warm, far, kBlock));
+    REQUIRE (r->readRt (warm.ptrs.data(), kChannels, lastWindow, kBlock));
+    REQUIRE (matchesSource (warm, lastWindow, kBlock));
 
     // Backwards, over a span the window has already left behind.
     r->prefetch (0);
@@ -200,6 +202,30 @@ TEST_CASE ("BufferedFileReader prefetch warms a span the audio thread has not as
     Block rewound (kBlock);
     REQUIRE (r->readRt (rewound.ptrs.data(), kChannels, 0, kBlock));
     REQUIRE (matchesSource (rewound, 0, kBlock));
+
+    r.reset();
+    discard (path);
+}
+
+TEST_CASE ("BufferedFileReader says whether a span is resident before anyone reads it",
+           "[audiofile][buffered]")
+{
+    const auto path = tmp ("dusk_bfr_holds.wav");
+    REQUIRE (writeRamp (path));
+
+    auto r = manualReader (path);
+    REQUIRE (r != nullptr);
+
+    const std::int64_t at = 2048;
+    r->prefetch (at);
+    CHECK_FALSE (r->holds (at, kBlock));
+    r->fillNow();
+    CHECK (r->holds (at, kBlock));
+    CHECK (r->holds (at + kWindow - 1 - kBlock, kBlock));
+    CHECK_FALSE (r->holds (at - 1, kBlock));
+    CHECK_FALSE (r->holds (at + kWindow, kBlock));
+    // Past the end of the file is silence, which is always there.
+    CHECK (r->holds (kFrames, kBlock));
 
     r.reset();
     discard (path);

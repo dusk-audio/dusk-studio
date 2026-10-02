@@ -470,11 +470,22 @@ ScenarioResult runCloneSavedFields (ScenarioContext& ctx)
     set (hw.dryWet, 0.6f);
     srcStrip.insertMode.store (ChannelStrip::kInsertHardware);
 
-    src.regions.push_back ({});
-    src.regions.back().timelineStart = 4800;
-    src.regions.back().lengthInSamples = 9600;
-    src.regions.back().previousTakes.push_back ({});
-    src.regions.back().previousTakes.back().lengthInSamples = 9600;
+    {
+        AudioTake take;
+        take.id = session.allocateTakeId();
+        take.name = "Take 1";
+        take.file = session.getAudioDirectory().getChildFile ("clone_take.wav");
+        take.timelineStart = 4800;
+        take.lengthInSamples = 9600;
+        take.numChannels = 2;
+        take.provenance = { 1000, 2, false };
+        src.takes.push_back (take);
+        src.regions.push_back ({});
+        src.regions.back().file = take.file;
+        src.regions.back().timelineStart = 4800;
+        src.regions.back().lengthInSamples = 9600;
+        src.regions.back().takeId = take.id;
+    }
     {
         MidiRegion region;
         region.lengthInSamples = 24000;
@@ -548,9 +559,14 @@ ScenarioResult runCloneSavedFields (ScenarioContext& ctx)
         const auto cloneSaved = savedTrack (session, kDest);
         std::vector<std::string> same, different;
         compareLeaves (sourceSaved, cloneSaved, "", same, different);
-        different.erase (std::remove (different.begin(), different.end(), "/name"), different.end());
+        for (const auto* renamed : { "/name", "/takes[0]/id", "/regions[0]/take_id" })
+            different.erase (std::remove (different.begin(), different.end(), renamed), different.end());
         ctx.expect (different.empty(), when + " left " + joined (different)
                                            + " on the destination unlike the source");
+        ctx.expect (dstTrack.takes.size() == 1 && dstTrack.regions.size() == 1
+                        && dstTrack.takes[0].id != 0 && dstTrack.takes[0].id != src.takes[0].id
+                        && dstTrack.regions[0].takeId == dstTrack.takes[0].id,
+                    when + " did not give the clone's take its own id, named by its region");
         ctx.expect (dstTrack.name == "Source (copy)", when + " did not tag the clone's name");
         ctx.expect (dstStrip.insertMode.load() == ChannelStrip::kInsertHardware,
                     when + " did not carry the source's insert mode");

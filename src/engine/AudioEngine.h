@@ -164,6 +164,12 @@ public:
     std::function<void (const TrackMovePlan&)> onBeforeTracksMove;
     std::function<void (const TrackMovePlan&)> onTracksMoved;
 
+    // Called by stop() just before the recorder commits, with the mask of tracks
+    // it captured, so an edit held half done on one of them is put back first:
+    // the commit stores the regions as it finds them as the take's undo state.
+    // Message thread.
+    std::function<void (std::uint32_t capturedTracks)> onBeforeRecordCommit;
+
     Session&          getSession()        noexcept { return session; }
     const Session&    getSession() const   noexcept { return session; }
     Transport&        getTransport()      noexcept { return transport; }
@@ -334,7 +340,24 @@ public:
         return auxLaneStrips[(size_t) idx];
     }
 
-    void play();
+    // A realtime bounce plays with Audition::Ignore, so it prints the
+    // track's regions and not a take being auditioned.
+    void play (PlaybackEngine::Audition audition = PlaybackEngine::Audition::Honour);
+
+    // Plays one take alone on its track in place of the track's regions,
+    // until cleared, heard at once whether stopped or rolling. Bounce and
+    // freeze renders never hear it. Naming a take the track does not hold
+    // clears the audition instead. Message thread only.
+    void setTakeAudition (int trackIndex, TakeId takeId);
+    void clearTakeAudition();
+
+    // Brings playback up to date after the regions or takes of `tracks`
+    // changed. Stopped, every track's streams are rebuilt. Rolling, the tracks
+    // named are rebuilt live and crossfaded in once the message thread is done
+    // with the edit, so an edit of several actions is heard whole, except a
+    // track the recorder is capturing; the rest pick up gain and mute changes.
+    // Does nothing while an offline render runs. Message thread only.
+    void refreshPlayback (const TrackSlotMask& tracks);
     // Halts the transport and commits any take without moving the playhead.
     // For stops the user did not ask for as a transport press: session
     // switch, shutdown, bounce, external sync.
@@ -966,6 +989,20 @@ private:
     // keep ringing (Note Off never arrives on the now-unrouted source).
     std::array<int, Session::kNumTracks> lastMidiInputIndex {};
 
+    // Where each MIDI track's last timeline window ended, in samples past the
+    // next block's start, so the next window carries on from there when the
+    // instrument's latency moves; -1 after a block that scheduled none. Audio
+    // thread, except that a track move remaps it with the callback suspended.
+    std::array<int, Session::kNumTracks> midiScheduledAhead {};
+
+    // The same window's end on the timeline the instrument heard, after any
+    // loop wraps - the loop end itself when it ran right up to a seam. A next
+    // window that starts there continues it, so a seam the loop reports at its
+    // head was already crossed; one that starts anywhere else follows a jump,
+    // and resets and chases at its head. Read only while midiScheduledAhead is
+    // not -1; same threading.
+    std::array<std::int64_t, Session::kNumTracks> midiScheduledUpTo {};
+
     // MIDI hot-plug. The backend's MIDI thread reports that the OS port set
     // moved; noteMidiDeviceChange arms a single delayed pass so one plug (a
     // client arrival plus a port arrival per port) costs one rebuild, and
@@ -981,6 +1018,22 @@ private:
         AudioEngine& owner;
     };
     MidiHotplugTimer midiHotplugTimer { *this };
+
+    // Hands live rebuilds to the audio thread and frees what it hands back;
+    // runs while either has anything left to do.
+    void servicePlayback();
+    // Services playback as soon as the message thread is done with the edit
+    // that rebuilt a track, then on the timer until it has nothing left.
+    void schedulePlaybackService();
+    struct PlaybackServiceTimer : dusk::Timer
+    {
+        explicit PlaybackServiceTimer (AudioEngine& o) : owner (o) {}
+        void timerCallback() override { owner.servicePlayback(); }
+        AudioEngine& owner;
+    };
+    PlaybackServiceTimer playbackServiceTimer { *this };
+    int playbackIdleTicks = 0;
+    bool playbackServicePosted = false;
 
     // Outlives the engine so a hop still queued when it dies is a no-op instead
     // of a use-after-free: the poll thread posts those, and joining it in the
@@ -1008,6 +1061,9 @@ private:
     // from a change broadcast; either can be sitting in the queue when a quit
     // tears the engine down.
     std::shared_ptr<std::atomic<bool>> deviceCallbacksAlive
+        { std::make_shared<std::atomic<bool>> (true) };
+    // And for the playback service a live rebuild posts.
+    std::shared_ptr<std::atomic<bool>> playbackServiceAlive
         { std::make_shared<std::atomic<bool>> (true) };
     void broadcastChange();
     void fireChangeListeners();

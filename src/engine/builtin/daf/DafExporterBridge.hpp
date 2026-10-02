@@ -15,6 +15,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <exception>
 #include <memory>
@@ -34,7 +35,8 @@ public:
                     const uint32_t width, const uint32_t height, const double scaleFactor)
         : callbacks (std::move (hostCallbacks)),
           ui (this, nativeParent, sampleRate, editParamCallback, setParamCallback,
-              setStateCallback, nullptr, setSizeCallback, nullptr, nullptr, dsp, scaleFactor,
+              setStateCallback, sendNoteCallback, setSizeCallback, nullptr, nullptr, dsp,
+              scaleFactor,
               DGL_NAMESPACE::Application::kTypeAuto, 0, 0xffffffff, "dusk-studio-daf-unit")
     {
         ui.setWindowSizeFromHost (width, height);
@@ -96,6 +98,14 @@ private:
         auto& self = *static_cast<ExporterEditor*> (ptr);
         if (key != nullptr && value != nullptr && self.callbacks.stateEdited)
             self.callbacks.stateEdited (key, value);
+    }
+
+    static void sendNoteCallback (void* const ptr, const uint8_t channel, const uint8_t note,
+                                  const uint8_t velocity)
+    {
+        auto& self = *static_cast<ExporterEditor*> (ptr);
+        if (self.callbacks.noteSent)
+            self.callbacks.noteSent (channel, note, velocity);
     }
 
     static void setSizeCallback (void* const ptr, const uint width, const uint height)
@@ -234,12 +244,27 @@ public:
        #endif
     }
 
-    void run (const float* const* inputs, float* const* outputs, uint32_t frames) noexcept override
+    bool isInstrument() const noexcept override { return DAF_PLUGIN_IS_SYNTH; }
+
+    void run (const float* const* inputs, float* const* outputs, uint32_t frames,
+              const duskstudio::builtin::DafMidiEvent* events,
+              uint32_t eventCount) noexcept override
     {
        #if DAF_PLUGIN_WANT_MIDI_INPUT
+        const uint32_t count = std::min<uint32_t> (eventCount, (uint32_t) midiEvents.size());
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            MidiEvent& m = midiEvents[i];
+            m.frame = events[i].frame;
+            m.size = events[i].size;
+            std::copy (events[i].data, events[i].data + events[i].size, m.data);
+            m.dataExt = nullptr;
+        }
         exporter.run (const_cast<const float**> (inputs), const_cast<float**> (outputs), frames,
-                      nullptr, 0);
+                      midiEvents.data(), count);
        #else
+        (void) events;
+        (void) eventCount;
         exporter.run (const_cast<const float**> (inputs), const_cast<float**> (outputs), frames);
        #endif
     }
@@ -346,6 +371,9 @@ private:
    #endif
 
     PluginExporter exporter;
+   #if DAF_PLUGIN_WANT_MIDI_INPUT
+    std::array<MidiEvent, duskstudio::builtin::DafMidiEvent::kMaxPerBlock> midiEvents {};
+   #endif
     std::vector<duskstudio::builtin::DafParamDesc> descs;
     std::vector<std::string> stateKeys;
     std::vector<std::string> stateDefaults;

@@ -90,7 +90,7 @@ The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/
 
 Phases 1a → 5 of [DuskStudio.md](docs/DuskStudio.md) have all shipped, so there is no phase to work toward: the live mixer, multitrack recording with atomic JSON save/load and autosave, send-bus plugin hosting, take history and loop-record take stacking, markers, console automation (Write / Read / Touch) with breakpoint editing, punch and loop, and MTC + MIDI Clock sync are working features. Check the feature table in [README.md](README.md) and the relevant chapter of [MANUAL.md](MANUAL.md) before assuming something is unbuilt.
 
-Current focus is milestone 0.14 (GitHub milestone #7): finish automated coverage of every behaviour MANUAL.md documents, close the open blockers, then bump and tag. The tag is gated on the maintainer's own manual pass on Linux, macOS and Windows - never tag or run a release flow on your own initiative.
+Current focus is milestone 0.15 (GitHub milestone #8): finish its features with automated coverage of every behaviour MANUAL.md documents, close the open blockers, then bump and tag. The tag is gated on the maintainer's own manual pass on Linux, macOS and Windows - never tag or run a release flow on your own initiative.
 
 ## Audio thread rules (MANDATORY)
 

@@ -516,6 +516,39 @@ ScenarioResult runMoveUnderRunningCallback (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// A take solo moves with its track, and the streams the move rebuilds play it on
+// the track's new slot, as every other rebuild honours a solo.
+ScenarioResult runMoveKeepsTheAudition (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& playback = engine.getPlaybackEngine();
+    restoreOrderAtEnd (ctx);
+    ctx.cleanup ([&engine] { engine.clearTakeAudition(); });
+
+    AudioTake take;
+    take.id = session.allocateTakeId();
+    take.name = "Take 1";
+    take.file = SessionFile ("/nonexistent/eighteen-take.wav");
+    take.lengthInSamples = 4800;
+    session.track (kMoved).takes.push_back (take);
+    engine.setTakeAudition (kMoved, take.id);
+    const auto before = playback.playingAudition();
+    if (! ctx.expect (before.trackIdx == kMoved && before.takeId == take.id,
+                      "the streams did not play the solo before the move"))
+        return ctx.verdict();
+
+    if (! ctx.expect (engine.moveTracks (planBlockMove ({ kMoved }, 0)), "the move was refused"))
+        return ctx.verdict();
+    ctx.expect (session.takeAudition.trackIdx == 0 && session.takeAudition.takeId == take.id,
+                "the solo did not move with its track");
+    const auto after = playback.playingAudition();
+    ctx.expect (after.trackIdx == 0 && after.takeId == take.id,
+                after.trackIdx < 0 ? std::string ("after the move the streams play no solo")
+                                   : "after the move the streams play a solo on track " + std::to_string (after.trackIdx + 1));
+    return ctx.verdict();
+}
+
 // The suite's reset between cases puts moved tracks back and says so, so a case
 // that leaves them moved fails instead of quietly skewing every later one.
 ScenarioResult runWorldResetPutsTracksBack (ScenarioContext& ctx)
@@ -576,6 +609,14 @@ const ScenarioRegistrar refusals { Scenario {
     Needs::Engine,
     {},
     [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runMoveRefusals (ctx); }
+} };
+
+const ScenarioRegistrar audition { Scenario {
+    "session.move_tracks_keeps_the_take_solo",
+    { "session", "move", "take" },
+    Needs::Engine,
+    {},
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runMoveKeepsTheAudition (ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario

@@ -587,13 +587,13 @@ TEST_CASE ("SessionSerializer round-trips markers, bindings and fader groups",
 }
 
 // Every region field the manual promises: fades and their auto flag, gain,
-// label, colour, mute, lock and the take history under it.
+// label, colour, mute, lock and the take it came from.
 TEST_CASE ("SessionSerializer round-trips every region field", "[session][serializer]")
 {
     using duskstudio::AudioRegion;
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
-    using duskstudio::TakeRef;
+    using duskstudio::AudioTake;
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
@@ -614,11 +614,12 @@ TEST_CASE ("SessionSerializer round-trips every region field", "[session][serial
     region.label = "Chorus double";
     region.muted = true;
     region.locked = true;
-    TakeRef older;
-    older.file = dir.getChildFile ("audio").getChildFile ("take00.wav");
-    older.sourceOffset = 100;
-    older.lengthInSamples = 24000;
-    region.previousTakes.push_back (older);
+    AudioTake take;
+    take.id = a.allocateTakeId();
+    take.file = region.file;
+    take.lengthInSamples = 96000;
+    region.takeId = take.id;
+    a.track (3).takes.push_back (take);
     a.track (3).regions.push_back (region);
 
     REQUIRE (SessionSerializer::save (a, target));
@@ -642,10 +643,9 @@ TEST_CASE ("SessionSerializer round-trips every region field", "[session][serial
     CHECK (r.label == "Chorus double");
     CHECK (r.muted);
     CHECK (r.locked);
-    REQUIRE (r.previousTakes.size() == 1);
-    CHECK (r.previousTakes[0].file.getFileName() == "take00.wav");
-    CHECK (r.previousTakes[0].sourceOffset == 100);
-    CHECK (r.previousTakes[0].lengthInSamples == 24000);
+    REQUIRE (b->track (3).takes.size() == 1);
+    CHECK (r.takeId == b->track (3).takes[0].id);
+    CHECK (r.takeId != 0);
 
     dir.deleteRecursively();
 }

@@ -51,6 +51,17 @@ void BufferedFileReader::prefetch (std::int64_t startFrame) noexcept
     wake.signal();
 }
 
+bool BufferedFileReader::holds (std::int64_t startFrame, std::int64_t numFrames) const noexcept
+{
+    if (channels <= 0) return true;
+    const std::int64_t wantEnd = std::min (startFrame + numFrames, fileInfo.numFrames);
+    if (startFrame >= wantEnd) return true;
+    const std::uint64_t gen = generation.load (std::memory_order_acquire);
+    const std::int64_t  s   = residentStart.load (std::memory_order_acquire);
+    const std::int64_t  e   = residentEnd.load (std::memory_order_acquire);
+    return (gen & 1) == 0 && s <= startFrame && e >= wantEnd;
+}
+
 void BufferedFileReader::fillNow()
 {
     while (fillStep()) {}

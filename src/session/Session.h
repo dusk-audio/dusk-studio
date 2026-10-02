@@ -8,11 +8,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 #include "AtomicSnapshot.h"
 #include "MidiBindings.h"
@@ -61,11 +63,12 @@ struct AutomationPoint
 
     bool operator== (const AutomationPoint& o) const noexcept
     {
-        // Bit-exact compares (juce::exactlyEqual) - these are value-identity checks, not
-        // tolerance compares, and exactlyEqual silences -Wfloat-equal (a CI -Werror).
+        // Exact compares - these are value-identity checks, not tolerance compares, and
+        // std::equal_to keeps -Wfloat-equal (a CI -Werror) quiet.
+        const std::equal_to<float> same;
         return timeSamples == o.timeSamples
-            && juce::exactlyEqual (value, o.value)
-            && juce::exactlyEqual (recordedAtBPM, o.recordedAtBPM);
+            && same (value, o.value)
+            && same (recordedAtBPM, o.recordedAtBPM);
     }
     bool operator!= (const AutomationPoint& o) const noexcept { return ! (*this == o); }
 };
@@ -492,13 +495,19 @@ struct TakeProvenance
 static_assert (std::is_trivially_copyable<TakeProvenance>::value,
                "TakeProvenance must remain trivially copyable");
 
-// Take-history slot - timeline position is NOT stored so rotating
-// preserves the region's timelineStart (same spot in the song).
-struct TakeRef
+using TakeId = std::uint64_t;   // 0 = none
+
+// One complete recording pass on a track. Later recording never trims it;
+// regions cut from it name it through AudioRegion::takeId.
+struct AudioTake
 {
+    TakeId id = 0;
+    std::string name;
     juce::File file;
-    std::int64_t sourceOffset    = 0;
+    std::int64_t timelineStart   = 0;   // where sourceOffset sits on the timeline
     std::int64_t lengthInSamples = 0;
+    std::int64_t sourceOffset    = 0;
+    int numChannels = 1;
     TakeProvenance provenance;
 };
 
@@ -819,7 +828,7 @@ struct MidiRegion
     std::vector<MidiCc>   ccs;
     TakeProvenance provenance;
 
-    // Front = next to surface on cycle. Same semantics as AudioRegion.
+    // Front = next to surface on cycle.
     std::vector<MidiTakeRef> previousTakes;
 
     juce::Colour customColour;
@@ -860,6 +869,30 @@ inline void swapMidiTakePayload (MidiRegion& region, MidiTakeRef& take)
     swap (region.provenance, take.provenance);
 }
 
+// Forward brings the front of the take stack live and sends the displaced take
+// to the back; backward is the mirror image, so the two directions step through
+// the same ring. False when the region has no history.
+inline bool cycleTake (MidiRegion& region, bool forward)
+{
+    auto& takes = region.previousTakes;
+    if (takes.empty()) return false;
+    if (forward)
+    {
+        auto chosen = std::move (takes.front());
+        takes.erase (takes.begin());
+        swapMidiTakePayload (region, chosen);
+        takes.push_back (std::move (chosen));
+    }
+    else
+    {
+        auto chosen = std::move (takes.back());
+        takes.pop_back();
+        swapMidiTakePayload (region, chosen);
+        takes.insert (takes.begin(), std::move (chosen));
+    }
+    return true;
+}
+
 // All shapes: shape(0)=0, shape(1)=1. EqualPower is constant-power for
 // crossfades. RaisedCosine has zero slope at both endpoints - the right
 // choice for very-short click-mask fades (punch in/out).
@@ -873,20 +906,22 @@ enum class FadeShape : int
     RaisedCosine = 5
 };
 
-// Used by PlaybackEngine for audio + AudioRegionEditor for envelope
+// Used by PlaybackEngine for audio + the audio editor for envelope
 // painting - keep in sync.
+constexpr float kFadePi = 3.141592653589793238f;
+
 inline float applyFadeShape (float t, FadeShape s) noexcept
 {
     t = std::clamp (t, 0.0f, 1.0f);
     switch (s)
     {
         case FadeShape::Linear:      return t;
-        case FadeShape::EqualPower:  return std::sin (t * juce::MathConstants<float>::halfPi);
+        case FadeShape::EqualPower:  return std::sin (t * kFadePi * 0.5f);
         case FadeShape::Sigmoid:     return t * t * (3.0f - 2.0f * t);
         case FadeShape::Exp:         return t * t;
         case FadeShape::Log:         return 1.0f - (1.0f - t) * (1.0f - t);
         case FadeShape::RaisedCosine:
-            return 0.5f * (1.0f - std::cos (t * juce::MathConstants<float>::pi));
+            return 0.5f * (1.0f - std::cos (t * kFadePi));
     }
     return t;
 }
@@ -938,66 +973,50 @@ struct AudioRegion
     // playback. Right-click menu toggles; painter shows lock badge.
     bool locked = false;
 
-    // Front = next to surface on cycle.
-    std::vector<TakeRef> previousTakes;
+    // The take on the region's own track its audio came from.
+    TakeId takeId = 0;
+
+    // Set while the region plays a reversed render: the render, the span of the
+    // file it reversed, and the take the region named then. Reversing the region
+    // again plays that span forward instead of rendering the render in reverse.
+    struct ReverseSource
+    {
+        decltype (AudioRegion::file) render;
+        decltype (AudioRegion::file) file;
+        std::int64_t sourceOffset = 0;
+        std::int64_t lengthInSamples = 0;
+        TakeId takeId = 0;
+    };
+    std::optional<ReverseSource> reversedFrom;
 };
 
-inline TakeRef makeAudioTakeRef (const AudioRegion& region)
+// Reversed audio's head is the original tail, so a reverse swaps the fades to keep
+// each ramp on the same material.
+inline void swapFadeEnds (AudioRegion& region)
 {
-    return { region.file, region.sourceOffset, region.lengthInSamples,
-             region.provenance };
+    std::swap (region.fadeInSamples, region.fadeOutSamples);
+    std::swap (region.fadeInShape, region.fadeOutShape);
+    std::swap (region.fadeInAuto, region.fadeOutAuto);
 }
 
-inline void applyAudioTakeRef (AudioRegion& region, const TakeRef& take)
+// The region reversed back to the audio its render reversed, or nothing when it
+// plays no render it remembers. Trims and splits since the reverse carry across:
+// the render's sample s is sample length - 1 - s of the span it reversed.
+inline std::optional<AudioRegion> forwardOfReversed (const AudioRegion& region)
 {
-    region.file = take.file;
-    region.sourceOffset = take.sourceOffset;
-    region.lengthInSamples = take.lengthInSamples;
-    region.provenance = take.provenance;
-}
-
-inline void swapAudioTakePayload (AudioRegion& region, TakeRef& take)
-{
-    using std::swap;
-    swap (region.file, take.file);
-    swap (region.sourceOffset, take.sourceOffset);
-    swap (region.lengthInSamples, take.lengthInSamples);
-    swap (region.provenance, take.provenance);
-}
-
-// Forward brings the front of the take stack live and sends the displaced take
-// to the back; backward is the mirror image, so the two directions step through
-// the same ring. False when the region has no history.
-template <typename Region, typename SwapPayload>
-bool cycleTakeStack (Region& region, bool forward, SwapPayload swapPayload)
-{
-    auto& takes = region.previousTakes;
-    if (takes.empty()) return false;
-    if (forward)
-    {
-        auto chosen = std::move (takes.front());
-        takes.erase (takes.begin());
-        swapPayload (region, chosen);
-        takes.push_back (std::move (chosen));
-    }
-    else
-    {
-        auto chosen = std::move (takes.back());
-        takes.pop_back();
-        swapPayload (region, chosen);
-        takes.insert (takes.begin(), std::move (chosen));
-    }
-    return true;
-}
-
-inline bool cycleTake (AudioRegion& region, bool forward)
-{
-    return cycleTakeStack (region, forward, swapAudioTakePayload);
-}
-
-inline bool cycleTake (MidiRegion& region, bool forward)
-{
-    return cycleTakeStack (region, forward, swapMidiTakePayload);
+    if (! region.reversedFrom || region.file != region.reversedFrom->render)
+        return std::nullopt;
+    const auto& from = *region.reversedFrom;
+    const auto end = region.sourceOffset + region.lengthInSamples;
+    if (region.sourceOffset < 0 || region.lengthInSamples <= 0 || end > from.lengthInSamples)
+        return std::nullopt;
+    auto forward = region;
+    forward.file = from.file;
+    forward.sourceOffset = from.sourceOffset + (from.lengthInSamples - end);
+    forward.takeId = from.takeId;
+    forward.reversedFrom.reset();
+    swapFadeEnds (forward);
+    return forward;
 }
 
 struct Track
@@ -1053,6 +1072,9 @@ struct Track
     // wrapped in AtomicSnapshot for the lock-free swap.
     std::vector<AudioRegion>                regions;
     AtomicSnapshot<std::vector<MidiRegion>> midiRegions;
+
+    // Oldest first. Message thread only.
+    std::vector<AudioTake> takes;
 
     // Populated by AudioEngine::publishPluginStateForSave before save and
     // consumed by consumePluginStateAfterLoad.
@@ -1775,6 +1797,20 @@ public:
     };
     McuSessionState mcu;
 
+    // Unique across the session and never 0. The loader seeds it with the
+    // highest id the file holds. Message thread only.
+    TakeId allocateTakeId() noexcept                     { return ++lastTakeId; }
+    void   seedTakeIdAllocator (TakeId highestInUse) noexcept { lastTakeId = highestInUse; }
+
+    // A take played alone in place of its track's regions. Not saved; read
+    // only by PlaybackEngine::preparePlayback. Message thread only.
+    struct TakeAudition
+    {
+        int    trackIdx = -1;
+        TakeId takeId   = 0;
+    };
+    TakeAudition takeAudition;
+
     // -2 = follow track index, -1 = no input.
     int resolveInputForTrack (int trackIndex) const noexcept;
     // -1 in Mono / Midi mode (second channel meaningless).
@@ -1823,6 +1859,7 @@ private:
     MasterBusParams masterParams;
     MasteringParams masteringParams;
     juce::File sessionDir;
+    TakeId lastTakeId = 0;
 
     // Single relaxed load per callback instead of scanning all atoms.
     std::atomic<int> soloTrackCount { 0 };

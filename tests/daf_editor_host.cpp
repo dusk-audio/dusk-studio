@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <random>
 #include <string>
@@ -58,6 +59,8 @@ public:
     {
         ++idles;
         observed = *dsp;
+        if (duringIdle)
+            duringIdle();
         return alive;
     }
 
@@ -79,6 +82,8 @@ public:
     struct Push { std::uint32_t index; float value; };
 
     duskstudio::builtin::DafEditorCallbacks callbacks;
+    // What the editor's own loop does on its next turn.
+    std::function<void()> duringIdle;
     const int* dsp = nullptr;
     int observed = 0;
     std::vector<Push> pushed;
@@ -245,6 +250,57 @@ TEST_CASE ("a gesture marks the parameter touched and hands focus back at its en
     rig.unit.live->gesture (2, false);
     REQUIRE (rig.focusHandbacks == 1);
     REQUIRE (rig.unit.touched == std::vector<int> { 2 });
+}
+
+TEST_CASE ("a program loaded inside the editor's own loop neither marks a touch nor takes the keyboard",
+           "[builtin][daf][editor]")
+{
+    Rig rig;
+    REQUIRE (rig.host.open (kParent, rig.wanted));
+    rig.host.tick();
+    auto& editor = *rig.unit.live;
+
+    // A preset picked in the editor, or a MIDI program change synced into it,
+    // works every control in one turn of the editor's loop, a gesture apiece.
+    // The values land, but nothing was touched by hand, and a preset name being
+    // typed in the editor keeps the keyboard.
+    editor.duringIdle = [&editor]
+    {
+        for (std::uint32_t i = 0; i < 3; ++i)
+        {
+            editor.gesture (i, true);
+            editor.edit (i, 0.5f);
+            editor.gesture (i, false);
+        }
+    };
+    rig.host.tick();
+    REQUIRE_THAT (rig.unit.values[2], WithinAbs (0.5, 1e-9));
+    REQUIRE (rig.unit.touched.empty());
+    REQUIRE (rig.focusHandbacks == 0);
+
+    // A hand works one control at a time, inside one turn or across several.
+    editor.duringIdle = [&editor]
+    {
+        editor.gesture (2, true);
+        editor.edit (2, 0.75f);
+        editor.gesture (2, false);
+    };
+    rig.host.tick();
+    REQUIRE (rig.unit.touched == std::vector<int> { 2 });
+    REQUIRE (rig.focusHandbacks == 1);
+
+    editor.duringIdle = [&editor]
+    {
+        editor.gesture (0, true);
+        editor.edit (0, 0.1f);
+    };
+    rig.host.tick();
+    REQUIRE (rig.unit.touched == std::vector<int> { 2, 0 });
+    REQUIRE (rig.focusHandbacks == 1);
+    editor.duringIdle = [&editor] { editor.gesture (0, false); };
+    rig.host.tick();
+    REQUIRE (rig.focusHandbacks == 2);
+    editor.duringIdle = nullptr;
 }
 
 TEST_CASE ("a plug-in editor host follows the geometry it is given", "[builtin][daf][editor]")

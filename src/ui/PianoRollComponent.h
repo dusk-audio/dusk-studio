@@ -75,17 +75,16 @@ public:
     // CursorOverlay sink - MainComponent wires these so the editor
     // pushes its local mouse position into the shared overlay (which
     // bypasses the platform cursor pipeline that fails on this hybrid
-    // X11/Wayland setup). Same pattern as AudioRegionEditor.
+    // X11/Wayland setup). Same pattern as TapeStrip.
     // The juce::Range<int> argument carries the cut-line Y span (unused
     // on the piano roll - Cut mode has no glyph here - but the
-    // signature matches AudioRegionEditor's so MainComponent can use
+    // signature matches TapeStrip's so MainComponent can use
     // a single forwarder lambda).
     std::function<void (juce::Component&, juce::Point<int>, EditMode,
                           juce::Range<int>)> onMouseMovedForCursor;
     std::function<void()> onMouseExitedForCursor;
 
     static constexpr int kKeyboardWidth     = 76;
-    // Matches AudioRegionEditor kIconRowHeight for visual parity.
     static constexpr int kToolbarHeight     = 48;
     static constexpr int kHeaderHeight      = 28;
     static constexpr int kNoteHeight        = 16;
@@ -373,7 +372,7 @@ private:
     IconButton zoomInButton     { "Zoom in",    IconButton::Glyph::ZoomIn };
     IconButton zoomFitButton    { "Zoom fit",   IconButton::Glyph::ZoomFit };
 
-    // Shared with AudioRegionEditor + TapeStrip via session.editMode.
+    // Shared with the audio editor + TapeStrip via session.editMode.
     // Only Grab and Draw modify roll behaviour; others are no-ops here.
     std::unique_ptr<EditModeToolbar> editModeToolbar;
 

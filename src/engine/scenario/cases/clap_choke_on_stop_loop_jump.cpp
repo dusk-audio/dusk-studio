@@ -11,12 +11,21 @@ namespace
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
 constexpr int kTrackIndex   = 0;
 constexpr int kSettleBlocks = 3;
-// Deliberately not a multiple of the block size: the transport wraps the
-// playhead at a block boundary, so a block-aligned loop never puts the seam
-// inside a block where the scheduler can emit its reset.
-constexpr std::int64_t kLoopStart = 500;
-constexpr std::int64_t kLoopEnd   = 3000;
 constexpr std::int64_t kJumpTarget = 48000 * 10;
+
+// The first loop ends inside a block, so its seam is reset there. The second
+// ends on a block boundary, so the block before the seam ends on it and the
+// transport has wrapped before the next, which resets the seam at its head.
+struct LoopLeg
+{
+    const char* name;
+    std::int64_t start;
+    std::int64_t end;
+};
+constexpr LoopLeg kLoopLegs[] {
+    { "loop wrap", 500, 3000 },
+    { "block-aligned loop wrap", 2 * ScenarioContext::kBlockSize, 12 * ScenarioContext::kBlockSize },
+};
 
 struct Counters
 {
@@ -94,20 +103,22 @@ ScenarioResult runChoke (ScenarioContext& ctx)
         checkChoked (ctx, "stop", held, readCounters (ctx));
     }
 
+    for (const auto& leg : kLoopLegs)
     {
-        transport.setLoopRange (kLoopStart, kLoopEnd);
+        const std::string name = leg.name;
+        transport.setLoopRange (leg.start, leg.end);
         transport.setLoopEnabled (true);
-        transport.setPlayhead (kLoopStart);
+        transport.setPlayhead (leg.start);
         engine.play();
         ctx.pump (kSettleBlocks);
         const auto held = holdVoices (ctx, input);
-        ctx.expect (held.voicesHeld > 0.0, "loop wrap: the instrument never received the notes");
+        ctx.expect (held.voicesHeld > 0.0, name + ": the instrument never received the notes");
 
         // Enough blocks to cross the loop end from anywhere inside it.
-        ctx.pump ((int) ((kLoopEnd - kLoopStart) / ScenarioContext::kBlockSize) + 2);
-        ctx.note ("loop wrap: playhead landed at "
+        ctx.pump ((int) ((leg.end - leg.start) / ScenarioContext::kBlockSize) + 2);
+        ctx.note (name + ": playhead landed at "
                   + std::to_string ((long long) transport.getPlayhead()));
-        checkChoked (ctx, "loop wrap", held, readCounters (ctx));
+        checkChoked (ctx, leg.name, held, readCounters (ctx));
 
         engine.stop();
         transport.setLoopEnabled (false);

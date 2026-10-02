@@ -169,6 +169,7 @@ std::vector<std::string> ScenarioWorld::reset()
         clearAutomation (track.automationLanes);
 
         track.regions.clear();
+        track.takes.clear();
         track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
 
         track.midiInputIndex.store (-1, std::memory_order_relaxed);
@@ -194,6 +195,7 @@ std::vector<std::string> ScenarioWorld::reset()
     }
 
     sessionRef.getMarkers().clear();
+    sessionRef.takeAudition = {};
     // Recorded and edited actions hold track and region indices into this
     // session, which the next scenario rebuilds from nothing.
     engineRef.getUndoManager().clearUndoHistory();

@@ -115,6 +115,7 @@ void eachTrackField (Track& dst, Src& src, Fields& f)
     f.gesture (dst.midiActivity);
 
     f.value (dst.regions, src.regions);
+    f.value (dst.takes, src.takes);
     f.midiRegions (dst.midiRegions, src.midiRegions);
 
     f.value (dst.pluginDescriptor, src.pluginDescriptor);
@@ -493,6 +494,9 @@ void Session::landTrackMove (StagedTrackMove& staged)
             Land land { *stage };
             eachTrackField (tracks[(size_t) to], stage->fields, land);
         }
+
+    if (auto& audition = takeAudition; audition.trackIdx >= 0 && audition.trackIdx < kNumTracks)
+        audition.trackIdx = staged.plan.oldToNew[(size_t) audition.trackIdx];
 }
 
 bool Session::permuteTracks (const TrackMovePlan& plan, const TrackSlotMask& refollow)

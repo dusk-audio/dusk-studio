@@ -5,6 +5,94 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.15.0] - Unreleased
+
+Takes live on the track now, and the audio editor is where you comp them.
+
+### Added
+
+- **Every recording pass is kept whole as a take on its track.** Takes are
+  named Take 1, Take 2 and so on, and later recording never trims one. Only the
+  newest pass is placed on the timeline; the regions under it are cut back to
+  meet it, and the takes they came from stay complete. Undo right after
+  recording removes the takes that pass added.
+- **Take lanes in the audio editor.** A track with takes shows one lane per
+  take under the regions, newest at the top, with the parts the track plays
+  drawn bright. Drag across a lane to put that part of the take on the track,
+  or click a take's name to use all of it. Double-click a name to rename the
+  take. Each lane has a solo button (S), which plays that take alone at once,
+  and Delete, which asks first and takes the take and its regions off the track.
+  Every lane edit is one undo step and is saved with the session.
+- **Takes are easier to tell apart in the editor.** Each take has a colour,
+  shown in its lane and as a stripe with the take's name on every region cut
+  from it; an unlabelled region is titled by its take. Lanes scale quiet takes
+  up to be readable, grow to fill their part of the editor, and the caption
+  above them drags to give the lanes more or less room. The editor opens
+  zoomed out to every take, so a punch that starts later shows in its lane.
+- **Comp from the keyboard.** In the audio editor, **Down** puts the take in
+  the lane below on the focused region (or the selected range) and **Up** the
+  one above, each one undo step; **T** solos the take under the pointer or
+  the focused region's, and **T** again stops it.
+- **Click a take to use it for a section.** In the audio editor's take lanes,
+  a click on a take gives it the comp section under the click, as in Logic's
+  and Cubase's comping; the sections' dividers run through every lane, and
+  hovering outlines the section a click would replace.
+- **Drag the seam between two takes.** In the audio editor, the divider where
+  one take gives way to the next drags from any take lane or from the take
+  stripe along the top of the waveform; both edges move together, the
+  crossfade keeps its length, and it is one undo step.
+- **Comp edits are heard while playing.** Clicking or dragging a take, Up and
+  Down, a seam drag, undo and redo, and a take solo all change what you hear
+  within milliseconds while the transport rolls, crossfaded so there is no
+  click, instead of at the next Play.
+- **Loop a selection from the audio editor.** The waveform's right-click menu
+  has Loop region, or Loop selection over a drawn range, which sets the
+  transport loop, turns it on and moves the playhead to its start.
+- **A take count beside the track name.** The tape strip shows "3 takes" on a
+  track with several takes, or "1 take" when its only take has no region on the
+  timeline. Click it to open the audio editor on the take lanes.
+- **Loop recording keeps up to 1,024 passes per track.** It used to keep the
+  nine newest. Passes past the limit are left out, never an earlier one, and the
+  alert at Stop says so.
+- **The audio region editor is a native panel inside the main window.** It
+  keeps the old editor's gestures, keys and menus, adds Reverse to the toolbar
+  and the right-click menu, renames a region from its title, and takes typed
+  gain and fade values in the status bar. The Auto pill shows an automation lane
+  over the waveform for adding, moving, deleting and drawing points.
+
+### Changed
+
+- **Sunset opens its own editor** (#808). The built-in Sunset is now the Sunset
+  Circuits plug-in, compiled in with its own DSP and editor in place of the
+  knob panel: every control, the factory and user presets, and a keyboard that
+  plays it. Sessions saved with the knob panel keep their settings. Above 1x,
+  its oversampling reports latency, which delay compensation covers.
+- **Audio regions no longer cycle takes.** The T 1/N pill, the Takes submenu
+  and Alt+T / Alt+Shift+T now work on MIDI regions only; audio takes are chosen
+  in the take lanes. MIDI take history is unchanged.
+- **Sessions are saved in format v10.** A session from 0.14 loads each region's
+  old take history as takes on its track, with the audio files untouched. An
+  older build cannot open a v10 session.
+
+### Fixed
+
+- **Reversing a reversed region plays the original audio again.** It used to
+  render the render in reverse, one more "-reversed" file each time. Now the
+  region goes back to the audio it reversed, trims included, and names its take
+  again.
+- **An overdub that partly covered an older take no longer loses the covered
+  part.** The older take stays whole on the track (#802).
+- **Deleting the top take's region no longer empties the track.** Every take
+  stays on the track, and the take count leads back to them (#802).
+- **Splitting a region no longer copies its whole take history to both
+  halves.** A split has no history to copy; both halves play the same take
+  (#802).
+- **A recorded take no longer stretches a region past its own audio.** When a
+  new take ended or started inside the short crossfade at an older region's
+  edge, the recorder could extend that region into the next loop pass or before
+  the start of its file. Recording now places a take with the same rule as the
+  take lanes.
+
 ## [0.14.0] - 2026-09-29
 
 The first five minutes of using Dusk Studio, offline instrument browsing,

@@ -201,6 +201,7 @@ public:
           resultFn (std::move (onResult)),
           multiResultFn (std::move (onMultiResult))
     {
+        ++liveCount();
         const bool multi = (multiResultFn != nullptr);
         setOpaque (true);
         setWantsKeyboardFocus (true);
@@ -306,6 +307,7 @@ public:
 
     ~DuskFileBrowserPanel() override
     {
+        --liveCount();
         if (browser == nullptr) return;
         browser->removeListener (this);
         browser->dropFolderChange();
@@ -327,6 +329,12 @@ public:
     }
 
     static int retiredCount() { return (int) retiredScans().size(); }
+
+    static int& liveCount()
+    {
+        static int count = 0;
+        return count;
+    }
 
     // No timers once the app is going down. A scan that stops in time is
     // destroyed; one the OS still holds is left to the process exit.
@@ -557,6 +565,11 @@ bool shownFolderScanningForScenario()
 int retiredScansForScenario()
 {
     return DuskFileBrowserPanel::retiredCount();
+}
+
+int livePanelsForScenario()
+{
+    return DuskFileBrowserPanel::liveCount();
 }
 
 void holdFolderChecksForScenario (bool held)

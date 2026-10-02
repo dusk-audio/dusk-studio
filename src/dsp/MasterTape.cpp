@@ -188,7 +188,7 @@ void MasterTape::processInPlace (float* L, float* R, int numSamples) noexcept
     // The plug-in's run hands the buffers straight to its core, which reads
     // inputs[ch][n] before writing outputs[ch][n], so in-place is contractual.
     float* lr[2] = { L, R };
-    impl->plugin->run (lr, lr, (std::uint32_t) numSamples);
+    impl->plugin->run (lr, lr, (std::uint32_t) numSamples, nullptr, 0);
 }
 
 builtin::DafPlugin& MasterTape::plugin() noexcept

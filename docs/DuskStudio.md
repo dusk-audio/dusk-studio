@@ -95,10 +95,10 @@ A horizontal timeline showing:
 In addition to move / split / delete, the tape strip supports three minimal region operations. All are non-destructive — the underlying WAV files are never modified — and all happen with single gestures, not in a separate editor.
 
 * **Region trim (drag-edge)**: drag the left or right edge of an audio region to shorten it. Trimming the right edge decreases `lengthInSamples` only. Trimming the left edge increases `sourceOffset` and `timelineStart` by the same amount and decreases `lengthInSamples`, so the region appears to shrink from the left while the underlying file stays put. Trim is reversible: drag the edge back outward and the trimmed-off audio reappears, bounded by the available samples in the source WAV. Region trim is the right answer for "punch out the cough at the end of the take" without any waveform view. There is no time-stretch — trim only changes which slice of the source file plays back.
-* **Take history per region**: punch-in already creates a new WAV per take (`track01_take02.wav`, etc.). The current take is the one referenced by `AudioRegion.audioFilePath`; previous takes for the same range are tracked on the region as `previousTakes: std::vector<TakeRef>` (each entry stores the file path + the source offset / length that was active when that take was current). The region shows a small numeric badge in its top-left corner displaying the active take number when more than one exists. Clicking the badge cycles to the next take; right-clicking the badge opens an explicit picker listing all takes with a short audition button each. (This is the second exception to the "no right-click menus" rule, alongside marker delete.) Take swap is undoable. Take files are never auto-deleted — they accumulate in the session's `audio/` folder until the user clears them via Session → "Clean unused takes."
-* **Region copy/paste between markers (range copy)**: select an in/out range — either by setting loop in/out, by setting punch in/out, or by clicking two markers in sequence (Cmd/Ctrl + click for range select). Cmd/Ctrl + C copies all regions across all tracks (or only selected tracks) inside that range to a session-local clipboard, including their relative timeline offsets and any take history. Cmd/Ctrl + V pastes at the playhead, preserving inter-track offsets. This is the modern equivalent of the DP-24 TRACK EDIT copy/paste-between-locate-points workflow, useful for doubling a chorus, repeating a verse, or bouncing-by-copy when you want a section in two places without re-recording. Pasted regions create new region records but reference the same underlying WAV files (no duplication on disk). Paste is undoable.
+* **Takes on the track**: every recording pass on an audio track is kept whole as a take on that track (`Track::takes`, one `AudioTake` each: id, name, file, timeline start, source offset, length, channel count, provenance), named Take 1, Take 2 and so on. Later recording never trims a take. Only the newest pass is placed on the timeline; the regions under it are carved back to meet it with 64-sample raised-cosine seams, and a region it covers completely leaves the timeline, but no take loses audio. The track's regions are the comp: each region names the take it plays through `AudioRegion::takeId`, and only while it reads that take's file (reverse and rendered joins name none; a paste keeps the name only on a track holding the take). The tape strip shows a take count beside the track name ("N takes" for two or more, "1 take" when the only take has no region), and clicking it opens the audio editor on the track's take lanes: one lane per take, newest first, where a drag across a lane promotes that span into the regions, a click on the name promotes the whole take, and each lane can be renamed, auditioned alone, or deleted with the regions cut from it. Every take edit is undoable. A loop gesture keeps up to 1,024 passes per track. MIDI regions keep their own `previousTakes` stack (up to 8) with the T 1/N pill, Takes submenu and Alt+T cycling. Take files are never auto-deleted; Clean Out keeps every file a take references.
+* **Region copy/paste between markers (range copy)**: select an in/out range — either by setting loop in/out, by setting punch in/out, or by clicking two markers in sequence (Cmd/Ctrl + click for range select). Cmd/Ctrl + C copies all regions across all tracks (or only selected tracks) inside that range to a session-local clipboard, including their relative timeline offsets; a pasted audio region keeps naming its take only on a track that holds that take. Cmd/Ctrl + V pastes at the playhead, preserving inter-track offsets. This is the modern equivalent of the DP-24 TRACK EDIT copy/paste-between-locate-points workflow, useful for doubling a chorus, repeating a verse, or bouncing-by-copy when you want a section in two places without re-recording. Pasted regions create new region records but reference the same underlying WAV files (no duplication on disk). Paste is undoable.
 
-The `AudioRegion` struct in the Session Model carries `sourceLength` (so trim is just a setter) and `previousTakes` (the take-history list). Its `TakeRef` companion struct stores the file path + offset/length each previous take was recorded with, so swapping takes restores exactly the slice that was active before. See the Session Model section above for the full struct definitions.
+The `AudioRegion` struct in the Session Model carries `sourceLength` (so trim is just a setter) and `takeId` (the take on its track it plays). `Track::takes` holds the takes themselves as `AudioTake` records. See the Session Model section above for the full struct definitions.
 
 ### **Bottom Zone: Console (Mixer)**
 
@@ -259,6 +259,7 @@ struct Track {
     bool mute, solo;
     bool recordArmed;             // persisted per-session (see RECORD requirements)
     std::bitset<4> busAssign;
+    std::vector<AudioTake> takes; // every recording pass on the track, oldest first
 };
 
 // Audio regions — reference a WAV file on disk
@@ -268,17 +269,19 @@ struct AudioRegion : Region {
     int64_t sourceLength;         // bounded by file length minus sourceOffset; equal to
                                   // lengthInSamples for un-stretched audio (always, in v1)
     float gainTrim;
-    std::vector<TakeRef> previousTakes;  // older takes available via the region's take badge
-                                          // (see "Region operations on the tape strip")
+    TakeId takeId;                // the take on this region's track it plays; 0 = none
 };
 
-// Reference to a previous take of an audio region, kept on the region itself
-// so swapping takes restores the source offset/length that take was recorded with.
-struct TakeRef {
+// One complete recording pass, kept on its track (Track::takes, oldest first).
+// Later recording never trims it; regions cut from it name it through takeId.
+struct AudioTake {
+    TakeId id;                    // unique across the session, never 0
+    String name;                  // "Take 1", "Take 2", ... renamable
     String audioFilePath;         // relative to session directory
-    int64_t sourceOffset;         // sourceOffset at the time this take was active
-    int64_t sourceLength;
-    int64_t recordedAt;           // ms since session start, for ordering / display
+    int64_t timelineStart;        // where sourceOffset sits on the timeline
+    int64_t sourceOffset;
+    int64_t lengthInSamples;
+    int numChannels;
 };
 
 // Global session constant — single PPQN used by recorder, sequencer, and import/export.
@@ -676,7 +679,7 @@ Simple command pattern. Undoable actions are limited to:
 * Marker create, move, rename, delete
 * Knob/fader changes (group as single undo step per "gesture")
 
-Recording is NOT undoable (portastudio philosophy — you committed to that take). But the audio file stays on disk, so a "take history" per track could surface previous recordings.
+Recording is undoable: undo removes the region and the takes that pass added, and redo brings them back. Every earlier take stays on its track (see "Takes on the track").
 
 ### **8. Automation System (`src/engine/`)**
 
@@ -782,7 +785,7 @@ Bouncing in Dusk Studio spans three modes, all reached from a single "Bounce / E
   1. **Bake MIDI to audio** — commits an instrument plugin's output so subsequent BPM changes do not retime that part (already cross-referenced from the MIDI BPM-change section).
   2. **Commit channel strip processing** — for an audio region, render its strip's EQ/comp/saturation into the audio file so the strip can be reset (frees DSP for live tweaks elsewhere).
   3. **Portastudio-style ping-pong** — pick a multi-region selection across tracks (using range select), render to a single audio region that replaces them, freeing the source tracks. The "ping-pong" of cassette portastudios applied to disk-based recording.
-  Render-in-place creates a new WAV in `audio/` named `track<NN>_render<NN>.wav`. The original region's `previousTakes` retains the unrendered source so the operation is reversible (swap to the previous take to undo the render).
+  Render-in-place creates a new WAV in `audio/` named `track<NN>_render<NN>.wav`. Undo puts the original region back; the rendered region names no take.
 
 #### **9b. Realtime vs offline**
 
@@ -949,13 +952,13 @@ Add to Phase 2:
 * Punch in/out recording with crossfades (PunchRange invariants per the Session Model section)
 * Loop playback between two points (LoopRange invariants)
 * Undo system for region and marker edits
-* Region operations on the tape strip: non-destructive trim (drag region edges), take history per region (badge picker), copy/paste between markers (range copy)
+* Region operations on the tape strip: non-destructive trim (drag region edges), takes on the track (take count badge, take lanes in the audio editor), copy/paste between markers (range copy)
 * Bounce / Export dialog with three modes — Master mix, Stems, Render in place — defaulting to offline render at session sample rate / 24-bit WAV (per §9)
 * **Fader automation**: Off/Read/Write/Touch modes per channel, records fader/pan/send/mute gestures during playback, plays them back with visual fader movement
 * Automation mode buttons on each channel strip (Off / R / W / T)
 * Optional automation ribbon display below tracks in the tape strip
 
-**Verification**: record a song with verse/chorus structure, place markers at each section, punch in to fix a part. Trim the tail of one region (drag the right edge inward); confirm the underlying WAV is unchanged. Punch a new take, swap between takes via the region badge. Select the verse marker range, copy, paste at the second-verse marker — both verses play. Set channels to Touch mode, loop the chorus, ride the faders to mix it. Play back and watch the faders move. Bounce the final mix as a master, then bounce stems, and confirm both land in `bounces/` with the expected file layout.
+**Verification**: record a song with verse/chorus structure, place markers at each section, punch in to fix a part. Trim the tail of one region (drag the right edge inward); confirm the underlying WAV is unchanged. Punch a new take, then open the track's take lanes from its take count and promote part of the older take back. Select the verse marker range, copy, paste at the second-verse marker — both verses play. Set channels to Touch mode, loop the chorus, ride the faders to mix it. Play back and watch the faders move. Bounce the final mix as a master, then bounce stems, and confirm both land in `bounces/` with the expected file layout.
 
 ### **Phase 4: MIDI**
 

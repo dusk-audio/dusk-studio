@@ -211,12 +211,17 @@ void fillTrack (Track& t, int k)
         r.label = text ("region");
         r.muted = odd (k);
         r.locked = ! odd (k);
-        TakeRef take;
+        AudioTake take;
+        take.id = (TakeId) (k + 1);
+        take.name = text ("Take").toStdString();
         take.file = juce::File (text ("/audio/take") + ".wav");
+        take.timelineStart = 1000 * k + 2;
         take.sourceOffset = 20 + k;
         take.lengthInSamples = 600 + k;
+        take.numChannels = odd (k) ? 1 : 2;
         take.provenance = provenanceFor (k + 1);
-        r.previousTakes.push_back (take);
+        t.takes = { take };
+        r.takeId = take.id;
         t.regions = { r };
     }
 
@@ -474,6 +479,39 @@ TEST_CASE ("Session track move: every saved field travels with its track", "[ses
         CHECK (restored["tracks"][0]["input_source"] == 9);
         restored["tracks"][0]["input_source"] = before["tracks"][0]["input_source"];
         CHECK (restored == before);
+    }
+}
+
+TEST_CASE ("Session track move: a take audition follows its track", "[session][track-move][takes]")
+{
+    auto session = std::make_unique<Session>();
+    for (int k = 0; k < kN; ++k)
+        fillTrack (session->track (k), k);
+    const auto plan = planBlockMove ({ 17 }, 0);
+
+    SECTION ("the moved track")
+    {
+        session->takeAudition = { 17, 18 };
+        session->permuteTracks (plan);
+        CHECK (session->takeAudition.trackIdx == 0);
+        CHECK (session->takeAudition.takeId == 18);
+        session->permuteTracks (invertTrackMove (plan));
+        CHECK (session->takeAudition.trackIdx == 17);
+        CHECK (session->takeAudition.takeId == 18);
+    }
+    SECTION ("a track the move shifts")
+    {
+        session->takeAudition = { 3, 4 };
+        session->permuteTracks (plan);
+        CHECK (session->takeAudition.trackIdx == 4);
+        CHECK (session->takeAudition.takeId == 4);
+    }
+    SECTION ("a track the move leaves where it is")
+    {
+        session->takeAudition = { 20, 21 };
+        session->permuteTracks (plan);
+        CHECK (session->takeAudition.trackIdx == 20);
+        CHECK (session->takeAudition.takeId == 21);
     }
 }
 

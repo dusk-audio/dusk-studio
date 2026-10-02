@@ -284,6 +284,16 @@ public:
             && content->keyPressed (key);
     }
 
+    // Windows leaves nothing focused too, once a native child takes the keyboard. The
+    // release has to follow the press, or the content reads the next press of that key
+    // as an auto-repeat.
+    bool keyStateChanged (bool isKeyDown) override
+    {
+        auto* content = getContentComponent();
+        return content != nullptr && ! content->hasKeyboardFocus (true)
+            && content->keyStateChanged (isKeyDown);
+    }
+
 private:
     int configuredMinimumWidth = 0;
     int configuredMinimumHeight = 0;

@@ -4,6 +4,8 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <string>
+#include <vector>
 #include "../foundation/MidiBuffer.h"
 #include "../foundation/SpscIndexFifo.h"
 #include "../session/Session.h"
@@ -79,9 +81,10 @@ public:
         return activeStereoCaptureTrackMask.load (std::memory_order_acquire);
     }
 
-    // Message thread. Closes writers, finalizes WAV, appends regions. Waits
-    // for any audio-thread call already inside the recorder to leave first,
-    // however long that takes, so a stop always commits its take.
+    // Message thread. Closes writers, finalizes WAV, adds each pass as a take
+    // on its track and places the newest on the timeline. Waits for any
+    // audio-thread call already inside the recorder to leave first, however
+    // long that takes, so a stop always commits its take.
     void stopRecording (std::int64_t endSample);
 
     // Audio thread. R == nullptr for mono. numSamples == 0 early-returns.
@@ -120,8 +123,13 @@ public:
         return lastSetupFailures;
     }
 
-    // Mid-take errors latched at stopRecording.
-    enum class RecordErrorKind { WavWrite, MidiOverflow, OffsetConsumedTake };
+    // Loop passes one gesture can keep per audio track. The pass bounds are
+    // sized with the writer at startRecording; a pass past the limit is not
+    // written and is reported as LoopPassLimit, and no earlier pass is dropped.
+    static constexpr int kMaxLoopPassesPerGesture = 1024;
+
+    // Mid-take errors latched at stopRecording. LoopPassLimit counts passes.
+    enum class RecordErrorKind { WavWrite, MidiOverflow, OffsetConsumedTake, LoopPassLimit };
     struct RecordError
     {
         int trackIndex;
@@ -133,6 +141,8 @@ public:
         return lastRecordErrors;
     }
     void clearLastRecordErrors() noexcept { lastRecordErrors.clear(); }
+    // The body of the alert that lists them at Stop.
+    static std::string describeRecordErrors (const std::vector<RecordError>& errors);
 
     // BEFORE / AFTER snapshots so AudioEngine can wrap stopRecording
     // in an UndoableAction (Ctrl+Z reverts the take).
@@ -143,6 +153,8 @@ public:
         std::vector<AudioRegion>  audioAfter;
         std::vector<MidiRegion>   midiBefore;
         std::vector<MidiRegion>   midiAfter;
+        std::vector<AudioTake>    takesBefore;
+        std::vector<AudioTake>    takesAfter;
     };
     const std::vector<TrackCommitDiff>& getLastCommitDiff() const noexcept
     {
@@ -185,13 +197,11 @@ private:
 
     Session& session;
 
-    static constexpr int kRetainedLoopPasses = 9; // current + eight prior
     struct PassDescriptor
     {
-        int passOrdinal = 0;
-        std::int64_t timelineStart = 0;
         std::int64_t sourceOffset = 0;
         std::int64_t lengthInSamples = 0;
+        int passOrdinal = 0;
         bool endsPass = false;
         bool writeFailed = false;
     };
@@ -203,8 +213,12 @@ private:
         std::int64_t framesWritten = 0;
         int numChannels = 1;
         std::atomic<std::uint64_t> writeFailures { 0 };
-        std::array<PassDescriptor, kRetainedLoopPasses> loopPasses {};
+        std::array<PassDescriptor, kMaxLoopPassesPerGesture> loopPasses {};
         int loopPassCount = 0;
+        // Audio thread only; stopRecording reads them after audioInFlight
+        // drains, the same handoff that publishes loopPasses.
+        std::uint64_t droppedLoopPasses = 0;
+        int lastDroppedPassOrdinal = 0;
     };
 
     std::array<std::unique_ptr<PerTrackWriter>, Session::kNumTracks> writers;
@@ -285,8 +299,13 @@ private:
 
     LoopCapturePlan loopPlan;
     LoopCaptureSpan currentLoopSpan;
-    std::array<PassDescriptor, kRetainedLoopPasses> loopPasses {};
-    int loopPassCount = 0;
+    // MIDI regions keep at most eight previous takes, so only the newest nine
+    // passes of a gesture can survive as MIDI takes. Older bounds are evicted
+    // here; their events still seed held notes and controllers at the first
+    // kept boundary.
+    static constexpr int kMidiLoopPassWindow = 9;
+    std::array<PassDescriptor, kMidiLoopPassWindow> midiLoopPasses {};
+    int midiLoopPassCount = 0;
     std::int64_t gestureCapturedAtMs = 0;
 
     // Subtracted from committed audio region starts; may be negative. The

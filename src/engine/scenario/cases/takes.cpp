@@ -1,20 +1,31 @@
 #include "../Scenario.h"
 #include "../ScenarioContext.h"
 #include "../../AudioEngine.h"
+#include "../../BounceEngine.h"
+#include "../../PlaybackEngine.h"
 #include "../../audiofile/FileReader.h"
+#include "../../audiofile/FileWriter.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/Session.h"
 #include "../../../session/SessionSerializer.h"
+#include "../../../session/TakeComp.h"
 #include "../../../foundation/Json.h"
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::scenario
@@ -22,10 +33,12 @@ namespace duskstudio::scenario
 namespace
 {
 constexpr int kTrack = 5;
-// RecordManager's cap on a region's take history.
-constexpr int kMaxTakes = 8;
 // The click-mask crossfade a punch leaves against the region it cuts into.
 constexpr std::int64_t kPunchFade = 64;
+
+// The render API takes the framework's file type; named through Session's own
+// getter so this file stays free of the framework header.
+using SessionFile = std::decay_t<decltype (std::declval<const Session&>().getSessionDirectory())>;
 
 AudioRegion regionAt (std::int64_t start, std::int64_t length, std::int64_t offset = 0)
 {
@@ -79,12 +92,51 @@ const AudioRegion* regionStartingAt (ScenarioContext& ctx, std::int64_t start)
     return nullptr;
 }
 
-// A new take whose range fully contains an existing region pushes that region
-// onto the new one's take stack; Undo straight after puts the old one back.
-ScenarioResult fullCoverPushesOntoStack (ScenarioContext& ctx)
+// A take on the track with nothing of it on the timeline.
+TakeId addTake (ScenarioContext& ctx, std::int64_t start, std::int64_t length, std::int64_t offset)
+{
+    auto& track = ctx.session().track (kTrack);
+    AudioTake take;
+    take.id = ctx.session().allocateTakeId();
+    take.name = "Take " + std::to_string (track.takes.size() + 1);
+    take.timelineStart = start;
+    take.lengthInSamples = length;
+    take.sourceOffset = offset;
+    track.takes.push_back (take);
+    return take.id;
+}
+
+// An existing region cut from a take of its own, the way a recording leaves one.
+TakeId seedRegion (ScenarioContext& ctx, std::int64_t start, std::int64_t length, std::int64_t offset)
+{
+    const auto id = addTake (ctx, start, length, offset);
+    auto region = regionAt (start, length, offset);
+    region.takeId = id;
+    regionsOf (ctx).push_back (region);
+    return id;
+}
+
+const AudioTake* takeWithId (ScenarioContext& ctx, TakeId id)
+{
+    for (const auto& take : ctx.session().track (kTrack).takes)
+        if (take.id == id) return &take;
+    return nullptr;
+}
+
+bool takeIsWhole (ScenarioContext& ctx, TakeId id, std::int64_t start, std::int64_t length, std::int64_t offset)
+{
+    const auto* take = takeWithId (ctx, id);
+    return take != nullptr && take->timelineStart == start && take->lengthInSamples == length
+        && take->sourceOffset == offset;
+}
+
+// A recording that covers a whole region takes the region off the timeline and
+// leaves its take on the track; Undo puts the region back and drops the new take.
+ScenarioResult fullCoverKeepsTheCoveredTake (ScenarioContext& ctx)
 {
     auto& regs = regionsOf (ctx);
-    regs.push_back (regionAt (4800, 4800, 1000));
+    auto& takes = ctx.session().track (kTrack).takes;
+    const auto old = seedRegion (ctx, 4800, 4800, 1000);
     auto& undo = ctx.engine().getUndoManager();
     undo.clearUndoHistory();
     armTrack (ctx);
@@ -92,66 +144,39 @@ ScenarioResult fullCoverPushesOntoStack (ScenarioContext& ctx)
     if (! recordSpan (ctx, 2400, 12000))
         return ctx.verdict();
 
-    if (ctx.expect (regs.size() == 1, "the covered region was not absorbed; "
+    TakeId fresh = 0;
+    if (ctx.expect (regs.size() == 1, "the covered region is still on the timeline; "
                                           + std::to_string (regs.size()) + " regions on the track"))
     {
         const auto& live = regs[0];
+        fresh = live.takeId;
         ctx.expect (live.timelineStart <= 4800 && endOf (live) >= 9600,
                     "the new take does not span the region it covered");
-        ctx.expect (live.previousTakes.size() == 1
-                        && live.previousTakes[0].sourceOffset == 1000
-                        && live.previousTakes[0].lengthInSamples == 4800,
-                    "the covered region is not the first take on the stack");
+        ctx.expect (fresh != 0 && fresh != old && takeWithId (ctx, fresh) != nullptr,
+                    "the new region does not name a take of its own");
     }
+    ctx.expect (takes.size() == 2 && takeIsWhole (ctx, old, 4800, 4800, 1000),
+                "the covered region's take did not stay on the track as it was");
 
     ctx.expect (undo.undo(), "undo after recording was refused");
     ctx.expect (regs.size() == 1 && regs[0].timelineStart == 4800 && regs[0].sourceOffset == 1000
-                    && regs[0].lengthInSamples == 4800 && regs[0].previousTakes.empty(),
+                    && regs[0].lengthInSamples == 4800 && regs[0].takeId == old,
                 "undo after recording did not bring the old region back as it was");
-    ctx.expect (undo.redo() && regs.size() == 1 && regs[0].previousTakes.size() == 1,
-                "redo did not bring the take back with its stack");
+    ctx.expect (takes.size() == 1 && takes[0].id == old, "undo after recording left the new take behind");
+    ctx.expect (undo.redo() && regs.size() == 1 && regs[0].takeId == fresh
+                    && takes.size() == 2 && takes[1].id == fresh,
+                "redo did not bring the take back under the same id");
     return ctx.verdict();
 }
 
-// Overdubbing the same span again and again keeps the newest eight takes,
-// newest first, and lets the oldest fall off the bottom.
-ScenarioResult stackKeepsNewestEight (ScenarioContext& ctx)
+// A take over one end of an older region trims that region back to a
+// crossfade; the older take stays whole and the audio still playing from it
+// is exactly what played before.
+ScenarioResult partialOverdubKeepsCoveredTakeWhole (ScenarioContext& ctx)
 {
     auto& regs = regionsOf (ctx);
-    regs.push_back (regionAt (4800, 4800, 1000));
-    armTrack (ctx);
-
-    std::vector<decltype (AudioRegion::file)> liveFiles;
-    for (int take = 0; take <= kMaxTakes; ++take)
-    {
-        if (! recordSpan (ctx, 2400, 12000)) return ctx.verdict();
-        if (! ctx.expect (regs.size() == 1, "take " + std::to_string (take + 1)
-                                                + " left more than one region on the track"))
-            return ctx.verdict();
-        liveFiles.push_back (regs[0].file);
-    }
-
-    const auto& takes = regs[0].previousTakes;
-    if (ctx.expect ((int) takes.size() == kMaxTakes,
-                    "the stack holds " + std::to_string (takes.size()) + " takes, not "
-                        + std::to_string (kMaxTakes)))
-    {
-        for (int i = 0; i < kMaxTakes; ++i)
-            ctx.expect (takes[(std::size_t) i].file == liveFiles[liveFiles.size() - 2 - (std::size_t) i],
-                        "stack position " + std::to_string (i) + " is not the take recorded "
-                            + std::to_string (i + 1) + " before the live one");
-        for (const auto& take : takes)
-            ctx.expect (take.sourceOffset != 1000, "the original region survived past the cap");
-    }
-    return ctx.verdict();
-}
-
-// A take that covers only one end of an older region trims it back to a
-// crossfade instead of absorbing it, and keeps none of the covered audio.
-ScenarioResult edgeOverdubTrimsNeighbour (ScenarioContext& ctx)
-{
-    auto& regs = regionsOf (ctx);
-    regs.push_back (regionAt (4800, 4800));
+    const auto old = seedRegion (ctx, 4800, 4800, 1000);
+    const AudioRegion before = regs[0];
     auto& undo = ctx.engine().getUndoManager();
     undo.clearUndoHistory();
     armTrack (ctx);
@@ -159,19 +184,24 @@ ScenarioResult edgeOverdubTrimsNeighbour (ScenarioContext& ctx)
     if (! recordSpan (ctx, 7200, 12000))
         return ctx.verdict();
 
-    const auto* old = regionStartingAt (ctx, 4800);
+    const auto* kept = regionStartingAt (ctx, 4800);
     const AudioRegion* fresh = nullptr;
     for (const auto& r : regs)
-        if (&r != old) fresh = &r;
+        if (&r != kept) fresh = &r;
 
-    if (ctx.expect (regs.size() == 2 && old != nullptr && fresh != nullptr,
+    if (ctx.expect (regs.size() == 2 && kept != nullptr && fresh != nullptr,
                     "an edge overdub should leave the old region and the new take side by side; "
                         + std::to_string (regs.size()) + " regions on the track"))
     {
-        ctx.expect (endOf (*old) > fresh->timelineStart && endOf (*old) <= fresh->timelineStart + kPunchFade,
+        ctx.expect (endOf (*kept) > fresh->timelineStart && endOf (*kept) <= fresh->timelineStart + kPunchFade,
                     "the old region was not trimmed back to a crossfade under the new take");
-        ctx.expect (fresh->previousTakes.empty(), "the covered end of the old region went onto the stack");
+        ctx.expect (kept->file == before.file && kept->sourceOffset == before.sourceOffset
+                        && kept->takeId == old && kept->fadeInSamples == before.fadeInSamples
+                        && std::abs (kept->gainDb - before.gainDb) < 1.0e-6f,
+                    "the uncovered part of the old region no longer plays the same audio");
+        ctx.expect (fresh->takeId != 0 && fresh->takeId != old, "the new region does not name its own take");
     }
+    ctx.expect (takeIsWhole (ctx, old, 4800, 4800, 1000), "the covered take was trimmed with its region");
 
     ctx.expect (undo.undo() && regs.size() == 1 && regs[0].timelineStart == 4800
                     && regs[0].lengthInSamples == 4800,
@@ -179,12 +209,12 @@ ScenarioResult edgeOverdubTrimsNeighbour (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
-// A punch inside an older region splits it around the new take and keeps the
-// covered stretch on the take stack, so Alt+T brings the old audio back.
-ScenarioResult punchInsideKeepsCoveredSlice (ScenarioContext& ctx)
+// A punch inside an older region splits it around the new take. The two
+// fragments still name the older take, which stays whole; the punch names its own.
+ScenarioResult punchInsideNamesEveryTake (ScenarioContext& ctx)
 {
     auto& regs = regionsOf (ctx);
-    regs.push_back (regionAt (4800, 19200));
+    const auto old = seedRegion (ctx, 4800, 19200, 0);
     armTrack (ctx);
 
     if (! recordSpan (ctx, 9600, 14400))
@@ -210,91 +240,90 @@ ScenarioResult punchInsideKeepsCoveredSlice (ScenarioContext& ctx)
                 "the old region still runs under the new take");
     ctx.expect (right->sourceOffset == right->timelineStart - 4800,
                 "the right-hand fragment does not continue the old audio where it resumes");
-    if (ctx.expect (fresh->previousTakes.size() == 1, "the covered stretch did not go onto the stack"))
-    {
-        const auto& slice = fresh->previousTakes[0];
-        ctx.expect (slice.sourceOffset == fresh->timelineStart - 4800
-                        && slice.lengthInSamples == fresh->lengthInSamples,
-                    "the stacked slice is not the audio the new take covers");
-    }
+    ctx.expect (left->takeId == old && right->takeId == old,
+                "a fragment of the old region lost the take it came from");
+    ctx.expect (fresh->takeId != 0 && fresh->takeId != old && takeWithId (ctx, fresh->takeId) != nullptr,
+                "the punch does not name a take of its own");
+    ctx.expect (takeIsWhole (ctx, old, 4800, 19200, 0), "the punched-into take was cut down");
     return ctx.verdict();
 }
 
-// What TapeStrip does for Alt+T, Alt+Shift+T and the take badge: one cycle
-// step per undo step.
-bool cycleAudio (ScenarioContext& ctx, bool forward)
-{
-    const AudioRegion before = regionsOf (ctx)[0];
-    AudioRegion after = before;
-    if (! cycleTake (after, forward)) return false;
-    ctx.engine().getUndoManager().beginNewTransaction();
-    return ctx.engine().getUndoManager().perform (
-        new RegionEditAction (ctx.session(), ctx.engine(), kTrack, 0, before, after));
-}
-
-bool audioOrder (ScenarioContext& ctx, std::int64_t live, std::int64_t next, std::int64_t last)
-{
-    const auto& r = regionsOf (ctx)[0];
-    return r.sourceOffset == live && r.previousTakes.size() == 2
-        && r.previousTakes[0].sourceOffset == next && r.previousTakes[1].sourceOffset == last;
-}
-
-// Forward brings the next take live and sends the old one to the back;
-// backward undoes that step exactly; three steps come all the way round.
-ScenarioResult cycleStepsThroughTheStack (ScenarioContext& ctx)
+// Deleting a recorded region leaves its take on the track, and so does
+// splitting one: both halves name the take.
+ScenarioResult editsLeaveRecordedTakes (ScenarioContext& ctx)
 {
     auto& regs = regionsOf (ctx);
-    auto region = regionAt (0, 48000, 100);
-    for (const std::int64_t offset : { 200, 300 })
-    {
-        TakeRef take;
-        take.sourceOffset = offset;
-        take.lengthInSamples = 48000;
-        region.previousTakes.push_back (take);
-    }
-    regs.push_back (region);
+    auto& takes = ctx.session().track (kTrack).takes;
     auto& undo = ctx.engine().getUndoManager();
     undo.clearUndoHistory();
+    armTrack (ctx);
 
-    ctx.expect (cycleAudio (ctx, true) && audioOrder (ctx, 200, 300, 100),
-                "Alt+T did not bring the next take live and send the old one to the back");
-    ctx.expect (cycleAudio (ctx, false) && audioOrder (ctx, 100, 200, 300),
-                "Alt+Shift+T did not step back to the take before");
-    ctx.expect (cycleAudio (ctx, false) && audioOrder (ctx, 300, 100, 200),
-                "Alt+Shift+T from the first take did not wrap to the last");
-    ctx.expect (cycleAudio (ctx, true) && cycleAudio (ctx, true) && cycleAudio (ctx, true)
-                    && audioOrder (ctx, 300, 100, 200),
-                "three steps forward did not come back round to the same take");
-    ctx.expect (undo.undo() && audioOrder (ctx, 200, 300, 100), "undo did not take back one cycle step");
+    if (! recordSpan (ctx, 4800, 14400) || ! recordSpan (ctx, 4800, 14400))
+        return ctx.verdict();
+    if (! ctx.expect (regs.size() == 1 && takes.size() == 2, "two takes over one span did not leave one region and two takes"))
+        return ctx.verdict();
+    const auto taken = takes;
+    const auto newest = regs[0].takeId;
+    ctx.expect (newest == taken[1].id, "the region does not name the newest take");
 
-    regs.push_back (regionAt (96000, 48000));
-    AudioRegion single = regs[1];
-    ctx.expect (! cycleTake (single, true), "a region with no history reported a take to cycle to");
-
-    // MIDI regions cycle the same way, carrying their notes and length.
-    auto& track = ctx.session().track (kTrack);
-    MidiRegion midi;
-    midi.lengthInTicks = 480;
-    for (const std::int64_t ticks : { 960, 1440 })
-    {
-        MidiTakeRef take;
-        take.lengthInTicks = ticks;
-        midi.previousTakes.push_back (take);
-    }
-    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { midi }));
-    const MidiRegion before = track.midiRegions.current()[0];
-    MidiRegion after = before;
-    ctx.expect (cycleTake (after, true), "a MIDI region with history had no take to cycle to");
+    const auto mid = regs[0].timelineStart + regs[0].lengthInSamples / 2;
     undo.beginNewTransaction();
-    ctx.expect (undo.perform (new MidiRegionEditAction (ctx.session(), ctx.engine(), kTrack, 0, before, after)),
-                "the MIDI cycle step was refused");
-    const auto& cycled = track.midiRegions.current()[0];
-    ctx.expect (cycled.lengthInTicks == 960 && cycled.previousTakes.size() == 2
-                    && cycled.previousTakes[0].lengthInTicks == 1440
-                    && cycled.previousTakes[1].lengthInTicks == 480,
-                "the MIDI take stack did not step forward");
-    ctx.expect (undo.undo() && track.midiRegions.current()[0].lengthInTicks == 480,
-                "undo did not restore the MIDI take");
+    if (ctx.expect (undo.perform (new SplitRegionAction (ctx.session(), ctx.engine(), kTrack, 0, mid)),
+                    "the split was refused")
+        && ctx.expect (regs.size() == 2, "the split did not leave two regions"))
+    {
+        ctx.expect (regs[0].takeId == newest && regs[1].takeId == newest,
+                    "the split halves do not both name the take they came from");
+    }
+    ctx.expect (takes.size() == 2, "the split changed the track's takes");
+
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new DeleteRegionAction (ctx.session(), ctx.engine(), kTrack, 1)),
+                "deleting a half was refused");
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new DeleteRegionAction (ctx.session(), ctx.engine(), kTrack, 0)),
+                "deleting the other half was refused");
+    ctx.expect (regs.empty(), "a region is still on the track");
+    ctx.expect (takes.size() == 2 && takes[0].id == taken[0].id && takes[1].id == taken[1].id
+                    && takeIsWhole (ctx, taken[0].id, taken[0].timelineStart, taken[0].lengthInSamples, taken[0].sourceOffset)
+                    && takeIsWhole (ctx, taken[1].id, taken[1].timelineStart, taken[1].lengthInSamples, taken[1].sourceOffset),
+                "deleting the recorded region removed or changed a take");
+    ctx.expect (undo.undo() && regs.size() == 1 && regs[0].takeId == newest,
+                "undo did not bring the deleted half back naming its take");
+    return ctx.verdict();
+}
+
+// Undoing a recording removes the take it added and only that one; redo
+// brings it back under the same id.
+ScenarioResult undoRecordRemovesItsTake (ScenarioContext& ctx)
+{
+    auto& regs = regionsOf (ctx);
+    auto& takes = ctx.session().track (kTrack).takes;
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    armTrack (ctx);
+
+    if (! recordSpan (ctx, 4800, 9600))
+        return ctx.verdict();
+    if (! ctx.expect (takes.size() == 1 && regs.size() == 1, "the first recording did not add one take"))
+        return ctx.verdict();
+    const auto first = takes[0];
+
+    if (! recordSpan (ctx, 7200, 12000))
+        return ctx.verdict();
+    if (! ctx.expect (takes.size() == 2, "the second recording did not add a take"))
+        return ctx.verdict();
+    const auto second = takes[1];
+    ctx.expect (second.id != first.id && second.name == "Take 2", "the second take has no id or name of its own");
+
+    ctx.expect (undo.undo(), "undo after recording was refused");
+    ctx.expect (takes.size() == 1 && takes[0].id == first.id, "undo did not remove exactly the take it recorded");
+    ctx.expect (regs.size() == 1 && regs[0].takeId == first.id && regs[0].lengthInSamples == first.lengthInSamples,
+                "undo did not put the first take's region back whole");
+    ctx.expect (undo.redo() && takes.size() == 2 && takes[1].id == second.id && takes[1].file == second.file,
+                "redo did not bring the take back under the same id");
+    ctx.expect (undo.undo() && undo.undo() && takes.empty() && regs.empty(),
+                "undoing both recordings left a take behind");
     return ctx.verdict();
 }
 
@@ -423,6 +452,1434 @@ ScenarioResult midiRecordingLivesInJson (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+using Span = std::pair<std::int64_t, std::int64_t>;
+
+std::string spansText (const std::vector<Span>& spans)
+{
+    std::string text;
+    for (const auto& span : spans)
+        text += "[" + std::to_string (span.first) + ", " + std::to_string (span.second) + ") ";
+    return text.empty() ? "none" : text;
+}
+
+// Promoting part of a take puts exactly that span of it on the timeline and
+// carves the region under it; undo and redo swap the whole layout back and forth.
+ScenarioResult promoteRangeReplacesThatSpan (ScenarioContext& ctx)
+{
+    auto& regs = regionsOf (ctx);
+    auto& track = ctx.session().track (kTrack);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+
+    const auto first = seedRegion (ctx, 0, 48000, 0);
+    const auto second = addTake (ctx, 0, 48000, 500);
+
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new PromoteTakeRangeAction (ctx.session(), ctx.engine(), kTrack,
+                                                               second, 12000, 24000)),
+                      "promoting a range of the second take was refused"))
+        return ctx.verdict();
+
+    const auto* promoted = regionStartingAt (ctx, 12000);
+    if (ctx.expect (promoted != nullptr, "no region starts where the promoted range does"))
+        ctx.expect (promoted->takeId == second && promoted->lengthInSamples == 12000
+                        && promoted->sourceOffset == 500 + 12000,
+                    "the promoted region is not the second take's audio over the range");
+
+    const auto secondSpans = takeCoverage (track, second);
+    const auto firstSpans = takeCoverage (track, first);
+    ctx.note ("first take plays " + spansText (firstSpans) + "; second plays " + spansText (secondSpans));
+    ctx.expect (secondSpans == std::vector<Span> { { 12000, 24000 } },
+                "the second take does not play exactly the promoted range");
+    ctx.expect (firstSpans == std::vector<Span> { { 0, 12000 + kPunchFade }, { 24000 - kPunchFade, 48000 } },
+                "the first take does not play everything outside the range up to the seams");
+    ctx.expect (track.takes.size() == 2 && takeIsWhole (ctx, first, 0, 48000, 0)
+                    && takeIsWhole (ctx, second, 0, 48000, 500),
+                "promoting a range changed a take");
+
+    ctx.expect (undo.undo() && regs.size() == 1 && regs[0].takeId == first
+                    && regs[0].timelineStart == 0 && regs[0].lengthInSamples == 48000,
+                "undo did not put the first take's region back whole");
+    ctx.expect (takeCoverage (track, second).empty(), "undo left the second take on the timeline");
+    ctx.expect (undo.redo() && takeCoverage (track, second) == secondSpans
+                    && takeCoverage (track, first) == firstSpans,
+                "redo did not bring the promoted layout back");
+
+    auto& frozen = track.frozen;
+    ctx.keep (frozen);
+    frozen.store (true);
+    const auto regionCount = regs.size();
+    undo.beginNewTransaction();
+    ctx.expect (! undo.perform (new PromoteTakeRangeAction (ctx.session(), ctx.engine(), kTrack,
+                                                           first, 30000, 36000)),
+                "a promote on a frozen track was carried out");
+    ctx.expect (regs.size() == regionCount, "a refused promote changed the regions");
+    frozen.store (false);
+
+    undo.beginNewTransaction();
+    ctx.expect (! undo.perform (new PromoteTakeRangeAction (ctx.session(), ctx.engine(), kTrack,
+                                                           second, 60000, 70000)),
+                "a promote outside the take was carried out");
+
+    for (auto& r : regs)
+        if (r.timelineStart == 0) r.locked = true;
+    undo.beginNewTransaction();
+    ctx.expect (! undo.perform (new PromoteTakeRangeAction (ctx.session(), ctx.engine(), kTrack,
+                                                           second, 6000, 9000)),
+                "a promote that would carve a locked region was carried out");
+    ctx.expect (regs.size() == regionCount && takeCoverage (track, first) == firstSpans,
+                "a promote refused over a locked region changed the regions");
+    return ctx.verdict();
+}
+
+// A region that names no take (an imported file, a reversed region, a 0.14
+// recording) becomes a take of its own before a promote or a recording cuts
+// into it, so no part of its audio is left out of every take. Undo removes that
+// take again and ends an audition of it; redo brings it back under its id.
+ScenarioResult carveAdoptsARegionNamingNoTake (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (kTrack);
+    auto& regs = track.regions;
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+
+    auto plain = regionAt (0, 48000, 200);
+    plain.file = SessionFile ((ctx.tempDir() / "imported.wav").u8string().c_str());
+    regs.push_back (plain);
+    const auto promoted = addTake (ctx, 0, 48000, 500);
+
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new PromoteTakeRangeAction (session, engine, kTrack, promoted, 12000, 24000)),
+                      "promoting over a region naming no take was refused"))
+        return ctx.verdict();
+    if (! ctx.expect (track.takes.size() == 2 && track.takes[1].id == promoted,
+                      "the region did not become a take ahead of the promoted one; "
+                          + std::to_string (track.takes.size()) + " takes on the track"))
+        return ctx.verdict();
+    const auto adopted = track.takes[0];
+    ctx.expect (adopted.id != 0 && adopted.file == plain.file && adopted.name == "Take 2",
+                "the adopted take is not the region's file under a new take name");
+    ctx.expect (takeIsWhole (ctx, adopted.id, 0, 48000, 200), "the adopted take is not the region as it stood");
+    const std::vector<Span> adoptedSpans { { 0, 12000 + kPunchFade }, { 24000 - kPunchFade, 48000 } };
+    ctx.note ("the adopted take plays " + spansText (takeCoverage (track, adopted.id)));
+    ctx.expect (takeCoverage (track, adopted.id) == adoptedSpans,
+                "the carved pieces of the region do not name the adopted take");
+
+    engine.setTakeAudition (kTrack, adopted.id);
+    ctx.expect (undo.undo(), "undo of the promote was refused");
+    ctx.expect (track.takes.size() == 1 && track.takes[0].id == promoted, "undo left the adopted take on the track");
+    ctx.expect (regs.size() == 1 && regs[0].takeId == 0 && regs[0].file == plain.file
+                    && regs[0].timelineStart == 0 && regs[0].lengthInSamples == 48000,
+                "undo did not put the region back whole, naming no take");
+    ctx.expect (session.takeAudition.trackIdx == -1 && session.takeAudition.takeId == 0,
+                "undo left the audition on the adopted take it removed");
+    ctx.expect (undo.redo() && track.takes.size() == 2 && track.takes[0].id == adopted.id
+                    && takeCoverage (track, adopted.id) == adoptedSpans,
+                "redo did not bring the adopted take back under its id");
+    ctx.expect (session.takeAudition.takeId == 0, "redo brought the audition back");
+
+    undo.clearUndoHistory();
+    regs.clear();
+    track.takes.clear();
+    auto older = regionAt (4800, 4800, 1000);
+    older.file = SessionFile ((ctx.tempDir() / "older.wav").u8string().c_str());
+    regs.push_back (older);
+    armTrack (ctx);
+    if (! recordSpan (ctx, 2400, 12000)) return ctx.verdict();
+    if (! ctx.expect (track.takes.size() == 2, "recording over a region naming no take did not keep it as a take; "
+                                                   + std::to_string (track.takes.size()) + " takes on the track"))
+        return ctx.verdict();
+    const auto kept = track.takes[0];
+    ctx.expect (kept.file == older.file && takeIsWhole (ctx, kept.id, 4800, 4800, 1000) && kept.name == "Take 1",
+                "the covered region's audio is not the first take, whole");
+    ctx.expect (track.takes[1].name == "Take 2" && regs.size() == 1 && regs[0].takeId == track.takes[1].id,
+                "the recording is not the second take on the timeline");
+    ctx.expect (undo.undo() && track.takes.empty() && regs.size() == 1 && regs[0].takeId == 0
+                    && regs[0].file == older.file,
+                "undo of the recording did not remove both takes and put the region back naming none");
+    ctx.expect (undo.redo() && track.takes.size() == 2 && track.takes[0].id == kept.id,
+                "redo did not bring the kept take back under its id");
+    return ctx.verdict();
+}
+
+// Deleting a take takes every region cut from it off the timeline; undo puts the
+// take back at its place in recording order and the regions back as they were.
+ScenarioResult deleteTakeRemovesItsRegions (ScenarioContext& ctx)
+{
+    auto& regs = regionsOf (ctx);
+    auto& track = ctx.session().track (kTrack);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+
+    const auto first = seedRegion (ctx, 0, 24000, 0);
+    const auto second = addTake (ctx, 0, 48000, 0);
+    const auto third = seedRegion (ctx, 30000, 9600, 0);
+    promoteTakeRange (ctx.session(), track, *findTake (track, second), 6000, 12000);
+    promoteTakeRange (ctx.session(), track, *findTake (track, second), 26000, 28000);
+    const auto takesBefore = track.takes;
+    const auto regionsBefore = regs;
+    if (! ctx.expect (takeCoverage (track, second).size() == 2, "the setup did not put the second take on the timeline twice"))
+        return ctx.verdict();
+
+    const auto firstOfSecond = std::find_if (regs.begin(), regs.end(),
+                                             [second] (const AudioRegion& r) { return r.takeId == second; });
+    firstOfSecond->locked = true;
+    undo.beginNewTransaction();
+    ctx.expect (! undo.perform (new DeleteTakeAction (ctx.session(), ctx.engine(), kTrack, second)),
+                "deleting a take with a locked region on the timeline was carried out");
+    ctx.expect (findTake (track, second) != nullptr && regs.size() == regionsBefore.size(),
+                "a refused take delete changed the track");
+    firstOfSecond->locked = false;
+
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new DeleteTakeAction (ctx.session(), ctx.engine(), kTrack, second)),
+                      "deleting the second take was refused"))
+        return ctx.verdict();
+    ctx.expect (findTake (track, second) == nullptr && track.takes.size() == 2
+                    && track.takes[0].id == first && track.takes[1].id == third,
+                "the delete did not remove exactly the second take");
+    ctx.expect (std::none_of (regs.begin(), regs.end(), [second] (const AudioRegion& r) { return r.takeId == second; }),
+                "a region cut from the deleted take is still on the timeline");
+    ctx.expect (regs.size() == regionsBefore.size() - 2, "the delete removed regions of other takes");
+
+    ctx.expect (undo.undo(), "undo of the take delete was refused");
+    bool sameTakes = track.takes.size() == takesBefore.size();
+    for (std::size_t i = 0; sameTakes && i < takesBefore.size(); ++i)
+        sameTakes = track.takes[i].id == takesBefore[i].id && track.takes[i].name == takesBefore[i].name
+                 && track.takes[i].timelineStart == takesBefore[i].timelineStart
+                 && track.takes[i].lengthInSamples == takesBefore[i].lengthInSamples;
+    ctx.expect (sameTakes, "undo did not put the take back with its id at its place in recording order");
+    bool sameRegions = regs.size() == regionsBefore.size();
+    for (std::size_t i = 0; sameRegions && i < regionsBefore.size(); ++i)
+        sameRegions = regs[i].takeId == regionsBefore[i].takeId
+                   && regs[i].timelineStart == regionsBefore[i].timelineStart
+                   && regs[i].lengthInSamples == regionsBefore[i].lengthInSamples
+                   && regs[i].sourceOffset == regionsBefore[i].sourceOffset;
+    ctx.expect (sameRegions, "undo did not put the take's regions back as they were");
+
+    ctx.expect (undo.redo() && findTake (track, second) == nullptr && track.takes.size() == 2,
+                "redo did not delete the take again");
+    undo.beginNewTransaction();
+    ctx.expect (! undo.perform (new DeleteTakeAction (ctx.session(), ctx.engine(), kTrack, second)),
+                "deleting a take that is already gone was carried out");
+    return ctx.verdict();
+}
+
+// Deleting the auditioned take, or cloning another track over its track, ends
+// the audition; undo brings the take back without auditioning it again.
+// Undoing the recording that added the auditioned take ends it too, and redo
+// brings the take back without the audition.
+ScenarioResult auditionEndsWhenItsTakeGoes (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    const auto first = seedRegion (ctx, 0, 24000, 0);
+    const auto second = addTake (ctx, 0, 24000, 0);
+    auto auditioning = [&session] (TakeId id)
+    {
+        return session.takeAudition.trackIdx == kTrack && session.takeAudition.takeId == id;
+    };
+    auto nothingAuditioned = [&session]
+    {
+        return session.takeAudition.trackIdx == -1 && session.takeAudition.takeId == 0;
+    };
+
+    engine.setTakeAudition (kTrack, first);
+    engine.setTakeAudition (kTrack, second + 1000);
+    ctx.expect (nothingAuditioned(), "an audition of a take the track lacks was kept");
+
+    engine.setTakeAudition (kTrack, first);
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new DeleteTakeAction (session, engine, kTrack, second)),
+                "deleting a take that is not auditioned was refused");
+    ctx.expect (auditioning (first), "deleting another take ended the audition");
+    ctx.expect (undo.undo() && findTake (track, second) != nullptr, "undo did not bring the take back");
+
+    engine.setTakeAudition (kTrack, second);
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new DeleteTakeAction (session, engine, kTrack, second)),
+                "deleting the auditioned take was refused");
+    ctx.expect (nothingAuditioned(), "deleting the auditioned take left the audition set");
+    ctx.expect (undo.undo() && findTake (track, second) != nullptr,
+                "undo did not bring the auditioned take back");
+    ctx.expect (nothingAuditioned(), "undo brought the audition back with the take");
+
+    engine.setTakeAudition (kTrack, second);
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new CloneTrackAction (session, engine, kTrack + 1, kTrack)),
+                "cloning a track over the auditioned track was refused");
+    ctx.expect (nothingAuditioned(), "a clone over the auditioned track left the audition set");
+    ctx.expect (undo.undo() && findTake (track, second) != nullptr && nothingAuditioned(),
+                "undoing the clone brought the audition back");
+
+    auto& source = session.track (kTrack + 1);
+    AudioTake sourceTake;
+    sourceTake.id = session.allocateTakeId();
+    sourceTake.name = "Take 1";
+    sourceTake.lengthInSamples = 24000;
+    source.takes.push_back (sourceTake);
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new CloneTrackAction (session, engine, kTrack + 1, kTrack)),
+                "cloning a track with a take was refused");
+    const auto cloned = track.takes.size() == 1 ? track.takes[0].id : TakeId { 0 };
+    engine.setTakeAudition (kTrack, cloned);
+    ctx.expect (cloned != 0 && auditioning (cloned), "the cloned take could not be auditioned");
+    ctx.expect (undo.undo() && findTake (track, cloned) == nullptr, "undoing the clone left the cloned take");
+    ctx.expect (nothingAuditioned(), "undoing the clone left the audition on the cloned take it removed");
+    source.takes.clear();
+
+    armTrack (ctx);
+    if (! recordSpan (ctx, 30000, 36000)) return ctx.verdict();
+    if (! ctx.expect (! track.takes.empty(), "the recording left no take")) return ctx.verdict();
+    const auto recorded = track.takes.back().id;
+    engine.setTakeAudition (kTrack, recorded);
+    ctx.expect (auditioning (recorded), "the recorded take could not be auditioned");
+    ctx.expect (undo.undo() && findTake (track, recorded) == nullptr, "undo did not remove the recorded take");
+    ctx.expect (nothingAuditioned(), "undoing the recording left the audition on its take");
+    ctx.expect (undo.redo() && findTake (track, recorded) != nullptr, "redo did not bring the recorded take back");
+    ctx.expect (nothingAuditioned(), "redo brought the audition back with the recorded take");
+    return ctx.verdict();
+}
+
+std::vector<TakeId> takeIds (const Track& track)
+{
+    std::vector<TakeId> ids;
+    for (const auto& take : track.takes)
+        ids.push_back (take.id);
+    return ids;
+}
+
+// A take can join the track with no undo step: a recording stopped by a stage
+// switch or a lost device. Undoing an earlier promote, recording or clone swaps
+// only the takes that step changed, and redo puts them back where they were.
+ScenarioResult undoKeepsTakesAddedOutsideHistory (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (kTrack);
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+
+    auto plain = regionAt (0, 48000, 200);
+    plain.file = SessionFile ((ctx.tempDir() / "imported.wav").u8string().c_str());
+    track.regions.push_back (plain);
+    const auto promoted = addTake (ctx, 0, 48000, 500);
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new PromoteTakeRangeAction (session, engine, kTrack, promoted, 12000, 24000)),
+                      "the promote was refused"))
+        return ctx.verdict();
+    if (! ctx.expect (track.takes.size() == 2, "the promote did not make the region a take"))
+        return ctx.verdict();
+    const auto adopted = track.takes[0].id;
+    const auto outside = addTake (ctx, 0, 48000, 0);
+
+    ctx.expect (undo.undo() && takeIds (track) == std::vector<TakeId> { promoted, outside },
+                "undoing the promote touched a take added after it with no undo step");
+    ctx.expect (undo.redo() && takeIds (track) == std::vector<TakeId> { adopted, promoted, outside },
+                "redoing the promote did not put its take back where it was");
+
+    undo.clearUndoHistory();
+    track.regions.clear();
+    track.takes.clear();
+    armTrack (ctx);
+    if (! recordSpan (ctx, 4800, 9600)) return ctx.verdict();
+    if (! ctx.expect (track.takes.size() == 1, "the recording did not add one take"))
+        return ctx.verdict();
+    const auto recorded = track.takes[0].id;
+    const auto later = addTake (ctx, 0, 48000, 0);
+    ctx.expect (undo.undo() && takeIds (track) == std::vector<TakeId> { later },
+                "undoing the recording touched a take added after it with no undo step");
+    ctx.expect (undo.redo() && takeIds (track) == std::vector<TakeId> { recorded, later },
+                "redoing the recording did not put its take back where it was");
+
+    undo.clearUndoHistory();
+    track.regions.clear();
+    track.takes.clear();
+    const auto replaced = addTake (ctx, 0, 48000, 0);
+    auto& source = session.track (kTrack + 1);
+    AudioTake sourceTake;
+    sourceTake.id = session.allocateTakeId();
+    sourceTake.name = "Take 1";
+    sourceTake.lengthInSamples = 24000;
+    source.takes.push_back (sourceTake);
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new CloneTrackAction (session, engine, kTrack + 1, kTrack))
+                          && track.takes.size() == 1 && track.takes[0].id != replaced,
+                      "the clone did not replace the destination's take with a copy"))
+        return ctx.verdict();
+    const auto copy = track.takes[0].id;
+    const auto afterClone = addTake (ctx, 0, 48000, 0);
+    ctx.expect (undo.undo() && takeIds (track) == std::vector<TakeId> { replaced, afterClone },
+                "undoing the clone touched a take added after it with no undo step");
+    ctx.expect (undo.redo() && takeIds (track) == std::vector<TakeId> { copy, afterClone },
+                "redoing the clone touched a take added after it with no undo step");
+    source.takes.clear();
+    return ctx.verdict();
+}
+
+// A renamed take keeps its new name through save and load, and an undone
+// rename saves the old one.
+ScenarioResult renameTakeRoundTrips (ScenarioContext& ctx)
+{
+    auto& track = ctx.session().track (kTrack);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    armTrack (ctx);
+    if (! recordSpan (ctx, 4800, 9600)) return ctx.verdict();
+    if (! ctx.expect (track.takes.size() == 1, "the recording did not add a take")) return ctx.verdict();
+    const auto id = track.takes[0].id;
+    const auto original = track.takes[0].name;
+
+    const std::string renamed = "Lead vocal \xE2\x80\x93 keeper";
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new RenameTakeAction (ctx.session(), kTrack, id, renamed)),
+                "the rename was refused");
+    ctx.expect (track.takes[0].name == renamed, "the rename did not change the take's name");
+
+    auto nameAfterReload = [&ctx, id] (const char* file) -> std::string
+    {
+        const auto path = ctx.sessionDir() / file;
+        if (! ctx.expect (SessionSerializer::save (ctx.session(), path), "could not save the session"))
+            return {};
+        auto loaded = std::make_unique<Session>();
+        if (! ctx.expect (SessionSerializer::load (*loaded, path), "could not reload the session"))
+            return {};
+        const auto* take = findTake (loaded->track (kTrack), id);
+        return take != nullptr ? take->name : std::string ("<no take with that id>");
+    };
+
+    const auto reloaded = nameAfterReload ("renamed.json");
+    ctx.note ("reloaded name: " + reloaded);
+    ctx.expect (reloaded == renamed, "the renamed take did not keep its name through save and load");
+
+    ctx.expect (undo.undo() && track.takes[0].name == original, "undo did not restore the take's name");
+    ctx.expect (nameAfterReload ("undone.json") == original, "the undone rename did not save the old name");
+
+    undo.beginNewTransaction();
+    ctx.expect (! undo.perform (new RenameTakeAction (ctx.session(), kTrack, id + 1000, "nobody")),
+                "renaming a take the track lacks was carried out");
+    return ctx.verdict();
+}
+
+bool writeMono (const std::filesystem::path& path, const std::vector<float>& samples)
+{
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = ScenarioContext::kSampleRate;
+    spec.numChannels = 1;
+    spec.bitsPerSample = 32;
+    auto writer = dusk::audio::FileWriter::create (path, spec);
+    const float* channels[] = { samples.data() };
+    return writer != nullptr && writer->write (channels, 1, (std::int64_t) samples.size())
+        && writer->flush();
+}
+
+float peakOf (const std::vector<float>& samples)
+{
+    float peak = 0.0f;
+    for (const float s : samples) peak = std::max (peak, std::abs (s));
+    return peak;
+}
+
+struct AuditionRender
+{
+    std::unique_ptr<BounceEngine> bounce;
+    std::atomic<bool> finished { false };
+    std::atomic<bool> ok { false };
+    std::string error;
+    std::filesystem::path printed;
+};
+
+enum class AuditionLeg { RealtimeMix, Mix, Stems, Freeze };
+
+std::string legName (AuditionLeg leg)
+{
+    switch (leg)
+    {
+        case AuditionLeg::RealtimeMix: return "the realtime mixdown";
+        case AuditionLeg::Mix:         return "the mixdown";
+        case AuditionLeg::Stems:       return "the stems bounce";
+        case AuditionLeg::Freeze:      return "the freeze";
+    }
+    return {};
+}
+
+std::filesystem::path pathOf (const SessionFile& file)
+{
+    return std::filesystem::u8path (file.getFullPathName().toStdString());
+}
+
+// The track plays a tone from its region and has a silent take over the same
+// span. Auditioning the silent take silences the track's playback, and a
+// realtime mixdown, an offline mixdown, a stems bounce and a freeze taken during
+// the audition all still print the tone. The realtime pass is clocked by
+// pumped blocks, as a device would clock it.
+std::optional<ScenarioResult> auditionNeverReachesBounce (ScenarioContext& ctx)
+{
+    static constexpr int kTrackIdx = 0;
+    static constexpr std::int64_t kStart = 12000;
+    static constexpr int kLength = 24000;
+    constexpr int kProbe = ScenarioContext::kBlockSize;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (kTrackIdx);
+
+    std::vector<float> tone ((std::size_t) kLength);
+    for (int i = 0; i < kLength; ++i)
+        tone[(std::size_t) i] = 0.25f * std::sin (2.0f * 3.14159265f * 440.0f * (float) i
+                                                  / (float) ScenarioContext::kSampleRate);
+    const auto toneFile = ctx.tempDir() / "tone.wav";
+    const auto silentFile = ctx.tempDir() / "silent.wav";
+    if (! writeMono (toneFile, tone) || ! writeMono (silentFile, std::vector<float> ((std::size_t) kLength, 0.0f)))
+        return ScenarioResult::fail ("could not write the source takes");
+
+    AudioTake toneTake;
+    toneTake.id = session.allocateTakeId();
+    toneTake.file = SessionFile (toneFile.u8string().c_str());
+    toneTake.timelineStart = kStart;
+    toneTake.lengthInSamples = kLength;
+    AudioTake silentTake = toneTake;
+    silentTake.id = session.allocateTakeId();
+    silentTake.file = SessionFile (silentFile.u8string().c_str());
+    track.takes = { toneTake, silentTake };
+    track.regions.push_back (*regionFromTake (toneTake, kStart, kStart + kLength));
+
+    // Loop over the region so preparePlayback fills the loop-start cache on
+    // this thread and a read right after it sees real samples.
+    auto& transport = engine.getTransport();
+    transport.setPlayhead (kStart);
+    transport.setLoopRange (kStart, kStart + kLength);
+    transport.setLoopEnabled (true);
+    std::vector<float> probe ((std::size_t) kProbe);
+    auto trackPeak = [&]
+    {
+        engine.getPlaybackEngine().readForTrack (kTrackIdx, kStart + 1000, probe.data(), nullptr, kProbe,
+                                                 kStart, kStart + kLength);
+        return peakOf (probe);
+    };
+
+    engine.clearTakeAudition();
+    const float regionPeak = trackPeak();
+    engine.setTakeAudition (kTrackIdx, silentTake.id);
+    const float auditionPeak = trackPeak();
+    ctx.note ("track peak from the region " + std::to_string (regionPeak) + ", auditioning the silent take "
+              + std::to_string (auditionPeak));
+    if (! ctx.expect (regionPeak > 0.1f, "the region does not play before the audition")
+        || ! ctx.expect (auditionPeak < 1.0e-6f, "the audition did not replace the region with the silent take"))
+        return ctx.verdict();
+    transport.setLoopEnabled (false);
+    transport.setLoopRange (0, 0);
+    transport.setPlayhead (0);
+
+    const std::vector<AuditionLeg> legs { AuditionLeg::RealtimeMix, AuditionLeg::Mix,
+                                          AuditionLeg::Stems, AuditionLeg::Freeze };
+    auto next = std::make_shared<std::function<void (std::size_t)>>();
+    std::weak_ptr<std::function<void (std::size_t)>> weakNext = next;
+    *next = [&ctx, &engine, &session, legs, weakNext, silent = silentTake.id] (std::size_t index)
+    {
+        if (index >= legs.size())
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        const auto leg = legs[index];
+        const auto label = legName (leg);
+        auto run = std::make_shared<AuditionRender>();
+        run->bounce = std::make_unique<BounceEngine> (engine, session);
+        ctx.cleanup ([run] { run->bounce.reset(); });
+        run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+        {
+            raw->error = std::move (error);
+            raw->ok.store (ok);
+            raw->finished.store (true, std::memory_order_release);
+        };
+
+        const auto out = ctx.sessionDir() / ("audition-" + std::to_string (index) + ".wav");
+        const SessionFile outFile (out.u8string().c_str());
+        const bool realtime = leg == AuditionLeg::RealtimeMix;
+        bool started = false;
+        switch (leg)
+        {
+            case AuditionLeg::RealtimeMix:
+            case AuditionLeg::Mix:
+                run->printed = out;
+                started = run->bounce->start (outFile, ScenarioContext::kSampleRate, 1024, 1.0,
+                                              BounceEngine::Mode::MasterMix, BounceEngine::Format::Wav,
+                                              320, 24, realtime);
+                break;
+            case AuditionLeg::Stems:
+                run->printed = pathOf (BounceEngine::stemOutputFile (
+                    outFile, kTrackIdx, session.track (kTrackIdx).name.toStdString()));
+                started = run->bounce->start (outFile, ScenarioContext::kSampleRate, 1024, 1.0,
+                                              BounceEngine::Mode::Stems, BounceEngine::Format::Wav, 320, 24);
+                break;
+            case AuditionLeg::Freeze:
+            {
+                SessionFile frozen;
+                std::int64_t length = 0;
+                if (! ctx.expect (engine.freezePrepare (kTrackIdx, frozen, length),
+                                  "freeze refused: " + engine.getLastFreezeError().toStdString()))
+                {
+                    ctx.complete (ctx.verdict());
+                    return;
+                }
+                run->printed = pathOf (frozen);
+                started = run->bounce->startFreeze (kTrackIdx, frozen, length, ScenarioContext::kSampleRate);
+                break;
+            }
+        }
+        if (! ctx.expect (started, label + " refused to start: " + run->bounce->getLastError()))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+
+        auto self = weakNext.lock();
+        ctx.waitUntil ([&ctx, run, realtime]
+                       {
+                           if (realtime) ctx.pump (8);
+                           return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering();
+                       },
+                       90000,
+                       [&ctx, &engine, run, label, realtime, silent, index, self]
+                       {
+                           auto reader = dusk::audio::FileReader::open (run->printed);
+                           if (ctx.expect (run->ok.load(), label + " failed: " + run->error)
+                               && ctx.expect (reader != nullptr, label + " wrote no readable file"))
+                           {
+                               std::vector<float> left ((std::size_t) kLength - 512);
+                               float* dest[] = { left.data() };
+                               reader->read (dest, 1, kStart + 256, (std::int64_t) left.size());
+                               const float printed = peakOf (left);
+                               ctx.note (label + " peak over the region " + std::to_string (printed));
+                               ctx.expect (printed > 0.05f, label + " printed the auditioned silent take, not the region");
+                           }
+                           const auto& audition = ctx.session().takeAudition;
+                           ctx.expect (audition.trackIdx == kTrackIdx && audition.takeId == silent,
+                                       label + " changed the audition the user had set");
+                           // An offline render hands the engine back to the device,
+                           // whose restart re-prepares it; this world has no device.
+                           if (! realtime)
+                               engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+                           (*self) (index + 1);
+                       },
+                       label + " never finished");
+    };
+    (*next) (0);
+    return std::nullopt;
+}
+
+// A take on the track whose file really exists, a quiet ramp, so an edit that
+// renders can read it.
+std::optional<AudioTake> writtenTake (ScenarioContext& ctx, const std::string& name, std::int64_t start, int length)
+{
+    std::vector<float> ramp ((std::size_t) length);
+    for (int i = 0; i < length; ++i)
+        ramp[(std::size_t) i] = 0.5f * (float) i / (float) length;
+    const auto path = ctx.tempDir() / (name + ".wav");
+    if (! writeMono (path, ramp)) return std::nullopt;
+    AudioTake take;
+    take.id = ctx.session().allocateTakeId();
+    take.name = name;
+    take.file = SessionFile (path.u8string().c_str());
+    take.timelineStart = start;
+    take.lengthInSamples = length;
+    ctx.session().track (kTrack).takes.push_back (take);
+    return take;
+}
+
+// Reverse renders the region into a file of its own, which is no take's: the
+// result names no take, the take's lane stops showing it, and deleting the take
+// leaves it. Undo brings the region back naming its take.
+ScenarioResult reverseNamesNoTake (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
+    auto& regs = track.regions;
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto take = writtenTake (ctx, "reverse-take", 4800, 9600);
+    if (! take) return ScenarioResult::fail ("could not write the take");
+    regs.push_back (*regionFromTake (*take, 4800, 14400));
+
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new ReverseRegionAction (session, ctx.engine(), kTrack, 0)), "the reverse was refused")
+        || ! ctx.expect (regs.size() == 1, "the reverse changed the number of regions"))
+        return ctx.verdict();
+    ctx.expect (regs[0].file != take->file, "the reverse did not render a file of its own");
+    ctx.expect (regs[0].takeId == 0, "the reversed region still names the take it was rendered from");
+    ctx.expect (takeCoverage (track, take->id).empty(), "the take's lane still shows the reversed region");
+
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new DeleteTakeAction (session, ctx.engine(), kTrack, take->id)),
+                "deleting the take was refused");
+    ctx.expect (regs.size() == 1 && findTake (track, take->id) == nullptr,
+                "deleting the take took the reversed region with it");
+
+    ctx.expect (undo.undo() && undo.undo(), "undo of the delete and the reverse was refused");
+    ctx.expect (regs.size() == 1 && regs[0].file == take->file && regs[0].takeId == take->id,
+                "undoing the reverse did not bring the region back naming its take");
+    return ctx.verdict();
+}
+
+// Reversing a reversed region plays the audio it reversed forward again, naming
+// its take once more, with nothing rendered; undo goes back to the render. A
+// trimmed part of the render reverses back onto its own part of the take.
+ScenarioResult reverseTwiceRestoresTheSource (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& regs = session.track (kTrack).regions;
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto take = writtenTake (ctx, "reverse-twice", 4800, 9600);
+    if (! take) return ScenarioResult::fail ("could not write the take");
+    const auto original = *regionFromTake (*take, 4800, 14400);
+    regs.push_back (original);
+    const auto takesDir = std::filesystem::u8path (
+        session.getSessionDirectory().getChildFile ("takes").getFullPathName().toStdString());
+    const auto renders = [&takesDir]
+    {
+        std::error_code error;
+        std::size_t count = 0;
+        for (std::filesystem::directory_iterator it (takesDir, error), end; ! error && it != end; it.increment (error))
+            ++count;
+        return count;
+    };
+    const auto reverse = [&ctx, &session, &undo]
+    {
+        undo.beginNewTransaction();
+        return undo.perform (new ReverseRegionAction (session, ctx.engine(), kTrack, 0));
+    };
+
+    if (! ctx.expect (reverse(), "the first reverse was refused") || ! ctx.expect (regs.size() == 1, "the reverse changed the number of regions"))
+        return ctx.verdict();
+    const auto reversed = regs[0];
+    const auto rendered = renders();
+    ctx.expect (reversed.file != take->file && reversed.reversedFrom.has_value(),
+                "the first reverse did not play a render that remembers its source");
+
+    ctx.expect (reverse(), "the second reverse was refused");
+    ctx.expect (regs[0].file == take->file && regs[0].sourceOffset == original.sourceOffset
+                    && regs[0].lengthInSamples == original.lengthInSamples
+                    && regs[0].timelineStart == original.timelineStart,
+                "the second reverse did not play the take's audio forward again");
+    ctx.expect (regs[0].takeId == take->id && ! regs[0].reversedFrom.has_value(),
+                "the second reverse did not name the take again");
+    ctx.expect (renders() == rendered, "the second reverse rendered another file");
+
+    ctx.expect (undo.undo() && regs[0].file == reversed.file && regs[0].reversedFrom.has_value(),
+                "undoing the second reverse did not go back to the render");
+
+    auto trimmed = regs[0];
+    trimmed.sourceOffset += 1000;
+    trimmed.lengthInSamples -= 1000;
+    trimmed.timelineStart += 1000;
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new RegionEditAction (session, ctx.engine(), kTrack, 0, regs[0], trimmed)),
+                "the trim was refused");
+    ctx.expect (reverse(), "reversing the trimmed render was refused");
+    ctx.expect (regs[0].file == take->file && regs[0].sourceOffset == original.sourceOffset
+                    && regs[0].lengthInSamples == original.lengthInSamples - 1000
+                    && regs[0].timelineStart == original.timelineStart + 1000,
+                "the trimmed render did not reverse back onto its own part of the take");
+    ctx.expect (renders() == rendered, "reversing the trimmed render rendered another file");
+    return ctx.verdict();
+}
+
+// A comp section steps through the takes that cover it, newest to oldest, each
+// step one undo step that puts the next take over the section's span and leaves
+// the neighbours as they were; a punch that covers only part of it is skipped.
+ScenarioResult switchTakeStepsThroughCoveringTakes (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
+    auto& regs = track.regions;
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto first = writtenTake (ctx, "switch-first", 0, 96000);
+    const auto second = writtenTake (ctx, "switch-second", 0, 96000);
+    const auto punch = writtenTake (ctx, "switch-punch", 40000, 16000);
+    if (! first || ! second || ! punch) return ScenarioResult::fail ("could not write the takes");
+    promoteTakeRange (session, track, *second, 0, 96000);
+    promoteTakeRange (session, track, *first, 24000, 48000);
+    const auto sectionOf = [&regs] (TakeId id) -> const AudioRegion*
+    {
+        for (const auto& r : regs)
+            if (r.takeId == id && r.timelineStart == 24000) return &r;
+        return nullptr;
+    };
+    const auto* section = sectionOf (first->id);
+    if (! ctx.expect (section != nullptr, "the comp has no section from the first take"))
+        return ctx.verdict();
+
+    const auto from = section->timelineStart;
+    const auto to = from + section->lengthInSamples;
+    const auto covering = takesCovering (track, from, to);
+    ctx.expect (covering == std::vector<TakeId> { second->id, first->id },
+                "the punch, which covers only part of the section, was offered for it");
+    const auto newer = steppedTake (covering, first->id, -1);
+    ctx.expect (newer == second->id, "stepping up from the first take did not reach the second");
+    ctx.expect (steppedTake (covering, first->id, 1) == 0, "stepping down past the oldest take went somewhere");
+
+    const auto before = regs;
+    undo.beginNewTransaction ("Switch take");
+    ctx.expect (undo.perform (new PromoteTakeRangeAction (session, ctx.engine(), kTrack, newer, from, to)),
+                "switching the section to the second take was refused");
+    ctx.expect (takeCoverage (track, first->id).empty(), "the first take still plays after the switch");
+    ctx.expect (takeCoverage (track, second->id)
+                    == std::vector<std::pair<std::int64_t, std::int64_t>> { { 0, 96000 } },
+                "the second take does not play over the whole of it after the switch");
+    ctx.expect (undo.getUndoDescription() == "Switch take", "the switch is not one \"Switch take\" step");
+    ctx.expect (undo.undo() && regs.size() == before.size() && sectionOf (first->id) != nullptr,
+                "undoing the switch did not put the first take's section back");
+    return ctx.verdict();
+}
+
+// Moving the seam where one take gives way to another is one step of two region
+// edits: the left region's end and the right one's start move together, the
+// crossfade keeps its length, and Undo puts both back.
+ScenarioResult seamMoveIsOneStep (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
+    auto& regs = track.regions;
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto first = writtenTake (ctx, "seam-first", 0, 96000);
+    const auto second = writtenTake (ctx, "seam-second", 0, 96000);
+    if (! first || ! second) return ScenarioResult::fail ("could not write the takes");
+    promoteTakeRange (session, track, *first, 0, 96000);
+    promoteTakeRange (session, track, *second, 48000, 96000);
+    const auto seam = compSeamNear (track, 48000, 16);
+    if (! ctx.expect (seam.has_value(), "no seam where the second take starts"))
+        return ctx.verdict();
+    const auto before = regs;
+    const auto overlap = regs[(std::size_t) seam->left].timelineStart + regs[(std::size_t) seam->left].lengthInSamples
+                       - regs[(std::size_t) seam->right].timelineStart;
+
+    const auto leftBefore = regs[(std::size_t) seam->left];
+    const auto rightBefore = regs[(std::size_t) seam->right];
+    shiftSeam (track, *seam, -12000);
+    const auto leftAfter = regs[(std::size_t) seam->left];
+    const auto rightAfter = regs[(std::size_t) seam->right];
+    regs[(std::size_t) seam->left] = leftBefore;
+    regs[(std::size_t) seam->right] = rightBefore;
+    undo.beginNewTransaction ("Move comp seam");
+    ctx.expect (undo.perform (new RegionEditAction (session, ctx.engine(), kTrack, seam->left, leftBefore, leftAfter))
+                    && undo.perform (new RegionEditAction (session, ctx.engine(), kTrack, seam->right, rightBefore,
+                                                           rightAfter)),
+                "the seam move was refused");
+    const auto& left = regs[(std::size_t) seam->left];
+    const auto& right = regs[(std::size_t) seam->right];
+    ctx.expect (right.timelineStart == 36000 && right.sourceOffset == 36000 && right.lengthInSamples == 60000,
+                "the second take's region did not start 12000 samples earlier, reading its take there");
+    ctx.expect (left.timelineStart + left.lengthInSamples - right.timelineStart == overlap,
+                "the crossfade changed length");
+    ctx.expect (takeCoverage (track, second->id)
+                    == std::vector<std::pair<std::int64_t, std::int64_t>> { { 36000, 96000 } },
+                "the second take's lane does not show the moved seam");
+    ctx.expect (undo.getUndoDescription() == "Move comp seam", "the move is not one \"Move comp seam\" step");
+    ctx.expect (undo.undo() && regs.size() == before.size()
+                    && regs[(std::size_t) seam->right].timelineStart == before[(std::size_t) seam->right].timelineStart
+                    && regs[(std::size_t) seam->left].lengthInSamples == before[(std::size_t) seam->left].lengthInSamples,
+                "one Undo did not put both regions back");
+    return ctx.verdict();
+}
+
+// A cloned track's reversed region reverses back onto the clone's own copy of the
+// take, not onto an id only the source track holds.
+ScenarioResult cloneKeepsReverseTake (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& source = session.track (kTrack + 1);
+    auto& clone = session.track (kTrack);
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    source.regions.clear();
+    source.takes.clear();
+    const auto take = writtenTake (ctx, "clone-reverse", 0, 9600);
+    if (! take) return ScenarioResult::fail ("could not write the take");
+    // writtenTake puts the take on kTrack; the case wants it on the source.
+    source.takes.push_back (*take);
+    clone.takes.clear();
+    clone.regions.clear();
+    source.regions.push_back (*regionFromTake (*take, 0, 9600));
+
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new ReverseRegionAction (session, engine, kTrack + 1, 0)), "the reverse was refused"))
+        return ctx.verdict();
+    undo.beginNewTransaction();
+    if (! ctx.expect (undo.perform (new CloneTrackAction (session, engine, kTrack + 1, kTrack)), "the clone was refused")
+        || ! ctx.expect (clone.takes.size() == 1 && clone.regions.size() == 1, "the clone did not copy the take and region"))
+        return ctx.verdict();
+    const auto copyId = clone.takes[0].id;
+    ctx.expect (copyId != take->id, "the clone's take kept the source's id");
+    ctx.expect (clone.regions[0].reversedFrom && clone.regions[0].reversedFrom->takeId == copyId,
+                "the clone's reversed region remembers the source track's take");
+
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new ReverseRegionAction (session, engine, kTrack, 0)), "reversing the clone back was refused");
+    ctx.expect (clone.regions[0].file == take->file && clone.regions[0].takeId == copyId,
+                "reversing the clone back did not name the clone's take");
+    return ctx.verdict();
+}
+
+// A click on a take inside a comp section gives that take the whole section: with
+// Take 3, a punch and Take 3 again, Take 2 takes over the first section alone, the
+// punch keeps its span, and one Undo puts Take 3 back.
+ScenarioResult clickSwitchesSection (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto one = writtenTake (ctx, "section-1", 0, 96000);
+    const auto two = writtenTake (ctx, "section-2", 0, 96000);
+    const auto three = writtenTake (ctx, "section-3", 0, 96000);
+    const auto punch = writtenTake (ctx, "section-punch", 24000, 48000);
+    if (! one || ! two || ! three || ! punch) return ScenarioResult::fail ("could not write the takes");
+    promoteTakeRange (session, track, *three, 0, 96000);
+    promoteTakeRange (session, track, *punch, 24000, 72000);
+
+    const auto section = compSectionAt (track, 10000);
+    ctx.expect (section == Span { 0, 24000 + kPunchFadeSamples }, "the first section is not Take 3's run up to the punch");
+    const auto punchBefore = takeCoverage (track, punch->id);
+
+    undo.beginNewTransaction ("Switch take");
+    ctx.expect (undo.perform (new PromoteTakeRangeAction (session, ctx.engine(), kTrack, two->id, section.first,
+                                                          section.second)),
+                "giving the first section to Take 2 was refused");
+    ctx.expect (takeCoverage (track, two->id) == std::vector<Span> { section }, "Take 2 does not play the first section");
+    ctx.expect (takeCoverage (track, punch->id) == punchBefore, "the punch lost part of its section");
+    ctx.expect (takeCoverage (track, three->id) == std::vector<Span> { { 72000 - kPunchFadeSamples, 96000 } },
+                "Take 3 still plays the first section, or lost the last");
+    ctx.expect (undo.undo() && takeCoverage (track, two->id).empty()
+                    && takeCoverage (track, three->id).size() == 2,
+                "one Undo did not give the first section back to Take 3");
+    return ctx.verdict();
+}
+
+// A whole take holding a steady 440 Hz tone, so how loud the track plays names the
+// take. A tone, not a constant: the strip filters a constant out as DC. Every one
+// starts its tone at the same phase, so two at one level sound alike.
+std::optional<AudioTake> levelTake (ScenarioContext& ctx, const std::string& name, float level,
+                                    int trackIdx = kTrack)
+{
+    const auto path = ctx.tempDir() / (name + ".wav");
+    std::vector<float> tone (96000);
+    for (std::size_t i = 0; i < tone.size(); ++i)
+        tone[i] = level * std::sin (6.283185307f * 440.0f * (float) i / (float) ScenarioContext::kSampleRate);
+    if (! writeMono (path, tone)) return std::nullopt;
+    AudioTake take;
+    take.id = ctx.session().allocateTakeId();
+    take.name = name;
+    take.file = SessionFile (path.u8string().c_str());
+    take.lengthInSamples = 96000;
+    ctx.session().track (trackIdx).takes.push_back (take);
+    return take;
+}
+
+// Readers that warm as they open and a flat master, so a track's level is what
+// its streams play; the transport is stopped when the case ends.
+void flatWarmPlayback (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& playback = engine.getPlaybackEngine();
+    playback.setSynchronousReadersForTest (true);
+    ctx.cleanup ([&engine, &playback]
+    {
+        engine.stop();
+        playback.setSynchronousReadersForTest (false);
+    });
+    for (auto* flag : { &session.master().eqEnabled, &session.master().compEnabled, &session.master().tapeEnabled })
+    {
+        ctx.keep (*flag);
+        flag->store (false);
+    }
+}
+
+// Rolling from `from` as flatWarmPlayback sets it up, with only kTrack sounding
+// and playing what `lay` puts on it.
+std::optional<ScenarioResult> beginRolling (ScenarioContext& ctx, const std::function<void (Track&)>& lay,
+                                            std::int64_t from = 0)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    flatWarmPlayback (ctx);
+    auto& track = session.track (kTrack);
+    track.mode.store ((int) Track::Mode::Mono);
+    track.inputMonitor.store (false);
+    session.setTrackArmed (kTrack, false);
+    lay (track);
+    engine.getTransport().setPlayhead (from);
+    engine.play();
+    if (! engine.getTransport().isPlaying())
+        return ScenarioResult::fail ("the transport did not roll");
+    return std::nullopt;
+}
+
+// Hands the edit's rebuilds to the audio thread, as the message loop does once the
+// turn that made the edit is over. A case runs inside one turn, so it stands in.
+void handOver (ScenarioContext& ctx)
+{
+    ctx.engine().getPlaybackEngine().service();
+}
+
+// Rolling, with kTrack playing `quiet`.
+std::optional<ScenarioResult> beginRollingTakes (ScenarioContext& ctx, const AudioTake& quiet)
+{
+    auto& session = ctx.session();
+    return beginRolling (ctx, [&session, &quiet] (Track& track) { promoteTakeRange (session, track, quiet, 0, 96000); });
+}
+
+// Blocks pumped one at a time: the lowest peak any 128-sample stretch of them
+// reaches. A 440 Hz cycle fits in one, so on a steady tone this is its level, and
+// it falls only where the level does.
+float quietestStretch (ScenarioContext& ctx, int blocks)
+{
+    static constexpr std::size_t kStretch = 128;
+    float lowest = std::numeric_limits<float>::max();
+    for (int b = 0; b < blocks; ++b)
+    {
+        ctx.pump (1);
+        const auto& out = ctx.lastBlock (0);
+        for (std::size_t from = 0; from + kStretch <= out.size(); from += kStretch)
+        {
+            float peak = 0.0f;
+            for (std::size_t i = from; i < from + kStretch; ++i)
+                peak = std::max (peak, std::abs (out[i]));
+            lowest = std::min (lowest, peak);
+        }
+    }
+    return lowest;
+}
+
+// Blocks pumped one at a time: the loudest sample, and the largest step between
+// one sample and the next, across a crossfade.
+std::pair<float, float> pumpWatchingSteps (ScenarioContext& ctx, int blocks)
+{
+    float peak = 0.0f, worstStep = 0.0f;
+    float last = ctx.lastBlock (0).empty() ? 0.0f : ctx.lastBlock (0).back();
+    for (int b = 0; b < blocks; ++b)
+    {
+        ctx.pump (1);
+        for (const float sample : ctx.lastBlock (0))
+        {
+            peak = std::max (peak, std::abs (sample));
+            worstStep = std::max (worstStep, std::abs (sample - last));
+            last = sample;
+        }
+    }
+    return { peak, worstStep };
+}
+
+// Rolling, switching the comp's take and soloing a take are heard within a few
+// blocks, crossfaded rather than stepped, instead of waiting for the next Play.
+ScenarioResult editsHeardWhileRolling (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    const auto quiet = levelTake (ctx, "rolling-quiet", 0.1f);
+    const auto loud = levelTake (ctx, "rolling-loud", 0.4f);
+    if (! quiet || ! loud) return ScenarioResult::fail ("could not write the takes");
+    if (auto early = beginRollingTakes (ctx, *quiet)) return *early;
+
+    const float before = ctx.pump (8);
+    if (! ctx.expect (before > 1.0e-3f, "the quiet take is not heard")) return ctx.verdict();
+
+    undo.beginNewTransaction ("Switch take");
+    ctx.expect (undo.perform (new PromoteTakeRangeAction (session, engine, kTrack, loud->id, 0, 96000)),
+                "switching to the loud take was refused");
+    handOver (ctx);
+    const auto [crossing, step] = pumpWatchingSteps (ctx, 4);
+    const float after = ctx.pump (4);
+    ctx.expect (after > before * 3.5f && after < before * 4.5f,
+                "the switch was not heard while rolling (" + std::to_string (before) + " to " + std::to_string (after) + ")");
+    // A 440 Hz tone steps about 0.058 of its peak from one sample to the next, so a
+    // click shows as a step well past that.
+    ctx.expect (crossing <= after * 1.05f && step < after * 0.1f,
+                "the switch stepped or overshot instead of crossfading (step " + std::to_string (step) + ", peak "
+                    + std::to_string (crossing) + " for " + std::to_string (after) + ")");
+
+    engine.setTakeAudition (kTrack, quiet->id);
+    handOver (ctx);
+    ctx.pump (4);
+    const float soloed = ctx.pump (4);
+    ctx.expect (std::abs (soloed - before) < before * 0.1f, "a solo while rolling was not heard at once ("
+                                                                + std::to_string (soloed) + " for " + std::to_string (before) + ")");
+    engine.clearTakeAudition();
+    handOver (ctx);
+    ctx.pump (4);
+    const float cleared = ctx.pump (4);
+    ctx.expect (std::abs (cleared - after) < after * 0.1f, "clearing the solo while rolling was not heard at once");
+    return ctx.verdict();
+}
+
+// Fifty switches a block apart while rolling: each lands, the last is what plays,
+// and every stream set the audio thread retires is freed.
+ScenarioResult rapidSwitchesWhileRolling (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& playback = engine.getPlaybackEngine();
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    const auto quiet = levelTake (ctx, "rapid-quiet", 0.1f);
+    const auto loud = levelTake (ctx, "rapid-loud", 0.4f);
+    if (! quiet || ! loud) return ScenarioResult::fail ("could not write the takes");
+    if (auto early = beginRollingTakes (ctx, *quiet)) return *early;
+
+    const float quietLevel = ctx.pump (8);
+    playback.service();
+    const int streams = PlaybackEngine::liveStreamCountForTest();
+    for (int i = 0; i < 50; ++i)
+    {
+        undo.beginNewTransaction ("Switch take");
+        undo.perform (new PromoteTakeRangeAction (session, engine, kTrack, i % 2 == 0 ? loud->id : quiet->id, 0, 96000));
+        handOver (ctx);
+        ctx.pump (1);
+    }
+    ctx.pump (8);
+    playback.service();
+    const float last = ctx.pump (4);
+    ctx.expect (std::abs (last - quietLevel) < quietLevel * 0.1f, "the last switch is not what plays ("
+                                                                    + std::to_string (last) + " for " + std::to_string (quietLevel) + ")");
+    ctx.expect (PlaybackEngine::liveStreamCountForTest() == streams,
+                "switching while rolling left stream sets behind (" + std::to_string (PlaybackEngine::liveStreamCountForTest())
+                    + " for " + std::to_string (streams) + ")");
+    return ctx.verdict();
+}
+
+// A comp seam moved while rolling swaps the track's streams once and never drops
+// out. The move is two region edits, and the first heard alone would already end
+// the left region where the seam goes while the right one still began where it
+// was: a gap, here under the playhead. A block runs between the two edits, as the
+// audio thread can while the message thread is still inside them. Undo and Redo
+// of the move swap once each too, rebuilding once through the batch the app's own
+// undo opens and once per region edit without it.
+ScenarioResult seamMoveWhileRollingSwapsOnce (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (kTrack);
+    auto& regs = track.regions;
+    auto& playback = engine.getPlaybackEngine();
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    const auto first = levelTake (ctx, "seam-rolling-first", 0.25f);
+    const auto second = levelTake (ctx, "seam-rolling-second", 0.25f);
+    if (! first || ! second) return ScenarioResult::fail ("could not write the takes");
+    const auto lay = [&session, &first, &second] (Track& t)
+    {
+        promoteTakeRange (session, t, *first, 0, 96000);
+        promoteTakeRange (session, t, *second, 48000, 96000);
+    };
+    if (auto early = beginRolling (ctx, lay, 40000)) return *early;
+
+    const auto seam = compSeamNear (track, 48000, 16);
+    if (! ctx.expect (seam.has_value(), "no seam where the second take starts")) return ctx.verdict();
+    const auto left = (std::size_t) seam->left;
+    const auto right = (std::size_t) seam->right;
+    const auto leftBefore = regs[left];
+    const auto rightBefore = regs[right];
+    shiftSeam (track, *seam, -12000);
+    const auto leftAfter = regs[left];
+    const auto rightAfter = regs[right];
+    regs[left] = leftBefore;
+    regs[right] = rightBefore;
+
+    ctx.pump (8);
+    const float level = quietestStretch (ctx, 4);
+    if (! ctx.expect (level > 1.0e-3f, "the comp is not heard")) return ctx.verdict();
+    const auto playhead = engine.getTransport().getPlayhead();
+    if (! ctx.expect (playhead > leftAfter.timelineStart + leftAfter.lengthInSamples
+                          && playhead + 9 * ScenarioContext::kBlockSize < rightBefore.timelineStart,
+                      "the playhead is not where the left edit alone leaves a gap"))
+        return ctx.verdict();
+
+    const auto swaps = playback.swapCount();
+    undo.beginNewTransaction ("Move comp seam");
+    ctx.expect (undo.perform (new RegionEditAction (session, engine, kTrack, seam->left, leftBefore, leftAfter)),
+                "moving the left region's end was refused");
+    float lowest = quietestStretch (ctx, 1);
+    ctx.expect (undo.perform (new RegionEditAction (session, engine, kTrack, seam->right, rightBefore, rightAfter)),
+                "moving the right region's start was refused");
+    handOver (ctx);
+    lowest = std::min (lowest, quietestStretch (ctx, 8));
+    ctx.expect (playback.swapCount() - swaps == 1,
+                "the move swapped the track's streams " + std::to_string (playback.swapCount() - swaps) + " times");
+    ctx.expect (lowest > level * 0.9f, "the move dropped out while rolling (" + std::to_string (lowest) + " for "
+                                           + std::to_string (level) + ")");
+
+    struct Leg
+    {
+        const char* name;
+        std::function<bool()> run;
+        std::uint64_t rebuilds;
+    };
+    const Leg legs[] {
+        { "Undo", [&undo] { return undo.undo(); }, 2 },
+        { "Redo", [&undo] { return undo.redo(); }, 2 },
+        { "The app's Undo", [&engine] { return undoTransaction (engine); }, 1 },
+        { "The app's Redo", [&engine] { return redoTransaction (engine); }, 1 },
+    };
+    for (const auto& leg : legs)
+    {
+        const auto swapsBefore = playback.swapCount();
+        const auto rebuildsBefore = playback.rebuildCount();
+        if (! ctx.expect (leg.run(), std::string (leg.name) + " of the move was refused")) return ctx.verdict();
+        handOver (ctx);
+        const float quietest = quietestStretch (ctx, 8);
+        const auto swapped = playback.swapCount() - swapsBefore;
+        const auto rebuilt = playback.rebuildCount() - rebuildsBefore;
+        ctx.expect (swapped == 1 && rebuilt == leg.rebuilds,
+                    std::string (leg.name) + " of the move rebuilt the track " + std::to_string (rebuilt)
+                        + " times and swapped it " + std::to_string (swapped) + " times");
+        ctx.expect (quietest > level * 0.9f, std::string (leg.name) + " of the move dropped out while rolling");
+    }
+    ctx.expect (regs[right].timelineStart == rightAfter.timelineStart, "the move did not end where it was made");
+    return ctx.verdict();
+}
+
+// While recording, an edit on the track the take captures leaves its streams alone,
+// since the track plays its input rather than its regions, and one on any other
+// track is heard at once. Which tracks those are is fixed when the take starts:
+// disarming the captured track does not end its capture, and arming another does
+// not start one.
+ScenarioResult editsWhileRecordingLeaveTheCapturedTrack (ScenarioContext& ctx)
+{
+    static constexpr int kOther = kTrack + 1;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto& playback = engine.getPlaybackEngine();
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    const auto capturedQuiet = levelTake (ctx, "captured-quiet", 0.1f);
+    const auto capturedLoud = levelTake (ctx, "captured-loud", 0.4f);
+    const auto otherQuiet = levelTake (ctx, "other-quiet", 0.1f, kOther);
+    const auto otherLoud = levelTake (ctx, "other-loud", 0.4f, kOther);
+    if (! capturedQuiet || ! capturedLoud || ! otherQuiet || ! otherLoud)
+        return ScenarioResult::fail ("could not write the takes");
+
+    flatWarmPlayback (ctx);
+    armTrack (ctx);
+    session.deviceCaptureChannels.store (kOther + 1);
+    auto& captured = session.track (kTrack);
+    auto& other = session.track (kOther);
+    captured.inputMonitor.store (false);
+    other.mode.store ((int) Track::Mode::Mono);
+    other.inputMonitor.store (false);
+    promoteTakeRange (session, captured, *capturedQuiet, 0, 96000);
+    promoteTakeRange (session, other, *otherQuiet, 0, 96000);
+    transport.setPlayhead (0);
+    engine.record();
+    if (! ctx.expect (transport.isRecording(), "Record did not start with the track armed")) return ctx.verdict();
+
+    const float before = ctx.pump (8);
+    if (! ctx.expect (before > 1.0e-3f, "the other track is not heard while recording")) return ctx.verdict();
+
+    const auto counts = [&playback] { return std::make_pair (playback.rebuildCount(), playback.swapCount()); };
+    const auto switchTo = [&] (int t, TakeId id)
+    {
+        undo.beginNewTransaction ("Switch take");
+        const bool done = undo.perform (new PromoteTakeRangeAction (session, engine, t, id, 0, 96000));
+        handOver (ctx);
+        ctx.pump (4);
+        handOver (ctx);
+        return done;
+    };
+
+    auto was = counts();
+    ctx.expect (switchTo (kTrack, capturedLoud->id), "switching the recording track's take was refused");
+    ctx.expect (counts() == was, "an edit on the track being recorded rebuilt its streams");
+
+    session.setTrackArmed (kTrack, false);
+    was = counts();
+    ctx.expect (switchTo (kTrack, capturedQuiet->id), "switching the disarmed track's take was refused");
+    ctx.expect (counts() == was && ! playback.hasPendingWork(),
+                "disarming the track mid-take let an edit on it rebuild streams it does not play until Stop");
+
+    session.setTrackArmed (kOther, true);
+    if (! ctx.expect (other.recordArmed.load(), "the other track did not arm")) return ctx.verdict();
+    was = counts();
+    ctx.expect (switchTo (kOther, otherLoud->id), "switching the other track's take was refused");
+    const float after = ctx.pump (4);
+    ctx.expect (counts().second == was.second + 1 && after > before * 3.5f && after < before * 4.5f,
+                "arming a track the take does not capture kept an edit on it from being heard ("
+                    + std::to_string (before) + " to " + std::to_string (after) + ")");
+    return ctx.verdict();
+}
+
+// An offline mixdown started straight after an edit made while rolling prints the
+// edit. The playback service the edit started is still running when the render's
+// worker takes the streams over, and has to leave them alone until the render is
+// done; only the thread sanitizer sees it if it does not.
+std::optional<ScenarioResult> renderAfterARollingEdit (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    const auto quiet = levelTake (ctx, "render-quiet", 0.1f);
+    const auto loud = levelTake (ctx, "render-loud", 0.4f);
+    if (! quiet || ! loud) return ScenarioResult::fail ("could not write the takes");
+    if (auto early = beginRollingTakes (ctx, *quiet)) return *early;
+
+    const float quietLevel = ctx.pump (8);
+    undo.beginNewTransaction ("Switch take");
+    ctx.expect (undo.perform (new PromoteTakeRangeAction (session, engine, kTrack, loud->id, 0, 96000)),
+                "switching to the loud take was refused");
+    ctx.pump (4);
+    engine.stop();
+
+    auto run = std::make_shared<AuditionRender>();
+    run->bounce = std::make_unique<BounceEngine> (engine, session);
+    ctx.cleanup ([run] { run->bounce.reset(); });
+    run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+    {
+        raw->error = std::move (error);
+        raw->ok.store (ok);
+        raw->finished.store (true, std::memory_order_release);
+    };
+    run->printed = ctx.sessionDir() / "after-rolling-edit.wav";
+    const SessionFile outFile (run->printed.u8string().c_str());
+    if (! ctx.expect (run->bounce->start (outFile, ScenarioContext::kSampleRate, 1024, 1.0, BounceEngine::Mode::MasterMix,
+                                          BounceEngine::Format::Wav, 320, 24),
+                      "the mixdown refused to start: " + run->bounce->getLastError()))
+        return ctx.verdict();
+
+    ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
+                   90000,
+                   [&ctx, &engine, run, quietLevel]
+                   {
+                       auto reader = dusk::audio::FileReader::open (run->printed);
+                       if (ctx.expect (run->ok.load(), "the mixdown failed: " + run->error)
+                           && ctx.expect (reader != nullptr, "the mixdown wrote no readable file"))
+                       {
+                           std::vector<float> printed (48000);
+                           float* dest[] = { printed.data() };
+                           reader->read (dest, 1, 24000, (std::int64_t) printed.size());
+                           ctx.expect (peakOf (printed) > quietLevel * 2.5f,
+                                       "the mixdown did not print the edit (" + std::to_string (peakOf (printed))
+                                           + " against " + std::to_string (quietLevel) + " before it)");
+                       }
+                       // An offline render hands the engine back to the device,
+                       // whose restart re-prepares it; this world has no device.
+                       engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+                       ctx.complete (ctx.verdict());
+                   },
+                   "the mixdown never finished");
+    return std::nullopt;
+}
+
+// Join keeps a take only while the result still reads that take alone: two
+// halves of one take rejoin naming it, two loop passes that share a file and
+// abut join naming neither, and regions of two takes render into a new file
+// that names none.
+ScenarioResult joinNamesATakeOnlyWhileItReadsIt (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& regs = regionsOf (ctx);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto first = writtenTake (ctx, "join-first", 0, 9600);
+    const auto second = writtenTake (ctx, "join-second", 0, 9600);
+    if (! first || ! second) return ScenarioResult::fail ("could not write the takes");
+
+    const auto join = [&] (const std::string& what)
+    {
+        undo.beginNewTransaction();
+        return ctx.expect (undo.perform (new JoinRegionsAction (session, ctx.engine(), kTrack, { 0, 1 })),
+                           "joining " + what + " was refused")
+            && ctx.expect (regs.size() == 1, "joining " + what + " did not leave one region");
+    };
+
+    regs = { *regionFromTake (*first, 0, 4800), *regionFromTake (*first, 4800, 9600) };
+    if (join ("two halves of one take"))
+        ctx.expect (regs[0].file == first->file && regs[0].takeId == first->id,
+                    "two halves of one take did not rejoin naming it");
+
+    AudioTake passOne = *first;
+    passOne.id = session.allocateTakeId();
+    passOne.timelineStart = 20000;
+    passOne.lengthInSamples = 4800;
+    AudioTake passTwo = passOne;
+    passTwo.id = session.allocateTakeId();
+    passTwo.sourceOffset = 4800;
+    session.track (kTrack).takes.push_back (passOne);
+    session.track (kTrack).takes.push_back (passTwo);
+    auto moved = *regionFromTake (passTwo, 20000, 24800);
+    moved.timelineStart = 24800;
+    regs = { *regionFromTake (passOne, 20000, 24800), moved };
+    if (join ("two loop passes of one file"))
+        ctx.expect (regs[0].file == first->file && regs[0].takeId == 0,
+                    "a join across two loop passes named one of them");
+
+    regs = { *regionFromTake (*first, 0, 4800), *regionFromTake (*second, 4800, 9600) };
+    if (join ("regions of two takes"))
+        ctx.expect (regs[0].file != first->file && regs[0].file != second->file && regs[0].takeId == 0,
+                    "a join rendered from two takes names one of them");
+    return ctx.verdict();
+}
+
+// A pasted copy names its take only while the take is on the track and the copy
+// reads its file: a copy on the take's own track keeps it, and a copy on another
+// track, a copy reading another file and a copy pasted after its take was
+// deleted do not.
+ScenarioResult pasteKeepsTheTakeWhileItReadsIt (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& regs = regionsOf (ctx);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    const auto take = writtenTake (ctx, "paste-take", 0, 9600);
+    if (! take) return ScenarioResult::fail ("could not write the take");
+    regs.push_back (*regionFromTake (*take, 0, 9600));
+    auto copy = regs[0];
+    copy.timelineStart = 20000;
+
+    const auto paste = [&] (int track, const AudioRegion& region, const std::string& what) -> const AudioRegion*
+    {
+        undo.beginNewTransaction();
+        auto& target = session.track (track).regions;
+        const auto before = target.size();
+        if (! ctx.expect (undo.perform (new PasteRegionAction (session, ctx.engine(), track, region)),
+                          "pasting " + what + " was refused")
+            || ! ctx.expect (target.size() == before + 1, "pasting " + what + " added no region"))
+            return nullptr;
+        return &target.back();
+    };
+
+    if (const auto* pasted = paste (kTrack, copy, "a copy on its own track"))
+        ctx.expect (pasted->takeId == take->id, "a copy pasted on its take's track lost the take");
+
+    if (const auto* pasted = paste (kTrack + 1, copy, "a copy on another track"))
+        ctx.expect (pasted->takeId == 0, "a copy pasted on a track without the take still names it");
+
+    auto elsewhere = copy;
+    elsewhere.file = SessionFile ((ctx.tempDir() / "elsewhere.wav").u8string().c_str());
+    if (const auto* pasted = paste (kTrack, elsewhere, "a copy reading another file"))
+        ctx.expect (pasted->takeId == 0, "a copy reading another file names the take");
+
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new DeleteTakeAction (session, ctx.engine(), kTrack, take->id)),
+                "deleting the take was refused");
+    ctx.expect (regs.size() == 1 && regs[0].file == elsewhere.file,
+                "deleting the take did not remove exactly the original and the copy that names it");
+    if (const auto* pasted = paste (kTrack, copy, "a copy after its take was deleted"))
+        ctx.expect (pasted->takeId == 0, "a copy pasted after its take was deleted still names it");
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
@@ -517,26 +1974,86 @@ const ScenarioRegistrar overdubRegistrar { Scenario {
     "record.second_track_overdub", { "record", "playback" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (secondTrackOverdub, ctx); } } };
 
-const ScenarioRegistrar fullCoverRegistrar { Scenario {
-    "take.full_cover_pushes_onto_stack", { "take", "record", "undo" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return run (fullCoverPushesOntoStack, ctx); } } };
 const ScenarioRegistrar eightInputsRegistrar { Scenario {
     "record.eight_inputs_separate_takes", { "record" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (eightInputsRecordSeparately, ctx); } } };
 const ScenarioRegistrar midiJsonRegistrar { Scenario {
     "record.midi_embedded_in_json", { "record", "midi", "session" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (midiRecordingLivesInJson, ctx); } } };
-const ScenarioRegistrar capRegistrar { Scenario {
-    "take.stack_keeps_newest_eight", { "take", "record" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return run (stackKeepsNewestEight, ctx); } } };
+const ScenarioRegistrar fullCoverRegistrar { Scenario {
+    "take.full_cover_keeps_the_covered_take", { "take", "record", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (fullCoverKeepsTheCoveredTake, ctx); } } };
 const ScenarioRegistrar edgeRegistrar { Scenario {
-    "take.edge_overdub_trims_neighbour", { "take", "record", "punch" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return run (edgeOverdubTrimsNeighbour, ctx); } } };
+    "take.partial_overdub_keeps_covered_take_whole", { "take", "record", "punch" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (partialOverdubKeepsCoveredTakeWhole, ctx); } } };
 const ScenarioRegistrar punchRegistrar { Scenario {
-    "take.punch_inside_keeps_covered_slice", { "take", "record", "punch" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return run (punchInsideKeepsCoveredSlice, ctx); } } };
-const ScenarioRegistrar cycleRegistrar { Scenario {
-    "take.cycle_steps_through_the_stack", { "take", "undo" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return run (cycleStepsThroughTheStack, ctx); } } };
+    "take.punch_inside_names_every_take", { "take", "record", "punch" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (punchInsideNamesEveryTake, ctx); } } };
+const ScenarioRegistrar editsRegistrar { Scenario {
+    "take.split_and_delete_keep_the_take", { "take", "record", "region", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (editsLeaveRecordedTakes, ctx); } } };
+const ScenarioRegistrar undoRegistrar { Scenario {
+    "take.undo_record_removes_its_take", { "take", "record", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (undoRecordRemovesItsTake, ctx); } } };
+const ScenarioRegistrar promoteRegistrar { Scenario {
+    "take.promote_range_replaces_that_span", { "take", "comp", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (promoteRangeReplacesThatSpan, ctx); } } };
+const ScenarioRegistrar adoptRegistrar { Scenario {
+    "take.carve_adopts_a_region_naming_no_take", { "take", "comp", "record", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (carveAdoptsARegionNamingNoTake, ctx); } } };
+const ScenarioRegistrar deleteTakeRegistrar { Scenario {
+    "take.delete_take_removes_its_regions_and_undo_restores_ids", { "take", "comp", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (deleteTakeRemovesItsRegions, ctx); } } };
+const ScenarioRegistrar auditionEndsRegistrar { Scenario {
+    "take.audition_ends_when_its_take_goes", { "take", "comp", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (auditionEndsWhenItsTakeGoes, ctx); } } };
+const ScenarioRegistrar undoKeepsOutsideTakesRegistrar { Scenario {
+    "take.undo_keeps_takes_added_outside_history", { "take", "comp", "record", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (undoKeepsTakesAddedOutsideHistory, ctx); } } };
+const ScenarioRegistrar renameTakeRegistrar { Scenario {
+    "take.rename_take_round_trips_through_save", { "take", "session", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (renameTakeRoundTrips, ctx); } } };
+const ScenarioRegistrar reverseRegistrar { Scenario {
+    "take.reverse_names_no_take", { "take", "region", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (reverseNamesNoTake, ctx); } } };
+const ScenarioRegistrar reverseTwiceRegistrar { Scenario {
+    "take.reverse_twice_restores_the_source", { "take", "region", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (reverseTwiceRestoresTheSource, ctx); } } };
+const ScenarioRegistrar switchTakeRegistrar { Scenario {
+    "take.switch_region_take_steps_through_covering_takes", { "take", "comp", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (switchTakeStepsThroughCoveringTakes, ctx); } } };
+const ScenarioRegistrar seamMoveRegistrar { Scenario {
+    "take.seam_move_is_one_step", { "take", "comp", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (seamMoveIsOneStep, ctx); } } };
+const ScenarioRegistrar cloneReverseRegistrar { Scenario {
+    "take.clone_keeps_reverse_take", { "take", "region", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (cloneKeepsReverseTake, ctx); } } };
+const ScenarioRegistrar clickSectionRegistrar { Scenario {
+    "take.click_switches_section", { "take", "comp", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (clickSwitchesSection, ctx); } } };
+const ScenarioRegistrar rollingEditsRegistrar { Scenario {
+    "take.edits_heard_while_rolling", { "take", "comp", "playback" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (editsHeardWhileRolling, ctx); } } };
+const ScenarioRegistrar rapidSwitchesRegistrar { Scenario {
+    "take.rapid_switches_while_rolling", { "take", "comp", "playback" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (rapidSwitchesWhileRolling, ctx); } } };
+const ScenarioRegistrar rollingSeamRegistrar { Scenario {
+    "take.seam_move_while_rolling_swaps_once", { "take", "comp", "playback", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (seamMoveWhileRollingSwapsOnce, ctx); } } };
+const ScenarioRegistrar recordingEditsRegistrar { Scenario {
+    "take.edits_while_recording_leave_the_captured_track", { "take", "comp", "playback", "record" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (editsWhileRecordingLeaveTheCapturedTrack, ctx); } } };
+const ScenarioRegistrar renderAfterEditRegistrar { Scenario {
+    "take.render_after_a_rolling_edit", { "take", "comp", "playback", "bounce" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return renderAfterARollingEdit (ctx); }, 120000 } };
+const ScenarioRegistrar joinRegistrar { Scenario {
+    "take.join_names_a_take_only_while_it_reads_it", { "take", "region", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (joinNamesATakeOnlyWhileItReadsIt, ctx); } } };
+const ScenarioRegistrar pasteRegistrar { Scenario {
+    "take.paste_keeps_the_take_while_it_reads_it", { "take", "region", "undo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (pasteKeepsTheTakeWhileItReadsIt, ctx); } } };
+const ScenarioRegistrar auditionRegistrar { Scenario {
+    "take.audition_never_reaches_bounce", { "take", "bounce", "freeze", "playback" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return auditionNeverReachesBounce (ctx); }, 180000 } };
 } // namespace
 } // namespace duskstudio::scenario

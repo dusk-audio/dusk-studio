@@ -186,7 +186,7 @@ TEST_CASE ("A v7 session's EQ dial positions load as the Hz they played",
         std::ifstream stream (file);
         const auto saved = Json::parse (stream, nullptr, false);
         REQUIRE (saved.is_object());
-        CHECK (saved["version"].get<int>() == 9);
+        CHECK (saved["version"].get<int>() == 10);
         CHECK_THAT (saved["tracks"][0]["eq"]["hf"]["freq"].get<float>(), WithinRel (loaded.hf, 1.0e-6f));
         CHECK_THAT (saved["tracks"][0]["hpf"]["freq"].get<float>(), WithinRel (loaded.hpf, 1.0e-6f));
 

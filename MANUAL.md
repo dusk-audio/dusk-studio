@@ -36,7 +36,8 @@ Dusk Studio includes:
 - MIDI Clock and MIDI Time Code chase and emit.
 - Mackie Control surface support (tested against Tascam DP-24SD).
 - A piano roll for MIDI editing and an audio region editor with non-destructive trim, fade, and gain.
-- Session save/load with automatic 30-second autosave, atomic-write protection, and an 8-take history per region.
+- Every recording pass kept whole as a take on its track, with take lanes in the audio region editor for building a comp from the best parts.
+- Session save/load with automatic 30-second autosave and atomic-write protection.
 
 ## What it deliberately does not have
 
@@ -93,7 +94,7 @@ Hit **R** or click the transport's record button. Playback starts, the record in
 
 ![Mid-record: levels lit, region drawing in the tape strip.](docs/images/qg-04-record-rolling.png)
 
-If you do not like the take, **Cmd+Z** undoes the recording. The take is preserved in the region's take history (up to 8 takes per region) — right-click the region and pick a previous take to swap it back in.
+If you do not like the take, **Cmd+Z** undoes the recording and **Cmd+Shift+Z** brings it back. If you record again over it instead, the first pass stays on the track as a take. Click the **2 takes** badge beside the track name to open the audio editor on the take lanes, where you can hear it again or put it back.
 
 ## Overdub
 
@@ -297,7 +298,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 1   | Waveform          | Region content, with the source-file context dimmed before / after trim points. |
 | 2   | Fade handle       | Drag in from each edge to set fade-in or fade-out length.                       |
 | 3   | Trim handle       | Region in / out trims (non-destructive).                                        |
-| 4   | Gain slider       | −24 to +12 dB region gain.                                                             |
+| 4   | Gain line         | Drag for −24 to +12 dB region gain.                                             |
 | 5   | Edit-mode toolbar | Grab / Range / Cut / Draw. **G** = Grab. (Tempo is edited by right-clicking the main timeline ruler, not from here.) |
 
 ## The piano roll
@@ -723,7 +724,7 @@ The copy carries everything the session saves for the track, so it sounds and be
 - The HPF, LPF, EQ and compressor, including the compressor type.
 - The insert: the plugin or built-in unit with its settings, the insert bypass, or a hardware insert with its settings. A hardware insert keeps the same interface outputs and inputs, so both tracks feed the same outboard gear and each hears what comes back. Give the copy its own pair in **Edit hardware insert...** if you have one to spare.
 - The inputs, ARM, IN and PRINT, and on a MIDI track the MIDI port, channel and MIDI out.
-- The regions, MIDI regions and their take history.
+- The regions, the track's takes (with new ids of their own), and the MIDI regions with their take history.
 - The automation mode and every automation lane. The copy's lanes are its own, so editing them leaves the source's alone.
 
 A clone waits for the transport to stop, and a frozen track cannot be cloned or cloned onto. Either way **Can't clone track** says what to do (see *Messages*). Undo and redo of a clone still work during playback.
@@ -1198,7 +1199,7 @@ To repeat a section while you experiment:
 2. Check that the **Loop** button on the transport bar is lit. **L** or the button turns loop off and on again without moving the brackets.
 3. Press Play (for loop playback) or Record (for loop recording).
 
-In loop play, the transport wraps at the loop boundary indefinitely. Loop recording also wraps and creates a new take on each pass. The current pass plus up to **8 previous passes** stay attached to one range-aligned region, so you can cycle performances after stopping. A loop must be at least 128 samples long to record.
+In loop play, the transport wraps at the loop boundary indefinitely. Loop recording also wraps and creates a new take on each pass. On an audio track every pass is kept as a take on the track, up to **1,024 passes** in one loop take, and the newest pass is placed on the timeline; pick between the passes in the audio editor's take lanes. On a MIDI track the current pass plus up to **8 previous passes** stay attached to one range-aligned region, so you can cycle performances after stopping. A loop must be at least 128 samples long to record.
 
 With Punch enabled, each pass records only the overlap between the loop and punch ranges. Pressing Record anywhere inside the loop aligns the gesture to that effective capture start before count-in or pre-roll begins, so every pass covers the same timeline range. Punch post-roll auto-stop is suspended during loop recording; press Stop when you are finished.
 
@@ -1223,30 +1224,33 @@ Every recorded audio file is a **24-bit WAV** at the session's sample rate. File
 
 MIDI tracks do not produce separate files; their note and CC data is embedded in `session.json`.
 
-## Take history
+## Takes
 
-Each region keeps a stack of up to **8 previous takes**. When you record a new take whose timeline range fully contains an existing region, the existing region is pushed onto that stack. Partially-overlapping takes are not absorbed — they stay visible on either side of the punch.
+Every recording pass on an audio track is kept on that track as a take, named **Take 1**, **Take 2** and so on in recording order. A take is the whole pass. Recording over it later never trims it, so no take loses audio. A new take is numbered one past the highest **Take N** on the track, so a take you renamed does not count, and deleting a take never renumbers the others.
 
-Current limits:
+Only the newest pass is placed on the timeline. Where it lands over older regions, those regions are cut back to meet it with a short crossfade at each join, and a region it covers completely leaves the timeline. The takes those regions came from stay whole on the track, so any part of them can be put back from the take lanes in the audio region editor (see *Take lanes* in that chapter).
 
-- When a new take covers only the start or the end of an older region, the older region is trimmed to meet it and the covered part is not kept in take history. To get it back, use **Undo** (Cmd+Z / Ctrl+Z) right after recording. The audio file itself stays on disk.
-- A punch that falls inside an older region is different: the older region carries on either side of it, and the stretch the punch replaced goes onto the new take's stack, so **Alt+T** brings it back.
-- Deleting a region deletes its whole take stack. **Undo** restores it.
+- A punch inside an older region splits that region around it. Both pieces keep playing the older take.
+- Splitting or deleting a region leaves its take on the track. **Undo** puts the region back.
+- **Undo** right after recording removes the new region and the takes that pass added. **Redo** brings them back.
 
-To cycle through takes:
+When a track has two or more takes, the tape strip shows the count, for example **3 takes**, beside the track name. A track with one take and no region on the timeline shows **1 take**, so a take whose region you deleted is still easy to reach. Click the count to open the audio editor on the track's take lanes. A frozen track refuses with **Track is frozen**; unfreeze it first.
 
-- Press **Alt+T** for next take.
-- Press **Alt+Shift+T** for previous take.
+A region names its take only while it plays that take's audio. **Reverse region** and a join that has to render a new file make a region that names no take (reversing it back names the take again), and a pasted region keeps naming its take only on a track that holds that take.
 
-Or click the take badge on the region itself (visible when more than one take exists).
+A region that names no take (an imported file, a reversed or rendered region, or a region an older session loads without one) first becomes a take of its own when something is recorded or put from a take lane over it, so the audio cut away from it can be put back. It gets a lane in the audio editor like any other take.
 
-The 8-take cap bounds memory and disk growth across long sessions.
+MIDI tracks keep their own take history. Each MIDI region holds up to **8 previous takes**; see *Take count and MIDI take cycling* under The tape strip.
+
+Sessions saved by Dusk Studio 0.14 load with each region's old take history as takes on its track, numbered oldest first. The audio files are not touched. Sessions are now saved in format v10, which Dusk Studio 0.14 and earlier cannot open, so keep a copy of a 0.14 session if you still need to open it there.
 
 ## Recording errors
 
 If Dusk Studio can't open a file for writing (full disk, permission denied, missing audio directory), the error is captured at record start and displayed as an alert before the take begins, listing the affected tracks. You don't lose a take thinking it was captured.
 
-If something goes wrong mid-take (ring-buffer overrun on a stressed disk, MIDI FIFO overflow), an alert appears when you press Stop. The portion of the take that was written successfully is preserved.
+If something goes wrong mid-take (ring-buffer overrun on a stressed disk, MIDI FIFO overflow), an alert appears when you press Stop. The portion of the take that was written successfully is preserved. In a loop take, a pass that hit a failed write is dropped whole, and the other passes are kept.
+
+A loop take keeps up to 1,024 passes per track. Passes past that are not recorded, and the same alert at Stop lists the track with "loop passes not recorded (past 1,024 in one take)". Every earlier pass is kept.
 
 \newpage
 
@@ -1278,7 +1282,7 @@ To select several tracks, **Shift+click** a name to take in every row shown betw
 
 Double-click a name to rename the track in place. **Enter**, or clicking anywhere else, keeps the new name; **Escape** keeps the old one. An empty name falls back to the track number, and **Cmd/Ctrl+Z** undoes a rename.
 
-Drag a name up or down to move the track to another row. A line shows where it will land, and the tracks between its old row and the new one each shift one slot to make room. Everything on the track goes with it: name, colour, regions, channel strip settings, the insert with its plug-in's current state, and automation. Every track that changes row, the shifted ones included, keeps the input it had: an input that followed the track number becomes that same input, fixed, so the track still records from the same channel. Drag one of several selected names and they all move together as one block, in their order. With **ALL** off, a drop between two shown rows lands right after the upper one, so the hidden tracks under that row stay under the moved track; a drop just above a row that is moving leaves the tracks where they are. **Escape** cancels the drag, and a click that doesn't drag still selects the track as before. After the drop the console pages to the moved track.
+Drag a name up or down to move the track to another row. A line shows where it will land, and the tracks between its old row and the new one each shift one slot to make room. Everything on the track goes with it: name, colour, regions and takes, channel strip settings, the insert with its plug-in's current state, and automation. A take solo stays on its track, and so does an audio editor that is open when you undo or redo a move. Every track that changes row, the shifted ones included, keeps the input it had: an input that followed the track number becomes that same input, fixed, so the track still records from the same channel. Drag one of several selected names and they all move together as one block, in their order. With **ALL** off, a drop between two shown rows lands right after the upper one, so the hidden tracks under that row stay under the moved track; a drop just above a row that is moving leaves the tracks where they are. **Escape** cancels the drag, and a click that doesn't drag still selects the track as before. After the drop the console pages to the moved track.
 
 A move is one undo step, and its undo sets the inputs it fixed back to following the track number. It clears the undo history from before it, though, because those steps name tracks by their number. Stop playback before moving tracks, unfreeze any frozen track that would move or shift, and let a plug-in that is still loading on one of them finish: otherwise the move is refused with [Can't move tracks](#cant-move-tracks). Plug-in parameter and track MIDI controller bindings stay on the track number, so after a move they drive whichever track now sits there.
 
@@ -1300,7 +1304,7 @@ Each region is drawn as a rounded coloured rectangle. Audio regions show a wavef
 - Drag the left or right edge to trim.
 - Drag the pink fade discs in the top corners to set fade-in / fade-out lengths.
 
-The selection stays on a region while you edit it, so you can press **Alt+T** or nudge it again without clicking it first. Undo, redo, and anything that adds or removes regions (split, paste, duplicate, join, delete) clear the selection.
+The selection stays on a region while you edit it, so you can nudge it again, or press **Alt+T** on a MIDI region, without clicking it first. Undo, redo, and anything that adds or removes regions (split, paste, duplicate, join, delete) clear the selection.
 
 ### Splitting
 
@@ -1324,12 +1328,15 @@ A right-click on any region shows a context menu:
 - **Label**: type a custom name.
 - **Mute** the region (silences it without deleting it).
 - **Lock** the region (prevents accidental edits).
-- **Takes** submenu (when more than one take exists on the region).
-- **Reverse region** (non-destructive: renders a reversed copy into `takes/` and points the region at it; undoable).
+- **Reverse region** (non-destructive: renders a reversed copy into `takes/` and points the region at it; undoable). Reversing a reversed region plays the original audio forward again, trimmed the same way, without rendering anything.
 - **Color**: a palette of 8 accent hues plus **Reset to track colour**.
-- **Delete**.
+- **Delete region**.
+
+On a locked region, **Split at playhead** and **Delete region** are unavailable, and **Join selected regions** is unavailable while any of the selected regions is locked.
 
 Normalize is not on this menu — it lives in the audio region editor (double-click the region).
+
+A MIDI region's menu has **Loop region**, the label, **Mute**, **Lock**, a **Takes** submenu when the region has more than one take, **Color** and **Delete region**.
 
 ### Track name menu
 
@@ -1343,11 +1350,13 @@ A right-click on a track's name in the left column acts on every region, audio a
 - **Color**: the region palette, with **Reset to track colour**. It colours the regions, not the tracks.
 - **Delete regions**.
 
-Split, reverse and delete skip locked regions. The region-only items (join, label and takes) stay on the region menu.
+Split, reverse and delete skip locked regions. The region-only items (join, label and a MIDI region's takes) stay on the region menu.
 
-### Take cycling
+### Take count and MIDI take cycling
 
-Right-click a region to see a take submenu (if more than one take exists), or use **Alt+T** / **Alt+Shift+T** to cycle.
+An audio track's takes are reached from the take count beside its name, for example **3 takes**, which opens the audio editor on the track's take lanes (see *Takes* under Recording). Audio regions have no take submenu and no take cycling.
+
+A MIDI region with more than one take shows a **T 1/N** pill in its top-left corner. Right-click it and pick from the **Takes** submenu, or select it and press **Alt+T** for the next take and **Alt+Shift+T** for the previous one.
 
 ## Markers
 
@@ -1402,7 +1411,7 @@ It is marked **experimental** because parts of the DP file format are reverse-en
 
 ![Region editor modal over a region with fades.](docs/images/ed-04-region-editor-modal.png)
 
-Double-click an audio region in the tape strip to open the audio region editor as a centred modal. Press **Esc** or click outside to close.
+Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. On a track with takes it opens zoomed out to show every take, so a take that starts later still shows in its lane; **0** zooms to the focused region. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. Other keys do nothing until you let go. A recording on the track that stops while you drag a region, from a punch that ends on its own, a Stop sent over MIDI or a sync stop, cancels the drag the way **Esc** does before the take lands: the take goes down over the region as it was before the drag, undoing the take brings that region back, and letting go records nothing. While the editor is up, a key it has no use for does nothing: **S**, **M**, a page digit and the timeline's other shortcuts never reach the timeline behind it. **Space**, **.**, **L**, **P** and **F11** still work, and **?** closes the editor to open the shortcut list. Holding a key does its job once, so holding **Delete** deletes one region; only **Left** and **Right**, the zoom keys and **Cmd+Z** repeat while held. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
 
 ## What's editable
 
@@ -1411,19 +1420,25 @@ Double-click an audio region in the tape strip to open the audio region editor a
 - **Gain** adjustment (−24 to +12 dB, non-destructive).
 - **Position** of the region on the timeline.
 
-You **cannot** edit individual samples. There is no pencil tool, no zoom-to-sample, no spectral edit, no destructive trim. The portastudio philosophy is that you commit to good takes and work non-destructively from there.
+A locked region takes none of these edits. The editor won't split, normalize, reverse, join or delete it either: those buttons and menu items are unavailable, its gain and fade readouts don't open for typing, and **Delete** passes it by when other regions are selected with it. Its mute, lock, label and colour still change. A frozen track refuses every region edit until you unfreeze it.
+
+You **cannot** edit individual samples. There is no zoom-to-sample, no spectral edit and no destructive trim, and the **Draw** tool's pencil draws automation, never audio. The portastudio philosophy is that you commit to good takes and work non-destructively from there.
 
 ## Layout
 
-The top is a row of icon buttons:
+The top is a row of icon buttons. Hover over one for its name and shortcut:
 
 - **Undo / Redo** (also **Cmd+Z** and **Cmd+Shift+Z**).
-- **Split** at the edit cursor (also **Cmd/Ctrl+E**).
-- **Normalize** (adjusts gain toward a peak just below 0 dBFS, within the gain limits).
+- **Split** at the edit cursor (also **Cmd/Ctrl+E**; unavailable on a locked region or a frozen track).
+- **Normalize** (adjusts gain toward a peak just below 0 dBFS, within the gain limits; unavailable on a locked region or a frozen track).
+- **Reverse** (the same non-destructive reverse as the tape strip's **Reverse region**; unavailable on a locked region or a frozen track).
 - **Properties** (label, mute, lock, colour and delete actions, with file name, sample rate, channel count and length shown below).
-- **Zoom out / Zoom in / Zoom fit** (also **−**, **+**, **0**).
+- **Grab**, **Range**, **Cut**, **Draw**, then the editor's own **Snap** toggle and grid resolution, set apart from the timeline's.
+- **Auto: Off**, which picks an automation lane to show over the waveform (see *Editing breakpoints in the region editor* under Mixing).
+- The track name and the region's title. Double-click the title to rename the region in place; Enter keeps the new name, Esc keeps the old one, and accepting the title as shown (the take's name, or the file name for a region with no named take) leaves the region unlabelled.
+- **Chase** and **Zoom out / Zoom in / Zoom fit** at the right (also **−**, **+**, **0**). Zoom in stops at one sample per pixel. Resizing the window keeps the zoom and the edit cursor where they are; **Zoom fit** fits the view to the new size.
 
-The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. Draw is the automation pencil: with an automation lane selected (see below) it draws a freehand breakpoint curve; with no lane selected it does nothing (it never moves the region).
+The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. The range belongs to the region you drew it on: clicking another region with Grab or Cut clears it. Cut splits the region at every click. Draw is the automation pencil: with an automation lane selected (see below) it draws a freehand breakpoint curve; with no lane selected it does nothing (it never moves the region).
 
 **Tempo** is edited on the **timeline ruler** (the top band of the tape strip), in any edit mode — it's where the tempo map is edited (the transport BPM field shows the tempo at the playhead; double-click it to set that tempo directly — in a session with tempo changes it edits the change governing the playhead). **Double-click a tempo marker (its triangle or BPM number) to change its value**; double-click the dimmed bar-1 handle to set the starting tempo. **Drag a tempo marker left or right to move it** (it snaps to the grid when SNAP is on; the bar-1 starting tempo stays anchored). **Right-click** the ruler for the full menu: its *Tempo* section offers **Set tempo here…** on an empty spot (adds a tempo change at that bar — type the BPM); **Set tempo… / Delete tempo** on an existing marker (right-clicking anywhere in the ruler column under the number lands on it); and **Set starting tempo…** on the bar-1 handle before any changes exist. The bar grid re-flows to follow, and **MIDI playback and the metronome track the tempo changes** too. The first change you add seeds a point at bar 1 from the starting tempo, so the bars before it keep that tempo. (Audio regions are never time-stretched — only MIDI follows the tempo map.)
 
@@ -1433,7 +1448,8 @@ Below the toolbar:
 
 - **Bar/beat ruler** for the region.
 - **Waveform area** showing the region centred, with adjacent regions on the same track faded so splits don't shift the view.
-- **Status bar** at the bottom showing position, gain, fade lengths, a raw sample readout (`smp` — the cursor's timeline sample, or a range's start and length in samples), mute and lock toggles.
+- **Take lanes** under the waveform when the track has takes (see *Take lanes* below).
+- **Status bar** at the bottom showing position, gain, fade lengths, a raw sample readout (`smp`: the cursor's timeline sample, or a range's start and length in samples), mute and lock toggles. Double-click the gain or fade readout to type a value; fades take `in / out` in milliseconds.
 
 ## Editing gestures
 
@@ -1446,7 +1462,43 @@ Below the toolbar:
 - **Drag the gain line** (the solid green line through the waveform): adjusts the region's gain from −24 to +12 dB. Its value chip and the status bar display the level.
 - **Shift+drag** on the waveform: select a time range (yellow highlight).
 - **Cmd/Ctrl+]** / **Cmd/Ctrl+[**: navigate to the next / previous region on the same track without closing the modal.
-- **Delete**: delete the selected range when one is active; otherwise delete the selected region or regions.
+- **Delete**: delete the selected range when one is active; otherwise delete the selected region or regions, leaving any that are locked.
+
+## Menus
+
+Right-click the waveform for **Loop region** (or **Loop selection** with a range drawn, looping the range; with several regions selected it loops from the first to the last), which sets the transport loop, turns looping on and moves the playhead to its start; then **Split at edit cursor**, **Cut range**, **Join selected regions**, **Reset gain (0 dB)**, **Reset fades**, **Mute** / **Unmute**, **Lock** / **Unlock** and **Reverse**. **Split at edit cursor**, **Cut range**, **Reset gain (0 dB)**, **Reset fades** and **Reverse** are unavailable on a locked region or a frozen track, and **Join selected regions** while any of the selected regions is locked or the track is frozen. Right-click a fade disc for its curve shape.
+
+The **Properties** button opens a menu headed with the track and region number: **Add label...** (or **Rename label...**), **Mute region**, **Lock region**, **Color** and **Delete region**, with the file name, sample rate, channel count and length below. **Delete region** is unavailable on a locked region or a frozen track.
+
+## Take lanes
+
+![Audio editor with three take lanes under a comp drawn from all three.](docs/images/ed-06-take-lanes.png)
+
+When the track has takes, each take gets a lane under the waveform, newest at the top, on the same time axis as the regions above. A lane shows the take's colour, its name, its length, a solo button (**S**) and a **Delete** button. The parts of a take the track plays are drawn bright in the take's colour, with a line along their top edge; the rest of the take is dimmed. Each lane scales its take to fill the lane, by up to 12 dB, so a quiet take is as easy to read as a loud one. The caption above the lanes counts the takes and says what to do: "Click a take to use it for that section, drag across it to pick any range, or drag a divider to move a split."
+
+The regions the track plays are its comp, and each one is a section: lines at every section's edges run down through all the lanes, so every lane shows the same sections.
+
+Every region on the track that plays a take carries a stripe in that take's colour along its top, with the take's name when the region is wide enough, and an unlabelled region's title is its take's name. The lanes grow to fill their share of the editor, up to a height, and scroll when there are more than fit. Drag the caption up or down to give the lanes more or less of the editor; double-click it to put it back.
+
+- **Click a take** inside a section to have that take play the whole section, or the part of it the take covers (**Switch take**). Hovering a lane outlines the section a click would replace and says "Use Take 2 here". Clicking where the take has no audio says so in the caption. In a gap between sections, a click fills the gap from that take.
+- **Drag across a lane** to put that part of the take on the track, replacing whatever played there, with a short crossfade at each end. The span snaps to the grid when the editor's **Snap** is on; hold **Cmd/Ctrl** to drag off the grid. The undo step is **Promote take range**.
+- **Click a take's name** to put the whole take on the track (**Promote take**). The promote waits out the double-click time, and a drag started before then cancels it.
+- **Double-click a take's name** to rename it. Enter keeps the new name, Esc the old one (**Rename take**).
+- **S** solos that take: the track plays only that take, in place of its regions, heard at once whether the transport is stopped or rolling. The playhead stays where it is, and the caption reads "Solo "Take 2": the track plays only this take." Click **S** again to stop, also heard at once. Soloing another lane replaces it, and closing the editor or deleting the take ends it. Bounce, mixdown and freeze never hear a solo.
+- **Down** puts the take in the lane below on the focused region, and **Up** the take in the lane above, stepping only through takes that cover all of the region (**Switch take**). With a range selected, only the range changes. Past the last lane the caption says "No older take covers all of this." (or "No newer take...") and nothing changes.
+- **Drag a divider** to move where one take gives way to the next. Point at the join in any lane, or in the take stripe along the top of the waveform, where the cursor turns to a double arrow and a line marks the seam through every lane, and drag left or right. Where a fade disc sits on the join, the disc takes the drag; point above it in the stripe, or in a lane, to move the seam. Both regions move their edge together and the crossfade keeps its length; the seam stops where either take runs out. The undo step is **Move comp seam**.
+- **T** solos the take in the lane under the pointer, or the focused region's take when the pointer is not over a lane, as **S** does. **T** again stops it.
+- **Delete** asks "Delete this take and the regions cut from it?" in the lane, with **Delete** and **Cancel**. Deleting takes the take and every region cut from it off the track. **Undo** puts both back (**Delete take**).
+
+Every lane edit is one undo step and is saved with the session. While the transport rolls, each edit, its undo and redo, and a solo are heard straight away: the track crosses from what it played to the new comp over about ten milliseconds, so there is no click and no need to stop and play again. A track that is recording is left as it is until you stop. An edit that cannot go ahead says why in the caption instead:
+
+- "A locked region is in the way. Unlock it to use this part of the take."
+- "A region cut from this take is locked. Unlock it to delete the take."
+- "Unfreeze this track to change its takes."
+
+A track with takes but no region shows "No region plays on this track" in the waveform area, above "Click or drag across a take below to put it on the track."
+
+To build a comp, see *Splicing a vocal comp from multiple takes* in Tips and recipes.
 
 \newpage
 
@@ -1598,7 +1650,7 @@ Dusk Studio's automation is console-first: you ride the controls and the program
 
 ### Editing breakpoints in the region editor
 
-Double-click an audio region to open its editor. The **Auto:** button at the top of the editor picks which parameter the lane edits - **Fader (dB)**, **Pan**, **Mute**, **Solo**, or **Aux 1-4** - or **Off** to hide the lane and edit the region normally. With a lane active, its points draw over the waveform:
+Double-click an audio region to open its editor. The **Auto: Off** button at the top of the editor picks which parameter the lane edits - **Fader (dB)**, **Pan**, **Mute**, **Solo**, or **Aux 1-4** - or **Off** to hide the lane and edit the region normally. With a lane active, its points draw over the waveform:
 
 - **Click empty space** - add a breakpoint at the click. It snaps when the editor's Snap is on; hold **Cmd/Ctrl** to place it off-grid.
 - **Drag a point** - move it in time and value.
@@ -1773,11 +1825,11 @@ The editor's preset bar holds the plug-in's factory presets and any you save you
 
 ### Sunset
 
-A polyphonic synthesiser: six engines (Cosmos, Oracle, Mono, Modular, Prism and Acid), two oscillators plus sub and noise, a resonant filter, two envelopes, unison and glide. It is an **instrument**, so it appears only on a MIDI track's picker, and loading it converts an audio track to MIDI the way a soundfont does.
+Dusk Audio's Sunset Circuits plug-in, compiled into Dusk Studio with the plug-in's own DSP and editor. A polyphonic synthesiser: six engines (Cosmos, Oracle, Mono, Modular, Prism and Acid), each with its own oscillators, filter, envelopes, LFOs, modulation matrix and effects, plus unison, glide and an arpeggiator. It is an **instrument**, so it appears only on a MIDI track's picker, and loading it converts an audio track to MIDI the way a soundfont does.
 
-The editor exposes the two dozen controls a player reaches for, grouped as Global, Oscillators, Filter and Envelopes. The engine carries a great many more, which stay at the values its own init patch sets.
+Every control the plug-in has is in its editor, and the editor's preset menu holds the plug-in's factory presets and any you save yourself. The keyboard in the editor plays the instrument: click a key to hear it. Its **Oversampling** switch (1x, 2x or 4x, 2x by default) costs a few samples of latency above 1x, which the unit reports and delay compensation covers. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Sunset load with their settings, and everything that panel did not have starts at the plug-in's defaults. A setting the panel saved between two steps plays the step the panel played, except PB Range, which takes the nearest whole semitone. MIDI bindings learned on the panel's knobs stay on the controls they were learned on.
 
-It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and channel and polyphonic aftertouch, and it stops cleanly when the transport does.
+It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and channel and polyphonic aftertouch, and it stops cleanly when the transport does. A MIDI program change loads the factory preset with that number, counting from 0, and the session saves the preset it loaded.
 
 ![The Sunset instrument's editor.](docs/images/bi-05-sunset.png)
 
@@ -1785,15 +1837,15 @@ It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and c
 
 Picking a unit from the picker opens its editor. After that, on a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, or click the slot again, to dismiss it.
 
-**DuskVerb 2, Tape Echo 2 and Tape Machine 2 open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. Utility and Sunset have no editor of their own, so Dusk Studio draws them from their parameter table as a panel of knobs, switch banks, drop-down lists and toggles.
+**DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. Utility has no editor of its own, so Dusk Studio draws it from its parameter table as a panel of knobs and toggles.
 
 On an aux lane there is nothing to open: the unit's controls are always on screen, filling the lane under the slot header. DuskVerb 2, Tape Echo 2 and Tape Machine 2 sit there as their own editors, centred and scaled down to fit the lane while keeping their shape, the way a plug-in's editor does. The knob panels are grouped the way the unit's front panel would be: Utility shows Level and Image. Their knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
 
-On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Choices, such as Sunset's **Mode**, are drop-down lists. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
+On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Click a toggle to switch it on or off. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
 
 The transport keys keep working while an editor is open. A click into a plug-in's editor gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again.
 
-**MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in DuskVerb 2's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot, choose **MIDI Learn last-touched parameter**, and choose **MIDI Learn (this track)...** in the next menu. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
+**MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in a unit's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot, choose **MIDI Learn last-touched parameter**, and choose **MIDI Learn (this track)...** in the next menu. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
 
 ## Opening the editor
 
@@ -2116,7 +2168,8 @@ Plugin and tape state are captured in the autosave along with everything else, s
 A session captures everything user-visible:
 
 - Tracks: names, colours, modes, armed state, input sources, channel strip parameters.
-- Regions: file paths, timeline positions, lengths, source offsets, fades, gains, labels, colours, locks, mutes, take history.
+- Regions: file paths, timeline positions, lengths, source offsets, fades, gains, labels, colours, locks, mutes, the take each one plays, and a MIDI region's take history.
+- Takes: every take on each track, with its name, file and place on the timeline.
 - Mixer: aux lane names and contents, bus parameters, master parameters.
 - Plugins: descriptions and state blobs for every loaded plugin.
 - Transport: loop and punch points, BPM, time signature. (The playhead position itself is not persisted; sessions reopen at bar 1.)
@@ -2217,8 +2270,8 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **Cmd+→**                   | Nudge selected region one beat later   |
 | **Cmd+Shift+←**             | Nudge by one bar (earlier)             |
 | **Cmd+Shift+→**             | Nudge by one bar (later)               |
-| **Alt+T**                   | Cycle to next take on selected region  |
-| **Alt+Shift+T**             | Cycle to previous take                 |
+| **Alt+T**                   | Next take on the selected MIDI region  |
+| **Alt+Shift+T**             | Previous take on the selected MIDI region |
 
 ## Transport
 
@@ -2277,6 +2330,10 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **Cmd+E**             | Split at edit cursor                               |
 | **G**                 | Grab (move / select) edit mode (used inside the region / piano-roll editors) |
 | **Cmd+]** / **Cmd+[** | Next / previous region                             |
+| **Cmd+C** / **Cmd+X** / **Cmd+V** | Copy / cut the selected range, or the focused region; paste onto this track at the edit cursor |
+| **=** / **−** / **0** | Zoom in / zoom out / zoom fit                      |
+| **Down** / **Up**     | Put the take in the lane below / above on the focused region, or on the selected range |
+| **T**                 | Solo the take under the pointer, or the focused region's; again to stop |
 | **Esc**               | Close modal                                        |
 
 ## Piano roll
@@ -2399,9 +2456,11 @@ Each aux return lane can be sent to its own physical output pair (see the aux la
 
 ## Splicing a vocal comp from multiple takes
 
-1. Record three or four passes into the same region, each fully containing the last. Each pass pushes the previous one into the take history.
-2. In the audio region editor, cycle through takes (**Alt+T** / **Alt+Shift+T**) and listen to each.
-3. Pick the best phrases by splitting (**Cmd/Ctrl+E**) at the breaths, choosing the best take per phrase, and using fades to mask the joins.
+1. Record three or four passes over the same section, or loop-record it. Every pass stays on the track as a take.
+2. Click the take count beside the track name to open the audio editor on the take lanes. Press a lane's **S** to hear that take alone.
+3. Click the name of the best overall take to put all of it on the track.
+4. For each phrase another take sings better, drag across that phrase in its lane. Snap to the beat, or hold **Cmd/Ctrl** to drag from breath to breath.
+5. The bright parts of each lane show where every piece came from. Drag again on any lane to change your mind, and use the fade discs to smooth a join.
 
 \newpage
 
@@ -2542,9 +2601,9 @@ The format for each entry:
 ### Recording errors
 
 - **When**: A take finishes, but at least one track had a write error or MIDI overflow mid-take.
-- **Text**: "The last take captured with errors. Listed tracks may be partial or missing audio / MIDI data: [per-track byte/event counts]. Check the session's audio folder for free space and the session log for I/O details before continuing."
+- **Text**: "The last take captured with errors. Listed tracks may be partial or missing audio / MIDI data:" and then one line per problem, "Track [n] - [what went wrong] ([count])", where what went wrong is "WAV write failed (disk full / I/O error)", "take discarded (recording offset exceeds its length)", "loop passes not recorded (past 1,024 in one take)" or "MIDI events dropped (capture buffer full)". When a WAV write failed the alert ends "Check the session's audio folder for free space and the session log for I/O details before continuing."
 - **Buttons**: OK.
-- **Action**: Check disk space and the session log. The partial take is preserved in take history; you can roll back to a previous take and re-record the bad ones.
+- **Action**: After a failed WAV write, check disk space and the session log. The partial take is kept as a take on its track, with every earlier take (in a loop take, a pass that hit the failed write is dropped and the other passes are kept), so you can choose what plays in the audio editor's take lanes and re-record the bad parts. A track listed with "loop passes not recorded (past 1,024 in one take)" kept its first 1,024 passes and left the rest out. A take discarded for the recording offset would have landed entirely before the start of the timeline; see **Recording offset** under *Configuring audio*. Dropped MIDI events are missing from that take's MIDI region; record the part again if they matter.
 
 ## Session
 
@@ -2915,7 +2974,7 @@ The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These 
 
 **SIP (solo-in-place).** A solo mode in which un-soloed tracks are silenced from the main mix output (as opposed to PFL, which only affects monitoring).
 
-**Take.** A single recording pass. Dusk Studio keeps up to 8 previous takes per region.
+**Take.** A single recording pass, kept whole on its track. Regions play parts of takes, and the take lanes in the audio region editor choose which parts. A MIDI region keeps up to 8 previous takes of its own.
 
 **Tape strip.** Dusk Studio's timeline canvas.
 

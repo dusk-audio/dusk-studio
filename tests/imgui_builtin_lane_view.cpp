@@ -110,16 +110,11 @@ private:
 };
 
 // The test binary links the editor-free DAF libraries, so hasPluginEditor() cannot
-// distinguish the app's plug-in-editor units here. These are the effect units that
-// the native-UI app actually sends through the generic lane view.
-const char* const kGenericEffects[] = {
+// distinguish the app's plug-in-editor units here. These are the units the native-UI
+// app actually sends through the generic lane view: every other effect shows its own
+// editor there, and an instrument never sits on an aux lane.
+const char* const kLaneViewUnits[] = {
     "dusk.builtin.utility",
-};
-
-// The effects and the instrument, which reaches this view only through its section
-// fallback: twenty-six parameters is the worst case the layout meets.
-const char* const kGenericUnits[] = {
-    "dusk.builtin.utility", "dusk.builtin.synth",
 };
 
 struct PickerUnit
@@ -204,7 +199,7 @@ TEST_CASE ("the aux lane view gives every shown parameter one control inside the
     const float scale = GENERATE (1.0f, 2.0f);
     const ImVec2 lane = GENERATE (kCompactLane, kRoomyLane, kCrampedLane);
 
-    for (const char* id : kGenericUnits)
+    for (const char* id : kLaneViewUnits)
     {
         INFO ("unit " << id << " at scale " << scale << ", lane " << lane.x << "x" << lane.y);
         builtin::NativeBuiltinSlot slot;
@@ -255,7 +250,7 @@ TEST_CASE ("the aux lane view at a display scale of 2 is the same picture double
            "[builtin][imgui][lane]")
 {
     const ImVec2 lane = GENERATE (kCompactLane, kRoomyLane, kCrampedLane);
-    for (const char* id : kGenericUnits)
+    for (const char* id : kLaneViewUnits)
     {
         INFO ("unit " << id << ", lane " << lane.x << "x" << lane.y);
         builtin::NativeBuiltinSlot slot;
@@ -288,7 +283,7 @@ TEST_CASE ("the aux lane view's knobs stay full size down to the smallest window
     // A knob cell is its caption, the dial and its readout; 78 design pixels is a dial of
     // radius 20 drawn unshrunk, the smallest this layout calls readable.
     const ImVec2 lane = GENERATE (kCompactLane, kRoomyLane);
-    for (const char* id : kGenericEffects)
+    for (const char* id : kLaneViewUnits)
     {
         INFO ("unit " << id << ", lane " << lane.x << "x" << lane.y);
         builtin::NativeBuiltinSlot slot;

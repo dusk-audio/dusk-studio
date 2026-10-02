@@ -1,13 +1,18 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/RecordManager.h"
+#include "engine/audiofile/FileReader.h"
 #include "session/Session.h"
+#include "session/TakeComp.h"
+#include "session/UnreferencedAudio.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 using namespace duskstudio;
@@ -118,6 +123,59 @@ dusk::MidiBuffer oneNote (int note, int onSample = 1, int offSample = 6)
     addNoteOff (events, 1, note, offSample);
     return events;
 }
+
+const AudioRegion& regionOfTake (const Session& session, TakeId id)
+{
+    const auto& regions = session.track (0).regions;
+    const auto it = std::find_if (regions.begin(), regions.end(), [id] (const AudioRegion& region)
+    {
+        return region.takeId == id;
+    });
+    REQUIRE (it != regions.end());
+    return *it;
+}
+
+AudioTake seedTake (Session& session, const juce::File& file, std::int64_t timelineStart,
+                    std::int64_t length, std::int64_t sourceOffset, std::int64_t capturedAtMs)
+{
+    AudioTake take;
+    take.id = session.allocateTakeId();
+    take.name = "Take " + std::to_string (session.track (0).takes.size() + 1);
+    take.file = file;
+    take.timelineStart = timelineStart;
+    take.lengthInSamples = length;
+    take.sourceOffset = sourceOffset;
+    take.provenance.capturedAtMs = capturedAtMs;
+    session.track (0).takes.push_back (take);
+    return take;
+}
+
+AudioRegion regionFromTake (const AudioTake& take)
+{
+    AudioRegion region;
+    region.file = take.file;
+    region.timelineStart = take.timelineStart;
+    region.lengthInSamples = take.lengthInSamples;
+    region.sourceOffset = take.sourceOffset;
+    region.provenance = take.provenance;
+    region.takeId = take.id;
+    return region;
+}
+
+void recordLinear (RecordManager& manager, std::int64_t start, int samples)
+{
+    REQUIRE (manager.startRecording (48000.0, start, 0));
+    std::vector<float> block ((size_t) samples, 0.25f);
+    manager.writeInputBlock (0, block.data(), nullptr, samples);
+    manager.stopRecording (start + samples);
+}
+
+bool takeMatches (const AudioTake& take, std::int64_t timelineStart,
+                  std::int64_t length, std::int64_t sourceOffset)
+{
+    return take.timelineStart == timelineStart && take.lengthInSamples == length
+        && take.sourceOffset == sourceOffset && take.file.existsAsFile();
+}
 } // namespace
 
 TEST_CASE ("Loop audio stores two full passes as one spool with exact take offsets",
@@ -134,6 +192,7 @@ TEST_CASE ("Loop audio stores two full passes as one spool with exact take offse
     writeAudioPass (manager, 2, 100, 8);
     manager.stopRecording (108);
 
+    REQUIRE (session.track (0).regions.size() == 1);
     const auto& region = loopAudioRegion (session);
     REQUIRE (region.timelineStart == 100);
     REQUIRE (region.sourceOffset == 8);
@@ -141,13 +200,25 @@ TEST_CASE ("Loop audio stores two full passes as one spool with exact take offse
     REQUIRE (region.provenance.loopPassOrdinal == 2);
     REQUIRE_FALSE (region.provenance.partialPass);
     REQUIRE (region.provenance.capturedAtMs > 0);
-    REQUIRE (region.previousTakes.size() == 1);
-    REQUIRE (region.previousTakes[0].file == region.file);
-    REQUIRE (region.previousTakes[0].sourceOffset == 0);
-    REQUIRE (region.previousTakes[0].lengthInSamples == 8);
-    REQUIRE (region.previousTakes[0].provenance.loopPassOrdinal == 1);
-    REQUIRE (region.previousTakes[0].provenance.capturedAtMs
-             == region.provenance.capturedAtMs);
+
+    const auto& takes = session.track (0).takes;
+    REQUIRE (takes.size() == 2);
+    REQUIRE (takes[0].name == "Take 1");
+    REQUIRE (takes[0].file == region.file);
+    REQUIRE (takes[0].timelineStart == 100);
+    REQUIRE (takes[0].sourceOffset == 0);
+    REQUIRE (takes[0].lengthInSamples == 8);
+    REQUIRE (takes[0].numChannels == 1);
+    REQUIRE (takes[0].provenance.loopPassOrdinal == 1);
+    REQUIRE (takes[0].provenance.capturedAtMs == region.provenance.capturedAtMs);
+    REQUIRE (takes[1].name == "Take 2");
+    REQUIRE (takes[1].id == region.takeId);
+    REQUIRE (takes[1].file == region.file);
+    REQUIRE (takes[1].timelineStart == 100);
+    REQUIRE (takes[1].sourceOffset == 8);
+    REQUIRE (takes[1].lengthInSamples == 8);
+    REQUIRE (takes[1].provenance.loopPassOrdinal == 2);
+    REQUIRE (takes[0].id != takes[1].id);
 }
 
 TEST_CASE ("Loop audio commits a final partial pass and no exact-boundary empty pass",
@@ -171,7 +242,13 @@ TEST_CASE ("Loop audio commits a final partial pass and no exact-boundary empty 
         REQUIRE (region.provenance.partialPass);
         REQUIRE (region.sourceOffset == 8);
         REQUIRE (region.lengthInSamples == 3);
-        REQUIRE (region.previousTakes.size() == 1);
+        const auto& takes = session.track (0).takes;
+        REQUIRE (takes.size() == 2);
+        REQUIRE (takeMatches (takes[0], 100, 8, 0));
+        REQUIRE_FALSE (takes[0].provenance.partialPass);
+        REQUIRE (takeMatches (takes[1], 100, 3, 8));
+        REQUIRE (takes[1].provenance.partialPass);
+        REQUIRE (takes[1].id == region.takeId);
     }
 
     SECTION ("exact loop boundary")
@@ -181,7 +258,9 @@ TEST_CASE ("Loop audio commits a final partial pass and no exact-boundary empty 
         const auto& region = loopAudioRegion (session);
         REQUIRE (region.provenance.loopPassOrdinal == 2);
         REQUIRE_FALSE (region.provenance.partialPass);
-        REQUIRE (region.previousTakes.size() == 1);
+        const auto& takes = session.track (0).takes;
+        REQUIRE (takes.size() == 2);
+        REQUIRE_FALSE (takes[1].provenance.partialPass);
     }
 }
 
@@ -204,7 +283,13 @@ TEST_CASE ("Loop audio excludes a pass after a failed writer push without compre
     REQUIRE (region.provenance.loopPassOrdinal == 2);
     REQUIRE (region.sourceOffset == 1);
     REQUIRE (region.lengthInSamples == 4);
-    REQUIRE (region.previousTakes.empty());
+
+    const auto& takes = session.track (0).takes;
+    REQUIRE (takes.size() == 1);
+    REQUIRE (takes[0].id == region.takeId);
+    REQUIRE (takes[0].provenance.loopPassOrdinal == 2);
+    REQUIRE (takes[0].sourceOffset == 1);
+    REQUIRE (takes[0].lengthInSamples == 4);
 
     const auto& errors = manager.getLastRecordErrors();
     REQUIRE (errors.size() == 1);
@@ -212,58 +297,97 @@ TEST_CASE ("Loop audio excludes a pass after a failed writer push without compre
     REQUIRE (errors[0].count == 1);
 }
 
-TEST_CASE ("Loop audio history is newest-first capped and then retains compatible old takes",
+TEST_CASE ("Loop audio keeps every pass as a take with no per-region history cap",
            "[recording][recordmanager][loop-takes][history]")
 {
-    const auto temp = makeSessionDir ("dusk-loop-audio-history-");
+    const auto temp = makeSessionDir ("dusk-loop-audio-every-pass-");
     Session session;
     armTrack (session, temp.dir, Track::Mode::Mono);
 
-    AudioRegion existing;
-    existing.file = temp.dir.getChildFile ("existing.wav");
-    existing.timelineStart = 100;
-    existing.lengthInSamples = 8;
-    existing.sourceOffset = 40;
-    existing.provenance.capturedAtMs = 77;
-    existing.previousTakes.push_back (
-        { temp.dir.getChildFile ("existing-older.wav"), 20, 8, { 66, 0, false } });
-    session.track (0).regions.push_back (existing);
+    for (int i = 0; i < 8; ++i)
+        seedTake (session, temp.dir.getChildFile ("earlier-" + juce::String (i) + ".wav"),
+                  100, 8, 0, 70 + i);
+    session.track (0).regions.push_back (regionFromTake (session.track (0).takes.back()));
+    const auto earlier = session.track (0).takes;
 
     RecordManager manager (session);
     const auto plan = loopPlan();
     REQUIRE (manager.startRecording (48000.0, 100, 0, plan));
-    for (int ordinal = 1; ordinal <= 7; ++ordinal)
+    constexpr int passes = 20;
+    for (int ordinal = 1; ordinal <= passes; ++ordinal)
         writeAudioPass (manager, ordinal, 100, 8);
     manager.stopRecording (108);
 
-    const auto& region = loopAudioRegion (session);
-    REQUIRE (region.provenance.loopPassOrdinal == 7);
-    REQUIRE (region.previousTakes.size() == 8);
-    for (int i = 0; i < 6; ++i)
-        REQUIRE (region.previousTakes[(size_t) i].provenance.loopPassOrdinal == 6 - i);
-    REQUIRE (region.previousTakes[6].file == existing.file);
-    REQUIRE (region.previousTakes[6].provenance.capturedAtMs == 77);
-    REQUIRE (region.previousTakes[7].file == existing.previousTakes[0].file);
+    const auto& takes = session.track (0).takes;
+    REQUIRE (takes.size() == earlier.size() + passes);
+    for (size_t i = 0; i < earlier.size(); ++i)
+    {
+        REQUIRE (takes[i].id == earlier[i].id);
+        REQUIRE (takes[i].file == earlier[i].file);
+        REQUIRE (takes[i].lengthInSamples == 8);
+    }
+    const auto spool = takes[earlier.size()].file;
+    for (int pass = 0; pass < passes; ++pass)
+    {
+        const auto& take = takes[earlier.size() + (size_t) pass];
+        REQUIRE (take.provenance.loopPassOrdinal == pass + 1);
+        REQUIRE_FALSE (take.provenance.partialPass);
+        REQUIRE (take.file == spool);
+        REQUIRE (takeMatches (take, 100, 8, 8 * pass));
+        REQUIRE (take.name == "Take " + std::to_string (earlier.size() + (size_t) pass + 1));
+    }
+    REQUIRE (manager.getLastRecordErrors().empty());
+
+    const auto& regions = session.track (0).regions;
+    REQUIRE (regions.size() == 1);
+    REQUIRE (regions[0].takeId == takes.back().id);
 }
 
-TEST_CASE ("Loop audio retention drops oldest passes after current plus eight prior",
-           "[recording][recordmanager][loop-takes][history]")
+TEST_CASE ("Loop audio past the pass limit leaves the extra passes out and keeps every earlier pass",
+           "[recording][recordmanager][loop-takes][failure]")
 {
-    const auto temp = makeSessionDir ("dusk-loop-audio-cap-");
+    const auto temp = makeSessionDir ("dusk-loop-audio-pass-limit-");
     Session session;
     armTrack (session, temp.dir, Track::Mode::Mono);
     RecordManager manager (session);
     const auto plan = loopPlan();
     REQUIRE (manager.startRecording (48000.0, 100, 0, plan));
-    for (int ordinal = 1; ordinal <= 10; ++ordinal)
+
+    constexpr int limit = RecordManager::kMaxLoopPassesPerGesture;
+    for (int ordinal = 1; ordinal <= limit; ++ordinal)
         writeAudioPass (manager, ordinal, 100, 8);
+    // Two passes over the limit, each arriving as two callbacks.
+    for (int ordinal = limit + 1; ordinal <= limit + 2; ++ordinal)
+    {
+        writeAudioPass (manager, ordinal, 100, 4, 0.75f);
+        writeAudioPass (manager, ordinal, 104, 4, 0.75f);
+    }
     manager.stopRecording (108);
 
+    const auto& takes = session.track (0).takes;
+    REQUIRE (takes.size() == (size_t) limit);
+    for (int pass = 0; pass < limit; ++pass)
+    {
+        const auto& take = takes[(size_t) pass];
+        REQUIRE (take.provenance.loopPassOrdinal == pass + 1);
+        REQUIRE_FALSE (take.provenance.partialPass);
+        REQUIRE (takeMatches (take, 100, 8, 8 * pass));
+    }
+
     const auto& region = loopAudioRegion (session);
-    REQUIRE (region.provenance.loopPassOrdinal == 10);
-    REQUIRE (region.previousTakes.size() == 8);
-    for (int i = 0; i < 8; ++i)
-        REQUIRE (region.previousTakes[(size_t) i].provenance.loopPassOrdinal == 9 - i);
+    REQUIRE (region.takeId == takes.back().id);
+    REQUIRE (region.provenance.loopPassOrdinal == limit);
+
+    const auto& errors = manager.getLastRecordErrors();
+    REQUIRE (errors.size() == 1);
+    REQUIRE (errors[0].trackIndex == 0);
+    REQUIRE (errors[0].kind == RecordManager::RecordErrorKind::LoopPassLimit);
+    REQUIRE (errors[0].count == 2);
+
+    const auto reader = dusk::audio::FileReader::open (
+        takes.back().file.getFullPathName().toStdString());
+    REQUIRE (reader != nullptr);
+    REQUIRE (reader->info().numFrames == (std::int64_t) limit * 8);
 }
 
 TEST_CASE ("Loop audio retains a silent pass and trims latency per pass",
@@ -283,29 +407,44 @@ TEST_CASE ("Loop audio retains a silent pass and trims latency per pass",
     REQUIRE (region.timelineStart == 0);
     REQUIRE (region.sourceOffset == 11);
     REQUIRE (region.lengthInSamples == 5);
-    REQUIRE (region.previousTakes.size() == 1);
-    REQUIRE (region.previousTakes[0].sourceOffset == 3);
-    REQUIRE (region.previousTakes[0].lengthInSamples == 5);
+
+    const auto& takes = session.track (0).takes;
+    REQUIRE (takes.size() == 2);
+    REQUIRE (takeMatches (takes[0], 0, 5, 3));
+    REQUIRE (takeMatches (takes[1], 0, 5, 11));
+    REQUIRE (takes[1].id == region.takeId);
 }
 
-TEST_CASE ("Loop punch preserves the overwritten middle of a spanning region as a take",
+TEST_CASE ("A take the latency trim consumes leaves no take and no file",
+           "[recording][recordmanager][latency]")
+{
+    const auto temp = makeSessionDir ("dusk-linear-audio-consumed-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    RecordManager manager (session);
+    REQUIRE (manager.startRecording (48000.0, 0, 16));
+    std::vector<float> block (8, 0.25f);
+    manager.writeInputBlock (0, block.data(), nullptr, 8);
+    manager.stopRecording (8);
+
+    REQUIRE (session.track (0).takes.empty());
+    REQUIRE (session.track (0).regions.empty());
+    REQUIRE (manager.getLastCommitDiff().empty());
+    REQUIRE (temp.dir.getChildFile ("audio").findChildFiles (juce::File::findFiles, false, "*.wav").isEmpty());
+    const auto& errors = manager.getLastRecordErrors();
+    REQUIRE (errors.size() == 1);
+    REQUIRE (errors[0].kind == RecordManager::RecordErrorKind::OffsetConsumedTake);
+}
+
+TEST_CASE ("Loop punch inside a longer region keeps its take whole and splits it around the new one",
            "[recording][recordmanager][loop-takes][punch]")
 {
     const auto temp = makeSessionDir ("dusk-loop-audio-span-");
     Session session;
     armTrack (session, temp.dir, Track::Mode::Mono);
 
-    AudioRegion existing;
-    existing.file = temp.dir.getChildFile ("spanning.wav");
-    existing.timelineStart = 90;
-    existing.lengthInSamples = 30;
-    existing.sourceOffset = 50;
-    existing.provenance = { 42, 0, false };
-    existing.previousTakes.push_back (
-        { temp.dir.getChildFile ("spanning-older.wav"), 10, 30, { 41, 0, false } });
-    existing.previousTakes.push_back (
-        { temp.dir.getChildFile ("spanning-too-short.wav"), 5, 12, { 40, 0, false } });
-    session.track (0).regions.push_back (existing);
+    const auto spanning = seedTake (session, temp.dir.getChildFile ("spanning.wav"), 90, 30, 50, 42);
+    session.track (0).regions.push_back (regionFromTake (spanning));
 
     RecordManager manager (session);
     const auto plan = loopPlan (100, 110);
@@ -313,40 +452,57 @@ TEST_CASE ("Loop punch preserves the overwritten middle of a spanning region as 
     writeAudioPass (manager, 1, 100, 10);
     manager.stopRecording (110);
 
-    const auto& region = loopAudioRegion (session);
-    REQUIRE (region.previousTakes.size() == 2);
-    REQUIRE (region.previousTakes[0].file == existing.file);
-    REQUIRE (region.previousTakes[0].sourceOffset == 60);
-    REQUIRE (region.previousTakes[0].lengthInSamples == 10);
-    REQUIRE (region.previousTakes[0].provenance.capturedAtMs == 42);
-    REQUIRE (region.previousTakes[1].file == existing.previousTakes[0].file);
-    REQUIRE (region.previousTakes[1].sourceOffset == 20);
-    REQUIRE (region.previousTakes[1].lengthInSamples == 10);
-    REQUIRE (std::none_of (region.previousTakes.begin(), region.previousTakes.end(),
-                           [&existing] (const TakeRef& take)
+    const auto& takes = session.track (0).takes;
+    REQUIRE (takes.size() == 2);
+    REQUIRE (takes[0].id == spanning.id);
+    REQUIRE (takes[0].timelineStart == 90);
+    REQUIRE (takes[0].lengthInSamples == 30);
+    REQUIRE (takes[0].sourceOffset == 50);
+    REQUIRE (takeMatches (takes[1], 100, 10, 0));
+
+    const auto& regions = session.track (0).regions;
+    REQUIRE (regions.size() == 3);
+    static constexpr std::int64_t fade = 5;
+    const auto& punched = loopAudioRegion (session);
+    REQUIRE (punched.takeId == takes[1].id);
+    REQUIRE (punched.timelineStart == 100);
+    REQUIRE (punched.lengthInSamples == 10);
+    REQUIRE (punched.fadeInSamples == fade);
+    REQUIRE (punched.fadeOutSamples == fade);
+
+    const auto left = std::find_if (regions.begin(), regions.end(), [] (const AudioRegion& r)
     {
-        return take.file == existing.previousTakes[1].file;
-    }));
-    REQUIRE (session.track (0).regions.size() == 3);
+        return r.timelineStart == 90;
+    });
+    REQUIRE (left != regions.end());
+    REQUIRE (left->takeId == spanning.id);
+    REQUIRE (left->sourceOffset == 50);
+    REQUIRE (left->lengthInSamples == 10 + fade);
+    REQUIRE (left->fadeOutSamples == fade);
+    REQUIRE (left->fadeOutShape == FadeShape::RaisedCosine);
+
+    const auto right = std::find_if (regions.begin(), regions.end(), [] (const AudioRegion& r)
+    {
+        return r.timelineStart == 110 - fade;
+    });
+    REQUIRE (right != regions.end());
+    REQUIRE (right->takeId == spanning.id);
+    REQUIRE (right->sourceOffset == 50 + 20 - fade);
+    REQUIRE (right->timelineStart + right->lengthInSamples == 120);
+    REQUIRE (right->fadeInSamples == fade);
+    REQUIRE (right->fadeInShape == FadeShape::RaisedCosine);
 }
 
-TEST_CASE ("Final partial audio keeps loop history before sliced containing takes",
-           "[recording][recordmanager][loop-takes][history][punch]")
+TEST_CASE ("Final partial audio pass over a region keeps both passes and the region's take whole",
+           "[recording][recordmanager][loop-takes][punch]")
 {
     const auto temp = makeSessionDir ("dusk-loop-audio-partial-history-");
     Session session;
     armTrack (session, temp.dir, Track::Mode::Mono);
 
-    AudioRegion existing;
-    existing.file = temp.dir.getChildFile ("existing-full.wav");
-    existing.timelineStart = 100;
-    existing.lengthInSamples = 8;
-    existing.sourceOffset = 40;
-    existing.provenance = { 81, 0, false };
-    existing.previousTakes.push_back (
-        { temp.dir.getChildFile ("existing-full-older.wav"), 20, 8,
-          { 80, 0, false } });
-    session.track (0).regions.push_back (existing);
+    const auto existing = seedTake (session, temp.dir.getChildFile ("existing-full.wav"),
+                                    100, 8, 40, 81);
+    session.track (0).regions.push_back (regionFromTake (existing));
 
     RecordManager manager (session);
     const auto plan = loopPlan();
@@ -355,29 +511,26 @@ TEST_CASE ("Final partial audio keeps loop history before sliced containing take
     writeAudioPass (manager, 2, 100, 5);
     manager.stopRecording (105);
 
+    const auto& takes = session.track (0).takes;
+    REQUIRE (takes.size() == 3);
+    REQUIRE (takes[0].id == existing.id);
+    REQUIRE (takes[0].sourceOffset == 40);
+    REQUIRE (takes[0].lengthInSamples == 8);
+    REQUIRE (takeMatches (takes[1], 100, 8, 0));
+    REQUIRE (takes[1].provenance.loopPassOrdinal == 1);
+    REQUIRE (takeMatches (takes[2], 100, 5, 8));
+    REQUIRE (takes[2].provenance.partialPass);
+
     const auto& region = loopAudioRegion (session);
     REQUIRE (region.provenance.loopPassOrdinal == 2);
-    REQUIRE (region.provenance.partialPass);
-    REQUIRE (region.previousTakes.size() == 3);
-    REQUIRE (region.previousTakes[0].provenance.loopPassOrdinal == 1);
-    REQUIRE (region.previousTakes[1].file == existing.file);
-    REQUIRE (region.previousTakes[1].sourceOffset == 40);
-    REQUIRE (region.previousTakes[1].lengthInSamples == 5);
-    REQUIRE (region.previousTakes[1].provenance.capturedAtMs == 81);
-    REQUIRE (region.previousTakes[2].file == existing.previousTakes[0].file);
-    REQUIRE (region.previousTakes[2].sourceOffset == 20);
-    REQUIRE (region.previousTakes[2].lengthInSamples == 5);
+    REQUIRE (region.takeId == takes[2].id);
 
     const auto& regions = session.track (0).regions;
-    const auto tail = std::find_if (regions.begin(), regions.end(),
-                                    [&existing] (const AudioRegion& candidate)
-    {
-        return candidate.file == existing.file
-            && candidate.provenance.loopPassOrdinal == 0;
-    });
-    REQUIRE (tail != regions.end());
-    REQUIRE (tail->timelineStart < 108);
-    REQUIRE (tail->timelineStart + tail->lengthInSamples == 108);
+    REQUIRE (regions.size() == 2);
+    const auto& tail = regionOfTake (session, existing.id);
+    REQUIRE (tail.timelineStart < 105);
+    REQUIRE (tail.timelineStart + tail.lengthInSamples == 108);
+    REQUIRE (tail.sourceOffset == 40 + (tail.timelineStart - 100));
 }
 
 TEST_CASE ("Loop MIDI partitions two passes into current and previous takes",
@@ -486,11 +639,15 @@ TEST_CASE ("Loop MIDI finalization is bounded to the retained high-ordinal passe
     const auto plan = loopPlan();
     REQUIRE (manager.startRecording (960.0, 100, 0, plan));
 
-    constexpr int firstOrdinal = 99992;
+    constexpr int firstOrdinal = 99981;
     constexpr int lastOrdinal = 100000;
     for (int ordinal = firstOrdinal; ordinal <= lastOrdinal; ++ordinal)
-        writeMidiPass (manager, ordinal, 100,
-                       oneNote (60 + ordinal - firstOrdinal), 8);
+    {
+        auto events = oneNote (60 + ordinal - firstOrdinal);
+        if (ordinal == firstOrdinal)
+            addController (events, 1, 64, 127, 2);
+        writeMidiPass (manager, ordinal, 100, std::move (events), 8);
+    }
     manager.stopRecording (108);
 
     const auto region = session.track (0).midiRegions.current().at (0);
@@ -499,6 +656,14 @@ TEST_CASE ("Loop MIDI finalization is bounded to the retained high-ordinal passe
     for (int i = 0; i < 8; ++i)
         REQUIRE (region.previousTakes[(size_t) i].provenance.loopPassOrdinal
                  == lastOrdinal - 1 - i);
+
+    // The sustain was pressed in a pass outside the kept nine; the oldest
+    // kept take still starts with it.
+    const auto& oldestKept = region.previousTakes.back();
+    REQUIRE_FALSE (oldestKept.ccs.empty());
+    REQUIRE (oldestKept.ccs.front().controller == 64);
+    REQUIRE (oldestKept.ccs.front().value == 127);
+    REQUIRE (oldestKept.ccs.front().atTick == 0);
 }
 
 TEST_CASE ("Loop MIDI closes and retriggers a note crossing the seam",
@@ -781,18 +946,14 @@ TEST_CASE ("Final partial MIDI keeps containing history after loop passes withou
     }));
 }
 
-TEST_CASE ("Loop commit diff snapshots provenance and take history for undo",
+TEST_CASE ("Loop commit diff snapshots provenance and takes for undo",
            "[recording][recordmanager][loop-takes][undo]")
 {
     const auto temp = makeSessionDir ("dusk-loop-diff-");
     Session session;
     armTrack (session, temp.dir, Track::Mode::Mono);
-    AudioRegion before;
-    before.file = temp.dir.getChildFile ("before.wav");
-    before.timelineStart = 100;
-    before.lengthInSamples = 8;
-    before.provenance = { 55, 0, false };
-    session.track (0).regions.push_back (before);
+    const auto before = seedTake (session, temp.dir.getChildFile ("before.wav"), 100, 8, 0, 55);
+    session.track (0).regions.push_back (regionFromTake (before));
 
     RecordManager manager (session);
     const auto plan = loopPlan();
@@ -806,11 +967,16 @@ TEST_CASE ("Loop commit diff snapshots provenance and take history for undo",
     REQUIRE (diff[0].trackIndex == 0);
     REQUIRE (diff[0].audioBefore.size() == 1);
     REQUIRE (diff[0].audioBefore[0].provenance.capturedAtMs == 55);
+    REQUIRE (diff[0].audioBefore[0].takeId == before.id);
+    REQUIRE (diff[0].takesBefore.size() == 1);
+    REQUIRE (diff[0].takesBefore[0].id == before.id);
+    REQUIRE (diff[0].takesAfter.size() == 3);
+    REQUIRE (diff[0].takesAfter[0].id == before.id);
+    REQUIRE (diff[0].takesAfter[1].provenance.loopPassOrdinal == 1);
+    REQUIRE (diff[0].takesAfter[2].provenance.loopPassOrdinal == 2);
     REQUIRE (diff[0].audioAfter.size() == 1);
     REQUIRE (diff[0].audioAfter[0].provenance.loopPassOrdinal == 2);
-    REQUIRE (diff[0].audioAfter[0].previousTakes.size() == 2);
-    REQUIRE (diff[0].audioAfter[0].previousTakes[0].provenance.loopPassOrdinal == 1);
-    REQUIRE (diff[0].audioAfter[0].previousTakes[1].provenance.capturedAtMs == 55);
+    REQUIRE (diff[0].audioAfter[0].takeId == diff[0].takesAfter[2].id);
 }
 
 TEST_CASE ("Loop capture plan rejects an empty effective punch intersection",
@@ -872,4 +1038,285 @@ TEST_CASE ("Loop capture snapshots and writes only the effective punch intersect
     REQUIRE (region.lengthInSamples == 10);
     REQUIRE (region.sourceOffset == 0);
     REQUIRE_FALSE (region.provenance.partialPass);
+}
+
+TEST_CASE ("Three takes recorded over each other all stay complete on the track",
+           "[recording][recordmanager][takes][regression]")
+{
+    const auto temp = makeSessionDir ("dusk-overlapping-takes-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    RecordManager manager (session);
+
+    recordLinear (manager, 1000, 4000);
+    recordLinear (manager, 3000, 4000);
+    recordLinear (manager, 2000, 2000);
+
+    const auto& takes = session.track (0).takes;
+    REQUIRE (takes.size() == 3);
+    REQUIRE (takeMatches (takes[0], 1000, 4000, 0));
+    REQUIRE (takeMatches (takes[1], 3000, 4000, 0));
+    REQUIRE (takeMatches (takes[2], 2000, 2000, 0));
+    REQUIRE (takes[0].file != takes[1].file);
+    REQUIRE (takes[1].file != takes[2].file);
+    REQUIRE (takes[0].name == "Take 1");
+    REQUIRE (takes[1].name == "Take 2");
+    REQUIRE (takes[2].name == "Take 3");
+
+    const auto& regions = session.track (0).regions;
+    REQUIRE (regions.size() == 3);
+    const auto& first = regionOfTake (session, takes[0].id);
+    REQUIRE (first.timelineStart == 1000);
+    REQUIRE (first.timelineStart + first.lengthInSamples == 2000 + 64);
+    const auto& second = regionOfTake (session, takes[1].id);
+    REQUIRE (second.timelineStart == 4000 - 64);
+    REQUIRE (second.sourceOffset == 4000 - 64 - 3000);
+    REQUIRE (second.timelineStart + second.lengthInSamples == 7000);
+    const auto& third = regionOfTake (session, takes[2].id);
+    REQUIRE (third.timelineStart == 2000);
+    REQUIRE (third.lengthInSamples == 2000);
+}
+
+TEST_CASE ("Deleting the last-recorded region removes no take",
+           "[recording][recordmanager][takes][regression]")
+{
+    const auto temp = makeSessionDir ("dusk-delete-last-take-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    RecordManager manager (session);
+
+    recordLinear (manager, 1000, 4000);
+    recordLinear (manager, 1000, 4000);
+    auto& regions = session.track (0).regions;
+    REQUIRE (regions.size() == 1);
+    const auto newest = regions[0].takeId;
+    REQUIRE (newest == session.track (0).takes.back().id);
+
+    regions.clear();
+
+    const auto& takes = session.track (0).takes;
+    REQUIRE (takes.size() == 2);
+    REQUIRE (takeMatches (takes[0], 1000, 4000, 0));
+    REQUIRE (takeMatches (takes[1], 1000, 4000, 0));
+    REQUIRE (takes[1].id == newest);
+}
+
+TEST_CASE ("A take punched into a recorded region leaves both pieces naming the older take",
+           "[recording][recordmanager][takes][regression]")
+{
+    const auto temp = makeSessionDir ("dusk-split-recorded-take-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    RecordManager manager (session);
+
+    recordLinear (manager, 1000, 4000);
+    recordLinear (manager, 1000, 4000);
+    recordLinear (manager, 2000, 1000);
+
+    const auto& regions = session.track (0).regions;
+    REQUIRE (regions.size() == 3);
+    for (const auto& region : regions)
+        REQUIRE (region.takeId != 0);
+    const auto& takes = session.track (0).takes;
+    REQUIRE (takes.size() == 3);
+    REQUIRE (regionOfTake (session, takes[2].id).timelineStart == 2000);
+    const auto split = takes[1].id;
+    REQUIRE (std::count_if (regions.begin(), regions.end(), [split] (const AudioRegion& r)
+    {
+        return r.takeId == split;
+    }) == 2);
+}
+
+TEST_CASE ("A take recorded over the end of a region never stretches that region past its own audio",
+           "[recording][recordmanager][takes][punch][regression]")
+{
+    const auto temp = makeSessionDir ("dusk-record-seam-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    RecordManager manager (session);
+    constexpr std::int64_t fade = 64;
+
+    SECTION ("a region ending inside the seam stops where its loop pass does")
+    {
+        REQUIRE (manager.startRecording (48000.0, 0, 0, loopPlan (0, 100)));
+        writeAudioPass (manager, 1, 0, 100, 0.25f);
+        writeAudioPass (manager, 2, 0, 100, 0.75f);
+        manager.stopRecording (100);
+        const auto firstPass = session.track (0).takes[0];
+        session.track (0).regions.assign (1, regionFromTake (firstPass));
+
+        recordLinear (manager, 90, 200);
+
+        const auto& kept = regionOfTake (session, firstPass.id);
+        CHECK (kept.timelineStart == 0);
+        CHECK (kept.sourceOffset == 0);
+        CHECK (kept.lengthInSamples == 100);
+        CHECK (kept.fadeOutSamples == 10);
+        CHECK (kept.fadeOutShape == FadeShape::RaisedCosine);
+
+        const auto reader = dusk::audio::FileReader::open (
+            kept.file.getFullPathName().toStdString());
+        REQUIRE (reader != nullptr);
+        std::vector<float> played ((size_t) kept.lengthInSamples);
+        float* dest[] { played.data() };
+        REQUIRE (reader->read (dest, 1, kept.sourceOffset, kept.lengthInSamples)
+                 == kept.lengthInSamples);
+        const auto [quietest, loudest] = std::minmax_element (played.begin(), played.end());
+        CHECK_THAT (*quietest, Catch::Matchers::WithinAbs (0.25f, 1e-4));
+        CHECK_THAT (*loudest, Catch::Matchers::WithinAbs (0.25f, 1e-4));
+    }
+
+    SECTION ("a region starting inside the seam keeps its own start and source offset")
+    {
+        recordLinear (manager, 1000, 2000);
+        const auto older = session.track (0).takes[0];
+
+        recordLinear (manager, 0, 1020);
+
+        const auto& kept = regionOfTake (session, older.id);
+        CHECK (kept.timelineStart == 1000);
+        CHECK (kept.sourceOffset == 0);
+        CHECK (kept.lengthInSamples == 2000);
+        CHECK (kept.fadeInSamples == 20);
+        CHECK (kept.fadeInShape == FadeShape::RaisedCosine);
+    }
+
+    SECTION ("a region trimmed at one edge shrinks its far fade so the two never overlap")
+    {
+        auto left = regionFromTake (
+            seedTake (session, temp.dir.getChildFile ("left.wav"), 1000, 200, 0, 11));
+        left.fadeInSamples = 150;
+        auto right = regionFromTake (
+            seedTake (session, temp.dir.getChildFile ("right.wav"), 1900, 300, 0, 12));
+        right.fadeOutSamples = 250;
+        session.track (0).regions = { left, right };
+
+        recordLinear (manager, 1100, 900);
+
+        const auto& keptLeft = regionOfTake (session, left.takeId);
+        CHECK (keptLeft.lengthInSamples == 100 + fade);
+        CHECK (keptLeft.fadeOutSamples == fade);
+        CHECK (keptLeft.fadeInSamples == 100);
+
+        const auto& keptRight = regionOfTake (session, right.takeId);
+        CHECK (keptRight.timelineStart == 2000 - fade);
+        CHECK (keptRight.lengthInSamples == 200 + fade);
+        CHECK (keptRight.fadeInSamples == fade);
+        CHECK (keptRight.fadeOutSamples == 200);
+    }
+}
+
+TEST_CASE ("A take recorded over a region naming no take keeps that region's audio as a take",
+           "[recording][recordmanager][takes][regression]")
+{
+    const auto temp = makeSessionDir ("dusk-adopt-plain-region-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    const auto audioDir = session.getAudioDirectory();
+    REQUIRE (audioDir.createDirectory().wasOk());
+    RecordManager manager (session);
+    auto& track = session.track (0);
+
+    AudioRegion plain;
+    plain.file = audioDir.getChildFile ("imported.wav");
+    REQUIRE (plain.file.replaceWithText ("not audio"));
+    plain.numChannels = 2;
+
+    SECTION ("a region the take covers whole")
+    {
+        plain.timelineStart = 1200;
+        plain.lengthInSamples = 800;
+        plain.sourceOffset = 300;
+        track.regions = { plain };
+
+        recordLinear (manager, 1000, 1500);
+
+        REQUIRE (track.takes.size() == 2);
+        const auto& adopted = track.takes[0];
+        CHECK (adopted.id != 0);
+        CHECK (adopted.name == "Take 1");
+        CHECK (adopted.file == plain.file);
+        CHECK (adopted.timelineStart == 1200);
+        CHECK (adopted.lengthInSamples == 800);
+        CHECK (adopted.sourceOffset == 300);
+        CHECK (adopted.numChannels == 2);
+        CHECK (track.takes[1].name == "Take 2");
+        CHECK (takeMatches (track.takes[1], 1000, 1500, 0));
+        REQUIRE (track.regions.size() == 1);
+        CHECK (track.regions[0].takeId == track.takes[1].id);
+
+        const auto unreferenced = findUnreferencedAudio (session);
+        CHECK_FALSE (unreferenced.scanFailed);
+        CHECK (std::none_of (unreferenced.files.begin(), unreferenced.files.end(),
+                             [] (const std::filesystem::path& file)
+                             {
+                                 return file.filename() == "imported.wav";
+                             }));
+
+        const auto& diff = manager.getLastCommitDiff();
+        REQUIRE (diff.size() == 1);
+        REQUIRE (diff[0].audioBefore.size() == 1);
+        CHECK (diff[0].audioBefore[0].takeId == 0);
+        CHECK (diff[0].takesBefore.empty());
+        REQUIRE (diff[0].takesAfter.size() == 2);
+        CHECK (diff[0].takesAfter[0].id == adopted.id);
+        CHECK (diff[0].takesAfter[1].id == track.takes[1].id);
+    }
+
+    SECTION ("a region the take punches into")
+    {
+        plain.timelineStart = 5000;
+        plain.lengthInSamples = 6000;
+        plain.sourceOffset = 40;
+        track.regions = { plain };
+
+        recordLinear (manager, 7000, 1000);
+
+        REQUIRE (track.takes.size() == 2);
+        const auto adopted = track.takes[0];
+        CHECK (adopted.name == "Take 1");
+        CHECK (adopted.file == plain.file);
+        CHECK (adopted.timelineStart == 5000);
+        CHECK (adopted.lengthInSamples == 6000);
+        CHECK (adopted.sourceOffset == 40);
+        CHECK (track.takes[1].name == "Take 2");
+
+        REQUIRE (track.regions.size() == 3);
+        CHECK (std::count_if (track.regions.begin(), track.regions.end(),
+                              [&adopted] (const AudioRegion& r) { return r.takeId == adopted.id; }) == 2);
+        using Span = std::pair<std::int64_t, std::int64_t>;
+        CHECK (takeCoverage (track, adopted.id)
+               == std::vector<Span> { { 5000, 7000 + kPunchFadeSamples }, { 8000 - kPunchFadeSamples, 11000 } });
+    }
+}
+
+TEST_CASE ("A recorded take is numbered after the highest take number on its track",
+           "[recording][recordmanager][takes][regression]")
+{
+    const auto temp = makeSessionDir ("dusk-take-numbering-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    RecordManager manager (session);
+    auto& track = session.track (0);
+
+    recordLinear (manager, 1000, 400);
+    recordLinear (manager, 2000, 400);
+    REQUIRE (track.takes.size() == 2);
+    REQUIRE (track.takes[0].name == "Take 1");
+    REQUIRE (track.takes[1].name == "Take 2");
+
+    const auto gone = track.takes[0].id;
+    track.takes.erase (track.takes.begin());
+    track.regions.erase (std::remove_if (track.regions.begin(), track.regions.end(),
+                                         [gone] (const AudioRegion& r) { return r.takeId == gone; }),
+                         track.regions.end());
+
+    recordLinear (manager, 3000, 400);
+    REQUIRE (track.takes.size() == 2);
+    CHECK (track.takes[1].name == "Take 3");
+
+    track.takes[1].name = "Take 3 keeper";
+    recordLinear (manager, 4000, 400);
+    REQUIRE (track.takes.size() == 3);
+    CHECK (track.takes[2].name == "Take 3");
 }

@@ -2,6 +2,7 @@
 
 #include "BuiltinUnit.h"
 #include "DafPlugin.h"
+#include "../../foundation/MidiBuffer.h"
 #include "../hosting/INativeInstance.h"
 #include "../hosting/SpscRing.h"
 
@@ -45,6 +46,10 @@ public:
     bool reactivate (double sampleRate, int maxBlockFrames, std::string& errorOut) override;
     bool isActive() const noexcept override { return active.load (std::memory_order_acquire); }
     void processBlock (const hosting::PortBuffers& io) noexcept override;
+    // Audio thread, in place of processBlock for a block the strip does not run
+    // the plug-in (a frozen track): the notes its editor's keyboard queued meanwhile
+    // are dropped, not held to play in a burst once it runs again.
+    void skipBlock() noexcept;
     bool saveState (std::vector<std::uint8_t>& out) const override;
     bool loadState (const std::vector<std::uint8_t>& in) override;
     int  getLatencySamples() const noexcept override;
@@ -68,19 +73,34 @@ public:
 
     static constexpr int kStateVersion = 3;
     static constexpr std::uint32_t kWriteRingSize = 1024;
+    static constexpr std::uint32_t kNoteRingSize = 256;
 
 private:
     struct ParamWrite
     {
         std::uint32_t index;
         float value;
+        std::uint32_t sequence;
     };
+
+    struct EditorNote
+    {
+        std::uint8_t status;
+        std::uint8_t note;
+        std::uint8_t velocity;
+    };
+
+    // Message thread: a note from the editor's keyboard, played at the top of the
+    // next block.
+    void playEditorNote (std::uint8_t channel, std::uint8_t note, std::uint8_t velocity) noexcept;
+    // Audio thread: the editor's notes, then the block's own MIDI, into events.
+    std::uint32_t gatherEvents (const dusk::MidiBuffer* midi, int numFrames) noexcept;
 
     // The audio thread, or the message thread while the audio thread is fenced.
     void pushAllParams() noexcept;
     void refreshParamMirrors() noexcept;
     void applyEditorState (const std::string& key, const std::string& value);
-    const char* legacyKnobId (const std::string& symbol) const noexcept;
+    const LegacyParam* legacyParam (const std::string& symbol) const noexcept;
 
     std::string id;
     std::unique_ptr<DafPlugin> plugin;
@@ -88,9 +108,19 @@ private:
     std::vector<ParamInfo> infos;
     std::vector<std::vector<std::string>> choiceText;
     std::vector<std::vector<const char*>> choicePointers;
-    std::vector<std::atomic<float>> values;
+    // The mirror. Each entry packs the value with the sequence number of the
+    // message thread's last write to it, which only that thread advances, so the
+    // audio thread can tell a write the plug-in has not been handed yet from one
+    // it has, even when the two carry the same value.
+    std::vector<std::atomic<std::uint64_t>> values;
     std::vector<std::uint32_t> outputIndices;
     hosting::SpscRing<ParamWrite, kWriteRingSize> writes;
+    hosting::SpscRing<EditorNote, kNoteRingSize> editorNotes;
+    // Sized once for an instrument and left empty for an effect, which plays no MIDI.
+    std::vector<DafMidiEvent> events;
+    // The sequence number of the last write to each parameter the plug-in has been
+    // handed. The audio thread's, or the message thread's while that is fenced.
+    std::vector<std::uint32_t> appliedWrites;
     std::atomic<bool> resyncAll { false };
     hosting::PortLayout layout;
     std::atomic<bool> active { false };

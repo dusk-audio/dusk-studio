@@ -463,7 +463,7 @@ void BounceEngine::run()
         engine.setStage (AudioEngine::Stage::Mixing);
         transport.setPlayhead (0);
         transport.setState (Transport::State::Playing);
-        engine.getPlaybackEngine().preparePlayback();
+        engine.getPlaybackEngine().preparePlayback (PlaybackEngine::Audition::Ignore);
         // The in-callback relatch of the master-stage aux PDC only runs while
         // stopped - and this offline drive is Playing from the first block.
         // Latch the targets here (callback is detached) or the render plays
@@ -743,7 +743,7 @@ bool BounceEngine::runStemsMode()
 
         transport.setPlayhead (0);
         transport.setState (Transport::State::Playing);
-        engine.getPlaybackEngine().preparePlayback();
+        engine.getPlaybackEngine().preparePlayback (PlaybackEngine::Audition::Ignore);
 
         // Per-kind PDC lead-in trim (see leadInFor). Trimming each stem by
         // its own offset keeps the whole set mutually sample-aligned at
@@ -974,7 +974,7 @@ bool BounceEngine::runRealtimeMode()
                 }
                 transport.setLoopEnabled (false);
                 transport.setPlayhead (0);
-                engine.play();
+                engine.play (PlaybackEngine::Audition::Ignore);
             }))
         {
             engine.disarmRealtimeBounce();
@@ -1217,7 +1217,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
 
     transport.setPlayhead (0);
     transport.setState (Transport::State::Playing);
-    engine.getPlaybackEngine().preparePlayback();
+    engine.getPlaybackEngine().preparePlayback (PlaybackEngine::Audition::Ignore);
 
     engine.getChannelStrip (trackIndex).setFreezeCapture (capL.data(), capR.data());
 

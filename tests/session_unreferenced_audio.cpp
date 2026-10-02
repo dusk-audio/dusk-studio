@@ -43,13 +43,13 @@ bool holds (const duskstudio::UnreferencedAudio& found, const juce::File& file)
 
 // Clean out offers to delete what past record passes left behind: WAVs in the
 // session's audio directory that nothing points at any more. Anything a region,
-// a take under a region or the loaded mastering source still names has to
-// survive, and so does everything outside that one directory level.
+// a track take or the loaded mastering source still names has to survive, and so
+// does everything outside that one directory level.
 TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleanout]")
 {
     using duskstudio::AudioRegion;
+    using duskstudio::AudioTake;
     using duskstudio::Session;
-    using duskstudio::TakeRef;
 
     const auto dir = makeScratch();
     const auto audio = dir.getChildFile ("audio");
@@ -60,9 +60,11 @@ TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleano
 
     const auto live = writeWav (audio, "take_live.wav", 2048);
     const auto older = writeWav (audio, "take_older.wav", 1024);
+    const auto unplayed = writeWav (audio, "take_unplayed.wav", 768);
     const auto mastering = writeWav (audio, "mixdown.wav", 512);
     const auto orphanA = writeWav (audio, "orphan_a.wav", 4096);
     const auto orphanB = writeWav (audio, "orphan_b.wav", 256);
+    const auto imported = writeWav (audio, "imported.wav", 640);
     // A freeze render and anything hand-dropped live a level down, which the
     // walk never descends into.
     const auto freezeDir = audio.getChildFile ("freeze");
@@ -76,11 +78,23 @@ TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleano
     region.file = live;
     region.timelineStart = 0;
     region.lengthInSamples = 48000;
-    TakeRef take;
-    take.file = older;
-    region.previousTakes.push_back (take);
     session.track (4).regions.push_back (region);
+    AudioTake displaced;
+    displaced.id = session.allocateTakeId();
+    displaced.file = older;
+    session.track (4).takes.push_back (displaced);
+    AudioTake pass;
+    pass.id = session.allocateTakeId();
+    pass.file = unplayed;
+    session.track (9).takes.push_back (pass);
     session.mastering().sourceFile = mastering;
+    // A reversed region plays its render from takes/; reversing it again plays
+    // the file the render came from.
+    AudioRegion reversed;
+    reversed.file = dir.getChildFile ("takes").getChildFile ("imported-reversed.wav");
+    reversed.lengthInSamples = 480;
+    reversed.reversedFrom = AudioRegion::ReverseSource { reversed.file, imported, 0, 480, 0 };
+    session.track (6).regions.push_back (reversed);
 
     const auto found = duskstudio::findUnreferencedAudio (session);
     CHECK (found.files.size() == 2);
@@ -88,7 +102,9 @@ TEST_CASE ("Clean out finds only the audio nothing points at", "[session][cleano
     CHECK (holds (found, orphanB));
     CHECK_FALSE (holds (found, live));
     CHECK_FALSE (holds (found, older));
+    CHECK_FALSE (holds (found, unplayed));
     CHECK_FALSE (holds (found, mastering));
+    CHECK_FALSE (holds (found, imported));
     CHECK_FALSE (holds (found, frozen));
     CHECK_FALSE (holds (found, notes));
     CHECK (found.totalBytes == orphanA.getSize() + orphanB.getSize());

@@ -19,6 +19,7 @@
 #include "FaderBindingMap.h"
 #include "CompModeMap.h"
 #include "../session/RegionEditActions.h"
+#include "../session/TakeComp.h"
 #include "../session/TrackMove.h"
 #include "DeviceFallbackMessage.h"
 #include "LegacyStateBase64.h"
@@ -44,6 +45,11 @@
 namespace duskstudio
 {
 constexpr std::int64_t kMinLoopRecordSamples = 128;
+// A MIDI track whose instrument's latency rises mid-roll schedules a window this
+// much longer than its block at most (see midiScheduledAhead); a bigger rise is
+// taken as a locate. The cap keeps the window's loop-seam resets inside the
+// generated-MIDI budget.
+constexpr int kMaxMidiLatencyBridge = 1024;
 
 using dusk::audio::findSignedMinMax;
 
@@ -767,6 +773,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // -1 sentinel so the first block sees a "swap" if a device is
     // already selected (harmless flush - no notes held yet).
     lastMidiInputIndex.fill (-1);
+    midiScheduledAhead.fill (-1);
 
     publishTempoMap();   // seed the snapshot (empty -> constant tempoBpm)
 
@@ -1419,7 +1426,7 @@ void AudioEngine::commitFreeze (int trackIndex, const juce::File& outFile, std::
     track.frozen.store (true, std::memory_order_release);
 
     // Open the frozen WAV reader (and rebuild every track's readers).
-    playbackEngine.preparePlayback();
+    playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
 }
 
 void AudioEngine::unfreezeTrack (int trackIndex)
@@ -1439,7 +1446,7 @@ void AudioEngine::unfreezeTrack (int trackIndex)
 
     // Rebuild readers without the frozen stream (closes the frozen WAV handle)
     // BEFORE deleting the file.
-    playbackEngine.preparePlayback();
+    playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
 
     // Delete the baked WAV - but only one we created: inside the session's audio
     // dir and named like our freeze output. A corrupt session could otherwise
@@ -1519,12 +1526,16 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
 
     const auto stripsWere = strips;
     const auto midiInputsWere = lastMidiInputIndex;
+    const auto midiAheadWas = midiScheduledAhead;
+    const auto midiUpToWas = midiScheduledUpTo;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto from = (size_t) plan.newToOld[(size_t) t];
         auto* strip = stripsWere[from];
         strips[(size_t) t] = strip;
         lastMidiInputIndex[(size_t) t] = midiInputsWere[from];
+        midiScheduledAhead[(size_t) t] = midiAheadWas[from];
+        midiScheduledUpTo[(size_t) t] = midiUpToWas[from];
         strip->bind (session.track (t).strip);
         strip->bindHardwareInsert (session.track (t).hardwareInsert);
     }
@@ -1539,7 +1550,7 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
         regionClipboard.sourceTrack = plan.oldToNew[(size_t) regionClipboard.sourceTrack];
     nativeParamDrain->followTrackMove (plan);
     recomputePdc();
-    playbackEngine.preparePlayback();
+    playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
 
     if (onTracksMoved) onTracksMoved (plan);
     return true;
@@ -1724,6 +1735,7 @@ AudioEngine::~AudioEngine()
     midiHotplugAlive->store (false, std::memory_order_release);
     changeListenersAlive->store (false, std::memory_order_release);
     deviceCallbacksAlive->store (false, std::memory_order_release);
+    playbackServiceAlive->store (false, std::memory_order_release);
     changeListeners.clear();
     midiHotplugTimer.stopTimer();
     diagTimer.stopTimer();
@@ -1762,7 +1774,94 @@ void AudioEngine::drainCallbackDiagnostics()
     }
 }
 
-void AudioEngine::play()
+void AudioEngine::setTakeAudition (int trackIndex, TakeId takeId)
+{
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks
+        || findTake (session.track (trackIndex), takeId) == nullptr)
+    {
+        clearTakeAudition();
+        return;
+    }
+    TrackSlotMask tracks {};
+    if (const int was = session.takeAudition.trackIdx; was >= 0 && was < Session::kNumTracks)
+        tracks[(size_t) was] = true;
+    tracks[(size_t) trackIndex] = true;
+    session.takeAudition = { trackIndex, takeId };
+    refreshPlayback (tracks);
+}
+
+void AudioEngine::clearTakeAudition()
+{
+    TrackSlotMask tracks {};
+    if (const int was = session.takeAudition.trackIdx; was >= 0 && was < Session::kNumTracks)
+        tracks[(size_t) was] = true;
+    session.takeAudition = {};
+    refreshPlayback (tracks);
+}
+
+void AudioEngine::refreshPlayback (const TrackSlotMask& tracks)
+{
+    // A render's worker owns the streams from its first preparePlayback to its
+    // last stopPlayback, and Play builds them afresh after it.
+    if (offlineRenderActive.load (std::memory_order_acquire))
+        return;
+    if (transport.isStopped())
+    {
+        playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);
+        return;
+    }
+    // A track the recorder captures plays its input, not its streams, until Stop,
+    // whatever its arm button says since the take started.
+    const auto captured = transport.isRecording() && recordManager.isActive()
+                        ? recordManager.getActiveCaptureTrackMask() : std::uint32_t { 0 };
+    bool rebuilt = false;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (tracks[(size_t) t] && (captured & (std::uint32_t { 1 } << t)) == 0)
+        {
+            playbackEngine.refreshTrackPlayback (t, PlaybackEngine::Audition::Honour);
+            rebuilt = true;
+        }
+    playbackEngine.refreshLiveRegionParams();
+    if (rebuilt)
+        schedulePlaybackService();
+}
+
+// Posted rather than run here: an edit of several actions refreshes once per
+// action, and only the last rebuild of the track may reach the audio thread.
+void AudioEngine::schedulePlaybackService()
+{
+    playbackIdleTicks = 0;
+    if (! playbackServiceTimer.isTimerRunning())
+        playbackServiceTimer.startTimer (10);
+    if (std::exchange (playbackServicePosted, true)) return;
+    auto alive = playbackServiceAlive;
+    const bool queued = dusk::callAsync ([this, alive]
+    {
+        if (! alive->load (std::memory_order_acquire)) return;
+        playbackServicePosted = false;
+        servicePlayback();
+    });
+    if (! queued) playbackServicePosted = false;
+}
+
+void AudioEngine::servicePlayback()
+{
+    // Leaves the streams to a render's worker. The worker raises the flag before
+    // the hop to this thread that starts its render and lowers it after its last
+    // stopPlayback, so a pass that finds it lowered runs wholly before the
+    // worker's first touch of the streams or after its last.
+    if (offlineRenderActive.load (std::memory_order_acquire))
+        return;
+    playbackEngine.service();
+    // A swap the audio thread has taken is still fading for a few milliseconds
+    // before it hands the old streams back, so the timer outlasts the last work.
+    if (playbackEngine.hasPendingWork())
+        playbackIdleTicks = 0;
+    else if (++playbackIdleTicks >= 50)
+        playbackServiceTimer.stopTimer();
+}
+
+void AudioEngine::play (PlaybackEngine::Audition audition)
 {
     if (transport.isPlaying() || transport.isRecording()) return;
     performPendingDspRestartIfIdle();
@@ -1784,7 +1883,7 @@ void AudioEngine::play()
     }
 
     transport.setRollStart (transport.getPlayhead());
-    playbackEngine.preparePlayback();
+    playbackEngine.preparePlayback (audition);
     transport.setState (Transport::State::Playing);
 }
 
@@ -1809,6 +1908,8 @@ void AudioEngine::stop()
 
         if (wasRecording)
         {
+            if (onBeforeRecordCommit)
+                onBeforeRecordCommit (recordManager.getActiveCaptureTrackMask());
             recordManager.stopRecording (transport.getPlayhead());
             activeRecordStart.store (std::numeric_limits<std::int64_t>::min(),
                                       std::memory_order_relaxed);
@@ -1823,7 +1924,8 @@ void AudioEngine::stop()
                 for (const auto& d : diff)
                     wrapped.push_back ({ d.trackIndex,
                                           d.audioBefore, d.audioAfter,
-                                          d.midiBefore,  d.midiAfter });
+                                          d.midiBefore,  d.midiAfter,
+                                          d.takesBefore, d.takesAfter });
                 undoManager.beginNewTransaction ("Record");
                 undoManager.perform (new RecordCommitAction (
                     session, *this, std::move (wrapped)));
@@ -2168,7 +2270,7 @@ void AudioEngine::record()
     if (transport.isStopped())
         transport.setRollStart (startSample);
 
-    playbackEngine.preparePlayback();  // un-armed tracks still play through
+    playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);  // un-armed tracks still play through
     transport.setState (Transport::State::Recording);
 }
 
@@ -2675,6 +2777,19 @@ void AudioEngine::consumePluginStateAfterLoad()
         return unit != nullptr ? std::string (unit->name) : unitId;
     };
 
+    // Only for a blob the slot takes: a failed restore keeps the knob unit's blob
+    // for the next save, and bindings moved beside it would move again on the
+    // next load.
+    auto adoptKnobUnitBindings = [this] (MidiBindingTarget target, int targetIndex,
+                                         const std::vector<int>& knobIndices)
+    {
+        if (knobIndices.empty()) return;
+        session.midiBindings.mutate ([&] (std::vector<MidiBinding>& binds)
+        {
+            remapPluginParamBindings (binds, target, targetIndex, knobIndices);
+        });
+    };
+
     auto rejectUnreadableTrackState = [&] (
         const DecodedStateBlob& state, ChannelStrip& strip,
         auto&& markRestoreFailed, const std::string& location,
@@ -3048,6 +3163,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     builtinName (unitId), "built-in"))
                 continue;
             auto& blob = decoded.bytes;
+            const auto knobIndices = builtin::knobUnitParamIndices (unitId, blob);
             if (strip.isPrepared())
             {
                 suspendProcessing();
@@ -3071,9 +3187,14 @@ void AudioEngine::consumePluginStateAfterLoad()
                         dusk::text::format ("Track %d", t + 1),
                         builtinName (unitId), "built-in", reason });
                 }
+                else
+                {
+                    adoptKnobUnitBindings (MidiBindingTarget::TrackPluginParam, t, knobIndices);
+                }
             }
             else
             {
+                adoptKnobUnitBindings (MidiBindingTarget::TrackPluginParam, t, knobIndices);
                 strip.unloadNativeClap();   // see the CLAP pending branch above
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
@@ -3410,6 +3531,9 @@ void AudioEngine::consumePluginStateAfterLoad()
                         builtinName (unitId), "built-in"))
                     continue;
                 auto& blob = decoded.bytes;
+                // An aux binding drives the lane's first slot only.
+                const auto knobIndices = s == 0 ? builtin::knobUnitParamIndices (unitId, blob)
+                                                : std::vector<int>();
                 if (strip.isPrepared())
                 {
                     suspendProcessing();
@@ -3434,9 +3558,14 @@ void AudioEngine::consumePluginStateAfterLoad()
                             dusk::text::format ("Aux %d slot %d", a + 1, s + 1),
                             builtinName (unitId), "built-in", reason });
                     }
+                    else
+                    {
+                        adoptKnobUnitBindings (MidiBindingTarget::AuxPluginParam, a, knobIndices);
+                    }
                 }
                 else
                 {
+                    adoptKnobUnitBindings (MidiBindingTarget::AuxPluginParam, a, knobIndices);
                     strip.unloadNativeClap (s);
                     strip.unloadNativeLv2 (s);
                     strip.unloadNativeVst3 (s);
@@ -5770,16 +5899,59 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // Skipped on non-MIDI tracks; perTrackMidi on those tracks
         // stays an empty buffer for effect inserts.
         //
-        // Three triggers warrant a flush, all OR'd together:
+        // These triggers warrant a flush, all OR'd together:
         //   - engine-wide flushHangingMidi (transport stop / playhead jump)
         //   - this track's midiInputIndex changed since last block (the
         //     user swapped MIDI controllers - held notes from the old
         //     device would otherwise hang on the synth forever).
+        //   - the instrument's latency rose further than a window can bridge
+        //     (below), which is handled as a locate.
         const int currentMidiIdx = session.track (t).midiInputIndex.load (
                                        std::memory_order_relaxed);
         const bool midiInputSwapped = (currentMidiIdx != lastMidiInputIndex[(size_t) t]);
         lastMidiInputIndex[(size_t) t] = currentMidiIdx;
-        const bool perTrackFlush = flushHangingMidi || midiInputSwapped;
+
+        // A MIDI track reports 0 to PDC (recomputePdc), so its instrument's
+        // latency comes out of the timeline window instead: the window runs
+        // that far ahead of the block and the delayed output lands on the
+        // note's timeline sample. The insert-wide read, not the plug-in
+        // slot's, so native and built-in instruments count too. Audio tracks
+        // never shift - an effect's latency is PDC's to align.
+        //
+        // The latency can move while the transport rolls (Sunset's
+        // Oversampling switch). A window that jumped with it would skip the
+        // events in between going up - a note-off there hangs - and send some
+        // twice going down. So a window starts where the last one ended and
+        // stretches or shrinks to the new lead: every event goes out once, the
+        // ones a rise passes over at the top of the block, and held voices are
+        // left alone. Only a rise past kMaxMidiLatencyBridge is a locate,
+        // released and chased the way a playhead jump is.
+        const bool schedulesTimelineMidi = midiTrack && willReadFromDisk && ! isFrozen;
+        const int scheduledAhead = midiScheduledAhead[(size_t) t];
+        int instrumentLatency = 0;
+        int midiWindowAhead = 0;
+        bool latencyLocate = false;
+        if (schedulesTimelineMidi)
+        {
+            instrumentLatency = std::clamp (strips[(size_t) t]->getInsertPluginLatencySamples(),
+                                            0, ChannelStrip::kMaxPdcSamples);
+            midiWindowAhead = (scheduledAhead < 0 || flushHangingMidi) ? instrumentLatency
+                                                                      : scheduledAhead;
+            if (instrumentLatency - midiWindowAhead > kMaxMidiLatencyBridge)
+            {
+                latencyLocate = true;
+                midiWindowAhead = instrumentLatency;
+            }
+            midiScheduledAhead[(size_t) t] = std::max (instrumentLatency,
+                                                       midiWindowAhead - numSamples);
+        }
+        else
+        {
+            midiScheduledAhead[(size_t) t] = -1;
+        }
+        const bool perTrackFlush = flushHangingMidi || midiInputSwapped || latencyLocate;
+        const bool midiWindowContinues = schedulesTimelineMidi && scheduledAhead >= 0
+                                      && ! perTrackFlush;
 
         perTrackMidi[(size_t) t].clear();
         liveRecordMidiScratch.clear();
@@ -5791,6 +5963,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                          * kGeneratedEventBytes;
         static_assert (kGeneratedMidiBudget
                        >= (8192 / kMinLoopRecordSamples + 1)
+                            * kHangingResetBytes);
+        // A bridged window's seams, plus the flush an input swap can add.
+        static_assert (kGeneratedMidiBudget
+                       >= ((8192 + kMaxMidiLatencyBridge) / kMinLoopRecordSamples + 2)
                             * kHangingResetBytes);
         GeneratedMidiBudget generatedMidiBudget (kGeneratedMidiBudget);
         if (midiTrack && perTrackFlush)
@@ -5931,16 +6107,19 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // tempo changes); when null/empty this is the exact constant-bpm path.
             const TempoMap* tm = rtTempoMap.load (std::memory_order_acquire);
             const bool useMap = (tm != nullptr && ! tm->empty());
-            // Plugin latency comp for instrument tracks: shift the scheduling
-            // window forward by the plugin's reported latency so the
-            // delayed audio output aligns to the correct timeline sample.
-            // 0 latency = no shift (the common case for synths). Audio
-            // tracks have no instrument plugin so latency is 0 even when
-            // the slot is loaded with an effect.
-            const std::int64_t pluginLatency = midiTrack
-                ? (std::int64_t) strips[(size_t) t]->getPluginSlot().getLatencySamples()
-                : 0;
-            const auto schedStart = blockStartSamples + pluginLatency;
+            // The timeline window, from where the last one ended to the
+            // instrument's latency past this block's end (see
+            // midiScheduledAhead). Usually exactly the block shifted by that
+            // latency. After a rise it is longer, and what falls before the
+            // block lands on its first sample; after a fall it is shorter, or
+            // empty while the block is still inside what was already sent.
+            const auto windowStart = blockStartSamples + midiWindowAhead;
+            const int windowLength = numSamples + instrumentLatency - midiWindowAhead;
+            const int windowToBuffer = midiWindowAhead - instrumentLatency;
+            const auto bufferOffsetOf = [windowToBuffer] (int offsetInWindow) noexcept
+            {
+                return std::max (0, offsetInWindow + windowToBuffer);
+            };
 
             // Acquire-load the track's MIDI region snapshot once for the
             // block. Mutated on the message thread by RecordManager (when
@@ -5967,17 +6146,44 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             int chasedControllerKeyCount = 0;
 
             // Reserve every reset before discretionary notes/controllers can
-            // consume their bytes. At the supported 8192-frame maximum and
-            // 128-sample minimum loop this is at most 64 complete resets.
+            // consume their bytes. At the supported 8192-frame maximum, plus a
+            // bridged latency rise of up to kMaxMidiLatencyBridge, and the
+            // 128-sample minimum loop this is at most 73 complete resets.
+            //
+            // A window that carries on from the last one has a seam at its head
+            // exactly when it does not start where that one ended, on the
+            // timeline the instrument hears. If it starts there past the loop
+            // end, which the loop reports as a wrap at its head, the last
+            // window already crossed that seam and sent its reset and chase.
+            // If it starts anywhere else, the timeline jumped between them
+            // without a span reporting it: the transport wrapped at a loop end
+            // the last window ended on, as any loop end on a block boundary
+            // does at no latency, or the loop was switched off or moved after a
+            // window running ahead had crossed it. Under the minimum, a loop's
+            // window runs straight through the transport's wraps (above), so
+            // its jumps are not seams.
+            bool headSeam = false;
             if (midiTrack)
             {
                 int futureSeamResetCount = 0;
+                auto& scheduledUpTo = midiScheduledUpTo[(size_t) t];
+                const auto lastWindowEnd = scheduledUpTo;
+                const bool headFollowsLastWindow = midiWindowContinues
+                    && ! (loopReadEnd > loopReadStart && ! midiLoopActive);
                 forEachLoopTimelineSpan (
-                    schedStart, numSamples, midiLoopActive, loopReadStart, loopReadEnd,
+                    windowStart, windowLength, midiLoopActive, loopReadStart, loopReadEnd,
                     [&] (const LoopTimelineSpan& span) noexcept
                     {
-                        if (span.wrappedBefore)
+                        bool seam = span.wrappedBefore;
+                        if (span.bufferOffset == 0)
+                        {
+                            if (headFollowsLastWindow)
+                                seam = span.timelineStart != lastWindowEnd;
+                            headSeam = seam;
+                        }
+                        if (seam)
                             ++futureSeamResetCount;
+                        scheduledUpTo = span.timelineStart + span.length;
                     });
                 const bool reserved = generatedMidiBudget.reserveStructural (
                     futureSeamResetCount * kHangingResetBytes);
@@ -5993,15 +6199,16 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 return true;
             };
             forEachLoopTimelineSpan (
-                schedStart, numSamples, midiLoopActive, loopReadStart, loopReadEnd,
+                windowStart, windowLength, midiLoopActive, loopReadStart, loopReadEnd,
                 [&] (const LoopTimelineSpan& span) noexcept
                 {
+                    const bool seam = span.bufferOffset == 0 ? headSeam : span.wrappedBefore;
                     // Structural resets are emitted before every overload
                     // bailout. Their capacity was reserved exactly above, so
                     // an exhausted musical-event or scan budget cannot suppress
                     // this or any later seam reset.
-                    if (midiTrack && span.wrappedBefore
-                        && ! emitHangingMidiReset (span.bufferOffset))
+                    if (midiTrack && seam
+                        && ! emitHangingMidiReset (bufferOffsetOf (span.bufferOffset)))
                     {
                         midiBufferOverflow = true;
                         return;
@@ -6012,9 +6219,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                         || midiScheduleScansRemaining <= 0)
                         return;
 
-                    const bool chase = midiTrack && (span.wrappedBefore
-                                    || (span.bufferOffset == 0 && flushHangingMidi));
-                    const int chaseOffset = span.bufferOffset;
+                    const bool chase = midiTrack && (seam
+                                    || (span.bufferOffset == 0
+                                        && (flushHangingMidi || latencyLocate)));
+                    const int chaseOffset = bufferOffsetOf (span.bufferOffset);
                     const auto spanEnd = span.timelineStart + span.length;
                     if (chase)
                     {
@@ -6091,7 +6299,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                     (std::uint8_t) (0xB0 | (c.channel - 1)),
                                     (std::uint8_t) c.controller,
                                     (std::uint8_t) c.value,
-                                    span.bufferOffset + (int) (at - span.timelineStart)))
+                                    bufferOffsetOf (span.bufferOffset
+                                                    + (int) (at - span.timelineStart))))
                                 {
                                     controllerPassComplete = false;
                                     break;
@@ -6163,7 +6372,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                         (std::uint8_t) (0x90 | (n.channel - 1)),
                                         (std::uint8_t) n.noteNumber,
                                         (std::uint8_t) n.velocity,
-                                        span.bufferOffset + (int) (onAbs - span.timelineStart)))
+                                        bufferOffsetOf (span.bufferOffset
+                                                        + (int) (onAbs - span.timelineStart))))
                                     return;
                             }
                             if (offAbs >= span.timelineStart && offAbs < spanEnd)
@@ -6171,7 +6381,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                 if (! addGeneratedMidi (
                                         (std::uint8_t) (0x80 | (n.channel - 1)),
                                         (std::uint8_t) n.noteNumber, 0,
-                                        span.bufferOffset + (int) (offAbs - span.timelineStart)))
+                                        bufferOffsetOf (span.bufferOffset
+                                                        + (int) (offAbs - span.timelineStart))))
                                     return;
                             }
                         }

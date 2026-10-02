@@ -52,6 +52,7 @@ TEST_CASE ("consolidateInto copies session audio and repoints the model",
 
     const auto take1   = makeFakeWav (dirA.getChildFile ("audio/take1.wav"));
     const auto take0   = makeFakeWav (dirA.getChildFile ("audio/take0.wav"));
+    const auto passB   = makeFakeWav (dirA.getChildFile ("audio/pass_b.wav"));
     const auto freeze  = makeFakeWav (dirA.getChildFile ("audio/freeze/freeze_track02.wav"));
     const auto mixdown = makeFakeWav (dirA.getChildFile ("mixdown.wav"));
 
@@ -59,10 +60,20 @@ TEST_CASE ("consolidateInto copies session audio and repoints the model",
         AudioRegion r;
         r.file            = take1;
         r.lengthInSamples = 1000;
-        TakeRef prior;
-        prior.file            = take0;
-        prior.lengthInSamples = 500;
-        r.previousTakes.push_back (prior);
+        AudioTake live;
+        live.id              = s.allocateTakeId();
+        live.file            = take1;
+        live.lengthInSamples = 1000;
+        r.takeId = live.id;
+        AudioTake unplayed;
+        unplayed.id              = s.allocateTakeId();
+        unplayed.file            = passB;
+        unplayed.lengthInSamples = 800;
+        AudioTake older;
+        older.id              = s.allocateTakeId();
+        older.file            = take0;
+        older.lengthInSamples = 500;
+        s.track (0).takes = { live, unplayed, older };
         s.track (0).regions.push_back (r);
 
         s.track (1).frozen.store (true);
@@ -75,19 +86,21 @@ TEST_CASE ("consolidateInto copies session audio and repoints the model",
 
     const auto res = SessionSerializer::consolidateInto (s, dirB);
     REQUIRE (res.ok);
-    REQUIRE (res.filesCopied == 4);
+    REQUIRE (res.filesCopied == 5);
     REQUIRE (res.missingSources.empty());
 
     // Relative subpaths preserved, including audio/freeze/ and the root mixdown.
     REQUIRE (dirB.getChildFile ("audio/take1.wav").existsAsFile());
     REQUIRE (dirB.getChildFile ("audio/take0.wav").existsAsFile());
+    REQUIRE (dirB.getChildFile ("audio/pass_b.wav").existsAsFile());
     REQUIRE (dirB.getChildFile ("audio/freeze/freeze_track02.wav").existsAsFile());
     REQUIRE (dirB.getChildFile ("mixdown.wav").existsAsFile());
 
     // Model repointed into dirB.
     REQUIRE (s.track (0).regions[0].file == dirB.getChildFile ("audio/take1.wav"));
-    REQUIRE (s.track (0).regions[0].previousTakes[0].file
-                 == dirB.getChildFile ("audio/take0.wav"));
+    REQUIRE (s.track (0).takes[0].file == dirB.getChildFile ("audio/take1.wav"));
+    REQUIRE (s.track (0).takes[1].file == dirB.getChildFile ("audio/pass_b.wav"));
+    REQUIRE (s.track (0).takes[2].file == dirB.getChildFile ("audio/take0.wav"));
     REQUIRE (s.track (1).frozenAudioPath
                  == dirB.getChildFile ("audio/freeze/freeze_track02.wav").getFullPathName());
     REQUIRE (s.track (1).frozenRegion.file
@@ -107,6 +120,9 @@ TEST_CASE ("consolidateInto copies session audio and repoints the model",
     REQUIRE (SessionSerializer::load (loaded, target));
     REQUIRE (loaded.missingAudioFilesAfterLoad.empty());
     REQUIRE (loaded.track (0).regions[0].file == dirB.getChildFile ("audio/take1.wav"));
+    REQUIRE (loaded.track (0).takes.size() == 3);
+    REQUIRE (loaded.track (0).takes[1].file == dirB.getChildFile ("audio/pass_b.wav"));
+    REQUIRE (loaded.track (0).takes[2].file == dirB.getChildFile ("audio/take0.wav"));
 }
 
 TEST_CASE ("consolidateInto pulls external files into audio/ with collision suffixes",
@@ -328,10 +344,11 @@ TEST_CASE ("revertConsolidation restores every path and removes what the Save As
         AudioRegion r;
         r.file = take1;
         r.lengthInSamples = 1000;
-        TakeRef prior;
-        prior.file = take0;
-        prior.lengthInSamples = 500;
-        r.previousTakes.push_back (prior);
+        AudioTake earlier;
+        earlier.id = s.allocateTakeId();
+        earlier.file = take0;
+        earlier.lengthInSamples = 500;
+        s.track (0).takes.push_back (earlier);
         s.track (0).regions.push_back (r);
         AudioRegion e;
         e.file = ext;
@@ -368,7 +385,7 @@ TEST_CASE ("revertConsolidation restores every path and removes what the Save As
     {
         CHECK (s.getSessionDirectory() == dirA);
         CHECK (s.track (0).regions[0].file == take1);
-        CHECK (s.track (0).regions[0].previousTakes[0].file == take0);
+        CHECK (s.track (0).takes[0].file == take0);
         CHECK (s.track (0).regions[1].file == ext);
         CHECK (s.track (2).regions[0].file == gone);
         CHECK (s.track (1).frozenAudioPath == freeze.getFullPathName());
@@ -397,4 +414,44 @@ TEST_CASE ("revertConsolidation restores every path and removes what the Save As
         CHECK (listing (dirB) == listingB);
         CHECK (dirB.getChildFile ("audio/take1.wav").loadFileAsString() == "theirs");
     }
+}
+
+// A reversed region remembers the render it plays and the file it reversed. Save As
+// takes both along and repoints both, so reversing the region again in the new
+// folder still finds its source rather than rendering the render in reverse.
+TEST_CASE ("consolidateInto carries what a reversed region reversed",
+           "[session][serializer][consolidate][reverse]")
+{
+    const auto dirA = makeTempDir ("dusk-consolidate-rev-a-");
+    const auto dirB = makeTempDir ("dusk-consolidate-rev-b-");
+    const struct Cleanup
+    {
+        juce::File a, b;
+        ~Cleanup() { a.deleteRecursively(); b.deleteRecursively(); }
+    } cleanup { dirA, dirB };
+
+    Session s;
+    s.setSessionDirectory (dirA);
+    const auto source = makeFakeWav (dirA.getChildFile ("audio/imported.wav"));
+    const auto render = makeFakeWav (dirA.getChildFile ("takes/imported-reversed.wav"));
+    AudioRegion r;
+    r.file = render;
+    r.lengthInSamples = 1000;
+    r.reversedFrom = AudioRegion::ReverseSource { render, source, 0, 1000, 0 };
+    s.track (0).regions.push_back (r);
+
+    const auto res = SessionSerializer::consolidateInto (s, dirB);
+    REQUIRE (res.ok);
+    CHECK (res.filesCopied == 2);
+    const auto& moved = s.track (0).regions[0];
+    REQUIRE (moved.reversedFrom.has_value());
+    CHECK (moved.file == dirB.getChildFile ("takes/imported-reversed.wav"));
+    CHECK (moved.reversedFrom->render == moved.file);
+    CHECK (moved.reversedFrom->file == dirB.getChildFile ("audio/imported.wav"));
+    CHECK (dirB.getChildFile ("audio/imported.wav").existsAsFile());
+    CHECK (forwardOfReversed (moved).has_value());
+
+    SessionSerializer::revertConsolidation (s, res);
+    CHECK (s.track (0).regions[0].reversedFrom->file == source);
+    CHECK (s.track (0).regions[0].reversedFrom->render == render);
 }

@@ -157,7 +157,7 @@ JUCE (audio framework)
              from VST3's.
 
 Dusk Audio plugins (donor DSP cores)
-  Version  : dusk-audio/plugins rev 7e13c9ce94d5c2069166708ee2ec688a74dc593f
+  Version  : dusk-audio/plugins rev 78abae748a32c5863f586ca174a47047a4d2c4a1
              (the DONOR_REV file at the top of the Dusk Studio source)
   License  : GPL-3.0-or-later (matches Dusk Studio)
   Path     : plugins/ in the donor checkout, fetched at configure time
@@ -168,7 +168,7 @@ Dusk Audio plugins (donor DSP cores)
     - tape-echo    (Tape Echo 2 DSP and editor)
     - TapeMachine  (full tape emulation)
     - DuskVerb     (DuskVerb 2 DSP and editor)
-    - sunset-circuits (Sunset synth core)
+    - sunset-circuits (Sunset Circuits DSP and editor)
     - shared/AnalogEmulation (TubeEmulation, TransformerEmulation, etc.)
     - shared-daf/fonts/BarlowCondensed (Regular and SemiBold font data embedded
       in the DuskVerb 2 editor; SIL Open Font License 1.1, Copyright 2017 The
@@ -4207,7 +4207,7 @@ distribute, and modify this file as you see fit.
 --------------------------------------------------------------------------------
 Barlow Condensed — SIL Open Font License 1.1
 plugins/shared-daf/fonts/BarlowCondensed/OFL.txt at dusk-audio/plugins rev
-7e13c9ce94d5c2069166708ee2ec688a74dc593f
+78abae748a32c5863f586ca174a47047a4d2c4a1
 --------------------------------------------------------------------------------
 
 Copyright 2017 The Barlow Project Authors (https://github.com/jpt/barlow)

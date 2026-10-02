@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <system_error>
 #include <utility>
@@ -79,7 +80,7 @@ inline std::optional<PluginDescriptor> descriptorFromObject (
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 9;
+constexpr int kFormatVersion = 10;
 
 inline bool hasTakeProvenance (const TakeProvenance& provenance) noexcept
 {
@@ -112,6 +113,11 @@ inline TakeProvenance parseTakeProvenance (const nlohmann::json& parent) noexcep
         0, json::getInt (value, "loop_pass", 0));
     provenance.partialPass = json::getBool (value, "partial", false);
     return provenance;
+}
+
+inline TakeId parseTakeId (const nlohmann::json& parent, const char* key) noexcept
+{
+    return (TakeId) std::max ((std::int64_t) 0, json::getInt64 (parent, key, 0));
 }
 
 // Store a float from JSON only when it's finite, so a corrupt or hand-edited
@@ -397,6 +403,145 @@ bool migrateStripEqDialsToHz (nlohmann::json& root)
     return false;
 #endif
 }
+
+// Up to format 8 an audio region carried the recordings it had displaced as
+// previous_takes. Each distinct recording pass on a track - one file and loop
+// pass - becomes one of the track's takes, spanning all of the file that any
+// region or previous take used and sitting where the earliest of them put it
+// that leaves the take inside the timeline, or at sample 0 when none does. The
+// take is never cut short to fit, since a previous take may be the only thing
+// still reaching that audio. A recorded region names its take by take_id; what
+// it plays is left exactly as it was.
+//
+// The takes are numbered oldest first. A history lists the newest displaced
+// take first under the region playing the newest of all, so walking each one
+// backwards meets its passes oldest first. Passes with a capture time are then
+// ordered by it, and by loop pass within one loop recording, among the places
+// they hold; a pass without one keeps its place.
+void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
+{
+    const auto tracks = root.find ("tracks");
+    if (tracks == root.end() || ! tracks->is_array()) return;
+
+    constexpr auto kMaxSample = std::numeric_limits<std::int64_t>::max();
+    TakeId lastId = 0;
+    for (auto& track : *tracks)
+    {
+        if (! track.is_object()) continue;
+        const auto regions = track.find ("regions");
+        if (regions == track.end() || ! regions->is_array()) continue;
+
+        struct Pass
+        {
+            std::string file;
+            int loopPass = 0;
+            std::int64_t capturedAtMs = 0;
+            std::int64_t fileStart = 0, fileEnd = 0;
+            // Timeline position of the file's first sample, per piece.
+            std::vector<std::int64_t> origins;
+            int numChannels = 1;
+            nlohmann::json provenance;
+        };
+        std::vector<Pass> passes;
+        std::vector<std::pair<nlohmann::json*, std::size_t>> regionPasses;
+
+        const auto contribute = [&] (const nlohmann::json& source, std::int64_t timelineStart,
+                                     int numChannels) -> std::optional<std::size_t>
+        {
+            auto file = json::getString (source, "file");
+            if (file.empty()) return std::nullopt;
+            const auto provenance = parseTakeProvenance (source);
+            const auto offset = std::max ((std::int64_t) 0, json::getInt64 (source, "source_offset", 0));
+            const auto length = std::max ((std::int64_t) 0, json::getInt64 (source, "length", 0));
+            const auto end = offset > kMaxSample - length ? kMaxSample : offset + length;
+            const auto origin = timelineStart - offset;
+
+            for (std::size_t i = 0; i < passes.size(); ++i)
+            {
+                auto& pass = passes[i];
+                if (pass.file != file || pass.loopPass != provenance.loopPassOrdinal) continue;
+                pass.fileStart = std::min (pass.fileStart, offset);
+                pass.fileEnd   = std::max (pass.fileEnd, end);
+                pass.origins.push_back (origin);
+                return i;
+            }
+
+            Pass pass;
+            pass.file = std::move (file);
+            pass.loopPass = provenance.loopPassOrdinal;
+            pass.capturedAtMs = provenance.capturedAtMs;
+            pass.fileStart = offset;
+            pass.fileEnd = end;
+            pass.origins.push_back (origin);
+            pass.numChannels = numChannels;
+            if (const auto it = source.find ("take_provenance"); it != source.end() && it->is_object())
+                pass.provenance = *it;
+            passes.push_back (std::move (pass));
+            return passes.size() - 1;
+        };
+
+        for (auto& region : *regions)
+        {
+            if (! region.is_object()) continue;
+            const auto& prior = json::array (region, "previous_takes");
+            if (parseTakeProvenance (region).capturedAtMs != 0 || ! prior.empty())
+            {
+                const auto timelineStart = std::max ((std::int64_t) 0, json::getInt64 (region, "timeline_start", 0));
+                const int numChannels = jlimit (1, 2, json::getInt (region, "num_channels", 1));
+                for (auto take = prior.rbegin(); take != prior.rend(); ++take)
+                    if (take->is_object())
+                        contribute (*take, timelineStart, numChannels);
+                if (const auto own = contribute (region, timelineStart, numChannels))
+                    regionPasses.emplace_back (&region, *own);
+            }
+            region.erase ("previous_takes");
+        }
+
+        if (passes.empty()) continue;
+
+        std::vector<std::size_t> timedPlaces;
+        for (std::size_t i = 0; i < passes.size(); ++i)
+            if (passes[i].capturedAtMs != 0) timedPlaces.push_back (i);
+        auto timed = timedPlaces;
+        std::stable_sort (timed.begin(), timed.end(), [&passes] (std::size_t a, std::size_t b)
+        {
+            return std::make_pair (passes[a].capturedAtMs, passes[a].loopPass)
+                 < std::make_pair (passes[b].capturedAtMs, passes[b].loopPass);
+        });
+        std::vector<std::size_t> order (passes.size());
+        for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+        for (std::size_t k = 0; k < timedPlaces.size(); ++k)
+            order[timedPlaces[k]] = timed[k];
+
+        std::vector<TakeId> ids (passes.size());
+        auto takes = nlohmann::json::array();
+        for (std::size_t n = 0; n < order.size(); ++n)
+        {
+            const auto& pass = passes[order[n]];
+            ids[order[n]] = ++lastId;
+            const auto lowest = -pass.fileStart;
+            auto origin = kMaxSample;
+            for (const auto o : pass.origins)
+                if (o >= lowest) origin = std::min (origin, o);
+            if (origin == kMaxSample) origin = lowest;
+            nlohmann::json take;
+            take["id"]             = lastId;
+            take["name"]           = "Take " + std::to_string (n + 1);
+            take["file"]           = pass.file;
+            take["timeline_start"] = origin + pass.fileStart;
+            take["length"]         = pass.fileEnd - pass.fileStart;
+            take["source_offset"]  = pass.fileStart;
+            if (pass.numChannels != 1)
+                take["num_channels"] = pass.numChannels;
+            if (! pass.provenance.is_null())
+                take["take_provenance"] = pass.provenance;
+            takes.push_back (std::move (take));
+        }
+        for (const auto& [region, pass] : regionPasses)
+            (*region)["take_id"] = ids[pass];
+        track["takes"] = std::move (takes);
+    }
+}
 } // namespace
 
 // Forward-migrate `root` from a known older version to kFormatVersion
@@ -517,6 +662,20 @@ bool migrateSession (nlohmann::json& root, int from)
                 // them on the next save.
                 if (root.is_object())
                     root["version"] = 9;
+                ++v;
+                break;
+
+            case 9:
+                // v9 -> v10: audio take history moves off the regions onto the
+                // track. A region's previous_takes become track takes, and a
+                // recorded region names its take by take_id; MIDI regions keep
+                // their previous_takes. The bump exists because a v9 build
+                // would drop every track take on re-save.
+                if (root.is_object())
+                {
+                    migrateAudioTakeHistoryToTrackTakes (root);
+                    root["version"] = 10;
+                }
                 ++v;
                 break;
 
@@ -932,28 +1091,41 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
         if (r.muted)  rObj["muted"]  = true;
         if (r.locked) rObj["locked"] = true;
         addTakeProvenance (rObj, r.provenance);
-
-        // Take history. Empty array on the common case (no overdubs); only
-        // serialised when at least one prior take has been captured to keep
-        // session.json compact.
-        if (! r.previousTakes.empty())
+        if (r.takeId != 0) rObj["take_id"] = r.takeId;
+        if (const auto& from = r.reversedFrom)
         {
-            JObj prior = JObj::array();
-            for (auto& take : r.previousTakes)
-            {
-                JObj tObj;
-                tObj["file"]          = toStd (portablePath (take.file, sessionDir));
-                tObj["source_offset"] = (std::int64_t) take.sourceOffset;
-                tObj["length"]        = (std::int64_t) take.lengthInSamples;
-                addTakeProvenance (tObj, take.provenance);
-                prior.push_back (std::move (tObj));
-            }
-            rObj["previous_takes"] = std::move (prior);
+            JObj reversed;
+            reversed["render"]        = toStd (portablePath (from->render, sessionDir));
+            reversed["file"]          = toStd (portablePath (from->file, sessionDir));
+            reversed["source_offset"] = (std::int64_t) from->sourceOffset;
+            reversed["length"]        = (std::int64_t) from->lengthInSamples;
+            if (from->takeId != 0) reversed["take_id"] = from->takeId;
+            rObj["reversed_from"] = std::move (reversed);
         }
 
         regions.push_back (std::move (rObj));
     }
     obj["regions"] = std::move (regions);
+
+    if (! t.takes.empty())
+    {
+        JObj takes = JObj::array();
+        for (const auto& take : t.takes)
+        {
+            JObj tObj;
+            tObj["id"]             = take.id;
+            tObj["name"]           = take.name;
+            tObj["file"]           = toStd (portablePath (take.file, sessionDir));
+            tObj["timeline_start"] = take.timelineStart;
+            tObj["length"]         = take.lengthInSamples;
+            tObj["source_offset"]  = take.sourceOffset;
+            if (take.numChannels != 1)
+                tObj["num_channels"] = take.numChannels;
+            addTakeProvenance (tObj, take.provenance);
+            takes.push_back (std::move (tObj));
+        }
+        obj["takes"] = std::move (takes);
+    }
 
     // MIDI regions. Same shape as audio regions (timelineStart + length)
     // but holds events in tick time instead of a WAV file path. Notes and
@@ -1015,9 +1187,9 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
             if (! r.tempoLock) rObj["tempo_lock"] = false;
             rObj["recorded_at_bpm"] = r.recordedAtBPM;
 
-            // MIDI take history mirrors audio: previously-recorded versions
-            // of the same range stack here when an overdub fully overlaps
-            // an existing region.
+            // MIDI take history: previously-recorded versions of the same
+            // range stack here when an overdub fully overlaps an existing
+            // region.
             if (! r.previousTakes.empty())
             {
                 JObj prior = JObj::array();
@@ -1676,24 +1848,42 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
             r.muted           = json::getBool (rv, "muted", false);
             r.locked          = json::getBool (rv, "locked", false);
             r.provenance      = parseTakeProvenance (rv);
-
+            r.takeId          = parseTakeId (rv, "take_id");
+            if (const auto& reversed = json::child (rv, "reversed_from"); ! reversed.empty())
             {
-                const auto& prior = json::array (rv, "previous_takes");
-                for (const auto& tv : prior)
-                {
-                    if (! tv.is_object()) continue;
-                    TakeRef take;
-                    take.file            = resolvePortablePath (json::getString (tv, "file"),
-                                                                 sessionDir, missingFiles);
-                    take.sourceOffset    = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "source_offset", 0));
-                    take.lengthInSamples = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "length", 0));
-                    take.provenance      = parseTakeProvenance (tv);
-                    r.previousTakes.push_back (std::move (take));
-                }
+                // A reverse's source is not audio the region plays, so it is not
+                // reported missing; a region whose source is gone renders instead.
+                std::remove_reference_t<decltype (missingFiles)> notPlayed;
+                AudioRegion::ReverseSource from;
+                from.render          = resolvePortablePath (json::getString (reversed, "render"), sessionDir, notPlayed);
+                from.file            = resolvePortablePath (json::getString (reversed, "file"), sessionDir, notPlayed);
+                from.sourceOffset    = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (reversed, "source_offset", 0));
+                from.lengthInSamples = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (reversed, "length", 0));
+                from.takeId          = parseTakeId (reversed, "take_id");
+                r.reversedFrom = std::move (from);
             }
 
             t.regions.push_back (std::move (r));
         }
+    }
+
+    // Ids are kept as stored; repairTakeIds makes them unique and consistent
+    // once every track is in.
+    t.takes.clear();
+    for (const auto& tv : json::array (v, "takes"))
+    {
+        if (! tv.is_object()) continue;
+        AudioTake take;
+        take.id              = parseTakeId (tv, "id");
+        take.name            = json::getString (tv, "name");
+        take.file            = resolvePortablePath (json::getString (tv, "file"),
+                                                    sessionDir, missingFiles);
+        take.timelineStart   = std::max ((std::int64_t) 0, json::getInt64 (tv, "timeline_start", 0));
+        take.lengthInSamples = std::max ((std::int64_t) 0, json::getInt64 (tv, "length", 0));
+        take.sourceOffset    = std::max ((std::int64_t) 0, json::getInt64 (tv, "source_offset", 0));
+        take.numChannels     = jlimit (1, 2, json::getInt (tv, "num_channels", 1));
+        take.provenance      = parseTakeProvenance (tv);
+        t.takes.push_back (std::move (take));
     }
 
     // MIDI regions. Symmetric with the writer above; absent for audio
@@ -1787,6 +1977,47 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
         }
     }
     t.midiRegions.publish (std::move (freshMidi));
+}
+
+// The first take to hold an id keeps it; one holding 0 or an id already in use
+// gets a fresh id. A region follows the first take on its own track that held
+// its stored id, and names no take when its track has none.
+void repairTakeIds (Session& s)
+{
+    TakeId highest = 0;
+    for (int i = 0; i < Session::kNumTracks; ++i)
+        for (const auto& take : s.track (i).takes)
+            highest = std::max (highest, take.id);
+    s.seedTakeIdAllocator (highest);
+
+    std::set<TakeId> used;
+    for (int i = 0; i < Session::kNumTracks; ++i)
+    {
+        auto& track = s.track (i);
+        std::map<TakeId, TakeId> storedToLive;
+        for (auto& take : track.takes)
+        {
+            const auto stored = take.id;
+            if (stored == 0 || ! used.insert (stored).second)
+            {
+                take.id = s.allocateTakeId();
+                used.insert (take.id);
+            }
+            if (stored != 0)
+                storedToLive.emplace (stored, take.id);
+        }
+        const auto live = [&storedToLive] (TakeId stored)
+        {
+            const auto it = storedToLive.find (stored);
+            return it != storedToLive.end() ? it->second : 0;
+        };
+        for (auto& region : track.regions)
+        {
+            region.takeId = live (region.takeId);
+            if (region.reversedFrom)
+                region.reversedFrom->takeId = live (region.reversedFrom->takeId);
+        }
+    }
 }
 
 void restoreBus (Bus& a, const nlohmann::json& v, double defaultRecordBpm)
@@ -2297,6 +2528,7 @@ bool SessionSerializer::load (Session& s, const File& source)
     // has to undo a failed load (the session directory moves before this runs)
     // can rely on a false return leaving the model exactly as it was.
     s.missingAudioFilesAfterLoad.clear();
+    s.takeAudition = {};
     s.masteringSourceMissingAfterLoad = false;
 
     // Unconditional (reset-when-absent): a pre-SR-aware file must not inherit
@@ -2380,6 +2612,7 @@ bool SessionSerializer::load (Session& s, const File& source)
                           slotWithDefaults (trackDefaults, tracks, i),
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
+        repairTakeIds (s);
         s.repairLv2StateTags();
     }
     {
@@ -3038,9 +3271,14 @@ void forEachConsolidatedPath (Session& s, Visit&& visit)
         for (auto& r : track.regions)
         {
             visit (r.file);
-            for (auto& take : r.previousTakes)
-                visit (take.file);
+            if (r.reversedFrom)
+            {
+                visit (r.reversedFrom->render);
+                visit (r.reversedFrom->file);
+            }
         }
+        for (auto& take : track.takes)
+            visit (take.file);
         if (track.frozenAudioPath.isNotEmpty())
         {
             visit (track.frozenAudioPath);
@@ -3139,9 +3377,15 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
         for (auto& r : track.regions)
         {
             plan (r.file);
-            for (auto& take : r.previousTakes)
-                plan (take.file);
+            // What a reverse would go back to is not audio the session plays, so a
+            // missing one is not reported; one that is there goes along.
+            if (r.reversedFrom)
+                for (const auto& kept : { r.reversedFrom->render, r.reversedFrom->file })
+                    if (kept.existsAsFile())
+                        plan (kept);
         }
+        for (auto& take : track.takes)
+            plan (take.file);
         if (track.frozenAudioPath.isNotEmpty())
             plan (juce::File (track.frozenAudioPath));
     }

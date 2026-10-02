@@ -32,6 +32,7 @@ template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 
 auto trackLabelFont() { return juce::Font (juce::FontOptions (10.0f, juce::Font::bold)); }
+auto takeBadgeFont()  { return juce::Font (juce::FontOptions (8.0f, juce::Font::bold)); }
 
 constexpr int kNameEditorMinW = 140;
 
@@ -422,6 +423,7 @@ void TapeStrip::rebuildVisibleTrackOrder (bool relayoutParent)
         {
             const auto& tr = session.track (t);
             keep[(size_t) t] = ! tr.regions.empty()
+                             || ! tr.takes.empty()
                              || ! tr.midiRegions.current().empty()
                              || tr.recordArmed.load (std::memory_order_relaxed);
         }
@@ -478,22 +480,49 @@ juce::Rectangle<int> TapeStrip::tracksColumnBounds() const noexcept
 void TapeStrip::refreshLabelColumnWidth()
 {
     // Measure every row's drawn text (name, or the 1-based number fallback) in
-    // the same 10 pt bold the painter uses, and widen the column to the longest
-    // plus the stripe + insets, clamped so a stray long name can't swallow the
-    // timeline.
+    // the same 10 pt bold the painter uses, plus its take badge, and widen the
+    // column to the longest plus the stripe + insets, clamped so a stray long
+    // name can't swallow the timeline.
     const auto font = trackLabelFont();
-    float maxText = 0.0f;
+    int maxRow = 0;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto& nm = session.track (t).name;
         const juce::String s = nm.isNotEmpty() ? nm : juce::String (t + 1);
         juce::GlyphArrangement ga;
         ga.addLineOfText (font, s, 0.0f, 0.0f);
-        maxText = std::max (maxText, ga.getBoundingBox (0, -1, true).getWidth());
+        const int badgeW = takeBadgeWidth (t);
+        maxRow = std::max (maxRow, (int) ga.getBoundingBox (0, -1, true).getWidth() + 1
+                                     + (badgeW > 0 ? badgeW + 4 : 0));
     }
     // 3 px colour stripe + 4 px left inset (see paint) + text + 6 px right pad.
-    const int want = 3 + 4 + (int) maxText + 1 + 6;
+    const int want = 3 + 4 + maxRow + 6;
     labelColW = jlimit (kTrackLabelW, kTrackLabelWMax, want);
+}
+
+std::string TapeStrip::takeBadgeText (int track) const
+{
+    const auto& tr = session.track (track);
+    const auto n = tr.takes.size();
+    if (n == 1 && tr.regions.empty()) return "1 take";
+    return n < 2 ? std::string() : std::to_string (n) + " takes";
+}
+
+int TapeStrip::takeBadgeWidth (int track) const
+{
+    const auto text = takeBadgeText (track);
+    if (text.empty()) return 0;
+    juce::GlyphArrangement ga;
+    ga.addLineOfText (takeBadgeFont(), text, 0.0f, 0.0f);
+    return (int) std::ceil (ga.getBoundingBox (0, -1, true).getWidth()) + 8;
+}
+
+int TapeStrip::takeBadgeTrackAt (int x, int y) const
+{
+    if (! labelColumnBounds().contains (x, y)) return -1;
+    for (const int t : visibleTrackOrder)
+        if (takeBadgeBounds (t).contains (x, y)) return t;
+    return -1;
 }
 
 int TapeStrip::trackAtLabelY (int y) const noexcept
@@ -843,9 +872,7 @@ TapeStrip::RegionHit TapeStrip::hitTestRegion (int x, int y) const noexcept
             // Within this band, the cursor's distance to either fade-end
             // x-position determines which handle is grabbed. Outside
             // the band, falls through to the existing edge / move
-            // logic. Fade handles take priority over the take badge so
-            // the user can still adjust fade-in even on regions with
-            // alternate takes (the badge sits below the fade band).
+            // logic.
             const int yTopBand = row.getY() + 1;
             const bool inFadeBand = (y >= yTopBand && y < yTopBand + kFadeHandleH);
             if (inFadeBand)
@@ -859,24 +886,6 @@ TapeStrip::RegionHit TapeStrip::hitTestRegion (int x, int y) const noexcept
                 const int fadeOutBegX = x1 - (int) std::round ((double) fadeOutSamples * pxPerSample);
                 if (std::abs (x - fadeInEndX)  <= kFadeHitPx) { hit.op = RegionOp::FadeIn;  return hit; }
                 if (std::abs (x - fadeOutBegX) <= kFadeHitPx) { hit.op = RegionOp::FadeOut; return hit; }
-            }
-
-            // Take-history badge takes precedence over the trim-start gutter
-            // since the two share screen area at the region's top-left. Same
-            // bounds as the painter so the click target visibly lines up.
-            if (! r.previousTakes.empty())
-            {
-                const int regionWidth = std::max (2, x1 - x0);
-                const int badgeW = std::min (regionWidth, 16);
-                const int badgeH = std::min (row.getHeight() - 2, 10);
-                const int badgeYTop = row.getY() + 1;
-                if (badgeW >= 8 && badgeH >= 6
-                    && x >= x0 && x <= x0 + badgeW
-                    && y >= badgeYTop && y <= badgeYTop + badgeH)
-                {
-                    hit.op = RegionOp::TakeBadge;
-                    return hit;
-                }
             }
 
             // Edge gutters at the ends - only when the region is wide enough
@@ -1201,7 +1210,7 @@ void TapeStrip::rebuildPlaybackIfStopped()
     // thread is safe at rest but risks an xrun mid-transport.
     auto& transport = engine.getTransport();
     if (transport.getState() == Transport::State::Stopped)
-        engine.getPlaybackEngine().preparePlayback();
+        engine.getPlaybackEngine().preparePlayback (PlaybackEngine::Audition::Honour);
 }
 
 void TapeStrip::resized()
@@ -1240,9 +1249,9 @@ void TapeStrip::resized()
 
 void TapeStrip::timerCallback()
 {
-    // Detect track color / name changes and repaint the whole strip if
-    // anything changed. Cheap - there are 24 tracks and we just compare
-    // a String + a Colour each tick.
+    // Detect track color / name / take-badge changes and repaint the whole
+    // strip if anything changed. Cheap - there are 24 tracks and we just
+    // compare a String, a Colour and a short badge text each tick.
     bool stateChanged = false;
     bool namesChanged = false;
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -1250,10 +1259,17 @@ void TapeStrip::timerCallback()
         const auto& tr = session.track (t);
         if (lastNames[(size_t) t]   != tr.name)   { lastNames[(size_t) t]   = tr.name;   stateChanged = true; namesChanged = true; }
         if (lastColours[(size_t) t] != tr.colour) { lastColours[(size_t) t] = tr.colour; stateChanged = true; }
+        if (auto badge = takeBadgeText (t); badge != lastTakeBadges[(size_t) t])
+        {
+            lastTakeBadges[(size_t) t] = std::move (badge);
+            stateChanged = true;
+            namesChanged = true;
+        }
     }
 
-    // A rename can change the column width; resize repositions the SHOW ALL
-    // toggle and recomputes labelColW, and the repaint below redraws.
+    // A rename or a take-count badge can change the column width; resize
+    // repositions the SHOW ALL toggle and recomputes labelColW, and the
+    // repaint below redraws.
     if (namesChanged)
         resized();
 
@@ -1481,8 +1497,8 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
             return;
         }
         // No audio hit - try MIDI. MIDI regions don't have edge gutters
-        // / fade handles / take badges, so we just check whether the
-        // cursor sits inside any region's painted rect.
+        // or fade handles, so we just check whether the cursor sits
+        // inside any region's painted rect.
         for (int t = 0; t < Session::kNumTracks; ++t)
         {
             const auto row = rowBounds (t);
@@ -1671,6 +1687,17 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    if (! e.mods.isRightButtonDown())
+    {
+        if (const int t = takeBadgeTrackAt (e.x, e.y); t >= 0)
+        {
+            labelClickTimer.stopTimer();
+            labelPressTrack = -1;
+            if (onTrackTakesClicked) onTrackTakesClicked (t, e.getDoubleClickTimeout());
+            return;
+        }
+    }
+
     // Left-click on the track label (the strip on the far left of each
     // row, before the timeline column starts) selects that track without
     // picking a region, so keyboard shortcuts (A / S / X) can target a
@@ -1722,37 +1749,13 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
     // hit.op == None (audio-only hit test) would swallow clicks on MIDI regions
     // and box-select drags.
 
-    // Take-history badge: the same forward step as Alt+T, wrapped in a
-    // RegionEditAction so Cmd+Z reverts it, like the Takes menu.
-    if (hit.op == RegionOp::TakeBadge)
-    {
-        const AudioRegion before = session.track (hit.track).regions[(size_t) hit.regionIdx];
-        AudioRegion after = before;
-        if (cycleTake (after, true))
-        {
-            selectedTrack  = hit.track;
-            selectedRegion = hit.regionIdx;
-            selectedMidiTrack  = -1;
-            selectedMidiRegion = -1;
-
-            auto& um = engine.getUndoManager();
-            um.beginNewTransaction ("Cycle take");
-            performInPlace (new RegionEditAction (session, engine,
-                                                    hit.track, hit.regionIdx, before, after));
-            repaint();
-        }
-        return;
-    }
-
     if (hit.op != RegionOp::None)
     {
-        // Locked regions reject drag / resize / fade / gain. The
-        // take-badge rotation is still allowed - it's reversible by
-        // another click and doesn't change geometry. Shift-click
-        // for selection is also allowed so the user can pick up
-        // locked regions to copy / paste somewhere else.
+        // Locked regions reject drag / resize / fade / gain. Shift-click
+        // for selection is still allowed so the user can pick up locked
+        // regions to copy / paste somewhere else.
         const auto& clickedRegion = session.track (hit.track).regions[(size_t) hit.regionIdx];
-        if (clickedRegion.locked && hit.op != RegionOp::TakeBadge
+        if (clickedRegion.locked
             && ! (e.mods.isShiftDown() || e.mods.isCommandDown()))
         {
             // Just select the region so the user knows what they
@@ -1766,7 +1769,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         }
 
         // Shift / Cmd-click on a region body extends the multi-selection
-        // without starting a drag. Edge ops (trim, fade, take badge)
+        // without starting a drag. Edge ops (trim, fade)
         // ignore the modifier - those are still single-region operations
         // even when other regions are selected. Group drag begins from a
         // plain (no-modifier) click on an already-selected region body.
@@ -2267,8 +2270,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             break;
         }
         case RegionOp::None:
-        case RegionOp::TakeBadge:
-            break;  // mouseDown handled the rotation; no drag semantics
+            break;
     }
     repaint();
 }
@@ -2562,6 +2564,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                                                     "Trim region";
             auto& um = engine.getUndoManager();
             um.beginNewTransaction (label);
+            const RegionRebuildBatch batch (engine);
             performInPlace (new RegionEditAction (session, engine,
                                                     drag.track, drag.regionIdx,
                                                     beforeState, afterState));
@@ -2667,7 +2670,7 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
     }
     if (trackIdx < 0) return;
 
-    // Audio-region hit: open the AudioRegionEditor modal. Walk newest-
+    // Audio-region hit: open the audio editor. Walk newest-
     // first so overlaid regions prefer the most-recently-added (matches
     // the painter's draw order).
     {
@@ -2795,7 +2798,7 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
         // Over an audio region: scissors glyph + a dashed cut-preview line down
         // the region's height (matches the audio editor's Cut affordance).
         juce::Range<int> cutLine;
-        if (hit.op == RegionOp::Move)   // audio body only - not trim/fade/take sub-areas
+        if (hit.op == RegionOp::Move)   // audio body only - not trim/fade sub-areas
         {
             const auto rr = audioRegionScreenRect (hit.track, hit.regionIdx);
             cutLine = { rr.getY(), rr.getBottom() };
@@ -2803,6 +2806,12 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
         setHoverCursor (hit.op == RegionOp::Move ? juce::MouseCursor::NoCursor
                                                  : juce::MouseCursor::NormalCursor,
                         e.x, e.y, cutLine);
+        return;
+    }
+
+    if (takeBadgeTrackAt (e.x, e.y) >= 0)
+    {
+        setHoverCursor (juce::MouseCursor::PointingHandCursor, e.x, e.y);
         return;
     }
 
@@ -2877,9 +2886,6 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
             break;
         case RegionOp::AdjustGain:
             setHoverCursor (juce::MouseCursor::UpDownResizeCursor, e.x, e.y);
-            break;
-        case RegionOp::TakeBadge:
-            setHoverCursor (juce::MouseCursor::PointingHandCursor, e.x, e.y);
             break;
         case RegionOp::None:
             // Empty lane = plain arrow even in Grab. The hand glyph is
@@ -3017,8 +3023,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
 
     const auto& region = session.track (hit.track).regions[(size_t) hit.regionIdx];
     const auto regionEnd = region.timelineStart + region.lengthInSamples;
-    const bool playheadInside =
-        playhead > region.timelineStart && playhead < regionEnd;
+    const RegionId hitId { hit.track, hit.regionIdx };
 
     juce::PopupMenu m;
     m.addSectionHeader (juce::String::formatted ("Track %d region %d",
@@ -3035,42 +3040,40 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                     tr.locate (regionStart);
                     safeThis->repaint();
                 });
-    m.addItem ("Split at playhead", playheadInside,
+    m.addItem ("Split at playhead", ! splittableAudioRegions ({ hitId }, playhead).empty(),
                 false /*ticked*/,
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
-                 hitCopy = hit, playhead]
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this), hitId, playhead]
                 {
-                    if (safeThis == nullptr) return;
+                    if (safeThis == nullptr || safeThis->splittableAudioRegions ({ hitId }, playhead).empty()) return;
                     auto& um = safeThis->engine.getUndoManager();
                     um.beginNewTransaction ("Split region");
                     um.perform (new SplitRegionAction (safeThis->session, safeThis->engine,
-                                                         hitCopy.track,
-                                                         hitCopy.regionIdx,
+                                                         hitId.track,
+                                                         hitId.regionIdx,
                                                          playhead));
                     safeThis->repaint();
                 });
 
     // Join regions: enabled when at least two regions on this track are
-    // selected (counting the primary + additional). Same-source abutting
-    // selections collapse cheaply; everything else renders a glued WAV.
-    int joinCount = 0;
-    std::vector<int> joinIdxs;
+    // selected (counting the primary + additional) and none is locked.
+    // Same-source abutting selections collapse cheaply; everything else
+    // renders a glued WAV.
+    std::vector<RegionId> joinIds;
     if (selectedTrack == hit.track && selectedRegion >= 0)
-    {
-        joinIdxs.push_back (selectedRegion);
-        ++joinCount;
-    }
+        joinIds.push_back ({ hit.track, selectedRegion });
     for (const auto& id : additionalSelections)
         if (id.track == hit.track)
-        {
-            joinIdxs.push_back (id.regionIdx);
-            ++joinCount;
-        }
-    m.addItem ("Join selected regions", joinCount >= 2, false,
+            joinIds.push_back (id);
+    std::vector<int> joinIdxs;
+    for (const auto& id : joinIds)
+        joinIdxs.push_back (id.regionIdx);
+    const auto joinable = [joinIds] (const TapeStrip& strip)
+    { return joinIds.size() >= 2 && strip.editableAudioRegions (joinIds).size() == joinIds.size(); };
+    m.addItem ("Join selected regions", joinable (*this), false,
                 [safeThis = juce::Component::SafePointer<TapeStrip> (this),
-                 track = hit.track, joinIdxs]
+                 track = hit.track, joinIdxs, joinable]
                 {
-                    if (safeThis == nullptr) return;
+                    if (safeThis == nullptr || ! joinable (*safeThis)) return;
                     auto& um = safeThis->engine.getUndoManager();
                     um.beginNewTransaction (
                         juce::String ("Join ") + juce::String ((int) joinIdxs.size())
@@ -3181,69 +3184,19 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
 
     m.addSeparator();
 
-    // Takes submenu (audio). Shown when the recorder has absorbed older
-    // takes into previousTakes. Selecting a previous take swaps its
-    // payload (file / sourceOffset / lengthInSamples) into the live
-    // region; the displaced live take drops back into the slot the
-    // chosen take came from so the cycle is reversible.
-    if (! region.previousTakes.empty())
-    {
-        juce::PopupMenu takesSub;
-        const int numTakes = (int) region.previousTakes.size() + 1;
-        takesSub.addSectionHeader (juce::String::formatted ("%d takes", numTakes));
-        takesSub.addItem ("Take 1 (current)", false, true, [] {});
-        for (int i = 0; i < (int) region.previousTakes.size(); ++i)
-        {
-            const int takeNumber = i + 2;
-            takesSub.addItem (
-                juce::String::formatted ("Take %d", takeNumber),
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
-                 hitCopy = hit, takeIdx = i]
-                {
-                    if (safeThis == nullptr) return;
-                    // The region (or whole track) may have been deleted
-                    // between menu open + click - bounds-check before
-                    // indexing. Matches the MIDI variant's guard.
-                    if (hitCopy.track < 0 || hitCopy.track >= Session::kNumTracks) return;
-                    const auto& regs = safeThis->session.track (hitCopy.track).regions;
-                    if (hitCopy.regionIdx < 0
-                        || hitCopy.regionIdx >= (int) regs.size()) return;
-                    const auto& cur = regs[(size_t) hitCopy.regionIdx];
-                    if (takeIdx < 0 || takeIdx >= (int) cur.previousTakes.size()) return;
-
-                    AudioRegion before = cur;
-                    AudioRegion after  = cur;
-                    swapAudioTakePayload (
-                        after, after.previousTakes[(size_t) takeIdx]);
-
-                    auto& um = safeThis->engine.getUndoManager();
-                    um.beginNewTransaction (
-                        juce::String::formatted ("Swap to take %d", takeIdx + 2));
-                    safeThis->performInPlace (new RegionEditAction (
-                        safeThis->session, safeThis->engine,
-                        hitCopy.track, hitCopy.regionIdx,
-                        before, after));
-                    safeThis->repaint();
-                });
-        }
-        m.addSubMenu ("Takes", takesSub);
-        m.addSeparator();
-    }
-
     // Acts on the whole selection when the right-clicked region is part of it.
     m.addSubMenu ("Color", regionColourMenu (region.customColour.getARGB()));
 
     m.addSeparator();
-    m.addItem ("Delete region",
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
-                 hitCopy = hit]
+    m.addItem ("Delete region", ! editableAudioRegions ({ hitId }).empty(), false,
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this), hitId]
                 {
-                    if (safeThis == nullptr) return;
+                    if (safeThis == nullptr || safeThis->editableAudioRegions ({ hitId }).empty()) return;
                     auto& um = safeThis->engine.getUndoManager();
                     um.beginNewTransaction ("Delete region");
                     um.perform (new DeleteRegionAction (safeThis->session, safeThis->engine,
-                                                          hitCopy.track,
-                                                          hitCopy.regionIdx));
+                                                          hitId.track,
+                                                          hitId.regionIdx));
                     safeThis->repaint();
                 });
 
@@ -3347,11 +3300,10 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
 
     m.addSeparator();
 
-    // Takes submenu (MIDI). Same shape as the audio version - swap the
-    // live region's musical payload (notes / ccs / lengthInTicks) with
-    // a previously-absorbed take. lengthInSamples is recomputed from
-    // lengthInTicks at the session's current BPM so the rendered span
-    // stays correct after the swap.
+    // Takes submenu (MIDI). Swap the live region's musical payload
+    // (notes / ccs / lengthInTicks) with a previously-absorbed take.
+    // lengthInSamples is recomputed from lengthInTicks at the session's
+    // current BPM so the rendered span stays correct after the swap.
     if (! region.previousTakes.empty())
     {
         juce::PopupMenu takesSub;
@@ -3712,8 +3664,19 @@ void TapeStrip::paint (juce::Graphics& g)
         const auto& trackName = session.track (t).name;
         const juce::String displayLabel = trackName.isNotEmpty() ? trackName
                                                                   : juce::String (t + 1);
-        g.drawText (displayLabel, labelRow.withTrimmedLeft (4),
+        const auto takeBadge = takeBadgeBounds (t);
+        g.drawText (displayLabel,
+                     takeBadge.isEmpty() ? labelRow.withTrimmedLeft (4)
+                                         : labelRow.withTrimmedLeft (4).withRight (takeBadge.getX() - 2),
                      juce::Justification::centredLeft, false);
+        if (! takeBadge.isEmpty())
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.55f));
+            g.fillRoundedRectangle (takeBadge.toFloat(), 1.5f);
+            g.setColour (juce::Colour (0xffa0c0e0));
+            g.setFont (takeBadgeFont());
+            g.drawText (takeBadgeText (t), takeBadge, juce::Justification::centred, false);
+        }
 
         // Recorded regions for this track.
         const auto& regions = session.track (t).regions;
@@ -3769,18 +3732,13 @@ void TapeStrip::paint (juce::Graphics& g)
             // User-supplied region label, drawn over the body's
             // top-left. Only when set + the region is wide enough
             // for a few characters; auto-truncated by the renderer
-            // otherwise. Take-history badge sits in the same corner;
-            // the label paints on top so the user can see what they
-            // typed. Skip when the row is too short to fit text.
+            // otherwise. Skip when the row is too short to fit text.
             if (region.label.isNotEmpty()
                 && regionRect.getHeight() >= 10
                 && regionRect.getWidth()  >= 24)
             {
                 const int padX = 4;
-                // Badge is 36 px wide (see take-badge paint below) plus
-                // 2 px breathing room before the label starts.
-                const int badgeOffset = ! region.previousTakes.empty() ? 38 : 0;
-                auto labelArea = regionRect.withTrimmedLeft (padX + badgeOffset)
+                auto labelArea = regionRect.withTrimmedLeft (padX)
                                             .withTrimmedRight (padX);
                 if (labelArea.getWidth() > 0)
                 {
@@ -3799,7 +3757,7 @@ void TapeStrip::paint (juce::Graphics& g)
 
             // Lock indicator: a small amber filled circle at the
             // bottom-right of the region body, far from the top-
-            // right gain badge and top-left label / take badge.
+            // right gain badge and top-left label.
             // The shape doesn't have to be a literal padlock - at
             // 14 px row height nothing more elaborate would read
             // anyway. The accent colour is the same amber used on
@@ -3815,29 +3773,6 @@ void TapeStrip::paint (juce::Graphics& g)
                 g.fillEllipse (cx - 3.0f, cy - 3.0f, 6.0f, 6.0f);
                 g.setColour (juce::Colour (0xffe0c060));
                 g.fillEllipse (cx - 2.0f, cy - 2.0f, 4.0f, 4.0f);
-            }
-
-            // Take badge: "T 1/3" at the top-left of the region body
-            // when previousTakes is non-empty. Tells the user at a
-            // glance that the region has alternates, and which slot is
-            // currently live. Hidden on very narrow / short regions so
-            // the badge doesn't visually crowd a thin slice.
-            if (! region.previousTakes.empty()
-                && regionRect.getWidth()  >= 40
-                && regionRect.getHeight() >= 12)
-            {
-                const int total = (int) region.previousTakes.size() + 1;
-                const auto badgeLabel = juce::String::formatted ("T 1/%d", total);
-                const int badgeW = 36;
-                const int badgeH = 10;
-                juce::Rectangle<int> badge (regionRect.getX() + 2,
-                                              regionRect.getY() + 1,
-                                              badgeW, badgeH);
-                g.setColour (juce::Colours::black.withAlpha (0.55f));
-                g.fillRoundedRectangle (badge.toFloat(), 1.5f);
-                g.setColour (juce::Colour (0xffa0c0e0));
-                g.setFont (juce::Font (juce::FontOptions (8.0f, juce::Font::bold)));
-                g.drawText (badgeLabel, badge, juce::Justification::centred, false);
             }
 
             // Region-gain badge: small "+3.0 dB" / "-6.0 dB" readout
@@ -3919,27 +3854,6 @@ void TapeStrip::paint (juce::Graphics& g)
                     };
                     drawHandle (fadeInEndX);
                     drawHandle (fadeOutBegX);
-                }
-            }
-
-            // Take-history badge. Shows total take count (current + prior)
-            // anchored to the region's top-left when there's at least one
-            // prior take. Clicking it rotates to the next prior take; the
-            // rotation is hit-tested via hitTestRegion's TakeBadge op.
-            if (! region.previousTakes.empty())
-            {
-                const int badgeW = std::min (regionRect.getWidth(), 16);
-                const int badgeH = std::min (regionRect.getHeight(), 10);
-                if (badgeW >= 8 && badgeH >= 6)
-                {
-                    juce::Rectangle<int> badge (regionRect.getX(), regionRect.getY(),
-                                                  badgeW, badgeH);
-                    g.setColour (juce::Colours::black.withAlpha (0.6f));
-                    g.fillRoundedRectangle (badge.toFloat(), 1.5f);
-                    g.setColour (juce::Colours::white);
-                    g.setFont (juce::Font (juce::FontOptions (8.0f, juce::Font::bold)));
-                    g.drawText (juce::String ((int) region.previousTakes.size() + 1),
-                                 badge, juce::Justification::centred, false);
                 }
             }
         }
@@ -4035,8 +3949,7 @@ void TapeStrip::paint (juce::Graphics& g)
             // User-supplied label, top-left of the region body. Same
             // shadow + white-text combo the audio painter uses. Shift
             // right by the take-badge width when previousTakes is non-
-            // empty so the label and the "T 1/N" pill don't overlap;
-            // matches the audio painter's badgeOffset.
+            // empty so the label and the "T 1/N" pill don't overlap.
             if (region.label.isNotEmpty()
                 && regionRect.getHeight() >= 10
                 && regionRect.getWidth()  >= 24)
@@ -4070,8 +3983,7 @@ void TapeStrip::paint (juce::Graphics& g)
                 g.fillEllipse (cx - 2.0f, cy - 2.0f, 4.0f, 4.0f);
             }
 
-            // Take badge - matches the audio painter so MIDI take cycles
-            // surface the same affordance.
+            // Take badge: "T 1/3" when the region has alternate takes.
             if (! region.previousTakes.empty()
                 && regionRect.getWidth()  >= 40
                 && regionRect.getHeight() >= 12)
@@ -4795,15 +4707,12 @@ bool TapeStrip::duplicateSelectedRegion()
     auto& um = engine.getUndoManager();
     um.beginNewTransaction (selection.size() == 1 ? "Duplicate region"
                                                     : "Duplicate regions");
+    const RegionRebuildBatch batch (engine);
     for (const auto& id : selection)
     {
         const auto& regs = session.track (id.track).regions;
         if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
         AudioRegion clone = regs[(size_t) id.regionIdx];
-        // Drop take history on the duplicate - it's a fresh region as
-        // far as the user is concerned; cycling alternate takes on the
-        // clone would be confusing. The original keeps its history.
-        clone.previousTakes.clear();
         clone.timelineStart = regs[(size_t) id.regionIdx].timelineStart
                              + regs[(size_t) id.regionIdx].lengthInSamples;
         um.perform (new PasteRegionAction (session, engine, id.track, clone));
@@ -4842,6 +4751,7 @@ bool TapeStrip::nudgeSelectedRegion (std::int64_t deltaSamples)
     auto& um = engine.getUndoManager();
     um.beginNewTransaction (deltaSamples > 0 ? "Nudge regions right"
                                               : "Nudge regions left");
+    const RegionRebuildBatch batch (engine);
     for (const auto& id : selection)
     {
         const auto& regs = session.track (id.track).regions;
@@ -4858,59 +4768,33 @@ bool TapeStrip::nudgeSelectedRegion (std::int64_t deltaSamples)
     return true;
 }
 
-bool TapeStrip::cycleSelectedTake (bool forward)
+bool TapeStrip::cycleSelectedMidiTake (bool forward)
 {
-    // Every selected audio region with history steps through its take stack,
-    // as one undo step. A selected MIDI region is the fallback when no audio
-    // region in the selection has history.
-    auto selection = allSelectedRegions();
-    bool didAny = false;
-    auto& um = engine.getUndoManager();
-    for (const auto& id : selection)
-    {
-        const auto& regs = session.track (id.track).regions;
-        if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
-        const AudioRegion before = regs[(size_t) id.regionIdx];
-        AudioRegion after = before;
-        if (! cycleTake (after, forward)) continue;
+    if (selectedMidiTrack < 0 || selectedMidiTrack >= Session::kNumTracks || selectedMidiRegion < 0)
+        return false;
+    const auto& curList = session.track (selectedMidiTrack).midiRegions.current();
+    if (selectedMidiRegion >= (int) curList.size()) return false;
 
-        if (! didAny) um.beginNewTransaction ("Cycle take");
-        performInPlace (new RegionEditAction (session, engine,
-                                                id.track, id.regionIdx,
+    const MidiRegion before = curList[(size_t) selectedMidiRegion];
+    MidiRegion after = before;
+    if (! cycleTake (after, forward)) return false;
+
+    const double sr = engine.getCurrentSampleRate();
+    const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
+    if (sr > 0.0 && bpm > 0.0f)
+    {
+        const double samplesPerTick =
+            (sr * 60.0) / ((double) bpm * (double) kMidiTicksPerQuarter);
+        after.lengthInSamples = (std::int64_t) std::llround (
+            (double) after.lengthInTicks * samplesPerTick);
+    }
+
+    engine.getUndoManager().beginNewTransaction ("Cycle take");
+    performInPlace (new MidiRegionEditAction (session, engine,
+                                                selectedMidiTrack, selectedMidiRegion,
                                                 before, after));
-        didAny = true;
-    }
-    if (! didAny
-        && selectedMidiTrack >= 0 && selectedMidiTrack < Session::kNumTracks
-        && selectedMidiRegion >= 0)
-    {
-        const auto& curList = session.track (selectedMidiTrack).midiRegions.current();
-        if (selectedMidiRegion < (int) curList.size())
-        {
-            const MidiRegion before = curList[(size_t) selectedMidiRegion];
-            MidiRegion after = before;
-            if (cycleTake (after, forward))
-            {
-                const double sr = engine.getCurrentSampleRate();
-                const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
-                if (sr > 0.0 && bpm > 0.0f)
-                {
-                    const double samplesPerTick =
-                        (sr * 60.0) / ((double) bpm * (double) kMidiTicksPerQuarter);
-                    after.lengthInSamples = (std::int64_t) std::llround (
-                        (double) after.lengthInTicks * samplesPerTick);
-                }
-
-                um.beginNewTransaction ("Cycle take");
-                performInPlace (new MidiRegionEditAction (session, engine,
-                                                            selectedMidiTrack, selectedMidiRegion,
-                                                            before, after));
-                didAny = true;
-            }
-        }
-    }
-    if (didAny) repaint();
-    return didAny;
+    repaint();
+    return true;
 }
 
 bool TapeStrip::splitSelectedAtPlayhead()

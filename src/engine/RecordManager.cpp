@@ -1,9 +1,11 @@
 #include "RecordManager.h"
 #include "audiofile/FileWriter.h"
+#include "../session/TakeComp.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <new>
+#include <string>
 #include <thread>
 #include <unordered_map>
 
@@ -11,19 +13,14 @@ namespace duskstudio
 {
 namespace
 {
-// Cap on the per-region take history. Each overdub that fully contains
-// an existing region pushes the previous take onto previousTakes; without
-// a bound, repeated punch-recording in the same spot accumulates
-// indefinitely. 8 is plenty for a portastudio retake workflow; older takes
-// get trimmed from the back (the oldest, least-likely-to-be-recalled
-// entries) when the cap is exceeded.
-constexpr int kMaxTakesPerRegion = 8;
+// MIDI regions still carry their own take history. Repeated punch-recording
+// in one spot would otherwise grow it without bound; the oldest entries go.
+constexpr int kMaxMidiTakesPerRegion = 8;
 
-template <typename Region>
-void trimTakeHistory (Region& region) noexcept
+void trimMidiTakeHistory (MidiRegion& region) noexcept
 {
-    if ((int) region.previousTakes.size() > kMaxTakesPerRegion)
-        region.previousTakes.resize ((size_t) kMaxTakesPerRegion);
+    if ((int) region.previousTakes.size() > kMaxMidiTakesPerRegion)
+        region.previousTakes.resize ((size_t) kMaxMidiTakesPerRegion);
 }
 
 bool sameProvenance (const TakeProvenance& a, const TakeProvenance& b) noexcept
@@ -46,13 +43,6 @@ bool sameMidiCc (const MidiCc& a, const MidiCc& b) noexcept
         && a.value == b.value && a.atTick == b.atTick;
 }
 
-bool sameAudioTake (const TakeRef& a, const TakeRef& b) noexcept
-{
-    return a.file == b.file && a.sourceOffset == b.sourceOffset
-        && a.lengthInSamples == b.lengthInSamples
-        && sameProvenance (a.provenance, b.provenance);
-}
-
 bool sameMidiTake (const MidiTakeRef& a, const MidiTakeRef& b) noexcept
 {
     return a.lengthInTicks == b.lengthInTicks
@@ -67,10 +57,15 @@ bool sameAudioRegion (const AudioRegion& a, const AudioRegion& b) noexcept
 {
     return a.file == b.file && a.timelineStart == b.timelineStart
         && a.lengthInSamples == b.lengthInSamples && a.sourceOffset == b.sourceOffset
-        && a.previousTakes.size() == b.previousTakes.size()
-        && sameProvenance (a.provenance, b.provenance)
-        && std::equal (a.previousTakes.begin(), a.previousTakes.end(),
-                       b.previousTakes.begin(), sameAudioTake);
+        && a.takeId == b.takeId
+        && sameProvenance (a.provenance, b.provenance);
+}
+
+bool sameTakeIds (const std::vector<AudioTake>& a, const std::vector<AudioTake>& b) noexcept
+{
+    return a.size() == b.size()
+        && std::equal (a.begin(), a.end(), b.begin(),
+                       [] (const AudioTake& x, const AudioTake& y) { return x.id == y.id; });
 }
 
 bool sameMidiRegion (const MidiRegion& a, const MidiRegion& b) noexcept
@@ -140,6 +135,30 @@ bool sliceMidiTake (const MidiTakeRef& source,
 } // namespace
 
 RecordManager::RecordManager (Session& s) : session (s) {}
+
+std::string RecordManager::describeRecordErrors (const std::vector<RecordError>& errors)
+{
+    static_assert (kMaxLoopPassesPerGesture == 1024, "the loop pass limit message quotes the limit");
+    std::string text = "The last take captured with errors. Listed tracks may be partial "
+                       "or missing audio / MIDI data:\n";
+    for (const auto& e : errors)
+    {
+        const char* kind = e.kind == RecordErrorKind::WavWrite
+                               ? "WAV write failed (disk full / I/O error)"
+                         : e.kind == RecordErrorKind::OffsetConsumedTake
+                               ? "take discarded (recording offset exceeds its length)"
+                         : e.kind == RecordErrorKind::LoopPassLimit
+                               ? "loop passes not recorded (past 1,024 in one take)"
+                               : "MIDI events dropped (capture buffer full)";
+        text += "\n    Track " + std::to_string (e.trackIndex + 1) + " - " + kind + " ("
+              + std::to_string (e.count) + ")";
+    }
+    if (std::any_of (errors.begin(), errors.end(),
+                     [] (const RecordError& e) { return e.kind == RecordErrorKind::WavWrite; }))
+        text += "\n\nCheck the session's audio folder for free space and the "
+                "session log for I/O details before continuing.";
+    return text;
+}
 
 RecordManager::~RecordManager()
 {
@@ -246,7 +265,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     recordLatencyOffsetSamples = latencyOffsetSamples;
     loopPlan = loopCapturePlan;
     currentLoopSpan = {};
-    loopPassCount = 0;
+    midiLoopPassCount = 0;
     gestureCapturedAtMs = std::chrono::duration_cast<std::chrono::milliseconds> (
         std::chrono::system_clock::now().time_since_epoch()).count();
 
@@ -470,22 +489,22 @@ void RecordManager::beginLoopCaptureSpan (const LoopCaptureSpan& span) noexcept
         return;
 
     PassDescriptor* descriptor = nullptr;
-    if (loopPassCount > 0
-        && loopPasses[(size_t) (loopPassCount - 1)].passOrdinal == span.passOrdinal)
+    if (midiLoopPassCount > 0
+        && midiLoopPasses[(size_t) (midiLoopPassCount - 1)].passOrdinal == span.passOrdinal)
     {
-        descriptor = &loopPasses[(size_t) (loopPassCount - 1)];
+        descriptor = &midiLoopPasses[(size_t) (midiLoopPassCount - 1)];
     }
     else
     {
-        if (loopPassCount == kRetainedLoopPasses)
+        if (midiLoopPassCount == kMidiLoopPassWindow)
         {
-            std::move (loopPasses.begin() + 1, loopPasses.end(), loopPasses.begin());
-            --loopPassCount;
+            std::move (midiLoopPasses.begin() + 1, midiLoopPasses.end(),
+                       midiLoopPasses.begin());
+            --midiLoopPassCount;
         }
-        descriptor = &loopPasses[(size_t) loopPassCount++];
+        descriptor = &midiLoopPasses[(size_t) midiLoopPassCount++];
         *descriptor = {};
         descriptor->passOrdinal = span.passOrdinal;
-        descriptor->timelineStart = loopPlan.captureStartSample;
     }
     descriptor->lengthInSamples += span.numSamples;
     descriptor->endsPass = descriptor->endsPass || span.endsPass;
@@ -516,6 +535,9 @@ void RecordManager::stopRecording (std::int64_t endSample)
             const auto fails = w->writeFailures.load (std::memory_order_relaxed);
             if (fails > 0)
                 lastRecordErrors.push_back ({ t, RecordErrorKind::WavWrite, fails });
+            if (w->droppedLoopPasses > 0)
+                lastRecordErrors.push_back ({ t, RecordErrorKind::LoopPassLimit,
+                                              w->droppedLoopPasses });
         }
         if (auto& cap = midiCaptures[(size_t) t])
         {
@@ -533,10 +555,12 @@ void RecordManager::stopRecording (std::int64_t endSample)
     lastCommitDiff.clear();
     std::array<std::vector<AudioRegion>, Session::kNumTracks> beforeAudio;
     std::array<std::vector<MidiRegion>,  Session::kNumTracks> beforeMidi;
+    std::array<std::vector<AudioTake>,   Session::kNumTracks> beforeTakes;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         beforeAudio[(size_t) t] = session.track (t).regions;
         beforeMidi[(size_t) t]  = session.track (t).midiRegions.current();
+        beforeTakes[(size_t) t] = session.track (t).takes;
     }
 
     // Drain any per-track MIDI captures into MidiRegions BEFORE the writer
@@ -600,8 +624,10 @@ void RecordManager::stopRecording (std::int64_t endSample)
             std::array<ActiveNote, 16 * 128> activeNotes {};
             std::array<int, 16 * 128> controllerState {};
             controllerState.fill (-1);
+            static_assert (kMidiLoopPassWindow == kMaxMidiTakesPerRegion + 1,
+                           "the MIDI pass window holds the current take plus the capped history");
             std::vector<MidiRegion> nonemptyPasses;
-            nonemptyPasses.reserve ((size_t) kRetainedLoopPasses);
+            nonemptyPasses.reserve ((size_t) kMidiLoopPassWindow);
             const auto captureLength = loopPlan.captureEndSample
                                      - loopPlan.captureStartSample;
             size_t drainedIndex = 0;
@@ -630,14 +656,14 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 }
             };
 
-            for (int passIndex = 0; passIndex < loopPassCount; ++passIndex)
+            for (int passIndex = 0; passIndex < midiLoopPassCount; ++passIndex)
             {
-                const auto& pass = loopPasses[(size_t) passIndex];
+                const auto& pass = midiLoopPasses[(size_t) passIndex];
                 if (pass.lengthInSamples <= 0) continue;
 
-                // Consume discarded older passes once to recover held-note and
-                // controller state at the first retained boundary. The outer
-                // loop is capped at current + eight prior takes.
+                // Consume evicted older passes once to recover held-note and
+                // controller state at the first kept boundary. The outer loop
+                // is capped at current + eight prior takes.
                 while (drainedIndex < drained.size()
                        && drained[drainedIndex].passOrdinal < pass.passOrdinal)
                     seedState (drained[drainedIndex++]);
@@ -741,7 +767,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     passRegion.notes.push_back (committed);
                 }
 
-                if (passIndex + 1 < loopPassCount)
+                if (passIndex + 1 < midiLoopPassCount)
                 {
                     for (int key = 0; key < (int) controllerState.size(); ++key)
                     {
@@ -757,11 +783,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 }
 
                 if (! passRegion.notes.empty() || ! passRegion.ccs.empty())
-                {
-                    if ((int) nonemptyPasses.size() == kRetainedLoopPasses)
-                        nonemptyPasses.erase (nonemptyPasses.begin());
                     nonemptyPasses.push_back (std::move (passRegion));
-                }
             }
 
             if (nonemptyPasses.empty())
@@ -775,7 +797,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                  it != nonemptyPasses.rend(); ++it)
             {
                 region.previousTakes.push_back (makeMidiTakeRef (*it));
-                trimTakeHistory (region);
+                trimMidiTakeHistory (region);
             }
 
             const auto newStart = region.timelineStart;
@@ -794,7 +816,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                             region.previousTakes.push_back (makeMidiTakeRef (*it));
                             for (auto& deeper : it->previousTakes)
                                 region.previousTakes.push_back (std::move (deeper));
-                            trimTakeHistory (region);
+                            trimMidiTakeHistory (region);
                             it = regions.erase (it);
                             continue;
                         }
@@ -816,7 +838,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                                 if (sliceMidiTake (deeper, it->lengthInSamples,
                                                    sliceOffset, sliceLength, sliced))
                                     region.previousTakes.push_back (std::move (sliced));
-                            trimTakeHistory (region);
+                            trimMidiTakeHistory (region);
                         }
                         ++it;
                     }
@@ -910,8 +932,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
             continue;
         }
 
-        // Take-history capture, mirrors AudioRegion's fully-contained
-        // overdub absorption below. Any existing MIDI region whose
+        // Take-history capture. Any existing MIDI region whose
         // timeline range sits fully inside the new take's range gets
         // moved into the new region's previousTakes (with its own
         // deeper history forwarded so an overdub-of-an-overdub doesn't
@@ -936,7 +957,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     for (auto& deeper : it->previousTakes)
                         region.previousTakes.push_back (std::move (deeper));
 
-                    trimTakeHistory (region);
+                    trimMidiTakeHistory (region);
 
                     it = mregs.erase (it);
                 }
@@ -969,13 +990,11 @@ void RecordManager::stopRecording (std::int64_t endSample)
                                           : recordStartSample)
                                    - recordLatencyOffsetSamples;
         const std::int64_t trim = shifted < 0 ? -shifted : 0;
-        AudioRegion region;
-        bool hasRegion = false;
+        std::vector<AudioTake> passTakes;
 
         if (loopPlan.enabled)
         {
-            std::vector<AudioRegion> committedPasses;
-            committedPasses.reserve ((size_t) slot->loopPassCount);
+            passTakes.reserve ((size_t) slot->loopPassCount);
             const auto captureLength = loopPlan.captureEndSample
                                      - loopPlan.captureStartSample;
             for (int i = 0; i < slot->loopPassCount; ++i)
@@ -984,205 +1003,47 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 if (pass.writeFailed || pass.lengthInSamples <= 0
                     || trim >= pass.lengthInSamples)
                     continue;
-                AudioRegion passRegion;
-                passRegion.file = slot->file;
-                passRegion.timelineStart = std::max<std::int64_t> (0, shifted);
-                passRegion.lengthInSamples = pass.lengthInSamples - trim;
-                passRegion.sourceOffset = pass.sourceOffset + trim;
-                passRegion.numChannels = slot->numChannels;
-                passRegion.provenance = {
+                AudioTake passTake;
+                passTake.file = slot->file;
+                passTake.timelineStart = std::max<std::int64_t> (0, shifted);
+                passTake.lengthInSamples = pass.lengthInSamples - trim;
+                passTake.sourceOffset = pass.sourceOffset + trim;
+                passTake.numChannels = slot->numChannels;
+                passTake.provenance = {
                     gestureCapturedAtMs, pass.passOrdinal,
                     ! pass.endsPass || pass.lengthInSamples < captureLength
                 };
-                committedPasses.push_back (std::move (passRegion));
-            }
-
-            if (! committedPasses.empty())
-            {
-                region = std::move (committedPasses.back());
-                for (auto it = committedPasses.rbegin() + 1;
-                     it != committedPasses.rend(); ++it)
-                {
-                    region.previousTakes.push_back (makeAudioTakeRef (*it));
-                    trimTakeHistory (region);
-                }
-                hasRegion = true;
+                passTakes.push_back (std::move (passTake));
             }
         }
         else if (frames > 0 && trim < frames)
         {
-            region.file = slot->file;
-            region.timelineStart = std::max<std::int64_t> (0, shifted);
-            region.lengthInSamples = frames - trim;
-            region.sourceOffset = trim;
-            region.numChannels = slot->numChannels;
-            hasRegion = true;
+            AudioTake take;
+            take.file = slot->file;
+            take.timelineStart = std::max<std::int64_t> (0, shifted);
+            take.lengthInSamples = frames - trim;
+            take.sourceOffset = trim;
+            take.numChannels = slot->numChannels;
+            passTakes.push_back (std::move (take));
         }
 
-        if (hasRegion)
+        if (! passTakes.empty())
         {
-            // Take-history capture: any existing region whose timeline range
-            // is FULLY CONTAINED within the new take's range gets absorbed
-            // into previousTakes. The user can then cycle through them via
-            // the badge UI without losing access to earlier takes.
-            //
-            // Partial overlaps (e.g. punch-in over the middle of a longer
-            // take) are not absorbed wholesale: Pass 2 retains their outer
-            // fragments and saves the overwritten compatible slice as a take.
-            const std::int64_t newStart = region.timelineStart;
-            const std::int64_t newEnd   = newStart + region.lengthInSamples;
-            auto& regs = session.track (t).regions;
+            auto& track = session.track (t);
+            for (auto& take : passTakes)
+                take.id = session.allocateTakeId();
 
-            // Crossfade length: 64 samples per side, raised-cosine
-            // shape. docs/DuskStudio.md §5b specifies the click-mask fade as
-            // 64 samples ~ 1.3 ms at 48 kHz - imperceptible as a fade
-            // but enough to suppress the boundary discontinuity. Bound
-            // by half the new take's length so a punch shorter than 128
-            // samples still gets symmetric ramps that don't overlap.
-            constexpr std::int64_t kPunchFadeSamples = 64;
-            const std::int64_t fadeSamples = std::max (
-                (std::int64_t) 0, std::min (kPunchFadeSamples, region.lengthInSamples / 2));
-
-            // Pass 1 - fully-contained takes get absorbed into the new
-            // region's previousTakes (no audio overlap, just history).
-            // Partial overlaps fall through to Pass 2 below.
-            std::vector<AudioRegion> spawnedFragments;
-            for (auto it = regs.begin(); it != regs.end(); )
+            // Only the newest pass goes on the timeline. What it covers is
+            // carved out of the regions under it; their takes stay whole, and
+            // one naming no take becomes a take ahead of this recording's.
+            const auto& newest = passTakes.back();
+            promoteTakeRange (session, track, newest, newest.timelineStart,
+                              newest.timelineStart + newest.lengthInSamples);
+            for (auto& take : passTakes)
             {
-                const auto exStart = it->timelineStart;
-                const auto exEnd   = it->timelineStart + it->lengthInSamples;
-                const bool fullyContained = exStart >= newStart && exEnd <= newEnd;
-                if (! fullyContained) { ++it; continue; }
-
-                region.previousTakes.push_back (makeAudioTakeRef (*it));
-
-                // Carry forward the displaced region's own history so we
-                // don't drop deeper takes when overdubbing repeatedly. The
-                // newly-displaced take goes first, then the older ones.
-                for (auto& deeper : it->previousTakes)
-                    region.previousTakes.push_back (std::move (deeper));
-
-                trimTakeHistory (region);
-
-                it = regs.erase (it);
+                take.name = nextTakeName (track);
+                track.takes.push_back (std::move (take));
             }
-
-            // Pass 2 - partial overlaps get split / trimmed so the new
-            // take's edges crossfade against the existing region's audio
-            // instead of clicking. Three cases:
-            //   - Left overlap  (exStart < newStart, exEnd inside punch):
-            //     trim ex to [exStart, newStart + fade], fadeOut at end.
-            //   - Right overlap (exStart inside punch, exEnd > newEnd):
-            //     trim ex to [newEnd - fade, exEnd] + advance sourceOffset.
-            //   - Span (ex wraps both ends): produce two fragments - left
-            //     half + right half - sharing the original source file.
-            // Fades are matched on the new region by hasOverlapL / R below.
-            bool hasOverlapL = false, hasOverlapR = false;
-            for (auto it = regs.begin(); it != regs.end(); )
-            {
-                const auto exStart = it->timelineStart;
-                const auto exEnd   = it->timelineStart + it->lengthInSamples;
-                const bool overlaps = ! (exEnd <= newStart || exStart >= newEnd);
-                if (! overlaps) { ++it; continue; }
-
-                const bool spansLeft  = exStart < newStart;
-                const bool spansRight = exEnd   > newEnd;
-                const bool containsActive = exStart <= newStart && exEnd >= newEnd;
-
-                if (containsActive)
-                {
-                    // Keep the overwritten payload as a cycle slot even when
-                    // the new partial pass shares one edge with the old take.
-                    // Deeper history is compatible only when it covers the
-                    // same source-domain slice.
-                    const auto sliceOffset = newStart - exStart;
-                    const auto sliceLength = newEnd - newStart;
-                    TakeRef middle = makeAudioTakeRef (*it);
-                    middle.sourceOffset += sliceOffset;
-                    middle.lengthInSamples = sliceLength;
-                    region.previousTakes.push_back (std::move (middle));
-                    for (const auto& deeper : it->previousTakes)
-                    {
-                        if (deeper.lengthInSamples < sliceOffset + sliceLength)
-                            continue;
-                        auto sliced = deeper;
-                        sliced.sourceOffset += sliceOffset;
-                        sliced.lengthInSamples = sliceLength;
-                        region.previousTakes.push_back (std::move (sliced));
-                    }
-                    trimTakeHistory (region);
-                }
-
-                if (spansLeft && spansRight)
-                {
-                    // Span: produce a left fragment + a right fragment from
-                    // the same source. Mutate `it` into the left fragment
-                    // and queue the right fragment for re-insertion.
-                    AudioRegion right = *it;
-                    right.timelineStart   = newEnd - fadeSamples;
-                    right.sourceOffset    = it->sourceOffset
-                                           + (right.timelineStart - it->timelineStart);
-                    right.lengthInSamples = exEnd - right.timelineStart;
-                    right.fadeInSamples   = fadeSamples;
-                    right.fadeInShape     = FadeShape::RaisedCosine;
-                    // Right fragment ends at the original exEnd, so any fade-out
-                    // the source region carried still applies. Clamp so the new
-                    // shorter length still satisfies fadeIn + fadeOut <= length.
-                    right.fadeOutSamples  = std::max ((std::int64_t) 0,
-                        std::min (right.fadeOutSamples,
-                                     right.lengthInSamples - right.fadeInSamples));
-                    right.previousTakes.clear();  // history stays with the left half
-                    spawnedFragments.push_back (std::move (right));
-
-                    it->lengthInSamples = (newStart + fadeSamples) - exStart;
-                    it->fadeOutSamples  = fadeSamples;
-                    it->fadeOutShape    = FadeShape::RaisedCosine;
-                    hasOverlapL = hasOverlapR = true;
-                    ++it;
-                }
-                else if (spansLeft)
-                {
-                    // Left overlap only: trim end to newStart + fade.
-                    it->lengthInSamples = (newStart + fadeSamples) - exStart;
-                    it->fadeOutSamples  = fadeSamples;
-                    it->fadeOutShape    = FadeShape::RaisedCosine;
-                    hasOverlapL = true;
-                    ++it;
-                }
-                else if (spansRight)
-                {
-                    // Right overlap only: shift start to newEnd - fade.
-                    const std::int64_t newLeft = newEnd - fadeSamples;
-                    it->sourceOffset    += (newLeft - exStart);
-                    it->timelineStart    = newLeft;
-                    it->lengthInSamples  = exEnd - newLeft;
-                    it->fadeInSamples    = fadeSamples;
-                    it->fadeInShape      = FadeShape::RaisedCosine;
-                    hasOverlapR = true;
-                    ++it;
-                }
-                else
-                {
-                    // Should be unreachable - fully-contained was handled
-                    // in Pass 1. Defensive ++ to avoid an infinite loop.
-                    ++it;
-                }
-            }
-            for (auto& frag : spawnedFragments)
-                regs.push_back (std::move (frag));
-
-            if (hasOverlapL)
-            {
-                region.fadeInSamples = fadeSamples;
-                region.fadeInShape   = FadeShape::RaisedCosine;
-            }
-            if (hasOverlapR)
-            {
-                region.fadeOutSamples = fadeSamples;
-                region.fadeOutShape   = FadeShape::RaisedCosine;
-            }
-
-            regs.push_back (std::move (region));
         }
         else
         {
@@ -1222,7 +1083,9 @@ void RecordManager::stopRecording (std::int64_t endSample)
                                       && std::equal (afterM.begin(), afterM.end(),
                                                       beforeMidi[(size_t) t].begin(),
                                                       sameMidiRegion));
-        if (! audioChanged && ! midiChanged) continue;
+        const bool takesChanged = ! sameTakeIds (session.track (t).takes,
+                                                 beforeTakes[(size_t) t]);
+        if (! audioChanged && ! midiChanged && ! takesChanged) continue;
 
         TrackCommitDiff diff;
         diff.trackIndex  = t;
@@ -1230,6 +1093,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
         diff.audioAfter  = afterA;
         diff.midiBefore  = std::move (beforeMidi[(size_t) t]);
         diff.midiAfter   = std::move (afterM);
+        diff.takesBefore = std::move (beforeTakes[(size_t) t]);
+        diff.takesAfter  = session.track (t).takes;
         lastCommitDiff.push_back (std::move (diff));
     }
 }
@@ -1379,18 +1244,22 @@ void RecordManager::writeInputBlock (int trackIndex,
         {
             descriptor = &slot->loopPasses[(size_t) (slot->loopPassCount - 1)];
         }
+        else if (slot->loopPassCount == kMaxLoopPassesPerGesture)
+        {
+            // Earlier passes are never evicted, so a pass with no room for its
+            // bounds is left out whole: nothing spooled, counted once per pass.
+            if (selectedLoopSpan.passOrdinal != slot->lastDroppedPassOrdinal)
+            {
+                slot->lastDroppedPassOrdinal = selectedLoopSpan.passOrdinal;
+                ++slot->droppedLoopPasses;
+            }
+            return;
+        }
         else
         {
-            if (slot->loopPassCount == kRetainedLoopPasses)
-            {
-                std::move (slot->loopPasses.begin() + 1, slot->loopPasses.end(),
-                           slot->loopPasses.begin());
-                --slot->loopPassCount;
-            }
             descriptor = &slot->loopPasses[(size_t) slot->loopPassCount++];
             *descriptor = {};
             descriptor->passOrdinal = selectedLoopSpan.passOrdinal;
-            descriptor->timelineStart = loopPlan.captureStartSample;
             descriptor->sourceOffset = sourceOffset;
         }
     }

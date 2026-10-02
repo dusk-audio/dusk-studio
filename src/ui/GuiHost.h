@@ -139,6 +139,31 @@ public:
     virtual bool audioEditorPointer (int x, int y, bool down, int modifiers = 0) = 0;
     virtual std::vector<std::int64_t> audioEditorSelection() const = 0;
     virtual std::vector<int> audioAutomationPoint (std::int64_t sample, float value) const = 0;
+    // The audio editor on a track's take lanes, the way the timeline's take count opens it.
+    virtual bool openAudioEditorOnTakes (int track) = 0;
+    // Take ids in lane order, newest first; empty when the editor shows no lanes.
+    virtual std::vector<std::uint64_t> audioEditorTakeLanes() const = 0;
+    // In the frame audioEditorPointer takes: "lane" is a take's waveform at a timeline
+    // sample; "name", "audition", "delete", "confirm" and "cancel" its header controls.
+    // Empty while the lane or the control is off screen.
+    virtual std::vector<int> audioEditorTakePoint (const std::string& kind, std::uint64_t take,
+                                                   std::int64_t sample) const = 0;
+    // Scrolls the lanes to the take's, the newest when take is 0; lands on the next frame.
+    virtual bool revealAudioEditorTake (std::uint64_t take) = 0;
+    // { renamingTake, confirmingDeleteTake, draggedTake, dragStart, dragEnd }.
+    virtual std::vector<std::int64_t> audioEditorTakeState() const = 0;
+    // The lane caption's explanation of a refused take edit; empty when none shows.
+    virtual std::string audioEditorTakeNotice() const = 0;
+    // Characters typed into the editor's open text field.
+    virtual bool typeInAudioEditor (const std::string& text) = 0;
+    // The whole take-lane caption; empty when the editor shows no lanes.
+    virtual std::string audioEditorTakeCaption() const = 0;
+    // Tells the editor's child it gained or lost the keyboard, as the platform does
+    // when the focus moves. A Windows child never holds it, so every key reaches the
+    // shell's window instead.
+    virtual bool audioEditorKeyboardFocus (bool focused) = 0;
+    // How often a field or menu opening in the editor has asked for the keyboard.
+    virtual int audioEditorKeyboardRequests() const = 0;
     virtual bool openPiano (int track, int region) = 0;
     virtual void closePiano() = 0;
     virtual bool clickPianoCcToggle() = 0;
@@ -170,6 +195,8 @@ public:
     virtual bool fileBrowserScanning() const = 0;
     // File browsers closed while listing a folder whose scan has not stopped yet.
     virtual int retiredFileBrowserScans() const = 0;
+    // File browsers not yet destroyed; a closed one lingers until the next message-loop tick.
+    virtual int fileBrowserPanels() const = 0;
     // Holds, or lets go of, the file browsers' checks of a folder they are about to show.
     virtual void holdFileBrowserFolderChecks (bool held) = 0;
     virtual bool clickFileBrowserControl (bool path) = 0;
@@ -239,7 +266,17 @@ public:
     // their text.
     virtual std::vector<std::string> contextMenuItems() const = 0;
 
+    // pressKey and pressPeerKey tap a key: the press, then its release.
     virtual bool pressPeerKey (const std::string& description, char text = 0) = 0;
+    // A key held down at the window: the first call presses it, and each further call
+    // before releasePeerKey is an auto-repeat, a press with no release between, as the
+    // platform delivers one.
+    virtual bool holdPeerKey (const std::string& description, char text = 0) = 0;
+    virtual void releasePeerKey() = 0;
+    // Leaves no component holding the keyboard, as Windows leaves the window once a
+    // native child takes it, so keys at the window reach the window itself. Returns
+    // what gives the keyboard back.
+    virtual std::function<void()> unfocusWindow() = 0;
     virtual bool clickModalAt (float xFraction, float yFraction) = 0;
     virtual bool clickFader (int index, bool readout, bool right = false) = 0;
     virtual bool faderEditing (int index) const = 0;
@@ -274,6 +311,9 @@ public:
     // may be sized to, all in interface units before the UI scale. Empty
     // without a window.
     virtual std::vector<int> mainWindowSize() const = 0;
+    // Sizes the main window, in the units mainWindowSize gives; the runner puts the
+    // launch size back after the case.
+    virtual bool resizeMainWindow (int width, int height) = 0;
     virtual int tapeExpansionState() const = 0;
     virtual int timelineChaseState() const = 0;
     virtual bool openRegionEditor (int track, int region, bool midi) = 0;
@@ -381,8 +421,13 @@ public:
     virtual void closePianoRoll() = 0;
     virtual bool pressPianoRollKey (const std::string& description) = 0;
     virtual bool doubleClickAudioRegion (int track, int region) = 0;
-    virtual bool clickAudioRegion (int track, int region, bool right = false) = 0;
-    virtual bool clickTakeBadge (int track, int region) = 0;
+    // Modifiers as pianoNotePointer takes them: 1 Shift, 2 Cmd/Ctrl.
+    virtual bool clickAudioRegion (int track, int region, bool right = false, int modifiers = 0) = 0;
+    virtual bool clickMidiRegion (int track, int region, bool right = false) = 0;
+    // The take-count badge in a track's label cell, as drawn ("3 takes"), and
+    // one or more clicks on it. Empty text and false when that track shows no badge.
+    virtual std::string tapeTakeBadgeText (int track) const = 0;
+    virtual bool clickTapeTakeBadge (int track, int clicks = 1) = 0;
     // A marker pill in the tape ruler: clicked, or dragged to a ruler fraction.
     virtual bool clickTapeMarker (int index, bool right) = 0;
     virtual bool dragTapeMarker (int index, float toFraction) = 0;
@@ -417,12 +462,16 @@ public:
     virtual std::vector<int> consoleStripsOffTheirSlot() const = 0;
     virtual bool audioEditorOpen() const = 0;
     virtual int audioEditorRegion() const = 0;
+    // The track the open editor edits, -1 when none is open.
+    virtual int audioEditorTrack() const = 0;
     virtual bool clickAudioEditorWaveform() = 0;
     virtual void closeAudioEditor() = 0;
     virtual bool pressAudioEditorKey (const std::string& description) = 0;
     virtual bool clickOutsideAudioEditor() = 0;
     // Dismiss the newest modal - the alert a deliberately failing open raised.
     virtual void closeTopModal() = 0;
+    // An alert over the main window, the way the engine's own reports raise one.
+    virtual void raiseAlert (const std::string& title, const std::string& message) = 0;
 
     // One tick of the autosave heartbeat, as its timer runs it.
     virtual void autosaveTick() = 0;

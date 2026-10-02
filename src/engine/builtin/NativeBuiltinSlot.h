@@ -89,6 +89,14 @@ public:
                                              std::move (callbacks), errorOut);
     }
 
+    // Audio thread, for a block the strip does not run the unit (a frozen track),
+    // so nothing its editor queued for that block is played later instead.
+    void skipBlock() noexcept
+    {
+        if (ready.load (std::memory_order_acquire) && instance != nullptr)
+            instance->skipBlock();
+    }
+
     // MIDI Learn: the control the user moved last in this unit's editor, or -1
     // when none has been touched since it loaded. Written by the editor on the
     // message thread, read by the learn resolver on the same thread.
