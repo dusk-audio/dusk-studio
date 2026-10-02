@@ -6150,28 +6150,39 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // bridged latency rise of up to kMaxMidiLatencyBridge, and the
             // 128-sample minimum loop this is at most 73 complete resets.
             //
-            // A window that starts past the loop end is reported as wrapping at
-            // its head. When it carries on from where the last window ended,
-            // the last window already crossed that seam and sent its reset and
-            // chase.
-            bool headSeamSent = false;
+            // A window that carries on from the last one has a seam at its head
+            // exactly when it does not start where that one ended, on the
+            // timeline the instrument hears. If it starts there past the loop
+            // end, which the loop reports as a wrap at its head, the last
+            // window already crossed that seam and sent its reset and chase.
+            // If it starts anywhere else, the timeline jumped between them
+            // without a span reporting it: the transport wrapped at a loop end
+            // the last window ended on, as any loop end on a block boundary
+            // does at no latency, or the loop was switched off or moved after a
+            // window running ahead had crossed it. Under the minimum, a loop's
+            // window runs straight through the transport's wraps (above), so
+            // its jumps are not seams.
+            bool headSeam = false;
             if (midiTrack)
             {
                 int futureSeamResetCount = 0;
                 auto& scheduledUpTo = midiScheduledUpTo[(size_t) t];
                 const auto lastWindowEnd = scheduledUpTo;
+                const bool headFollowsLastWindow = midiWindowContinues
+                    && ! (loopReadEnd > loopReadStart && ! midiLoopActive);
                 forEachLoopTimelineSpan (
                     windowStart, windowLength, midiLoopActive, loopReadStart, loopReadEnd,
                     [&] (const LoopTimelineSpan& span) noexcept
                     {
-                        if (span.wrappedBefore)
+                        bool seam = span.wrappedBefore;
+                        if (span.bufferOffset == 0)
                         {
-                            if (span.bufferOffset == 0 && midiWindowContinues
-                                && span.timelineStart == lastWindowEnd)
-                                headSeamSent = true;
-                            else
-                                ++futureSeamResetCount;
+                            if (headFollowsLastWindow)
+                                seam = span.timelineStart != lastWindowEnd;
+                            headSeam = seam;
                         }
+                        if (seam)
+                            ++futureSeamResetCount;
                         scheduledUpTo = span.timelineStart + span.length;
                     });
                 const bool reserved = generatedMidiBudget.reserveStructural (
@@ -6191,8 +6202,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 windowStart, windowLength, midiLoopActive, loopReadStart, loopReadEnd,
                 [&] (const LoopTimelineSpan& span) noexcept
                 {
-                    const bool seam = span.wrappedBefore
-                                   && ! (headSeamSent && span.bufferOffset == 0);
+                    const bool seam = span.bufferOffset == 0 ? headSeam : span.wrappedBefore;
                     // Structural resets are emitted before every overload
                     // bailout. Their capacity was reserved exactly above, so
                     // an exhausted musical-event or scan budget cannot suppress

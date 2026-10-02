@@ -998,8 +998,9 @@ private:
     // The same window's end on the timeline the instrument heard, after any
     // loop wraps - the loop end itself when it ran right up to a seam. A next
     // window that starts there continues it, so a seam the loop reports at its
-    // head was already crossed. Read only while midiScheduledAhead is not -1;
-    // same threading.
+    // head was already crossed; one that starts anywhere else follows a jump,
+    // and resets and chases at its head. Read only while midiScheduledAhead is
+    // not -1; same threading.
     std::array<std::int64_t, Session::kNumTracks> midiScheduledUpTo {};
 
     // MIDI hot-plug. The backend's MIDI thread reports that the OS port set
