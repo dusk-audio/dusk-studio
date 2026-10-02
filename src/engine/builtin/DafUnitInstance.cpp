@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <utility>
 
 namespace duskstudio::builtin
@@ -17,6 +18,33 @@ constexpr int kParameterOnlyStateVersion = 2;
 // An integer parameter with at most this many positions is a switch. A wider one
 // stays a knob, whose value the plug-in rounds.
 constexpr int kMaxSwitchPositions = 32;
+
+// A block too full to carry every event ends with all notes off on each of these
+// channels instead, so it cannot strand a note whose release it dropped.
+constexpr std::uint32_t kReleaseChannels = 16;
+
+static_assert (std::atomic<std::uint64_t>::is_always_lock_free,
+               "the audio thread exchanges mirror entries");
+
+std::uint64_t mirrorEntry (std::uint32_t sequence, float value) noexcept
+{
+    std::uint32_t bits = 0;
+    std::memcpy (&bits, &value, sizeof bits);
+    return ((std::uint64_t) sequence << 32) | bits;
+}
+
+std::uint32_t sequenceOf (std::uint64_t entry) noexcept
+{
+    return (std::uint32_t) (entry >> 32);
+}
+
+float valueOf (std::uint64_t entry) noexcept
+{
+    const auto bits = (std::uint32_t) entry;
+    float value = 0.0f;
+    std::memcpy (&value, &bits, sizeof value);
+    return value;
+}
 
 hosting::PortLayout makeLayout (int inputs, int outputs, bool isInstrument)
 {
@@ -81,7 +109,8 @@ DafUnitInstance::DafUnitInstance (std::string stateId, std::unique_ptr<DafPlugin
     : id (std::move (stateId)),
       plugin (std::move (hosted)),
       legacy (legacyParams),
-      values (plugin->params().size())
+      values (plugin->params().size()),
+      appliedWrites (plugin->params().size(), 0)
 {
     const auto& params = plugin->params();
     infos.resize (params.size());
@@ -125,17 +154,14 @@ DafUnitInstance::DafUnitInstance (std::string stateId, std::unique_ptr<DafPlugin
             info.choiceCount = positions;
         }
 
-        values[i].store (p.defaultValue, std::memory_order_relaxed);
+        values[i].store (mirrorEntry (0, p.defaultValue), std::memory_order_relaxed);
         if (p.isOutput)
             outputIndices.push_back ((std::uint32_t) i);
     }
 
     layout = makeLayout (plugin->numInputs(), plugin->numOutputs(), plugin->isInstrument());
     if (plugin->isInstrument())
-    {
         events.resize (DafMidiEvent::kMaxPerBlock);
-        mirrorBeforeRun.resize (params.size());
-    }
 }
 
 DafUnitInstance::~DafUnitInstance() = default;
@@ -208,7 +234,11 @@ void DafUnitInstance::processBlock (const hosting::PortBuffers& io) noexcept
         && (io.mainIn == nullptr || io.mainInChannels < plugin->numInputs()))
         return;
 
-    writes.drain ([this] (const ParamWrite& w) { plugin->setParameterValue (w.index, w.value); });
+    writes.drain ([this] (const ParamWrite& w)
+    {
+        plugin->setParameterValue (w.index, w.value);
+        appliedWrites[w.index] = w.sequence;
+    });
     if (resyncAll.exchange (false, std::memory_order_acq_rel))
         pushAllParams();
 
@@ -219,26 +249,34 @@ void DafUnitInstance::processBlock (const hosting::PortBuffers& io) noexcept
     const bool programChange = std::any_of (events.begin(), events.begin() + eventCount,
                                             [] (const DafMidiEvent& e)
                                             { return (e.data[0] & 0xF0) == 0xC0; });
-    if (programChange)
-        for (std::size_t i = 0; i < values.size(); ++i)
-            mirrorBeforeRun[i] = values[i].load (std::memory_order_relaxed);
 
     plugin->run (io.mainIn, io.mainOut, (std::uint32_t) io.numFrames, events.data(), eventCount);
 
     // A program change rewrites the plug-in's parameters inside run. The mirror
-    // takes them, except where the message thread wrote a newer value meanwhile:
-    // that write is queued and reaches the plug-in next block.
+    // takes them, except where the message thread has written since the plug-in
+    // was last handed a write: that one is queued, or about to be, and reaches
+    // the plug-in next block, so the mirror already holds what the plug-in will.
+    // The exchange fails if such a write lands after the check.
     if (programChange)
         for (std::size_t i = 0; i < values.size(); ++i)
         {
-            float expected = mirrorBeforeRun[i];
-            values[i].compare_exchange_strong (expected,
-                                               plugin->getParameterValue ((std::uint32_t) i),
-                                               std::memory_order_relaxed);
+            auto entry = values[i].load (std::memory_order_relaxed);
+            const auto sequence = sequenceOf (entry);
+            if (sequence != appliedWrites[i])
+                continue;
+            values[i].compare_exchange_strong (
+                entry, mirrorEntry (sequence, plugin->getParameterValue ((std::uint32_t) i)),
+                std::memory_order_relaxed);
         }
 
     for (const auto index : outputIndices)
-        values[index].store (plugin->getParameterValue (index), std::memory_order_relaxed);
+        values[index].store (mirrorEntry (0, plugin->getParameterValue (index)),
+                             std::memory_order_relaxed);
+}
+
+void DafUnitInstance::skipBlock() noexcept
+{
+    editorNotes.clear();
 }
 
 void DafUnitInstance::playEditorNote (std::uint8_t channel, std::uint8_t note,
@@ -251,9 +289,7 @@ void DafUnitInstance::playEditorNote (std::uint8_t channel, std::uint8_t note,
 
 std::uint32_t DafUnitInstance::gatherEvents (const dusk::MidiBuffer* midi, int numFrames) noexcept
 {
-    // The last slot is kept for an all-notes-off, so a block too full to carry
-    // every event cannot strand a note whose release it dropped.
-    const auto capacity = (std::uint32_t) events.size() - 1;
+    const auto capacity = (std::uint32_t) events.size() - kReleaseChannels;
     std::uint32_t count = 0;
     editorNotes.drain ([&] (const EditorNote& n)
     {
@@ -278,12 +314,15 @@ std::uint32_t DafUnitInstance::gatherEvents (const dusk::MidiBuffer* midi, int n
             continue;
         if (count == capacity)
         {
-            auto& e = events[count++];
-            e.frame = (std::uint32_t) (numFrames - 1);
-            e.size = 3;
-            e.data[0] = 0xB0;
-            e.data[1] = 123;
-            e.data[2] = 0;
+            for (std::uint32_t channel = 0; channel < kReleaseChannels; ++channel)
+            {
+                auto& e = events[count++];
+                e.frame = (std::uint32_t) (numFrames - 1);
+                e.size = 3;
+                e.data[0] = (std::uint8_t) (0xB0 | channel);
+                e.data[1] = 123;
+                e.data[2] = 0;
+            }
             break;
         }
 
@@ -303,15 +342,26 @@ void DafUnitInstance::pushAllParams() noexcept
     // legacy sync division), so the order is part of the restore.
     const auto& params = plugin->params();
     for (std::uint32_t i = 0; i < (std::uint32_t) params.size(); ++i)
-        if (! params[i].isOutput)
-            plugin->setParameterValue (i, values[i].load (std::memory_order_relaxed));
+    {
+        if (params[i].isOutput)
+            continue;
+        const auto entry = values[i].load (std::memory_order_relaxed);
+        plugin->setParameterValue (i, valueOf (entry));
+        appliedWrites[i] = sequenceOf (entry);
+    }
 }
 
 void DafUnitInstance::refreshParamMirrors() noexcept
 {
+    // Only the message thread advances a sequence, so the one read here still
+    // stands when the value is stored over it.
     const auto count = (std::uint32_t) plugin->params().size();
     for (std::uint32_t i = 0; i < count; ++i)
-        values[i].store (plugin->getParameterValue (i), std::memory_order_relaxed);
+    {
+        const auto sequence = sequenceOf (values[i].load (std::memory_order_relaxed));
+        values[i].store (mirrorEntry (sequence, plugin->getParameterValue (i)),
+                         std::memory_order_relaxed);
+    }
 }
 
 void DafUnitInstance::applyEditorState (const std::string& key, const std::string& value)
@@ -338,7 +388,7 @@ bool DafUnitInstance::saveState (std::vector<std::uint8_t>& out) const
     const auto& descs = plugin->params();
     for (std::size_t i = 0; i < descs.size(); ++i)
         if (! descs[i].isOutput)
-            params[descs[i].symbol] = values[i].load (std::memory_order_relaxed);
+            params[descs[i].symbol] = valueOf (values[i].load (std::memory_order_relaxed));
 
     dusk::json::Json root = dusk::json::Json::object();
     root["id"] = id;
@@ -418,7 +468,11 @@ bool DafUnitInstance::loadState (const std::vector<std::uint8_t>& in)
         plugin->setParameterValue ((std::uint32_t) i, conform (p, value));
     }
 
+    // The plug-in now holds what the mirror is about to, including in place of
+    // every write discarded above.
     refreshParamMirrors();
+    for (std::size_t i = 0; i < values.size(); ++i)
+        appliedWrites[i] = sequenceOf (values[i].load (std::memory_order_relaxed));
     return true;
 }
 
@@ -446,7 +500,7 @@ const ParamInfo* DafUnitInstance::paramInfo (int index) const noexcept
 float DafUnitInstance::getParamValue (int index) const noexcept
 {
     if (index < 0 || index >= paramCount()) return 0.0f;
-    return values[(std::size_t) index].load (std::memory_order_relaxed);
+    return valueOf (values[(std::size_t) index].load (std::memory_order_relaxed));
 }
 
 void DafUnitInstance::setParamValue (int index, float value) noexcept
@@ -456,10 +510,12 @@ void DafUnitInstance::setParamValue (int index, float value) noexcept
     if (p.isOutput) return;
 
     const float v = conform (p, value);
-    values[(std::size_t) index].store (v, std::memory_order_relaxed);
+    auto& entry = values[(std::size_t) index];
+    const auto sequence = sequenceOf (entry.load (std::memory_order_relaxed)) + 1;
+    entry.store (mirrorEntry (sequence, v), std::memory_order_relaxed);
     // A full ring means the audio thread has not drained for a long while. The
     // mirror already holds this value, so ask for all of it to be pushed instead.
-    if (! writes.push ({ (std::uint32_t) index, v }))
+    if (! writes.push ({ (std::uint32_t) index, v, sequence }))
         resyncAll.store (true, std::memory_order_release);
 }
 } // namespace duskstudio::builtin

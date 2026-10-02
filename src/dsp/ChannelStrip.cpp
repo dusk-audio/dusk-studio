@@ -1480,6 +1480,10 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             if (inR != nullptr) std::memcpy (R, inR, sizeof (float) * (size_t) numSamples);
             else                std::memcpy (R, L,   sizeof (float) * (size_t) numSamples);
 
+            // The baked instrument's editor still opens; what its keyboard
+            // plays now must not sound in a burst once the track unfreezes.
+            builtinSlot.skipBlock();
+
             if (activeInsertMode == kInsertHardware)
             {
                 jassert (numSamples <= (int) insertScratchL.size());

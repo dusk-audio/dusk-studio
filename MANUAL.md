@@ -1841,7 +1841,7 @@ Picking a unit from the picker opens its editor. After that, on a channel insert
 
 On an aux lane there is nothing to open: the unit's controls are always on screen, filling the lane under the slot header. DuskVerb 2, Tape Echo 2 and Tape Machine 2 sit there as their own editors, centred and scaled down to fit the lane while keeping their shape, the way a plug-in's editor does. The knob panels are grouped the way the unit's front panel would be: Utility shows Level and Image. Their knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
 
-On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Choices are drop-down lists. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
+On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Click a toggle to switch it on or off. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
 
 The transport keys keep working while an editor is open. A click into a plug-in's editor gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again.
 

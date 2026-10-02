@@ -989,6 +989,12 @@ private:
     // keep ringing (Note Off never arrives on the now-unrouted source).
     std::array<int, Session::kNumTracks> lastMidiInputIndex {};
 
+    // Where each MIDI track's last timeline window ended, in samples past the
+    // next block's start, so the next window carries on from there when the
+    // instrument's latency moves; -1 after a block that scheduled none. Audio
+    // thread, except that a track move remaps it with the callback suspended.
+    std::array<int, Session::kNumTracks> midiScheduledAhead {};
+
     // MIDI hot-plug. The backend's MIDI thread reports that the OS port set
     // moved; noteMidiDeviceChange arms a single delayed pass so one plug (a
     // client arrival plus a port arrival per port) costs one rebuild, and

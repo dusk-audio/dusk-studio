@@ -40,6 +40,8 @@ public:
     bool isActive() const noexcept override
         { return dafUnit != nullptr ? dafUnit->isActive() : active.load (std::memory_order_acquire); }
     void processBlock (const hosting::PortBuffers& io) noexcept override;
+    // Audio thread: see DafUnitInstance::skipBlock. A knob unit queues nothing.
+    void skipBlock() noexcept { if (dafUnit != nullptr) dafUnit->skipBlock(); }
     bool saveState (std::vector<std::uint8_t>& out) const override;
     bool loadState (const std::vector<std::uint8_t>& in) override;
     int  getLatencySamples() const noexcept override;

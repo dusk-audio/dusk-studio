@@ -147,6 +147,8 @@ public:
     {
         ++transportCalls;
         lastBpm = position.bpm;
+        if (duringTransport)
+            duringTransport();
     }
 
     void run (const float* const* in, float* const* out, std::uint32_t frames,
@@ -198,6 +200,7 @@ public:
     std::array<float, kNumFakeParams> held {};
     std::vector<DafMidiEvent> heard;
     std::function<void()> duringRun;
+    std::function<void()> duringTransport;
     std::vector<Write> log;
     std::vector<std::string> stateKeys;
     std::vector<std::string> stateDefaults;
@@ -254,7 +257,8 @@ struct Rig
     }
 
     // One block of an instrument, which takes MIDI and no audio.
-    void play (const dusk::MidiBuffer* midi = nullptr)
+    void play (const dusk::MidiBuffer* midi = nullptr,
+               const dusk::TransportPosition* transport = nullptr)
     {
         float* outs[2] = { outL.data(), outR.data() };
         hosting::PortBuffers io;
@@ -262,6 +266,7 @@ struct Rig
         io.mainOutChannels = 2;
         io.numFrames = kBlock;
         io.midiIn = midi;
+        io.transport = transport;
         unit->processBlock (io);
     }
 
@@ -721,6 +726,34 @@ TEST_CASE ("an instrument DAF unit plays its editor's keyboard at the next block
     REQUIRE (rig.fake->heard[0].data[2] == 0);
 }
 
+TEST_CASE ("an instrument DAF unit drops its editor's notes while it is not run",
+           "[builtin][daf][midi]")
+{
+    Rig rig (false, true);
+    rig.activate();
+    auto& editor = rig.openEditor();
+
+    // A frozen track does not run its instrument, but its editor still opens.
+    // What the keyboard plays meanwhile is not saved up for the unfreeze, where
+    // it would all sound at once, and never fills the queue to the point of
+    // keeping a note-on while dropping its note-off.
+    for (int block = 0; block < 400; ++block)
+    {
+        editor.playNote (0, (std::uint8_t) (block % 128), 100);
+        editor.playNote (0, (std::uint8_t) (block % 128), 0);
+        rig.unit->skipBlock();
+    }
+    rig.play();
+    REQUIRE (rig.fake->heard.empty());
+
+    // Once it runs again the keyboard plays as before.
+    editor.playNote (0, 64, 100);
+    rig.play();
+    REQUIRE (rig.fake->heard.size() == 1);
+    REQUIRE (rig.fake->heard[0].data[0] == 0x90);
+    REQUIRE (rig.fake->heard[0].data[1] == 64);
+}
+
 TEST_CASE ("an effect DAF unit's editor has no keyboard to play", "[builtin][daf][midi]")
 {
     Rig rig;
@@ -753,6 +786,51 @@ TEST_CASE ("an instrument DAF unit's mirror follows a program change the plug-in
     REQUIRE_THAT (rig.fake->held[kSteps], WithinAbs (2.0, 1e-9));
 }
 
+TEST_CASE ("an instrument DAF unit's mirror agrees with the plug-in on a write a program change overtook",
+           "[builtin][daf][midi]")
+{
+    Rig rig (false, true);
+    rig.activate();
+
+    dusk::MidiBuffer midi;
+    const std::uint8_t program[] = { 0xC0, 3 };
+    REQUIRE (midi.addEvent (program, 2, 10));
+    const dusk::TransportPosition position;
+
+    // A write the plug-in was handed at the top of the block is older than the
+    // program, which replaces it.
+    rig.unit->setParamValue (kSteps, 2.0f);
+    rig.play (&midi, &position);
+    REQUIRE_THAT (rig.unit->getParamValue (kSteps), WithinAbs (4.0, 1e-9));
+    REQUIRE_THAT (rig.fake->held[kSteps], WithinAbs (4.0, 1e-9));
+
+    // One the host makes after the block's writes were drained but before the
+    // program runs is still queued when the program loads: it reaches the
+    // plug-in next block, so the mirror has to keep it rather than take the
+    // program's value.
+    rig.fake->duringTransport = [&rig] { rig.unit->setParamValue (kSteps, 3.0f); };
+    rig.play (&midi, &position);
+    rig.fake->duringTransport = nullptr;
+    REQUIRE_THAT (rig.fake->held[kSteps], WithinAbs (4.0, 1e-9));
+    rig.play();
+    REQUIRE_THAT (rig.fake->held[kSteps], WithinAbs (3.0, 1e-9));
+    REQUIRE_THAT (rig.unit->getParamValue (kSteps), WithinAbs (3.0, 1e-9));
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.5, 1e-9));
+
+    // A write of the value the mirror already holds is still a write of its own:
+    // here the program sets the control elsewhere and the write puts it back.
+    rig.unit->setParamValue (kSteps, 4.0f);
+    rig.play();
+    rig.fake->duringTransport = [&rig] { rig.unit->setParamValue (kSteps, 4.0f); };
+    rig.fake->duringRun = [&rig] { rig.fake->held[kSteps] = 1.0f; };
+    rig.play (&midi, &position);
+    rig.fake->duringTransport = nullptr;
+    rig.fake->duringRun = nullptr;
+    rig.play();
+    REQUIRE_THAT (rig.fake->held[kSteps], WithinAbs (4.0, 1e-9));
+    REQUIRE_THAT (rig.unit->getParamValue (kSteps), WithinAbs (4.0, 1e-9));
+}
+
 TEST_CASE ("an instrument DAF unit whose block overflows ends it with all notes off",
            "[builtin][daf][midi]")
 {
@@ -769,11 +847,19 @@ TEST_CASE ("an instrument DAF unit whose block overflows ends it with all notes 
     REQUIRE (midi.addEvent (off, 3, kBlock - 1));
     rig.play (&midi);
 
+    // The release it dropped can be on any channel, so every channel gets one.
     const auto& heard = rig.fake->heard;
     REQUIRE (heard.size() == DafMidiEvent::kMaxPerBlock);
-    REQUIRE (heard.back().frame == kBlock - 1);
-    REQUIRE (heard.back().data[0] == 0xB0);
-    REQUIRE (heard.back().data[1] == 123);
+    for (std::uint8_t channel = 0; channel < 16; ++channel)
+    {
+        const auto& e = heard[heard.size() - 16 + channel];
+        INFO ("channel " << (int) channel + 1);
+        REQUIRE (e.frame == kBlock - 1);
+        REQUIRE (e.size == 3);
+        REQUIRE (e.data[0] == (0xB0 | channel));
+        REQUIRE (e.data[1] == 123);
+        REQUIRE (e.data[2] == 0);
+    }
     for (std::size_t i = 1; i < heard.size(); ++i)
         REQUIRE (heard[i].frame >= heard[i - 1].frame);
 }
