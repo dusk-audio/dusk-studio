@@ -95,6 +95,7 @@ add_executable(dusk-studio-tests
     session_freeze_roundtrip.cpp
     session_region_bounds.cpp
     session_takes.cpp
+    session_field_accessors.cpp
     take_comp.cpp
     take_lane_layout.cpp
     region_trim.cpp

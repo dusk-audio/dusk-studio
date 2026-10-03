@@ -154,9 +154,6 @@ constexpr AutomationLaneEntry kAutomationLanes[] = {
 };
 static_assert (std::size (kAutomationLanes) == static_cast<std::size_t> (kNumAutomationParams));
 
-using RegionColour = decltype (AudioRegion::customColour);
-using RegionLabel = decltype (AudioRegion::label);
-
 // The region colours every region surface offers, the tape strip's included.
 struct PaletteEntry
 {
@@ -302,7 +299,7 @@ struct Control
 
 struct Source
 {
-    std::string path;
+    std::filesystem::path path;
     std::unique_ptr<WaveformSource> source;
     std::vector<WaveformDetails::Window> requested;
     std::vector<WaveformDetails::Window> wanted;
@@ -681,7 +678,7 @@ public:
         }
 
         if (const auto* r = region())
-            sourceFor (r->file.getFullPathName().toStdString());
+            sourceFor (r->filePath());
 
         handleKeys (ctx);
         handleWheel();
@@ -899,7 +896,7 @@ private:
     {
         if (const auto* take = takeWithId (r.takeId); take != nullptr && ! take->name.empty())
             return take->name;
-        return r.file.getFileName().toStdString();
+        return r.filePath().filename().u8string();
     }
 
     const AudioTake* takeWithId (std::uint64_t id) const
@@ -1280,10 +1277,10 @@ private:
         automationStroke = {};
     }
 
-    Source* sourceFor (const std::string& path)
+    Source* sourceFor (const std::filesystem::path& path)
     {
         for (auto& source : sources)
-            if (source->path == path)
+            if (source->path.native() == path.native())
             {
                 source->lastUsed = frame;
                 return source.get();
@@ -1304,7 +1301,7 @@ private:
         auto source = std::make_unique<Source>();
         source->path = path;
         source->source = std::make_unique<WaveformSource>();
-        source->source->setFile (std::filesystem::u8path (path));
+        source->source->setFile (path);
         source->lastUsed = frame;
         sources.push_back (std::move (source));
         return sources.back().get();
@@ -1315,9 +1312,9 @@ private:
         const auto* r = region();
         if (r == nullptr)
             return nullptr;
-        const auto path = r->file.getFullPathName().toStdString();
+        const auto path = r->filePath();
         for (const auto& source : sources)
-            if (source->path == path)
+            if (source->path.native() == path.native())
                 return source.get();
         return nullptr;
     }
@@ -1645,7 +1642,7 @@ private:
         for (int i = 0; i < static_cast<int> (regions.size()); ++i)
         {
             const auto& r = regions[static_cast<std::size_t> (i)];
-            if (r.file == like.file && r.timelineStart == like.timelineStart
+            if (r.sameFile (like) && r.timelineStart == like.timelineStart
                 && r.sourceOffset == like.sourceOffset && r.lengthInSamples == like.lengthInSamples)
                 return i;
         }
@@ -1973,9 +1970,8 @@ private:
     void setColour (std::uint32_t argb)
     {
         const auto* r = region();
-        const RegionColour colour (argb);
-        if (r == nullptr || r->customColour == colour) return;
-        editFocused ("Set region colour", [&colour] (AudioRegion& a) { a.customColour = colour; });
+        if (r == nullptr || r->customArgb() == argb) return;
+        editFocused ("Set region colour", [argb] (AudioRegion& a) { a.setCustomArgb (argb); });
     }
 
     void deleteFocused()
@@ -2255,9 +2251,9 @@ private:
         const auto& right = regions[static_cast<std::size_t> (seamDragged.right)];
         const auto& leftWas = seamLeftAtDragStart;
         const auto& rightWas = seamRightAtDragStart;
-        return left.file == leftWas.file && left.takeId == leftWas.takeId
+        return left.sameFile (leftWas) && left.takeId == leftWas.takeId
             && left.timelineStart == leftWas.timelineStart && left.sourceOffset == leftWas.sourceOffset
-            && right.file == rightWas.file && right.takeId == rightWas.takeId
+            && right.sameFile (rightWas) && right.takeId == rightWas.takeId
             && right.timelineStart + right.lengthInSamples == rightWas.timelineStart + rightWas.lengthInSamples;
     }
 
@@ -2293,7 +2289,7 @@ private:
                 return false;
             const auto& r = regions[static_cast<std::size_t> (held.first)];
             const auto& was = held.second;
-            return r.file == was.file && r.takeId == was.takeId && r.timelineStart == was.timelineStart
+            return r.sameFile (was) && r.takeId == was.takeId && r.timelineStart == was.timelineStart
                 && r.sourceOffset == was.sourceOffset && r.lengthInSamples == was.lengthInSamples
                 && r.fadeInSamples == was.fadeInSamples && r.fadeOutSamples == was.fadeOutSamples
                 && ! nonZero (r.gainDb - was.gainDb);
@@ -2642,7 +2638,7 @@ private:
                 break;
             case Drag::trimEnd:
             {
-                const auto* source = sourceFor (regionAtDragStart.file.getFullPathName().toStdString());
+                const auto* source = sourceFor (regionAtDragStart.filePath());
                 const auto frames = source != nullptr && source->snapshot.info ? source->snapshot.info->numFrames : 0;
                 *r = trim::trimmedEnd (regionAtDragStart, snapToGrid (dragStartFileSampleForX (p.x)), frames);
                 break;
@@ -2836,10 +2832,13 @@ private:
     {
         if (! focusedEditable()) return;
         const auto* r = region();
-        if (! r->file.existsAsFile() || r->lengthInSamples <= 0) return;
+        const auto path = r->filePath();
+        std::error_code error;
+        if (! std::filesystem::exists (path, error) || std::filesystem::is_directory (path, error)
+            || r->lengthInSamples <= 0)
+            return;
 
-        auto reader = dusk::audio::FileReader::open (
-            std::filesystem::u8path (r->file.getFullPathName().toStdString()));
+        auto reader = dusk::audio::FileReader::open (path);
         if (reader == nullptr) return;
 
         const int channels = std::max (1, reader->info().numChannels);
@@ -3138,18 +3137,19 @@ private:
         if (inner.width() > 0.0f && trackIdx >= 0 && trackIdx < Session::kNumTracks)
         {
             const auto& track = session.track (trackIdx);
-            const auto name = track.name.toStdString();
+            const auto name = track.nameUtf8();
             const auto nameBox = inner.takeLeft (std::min (ctx.s (130.0f), inner.width() * 0.5f))
                                      .reduced (ctx.s (8.0f), ctx.s (2.0f));
             clippedText (ctx, nameBox, ctx.fonts->title, 12.5f,
-                         dw::brighter (argb (track.colour.getARGB()), 0.3f), name.c_str(), dw::Align::left);
+                         dw::brighter (argb (track.colourArgb()), 0.3f), name.c_str(), dw::Align::left);
 
             // Read again: the buttons above may have split or undone the region.
             const auto titleBox = inner.reduced (ctx.s (8.0f), ctx.s (2.0f));
             if (! drawField (ctx, Field::title, titleBox) && ! drawField (ctx, Field::label, titleBox))
                 if (const auto* r = region())
                 {
-                    const auto title = r->label.isNotEmpty() ? r->label.toStdString() : defaultTitle (*r);
+                    const auto label = r->labelUtf8();
+                    const auto title = label.empty() ? defaultTitle (*r) : label;
                     clippedText (ctx, titleBox, ctx.fonts->title, 12.5f, argb (kReadoutText), title.c_str(),
                                  dw::Align::left);
                     addControl ("Title", titleBox, true);
@@ -3211,8 +3211,7 @@ private:
                 auto label = field == Field::title ? dusk::text::trim (text) : text;
                 if (field == Field::title && label == defaultTitle (*r))
                     label.clear();
-                const auto value = RegionLabel::fromUTF8 (label.c_str());
-                editFocused ("Rename region", [&value] (AudioRegion& a) { a.label = value; });
+                editFocused ("Rename region", [&label] (AudioRegion& a) { a.setLabelUtf8 (label); });
                 break;
             }
             case Field::gain:
@@ -3371,8 +3370,7 @@ private:
         const auto mode = static_cast<TimeDisplayMode> (session.timeDisplayMode.load (std::memory_order_relaxed));
         const auto cursor = r->timelineStart + (editCursorSample - r->sourceOffset);
 
-        const auto position = "pos " + formatSamplePosition (cursor, sr, session.tempoMap, bpm, bpb, mode)
-                                           .toStdString();
+        const auto position = "pos " + formatSamplePosition (cursor, sr, session.tempoMap, bpm, bpb, mode);
         readout (ctx, pos, position.c_str(), dw::Align::left);
 
         char text[96];
@@ -3437,7 +3435,7 @@ private:
             if (reg.lengthInSamples <= 0) continue;
             const auto end = reg.timelineStart + reg.lengthInSamples;
             if (end <= anchorStart || reg.timelineStart >= anchorEnd) continue;
-            if (auto slice = sliceFor (reg.file.getFullPathName().toStdString(), reg.timelineStart,
+            if (auto slice = sliceFor (reg.filePath(), reg.timelineStart,
                                        reg.lengthInSamples, reg.sourceOffset, clipX0, clipX1))
             {
                 slice->region = i;
@@ -3448,7 +3446,7 @@ private:
 
     // The on-screen span of a stretch of a file placed at `timelineStart`, with its
     // detail window requested while the frame's column budget lasts.
-    std::optional<Slice> sliceFor (const std::string& path, std::int64_t timelineStart, std::int64_t length,
+    std::optional<Slice> sliceFor (const std::filesystem::path& path, std::int64_t timelineStart, std::int64_t length,
                                    std::int64_t sourceOffset, int clipX0, int clipX1)
     {
         // A column is an int, and a long region zoomed in can reach past one, so the
@@ -3508,7 +3506,7 @@ private:
             const auto* take = takeInLane (lane);
             if (take->lengthInSamples <= 0)
                 continue;
-            if (auto slice = sliceFor (take->file.getFullPathName().toStdString(), take->timelineStart,
+            if (auto slice = sliceFor (take->filePath(), take->timelineStart,
                                        take->lengthInSamples, take->sourceOffset, clipX0, clipX1))
                 takeSlices.push_back ({ lane, *slice });
         }
@@ -3550,8 +3548,8 @@ private:
             if (! focused)
                 dl->AddRectFilled (tl, br, argb (kBackground, 0.6f));
 
-            const auto base = reg.customColour.isTransparent() ? argb (kWaveformFill)
-                                                               : argb (reg.customColour.getARGB());
+            const auto custom = reg.customArgb();
+            const auto base = argbIsTransparent (custom) ? argb (kWaveformFill) : argb (custom);
             const auto* snapshot = slice.source != nullptr ? &slice.source->snapshot : nullptr;
             if (snapshot == nullptr || snapshot->state == WaveformSource::State::Failed)
             {
@@ -4169,8 +4167,8 @@ private:
         const auto* r = region();
         const bool muted = r->muted;
         const bool locked = r->locked;
-        const auto label = r->label.toStdString();
-        const auto customColour = r->customColour;
+        const auto label = r->labelUtf8();
+        const auto customColour = r->customArgb();
 
         char text[160];
         std::snprintf (text, sizeof (text), "Track %d  region %d", trackIdx + 1, regionIdx + 1);
@@ -4189,8 +4187,8 @@ private:
         {
             for (const auto& entry : kPalette)
             {
-                const bool current = entry.argb == 0 ? customColour.isTransparent()
-                                                     : customColour.getARGB() == entry.argb;
+                const bool current = entry.argb == 0 ? argbIsTransparent (customColour)
+                                                     : customColour == entry.argb;
                 if (menuItem (entry.label, true, current))
                     setColour (entry.argb);
             }
@@ -4205,7 +4203,7 @@ private:
             const double seconds = static_cast<double> (shown->lengthInSamples) / sampleRate();
             const int minutes = static_cast<int> (seconds / 60.0);
             std::snprintf (text, sizeof (text), "%s  -  %d kHz  -  %dch  -  %d:%06.3f",
-                           shown->file.getFileName().toStdString().c_str(),
+                           shown->filePath().filename().u8string().c_str(),
                            static_cast<int> (std::lround (sampleRate() / 1000.0)), shown->numChannels, minutes,
                            seconds - 60.0 * minutes);
             ImGui::TextDisabled ("%s", text);

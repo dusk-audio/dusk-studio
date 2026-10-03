@@ -49,7 +49,7 @@ src/session/ParamEditAction.h	2
 src/session/RegionEditActions.cpp	20
 src/session/RegionEditActions.h	4
 src/session/Session.cpp	10
-src/session/Session.h	71
+src/session/Session.h	61
 src/session/SessionSerializer.cpp	77
 src/session/SessionSerializer.h	13
 src/session/SessionTemplates.cpp	3

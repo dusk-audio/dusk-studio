@@ -7,7 +7,9 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -497,6 +499,8 @@ static_assert (std::is_trivially_copyable<TakeProvenance>::value,
 
 using TakeId = std::uint64_t;   // 0 = none
 
+constexpr bool argbIsTransparent (std::uint32_t argb) noexcept { return (argb >> 24) == 0; }
+
 // One complete recording pass on a track. Later recording never trims it;
 // regions cut from it name it through AudioRegion::takeId.
 struct AudioTake
@@ -509,6 +513,8 @@ struct AudioTake
     std::int64_t sourceOffset    = 0;
     int numChannels = 1;
     TakeProvenance provenance;
+
+    std::filesystem::path filePath() const { return std::filesystem::u8path (file.getFullPathName().toStdString()); }
 };
 
 // 480 PPQN matches every modern DAW + .mid convention; high enough
@@ -711,27 +717,36 @@ enum class SnapResolution : int
     CDFrames         = 19
 };
 
+inline std::string formatBarBeatTick (int bar, int beat, int tick)
+{
+    auto ticks = std::to_string (tick);
+    if (ticks.size() < 3)
+        ticks.insert (0, 3 - ticks.size(), '0');
+    return std::to_string (bar) + "." + std::to_string (beat) + "." + ticks;
+}
+
 // Every surface displaying a position routes through this so flipping
 // Session::timeDisplayMode swaps the whole app atomically.
-inline juce::String formatSamplePosition (std::int64_t samples,
-                                            double sampleRate,
-                                            float bpm,
-                                            int beatsPerBar,
-                                            TimeDisplayMode mode) noexcept
+inline std::string formatSamplePosition (std::int64_t samples,
+                                         double sampleRate,
+                                         float bpm,
+                                         int beatsPerBar,
+                                         TimeDisplayMode mode) noexcept
 {
     if (samples < 0) samples = 0;
     if (mode == TimeDisplayMode::Time)
     {
-        if (sampleRate <= 0.0) return juce::String ("00:00.000");
+        if (sampleRate <= 0.0) return "00:00.000";
         const double totalSec = (double) samples / sampleRate;
         const int mins   = (int) (totalSec / 60.0);
         const int secs   = (int) totalSec % 60;
         const int millis = (int) std::round ((totalSec - std::floor (totalSec)) * 1000.0);
-        return juce::String::formatted ("%02d:%02d.%03d", mins, secs,
-                                          millis >= 1000 ? 999 : millis);
+        char text[40];
+        std::snprintf (text, sizeof (text), "%02d:%02d.%03d", mins, secs, millis >= 1000 ? 999 : millis);
+        return text;
     }
     if (sampleRate <= 0.0 || bpm <= 0.0f || beatsPerBar <= 0)
-        return juce::String ("1.1.000");
+        return "1.1.000";
     const double samplesPerBeat = sampleRate * 60.0 / (double) bpm;
     const double samplesPerBar  = samplesPerBeat * (double) beatsPerBar;
     const int bar  = (int) ((double) samples / samplesPerBar);
@@ -739,9 +754,7 @@ inline juce::String formatSamplePosition (std::int64_t samples,
     const int beat = (int) (remBar / samplesPerBeat);
     const double remBeat = remBar - (double) beat * samplesPerBeat;
     const int tick = (int) (remBeat * (double) kMidiTicksPerQuarter / samplesPerBeat);
-    return juce::String (bar + 1) + "."
-         + juce::String (beat + 1) + "."
-         + juce::String (tick).paddedLeft ('0', 3);
+    return formatBarBeatTick (bar + 1, beat + 1, tick);
 }
 
 // Map-aware bar/beat/tick. With an empty map this delegates to the constant-
@@ -749,19 +762,19 @@ inline juce::String formatSamplePosition (std::int64_t samples,
 // regresses); with a populated map it integrates ticks across the tempo
 // segments so bar/beat stay correct after a tempo change. Time mode is tempo-
 // independent and routes through the scalar path either way.
-inline juce::String formatSamplePosition (std::int64_t samples,
-                                            double sampleRate,
-                                            const TempoMap& tempoMap,
-                                            float fallbackBpm,
-                                            int beatsPerBar,
-                                            TimeDisplayMode mode) noexcept
+inline std::string formatSamplePosition (std::int64_t samples,
+                                         double sampleRate,
+                                         const TempoMap& tempoMap,
+                                         float fallbackBpm,
+                                         int beatsPerBar,
+                                         TimeDisplayMode mode) noexcept
 {
     if (tempoMap.empty() || mode == TimeDisplayMode::Time)
         return formatSamplePosition (samples, sampleRate, fallbackBpm, beatsPerBar, mode);
 
     if (samples < 0) samples = 0;
     if (sampleRate <= 0.0 || beatsPerBar <= 0)
-        return juce::String ("1.1.000");
+        return "1.1.000";
 
     const std::int64_t ticks        = tempoMap.samplesToTicks (samples, sampleRate);
     const std::int64_t ticksPerBeat = kMidiTicksPerQuarter;
@@ -769,9 +782,7 @@ inline juce::String formatSamplePosition (std::int64_t samples,
     const int bar  = (int) (ticks / ticksPerBar);
     const int beat = (int) ((ticks % ticksPerBar) / ticksPerBeat);
     const int tick = (int) (ticks % ticksPerBeat);
-    return juce::String (bar + 1) + "."
-         + juce::String (beat + 1) + "."
-         + juce::String (tick).paddedLeft ('0', 3);
+    return formatBarBeatTick (bar + 1, beat + 1, tick);
 }
 
 // Off events folded into lengthInTicks - no dangling on/off bookkeeping.
@@ -964,6 +975,14 @@ struct AudioRegion
     juce::Colour customColour;
     juce::String label;
 
+    std::filesystem::path filePath() const { return std::filesystem::u8path (file.getFullPathName().toStdString()); }
+    // File equality, which ignores case where the platform's filenames do.
+    bool sameFile (const AudioRegion& other) const { return file == other.file; }
+    std::string labelUtf8() const { return label.toStdString(); }
+    void setLabelUtf8 (const std::string& utf8) { label = juce::String::fromUTF8 (utf8.c_str()); }
+    std::uint32_t customArgb() const noexcept { return customColour.getARGB(); }
+    void setCustomArgb (std::uint32_t argb) noexcept { customColour = juce::Colour (argb); }
+
     // Audio still on disk + other state (fades, gain, edits) preserved.
     // Takes effect on next preparePlayback (stop+play); painter dims
     // immediately.
@@ -1028,6 +1047,8 @@ struct Track
 
     juce::String name;
     juce::Colour colour;
+    std::string nameUtf8() const { return name.toStdString(); }
+    std::uint32_t colourArgb() const noexcept { return colour.getARGB(); }
     ChannelStripParams strip;
 
     // The slot's audio mode (Plugin vs Hardware) lives on the strip;
