@@ -95,6 +95,7 @@ add_executable(dusk-studio-tests
     session_freeze_roundtrip.cpp
     session_region_bounds.cpp
     session_takes.cpp
+    session_field_accessors.cpp
     take_comp.cpp
     take_lane_layout.cpp
     region_trim.cpp
@@ -299,11 +300,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(dusk-studio-tests PRIVATE asound)
 elseif(APPLE AND DUSKSTUDIO_NATIVE_COREMIDI)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_COREMIDI=1)
-else()
-    target_sources(dusk-studio-tests PRIVATE
-        ${CMAKE_SOURCE_DIR}/src/engine/midi/JuceMidiBackend.cpp)
-    target_link_libraries(dusk-studio-tests PRIVATE juce::juce_audio_devices)
 endif()
+
+# The JUCE MIDI fallback is the app's input path on macOS and Windows only, but
+# how it binds to a device manager is plain JUCE, so every platform checks it.
+target_sources(dusk-studio-tests PRIVATE
+    juce_midi_input_binding.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/midi/JuceMidiBackend.cpp)
+target_link_libraries(dusk-studio-tests PRIVATE juce::juce_audio_devices)
 
 # JUCE-free audio file I/O. Required: the src/ units under test read and write
 # through this seam unconditionally. dusk_sndfile is resolved in the top-level

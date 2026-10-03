@@ -13,12 +13,13 @@ namespace duskstudio::midi
 {
 namespace
 {
-juce::AudioDeviceManager* deviceManager = nullptr;
+using JuceDeviceManager = juce::AudioDeviceManager;
 
 class JuceMidiInput final : public IMidiInputBackend,
                             private juce::MidiInputCallback
 {
 public:
+    explicit JuceMidiInput (JuceDeviceManager* manager) : deviceManager (manager) {}
     ~JuceMidiInput() override { stop(); }
 
     std::vector<BackendDeviceInfo> enumerate() override
@@ -84,6 +85,7 @@ private:
                   message.getRawData(), message.getRawDataSize(), backendClockMs());
     }
 
+    JuceDeviceManager* const deviceManager;
     Receiver                 receiver;
     std::vector<std::string> enabled;
 };
@@ -169,8 +171,10 @@ private:
 };
 } // namespace
 
-void setJuceMidiDeviceManager (juce::AudioDeviceManager& dm) { deviceManager = &dm; }
+std::unique_ptr<IMidiInputBackend> makeJuceMidiInputBackend (JuceDeviceManager* deviceManager)
+{
+    return std::make_unique<JuceMidiInput> (deviceManager);
+}
 
-std::unique_ptr<IMidiInputBackend>  makeJuceMidiInputBackend()  { return std::make_unique<JuceMidiInput>(); }
 std::unique_ptr<IMidiOutputBackend> makeJuceMidiOutputBackend() { return std::make_unique<JuceMidiOutput>(); }
 } // namespace duskstudio::midi

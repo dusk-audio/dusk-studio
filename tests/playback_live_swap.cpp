@@ -15,6 +15,18 @@
 using namespace duskstudio;
 using Catch::Matchers::WithinAbs;
 
+#if defined(__has_feature)
+ #if __has_feature(address_sanitizer)
+  #define DUSK_TEST_LSAN 1
+ #endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+ #define DUSK_TEST_LSAN 1
+#endif
+#ifdef DUSK_TEST_LSAN
+ #include <sanitizer/lsan_interface.h>
+#endif
+
 namespace
 {
 constexpr int kFrames = 8192;
@@ -236,6 +248,11 @@ TEST_CASE ("Stopping frees every stream a track holds, taken or waiting", "[play
 
 TEST_CASE ("A stop whose drain gives up leaves no old rebuild to swap in", "[playback][live-swap]")
 {
+    // A drain that gives up leaks the streams the stuck read might still be
+    // using; that leak is the design, so LeakSanitizer is told about it.
+   #ifdef DUSK_TEST_LSAN
+    __lsan::ScopedDisabler intendedLeak;
+   #endif
     Rig rig;
     rig.play (1);
     rig.rebuildWith (rig.c);    // handed over, not yet taken

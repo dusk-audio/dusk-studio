@@ -212,7 +212,7 @@ private:
                       ImVec2 (at.x + titleInset, at.y + scale * (kHeaderH - kTitleSize) * 0.5f),
                       titleW, rgba (kTitleColour),
                       fitted (ctx.fonts->band, titleSize, titleW,
-                              track.name.toRawUTF8(), scratch, sizeof (scratch)));
+                              track.nameUtf8().c_str(), scratch, sizeof (scratch)));
         }
 
         dw::ButtonStyle style;

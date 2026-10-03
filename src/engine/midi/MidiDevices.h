@@ -41,10 +41,15 @@ public:
     // resolve back to it across hot-plug (its index is otherwise re-derived).
     static constexpr const char* kVirtualKeyboardIdentifier = "Dusk Studio:virtual-keyboard";
 
+    // Over the platform's own backend. Where that is the JUCE fallback (macOS,
+    // Windows) the client has no device manager to enable inputs through, so the
+    // engine builds its client over a backend bound to its own manager instead.
     MidiInputClient();
 
-    // Test seam: the same client over a caller-supplied backend, so the
-    // enable-vs-dispatch ordering can be driven without an OS device.
+    // The same client over a caller-supplied backend: the engine's path on the
+    // JUCE fallback, where the backend has to carry the engine's device manager,
+    // and the seam tests use to drive enable-vs-dispatch ordering without an OS
+    // device.
     explicit MidiInputClient (std::unique_ptr<IMidiInputBackend> backendIn);
 
     ~MidiInputClient();
