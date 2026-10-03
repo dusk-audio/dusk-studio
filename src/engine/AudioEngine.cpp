@@ -732,6 +732,12 @@ private:
 
 AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     : session (sessionToBindTo), desiredWorkers (std::max (0, initialWorkers))
+   #if ! defined(__linux__) && ! DUSKSTUDIO_HAS_NATIVE_COREMIDI
+    // The JUCE MIDI fallback drives its input enable/callback lifecycle through
+    // a device manager, and it has to be this engine's own. Native MIDI backends
+    // own their connections.
+    , midiIn (midi::makeJuceMidiInputBackend (&deviceManager.juceManager()))
+   #endif
 {
     if (const char* p = std::getenv ("DUSKSTUDIO_PERF"); p != nullptr && p[0] == '1')
     {
@@ -1019,12 +1025,6 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         });
     }
     microphoneNotice_ = device::microphoneAccessNotice (microphone);
-
-   #if ! defined(__linux__) && ! DUSKSTUDIO_HAS_NATIVE_COREMIDI
-    // The JUCE MIDI fallback drives its input enable/callback lifecycle through
-    // the device manager. Native MIDI backends own their connections.
-    duskstudio::midi::setJuceMidiDeviceManager (deviceManager.juceManager());
-   #endif
 
     // Defer hot-plug handling to a fresh message-thread turn so a backend
     // notification never re-enters its own stop/rebuild lifecycle.

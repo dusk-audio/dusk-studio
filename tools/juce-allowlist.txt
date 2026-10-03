@@ -31,8 +31,8 @@ src/engine/device/DeviceManagerJuce.cpp	44
 src/engine/hosting/NativePluginId.h	8
 src/engine/ipc/IpcSelfTest.cpp	5
 src/engine/ipc/PluginHostMain.cpp	48
-src/engine/midi/JuceMidiBackend.cpp	14
-src/engine/midi/JuceMidiBackend.h	3
+src/engine/midi/JuceMidiBackend.cpp	13
+src/engine/midi/JuceMidiBackend.h	2
 src/engine/multisample/AriaBank.cpp	12
 src/engine/multisample/AriaBank.h	9
 src/engine/multisample/AriaGui.cpp	23

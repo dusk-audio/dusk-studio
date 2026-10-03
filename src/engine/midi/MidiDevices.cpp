@@ -33,7 +33,7 @@ std::unique_ptr<IMidiInputBackend> makeInputBackend()
    #elif defined(__APPLE__) && DUSKSTUDIO_HAS_NATIVE_COREMIDI
     return makeCoreMidiInputBackend();
    #else
-    return makeJuceMidiInputBackend();
+    return makeJuceMidiInputBackend (nullptr);
    #endif
 }
 
