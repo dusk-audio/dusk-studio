@@ -352,8 +352,8 @@ void PlaybackEngine::stopPlayback()
     // contended box - less than one legitimate callback - and bail
     // spuriously). If the audio thread is genuinely stuck past the
     // deadline, leave the streams allocated - streamsActive stays false
-    // so no new reads start, and the next stopPlayback retries the
-    // drain. Leak beats UAF.
+    // so no new reads start. A preparePlayback that follows installs fresh
+    // streams over them, so they are never freed. Leak beats UAF.
     constexpr auto kDrainTimeout = std::chrono::milliseconds (200);
     const auto drainDeadline = std::chrono::steady_clock::now() + kDrainTimeout;
     while (audioInFlight.load (std::memory_order_seq_cst) > 0)
@@ -362,8 +362,8 @@ void PlaybackEngine::stopPlayback()
         {
             std::fprintf (stderr,
                           "[Dusk Studio/PlaybackEngine] stopPlayback: audioInFlight=%d "
-                          "after %lld ms; BAILING teardown to avoid UAF. Streams "
-                          "leak until the next stopPlayback drains.\n",
+                          "after %lld ms; BAILING teardown to avoid UAF. Its streams "
+                          "are leaked.\n",
                           audioInFlight.load (std::memory_order_relaxed),
                           (long long) kDrainTimeout.count());
             return;
