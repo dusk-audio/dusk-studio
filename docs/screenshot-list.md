@@ -1,8 +1,9 @@
 # Dusk Studio — Manual Screenshot List
 
-The 32 unique PNGs referenced by `MANUAL.md` (33 refs — `np-09-tape-strip.png`
-is used twice), plus `np-12-notepad.png`, whose embed is pulled until it is
-reshot. Capture target: `docs/images/<name>.png`. Filenames must match the
+The 39 unique PNGs referenced by `MANUAL.md` (40 refs, because
+`np-09-tape-strip.png` is used twice), plus `np-12-notepad.png`, whose embed is
+pulled until it is reshot, and the captured figures `MANUAL.md` does not
+reference. Capture target: `docs/images/<name>.png`. Filenames must match the
 markers embedded in `MANUAL.md` exactly.
 
 Most of these are produced automatically by the capture harness — run:
@@ -39,52 +40,65 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 
 | Filename                   | Manual | Auto | What to capture                                                     |
 | -------------------------- | ------ | ---- | ------------------------------------------------------------------ |
-| `qg-01-startup.png`        | L66    | ✅   | Startup dialog with three fixed demo rows. Native panel: the app reads its own frame back and the script converts it. |
-| `qg-02-audio-settings.png` | L74    | ✅   | `Settings → Audio` panel, a real interface selected. Native panel: the app reads its own frame back and the script converts it. |
-| `qg-03-arm-track.png`      | L86    | ✅   | RECORDING: ARM on, input selected, IN off, live meter visible.    |
-| `qg-04-record-rolling.png` | L94    | ✅   | Mid-record: meters lit, a region drawing into the tape strip.      |
-| `qg-05-overdub.png`        | L102   | ✅   | Track 1 has a region; track 2 mid-record.                          |
-| `qg-06-mixing-stage.png`   | L118   | ✅   | MIXING stage on strip 1 — send knobs replace the input block.      |
-| `qg-07-bounce-dialog.png`  | L128   | ✅   | Bounce **file picker** at the session folder, then progress bar. (No format options — see note.) |
+| `qg-01-startup.png`        | L67    | ✅   | Startup dialog with three fixed demo rows. Native panel: the app reads its own frame back and the script converts it. |
+| `qg-02-audio-settings.png` | L75    | ✅   | `Settings → Audio` panel, a real interface selected. Native panel: the app reads its own frame back and the script converts it. |
+| `qg-03-arm-track.png`      | L87    | ✅   | RECORDING: ARM on, input selected, IN off, live meter visible.    |
+| `qg-04-record-rolling.png` | L95    | ✅   | Mid-record: meters lit, a region drawing into the tape strip.      |
+| `qg-05-overdub.png`        | L103   | ✅   | Track 1 has a region; track 2 mid-record.                          |
+| `qg-06-mixing-stage.png`   | L119   | ✅   | MIXING stage on strip 1 — send knobs replace the input block.      |
+| `qg-07-bounce-dialog.png`  | L129   | ✅   | Bounce **file picker** at the session folder, then progress bar. (No format options — see note.) |
 
 ## Names and Functions of Parts (annotated — add callouts after capture)
 
 | Filename                            | Manual | Auto | What to capture                                              |
 | ----------------------------------- | ------ | ---- | ----------------------------------------------------------- |
-| `np-01-main-window.png`             | L142   | ✅   | Full window, six horizontal bands.                          |
-| `np-02-transport-bar.png`           | L155   | ✅   | Transport bar, full width.                                  |
-| `rec-02-no-input-notice.png`        | L1663  | ✅   | Transport row as composed: bank buttons, notice row below.  |
-| `np-03-channel-strip-mixing.png`    | L182   | ✅   | One full channel strip, MIXING stage (sends visible).       |
-| `np-04-channel-strip-recording.png` | L209   | ✅   | Same strip, RECORDING stage (input block + ARM/IN/PRINT).   |
-| `np-05-bus-strip.png`               | L220   | ✅   | One bus strip top-to-bottom.                                |
-| `np-06-master-strip.png`            | L235   | ✅   | Master strip top-to-bottom.                                 |
-| `np-07-aux-view.png`                | L250   | ✅   | One aux lane shown full-width.                              |
-| `np-08-mastering-view.png`          | L263   | ✅   | Mastering chain.                                            |
-| `np-09-tape-strip.png`              | L278, L1181 | ✅ | Tape strip with regions, a marker, and a loop bracket. (Reused at both lines.) |
-| `np-10-region-editor.png`           | L293   | ✅   | Audio region editor modal. Native panel: the app reads its own frame back and the script converts it. |
-| `np-11-piano-roll.png`              | L305   | ✅   | Piano roll modal.                                           |
+| `np-01-main-window.png`             | L143   | ✅   | Full window, six horizontal bands.                          |
+| `np-02-transport-bar.png`           | L156   | ✅   | Transport bar, full width.                                  |
+| `np-03-channel-strip-mixing.png`    | L183   | ✅   | One full channel strip, MIXING stage (sends visible).       |
+| `np-04-channel-strip-recording.png` | L210   | ✅   | Same strip, RECORDING stage (input block + ARM/IN/PRINT).   |
+| `np-05-bus-strip.png`               | L221   | ✅   | One bus strip top-to-bottom.                                |
+| `np-06-master-strip.png`            | L236   | ✅   | Master strip top-to-bottom.                                 |
+| `np-07-aux-view.png`                | L251   | ✅   | One aux lane shown full-width.                              |
+| `np-08-mastering-view.png`          | L264   | ✅   | Mastering chain.                                            |
+| `np-09-tape-strip.png`              | L279, L1260 | ✅ | Tape strip with regions, a marker, and a loop bracket. (Reused at both lines.) |
+| `np-10-region-editor.png`           | L294   | ✅   | Audio region editor modal. Native panel: the app reads its own frame back and the script converts it. |
+| `np-11-piano-roll.png`              | L307   | ✅   | Piano roll modal.                                           |
 | `np-12-notepad.png`                 | pulled | ❌   | Notepad chart: title, section markers, chords over syllables. |
 
 ## Chapter figures
 
 | Filename                        | Manual | Auto | What to capture                                            |
 | ------------------------------- | ------ | ---- | --------------------------------------------------------- |
-| `rec-01-arm-multiple.png`       | L1072  | ✅   | Eight tracks armed simultaneously, RECORDING stage.       |
-| `ed-04-region-editor-modal.png` | L1298  | ✅   | Region editor modal over a region with fade-in/out. Same frame as `np-10-region-editor.png`. |
-| `ed-05-piano-roll-full.png`     | L1350  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
-| `ed-06-take-lanes.png`          | L1449  | ✅   | Audio editor with three take lanes under a comp drawn from all three. The harness stages three takes over the same four seconds of the Vox track, comps them (take 1, then take 3, then take 2) and opens the editor on the lanes; the takes exist only for this figure. Native panel, same route as `np-10-region-editor.png`. |
-| `fx-01-eq.png`                  | L735   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
-| `fx-02-comp.png`                | L757   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
-| `vkb-01-virtual-keyboard.png`   | L567   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
-| `fx-03-tape.png`                | L914   | ✅   | Master tape editor: Tape Machine 2's own editor, read back from its window once painted, same route as the built-in units' plug-in editors. |
-| `mm-01-automation-modes.png`    | L1438  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
-| `mm-02-mastering-chain.png`     | L995   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
-| `pl-01-plugin-picker.png`       | L1512  | ✅   | Plugin picker panel populated.                            |
-| `ms-02-sfz-library.png`         | L1628  | ✅   | Instrument library listing a fixture tree of soundfonts.  |
-| `pl-04-hw-insert.png`           | L1639  | ✅   | Hardware insert editor with I/O pickers and Ping button.  |
-| `sync-01-mcu-bindings.png`      | L1755  | ✅   | MIDI Bindings panel populated with a few learned bindings.|
-| `bnc-01-bounce-dialog.png`      | L1884  | ✅   | Bounce dialog (file picker + progress). (No format options — see note.) |
-| `ts-02-plugin-offline.png`      | L2140  | ✅   | A plugin slot in the `⚠ (offline)` state (the harness stages a synthetic one). |
+| `rec-01-arm-multiple.png`       | L1138  | ✅   | Eight tracks armed simultaneously, RECORDING stage.       |
+| `ed-04-region-editor-modal.png` | L1413  | ✅   | Region editor modal over a region with fade-in/out. Same frame as `np-10-region-editor.png`. |
+| `ed-05-piano-roll-full.png`     | L1508  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
+| `ed-06-take-lanes.png`          | L1476  | ✅   | Audio editor with three take lanes under a comp drawn from all three. The harness stages three takes over the same four seconds of the Vox track, comps them (take 1, then take 3, then take 2) and opens the editor on the lanes; the takes exist only for this figure. Native panel, same route as `np-10-region-editor.png`. |
+| `fx-01-eq.png`                  | L786   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
+| `fx-02-comp.png`                | L812   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
+| `vkb-01-virtual-keyboard.png`   | L595   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
+| `fx-03-tape.png`                | L976   | ✅   | Master tape editor: Tape Machine 2's own editor, read back from its window once painted, same route as the built-in units' plug-in editors. |
+| `mm-01-automation-modes.png`    | L1598  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
+| `mm-02-mastering-chain.png`     | L1059  | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
+| `pl-01-plugin-picker.png`       | L1672  | ✅   | Plugin picker panel populated.                            |
+| `bi-01-utility.png`             | L1745  | ✅   | The Utility unit's editor. One figure per built-in unit: the harness loads each onto track 1's insert and shoots it through the panel window the user opens. |
+| `bi-02-reverb.png`              | L1770  | ✅   | The DuskVerb 2 unit's editor. Same route as `bi-01-utility.png`. |
+| `bi-03-tape-echo.png`           | L1797  | ✅   | The Tape Echo 2 unit's editor. Same route as `bi-01-utility.png`. |
+| `bi-04-tape.png`                | L1825  | ✅   | The Tape Machine 2 unit's editor. Same route as `bi-01-utility.png`. |
+| `bi-05-sunset.png`              | L1835  | ✅   | The Sunset instrument's editor. Same route as `bi-01-utility.png`. |
+| `ms-02-sfz-library.png`         | L1925  | ✅   | Instrument library listing a fixture tree of soundfonts.  |
+| `pl-04-hw-insert.png`           | L1943  | ✅   | Hardware insert editor with I/O pickers and Ping button.  |
+| `sync-01-mcu-bindings.png`      | L2060  | ✅   | MIDI Bindings panel populated with a few learned bindings.|
+| `bnc-01-bounce-dialog.png`      | L2196  | ✅   | Bounce dialog (file picker + progress). (No format options — see note.) |
+| `ts-02-plugin-offline.png`      | L2476  | ✅   | A plugin slot in the `⚠ (offline)` state (the harness stages a synthetic one). |
+
+## No-input notice (captured, not referenced by `MANUAL.md`)
+
+On disk, not referenced: the harness still writes this figure, and no
+`MANUAL.md` line embeds it.
+
+| Filename                     | Manual | Auto | What to capture                                             |
+| ---------------------------- | ------ | ---- | ---------------------------------------------------------- |
+| `rec-02-no-input-notice.png` | -      | ✅   | Transport row as composed: bank buttons, notice row below.  |
 
 ## Compact-mode strips (captured, not yet referenced by `MANUAL.md`)
 

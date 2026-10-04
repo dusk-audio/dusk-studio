@@ -384,7 +384,7 @@ Each platform primitive has three implementations (`*_Linux.cpp`, `*_Mac.cpp`, `
 
 ### Session.h is the source of truth
 
-[src/session/Session.h](../src/session/Session.h) (~1080 lines) defines all state: 24 `Track`s (each with `ChannelStripParams`, regions, routing), 4 `BusParams`, 4 `AuxLaneParams`, `MasterBusParams`, `MasteringParams`, plus global tempo/time-sig/oversampling and solo/arm counters. Audio params are `std::atomic`. Key region structs: `AudioRegion` (WAV-on-disk: `timelineStart`, `lengthInSamples`, `sourceOffset`, fades, `previousTakes`) and `MidiRegion` (notes + CCs).
+[src/session/Session.h](../src/session/Session.h) (~1900 lines) defines all state: 24 `Track`s (each with `ChannelStripParams`, regions, routing), 4 `BusParams`, 4 `AuxLaneParams`, `MasterBusParams`, `MasteringParams`, plus global tempo/time-sig/oversampling and solo/arm counters. Audio params are `std::atomic`. Key region structs: `AudioRegion` (WAV-on-disk: `timelineStart`, `lengthInSamples`, `sourceOffset`, fades, `takeId`) and `MidiRegion` (notes + CCs, `previousTakes`). An audio track's takes are `Track::takes`.
 
 ### Saving is crash-safe
 
@@ -458,7 +458,7 @@ scripts/regress.sh all --release-run 1234567890 --fixtures-run 2345678901
 carry Linux, macOS and Windows options at once. An option no platform claims is
 a usage error rather than a silently ignored word. `--release-run` goes to all
 three: `all --release-run <id>` tests the Linux tarball, the macOS disk image
-and the Windows MSI of the same `release.yml` run, which is the 0.14 release
+and the Windows MSI of the same `release.yml` run, which is the release
 gate. A platform given a local package on the same line (`--tarball`, `--dmg`,
 `--msi`) tests that one, and the release run goes to the others.
 `--no-scenarios` goes to Linux and Windows; `--fixtures-run` to Windows.

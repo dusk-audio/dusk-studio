@@ -1,6 +1,6 @@
 # Take folders and comping (replaces flat take history)
 
-> **Superseded by the shipped model (0.15).** Takes live on the track (`Track::takes`, one `AudioTake` per recording pass, never trimmed) and the track's regions are the comp: each region names the take it plays through `AudioRegion::takeId`, and the audio editor's take lanes promote take ranges into regions. See `src/session/TakeComp.h` and MANUAL.md, *Takes* and *Take lanes*.
+> **Shipped in 0.15. This document is the historical design, and it differs from what shipped.** Everything below the banner is the plan as it was drafted (target 1.1, session format v8, the old `AudioRegionEditor`) and is kept for reference only. What shipped: takes live on the track (`Track::takes`, one `AudioTake` per recording pass, never trimmed) and the track's regions are the comp: each region names the take it plays through `AudioRegion::takeId`, and the take lanes in the audio editor (`src/ui/imgui/AudioEditorView.cpp`) promote take ranges into regions. Flatten and MIDI take folders were dropped. MIDI Merge is tracked for 0.16 in #825. The shipped session format is v10. MANUAL.md and CHANGELOG.md are the record of what shipped; the model is in `src/session/TakeComp.h`.
 
 Status: product spec, draft, targeted at **1.1**. 1.0 ships the flat take history
 with its limits documented. Supersedes the flat `previousTakes` model and the
