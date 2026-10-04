@@ -59,6 +59,20 @@ Takes live on the track now, and the audio editor is where you comp them.
   and the right-click menu, renames a region from its title, and takes typed
   gain and fade values in the status bar. The Auto pill shows an automation lane
   over the waveform for adding, moving, deleting and drawing points.
+- **Track names in the tape strip select, rename and move tracks** (#806).
+  Click a name to select the track; the console pages to its strip and the
+  row lights in the track's colour. Double-click renames in place, one undo
+  step. Drag a name up or down to move the track to another row, with
+  everything on it: regions, takes, strip settings, insert and automation.
+  Clicking a name used to do nothing.
+- **Select several tracks by name.** Shift+click takes in every row shown
+  between two names and Cmd/Ctrl+click adds or removes one. **A / S / X** then
+  act on all of them: off everywhere when any selected track has the state on,
+  otherwise on for all.
+- **A track name menu.** Right-click a name to edit every region on the
+  selected tracks, audio and MIDI: Loop region span, Split at playhead, Reverse
+  regions, Mute / Unmute, Lock / Unlock, Color and Delete regions. Each edit is
+  one undo step, and frozen tracks sit it out.
 
 ### Changed
 
@@ -73,6 +87,15 @@ Takes live on the track now, and the audio editor is where you comp them.
 - **Sessions are saved in format v10.** A session from 0.14 loads each region's
   old take history as takes on its track, with the audio files untouched. An
   older build cannot open a v10 session.
+- **Dropped files land at the playhead.** A drop on the tape strip used to
+  land under the pointer while File → Import used the playhead. Both use the
+  playhead now, a line shows where the files will land, and holding **Alt** as
+  you drop lands them under the pointer instead.
+- **The mastering loudness picker lists one row per target.** Spotify, YouTube
+  and Tidal were three rows with the same −14 LUFS / −1 dBTP target; they are
+  one row now, beside Apple Music and Broadcast (EBU R128). A session saved
+  with the old list opens on the row holding that platform's target.
+- **CLAP headers updated to 1.2.10.**
 
 ### Fixed
 
@@ -92,6 +115,9 @@ Takes live on the track now, and the audio editor is where you comp them.
   edge, the recorder could extend that region into the next loop pass or before
   the start of its file. Recording now places a take with the same rule as the
   take lanes.
+- **The GR meter and threshold handle stay when the timeline is open** (#807).
+  Expanding the timeline compacts the strips, and that used to hide the meter
+  and handle beside the fader on every channel strip, bus and the master.
 
 ## [0.14.0] - 2026-09-29
 
