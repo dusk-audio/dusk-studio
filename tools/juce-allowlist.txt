@@ -134,7 +134,7 @@ src/ui/ScreenshotCapture.cpp	37
 src/ui/SectionPillButton.h	7
 src/ui/SelfTestPanel.cpp	10
 src/ui/SelfTestPanel.h	7
-src/ui/ShortcutsPanel.h	37
+src/ui/ShortcutsPanel.h	36
 src/ui/SplitModuleButton.h	42
 src/ui/SteppedKnob.h	12
 src/ui/SupportersPanel.h	42
