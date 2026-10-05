@@ -124,7 +124,8 @@ public:
     virtual bool consolePageMatches (int index) const = 0;
     virtual bool timelineViewMatches (bool expanded) const = 0;
     virtual bool stripCompact (int index) const = 0;
-    // Every channel, bus and master GR slider beside its fader is on screen.
+    // Every channel, bus and master GR meter beside its fader is on screen with its
+    // threshold handle.
     virtual bool grMetersShown() const = 0;
     // The level text under a channel strip's send knob, as drawn.
     virtual std::string stripSendLabel (int track, int send) const = 0;
@@ -133,6 +134,8 @@ public:
     virtual void closeBuiltin (int track) = 0;
     virtual bool openAudioEditor (int track, int region) = 0;
     virtual bool clickAudioEditorButton (const std::string& name) = 0;
+    // Both clicks in one call, so the pair is a double-click however slowly the editor draws.
+    virtual bool doubleClickAudioEditorButton (const std::string& name) = 0;
     virtual bool clickAudioEditorSample (std::int64_t sample) = 0;
     virtual std::vector<double> audioEditorView() const = 0;
     virtual std::vector<int> audioEditorPoint (const std::string& kind, std::int64_t sample) const = 0;

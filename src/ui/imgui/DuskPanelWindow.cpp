@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -396,6 +397,27 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             releasePending = true;
         }
 
+        // Both clicks are queued at once: the view takes one button event a frame and
+        // the clock is held while any wait, so the two presses land two short frames
+        // apart however long a frame takes to draw and whenever the runner's timers fire.
+        void doubleClickForScenario (ImVec2 point)
+        {
+            noteScenarioInput();
+            MotionEvent motion;
+            motion.pos = { point.x, point.y };
+            motion.absolutePos = motion.pos;
+            onMotion (motion);
+            MouseEvent click;
+            click.button = DGL::kMouseButtonLeft;
+            click.pos = motion.pos;
+            click.absolutePos = motion.pos;
+            for (const bool press : { true, false, true, false })
+            {
+                click.press = press;
+                onMouse (click);
+            }
+        }
+
         void pointerForScenario (ImVec2 point, bool pressed, int modifiers)
         {
             noteScenarioInput();
@@ -509,9 +531,14 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         // renderer would age two clicks apart. While scenario input is waiting to be
         // drawn the clock moves no faster than a 60 Hz frame; the time between one
         // input being drawn and the next being sent still counts in full.
+        //
+        // The frame after the input was drawn is held too. A renderer slow enough to
+        // keep the message thread busy starts that frame before the runner's timer for
+        // its next step can fire, however short the step's delay, so it is time no
+        // step asked to wait.
         void onImGuiPrepareFrame() override
         {
-            if (quietFrames >= kSettledFrames)
+            if (quietFrames >= kSettledFrames && ! std::exchange (holdNextFrame, false))
                 return;
             const auto now = std::chrono::steady_clock::now();
             const float waited = std::chrono::duration<float> (now - unseenSince).count();
@@ -549,7 +576,10 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 if (ImGui::GetCurrentContext()->InputEventsQueue.Size > 0)
                     quietFrames = 0;
                 else if (++quietFrames == kSettledFrames)
+                {
                     --panelsWithUnseenScenarioInput;
+                    holdNextFrame = true;
+                }
             }
         }
 
@@ -557,10 +587,10 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         {
             if (const int interval = scenarioFrameIntervalMs(); interval > 0)
             {
-                const auto now = std::chrono::steady_clock::now();
-                if (now - lastFrameAt < std::chrono::milliseconds (interval))
-                    return;
-                lastFrameAt = now;
+                // Held on the message thread, as a software renderer's frame is: no
+                // timer can fire until the frame is out.
+                std::this_thread::sleep_until (lastFrameAt + std::chrono::milliseconds (interval));
+                lastFrameAt = std::chrono::steady_clock::now();
             }
             DGL::ImGuiTopLevelWidget::onDisplay();
             owner.captureFrameIfAsked (static_cast<int> (getWidth()),
@@ -593,6 +623,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         bool keyboardFocused = false;
         bool releasePending = false;
         int quietFrames = kSettledFrames;
+        bool holdNextFrame = false;
         std::chrono::steady_clock::time_point unseenSince;
         std::vector<unsigned int> keyReleases;
         DGL::MouseButton heldButton = DGL::kMouseButtonLeft;
@@ -904,6 +935,15 @@ bool DuskPanelWindow::clickControlForScenario (const std::string& control)
         || ! impl->view->controlPointForScenario (control, point)) return false;
     if (auto* window = impl->host.window()) window->focus();
     impl->panelWidget->clickForScenario (point);
+    return true;
+}
+bool DuskPanelWindow::doubleClickControlForScenario (const std::string& control)
+{
+    ImVec2 point;
+    if (! isOpen() || impl->view == nullptr || impl->panelWidget == nullptr
+        || ! impl->view->controlPointForScenario (control, point)) return false;
+    if (auto* window = impl->host.window()) window->focus();
+    impl->panelWidget->doubleClickForScenario (point);
     return true;
 }
 bool DuskPanelWindow::inputForScenario (const std::string& input)

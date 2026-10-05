@@ -77,11 +77,14 @@ constexpr int kAuxSlot    = 0;
 // only makes the case slower. The bound catches a hang, not a slow machine, and
 // fails the case with `timeout`. `retry`, where set, is sent once if the state
 // is still missing after kRetryAfterMs; only for a click the window can lose
-// and a second press cannot change the verdict.
+// and a second press cannot change the verdict. `boundMs` shortens the bound for
+// a case whose budget cannot hold the default.
 //
 // The delay of the step after one that sent a native panel input starts once the
 // panel has drawn that input, so a slow renderer cannot leave a drag half
 // delivered when the next step reads its result.
+constexpr int kUntilBoundMs = 15000;
+
 struct Step
 {
     int delayMs;
@@ -89,12 +92,15 @@ struct Step
     std::function<bool()> until {};
     std::string timeout {};
     std::function<void()> retry {};
+    int boundMs = kUntilBoundMs;
 };
 
 // A wheel of n notches as this platform's window peer reports it.
 float notch (float n) { return n * wheel::profile().lineNotchDelta; }
 
-constexpr int kUntilBoundMs = 15000;
+// Half the shortest window case's budget, so a panel that stops drawing is what the
+// case reports rather than its watchdog.
+constexpr int kSettleBoundMs = 5000;
 constexpr int kUntilPollMs  = 10;
 constexpr int kRetryAfterMs = 3000;
 
@@ -174,7 +180,7 @@ void runSteps (ScenarioContext& ctx, std::shared_ptr<std::vector<Step>> steps,
 
             const auto next = index + 1;
             const int delay = next < steps->size() ? (*steps)[next].delayMs : 0;
-            const auto deadline = Clock::now() + std::chrono::milliseconds (kUntilBoundMs);
+            const auto deadline = Clock::now() + std::chrono::milliseconds (kSettleBoundMs);
             auto settle = std::make_shared<std::function<void()>>();
             std::weak_ptr<std::function<void()>> weakSettle = settle;
             *settle = [&ctx, runner, index, next, delay, deadline, weakSettle]
@@ -188,7 +194,7 @@ void runSteps (ScenarioContext& ctx, std::shared_ptr<std::vector<Step>> steps,
                 if (Clock::now() >= deadline)
                 {
                     ctx.expect (false, "a panel had not drawn the input step " + std::to_string (index)
-                                           + " sent it after " + std::to_string (kUntilBoundMs) + " ms");
+                                           + " sent it after " + std::to_string (kSettleBoundMs) + " ms");
                     ctx.complete (ctx.verdict());
                     return;
                 }
@@ -208,7 +214,7 @@ void runSteps (ScenarioContext& ctx, std::shared_ptr<std::vector<Step>> steps,
         // Wall-clock bounds, as in ScenarioContext::waitUntil. A timeout goes
         // through expect so an earlier broken expectation stays the verdict.
         const auto started = Clock::now();
-        const auto deadline = started + std::chrono::milliseconds (kUntilBoundMs);
+        const auto deadline = started + std::chrono::milliseconds (step.boundMs);
         const auto retryAt = started + std::chrono::milliseconds (kRetryAfterMs);
         auto retried = std::make_shared<bool> (false);
         auto poll = std::make_shared<std::function<void()>>();
@@ -3243,7 +3249,9 @@ std::optional<ScenarioResult> runAudioTakePromoteName (GuiHost& host, ScenarioCo
     { ctx.expect (host.clickAudioEditorButton (takeControl ("name", middle)), "the take's name is not clickable"); },
       [&host, middle] { return host.audioEditorTakePoint ("name", middle, 0).size() == 2; },
       "the middle take's header never came into view" });
-    steps->push_back ({ 100, [&ctx, &track, middle]
+    // No delay: under a renderer that holds the message thread a step's delay costs
+    // whole frames, and two of them would outlast the double-click time.
+    steps->push_back ({ 0, [&ctx, &track, middle]
     { ctx.expect (takeCoverage (track, middle).empty(), "the name click promoted before the double-click time"); } });
     steps->push_back ({ 100, [&host, &ctx, &engine, &track, ids]
     {
@@ -3312,7 +3320,10 @@ std::optional<ScenarioResult> runAudioTakeRename (GuiHost& host, ScenarioContext
         return state.size() == 5 && state[0] == 0;
     };
     const auto click = [&host, &ctx, newest]
-    { ctx.expect (host.clickAudioEditorButton (takeControl ("name", newest)), "the take's name is not clickable"); };
+    {
+        ctx.expect (host.doubleClickAudioEditorButton (takeControl ("name", newest)),
+                    "the take's name is not clickable");
+    };
 
     const auto nameShown = [&host, newest] { return host.audioEditorTakePoint ("name", newest, 0).size() == 2; };
 
@@ -3320,7 +3331,6 @@ std::optional<ScenarioResult> runAudioTakeRename (GuiHost& host, ScenarioContext
     const auto doubleClick = [&steps, click, renaming, nameShown] (const char* timeout)
     {
         steps->push_back ({ 100, click, nameShown, "the take's header never came into view" });
-        steps->push_back ({ 100, click });
         steps->push_back ({ 100, [] {}, renaming, timeout });
     };
     steps->push_back ({ 100, [] {}, [&host] { return host.audioEditorTakeLanes().size() == 2; },
@@ -3390,11 +3400,10 @@ std::optional<ScenarioResult> runAudioTakeRenameUtf8 (GuiHost& host, ScenarioCon
         return found != nullptr ? found->name : std::string();
     };
     const auto click = [&host, &ctx, take]
-    { ctx.expect (host.clickAudioEditorButton (takeControl ("name", take)), "the take's name is not clickable"); };
+    { ctx.expect (host.doubleClickAudioEditorButton (takeControl ("name", take)), "the take's name is not clickable"); };
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, click, [&host, take] { return host.audioEditorTakePoint ("name", take, 0).size() == 2; },
                         "the take's header never came into view" });
-    steps->push_back ({ 100, click });
     steps->push_back ({ 100, [&host, &ctx, typed]
     { ctx.expect (host.typeInAudioEditor (typed), "typing into the field failed"); },
     [&host, take] { const auto s = host.audioEditorTakeState(); return s.size() == 5 && s[0] == (std::int64_t) take; },
@@ -3895,7 +3904,10 @@ std::optional<ScenarioResult> runAudioEditorFieldKeysFromShell (GuiHost& host, S
         return state.size() == 5 && state[0] == 0;
     };
     const auto click = [&host, &ctx, newest]
-    { ctx.expect (host.clickAudioEditorButton (takeControl ("name", newest)), "the take's name is not clickable"); };
+    {
+        ctx.expect (host.doubleClickAudioEditorButton (takeControl ("name", newest)),
+                    "the take's name is not clickable");
+    };
     const auto type = [&host] (char glyph) { host.pressPeerKey (keyCodeDescription (glyph), glyph); };
     const auto untouched = [&ctx, &track, &transport, regionsBefore, loopWas] (const std::string& where)
     {
@@ -3910,7 +3922,6 @@ std::optional<ScenarioResult> runAudioEditorFieldKeysFromShell (GuiHost& host, S
     const auto openName = [&steps, click, renaming, nameShown] (const char* timeout)
     {
         steps->push_back ({ 100, click, nameShown, "the take's header never came into view" });
-        steps->push_back ({ 100, click });
         steps->push_back ({ 100, [] {}, renaming, timeout });
     };
     steps->push_back ({ 100, [&host, &ctx]
@@ -5175,8 +5186,9 @@ std::optional<ScenarioResult> runAudioEditorDragYieldsToReshape (GuiHost& host, 
     steps->push_back ({ 150, [&host, &ctx, punch]
     { ctx.expect (host.clickAudioEditorButton (takeControl ("name", *punch)), "the take's name is not clickable"); } });
     // The click's release goes in after the next frame; the trim follows it well
-    // inside the double-click time.
-    steps->push_back ({ 50, pressTrim });
+    // inside the double-click time, with no delay that a slow renderer would stretch
+    // past it.
+    steps->push_back ({ 0, pressTrim });
     // Held past the double-click time, when a name click on its own promotes.
     steps->push_back ({ 700, [&ctx, &track, punch, release]
     {
@@ -5342,8 +5354,7 @@ std::optional<ScenarioResult> runAudioEditorFields (GuiHost& host, ScenarioConte
     const auto typeInto = [&host, &ctx, &steps] (const char* control, const char* text)
     {
         const auto click = [&host, &ctx, control]
-        { ctx.expect (host.clickAudioEditorButton (control), std::string ("no ") + control + " to double-click"); };
-        steps->push_back ({ 100, click });
+        { ctx.expect (host.doubleClickAudioEditorButton (control), std::string ("no ") + control + " to double-click"); };
         steps->push_back ({ 100, click });
         steps->push_back ({ 150, [&host, &ctx, text] { ctx.expect (host.typeInAudioEditor (text), "typing into the field failed"); } });
         steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.pressAudioEditorKey ("return"), "Enter was not delivered"); } });
@@ -12334,7 +12345,7 @@ std::optional<ScenarioResult> runTimelineDrawer (GuiHost& host, ScenarioContext&
                 for (int track = 0; track < Session::kNumTracks; ++track)
                     ctx.expect (host.stripCompact (track) == show,
                                 "timeline expansion left the wrong layout on strip " + std::to_string (track + 1));
-                ctx.expect (host.grMetersShown(), "a GR slider beside a fader is hidden");
+                ctx.expect (host.grMetersShown(), "a GR meter beside a fader is hidden or has lost its threshold handle");
             } });
         }
         runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
@@ -18265,8 +18276,8 @@ std::optional<ScenarioResult> runPluginKindMismatch (GuiHost& host, ScenarioCont
                 "the refusal did not name both kinds and the emptied slot: " + host.modalText());
             ctx.expect (! slot.isLoaded(), "the refused plugin stayed on the slot");
             ctx.expect (host.clickModalButton ("OK"), "the refusal has no usable OK button");
-        }, [&host] { return host.modalText().rfind ("Plugin kind mismatch", 0) == 0; },
-           "the load was never refused with a kind mismatch" });
+        }, [&host] { return host.fileBrowserPanels() == 0 && ! host.modalStackEmpty(); },
+           "Open left the file browser up, or it closed without an alert", {}, 5000 });
     }
     runSteps (ctx, steps, [&host, &ctx]
     {
