@@ -26,6 +26,7 @@ public:
            #else
             "Alt+";
            #endif
+        const auto utf8 = [] (const char* text) { return juce::String::fromUTF8 (text); };
 
         sections = {
             { "Stages", {
@@ -37,15 +38,17 @@ public:
             { "Transport", {
                 { "Space", "Play / Stop" }, { "R", "Record" },
                 { "Home", "Playhead to start" }, { ".", "Stop + rewind to start" },
-                { juce::CharPointer_UTF8 ("Shift+\xe2\x86\x90/\xe2\x86\x92"), "Prev / next marker" },
+                { utf8 ("Shift+\xe2\x86\x90/\xe2\x86\x92"), "Prev / next marker" },
                 { "B", "Tap tempo" }, { "Shift+C", "Count-in on / off" },
                 { "F", "Time / bars display" } } },
             { "Markers & loop", {
                 { "M", "Drop marker" }, { "[", "Set loop / punch in" },
                 { "]", "Set loop / punch out" }, { "L", "Toggle loop" },
                 { "P", "Toggle punch" } } },
+            { "Zoom", {
+                { "-", "Zoom out" }, { "=", "Zoom in" }, { mod ('0'), "Zoom to fit" } } },
             { "Selected track", {
-                { juce::CharPointer_UTF8 ("\xe2\x86\x90 / \xe2\x86\x92"), "Focus prev / next strip" },
+                { utf8 ("\xe2\x86\x90 / \xe2\x86\x92"), "Focus prev / next strip" },
                 { "A", "Arm" }, { "S", "Solo" }, { "X", "Mute" } } },
             { "Tools & view", {
                 { "G", "Grab / move edit mode" }, { "C", "Metronome on / off" },
@@ -54,14 +57,20 @@ public:
                 { mod ('E'), "Split region at playhead / cursor" },
                 { "F11", "Fullscreen" }, { alt + "T", "Cycle MIDI take (Shift = back)" },
                 { "?", "This shortcut list" } } },
-            { "Zoom", {
-                { "-", "Zoom out" }, { "=", "Zoom in" }, { mod ('0'), "Zoom to fit" } } },
+            { "Audio editor", {
+                { "G / R / C", "Grab / Range / Cut tool" },
+                { utf8 ("\xe2\x86\x91 / \xe2\x86\x93"), "Take above / below" },
+                { "T", "Solo take" },
+                { utf8 ("\xe2\x86\x90 / \xe2\x86\x92"), "Nudge a beat (Shift = bar)" },
+                { "[ / ]", "Loop in / out (Shift = punch)" },
+                { "F", "Fade in over range (Shift = out)" },
+                { "Delete", "Delete regions or range" }, { "0", "Zoom to fit" } } },
             { "File", {
                 { mod ('N'), "New session" }, { mod ('O'), "Open" }, { mod ('S'), "Save" },
                 { mod ('S', juce::ModifierKeys::shiftModifier), "Save as" },
                 { mod ('I'), "Import Audio or MIDI" }, { mod ('B'), "Bounce" }, { mod ('Q'), "Quit" } } },
         };
-        setSize (560, 720);
+        setSize (560, 734);
     }
 
     void paint (juce::Graphics& g) override

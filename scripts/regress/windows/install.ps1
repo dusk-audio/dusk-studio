@@ -5,8 +5,9 @@
 # name, the all-users shortcuts, the HKLM uninstall entry, and the installed
 # executable's own --version.
 #
-# UAC is never answered from here. When the prompt is up this phase posts a
-# REGRESS-UAC line and waits, bounded, for a person at the VM console.
+# UAC is never answered from inside the guest. When a prompt is up this phase
+# posts a REGRESS-UAC line and waits, bounded; the host answers it or leaves it
+# to a person at the VM console.
 #
 # Mode @@INSTALLMODE@@: install reuses an install of this very package
 # (same ProductCode) and otherwise installs over whatever is there; reinstall

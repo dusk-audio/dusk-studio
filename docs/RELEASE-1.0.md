@@ -75,7 +75,7 @@ Every open issue, one bucket each; completed release work is marked done.
 |---|---|---|---|
 | 74 | New Feature: Downloadable SFZ | post-1.0 | Online catalog and downloads deferred to 1.1. The offline half is #535. |
 | 75 | New Feature: Built In Plugins | 1.0 | Agreed 1.0 scope. A fresh install must have a reverb, delay, colour and instrument. Scoped in a comment on the issue. |
-| 124 | Playlist comping (Option B) | post-1.0 | Large new feature. Take cycling already covers the 1.0 need. |
+| 124 | Playlist comping (Option B) | done | Shipped in 0.15 as take folders: every recording pass is kept whole as a take on its track, and the comp is built in the audio editor's take lanes. |
 | 252 | SFZ library: cancellable download and hardened ZIP install | post-1.0 | Part of the deferred download path. Brings libcurl and libarchive with it. |
 | 253 | SFZ library: portable session locator and asynchronous loading | post-1.0 | Depends on the deferred catalog. |
 | 254 | SFZ library: embedded catalog UI and audited launch packs | post-1.0 | Online catalog UI and signed launch packs. The local-only browser is split out as #535. |
@@ -338,7 +338,8 @@ release.
 - Downloadable SFZ: the online catalog, downloads, archive extraction and the
   libcurl and libarchive dependencies (#74, #252, #253, #254). Only the
   offline browser (#535) is in.
-- Playlist comping (#124). Take cycling already covers the 1.0 need.
+- MIDI take folders and Flatten. Both were dropped; audio comping (#124)
+  shipped in 0.15 as take folders.
 - Self-hosted macOS build routing (#320).
 - Any feature not named in the definition of done above. New feature requests
   arriving during the 1.0 push get `post-1.0` on sight.

@@ -514,4 +514,9 @@ public:
     // is left alone; launchStateDiff() names those instead.
     virtual void resetForScenario() = 0;
 };
+
+// Whether every native panel has drawn the pointer, key and text input the host
+// queued on it. A panel takes that input a frame at a time, so a case that reads
+// the result straight after sending it is reading a race with the renderer.
+bool panelInputSeen();
 } // namespace duskstudio::scenario

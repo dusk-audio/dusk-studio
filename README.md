@@ -179,8 +179,8 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
   plugin's own editor.
 - **Built-in units** are compiled into the application, so they need no scan and
   work on a fresh install: Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2 and
-  Sunset. DuskVerb 2, Tape Echo 2 and Tape Machine 2 show the plugin's own
-  editor, embedded in the window.
+  Sunset. DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset show the plugin's
+  own editor, embedded in the window.
 - **Plugin host**: CLAP, VST3, LV2 and AU on every channel strip, with aux
   returns hosting reverb and delay. In process by default. The **opt-in**
   out-of-process sandbox (`DUSKSTUDIO_USE_OOP_PLUGINS=1`) runs each plugin in a

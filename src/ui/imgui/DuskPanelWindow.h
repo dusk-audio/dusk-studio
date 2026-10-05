@@ -199,6 +199,11 @@ public:
     bool keyboardFocusForScenario (bool focused);
     // How often a field or menu opening has asked the system to focus the child.
     int keyboardRequestsForScenario() const noexcept;
+    // Counts input that reached the panel by another road, a key the shell passed
+    // on, as input still to be drawn.
+    void expectInputForScenario();
+    // Whether every open panel has drawn the input its ...ForScenario calls queued.
+    static bool inputSeenForScenario() noexcept;
 
 private:
     struct Impl;

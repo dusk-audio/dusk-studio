@@ -78,6 +78,10 @@ constexpr int kAuxSlot    = 0;
 // fails the case with `timeout`. `retry`, where set, is sent once if the state
 // is still missing after kRetryAfterMs; only for a click the window can lose
 // and a second press cannot change the verdict.
+//
+// The delay of the step after one that sent a native panel input starts once the
+// panel has drawn that input, so a slow renderer cannot leave a drag half
+// delivered when the next step reads its result.
 struct Step
 {
     int delayMs;
@@ -163,14 +167,35 @@ void runSteps (ScenarioContext& ctx, std::shared_ptr<std::vector<Step>> steps,
         }
 
         auto runner = weakRunner.lock();
+        using Clock = std::chrono::steady_clock;
         const auto runThenNext = [&ctx, steps, runner, index]
         {
             (*steps)[index].run();
 
             const auto next = index + 1;
             const int delay = next < steps->size() ? (*steps)[next].delayMs : 0;
-            if (runner != nullptr)
-                ctx.later (delay, [runner, next] { (*runner) (next); });
+            const auto deadline = Clock::now() + std::chrono::milliseconds (kUntilBoundMs);
+            auto settle = std::make_shared<std::function<void()>>();
+            std::weak_ptr<std::function<void()>> weakSettle = settle;
+            *settle = [&ctx, runner, index, next, delay, deadline, weakSettle]
+            {
+                if (panelInputSeen())
+                {
+                    if (runner != nullptr)
+                        ctx.later (delay, [runner, next] { (*runner) (next); });
+                    return;
+                }
+                if (Clock::now() >= deadline)
+                {
+                    ctx.expect (false, "a panel had not drawn the input step " + std::to_string (index)
+                                           + " sent it after " + std::to_string (kUntilBoundMs) + " ms");
+                    ctx.complete (ctx.verdict());
+                    return;
+                }
+                if (auto again = weakSettle.lock())
+                    ctx.later (kUntilPollMs, [again] { (*again)(); });
+            };
+            (*settle)();
         };
 
         const auto& step = (*steps)[index];
@@ -182,7 +207,6 @@ void runSteps (ScenarioContext& ctx, std::shared_ptr<std::vector<Step>> steps,
 
         // Wall-clock bounds, as in ScenarioContext::waitUntil. A timeout goes
         // through expect so an earlier broken expectation stays the verdict.
-        using Clock = std::chrono::steady_clock;
         const auto started = Clock::now();
         const auto deadline = started + std::chrono::milliseconds (kUntilBoundMs);
         const auto retryAt = started + std::chrono::milliseconds (kRetryAfterMs);
@@ -3290,10 +3314,12 @@ std::optional<ScenarioResult> runAudioTakeRename (GuiHost& host, ScenarioContext
     const auto click = [&host, &ctx, newest]
     { ctx.expect (host.clickAudioEditorButton (takeControl ("name", newest)), "the take's name is not clickable"); };
 
+    const auto nameShown = [&host, newest] { return host.audioEditorTakePoint ("name", newest, 0).size() == 2; };
+
     auto steps = std::make_shared<std::vector<Step>>();
-    const auto doubleClick = [&steps, click, renaming] (const char* timeout)
+    const auto doubleClick = [&steps, click, renaming, nameShown] (const char* timeout)
     {
-        steps->push_back ({ 100, click });
+        steps->push_back ({ 100, click, nameShown, "the take's header never came into view" });
         steps->push_back ({ 100, click });
         steps->push_back ({ 100, [] {}, renaming, timeout });
     };
@@ -3878,10 +3904,12 @@ std::optional<ScenarioResult> runAudioEditorFieldKeysFromShell (GuiHost& host, S
         ctx.expect (transport.isLoopEnabled() == loopWas, "a key " + where + " toggled loop");
     };
 
+    const auto nameShown = [&host, newest] { return host.audioEditorTakePoint ("name", newest, 0).size() == 2; };
+
     auto steps = std::make_shared<std::vector<Step>>();
-    const auto openName = [&steps, click, renaming] (const char* timeout)
+    const auto openName = [&steps, click, renaming, nameShown] (const char* timeout)
     {
-        steps->push_back ({ 100, click });
+        steps->push_back ({ 100, click, nameShown, "the take's header never came into view" });
         steps->push_back ({ 100, click });
         steps->push_back ({ 100, [] {}, renaming, timeout });
     };
@@ -18227,7 +18255,7 @@ std::optional<ScenarioResult> runPluginKindMismatch (GuiHost& host, ScenarioCont
         } });
         steps->push_back ({ 200, [&host, &ctx]
         { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the fixture path"); } });
-        steps->push_back ({ 1500, [&host, &ctx, &slot, leg]
+        steps->push_back ({ 200, [&host, &ctx, &slot, leg]
         {
             ctx.expect (host.modalText() ==
                 "Plugin kind mismatch\nThis slot expects an " + leg.wanted
@@ -18237,7 +18265,8 @@ std::optional<ScenarioResult> runPluginKindMismatch (GuiHost& host, ScenarioCont
                 "the refusal did not name both kinds and the emptied slot: " + host.modalText());
             ctx.expect (! slot.isLoaded(), "the refused plugin stayed on the slot");
             ctx.expect (host.clickModalButton ("OK"), "the refusal has no usable OK button");
-        } });
+        }, [&host] { return host.modalText().rfind ("Plugin kind mismatch", 0) == 0; },
+           "the load was never refused with a kind mismatch" });
     }
     runSteps (ctx, steps, [&host, &ctx]
     {

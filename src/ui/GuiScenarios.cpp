@@ -711,7 +711,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         auto* peer = owner.getPeer();
         if (peer == nullptr) return false;
         using Peer = std::remove_pointer_t<decltype (peer)>;
-        return dispatchKey (*peer, &Peer::handleKeyPress, description, text);
+        const bool handled = dispatchKey (*peer, &Peer::handleKeyPress, description, text);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        // The shell hands the editor's child the keys it is not focused to take.
+        if (owner.audioEditorShowing())
+            owner.audioEditorWindow->expectInputForScenario();
+       #endif
+        return handled;
     }
     void releasePeerKey() override
     {
@@ -2620,7 +2626,19 @@ struct GuiRun
     std::unique_ptr<scenario::GuiHost> host;
     std::unique_ptr<scenario::SuiteRunner> runner;
 };
+} // namespace
 
+bool scenario::panelInputSeen()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return imgui::DuskPanelWindow::inputSeenForScenario();
+   #else
+    return true;
+   #endif
+}
+
+namespace
+{
 // One GUI suite per process - it ends by quitting the app - so a file-scope
 // holder is all the ownership the run needs, and MainComponent stays free of a
 // member only the harness would ever use.

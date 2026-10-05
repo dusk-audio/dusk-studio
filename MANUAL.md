@@ -189,7 +189,7 @@ In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` become
 | 3   | HPF                 | High-pass filter, 20–300 Hz. LED green when on.                                                             |
 | 4   | LPF                 | Low-pass filter, 3 kHz–20 kHz.                                                                              |
 | 5   | 4-band EQ           | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Click the header's left status light to bypass/engage, click the **EQ** label to open the editor, or right-click anywhere on it for the EQ menu (E / G character, reset, open editor). |
-| 6   | Compressor          | Opto / FET / VCA. Click the header's left status light to bypass/engage, click the **COMP** label to open the editor, or right-click anywhere on it for the COMP menu (mode, reset, open editor). GR meter to the left. |
+| 6   | Compressor          | Opto / FET / VCA. Click the header's left status light to bypass/engage, click the **COMP** label to open the editor, or right-click anywhere on it for the COMP menu (mode, reset, open editor). |
 | 7   | Aux 1 send          | Post-fader by default; right-click to flip pre-fader.                                                       |
 | 8   | Aux 2 send          |                                                                                                             |
 | 9   | Aux 3 send          |                                                                                                             |
@@ -198,7 +198,7 @@ In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` become
 | 12  | Fader               | −∞ to +12 dB. Click the dB readout to type; right-click for MIDI Learn.                                     |
 | 13  | Mute / Solo / Phase | M (red), S (blue), Ø (yellow). Solo is solo-in-place and additive.                                          |
 | 14  | Bus assigns         | Right-click the fader area for the bus menu.                                                                |
-| 15  | Meters              | Level meter (left of fader): pre-fader input while monitoring (IN), post-fader output on playback. GR meter (right of comp). |
+| 15  | Meters              | Level meter (right of the fader): pre-fader input while monitoring (IN), post-fader output on playback. GR meter with the threshold handle (right of the level meter). |
 | 16  | Fader group         | Right-click the strip → **Fader group…** to join one of 8 groups. A coloured **G1…G8** chip appears in the name row.  |
 
 ### Fader groups
@@ -299,7 +299,8 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 2   | Fade handle       | Drag in from each edge to set fade-in or fade-out length.                       |
 | 3   | Trim handle       | Region in / out trims (non-destructive).                                        |
 | 4   | Gain line         | Drag for −24 to +12 dB region gain.                                             |
-| 5   | Edit-mode toolbar | Grab / Range / Cut / Draw. **G** = Grab. (Tempo is edited by right-clicking the main timeline ruler, not from here.) |
+| 5   | Edit-mode toolbar | Grab / Range / Cut / Draw. **G** = Grab, **R** = Range, **C** = Cut. (Tempo is edited by right-clicking the main timeline ruler, not from here.) |
+| 6   | Take lanes        | One lane per take under the regions, newest at the top, on a track with takes. Click or drag in a lane to put that take on the track; each lane has a solo button (**S**) and **Delete**. |
 
 ## The piano roll
 
@@ -428,7 +429,7 @@ Get-FileHash -Algorithm SHA256 dusk-studio-*-Windows-x64.msi
 From 0.14 on, `SHA256SUMS` ships with a detached OpenPGP signature, `SHA256SUMS.asc`. The public key that made it is not a release asset: it is kept in the source repository at `packaging/release-signing.pub`, so download it from the tag that matches your release. Before you import the key, compare its fingerprint with the one printed on the project site. Import only if the two agree, then check the signature before you check the hashes:
 
 ```bash
-VERSION=0.14.0   # the release you downloaded
+VERSION=X.Y.Z   # the release you downloaded; Settings → About Dusk Studio shows it
 curl -fsSLO "https://raw.githubusercontent.com/dusk-audio/dusk-studio/v$VERSION/packaging/release-signing.pub"
 gpg --show-keys --with-fingerprint release-signing.pub
 # Compare the fingerprint line with the one published on the project site.
@@ -848,7 +849,7 @@ A clean, fast, full-featured compressor.
 
 The soft-knee and detector toggles appear only in VCA mode. The sidechain has a built-in 60 Hz high-pass filter in VCA mode (so bass doesn't pump the compressor); Opto and FET have it disabled by default to preserve their period-correct character.
 
-The gain-reduction meter (the thin vertical bar to the left of the comp section) shows real-time reduction in dB, regardless of mode.
+The gain-reduction meter (the thin vertical bar beside the fader, right of the level meter) shows real-time reduction in dB, regardless of mode.
 
 ## Aux sends (MIXING stage)
 
@@ -889,8 +890,8 @@ Each channel can be routed to any combination of the four mix buses. Right-click
 
 ## Meters
 
-- **Level meter** (left of the fader): peak level in dBFS, with a brief peak-hold and a numeric readout below it. Two columns for stereo tracks. In the Recording stage it shows **pre-fader input** when an audio track is armed or IN is engaged, so you can set record levels without enabling software monitoring. Otherwise it shows **post-fader output** (the track's contribution to the mix); Mixing remains post-fader unless IN is explicitly on. Bus and master meters are always post-fader output.
-- **GR meter** (right of the fader): real-time compressor gain reduction.
+- **Level meter** (right of the fader): peak level in dBFS, with a brief peak-hold and a numeric readout below it. Two columns for stereo tracks. In the Recording stage it shows **pre-fader input** when an audio track is armed or IN is engaged, so you can set record levels without enabling software monitoring. Otherwise it shows **post-fader output** (the track's contribution to the mix); Mixing remains post-fader unless IN is explicitly on. Bus and master meters are always post-fader output.
+- **GR meter** (right of the level meter): real-time compressor gain reduction, with the threshold handle on its right edge.
 
 A short red bar at the top of the input meter indicates a clip on that track. The bar holds for one second before clearing.
 
@@ -944,7 +945,7 @@ Identical in function to the channel strip versions. Bus solos follow the same a
 
 ## Meters
 
-Each bus shows a post-bus peak meter (L and R) plus a slim VU-style RMS meter integrated at 300 ms, matched to the tape saturation's internal VU integrator. The compressor's gain-reduction meter is visible alongside the bus comp section.
+Each bus shows a post-bus peak meter (L and R) plus a slim VU-style RMS meter integrated at 300 ms, matched to the tape saturation's internal VU integrator. The compressor's gain-reduction meter sits beside the fader, right of the level meter.
 
 \newpage
 
@@ -1005,7 +1006,7 @@ A small **MONO/STEREO** button below the master fader. When pushed, the master o
 
 ## Output meters
 
-Two peak meters (L and R) plus two RMS VU meters. The compressor's gain-reduction meter is at the bottom of the comp section.
+Two peak meters (L and R) plus two RMS VU meters. The compressor's gain-reduction meter sits beside the fader, right of the level meter.
 
 \newpage
 
@@ -1411,7 +1412,7 @@ It is marked **experimental** because parts of the DP file format are reverse-en
 
 ![Region editor modal over a region with fades.](docs/images/ed-04-region-editor-modal.png)
 
-Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. On a track with takes it opens zoomed out to show every take, so a take that starts later still shows in its lane; **0** zooms to the focused region. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. Other keys do nothing until you let go. A recording on the track that stops while you drag a region, from a punch that ends on its own, a Stop sent over MIDI or a sync stop, cancels the drag the way **Esc** does before the take lands: the take goes down over the region as it was before the drag, undoing the take brings that region back, and letting go records nothing. While the editor is up, a key it has no use for does nothing: **S**, **M**, a page digit and the timeline's other shortcuts never reach the timeline behind it. **Space**, **.**, **L**, **P** and **F11** still work, and **?** closes the editor to open the shortcut list. Holding a key does its job once, so holding **Delete** deletes one region; only **Left** and **Right**, the zoom keys and **Cmd+Z** repeat while held. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
+Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. On a track with takes it opens zoomed out to show every take, so a take that starts later still shows in its lane; **0** zooms to the focused region. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. Other keys do nothing until you let go. A recording on the track that stops while you drag a region, from a punch that ends on its own, a Stop sent over MIDI or a sync stop, cancels the drag the way **Esc** does before the take lands: the take goes down over the region as it was before the drag, undoing the take brings that region back, and letting go records nothing. While the editor is up, a key it has no use for does nothing: **S**, **M**, a page digit and the timeline's other shortcuts never reach the timeline behind it. **Space**, **.**, **L**, **P** and **F11** still work, and **?** closes the editor to open the shortcut list. Holding a key does its job once, so holding **Delete** deletes one region; only **Left** and **Right** (which nudge the selected regions), the zoom keys and **Cmd+Z** repeat while held. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
 
 ## What's editable
 
@@ -2328,8 +2329,14 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | Shortcut              | Action                                             |
 | --------------------- | -------------------------------------------------- |
 | **Cmd+E**             | Split at edit cursor                               |
-| **G**                 | Grab (move / select) edit mode (used inside the region / piano-roll editors) |
+| **G** / **R** / **C** | Grab (move / select) / Range / Cut edit mode. **G** also works in the piano roll |
 | **Cmd+]** / **Cmd+[** | Next / previous region                             |
+| **←** / **→**         | Nudge the selected regions one beat (**Shift** = one bar) |
+| **Cmd+←** / **Cmd+→** | Scroll the view a quarter of its width             |
+| **Home** / **End**    | Scroll to the start / end                          |
+| **[** / **]**         | Set the loop in / out point at the edit cursor (**Shift** = punch in / out) |
+| **F** / **Shift+F**   | Fade in / fade out over the selected range         |
+| **Delete**            | Delete the selected regions, or the selected range |
 | **Cmd+C** / **Cmd+X** / **Cmd+V** | Copy / cut the selected range, or the focused region; paste onto this track at the edit cursor |
 | **=** / **−** / **0** | Zoom in / zoom out / zoom fit                      |
 | **Down** / **Up**     | Put the take in the lane below / above on the focused region, or on the selected range |
@@ -2438,7 +2445,7 @@ An open chord slot takes the keys instead:
 3. On the EQ, a 1–2 dB shelf boost at 10 kHz and a 0.5–1 dB cut at 250 Hz is a safe starting point.
 4. On the bus comp, aim for 0.5–1 dB of reduction on peaks. Slow attack (30 ms), slow release (250 ms), 2:1.
 5. On the limiter, leave the ceiling at **−1.0 dB**, the true-peak ceiling of every streaming target. Push the **Drive** until the integrated LUFS reads −14 (Spotify and YouTube) or −16 (Apple Music) — but stop pushing as soon as the limiter is regularly pulling more than 2 dB.
-6. Use the **streaming-platform preset** picker to colour-code the readouts and confirm you're within target.
+6. Use the **loudness target** picker to colour-code the readouts and confirm you're within target.
 
 ## Headphone cue mix for tracking
 
