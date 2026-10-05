@@ -363,8 +363,11 @@ run_guest_phase() {
                     if [[ "$UAC_ACCEPT" == 1 ]]; then
                         # consent.exe is up before its dialog takes keys.
                         sleep 3
-                        vkey --raw KEY_LEFTALT KEY_Y
-                        echo "  prompt ${line##* }: accepted from the host with Alt+Y"
+                        if vkey --raw KEY_LEFTALT KEY_Y; then
+                            echo "  prompt ${line##* }: sent Alt+Y from the host"
+                        else
+                            echo "  prompt ${line##* }: could not send Alt+Y; accept it at the VM console (virt-manager)"
+                        fi
                     else
                         echo "  prompt ${line##* }: accept it at the VM console (virt-manager); the leg waits up to $((UAC_WAIT / 60)) min in all"
                     fi
