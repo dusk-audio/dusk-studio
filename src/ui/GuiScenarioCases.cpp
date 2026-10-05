@@ -18255,7 +18255,7 @@ std::optional<ScenarioResult> runPluginKindMismatch (GuiHost& host, ScenarioCont
         } });
         steps->push_back ({ 200, [&host, &ctx]
         { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the fixture path"); } });
-        steps->push_back ({ 1500, [&host, &ctx, &slot, leg]
+        steps->push_back ({ 200, [&host, &ctx, &slot, leg]
         {
             ctx.expect (host.modalText() ==
                 "Plugin kind mismatch\nThis slot expects an " + leg.wanted
@@ -18265,7 +18265,8 @@ std::optional<ScenarioResult> runPluginKindMismatch (GuiHost& host, ScenarioCont
                 "the refusal did not name both kinds and the emptied slot: " + host.modalText());
             ctx.expect (! slot.isLoaded(), "the refused plugin stayed on the slot");
             ctx.expect (host.clickModalButton ("OK"), "the refusal has no usable OK button");
-        } });
+        }, [&host] { return host.modalText().rfind ("Plugin kind mismatch", 0) == 0; },
+           "the load was never refused with a kind mismatch" });
     }
     runSteps (ctx, steps, [&host, &ctx]
     {
