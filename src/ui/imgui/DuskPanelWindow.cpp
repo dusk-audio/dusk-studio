@@ -5,6 +5,7 @@
 #include "../../foundation/MessageThread.h"
 
 #include <DearImGui.hpp>
+#include <DearImGui/imgui_internal.h>
 #include <OpenGL.hpp>
 #ifndef DGL_NO_SHARED_RESOURCES
 # include "src/Resources.hpp"
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <utility>
@@ -30,6 +32,27 @@ constexpr float kPlateMargin = 6.0f;
 constexpr float kPlateRounding = 8.0f;
 constexpr unsigned int kPlateFill = 0x202024ffu;
 constexpr unsigned int kPlateBorder = 0x3a3a42ffu;
+
+// A scenario's input counts as seen once the view has drawn this many frames with
+// nothing left in the queue: the frame that took the last event, and the one after
+// it for whatever that event set in motion.
+constexpr int kSettledFrames = 2;
+constexpr float kScenarioFrameSeconds = 1.0f / 60.0f;
+int panelsWithUnseenScenarioInput = 0;
+
+// A scenario run can hold the panels to the frame rate of a loaded software
+// renderer, which is where a case's timing assumptions break. 0 leaves them alone.
+int scenarioFrameIntervalMs()
+{
+    static const int interval = []
+    {
+        const char* const spec = std::getenv ("DUSKSTUDIO_SCENARIO_FRAME_MS");
+        if (spec == nullptr || std::getenv ("DUSKSTUDIO_RUN_SCENARIOS") == nullptr)
+            return 0;
+        return std::clamp (std::atoi (spec), 0, 1000);
+    }();
+    return interval;
+}
 
 ImU32 rgba (unsigned int hex)
 {
@@ -351,8 +374,15 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         PanelWidget (DGL::Window& window, Impl& ownerRef)
             : DGL::ImGuiTopLevelWidget (window, 13.0f), owner (ownerRef) {}
 
+        ~PanelWidget() override
+        {
+            if (quietFrames < kSettledFrames)
+                --panelsWithUnseenScenarioInput;
+        }
+
         void clickForScenario (ImVec2 point)
         {
+            noteScenarioInput();
             MotionEvent motion;
             motion.pos = { point.x, point.y };
             motion.absolutePos = motion.pos;
@@ -368,6 +398,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
         void pointerForScenario (ImVec2 point, bool pressed, int modifiers)
         {
+            noteScenarioInput();
             const bool command = (modifiers & scenarioCommand) != 0;
             const auto mods = frameworkModifiers ((modifiers & scenarioShift) != 0,
                                                   command && ! commandIsSuper(),
@@ -391,6 +422,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
         void scrollForScenario (double wheel)
         {
+            noteScenarioInput();
             MotionEvent motion;
             motion.pos = { getWidth() * 0.5, getHeight() * 0.5 };
             motion.absolutePos = motion.pos;
@@ -404,6 +436,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
         void typeForScenario (const std::string& text)
         {
+            noteScenarioInput();
             for (std::size_t at = 0; at < text.size();)
                 type (decodeUtf8 (text, at));
         }
@@ -416,7 +449,10 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 return true;
             }
             const auto chord = parseKeyDescription (input);
-            return chord && press (*chord);
+            if (! chord || ! press (*chord))
+                return false;
+            noteScenarioInput();
+            return true;
         }
 
         // The key as the platform would have delivered it to a focused child: the press
@@ -432,6 +468,16 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         }
 
         bool hasKeyboard() const noexcept { return keyboardFocused; }
+
+        void noteScenarioInput()
+        {
+            if (quietFrames >= kSettledFrames)
+            {
+                ++panelsWithUnseenScenarioInput;
+                unseenSince = std::chrono::steady_clock::now();
+            }
+            quietFrames = 0;
+        }
 
         void focusForScenario (bool focused)
         {
@@ -458,6 +504,23 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             return true;
         }
 
+        // Dear ImGui times a double-click on the wall clock, and the scenario runner
+        // waits for each input to be drawn before it sends the next, so a slow
+        // renderer would age two clicks apart. While scenario input is waiting to be
+        // drawn the clock moves no faster than a 60 Hz frame; the time between one
+        // input being drawn and the next being sent still counts in full.
+        void onImGuiPrepareFrame() override
+        {
+            if (quietFrames >= kSettledFrames)
+                return;
+            const auto now = std::chrono::steady_clock::now();
+            const float waited = std::chrono::duration<float> (now - unseenSince).count();
+            unseenSince = now;
+            auto& io = ImGui::GetIO();
+            io.DeltaTime = std::max (io.DeltaTime - std::max (0.0f, waited - kScenarioFrameSeconds),
+                                     std::min (io.DeltaTime, kScenarioFrameSeconds));
+        }
+
         void onImGuiDisplay() override
         {
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()),
@@ -481,10 +544,24 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 release.button = DGL::kMouseButtonLeft;
                 onMouse (release);
             }
+            if (quietFrames < kSettledFrames)
+            {
+                if (ImGui::GetCurrentContext()->InputEventsQueue.Size > 0)
+                    quietFrames = 0;
+                else if (++quietFrames == kSettledFrames)
+                    --panelsWithUnseenScenarioInput;
+            }
         }
 
         void onDisplay() override
         {
+            if (const int interval = scenarioFrameIntervalMs(); interval > 0)
+            {
+                const auto now = std::chrono::steady_clock::now();
+                if (now - lastFrameAt < std::chrono::milliseconds (interval))
+                    return;
+                lastFrameAt = now;
+            }
             DGL::ImGuiTopLevelWidget::onDisplay();
             owner.captureFrameIfAsked (static_cast<int> (getWidth()),
                                        static_cast<int> (getHeight()));
@@ -515,9 +592,12 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         Impl& owner;
         bool keyboardFocused = false;
         bool releasePending = false;
+        int quietFrames = kSettledFrames;
+        std::chrono::steady_clock::time_point unseenSince;
         std::vector<unsigned int> keyReleases;
         DGL::MouseButton heldButton = DGL::kMouseButtonLeft;
         ImGuiMouseCursor appliedCursor = ImGuiMouseCursor_Arrow;
+        std::chrono::steady_clock::time_point lastFrameAt;
     };
 
     Impl (std::string className, std::string logTag, std::string displayName)
@@ -861,5 +941,14 @@ bool DuskPanelWindow::keyboardFocusForScenario (bool focused)
 int DuskPanelWindow::keyboardRequestsForScenario() const noexcept
 {
     return impl->keyboardRequests;
+}
+void DuskPanelWindow::expectInputForScenario()
+{
+    if (isOpen() && impl->panelWidget != nullptr)
+        impl->panelWidget->noteScenarioInput();
+}
+bool DuskPanelWindow::inputSeenForScenario() noexcept
+{
+    return panelsWithUnseenScenarioInput == 0;
 }
 } // namespace duskstudio::imgui

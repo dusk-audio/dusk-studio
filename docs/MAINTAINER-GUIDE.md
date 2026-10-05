@@ -666,6 +666,12 @@ nothing failed, and 3 when nothing passed or failed (every selected scenario
 skipped, or the selection matched none), since a run that verified nothing is
 not a pass.
 
+`DUSKSTUDIO_SCENARIO_FRAME_MS=<1..1000>` holds every native panel to one
+frame per that many milliseconds for the run, which is how a `gui` case that
+only fails under a slow software renderer (the Windows VM's llvmpipe) is
+reproduced on Linux: `150` is about 6 fps. It is read only when
+`DUSKSTUDIO_RUN_SCENARIOS` is set.
+
 A scenario or self-test run never uses your own config directory. Window
 state, `app-config.properties`, Recent Sessions, `audio-device.xml`, the
 plug-in caches and the log go to `DUSKSTUDIO_CONFIG_DIR` when it is set, and
