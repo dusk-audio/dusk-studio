@@ -57,7 +57,7 @@ usage: scripts/regress.sh [linux|mac|windows|all] [options]
                                  image of that release.yml run, and fixtures
                                  from the commit the run built
   windows  drive the libvirt win11 guest from this box: install the MSI into
-           Program Files (a person answers the UAC prompt at the VM console),
+           Program Files (the runner accepts the test guest's UAC prompt),
            then the self-test, handoff, session-close, scenario and isolation
            legs against the installed app
              --msi <path>          installer to test

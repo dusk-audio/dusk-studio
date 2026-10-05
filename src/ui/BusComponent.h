@@ -41,7 +41,11 @@ public:
     // Scenario-harness only: the mode label and whether the fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
-    bool grMeterShownForScenario() const { return compMeter != nullptr && compMeter->isVisible() && ! compMeter->getBounds().isEmpty(); }
+    bool grMeterShownForScenario() const
+    {
+        return compMeter != nullptr && compMeter->isVisible() && ! compMeter->getBounds().isEmpty()
+            && compMeter->handleShownForScenario();
+    }
     // A short window compacts the strip, and the EQ pill then stands in for the header.
     SplitModuleButton* eqHeaderForScenario() { return compactMode ? &eqCompactButton : eqHeaderBtn.get(); }
 

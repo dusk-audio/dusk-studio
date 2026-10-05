@@ -90,6 +90,8 @@ public:
     // vertical extent.
     juce::Rectangle<float> getGrBarArea() const noexcept { return grBarArea; }
 
+    bool handleShownForScenario() const noexcept { return showHandle && ! handleArea.isEmpty(); }
+
     static constexpr float kFloorDb   = -60.0f;
     static constexpr float kCeilingDb =   0.0f;
     static constexpr float kGrFloorDb = -24.0f;

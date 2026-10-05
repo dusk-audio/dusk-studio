@@ -499,7 +499,17 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         const bool handled = dispatchKey (owner, &MainComponent::keyPressed, description, text);
         owner.keyStateChanged (false);
+        expectAudioEditorShellKey();
         return handled;
+    }
+
+    // The shell hands the editor's child the keys it is not focused to take.
+    void expectAudioEditorShellKey()
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing())
+            owner.audioEditorWindow->expectInputForScenario();
+       #endif
     }
 
     std::function<void()> preserveKeyboardFocus() override
@@ -552,6 +562,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
     }
     bool clickAudioEditorButton (const std::string& name) override { return clickAudioEditorControl (name); }
+    bool doubleClickAudioEditorButton (const std::string& name) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.audioEditorShowing() && owner.audioEditorWindow->doubleClickControlForScenario (name);
+       #else
+        (void) name;
+        return false;
+       #endif
+    }
     bool clickAudioEditorSample (std::int64_t sample) override
     { return clickAudioEditorControl ("sample:" + std::to_string (sample)); }
     // In design pixels from the editor body's top-left, the frame audioEditorPointer takes.
@@ -712,11 +731,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (peer == nullptr) return false;
         using Peer = std::remove_pointer_t<decltype (peer)>;
         const bool handled = dispatchKey (*peer, &Peer::handleKeyPress, description, text);
-       #if DUSKSTUDIO_HAS_NATIVE_UI
-        // The shell hands the editor's child the keys it is not focused to take.
-        if (owner.audioEditorShowing())
-            owner.audioEditorWindow->expectInputForScenario();
-       #endif
+        expectAudioEditorShellKey();
         return handled;
     }
     void releasePeerKey() override

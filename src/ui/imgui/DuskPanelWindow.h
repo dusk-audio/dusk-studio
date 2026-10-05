@@ -186,6 +186,8 @@ public:
     };
 
     bool clickControlForScenario (const std::string& control);
+    // Two clicks the view reads as a double-click at any frame rate.
+    bool doubleClickControlForScenario (const std::string& control);
     // "scroll-down", or a key as parseKeyDescription reads it.
     bool inputForScenario (const std::string& input);
     // Characters typed into whatever field has the keyboard.
