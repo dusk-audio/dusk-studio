@@ -867,22 +867,27 @@ scripts/regress.sh windows --msi /path/to/installer.msi --extract-only
 Prerequisites: libvirt access to `win11` without sudo (`qemu:///system`), the
 guest running and unlocked, `7z`, `zip`, `sha256sum`, `python3` (Pillow for
 the PNG screenshots), `gh` authenticated for `--release-run` and
-`--fixtures-run`, and a person at the VM console (virt-manager) for the UAC
-prompt. Nothing has to be set up inside the guest: the phases bring their own
-session and fixtures, and none of them clicks anything.
+`--fixtures-run`. Nothing has to be set up inside the guest: the phases bring
+their own session and fixtures, and none of them clicks anything.
 
 **The install and UAC.** The package goes into `C:\Program Files\Dusk Studio`
 through `msiexec /i ... /passive`, as a user installs it. That needs
-elevation, and the UAC prompt is **never** answered by the runner, by a key, a
-click, a policy change or any other route. When the guest sees `consent.exe`
-come up it posts a line, and the runner prints
+elevation. `win11` is a test machine and nothing else, so the runner accepts
+its UAC prompt itself: when the guest sees `consent.exe` come up it posts a
+line, and the runner prints
 
 ```
 UAC prompt up in win11 for the X.Y.Z MSI install
 ```
 
-with a screenshot, then waits, screenshotting every 30 s, for someone to
-answer it at the VM console. Windows withdraws an unanswered prompt after about
+with a screenshot, then sends **Alt+Y** through `virsh send-key`, which
+reaches the secure desktop as a keyboard does. It changes no policy in the
+guest, and it only answers a prompt the guest reported for this run's own
+`msiexec`. `DUSK_REGRESS_UAC_ACCEPT=0` turns that off; the runner then waits,
+screenshotting every 30 s, for someone to answer at the VM console
+(virt-manager), which is also what happens if the key does not land. Never
+point the runner at a guest that is used for anything else with accepting
+left on. Windows withdraws an unanswered prompt after about
 two minutes and `msiexec` reports that as a cancel (1602), the same as No, so a
 prompt that stayed up 100 s or more counts as expired and the install is asked
 for again, with a new numbered prompt line; one closed sooner was answered.
@@ -1002,7 +1007,7 @@ leave a `<leg>-progress.png` every two minutes; read them before re-running:
 something else driving the VM has been the cause before.
 
 Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`,
-`DUSK_REGRESS_UAC_WAIT`.
+`DUSK_REGRESS_UAC_WAIT`, `DUSK_REGRESS_UAC_ACCEPT`.
 
 ### Adding a leg
 

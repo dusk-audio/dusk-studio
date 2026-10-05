@@ -6,8 +6,9 @@
 #   - an HTTP server on the host serving the phase scripts and the payload,
 #   - a collector on the host that the phase scripts POST their report to,
 #   - virsh screenshot to see what the guest is actually doing.
-# The installer goes into Program Files through msiexec, and its UAC prompt is
-# answered by a person at the VM console, never by this script.
+# The installer goes into Program Files through msiexec. The guest is a test
+# machine and nothing else, so its UAC prompt is accepted from here with Alt+Y;
+# DUSK_REGRESS_UAC_ACCEPT=0 leaves it for a person at the VM console.
 # See docs/MAINTAINER-GUIDE.md, "Regression run across platforms".
 
 set -euo pipefail
@@ -24,6 +25,7 @@ VM="${DUSK_REGRESS_VM:-win11}"
 LIBVIRT_URI="${DUSK_REGRESS_LIBVIRT_URI:-qemu:///system}"
 HOST_IP="${DUSK_REGRESS_HOST_IP:-192.168.122.1}"
 UAC_WAIT="${DUSK_REGRESS_UAC_WAIT:-1800}"
+UAC_ACCEPT="${DUSK_REGRESS_UAC_ACCEPT:-1}"
 HTTP_PORT=8000
 COLLECTOR_PORT=9000
 REPO_SLUG="dusk-audio/dusk-studio"
@@ -357,8 +359,15 @@ run_guest_phase() {
                 *prompt-up*)
                     uac_open=1
                     echo "UAC prompt up in ${VM} for the ${PACKAGE_VERSION} MSI ${label}"
-                    echo "  prompt ${line##* }: accept it at the VM console (virt-manager); the leg waits up to $((UAC_WAIT / 60)) min in all"
                     echo "  screenshot: $(screenshot "${RUN_DIR}/${name}-uac-${label}-${line##* }.png")"
+                    if [[ "$UAC_ACCEPT" == 1 ]]; then
+                        # consent.exe is up before its dialog takes keys.
+                        sleep 3
+                        vkey --raw KEY_LEFTALT KEY_Y
+                        echo "  prompt ${line##* }: accepted from the host with Alt+Y"
+                    else
+                        echo "  prompt ${line##* }: accept it at the VM console (virt-manager); the leg waits up to $((UAC_WAIT / 60)) min in all"
+                    fi
                     last_shot=$SECONDS
                     ;;
                 *closed*)
