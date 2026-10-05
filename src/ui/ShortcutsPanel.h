@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <algorithm>
 #include <vector>
 
 namespace duskstudio
@@ -103,30 +104,46 @@ public:
             if (run >= half) { splitAt = i + 1; break; }
         }
 
-        auto drawSections = [this, &g] (juce::Rectangle<int> col, size_t from, size_t to)
+        // A window shorter than the list squeezes the rows instead of dropping
+        // the last ones off the bottom.
+        const auto rowsHeight = [this] (size_t from, size_t to, int rowH)
+        {
+            int h = 0;
+            for (size_t i = from; i < to; ++i)
+                h += kTitleH + (int) sections[i].rows.size() * rowH + kSectionGap;
+            return h - kSectionGap;
+        };
+        int rowH = kRowH;
+        while (rowH > kMinRowH
+               && std::max (rowsHeight (0, splitAt, rowH), rowsHeight (splitAt, sections.size(), rowH))
+                      > colL.getHeight())
+            --rowH;
+        const float shrink = (float) (kRowH - rowH);
+
+        auto drawSections = [this, &g, rowH, shrink] (juce::Rectangle<int> col, size_t from, size_t to)
         {
             for (size_t i = from; i < to && i < sections.size(); ++i)
             {
                 const auto& s = sections[i];
                 g.setColour (juce::Colour (0xff8a9ad0));
                 g.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
-                g.drawText (s.title.toUpperCase(), col.removeFromTop (20),
+                g.drawText (s.title.toUpperCase(), col.removeFromTop (kTitleH),
                              juce::Justification::bottomLeft, false);
                 for (const auto& r : s.rows)
                 {
-                    auto row = col.removeFromTop (19);
+                    auto row = col.removeFromTop (rowH);
                     g.setColour (juce::Colour (0xff20222a));
                     auto keyBox = row.removeFromLeft (70);
                     g.fillRoundedRectangle (keyBox.reduced (1, 1).toFloat(), 3.0f);
                     g.setColour (juce::Colour (0xffe0e0e0));
-                    g.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
+                    g.setFont (juce::Font (juce::FontOptions (11.0f - shrink * 0.5f, juce::Font::bold)));
                     g.drawText (r.keys, keyBox.reduced (4, 0), juce::Justification::centred, false);
                     g.setColour (juce::Colour (0xffb0b0b8));
-                    g.setFont (juce::Font (juce::FontOptions (12.0f)));
+                    g.setFont (juce::Font (juce::FontOptions (12.0f - shrink * 0.5f)));
                     g.drawText (r.action, row.withTrimmedLeft (8),
                                  juce::Justification::centredLeft, false);
                 }
-                col.removeFromTop (8);
+                col.removeFromTop (kSectionGap);
             }
         };
         drawSections (colL, 0, splitAt);
@@ -134,6 +151,11 @@ public:
     }
 
 private:
+    static constexpr int kRowH = 19;
+    static constexpr int kMinRowH = 14;
+    static constexpr int kTitleH = 20;
+    static constexpr int kSectionGap = 8;
+
     struct Row { juce::String keys, action; };
     struct Section { juce::String title; std::vector<Row> rows; };
     std::vector<Section> sections;
