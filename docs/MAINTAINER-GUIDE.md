@@ -882,8 +882,10 @@ UAC prompt up in win11 for the X.Y.Z MSI install
 
 with a screenshot, then sends **Alt+Y** through `virsh send-key`, which
 reaches the secure desktop as a keyboard does. It changes no policy in the
-guest, and it only answers a prompt the guest reported for this run's own
-`msiexec`. `DUSK_REGRESS_UAC_ACCEPT=0` turns that off; the runner then waits,
+guest. The guest reports a prompt whenever a `consent.exe` exists while this
+run's `msiexec` is waiting; it cannot tell whose prompt that is, so anything
+else asking for elevation in that window would be accepted too.
+`DUSK_REGRESS_UAC_ACCEPT=0` turns the key off; the runner then waits,
 screenshotting every 30 s, for someone to answer at the VM console
 (virt-manager), which is also what happens if the key does not land. Never
 point the runner at a guest that is used for anything else with accepting
