@@ -1749,12 +1749,13 @@ private:
         commit (fadeOut ? "Fade-out to selection" : "Fade-in to selection", before, after);
     }
 
-    // The range as a free-standing slice of the same file, with no fades of its own.
-    AudioRegion rangeChunk (const AudioRegion& r) const
+    // File samples [first, second) of the region as a free-standing slice of the same
+    // file, with no fades of its own.
+    AudioRegion rangeChunk (const AudioRegion& r, std::pair<std::int64_t, std::int64_t> span) const
     {
         AudioRegion chunk = r;
-        chunk.sourceOffset = std::min (rangeStartSample, rangeEndSample);
-        chunk.lengthInSamples = std::abs (rangeEndSample - rangeStartSample);
+        chunk.sourceOffset = span.first;
+        chunk.lengthInSamples = span.second - span.first;
         chunk.timelineStart = 0;
         chunk.fadeInSamples = 0;
         chunk.fadeOutSamples = 0;
@@ -1765,8 +1766,12 @@ private:
     {
         const auto* r = region();
         if (r == nullptr) return;
+        // Only what the region covers of a range: past its ends the file may hold
+        // audio the region has trimmed away, or none.
+        const auto covered = coveredRange();
+        if (rangeActive && ! covered) return;
         auto& clip = engine.getRegionClipboard();
-        clip.region = rangeActive ? rangeChunk (*r) : *r;
+        clip.region = covered ? rangeChunk (*r, *covered) : *r;
         clip.sourceTrack = trackIdx;
         clip.hasContent = true;
     }
@@ -1859,10 +1864,11 @@ private:
     bool cutRange()
     {
         const auto* r = region();
-        if (r == nullptr || ! coveredRange() || r->locked || trackFrozen())
+        const auto covered = coveredRange();
+        if (r == nullptr || ! covered || r->locked || trackFrozen())
             return false;
         auto& clip = engine.getRegionClipboard();
-        clip.region = rangeChunk (*r);
+        clip.region = rangeChunk (*r, *covered);
         clip.sourceTrack = trackIdx;
         clip.hasContent = true;
         return deleteRange ("Cut chunk");
@@ -3749,6 +3755,9 @@ private:
             // than the session tempo allows for, so the count in view decides too.
             const auto step = ruler::barStep (pxPerBeat * beatsPerBar, lastBar - firstBar);
             const bool showBeats = pxPerBeat >= 9.0 && lastBar - firstBar <= ruler::kMaxMarks;
+            // Where the tempo map runs faster than the tempo the step was sized for,
+            // a number is drawn only once it clears the one before it.
+            float numbersFrom = ruler.x0;
             const int subdivisions = pxPerBeat >= 80.0 ? 4 : (pxPerBeat >= 36.0 ? 2 : 1);
             const float beatTop = ruler.y1 - ruler.height() * 0.45f;
             const float subTop = ruler.y1 - ruler.height() * 0.28f;
@@ -3772,11 +3781,12 @@ private:
                     if (x >= ruler.x0 && x <= ruler.x1)
                     {
                         vline (dl, x, ruler.y0, ruler.y1, argb (kBarLine), ctx.s (1.0f));
-                        if (bar % step == 0)
+                        if (bar % step == 0 && x >= numbersFrom)
                         {
                             char number[24];
                             std::snprintf (number, sizeof (number), "%lld", static_cast<long long> (bar + 1));
                             label (x, number);
+                            numbersFrom = x + ctx.s (static_cast<float> (ruler::kMinMarkPixels));
                         }
                     }
                 }

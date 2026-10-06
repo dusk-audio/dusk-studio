@@ -10,7 +10,7 @@
 // tempo map or the sample rate make of that span.
 namespace duskstudio::imgui::ruler
 {
-// The room a bar number or a time stamp needs, in design pixels.
+// The room a bar number needs, in design pixels, and a time stamp past the 30 s step.
 constexpr double kMinMarkPixels = 64.0;
 // The most marks one ruler draws.
 constexpr std::int64_t kMaxMarks = 1024;
@@ -29,8 +29,9 @@ inline std::int64_t barStep (double pixelsPerBar, std::int64_t barsInView) noexc
     return step;
 }
 
-// Seconds from one time stamp to the next: 1, 5, 10 and 30 s where the timeline ruler
-// changes between them, then minutes and hours once 30 s stamps would crowd.
+// Seconds from one time stamp to the next. 1, 5, 10 and 30 s change where the timeline
+// ruler changes between them, which puts stamps as close as 40 px; past 30 s the steps
+// are minutes and hours, each at least kMinMarkPixels apart.
 inline double stampSeconds (double pixelsPerSecond, double secondsInView) noexcept
 {
     constexpr double kLargest = 1.0e15;

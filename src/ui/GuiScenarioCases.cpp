@@ -6062,7 +6062,7 @@ const ScenarioRegistrar audioEditorTrimDropsRange { Scenario {
 // With no audio device running the editor still reads time at a real rate, the one
 // the device last ran at, and its ruler numbers only as many bars or stamps as it has
 // room for: over a track of takes alone, ten minutes end to end, a few of each rather
-// than one a bar.
+// than one a bar, also where a tempo map runs four times as fast as the session tempo.
 std::optional<ScenarioResult> runAudioEditorRulerWithoutDevice (GuiHost& host, ScenarioContext& ctx)
 {
     if (auto early = beginTakeCase (host, ctx)) return early;
@@ -6077,7 +6077,10 @@ std::optional<ScenarioResult> runAudioEditorRulerWithoutDevice (GuiHost& host, S
         || ! addLevelTake (ctx, track, "Take 2", span - kTakeCaseLength, kTakeCaseLength, kShortTakeLevel))
         return ScenarioResult::fail ("could not write take fixture");
     ctx.keep (session.timeDisplayMode);
+    ctx.keep (session.tempoBpm);
+    ctx.cleanup ([&session, points = session.tempoMap.points()] { session.tempoMap.setPoints (points); });
     session.timeDisplayMode.store ((int) TimeDisplayMode::Bars);
+    session.tempoMap.setPoints ({});
     ctx.cleanup ([&engine] { if (! engine.isAudioCallbackRegistered()) engine.reattachAudioCallback(); });
     engine.detachAudioCallback();
     if (engine.getCurrentSampleRate() > 0.0)
@@ -6104,7 +6107,14 @@ std::optional<ScenarioResult> runAudioEditorRulerWithoutDevice (GuiHost& host, S
         checkRuler ("bar numbers");
         session.timeDisplayMode.store ((int) TimeDisplayMode::Time);
     }, [&host] { return host.audioEditorTakeLanes().size() == 2; }, "the take lanes never showed" });
-    steps->push_back ({ 300, [checkRuler] { checkRuler ("time stamps"); } });
+    steps->push_back ({ 300, [&session, checkRuler, span]
+    {
+        checkRuler ("time stamps");
+        session.timeDisplayMode.store ((int) TimeDisplayMode::Bars);
+        session.tempoBpm.store (60.0f);
+        session.tempoMap.setPoints ({ { 0, 60.0f }, { span / 2, 240.0f } });
+    } });
+    steps->push_back ({ 300, [checkRuler] { checkRuler ("bar numbers under a faster tempo map"); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }

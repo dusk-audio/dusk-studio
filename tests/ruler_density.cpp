@@ -74,6 +74,9 @@ TEST_CASE ("Time stamps step as the timeline's, then by minutes and hours", "[ed
 
     for (double pixelsPerSecond = 1.0e-4; pixelsPerSecond < 2.0; pixelsPerSecond *= 1.37)
         CHECK (step (pixelsPerSecond) * pixelsPerSecond >= kMinMarkPixels);
+    // The timeline ruler's own steps come as close as 40 px, at one stamp a second.
+    for (double pixelsPerSecond = 1.0e-4; pixelsPerSecond < 500.0; pixelsPerSecond *= 1.07)
+        CHECK (step (pixelsPerSecond) * pixelsPerSecond >= 40.0);
 }
 
 TEST_CASE ("Time stamps stay under the ceiling whatever the zoom says", "[editor][ruler]")
