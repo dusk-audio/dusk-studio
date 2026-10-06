@@ -5949,6 +5949,62 @@ const ScenarioRegistrar audioEditorFocusDropsRange { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorFocusDropsRange (host, ctx); }
 } };
 
+// With no audio device running the editor still reads time at a real rate, the one
+// the device last ran at, and its ruler numbers only as many bars or stamps as it has
+// room for: over a track of takes alone, ten minutes end to end, a few of each rather
+// than one a bar.
+std::optional<ScenarioResult> runAudioEditorRulerWithoutDevice (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    const double rate = engine.getCurrentSampleRate();
+    if (host.engineDetached() || ! engine.isAudioCallbackRegistered() || rate <= 0.0)
+        return ScenarioResult::skip ("requires a running audio device");
+    auto& track = session.track (0);
+    const auto span = (std::int64_t) rate * 600;
+    if (! addLevelTake (ctx, track, "Take 1", 0, kTakeCaseLength, kWholeTakeLevel)
+        || ! addLevelTake (ctx, track, "Take 2", span - kTakeCaseLength, kTakeCaseLength, kShortTakeLevel))
+        return ScenarioResult::fail ("could not write take fixture");
+    ctx.keep (session.timeDisplayMode);
+    session.timeDisplayMode.store ((int) TimeDisplayMode::Bars);
+    ctx.cleanup ([&engine] { if (! engine.isAudioCallbackRegistered()) engine.reattachAudioCallback(); });
+    engine.detachAudioCallback();
+    if (engine.getCurrentSampleRate() > 0.0)
+        return ScenarioResult::fail ("a detached engine still reads a running rate");
+    if (! host.openAudioEditorOnTakes (0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    const auto checkRuler = [&host, &ctx, rate, span] (const std::string& marks)
+    {
+        const auto ruler = host.audioEditorRuler();
+        const auto view = host.audioEditorView();
+        if (! ctx.expect (ruler.size() == 2 && view.size() == 3, "the editor reported no ruler")) return;
+        ctx.expect (std::abs (ruler[1] - rate) < 0.5,
+                    "with no device running the editor reads time at " + std::to_string (ruler[1])
+                        + " Hz, not the " + std::to_string (rate) + " Hz the device last ran at");
+        // The whole track is in view, and a mark needs 64 design pixels of it.
+        const double room = view[0] * (double) span / 64.0 + 2.0;
+        ctx.expect (ruler[0] >= 2.0 && ruler[0] <= room,
+                    "the ruler drew " + std::to_string ((int) ruler[0]) + " " + marks + " where "
+                        + std::to_string ((int) room) + " fit");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&session, checkRuler]
+    {
+        checkRuler ("bar numbers");
+        session.timeDisplayMode.store ((int) TimeDisplayMode::Time);
+    }, [&host] { return host.audioEditorTakeLanes().size() == 2; }, "the take lanes never showed" });
+    steps->push_back ({ 300, [checkRuler] { checkRuler ("time stamps"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorRulerWithoutDevice { Scenario {
+    "gui.audio_editor_ruler_without_device", { "gui", "editor", "take" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorRulerWithoutDevice (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runAudioEditorToolbar (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

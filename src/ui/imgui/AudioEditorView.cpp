@@ -1,6 +1,7 @@
 #include "AudioEditorView.h"
 #include "PanelControls.h"
 #include "RegionTrim.h"
+#include "RulerDensity.h"
 #include "TakeLaneLayout.h"
 #include "../AppConfig.h"
 #include "../../engine/AudioEngine.h"
@@ -60,6 +61,8 @@ constexpr float kLaneInset = 4.0f;
 
 constexpr float kMinPixelsPerSample = 1.0e-5f;
 constexpr float kMaxPixelsPerSample = 1.0f;
+// What time is read at when no file, device or session gives a rate.
+constexpr double kFallbackSampleRate = 48000.0;
 constexpr float kZoomStep = 1.15f;
 constexpr float kWheelPanPixels = 12.5f;
 
@@ -505,6 +508,11 @@ public:
                  static_cast<double> (editCursorSample) };
     }
 
+    std::vector<double> rulerForScenario() const override
+    {
+        return { static_cast<double> (rulerMarks), sampleRate() };
+    }
+
     bool samplePointForScenario (std::int64_t timelineSample, ImVec2& point) const override
     {
         if (! laidOut)
@@ -761,6 +769,8 @@ private:
     std::int64_t scrollSamples = 0;
     std::int64_t editCursorSample = 0;
     float panRemainder = 0.0f;
+    // Bar numbers or time stamps the ruler drew in its last frame.
+    int rulerMarks = 0;
 
     bool chase = false;
     bool dismissRequested = false;
@@ -1321,13 +1331,19 @@ private:
 
     // Region positions were stored at the recording's rate and the waveform is drawn in
     // the file's own, so the grid and the readouts use the file's rate too - the device
-    // rate would drift them against the audio after a hot-swap to another rate.
+    // rate would drift them against the audio after a hot-swap to another rate. With no
+    // file to ask and no device running, as on a track of takes alone after the
+    // interface went, it is the rate the device last ran at, then the session's own.
     double sampleRate() const
     {
         if (const auto* source = focusedSource(); source != nullptr && source->snapshot.info)
             if (source->snapshot.info->sampleRate > 0.0)
                 return source->snapshot.info->sampleRate;
-        return std::max (1.0, engine.getCurrentSampleRate());
+        for (const double rate : { engine.getCurrentSampleRate(), engine.getLastDeviceSampleRate(),
+                                   session.sessionSampleRate })
+            if (rate > 0.0)
+                return rate;
+        return kFallbackSampleRate;
     }
 
     // Every region and take on the track, as [first, second) in timeline samples;
@@ -3683,8 +3699,10 @@ private:
         const auto anchorEnd = anchorStart + anchorLength;
         const float fontSize = ctx.s (12.0f);
         const float textY = ruler.at (0.0f, 0.5f).y - fontSize * 0.5f;
+        rulerMarks = 0;
         const auto label = [&] (float x, const char* str)
         {
+            ++rulerMarks;
             dw::text (ctx, ctx.fonts->band, fontSize, ImVec2 (x + ctx.s (3.0f), textY), ctx.s (60.0f),
                       argb (kHeaderText), str, dw::Align::left);
         };
@@ -3704,7 +3722,11 @@ private:
 
             const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
             const double pxPerBeat = bpm > 0.0f ? pixelsPerSample * (sr * 60.0 / bpm) : 0.0;
-            const bool showBeats = pxPerBeat >= 9.0;
+            // Zoomed out, only every step-th bar is numbered, and the bars between
+            // them are drawn while beats are: a tempo map can put more bars in view
+            // than the session tempo allows for, so the count in view decides too.
+            const auto step = ruler::barStep (pxPerBeat * beatsPerBar, lastBar - firstBar);
+            const bool showBeats = pxPerBeat >= 9.0 && lastBar - firstBar <= ruler::kMaxMarks;
             const int subdivisions = pxPerBeat >= 80.0 ? 4 : (pxPerBeat >= 36.0 ? 2 : 1);
             const float beatTop = ruler.y1 - ruler.height() * 0.45f;
             const float subTop = ruler.y1 - ruler.height() * 0.28f;
@@ -3718,7 +3740,7 @@ private:
                 vline (dl, x, top, ruler.y1, colour, ctx.s (1.0f));
             };
 
-            for (auto bar = firstBar; bar <= lastBar; ++bar)
+            for (auto bar = firstBar - firstBar % step; bar <= lastBar; bar += showBeats ? 1 : step)
             {
                 const auto barTick = bar * ticksPerBar;
                 const auto t = session.ticksToSamples (barTick, sr);
@@ -3728,9 +3750,12 @@ private:
                     if (x >= ruler.x0 && x <= ruler.x1)
                     {
                         vline (dl, x, ruler.y0, ruler.y1, argb (kBarLine), ctx.s (1.0f));
-                        char number[24];
-                        std::snprintf (number, sizeof (number), "%lld", static_cast<long long> (bar + 1));
-                        label (x, number);
+                        if (bar % step == 0)
+                        {
+                            char number[24];
+                            std::snprintf (number, sizeof (number), "%lld", static_cast<long long> (bar + 1));
+                            label (x, number);
+                        }
                     }
                 }
                 if (! showBeats) continue;
@@ -3746,14 +3771,9 @@ private:
             return;
         }
 
-        const double pxPerSecond = pixelsPerSample * sr;
-        double every = 1.0;
-        if (pxPerSecond < 6.0) every = 30.0;
-        else if (pxPerSecond < 16.0) every = 10.0;
-        else if (pxPerSecond < 40.0) every = 5.0;
-
         const double from = static_cast<double> (std::max (anchorStart, timelineForX (ruler.x0 - ctx.s (60.0f)))) / sr;
         const double to = static_cast<double> (std::min (anchorEnd, timelineForX (ruler.x1))) / sr;
+        const double every = ruler::stampSeconds (pixelsPerSample * sr, to - from);
         for (double second = std::floor (from / every) * every; second <= to; second += every)
         {
             const auto t = static_cast<std::int64_t> (std::llround (second * sr));
@@ -3787,6 +3807,8 @@ private:
         const auto to = std::min (anchorEnd, timelineForX (wave.x1));
         const auto firstBar = session.samplesToTicks (from, sr) / ticksPerBar;
         const auto lastBar = session.samplesToTicks (to, sr) / ticksPerBar + 1;
+        // The ruler drops its beats at the same count.
+        if (lastBar - firstBar > ruler::kMaxMarks) return;
         for (auto bar = firstBar; bar <= lastBar; ++bar)
             for (int beat = 0; beat < beatsPerBar; ++beat)
             {

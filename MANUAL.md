@@ -1447,7 +1447,7 @@ The **Snap** toggle and its grid-resolution button sit in the header, to the lef
 
 Below the toolbar:
 
-- **Bar/beat ruler** for the region.
+- **Bar/beat ruler** for the region. Zoomed out, it numbers every second bar, then every fourth, eighth and so on, so the numbers stay apart; with the display set to time rather than bars, its stamps step up from seconds to minutes and hours the same way. It reads the same with no audio device running.
 - **Waveform area** showing the region centred, with adjacent regions on the same track faded so splits don't shift the view.
 - **Take lanes** under the waveform when the track has takes (see *Take lanes* below).
 - **Status bar** at the bottom showing position, gain, fade lengths, a raw sample readout (`smp`: the cursor's timeline sample, or a range's start and length in samples), mute and lock toggles. Double-click the gain or fade readout to type a value; fades take `in / out` in milliseconds.

@@ -550,6 +550,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
         return {};
     }
+    std::vector<double> audioEditorRuler() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing() && owner.audioEditorView != nullptr)
+            return owner.audioEditorView->rulerForScenario();
+       #endif
+        return {};
+    }
     // The editor names its controls, and "sample:<n>", "waveform" and "at:<x>,<y>"
     // address points on it; see AudioEditorView::controlPointForScenario.
     bool clickAudioEditorControl (const std::string& control)

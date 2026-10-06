@@ -138,6 +138,9 @@ public:
     virtual bool doubleClickAudioEditorButton (const std::string& name) = 0;
     virtual bool clickAudioEditorSample (std::int64_t sample) = 0;
     virtual std::vector<double> audioEditorView() const = 0;
+    // { marks, sampleRate }: the bar numbers or time stamps the editor's ruler drew in
+    // its last frame, and the rate the editor reads time at. Empty with no editor up.
+    virtual std::vector<double> audioEditorRuler() const = 0;
     virtual std::vector<int> audioEditorPoint (const std::string& kind, std::int64_t sample) const = 0;
     virtual bool audioEditorPointer (int x, int y, bool down, int modifiers = 0) = 0;
     virtual std::vector<std::int64_t> audioEditorSelection() const = 0;

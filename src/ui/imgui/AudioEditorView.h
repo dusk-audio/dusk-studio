@@ -74,6 +74,10 @@ public:
     // { pixelsPerSample, scrollSamples, editCursorSample }. Pixels are design pixels.
     virtual std::vector<double> viewForScenario() const = 0;
 
+    // { marks, sampleRate }: the bar numbers or time stamps the ruler drew in its last
+    // frame, and the rate the editor reads time at.
+    virtual std::vector<double> rulerForScenario() const = 0;
+
     // Where the waveform shows a timeline sample, in the window's own pixels, three
     // quarters of the way down the lanes. False before the first frame has laid out.
     virtual bool samplePointForScenario (std::int64_t timelineSample, ImVec2& point) const = 0;

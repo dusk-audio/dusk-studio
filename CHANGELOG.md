@@ -118,6 +118,11 @@ Takes live on the track now, and the audio editor is where you comp them.
 - **The GR meter and threshold handle stay when the timeline is open** (#807).
   Expanding the timeline compacts the strips, and that used to hide the meter
   and handle beside the fader on every channel strip, bus and the master.
+- **The audio editor no longer freezes with no audio device running** (#845).
+  With the interface unplugged, or none opened at startup, the editor read time
+  at 1 Hz and its ruler drew a number for every one of millions of bars. It now
+  keeps the rate the device last ran at, and the ruler numbers only as many bars
+  or time stamps as it has room for at any zoom.
 
 ## [0.14.0] - 2026-09-29
 
