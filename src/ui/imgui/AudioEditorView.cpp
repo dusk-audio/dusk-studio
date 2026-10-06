@@ -1,6 +1,7 @@
 #include "AudioEditorView.h"
 #include "PanelControls.h"
 #include "RegionTrim.h"
+#include "RulerDensity.h"
 #include "TakeLaneLayout.h"
 #include "../AppConfig.h"
 #include "../../engine/AudioEngine.h"
@@ -60,6 +61,8 @@ constexpr float kLaneInset = 4.0f;
 
 constexpr float kMinPixelsPerSample = 1.0e-5f;
 constexpr float kMaxPixelsPerSample = 1.0f;
+// What time is read at when no file, device or session gives a rate.
+constexpr double kFallbackSampleRate = 48000.0;
 constexpr float kZoomStep = 1.15f;
 constexpr float kWheelPanPixels = 12.5f;
 
@@ -505,6 +508,11 @@ public:
                  static_cast<double> (editCursorSample) };
     }
 
+    std::vector<double> rulerForScenario() const override
+    {
+        return { static_cast<double> (rulerMarks), sampleRate() };
+    }
+
     bool samplePointForScenario (std::int64_t timelineSample, ImVec2& point) const override
     {
         if (! laidOut)
@@ -761,6 +769,8 @@ private:
     std::int64_t scrollSamples = 0;
     std::int64_t editCursorSample = 0;
     float panRemainder = 0.0f;
+    // Bar numbers or time stamps the ruler drew in its last frame.
+    int rulerMarks = 0;
 
     bool chase = false;
     bool dismissRequested = false;
@@ -1321,13 +1331,19 @@ private:
 
     // Region positions were stored at the recording's rate and the waveform is drawn in
     // the file's own, so the grid and the readouts use the file's rate too - the device
-    // rate would drift them against the audio after a hot-swap to another rate.
+    // rate would drift them against the audio after a hot-swap to another rate. With no
+    // file to ask and no device running, as on a track of takes alone after the
+    // interface went, it is the rate the device last ran at, then the session's own.
     double sampleRate() const
     {
         if (const auto* source = focusedSource(); source != nullptr && source->snapshot.info)
             if (source->snapshot.info->sampleRate > 0.0)
                 return source->snapshot.info->sampleRate;
-        return std::max (1.0, engine.getCurrentSampleRate());
+        for (const double rate : { engine.getCurrentSampleRate(), engine.getLastDeviceSampleRate(),
+                                   session.sessionSampleRate })
+            if (rate > 0.0)
+                return rate;
+        return kFallbackSampleRate;
     }
 
     // Every region and take on the track, as [first, second) in timeline samples;
@@ -1733,12 +1749,13 @@ private:
         commit (fadeOut ? "Fade-out to selection" : "Fade-in to selection", before, after);
     }
 
-    // The range as a free-standing slice of the same file, with no fades of its own.
-    AudioRegion rangeChunk (const AudioRegion& r) const
+    // File samples [first, second) of the region as a free-standing slice of the same
+    // file, with no fades of its own.
+    AudioRegion rangeChunk (const AudioRegion& r, std::pair<std::int64_t, std::int64_t> span) const
     {
         AudioRegion chunk = r;
-        chunk.sourceOffset = std::min (rangeStartSample, rangeEndSample);
-        chunk.lengthInSamples = std::abs (rangeEndSample - rangeStartSample);
+        chunk.sourceOffset = span.first;
+        chunk.lengthInSamples = span.second - span.first;
         chunk.timelineStart = 0;
         chunk.fadeInSamples = 0;
         chunk.fadeOutSamples = 0;
@@ -1749,8 +1766,12 @@ private:
     {
         const auto* r = region();
         if (r == nullptr) return;
+        // Only what the region covers of a range: past its ends the file may hold
+        // audio the region has trimmed away, or none.
+        const auto covered = coveredRange();
+        if (rangeActive && ! covered) return;
         auto& clip = engine.getRegionClipboard();
-        clip.region = rangeActive ? rangeChunk (*r) : *r;
+        clip.region = covered ? rangeChunk (*r, *covered) : *r;
         clip.sourceTrack = trackIdx;
         clip.hasContent = true;
     }
@@ -1759,11 +1780,14 @@ private:
     {
         const auto* r = region();
         if (r == nullptr) return;
-        if (cutRange())
+        // A range cutRange refuses - locked, frozen, or off the region - is a no-op, not
+        // a licence to cut the whole region.
+        if (rangeActive)
+        {
+            cutRange();
             return;
-        // A range cutRange refused - locked or frozen - is a no-op, not a licence to
-        // cut the whole region.
-        if (rangeActive || r->locked || trackFrozen())
+        }
+        if (r->locked || trackFrozen())
             return;
 
         auto& clip = engine.getRegionClipboard();
@@ -1790,49 +1814,64 @@ private:
         undo.perform (new PasteRegionAction (session, engine, trackIdx, pasted));
     }
 
-    // Removes the range from the focused region: split at whichever edges are inside
-    // it, since a split on the region's own edge does nothing, then delete the middle.
-    void deleteRange (const char* transaction)
+    // The part of the range the focused region covers, in file samples. A split, a
+    // trim, a comp seam or an edit made outside the editor can move the region's ends
+    // from under the range, so there may be none.
+    std::optional<std::pair<std::int64_t, std::int64_t>> coveredRange() const
     {
         const auto* r = region();
-        const auto a = std::min (rangeStartSample, rangeEndSample);
-        const auto b = std::max (rangeStartSample, rangeEndSample);
-        const auto regionStart = r->timelineStart;
-        const auto regionEnd = r->timelineStart + r->lengthInSamples;
-        const auto tlA = r->timelineStart + (a - r->sourceOffset);
-        const auto tlB = r->timelineStart + (b - r->sourceOffset);
-        const bool needLeft = tlA > regionStart;
-        const bool needRight = tlB < regionEnd;
+        if (r == nullptr || ! rangeActive)
+            return std::nullopt;
+        const auto a = std::max (std::min (rangeStartSample, rangeEndSample), r->sourceOffset);
+        const auto b = std::min (std::max (rangeStartSample, rangeEndSample), r->sourceOffset + r->lengthInSamples);
+        if (b <= a)
+            return std::nullopt;
+        return std::pair<std::int64_t, std::int64_t> { a, b };
+    }
+
+    // Removes the part of the range the focused region covers: split at whichever
+    // edges are inside the region, since a split on its own edge does nothing, then
+    // delete the middle. False, with no region deleted, when the region covers none of
+    // the range or a split that cuts the middle out is refused.
+    bool deleteRange (const char* transaction)
+    {
+        const auto covered = coveredRange();
+        if (! covered)
+        {
+            rangeActive = false;
+            return false;
+        }
+        const auto* r = region();
+        const auto tlA = r->timelineStart + (covered->first - r->sourceOffset);
+        const auto tlB = r->timelineStart + (covered->second - r->sourceOffset);
+        const bool needLeft = tlA > r->timelineStart;
+        const bool needRight = tlB < r->timelineStart + r->lengthInSamples;
 
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction (transaction);
         const RegionRebuildBatch batch (engine);
-        if (needRight)
-            undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
-        int doomed = regionIdx;
-        if (needLeft)
-        {
-            undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
-            doomed = regionIdx + 1;
-        }
-        undo.perform (new DeleteRegionAction (session, engine, trackIdx, doomed));
+        const auto split = [&] (std::int64_t at)
+        { return undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, at)); };
+        if ((needRight && ! split (tlB)) || (needLeft && ! split (tlA)))
+            return false;
+        // The left split leaves the middle one past the focused piece.
+        undo.perform (new DeleteRegionAction (session, engine, trackIdx, needLeft ? regionIdx + 1 : regionIdx));
         rangeActive = false;
         reanchorOrClose();
+        return true;
     }
 
     bool cutRange()
     {
         const auto* r = region();
-        if (r == nullptr || ! rangeActive || r->locked || trackFrozen())
-            return false;
-        if (std::max (rangeStartSample, rangeEndSample) <= std::min (rangeStartSample, rangeEndSample))
+        const auto covered = coveredRange();
+        if (r == nullptr || ! covered || r->locked || trackFrozen())
             return false;
         auto& clip = engine.getRegionClipboard();
-        clip.region = rangeChunk (*r);
+        clip.region = rangeChunk (*r, *covered);
         clip.sourceTrack = trackIdx;
         clip.hasContent = true;
-        deleteRange ("Cut chunk");
-        return true;
+        return deleteRange ("Cut chunk");
     }
 
     void deleteSelection()
@@ -1840,10 +1879,10 @@ private:
         const auto* r = region();
         if (r == nullptr)
             return;
+        // A range the region covers none of deletes nothing, least of all the region.
         if (rangeActive)
         {
-            if (! r->locked && ! trackFrozen()
-                && std::max (rangeStartSample, rangeEndSample) > std::min (rangeStartSample, rangeEndSample))
+            if (! r->locked && ! trackFrozen())
                 deleteRange ("Delete chunk");
             return;
         }
@@ -1940,6 +1979,9 @@ private:
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction (("Join " + std::to_string (indices.size()) + " regions").c_str());
         undo.perform (new JoinRegionsAction (session, engine, trackIdx, indices));
+        // A join across a gap or two files plays a new file, which the range's samples
+        // do not address.
+        rangeActive = false;
         additional.clear();
         // The joined region takes the lowest of the indices it replaced.
         const int lowest = *std::min_element (indices.begin(), indices.end());
@@ -1953,7 +1995,9 @@ private:
         if (r == nullptr || r->locked || trackFrozen()) return;
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction ("Reverse region");
-        undo.perform (new ReverseRegionAction (session, engine, trackIdx, regionIdx));
+        // The reversed region plays a new file, which the range's samples do not address.
+        if (undo.perform (new ReverseRegionAction (session, engine, trackIdx, regionIdx)))
+            rangeActive = false;
     }
 
     template <typename Edit>
@@ -3683,8 +3727,10 @@ private:
         const auto anchorEnd = anchorStart + anchorLength;
         const float fontSize = ctx.s (12.0f);
         const float textY = ruler.at (0.0f, 0.5f).y - fontSize * 0.5f;
+        rulerMarks = 0;
         const auto label = [&] (float x, const char* str)
         {
+            ++rulerMarks;
             dw::text (ctx, ctx.fonts->band, fontSize, ImVec2 (x + ctx.s (3.0f), textY), ctx.s (60.0f),
                       argb (kHeaderText), str, dw::Align::left);
         };
@@ -3704,7 +3750,14 @@ private:
 
             const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
             const double pxPerBeat = bpm > 0.0f ? pixelsPerSample * (sr * 60.0 / bpm) : 0.0;
-            const bool showBeats = pxPerBeat >= 9.0;
+            // Zoomed out, only every step-th bar is numbered, and the bars between
+            // them are drawn while beats are: a tempo map can put more bars in view
+            // than the session tempo allows for, so the count in view decides too.
+            const auto step = ruler::barStep (pxPerBeat * beatsPerBar, lastBar - firstBar);
+            const bool showBeats = pxPerBeat >= 9.0 && lastBar - firstBar <= ruler::kMaxMarks;
+            // Where the tempo map runs faster than the tempo the step was sized for,
+            // a number is drawn only once it clears the one before it.
+            float numbersFrom = ruler.x0;
             const int subdivisions = pxPerBeat >= 80.0 ? 4 : (pxPerBeat >= 36.0 ? 2 : 1);
             const float beatTop = ruler.y1 - ruler.height() * 0.45f;
             const float subTop = ruler.y1 - ruler.height() * 0.28f;
@@ -3718,7 +3771,7 @@ private:
                 vline (dl, x, top, ruler.y1, colour, ctx.s (1.0f));
             };
 
-            for (auto bar = firstBar; bar <= lastBar; ++bar)
+            for (auto bar = firstBar - firstBar % step; bar <= lastBar; bar += showBeats ? 1 : step)
             {
                 const auto barTick = bar * ticksPerBar;
                 const auto t = session.ticksToSamples (barTick, sr);
@@ -3728,9 +3781,13 @@ private:
                     if (x >= ruler.x0 && x <= ruler.x1)
                     {
                         vline (dl, x, ruler.y0, ruler.y1, argb (kBarLine), ctx.s (1.0f));
-                        char number[24];
-                        std::snprintf (number, sizeof (number), "%lld", static_cast<long long> (bar + 1));
-                        label (x, number);
+                        if (bar % step == 0 && x >= numbersFrom)
+                        {
+                            char number[24];
+                            std::snprintf (number, sizeof (number), "%lld", static_cast<long long> (bar + 1));
+                            label (x, number);
+                            numbersFrom = x + ctx.s (static_cast<float> (ruler::kMinMarkPixels));
+                        }
                     }
                 }
                 if (! showBeats) continue;
@@ -3746,14 +3803,9 @@ private:
             return;
         }
 
-        const double pxPerSecond = pixelsPerSample * sr;
-        double every = 1.0;
-        if (pxPerSecond < 6.0) every = 30.0;
-        else if (pxPerSecond < 16.0) every = 10.0;
-        else if (pxPerSecond < 40.0) every = 5.0;
-
         const double from = static_cast<double> (std::max (anchorStart, timelineForX (ruler.x0 - ctx.s (60.0f)))) / sr;
         const double to = static_cast<double> (std::min (anchorEnd, timelineForX (ruler.x1))) / sr;
+        const double every = ruler::stampSeconds (pixelsPerSample * sr, to - from);
         for (double second = std::floor (from / every) * every; second <= to; second += every)
         {
             const auto t = static_cast<std::int64_t> (std::llround (second * sr));
@@ -3787,6 +3839,8 @@ private:
         const auto to = std::min (anchorEnd, timelineForX (wave.x1));
         const auto firstBar = session.samplesToTicks (from, sr) / ticksPerBar;
         const auto lastBar = session.samplesToTicks (to, sr) / ticksPerBar + 1;
+        // The ruler drops its beats at the same count.
+        if (lastBar - firstBar > ruler::kMaxMarks) return;
         for (auto bar = firstBar; bar <= lastBar; ++bar)
             for (int beat = 0; beat < beatsPerBar; ++beat)
             {
@@ -5038,6 +5092,10 @@ private:
         if (! std::exchange (fieldDrawn, false))
             editing = Field::none;
         popupOpen = ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        // The range is the focused region's and goes once the region covers none of
+        // it. Not mid-drag: a trim the pointer still holds can go back out or be cancelled.
+        if (rangeActive && drag == Drag::none && ! coveredRange())
+            rangeActive = false;
     }
 };
 } // namespace

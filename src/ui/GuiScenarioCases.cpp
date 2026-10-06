@@ -5949,6 +5949,182 @@ const ScenarioRegistrar audioEditorFocusDropsRange { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorFocusDropsRange (host, ctx); }
 } };
 
+// A Shift drag over [from, to) of the focused region, as one range selection.
+void selectEditorRange (GuiHost& host, ScenarioContext& ctx, std::int64_t from, std::int64_t to)
+{
+    static constexpr int shift = 1;
+    const auto start = host.audioEditorPoint ("wave", from);
+    const auto end = host.audioEditorPoint ("wave", to);
+    if (! ctx.expect (start.size() == 2 && end.size() == 2, "editor geometry unavailable")) return;
+    host.audioEditorPointer (start[0], start[1], true, shift);
+    host.audioEditorPointer (end[0], end[1], true, shift);
+    host.audioEditorPointer (end[0], end[1], false, shift);
+}
+
+void expectEditorRange (GuiHost& host, ScenarioContext& ctx, bool range, const std::string& failure)
+{
+    const auto selection = host.audioEditorSelection();
+    ctx.expect (selection.size() == 4 && selection[0] == 0 && (selection[1] != 0) == range, failure);
+}
+
+// A range goes once its region covers none of it. The menu's Split at edit cursor,
+// left of a range, leaves the range's audio in the new piece beside the focused one:
+// the range is dropped, and Delete takes the focused piece, never the one beside it.
+std::optional<ScenarioResult> runAudioEditorSplitDropsRange (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginSpansCase (host, ctx, { { 0, kTakeCaseLength } })) return early;
+    auto& track = ctx.session().track (0);
+    static constexpr int rightButton = 4;
+    auto split = std::make_shared<std::int64_t> (0);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx] { selectEditorRange (host, ctx, 60000, 72000); },
+                        [&host] { return host.audioEditorTakeLanes().size() == 1; }, "the editor never laid out" });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        expectEditorRange (host, ctx, true, "the Shift drag did not select a range");
+        clickEditorWave (host, ctx, 24000, rightButton);
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Split at edit cursor"), "the waveform menu has no Split at edit cursor"); } });
+    steps->push_back ({ 150, [&host, &ctx, &track, split]
+    {
+        if (ctx.expect (track.regions.size() == 2, "Split at edit cursor did not split the region"))
+            *split = track.regions[1].sourceOffset;
+        expectEditorRange (host, ctx, false, "the split left the range on a piece that covers none of it");
+        ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not handled");
+    } });
+    steps->push_back ({ 200, [&ctx, &track, split]
+    {
+        ctx.expect (track.regions.size() == 1 && track.regions[0].sourceOffset == *split
+                        && track.regions[0].lengthInSamples == kTakeCaseLength - *split,
+                    "Delete after the split took the piece the range had been on");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorSplitDropsRange { Scenario {
+    "gui.audio_editor_split_drops_range", { "gui", "editor", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorSplitDropsRange (host, ctx); }
+} };
+
+// A trim that takes the region's end back past a range drops the range, so Delete
+// takes the focused region and leaves the locked region stored after it alone.
+std::optional<ScenarioResult> runAudioEditorTrimDropsRange (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr std::int64_t kFocused = 0;
+    static constexpr std::int64_t kLocked = 60000;
+    if (auto early = beginSpansCase (host, ctx, { { kFocused, 48000 }, { kLocked, kTakeCaseLength } })) return early;
+    auto& track = ctx.session().track (0);
+    track.regions[1].locked = true;
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx] { selectEditorRange (host, ctx, 36000, 44000); },
+                        [&host] { return host.audioEditorTakeLanes().size() == 1; }, "the editor never laid out" });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        expectEditorRange (host, ctx, true, "the Shift drag did not select a range");
+        const auto from = host.audioEditorPoint ("end", 48000);
+        const auto to = host.audioEditorPoint ("wave", 24000);
+        if (! ctx.expect (from.size() == 2 && to.size() == 2, "trim geometry unavailable")) return;
+        ctx.expect (host.audioEditorPointer (from[0], from[1], true), "the trim handle did not take the press");
+        host.audioEditorPointer (to[0], to[1], true);
+        host.audioEditorPointer (to[0], to[1], false);
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &track]
+    {
+        const auto* focused = regionPlaying (track, kFocused);
+        ctx.expect (focused != nullptr && std::abs (focused->lengthInSamples - 24000) < 256,
+                    "the trim did not take the region's end back past the range");
+        expectEditorRange (host, ctx, false, "the trim left the range past the region's end");
+        ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not handled");
+    } });
+    steps->push_back ({ 200, [&ctx, &track]
+    {
+        const auto* locked = regionPlaying (track, kLocked);
+        ctx.expect (locked != nullptr && locked->locked && locked->lengthInSamples == kTakeCaseLength - kLocked,
+                    "Delete after the trim took the locked region stored after the focused one");
+        ctx.expect (regionPlaying (track, kFocused) == nullptr && track.regions.size() == 1,
+                    "Delete after the trim did not take the focused region");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorTrimDropsRange { Scenario {
+    "gui.audio_editor_trim_drops_range", { "gui", "editor", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorTrimDropsRange (host, ctx); }
+} };
+
+// With no audio device running the editor still reads time at a real rate, the one
+// the device last ran at, and its ruler numbers only as many bars or stamps as it has
+// room for: over a track of takes alone, ten minutes end to end, a few of each rather
+// than one a bar, also where a tempo map runs four times as fast as the session tempo.
+std::optional<ScenarioResult> runAudioEditorRulerWithoutDevice (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    const double rate = engine.getCurrentSampleRate();
+    if (host.engineDetached() || ! engine.isAudioCallbackRegistered() || rate <= 0.0)
+        return ScenarioResult::skip ("requires a running audio device");
+    auto& track = session.track (0);
+    const auto span = (std::int64_t) rate * 600;
+    if (! addLevelTake (ctx, track, "Take 1", 0, kTakeCaseLength, kWholeTakeLevel)
+        || ! addLevelTake (ctx, track, "Take 2", span - kTakeCaseLength, kTakeCaseLength, kShortTakeLevel))
+        return ScenarioResult::fail ("could not write take fixture");
+    ctx.keep (session.timeDisplayMode);
+    ctx.keep (session.tempoBpm);
+    ctx.cleanup ([&session, points = session.tempoMap.points()] { session.tempoMap.setPoints (points); });
+    session.timeDisplayMode.store ((int) TimeDisplayMode::Bars);
+    session.tempoMap.setPoints ({});
+    ctx.cleanup ([&engine] { if (! engine.isAudioCallbackRegistered()) engine.reattachAudioCallback(); });
+    engine.detachAudioCallback();
+    if (engine.getCurrentSampleRate() > 0.0)
+        return ScenarioResult::fail ("a detached engine still reads a running rate");
+    if (! host.openAudioEditorOnTakes (0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    const auto checkRuler = [&host, &ctx, rate, span] (const std::string& marks)
+    {
+        const auto ruler = host.audioEditorRuler();
+        const auto view = host.audioEditorView();
+        if (! ctx.expect (ruler.size() == 2 && view.size() == 3, "the editor reported no ruler")) return;
+        ctx.expect (std::abs (ruler[1] - rate) < 0.5,
+                    "with no device running the editor reads time at " + std::to_string (ruler[1])
+                        + " Hz, not the " + std::to_string (rate) + " Hz the device last ran at");
+        // The whole track is in view, and a mark needs 64 design pixels of it.
+        const double room = view[0] * (double) span / 64.0 + 2.0;
+        ctx.expect (ruler[0] >= 2.0 && ruler[0] <= room,
+                    "the ruler drew " + std::to_string ((int) ruler[0]) + " " + marks + " where "
+                        + std::to_string ((int) room) + " fit");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&session, checkRuler]
+    {
+        checkRuler ("bar numbers");
+        session.timeDisplayMode.store ((int) TimeDisplayMode::Time);
+    }, [&host] { return host.audioEditorTakeLanes().size() == 2; }, "the take lanes never showed" });
+    steps->push_back ({ 300, [&session, checkRuler, span]
+    {
+        checkRuler ("time stamps");
+        session.timeDisplayMode.store ((int) TimeDisplayMode::Bars);
+        session.tempoBpm.store (60.0f);
+        session.tempoMap.setPoints ({ { 0, 60.0f }, { span / 2, 240.0f } });
+    } });
+    steps->push_back ({ 300, [checkRuler] { checkRuler ("bar numbers under a faster tempo map"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorRulerWithoutDevice { Scenario {
+    "gui.audio_editor_ruler_without_device", { "gui", "editor", "take" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorRulerWithoutDevice (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runAudioEditorToolbar (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

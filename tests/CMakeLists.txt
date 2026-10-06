@@ -99,6 +99,7 @@ add_executable(dusk-studio-tests
     take_comp.cpp
     take_lane_layout.cpp
     region_trim.cpp
+    ruler_density.cpp
     session_transport_bounds.cpp
     session_corrupted_recovery.cpp
     session_clamp_corrupt_values.cpp
