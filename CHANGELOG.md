@@ -123,6 +123,11 @@ Takes live on the track now, and the audio editor is where you comp them.
   at 1 Hz and its ruler drew a number for every one of millions of bars. It now
   keeps the rate the device last ran at, and the ruler numbers only as many bars
   or time stamps as it has room for at any zoom.
+- **Delete and Cut on a range no longer remove a different region** (#846).
+  After a split or a trim left the focused region holding none of a drawn range,
+  Delete or Cut removed the next region on the track whole, locked or not. The
+  range now goes when its region no longer covers it, and Delete and Cut take
+  only the part of a range the region covers.
 
 ## [0.14.0] - 2026-09-29
 

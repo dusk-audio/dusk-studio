@@ -1775,11 +1775,14 @@ private:
     {
         const auto* r = region();
         if (r == nullptr) return;
-        if (cutRange())
+        // A range cutRange refuses - locked, frozen, or off the region - is a no-op, not
+        // a licence to cut the whole region.
+        if (rangeActive)
+        {
+            cutRange();
             return;
-        // A range cutRange refused - locked or frozen - is a no-op, not a licence to
-        // cut the whole region.
-        if (rangeActive || r->locked || trackFrozen())
+        }
+        if (r->locked || trackFrozen())
             return;
 
         auto& clip = engine.getRegionClipboard();
@@ -1806,49 +1809,63 @@ private:
         undo.perform (new PasteRegionAction (session, engine, trackIdx, pasted));
     }
 
-    // Removes the range from the focused region: split at whichever edges are inside
-    // it, since a split on the region's own edge does nothing, then delete the middle.
-    void deleteRange (const char* transaction)
+    // The part of the range the focused region covers, in file samples. A split, a
+    // trim, a comp seam or an edit made outside the editor can move the region's ends
+    // from under the range, so there may be none.
+    std::optional<std::pair<std::int64_t, std::int64_t>> coveredRange() const
     {
         const auto* r = region();
-        const auto a = std::min (rangeStartSample, rangeEndSample);
-        const auto b = std::max (rangeStartSample, rangeEndSample);
-        const auto regionStart = r->timelineStart;
-        const auto regionEnd = r->timelineStart + r->lengthInSamples;
-        const auto tlA = r->timelineStart + (a - r->sourceOffset);
-        const auto tlB = r->timelineStart + (b - r->sourceOffset);
-        const bool needLeft = tlA > regionStart;
-        const bool needRight = tlB < regionEnd;
+        if (r == nullptr || ! rangeActive)
+            return std::nullopt;
+        const auto a = std::max (std::min (rangeStartSample, rangeEndSample), r->sourceOffset);
+        const auto b = std::min (std::max (rangeStartSample, rangeEndSample), r->sourceOffset + r->lengthInSamples);
+        if (b <= a)
+            return std::nullopt;
+        return std::pair<std::int64_t, std::int64_t> { a, b };
+    }
+
+    // Removes the part of the range the focused region covers: split at whichever
+    // edges are inside the region, since a split on its own edge does nothing, then
+    // delete the middle. False, with no region deleted, when the region covers none of
+    // the range or a split that cuts the middle out is refused.
+    bool deleteRange (const char* transaction)
+    {
+        const auto covered = coveredRange();
+        if (! covered)
+        {
+            rangeActive = false;
+            return false;
+        }
+        const auto* r = region();
+        const auto tlA = r->timelineStart + (covered->first - r->sourceOffset);
+        const auto tlB = r->timelineStart + (covered->second - r->sourceOffset);
+        const bool needLeft = tlA > r->timelineStart;
+        const bool needRight = tlB < r->timelineStart + r->lengthInSamples;
 
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction (transaction);
         const RegionRebuildBatch batch (engine);
-        if (needRight)
-            undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
-        int doomed = regionIdx;
-        if (needLeft)
-        {
-            undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
-            doomed = regionIdx + 1;
-        }
-        undo.perform (new DeleteRegionAction (session, engine, trackIdx, doomed));
+        const auto split = [&] (std::int64_t at)
+        { return undo.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, at)); };
+        if ((needRight && ! split (tlB)) || (needLeft && ! split (tlA)))
+            return false;
+        // The left split leaves the middle one past the focused piece.
+        undo.perform (new DeleteRegionAction (session, engine, trackIdx, needLeft ? regionIdx + 1 : regionIdx));
         rangeActive = false;
         reanchorOrClose();
+        return true;
     }
 
     bool cutRange()
     {
         const auto* r = region();
-        if (r == nullptr || ! rangeActive || r->locked || trackFrozen())
-            return false;
-        if (std::max (rangeStartSample, rangeEndSample) <= std::min (rangeStartSample, rangeEndSample))
+        if (r == nullptr || ! coveredRange() || r->locked || trackFrozen())
             return false;
         auto& clip = engine.getRegionClipboard();
         clip.region = rangeChunk (*r);
         clip.sourceTrack = trackIdx;
         clip.hasContent = true;
-        deleteRange ("Cut chunk");
-        return true;
+        return deleteRange ("Cut chunk");
     }
 
     void deleteSelection()
@@ -1856,10 +1873,10 @@ private:
         const auto* r = region();
         if (r == nullptr)
             return;
+        // A range the region covers none of deletes nothing, least of all the region.
         if (rangeActive)
         {
-            if (! r->locked && ! trackFrozen()
-                && std::max (rangeStartSample, rangeEndSample) > std::min (rangeStartSample, rangeEndSample))
+            if (! r->locked && ! trackFrozen())
                 deleteRange ("Delete chunk");
             return;
         }
@@ -1956,6 +1973,9 @@ private:
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction (("Join " + std::to_string (indices.size()) + " regions").c_str());
         undo.perform (new JoinRegionsAction (session, engine, trackIdx, indices));
+        // A join across a gap or two files plays a new file, which the range's samples
+        // do not address.
+        rangeActive = false;
         additional.clear();
         // The joined region takes the lowest of the indices it replaced.
         const int lowest = *std::min_element (indices.begin(), indices.end());
@@ -1969,7 +1989,9 @@ private:
         if (r == nullptr || r->locked || trackFrozen()) return;
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction ("Reverse region");
-        undo.perform (new ReverseRegionAction (session, engine, trackIdx, regionIdx));
+        // The reversed region plays a new file, which the range's samples do not address.
+        if (undo.perform (new ReverseRegionAction (session, engine, trackIdx, regionIdx)))
+            rangeActive = false;
     }
 
     template <typename Edit>
@@ -5060,6 +5082,10 @@ private:
         if (! std::exchange (fieldDrawn, false))
             editing = Field::none;
         popupOpen = ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        // The range is the focused region's and goes once the region covers none of
+        // it. Not mid-drag: a trim the pointer still holds can go back out or be cancelled.
+        if (rangeActive && drag == Drag::none && ! coveredRange())
+            rangeActive = false;
     }
 };
 } // namespace
