@@ -128,6 +128,21 @@ Takes live on the track now, and the audio editor is where you comp them.
   Delete or Cut removed the next region on the track whole, locked or not. The
   range now goes when its region no longer covers it, and Delete and Cut take
   only the part of a range the region covers.
+- **A locked region takes no edit** (#816, #827). In the audio editor Delete,
+  Split, Normalize, Reset gain, Reset fades, a typed gain or fade and
+  Properties > Delete region all edited a locked region, and so did the
+  timeline's right-click Split at playhead and Delete region, and Join in both
+  places. All of them leave a locked region alone now.
+- **Edits on several selected regions in the audio editor act on the regions
+  you picked** (#814, #815). After a split the selection slid onto neighbouring
+  regions, so the next Delete, nudge, join or move hit a region that was never
+  selected. And dragging a selection left with its first region at the start of
+  the timeline moved the others with no undo step.
+- **A MIDI note held across a loop end no longer hangs or re-attacks** (#829,
+  #830). When a loop ended exactly on an audio block boundary, an instrument
+  with no latency got no reset at the wrap, so a note sounding across it rang
+  until Stop. With an instrument that reports latency, a wrap could reset it
+  twice and re-attack the held notes.
 
 ## [0.14.0] - 2026-09-29
 
