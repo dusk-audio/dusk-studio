@@ -155,6 +155,12 @@ Takes live on the track now, and the audio editor is where you comp them.
   edges stay on the joined region. Regions that play one unbroken stretch of
   one recording, such as a comp section switched back to its own take, join
   into one region of that recording with nothing rendered.
+- **The audio editor keeps its focus when a take lands, and a click gets it
+  back** (#851). A recording that stopped with the editor open left it on no
+  region, or on a different one, so Delete could remove a region that was never
+  picked. The editor now stays on its region, or moves to the take that
+  replaced it. With no region in focus a click on a region did nothing; it now
+  focuses the region, and a paste focuses the region it pastes.
 
 ## [0.14.0] - 2026-09-29
 

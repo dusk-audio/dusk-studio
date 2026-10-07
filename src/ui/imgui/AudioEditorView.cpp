@@ -472,9 +472,11 @@ public:
         const auto chord = parseKeyDescription (description);
         if (repeat && ! (chord && repeatsWhenHeld (chord->key)))
             return true;
-        if (drag != Drag::none)
-            return chord ? handleKey (*chord) : true;
-        return chord && keysAvailable && handleKey (*chord);
+        refindSelection();
+        const bool handled = drag != Drag::none ? (chord ? handleKey (*chord) : true)
+                                                : (chord && keysAvailable && handleKey (*chord));
+        noteSelection();
+        return handled;
     }
 
     void focusRegion (int index) override
@@ -483,6 +485,7 @@ public:
         if (const auto* r = region())
             editCursorSample = std::clamp (editCursorSample, r->sourceOffset,
                                            r->sourceOffset + r->lengthInSamples);
+        noteSelection();
     }
 
     void followTrack (int index) override
@@ -492,14 +495,18 @@ public:
             cancelDrag();
         editing = Field::none;
         confirmingDelete = 0;
+        noteSelection();
     }
 
     void yieldDragToRecordCommit() override
     {
-        if (! editsRegions (drag) && drag != Drag::seam)
-            return;
-        cancelDrag();
-        drag = Drag::dropped;
+        if (editsRegions (drag) || drag == Drag::seam)
+        {
+            cancelDrag();
+            drag = Drag::dropped;
+        }
+        // The take lands on the regions as the cancel left them, not as the drag had them.
+        noteSelection();
     }
 
     std::vector<double> viewForScenario() const override
@@ -661,6 +668,7 @@ public:
     {
         popupWasOpen = popupOpen;
         ++frame;
+        refindSelection();
         controls.clear();
         layout = layoutFor (origin, size, ctx.scale, takeCount(), laneShare);
         laidOut = true;
@@ -809,6 +817,12 @@ private:
     // Delete, move and nudge act on the lot.
     std::vector<int> additional;
     std::vector<std::int64_t> additionalOrigins;
+
+    // The focused region and the selected ones as the editor last left them. A
+    // recording that stops, a lost device or an edit made elsewhere reshapes the
+    // track's list between two frames, and the indices then name other regions or none.
+    std::optional<AudioRegion> focusSeen;
+    std::vector<AudioRegion> additionalSeen;
 
     // [start, end) in file samples of the focused region; active once it has width.
     bool rangeActive = false;
@@ -1665,6 +1679,78 @@ private:
         return -1;
     }
 
+    static bool sameStretch (const AudioRegion& a, const AudioRegion& b)
+    {
+        return a.sameFile (b) && a.timelineStart == b.timelineStart && a.sourceOffset == b.sourceOffset
+            && a.lengthInSamples == b.lengthInSamples;
+    }
+
+    // The region playing at a timeline sample, the later-starting one where two
+    // overlap, or -1.
+    int regionPlayingAt (std::int64_t at) const
+    {
+        const auto& regions = trackRegions();
+        int playing = -1;
+        for (int i = 0; i < static_cast<int> (regions.size()); ++i)
+        {
+            const auto& r = regions[static_cast<std::size_t> (i)];
+            if (r.lengthInSamples > 0 && r.timelineStart <= at && at < r.timelineStart + r.lengthInSamples
+                && (playing < 0 || r.timelineStart > regions[static_cast<std::size_t> (playing)].timelineStart))
+                playing = i;
+        }
+        return playing;
+    }
+
+    void noteSelection()
+    {
+        focusSeen.reset();
+        additionalSeen.clear();
+        if (const auto* r = region())
+            focusSeen = *r;
+        else
+            return;
+        const auto& regions = trackRegions();
+        for (const int index : additional)
+            if (index >= 0 && index < static_cast<int> (regions.size()))
+                additionalSeen.push_back (regions[static_cast<std::size_t> (index)]);
+    }
+
+    bool selectionAsSeen() const
+    {
+        const auto* r = region();
+        if (r == nullptr || ! sameStretch (*r, *focusSeen) || additional.size() != additionalSeen.size())
+            return false;
+        const auto& regions = trackRegions();
+        for (std::size_t i = 0; i < additional.size(); ++i)
+            if (additional[i] < 0 || additional[i] >= static_cast<int> (regions.size())
+                || ! sameStretch (regions[static_cast<std::size_t> (additional[i])], additionalSeen[i]))
+                return false;
+        return true;
+    }
+
+    // When the track's list changed under the selection, drops the range and the
+    // selected regions and finds the focus again: the same region wherever it now
+    // sits, else the one now playing where it started, which is the take that
+    // replaced it, else none.
+    void refindSelection()
+    {
+        if (! focusSeen || trackIdx < 0 || trackIdx >= Session::kNumTracks || selectionAsSeen())
+            return;
+        const AudioRegion was = *focusSeen;
+        rangeActive = false;
+        additional.clear();
+        // A range still being dragged out is in the old focus's file samples.
+        if (drag == Drag::range)
+            drag = Drag::dropped;
+        int found = indexOfRegion (was);
+        if (found < 0)
+            found = regionPlayingAt (was.timelineStart);
+        // With no take lanes to click, an editor on no region shows nothing at all.
+        if (const auto count = static_cast<int> (trackRegions().size()); found < 0 && count > 0 && takeCount() == 0)
+            found = std::clamp (regionIdx, 0, count - 1);
+        focusRegion (found);
+    }
+
     void undoStep (bool redo)
     {
         std::optional<AudioRegion> focused;
@@ -1805,13 +1891,20 @@ private:
         auto& clip = engine.getRegionClipboard();
         if (! clip.hasContent) return;
         AudioRegion pasted = clip.region;
+        const bool unfocused = region() == nullptr;
         if (const auto* r = region())
             pasted.timelineStart = r->timelineStart + (editCursorSample - r->sourceOffset);
         else
             pasted.timelineStart = engine.getTransport().getPlayhead();
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction ("Paste region");
-        undo.perform (new PasteRegionAction (session, engine, trackIdx, pasted));
+        // The paste goes on the end of the track's list.
+        if (undo.perform (new PasteRegionAction (session, engine, trackIdx, pasted)) && unfocused)
+        {
+            regionIdx = static_cast<int> (trackRegions().size()) - 1;
+            if (const auto* r = region())
+                editCursorSample = r->sourceOffset;
+        }
     }
 
     // The part of the range the focused region covers, in file samples. A split, a
@@ -2365,7 +2458,19 @@ private:
     {
         auto* r = region();
         if (r == nullptr)
-            return;
+        {
+            // With nothing in focus a press on a region focuses it, and is then a
+            // press on the focused region.
+            const int hit = button != ImGuiMouseButton_Middle && layout.wave.contains (p) ? regionIndexAtX (p.x) : -1;
+            if (hit < 0)
+                return;
+            additional.clear();
+            rangeActive = false;
+            regionIdx = hit;
+            r = region();
+            editCursorSample = r->sourceOffset
+                             + std::clamp<std::int64_t> (timelineForX (p.x) - r->timelineStart, 0, r->lengthInSamples);
+        }
         const auto& io = ImGui::GetIO();
         const bool command = io.KeyCtrl || io.KeySuper;
         const bool inWave = layout.wave.contains (p);
@@ -5096,6 +5201,7 @@ private:
         // it. Not mid-drag: a trim the pointer still holds can go back out or be cancelled.
         if (rangeActive && drag == Drag::none && ! coveredRange())
             rangeActive = false;
+        noteSelection();
     }
 };
 } // namespace

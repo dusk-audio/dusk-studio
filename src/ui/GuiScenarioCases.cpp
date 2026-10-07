@@ -5323,6 +5323,226 @@ const ScenarioRegistrar audioEditorRecordStopCancelsDrag { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorRecordStopCancelsDrag (host, ctx); }
 } };
 
+// Three regions of one take end to end on track 1, at 0, 24000 and 48000, with the
+// editor open on one of them.
+std::optional<ScenarioResult> beginEditorFocusCase (GuiHost& host, ScenarioContext& ctx, int focused)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& track = ctx.session().track (0);
+    if (! addLevelTake (ctx, track, "Take 1", 0, kTakeCaseLength, kWholeTakeLevel))
+        return ScenarioResult::fail ("could not write take fixture");
+    for (const auto& [from, to] : { std::pair<std::int64_t, std::int64_t> { 0, 24000 }, { 24000, 48000 }, { 48000, 96000 } })
+        if (auto region = regionFromTake (track.takes[0], from, to))
+            track.regions.push_back (*region);
+    if (track.regions.size() != 3) return ScenarioResult::fail ("the setup did not leave three regions");
+    ctx.session().audioEditorSnap = false;
+    if (! host.openAudioEditor (0, focused)) return ScenarioResult::fail ("audio editor unavailable");
+    return std::nullopt;
+}
+
+// The region the editor has in focus, or nullopt when it has none or names one the
+// track does not hold.
+std::optional<AudioRegion> editorFocus (GuiHost& host, const Track& track)
+{
+    const auto selection = host.audioEditorSelection();
+    if (selection.size() != 4 || selection[0] < 0 || selection[0] >= (std::int64_t) track.regions.size())
+        return std::nullopt;
+    return track.regions[(std::size_t) selection[0]];
+}
+
+// Puts a new take on the track the way a recording's stop does: the notice the shell
+// passes to the editor when `announced`, then the take carved into the regions under it.
+std::optional<TakeId> landTake (ScenarioContext& ctx, Track& track, std::int64_t start, std::int64_t length,
+                                bool announced)
+{
+    auto& engine = ctx.engine();
+    if (announced && engine.onBeforeRecordCommit)
+        engine.onBeforeRecordCommit (1u);
+    const auto id = addLevelTake (ctx, track, "Take 2", start, length, kShortTakeLevel);
+    if (id)
+        promoteTakeRange (ctx.session(), track, track.takes.back(), start, start + length);
+    return id;
+}
+
+// A take that lands over the last two of three regions while the editor shows the last
+// leaves the editor on the take's region, a click on the first region focuses that one,
+// and Delete then removes it alone.
+std::optional<ScenarioResult> runAudioEditorRecordStopRefocuses (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginEditorFocusCase (host, ctx, 2)) return early;
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (0);
+    const auto landed = std::make_shared<TakeId> (0);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&ctx, &track, landed]
+    {
+        if (const auto id = landTake (ctx, track, 24000, 72000, true))
+            *landed = *id;
+        ctx.expect (*landed != 0 && track.regions.size() == 2, "the take did not replace the last two regions");
+    }, [&host, &track] { const auto focus = editorFocus (host, track); return focus && focus->timelineStart == 48000; },
+                        "the editor never showed the last region" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickAudioEditorSample (12000), "the first region is not clickable"); },
+                        [&host, &track, landed] { const auto focus = editorFocus (host, track); return focus && focus->takeId == *landed; },
+                        "the take landed and the editor is not on its region" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not handled"); },
+                        [&host, &track] { const auto focus = editorFocus (host, track); return focus && focus->timelineStart == 0; },
+                        "the click did not focus the first region" });
+    steps->push_back ({ 150, [&host, &ctx, &engine, &track, landed]
+    {
+        ctx.expect (track.regions.size() == 1 && track.regions[0].takeId == *landed,
+                    "Delete did not remove the first region alone");
+        ctx.expect (undoDescription (engine) == "Delete region", "the delete is not one \"Delete region\" step");
+        const auto focus = editorFocus (host, track);
+        ctx.expect (focus && focus->takeId == *landed, "the delete did not leave the editor on the take's region");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorRecordStopRefocuses { Scenario {
+    "gui.audio_editor_record_stop_refocuses", { "gui", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorRecordStopRefocuses (host, ctx); }
+} };
+
+// A take that replaces the first region and cuts into the second while the editor
+// shows the first leaves the editor on the take's region, not on what is left of the
+// second, whether or not the editor was told the take was coming. Delete then removes
+// the take's region.
+std::optional<ScenarioResult> runAudioEditorTakeReplacesFocus (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginEditorFocusCase (host, ctx, 0)) return early;
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (0);
+    const auto before = track.regions;
+    const auto takesBefore = track.takes;
+    const auto landed = std::make_shared<TakeId> (0);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool announced : { true, false })
+    {
+        const std::string label = announced ? "a take the editor was told of" : "a take landing unannounced";
+        steps->push_back ({ 100, [&ctx, &track, landed, announced, label]
+        {
+            *landed = landTake (ctx, track, 0, 36000, announced).value_or (0);
+            ctx.expect (*landed != 0 && track.regions.size() == 3 && track.regions[0].timelineStart > 24000,
+                        label + ": the take did not replace the first region and cut into the second");
+        }, [&host, &track] { const auto focus = editorFocus (host, track); return focus && focus->timelineStart == 0; },
+                            label + ": the editor never showed the first region" });
+        steps->push_back ({ 100, [&host, &ctx, label]
+        { ctx.expect (host.pressAudioEditorKey ("delete"), label + ": Delete was not handled"); },
+                            [&host, &track, landed] { const auto focus = editorFocus (host, track); return focus && focus->takeId == *landed; },
+                            label + ": the editor is not on the take's region" });
+        steps->push_back ({ 150, [&host, &ctx, &engine, &track, before, takesBefore, landed, label]
+        {
+            ctx.expect (track.regions.size() == 2
+                        && std::none_of (track.regions.begin(), track.regions.end(),
+                                         [landed] (const AudioRegion& r) { return r.takeId == *landed; }),
+                        label + ": Delete did not remove the take's region alone");
+            ctx.expect (host.audioEditorOpen(), label + ": the delete closed the editor");
+            host.closeAudioEditor();
+            track.regions = before;
+            track.takes = takesBefore;
+            engine.getUndoManager().clearUndoHistory();
+        } });
+        steps->push_back ({ 150, [&host, &ctx, label]
+        { ctx.expect (host.openAudioEditor (0, 0), label + ": the editor did not reopen"); } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorTakeReplacesFocus { Scenario {
+    "gui.audio_editor_take_replaces_focus", { "gui", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorTakeReplacesFocus (host, ctx); }
+} };
+
+// With the focused region gone from under the editor and nothing in focus, a click on
+// a region that is left focuses it, and Delete then removes it.
+std::optional<ScenarioResult> runAudioEditorClickFocusesUnfocused (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginEditorFocusCase (host, ctx, 2)) return early;
+    auto& track = ctx.session().track (0);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&track] { track.regions.erase (track.regions.begin() + 1, track.regions.end()); },
+                        [&host, &track] { const auto focus = editorFocus (host, track); return focus && focus->timelineStart == 48000; },
+                        "the editor never showed the last region" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickAudioEditorSample (12000), "the region that is left is not clickable"); },
+                        [&host] { const auto selection = host.audioEditorSelection(); return selection.size() == 4 && selection[0] == -1; },
+                        "the editor kept a focus on a region that is gone" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not handled"); },
+                        [&host, &track] { const auto focus = editorFocus (host, track); return focus && focus->timelineStart == 0; },
+                        "a click with nothing in focus did not focus the region" });
+    steps->push_back ({ 150, [&host, &ctx, &track]
+    {
+        ctx.expect (track.regions.empty(), "Delete did not remove the region the click focused");
+        ctx.expect (host.audioEditorOpen(), "the editor closed with takes still on the track");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorClickFocusesUnfocused { Scenario {
+    "gui.audio_editor_click_focuses_unfocused", { "gui", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorClickFocusesUnfocused (host, ctx); }
+} };
+
+// With every region deleted and the takes left, Paste puts the copied region on the
+// track in focus, and Delete then removes it.
+std::optional<ScenarioResult> runAudioEditorPasteFocuses (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginEditorFocusCase (host, ctx, 0)) return early;
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (0);
+    const auto clipboard = engine.getRegionClipboard();
+    ctx.cleanup ([&engine, clipboard] { engine.getRegionClipboard() = clipboard; });
+    ctx.cleanup ([&engine, at = engine.getTransport().getPlayhead()] { engine.getTransport().setPlayhead (at); });
+    engine.getTransport().setPlayhead (12000);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.pressAudioEditorKey ("command + C"), "Copy was not handled"); },
+                        [&host, &track] { const auto focus = editorFocus (host, track); return focus && focus->timelineStart == 0; },
+                        "the editor never showed the first region" });
+    for (std::size_t left = 3; left > 0; --left)
+        steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not handled"); },
+                            [&track, left] { return track.regions.size() == left; }, "Delete did not remove one region" });
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        const auto selection = host.audioEditorSelection();
+        ctx.expect (host.audioEditorOpen() && selection.size() == 4 && selection[0] == -1,
+                    "deleting every region did not leave the editor up with none in focus");
+        ctx.expect (host.pressAudioEditorKey ("command + V"), "Paste was not handled");
+    }, [&track] { return track.regions.empty(); }, "Delete did not remove the last region" });
+    steps->push_back ({ 100, [&host, &ctx, &engine]
+    {
+        ctx.expect (undoDescription (engine) == "Paste region", "the paste is not one \"Paste region\" step");
+        ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not handled");
+    }, [&host, &track] { const auto focus = editorFocus (host, track); return focus && focus->timelineStart == 12000; },
+                        "Paste with no region in focus did not focus the pasted region" });
+    steps->push_back ({ 150, [&host, &ctx, &engine, &track]
+    {
+        ctx.expect (track.regions.empty(), "Delete did not remove the pasted region");
+        ctx.expect (undoDescription (engine) == "Delete region", "the delete is not one \"Delete region\" step");
+        ctx.expect (host.audioEditorOpen(), "the editor closed with takes still on the track");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorPasteFocuses { Scenario {
+    "gui.audio_editor_paste_focuses", { "gui", "keyboard", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorPasteFocuses (host, ctx); }
+} };
+
 // A region fixture for the editor cases below: one mono region of a steady level over
 // the first two seconds of track 1, its own file, naming no take.
 std::optional<ScenarioResult> beginEditorRegionCase (GuiHost& host, ScenarioContext& ctx)
