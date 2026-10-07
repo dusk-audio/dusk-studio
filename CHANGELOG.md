@@ -151,10 +151,12 @@ Takes live on the track now, and the audio editor is where you comp them.
   file summed overlapping regions at full level and left their fades out, so
   every comp seam came out at twice its level for the length of the crossfade.
   A join now renders what the regions played: each fade with its shape, and
-  each overlap crossfaded as playback crossfades it. The fades at the outer
-  edges stay on the joined region. Regions that play one unbroken stretch of
-  one recording, such as a comp section switched back to its own take, join
-  into one region of that recording with nothing rendered.
+  each overlap crossfaded as playback crossfades it. A fade at an outer edge
+  stays on the joined region, unless another region sounds under it, and then
+  it is rendered into the file. Regions that play one unbroken stretch of one
+  recording at one gain, such as a comp section switched back to its own take,
+  join into one region of that recording with nothing rendered and no fade
+  left at the joins.
 - **The audio editor keeps its focus when a take lands, and a click gets it
   back** (#851). A recording that stopped with the editor open left it on no
   region, or on a different one, so Delete could remove a region that was never

@@ -100,7 +100,7 @@ public:
     // same body-relative design pixels as gesturePointForScenario.
     virtual bool automationPointForScenario (std::int64_t timelineSample, float value, ImVec2& point) const = 0;
 
-    // { regionIndex, rangeActive, rangeStart, rangeEnd }.
+    // { regionIndex, rangeActive, rangeStart, rangeEnd, additionalCount }.
     virtual std::vector<std::int64_t> selectionForScenario() const = 0;
 
     // Fits the whole track in view and scrolls the take lanes to the take's lane, the

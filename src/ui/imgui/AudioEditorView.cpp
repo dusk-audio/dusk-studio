@@ -434,6 +434,8 @@ public:
         // the timeline's business.
         if (session.editMode == EditMode::Grid)
             session.editMode = EditMode::Grab;
+        // A list that changes before the first frame is found again like any other.
+        noteSelection();
     }
 
     ~AudioEditorViewImpl() override { cancelDrag(); }
@@ -562,7 +564,8 @@ public:
 
     std::vector<std::int64_t> selectionForScenario() const override
     {
-        return { regionIdx, rangeActive ? 1 : 0, rangeStartSample, rangeEndSample };
+        return { regionIdx, rangeActive ? 1 : 0, rangeStartSample, rangeEndSample,
+                 static_cast<std::int64_t> (additional.size()) };
     }
 
     void revealTakes (std::uint64_t take) override
@@ -1684,12 +1687,8 @@ private:
     {
         const auto& regions = trackRegions();
         for (int i = 0; i < static_cast<int> (regions.size()); ++i)
-        {
-            const auto& r = regions[static_cast<std::size_t> (i)];
-            if (r.sameFile (like) && r.timelineStart == like.timelineStart
-                && r.sourceOffset == like.sourceOffset && r.lengthInSamples == like.lengthInSamples)
+            if (sameStretch (regions[static_cast<std::size_t> (i)], like))
                 return i;
-        }
         return -1;
     }
 
@@ -1713,6 +1712,25 @@ private:
                 playing = i;
         }
         return playing;
+    }
+
+    // What a cut left of a region: the earliest region of its file, on its alignment,
+    // that plays inside its old span, or -1.
+    int survivorOf (const AudioRegion& was) const
+    {
+        const auto& regions = trackRegions();
+        const auto wasEnd = was.timelineStart + was.lengthInSamples;
+        int survivor = -1;
+        for (int i = 0; i < static_cast<int> (regions.size()); ++i)
+        {
+            const auto& r = regions[static_cast<std::size_t> (i)];
+            if (r.lengthInSamples > 0 && r.sameFile (was)
+                && r.sourceOffset - r.timelineStart == was.sourceOffset - was.timelineStart
+                && r.timelineStart < wasEnd && was.timelineStart < r.timelineStart + r.lengthInSamples
+                && (survivor < 0 || r.timelineStart < regions[static_cast<std::size_t> (survivor)].timelineStart))
+                survivor = i;
+        }
+        return survivor;
     }
 
     void noteSelection()
@@ -1744,8 +1762,8 @@ private:
 
     // When the track's list changed under the selection, drops the range and the
     // selected regions and finds the focus again: the same region wherever it now
-    // sits, else the one now playing where it started, which is the take that
-    // replaced it, else none.
+    // sits, else what a cut left of it, else the one now playing where it started,
+    // which is the take that replaced it, else none.
     void refindSelection()
     {
         if (! focusSeen || trackIdx < 0 || trackIdx >= Session::kNumTracks || selectionAsSeen())
@@ -1757,6 +1775,8 @@ private:
         if (drag == Drag::range)
             drag = Drag::dropped;
         int found = indexOfRegion (was);
+        if (found < 0)
+            found = survivorOf (was);
         if (found < 0)
             found = regionPlayingAt (was.timelineStart);
         // With no take lanes to click, an editor on no region shows nothing at all.
@@ -2083,17 +2103,28 @@ private:
         if (! joinable()) return;
         std::vector<int> indices = additional;
         indices.push_back (regionIdx);
+        std::sort (indices.begin(), indices.end());
+        indices.erase (std::unique (indices.begin(), indices.end()), indices.end());
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction (("Join " + std::to_string (indices.size()) + " regions").c_str());
-        undo.perform (new JoinRegionsAction (session, engine, trackIdx, indices));
+        // The joined region takes the slot of the earliest-starting region it replaced,
+        // the lower index where two start together, once the others are out of the list.
+        const auto& regions = trackRegions();
+        const int lead = *std::min_element (indices.begin(), indices.end(), [&regions] (int a, int b)
+        {
+            const auto startA = regions[static_cast<std::size_t> (a)].timelineStart;
+            const auto startB = regions[static_cast<std::size_t> (b)].timelineStart;
+            return startA != startB ? startA < startB : a < b;
+        });
+        const auto joinedAt = lead - static_cast<int> (std::count_if (indices.begin(), indices.end(),
+                                                                      [lead] (int index) { return index < lead; }));
+        if (! undo.perform (new JoinRegionsAction (session, engine, trackIdx, indices)))
+            return;
         // A join across a gap or two files plays a new file, which the range's samples
         // do not address.
         rangeActive = false;
         additional.clear();
-        // The joined region takes the lowest of the indices it replaced.
-        const int lowest = *std::min_element (indices.begin(), indices.end());
-        const int total = static_cast<int> (trackRegions().size());
-        regionIdx = std::clamp (lowest, 0, std::max (0, total - 1));
+        regionIdx = joinedAt;
     }
 
     void reverseRegion()

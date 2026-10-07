@@ -4,7 +4,6 @@
 #include "../foundation/Decibels.h"
 
 #include <algorithm>
-#include <filesystem>
 #include <limits>
 #include <memory>
 
@@ -12,12 +11,6 @@ namespace duskstudio
 {
 namespace
 {
-template <typename FileType>
-std::filesystem::path audioPath (const FileType& file)
-{
-    return std::filesystem::u8path (file.getFullPathName().toStdString());
-}
-
 struct Voice
 {
     const AudioRegion* region = nullptr;
@@ -37,7 +30,7 @@ bool regionsPlayOneFileStretch (const std::vector<AudioRegion>& regions)
 
     // A run of splits snapped to slightly different sub-sample boundaries can
     // leave neighbours a sample apart; they still read as one stretch.
-    constexpr std::int64_t kAbutTolerance = 1;
+    static constexpr std::int64_t kAbutTolerance = 1;
     const auto within = [] (std::int64_t v) noexcept { return v >= -kAbutTolerance && v <= kAbutTolerance; };
 
     auto reach = endOf (regions.front());
@@ -78,7 +71,7 @@ bool mixRegionsAsPlayed (const std::vector<AudioRegion>& regions,
     {
         Voice v;
         v.region = &reg;
-        v.reader = dusk::audio::FileReader::open (audioPath (reg.file));
+        v.reader = dusk::audio::FileReader::open (reg.filePath());
         if (v.reader == nullptr) continue;
         v.fadeIn  = reg.fadeInSamples;
         v.fadeOut = reg.fadeOutSamples;
