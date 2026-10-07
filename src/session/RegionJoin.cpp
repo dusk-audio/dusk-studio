@@ -132,8 +132,13 @@ bool mixRegionsAsPlayed (const std::vector<AudioRegion>& regions,
         dusk::audio::PlanarBuffer tmp;
         if (! tmp.setSize (chs, regSamples))
             return false;
-        if (v.reader->read (tmp.data(), chs, reg.sourceOffset, regSamples) != regSamples)
+        // A mono file plays in the centre of a stereo track, so it fills every
+        // channel of the mix; the reader alone would leave the others silent.
+        const int fileChs = std::clamp (v.reader->info().numChannels, 1, chs);
+        if (v.reader->read (tmp.data(), fileChs, reg.sourceOffset, regSamples) != regSamples)
             return false;
+        for (int c = fileChs; c < chs; ++c)
+            std::copy_n (tmp.channel (0), regSamples, tmp.channel (c));
 
         const float regionGain = dusk::audio::decibelsToGain (
             std::clamp (reg.gainDb, -60.0f, 24.0f), -60.0f);

@@ -276,3 +276,21 @@ TEST_CASE ("A join render refuses a region its file cannot fill", "[region][join
     CHECK_FALSE (mixRegionsAsPlayed ({ regionOf (f.loud, 0, 1000, 0), regionOf (f.quiet, 1000, kFrames, 100) },
                                      mix, outer));
 }
+
+TEST_CASE ("A join render puts a mono file on every channel of a stereo mix", "[region][join]")
+{
+    Fixture f;
+    dusk::audio::PlanarBuffer mix;
+    REQUIRE (mix.setSize (2, 1000));
+    for (int c = 0; c < 2; ++c)
+        std::fill_n (mix.channel (c), 1000, 0.0f);
+    JoinedFades outer;
+    REQUIRE (mixRegionsAsPlayed ({ regionOf (f.loud, 0, 1000, 0) }, mix, outer));
+
+    const auto source = tone (0.5f);
+    for (int i = 0; i < 1000; ++i)
+    {
+        REQUIRE_THAT (mix.channel (0)[i], Catch::Matchers::WithinAbs (source[(std::size_t) i], 1.0e-6f));
+        REQUIRE_THAT (mix.channel (1)[i], Catch::Matchers::WithinAbs (source[(std::size_t) i], 1.0e-6f));
+    }
+}
