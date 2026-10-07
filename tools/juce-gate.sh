@@ -95,7 +95,9 @@ stale="$(comm -13 <(printf '%s\n' "$currentPaths") <(printf '%s\n' "$allowPaths"
 grown=""
 while IFS=$'\t' read -r path count; do
     [[ -z "$path" ]] && continue
-    ceiling="$(printf '%s\n' "$allow" | awk -F'\t' -v p="$path" '$1 == p { print $2; exit }')"
+    # A here-string, not a pipe: awk leaves at its match, and under pipefail a
+    # writer still feeding the pipe then fails the gate with SIGPIPE.
+    ceiling="$(awk -F'\t' -v p="$path" '$1 == p { print $2; exit }' <<<"$allow")"
     [[ -z "$ceiling" ]] && continue
     if (( count > ceiling )); then
         grown+="  ~ $path: $ceiling -> $count"$'\n'
