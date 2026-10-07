@@ -147,6 +147,14 @@ Takes live on the track now, and the audio editor is where you comp them.
   with no latency got no reset at the wrap, so a note sounding across it rang
   until Stop. With an instrument that reports latency, a wrap could reset it
   twice and re-attack the held notes.
+- **Joining regions keeps the crossfades between them** (#850). The joined
+  file summed overlapping regions at full level and left their fades out, so
+  every comp seam came out at twice its level for the length of the crossfade.
+  A join now renders what the regions played: each fade with its shape, and
+  each overlap crossfaded as playback crossfades it. The fades at the outer
+  edges stay on the joined region. Regions that play one unbroken stretch of
+  one recording, such as a comp section switched back to its own take, join
+  into one region of that recording with nothing rendered.
 
 ## [0.14.0] - 2026-09-29
 

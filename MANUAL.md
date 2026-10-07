@@ -1325,7 +1325,7 @@ A right-click on any region shows a context menu:
 
 - **Loop region**: set the transport loop to span the region's boundaries.
 - **Split at playhead**.
-- **Join selected regions** (enabled when two or more regions are selected): glue them into one.
+- **Join selected regions** (enabled when two or more regions are selected): glue them into one. The result plays as the regions did, fades and crossfades included. Regions that together play one unbroken stretch of one recording become a single region of it; anything else is rendered into a new file.
 - **Label**: type a custom name.
 - **Mute** the region (silences it without deleting it).
 - **Lock** the region (prevents accidental edits).

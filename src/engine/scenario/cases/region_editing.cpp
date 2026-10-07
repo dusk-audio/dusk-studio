@@ -1,13 +1,20 @@
 #include "../Scenario.h"
 #include "../ScenarioContext.h"
 #include "../../AudioEngine.h"
+#include "../../audiofile/FileReader.h"
+#include "../../audiofile/FileWriter.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/Session.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::scenario
@@ -15,6 +22,8 @@ namespace duskstudio::scenario
 namespace
 {
 constexpr int kTrack = 3;
+
+using SessionFile = std::decay_t<decltype (std::declval<const Session&>().getSessionDirectory())>;
 
 AudioRegion regionAt (std::int64_t start, std::int64_t length, std::int64_t offset = 0)
 {
@@ -187,6 +196,214 @@ ScenarioResult joinRejoinsASplit (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+std::filesystem::path pathOf (const SessionFile& file)
+{
+    return std::filesystem::u8path (file.getFullPathName().toStdString());
+}
+
+// A sine of one phase at every level, so two files of it line up on the
+// timeline when their regions read them from the same offset.
+std::vector<float> tone (int length, float level)
+{
+    std::vector<float> samples ((std::size_t) length);
+    for (int i = 0; i < length; ++i)
+        samples[(std::size_t) i] = level * std::sin (6.283185307f * 220.0f * (float) i
+                                                     / (float) ScenarioContext::kSampleRate);
+    return samples;
+}
+
+std::optional<SessionFile> writtenFile (ScenarioContext& ctx, const std::string& name,
+                                        const std::vector<float>& samples)
+{
+    const auto path = ctx.tempDir() / (name + ".wav");
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = ScenarioContext::kSampleRate;
+    spec.numChannels = 1;
+    spec.bitsPerSample = 32;
+    auto writer = dusk::audio::FileWriter::create (path, spec);
+    const float* channels[] = { samples.data() };
+    if (writer == nullptr || ! writer->write (channels, 1, (std::int64_t) samples.size()) || ! writer->flush())
+        return std::nullopt;
+    return SessionFile (path.u8string().c_str());
+}
+
+std::vector<float> samplesOf (const SessionFile& file)
+{
+    auto reader = dusk::audio::FileReader::open (pathOf (file));
+    if (reader == nullptr) return {};
+    std::vector<float> samples ((std::size_t) reader->info().numFrames);
+    float* dest[] = { samples.data() };
+    if (reader->read (dest, 1, 0, (std::int64_t) samples.size()) != (std::int64_t) samples.size())
+        return {};
+    return samples;
+}
+
+AudioRegion regionOf (const SessionFile& file, std::int64_t start, std::int64_t length, std::int64_t offset)
+{
+    auto r = regionAt (start, length, offset);
+    r.file = file;
+    return r;
+}
+
+std::size_t rendersIn (ScenarioContext& ctx)
+{
+    const auto takesDir = pathOf (ctx.session().getSessionDirectory().getChildFile ("takes"));
+    std::error_code error;
+    std::size_t count = 0;
+    for (std::filesystem::directory_iterator it (takesDir, error), end; ! error && it != end; it.increment (error))
+        ++count;
+    return count;
+}
+
+constexpr std::int64_t kSeam = 64;
+
+// A comp that plays one take throughout is three regions of its file meeting at
+// crossfaded seams. Joined, they are one region that plays the file, and
+// nothing is rendered.
+ScenarioResult joinOfOneFileAcrossSeamsPlaysTheFile (ScenarioContext& ctx)
+{
+    const auto file = writtenFile (ctx, "join-one-file", tone (14400, 0.5f));
+    if (! file) return ScenarioResult::fail ("could not write the source file");
+    auto& regs = regionsOf (ctx);
+    auto head = regionOf (*file, 1000, 4832, 200);
+    head.fadeOutSamples = kSeam;
+    head.fadeOutShape = FadeShape::RaisedCosine;
+    auto middle = regionOf (*file, 5768, 4864, 4968);
+    middle.fadeInSamples = middle.fadeOutSamples = kSeam;
+    middle.fadeInShape = middle.fadeOutShape = FadeShape::RaisedCosine;
+    auto tail = regionOf (*file, 10568, 3832, 9768);
+    tail.fadeInSamples = kSeam;
+    tail.fadeInShape = FadeShape::RaisedCosine;
+    head.takeId = middle.takeId = tail.takeId = 7;
+    regs = { head, middle, tail };
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    undo.beginNewTransaction();
+
+    ctx.expect (undo.perform (new JoinRegionsAction (ctx.session(), ctx.engine(), kTrack, { 0, 1, 2 })),
+                "the join was refused");
+    if (ctx.expect (regs.size() == 1, "the join did not leave one region"))
+    {
+        ctx.expect (regs[0].file == *file && sameSpan (regs[0], 1000, 13400, 200),
+                    "the joined region does not play the file straight through");
+        ctx.expect (regs[0].fadeInSamples == 0 && regs[0].fadeOutSamples == 0,
+                    "a seam fade was left on the joined region");
+        ctx.expect (regs[0].takeId == 7, "the joined region stopped naming the take it plays");
+    }
+    ctx.expect (rendersIn (ctx) == 0, "joining regions of one file on one alignment rendered a file");
+    ctx.expect (undo.undo() && regs.size() == 3 && sameSpan (regs[1], 5768, 4864, 4968),
+                "undo did not put the three regions back");
+
+    regs[1].sourceOffset += 10;
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new JoinRegionsAction (ctx.session(), ctx.engine(), kTrack, { 0, 1, 2 }))
+                    && regs.size() == 1 && regs[0].file != *file,
+                "overlapping regions that read the file from different places joined without a render");
+    return ctx.verdict();
+}
+
+// Two takes meeting at a seam join into a file that holds the crossfade the
+// regions played, and the fades at the outer edges stay on the region instead
+// of going into the file as well.
+ScenarioResult joinRendersASeamAsItPlayed (ScenarioContext& ctx)
+{
+    constexpr std::int64_t kLength = 9600, kMeet = 4800;
+    const auto loud = tone ((int) kLength, 0.5f);
+    const auto quiet = tone ((int) kLength, 0.3f);
+    const auto first = writtenFile (ctx, "join-seam-first", loud);
+    const auto second = writtenFile (ctx, "join-seam-second", quiet);
+    if (! first || ! second) return ScenarioResult::fail ("could not write the source files");
+    auto& regs = regionsOf (ctx);
+    const std::int64_t overlapStart = kMeet - kSeam / 2, overlapEnd = kMeet + kSeam / 2;
+    auto left = regionOf (*first, 0, overlapEnd, 0);
+    left.fadeInSamples = 480;
+    left.fadeInShape = FadeShape::Exp;
+    left.fadeOutSamples = kSeam;
+    left.fadeOutShape = FadeShape::RaisedCosine;
+    auto right = regionOf (*second, overlapStart, kLength - overlapStart, overlapStart);
+    right.fadeInSamples = kSeam;
+    right.fadeInShape = FadeShape::RaisedCosine;
+    right.fadeOutSamples = 960;
+    right.fadeOutShape = FadeShape::Log;
+    regs = { left, right };
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    undo.beginNewTransaction();
+
+    if (! ctx.expect (undo.perform (new JoinRegionsAction (ctx.session(), ctx.engine(), kTrack, { 0, 1 })),
+                      "the join was refused")
+        || ! ctx.expect (regs.size() == 1, "the join did not leave one region"))
+        return ctx.verdict();
+    const auto joined = samplesOf (regs[0].file);
+    if (! ctx.expect (regs[0].file != *first && regs[0].file != *second && (std::int64_t) joined.size() == kLength,
+                      "the join did not render the whole span into a file of its own"))
+        return ctx.verdict();
+
+    float worst = 0.0f, overlapPeak = 0.0f;
+    std::int64_t worstAt = 0;
+    for (std::int64_t i = 0; i < kLength; ++i)
+    {
+        float expected = 0.0f;
+        if (i < overlapEnd)
+            expected += loud[(std::size_t) i]
+                      * (i >= overlapStart ? applyFadeShape ((float) (overlapEnd - i) / (float) kSeam,
+                                                             FadeShape::RaisedCosine)
+                                           : 1.0f);
+        if (i >= overlapStart)
+            expected += quiet[(std::size_t) i]
+                      * (i < overlapEnd ? applyFadeShape ((float) (i - overlapStart) / (float) kSeam,
+                                                          FadeShape::RaisedCosine)
+                                        : 1.0f);
+        const float off = std::abs (joined[(std::size_t) i] - expected);
+        if (off > worst) { worst = off; worstAt = i; }
+        if (i >= overlapStart && i < overlapEnd)
+            overlapPeak = std::max (overlapPeak, std::abs (joined[(std::size_t) i]));
+    }
+    ctx.expect (worst < 1.0e-4f, "the joined file is " + std::to_string (worst) + " away from the crossfade at sample "
+                                     + std::to_string (worstAt));
+    ctx.expect (overlapPeak <= 0.5f + 1.0e-4f,
+                "the seam peaks at " + std::to_string (overlapPeak) + ", above either take");
+    ctx.expect (regs[0].fadeInSamples == 480 && regs[0].fadeInShape == FadeShape::Exp
+                    && regs[0].fadeOutSamples == 960 && regs[0].fadeOutShape == FadeShape::Log,
+                "the joined region lost a fade from its outer edges");
+    ctx.expect (undo.undo() && regs.size() == 2 && regs[1].file == *second,
+                "undo did not separate the regions again");
+    return ctx.verdict();
+}
+
+// Regions with a space between them join into a file that is silent there.
+ScenarioResult joinRendersAGapAsSilence (ScenarioContext& ctx)
+{
+    const auto source = tone (9600, 0.5f);
+    const auto file = writtenFile (ctx, "join-gap", source);
+    if (! file) return ScenarioResult::fail ("could not write the source file");
+    auto& regs = regionsOf (ctx);
+    regs = { regionOf (*file, 0, 2400, 0), regionOf (*file, 3400, 2400, 2400) };
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+    undo.beginNewTransaction();
+
+    if (! ctx.expect (undo.perform (new JoinRegionsAction (ctx.session(), ctx.engine(), kTrack, { 0, 1 })),
+                      "the join was refused")
+        || ! ctx.expect (regs.size() == 1 && sameSpan (regs[0], 0, 5800, 0),
+                         "the join did not leave one region over the whole span"))
+        return ctx.verdict();
+    const auto joined = samplesOf (regs[0].file);
+    if (! ctx.expect (regs[0].file != *file && joined.size() == 5800, "the join did not render the span"))
+        return ctx.verdict();
+    float gapPeak = 0.0f, worst = 0.0f;
+    for (std::size_t i = 0; i < joined.size(); ++i)
+    {
+        if (i >= 2400 && i < 3400)
+            gapPeak = std::max (gapPeak, std::abs (joined[i]));
+        else
+            worst = std::max (worst, std::abs (joined[i] - source[i < 2400 ? i : i - 1000]));
+    }
+    ctx.expect (! (gapPeak > 0.0f), "the gap between the regions is not silent in the joined file");
+    ctx.expect (worst < 1.0e-4f, "the joined file does not hold the regions either side of the gap");
+    return ctx.verdict();
+}
+
 // An edit over several MIDI regions of one track publishes the track's regions
 // once on perform, undo and redo: the snapshot keeps one retired vector, so a
 // second publish inside an audio block frees the vector that block reads. A
@@ -309,6 +526,15 @@ const ScenarioRegistrar editRegistrar { Scenario {
 const ScenarioRegistrar joinRegistrar { Scenario {
     "region.join_rejoins_a_split", { "region", "edit", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (joinRejoinsASplit, ctx); } } };
+const ScenarioRegistrar joinOneFileRegistrar { Scenario {
+    "region.join_of_one_file_across_seams_plays_the_file", { "region", "edit", "undo", "take" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (joinOfOneFileAcrossSeamsPlaysTheFile, ctx); } } };
+const ScenarioRegistrar joinSeamRegistrar { Scenario {
+    "region.join_renders_a_seam_as_it_played", { "region", "edit", "undo", "take" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (joinRendersASeamAsItPlayed, ctx); } } };
+const ScenarioRegistrar joinGapRegistrar { Scenario {
+    "region.join_renders_a_gap_as_silence", { "region", "edit" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (joinRendersAGapAsSilence, ctx); } } };
 const ScenarioRegistrar batchedRegistrar { Scenario {
     "region.batched_edits_publish_and_rebuild_once", { "region", "edit", "undo", "midi" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (batchedEditsPublishAndRebuildOnce, ctx); } } };

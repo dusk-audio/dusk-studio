@@ -277,16 +277,17 @@ private:
 };
 
 // Joins (glues) a set of audio regions on the same track into one.
-//   - Fast path: when every selected region references the same source
-//     file and the regions abut (or overlap) on the timeline, the join
-//     collapses them into a single AudioRegion by extending the leading
-//     region's lengthInSamples and erasing the rest. Source data and
-//     existing fades at the outer edges are preserved, and so is the
+//   - Fast path: when the selected regions play one unbroken stretch of
+//     one file (regionsPlayOneFileStretch) at one gain and mute state, the
+//     join collapses them into a single AudioRegion by extending the
+//     leading region's lengthInSamples and erasing the rest. Source data
+//     and existing fades at the outer edges are preserved, and so is the
 //     takeId when every region names the same take.
-//   - Slow path: when sources differ or there are gaps, the join renders
-//     a fresh WAV into <session>/takes/ that mixes every selected region
-//     across [minStart, maxEnd) and replaces the selection with one
-//     region pointing at that file, which names no take.
+//   - Slow path: otherwise the join renders a fresh WAV into
+//     <session>/takes/ that holds what the selected regions played across
+//     [minStart, maxEnd), their fades and crossfades included
+//     (mixRegionsAsPlayed), and replaces the selection with one region
+//     pointing at that file, which names no take.
 // `indices` must list the track-relative region indices the user wants
 // joined; ctor sorts a copy by timelineStart so the action records a
 // stable order. perform() captures the before-state of every involved
