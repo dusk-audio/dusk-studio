@@ -205,7 +205,7 @@ constexpr EditorKey kEditorKeys[] = {
     { ImGuiKey_Delete, false }, { ImGuiKey_Backspace, false }, { ImGuiKey_Equal, true },
     { ImGuiKey_Minus, true }, { ImGuiKey_KeypadAdd, true }, { ImGuiKey_KeypadSubtract, true },
     { ImGuiKey_0, false }, { ImGuiKey_UpArrow, false }, { ImGuiKey_DownArrow, false }, { ImGuiKey_T, false },
-    { ImGuiKey_Y, true }, { ImGuiKey_S, false },
+    { ImGuiKey_Y, true }, { ImGuiKey_S, false }, { ImGuiKey_Q, false },
 };
 
 bool repeatsWhenHeld (ImGuiKey key) noexcept
@@ -1554,11 +1554,12 @@ private:
             return true;
         }
 
-        // The session's key rather than the timeline's, so it is not left to die
-        // with the keys the editor has no use for.
-        if (command && is (ImGuiKey_S) && host.save)
+        // The session's and the application's keys rather than the timeline's, so they
+        // are not left to die with the keys the editor has no use for.
+        if (command && (is (ImGuiKey_S) || is (ImGuiKey_Q)) && host.shellCommand)
         {
-            host.save (k.shift);
+            using Command = AudioEditorHost::ShellCommand;
+            host.shellCommand (is (ImGuiKey_Q) ? Command::quit : k.shift ? Command::saveAs : Command::save);
             return true;
         }
 

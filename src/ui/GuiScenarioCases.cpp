@@ -4777,6 +4777,118 @@ const ScenarioRegistrar audioEditorSaveKeys { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorSaveKeys (host, ctx); }
 } };
 
+// Quit is the application's key: with the editor up over unsaved edits Cmd+Q raises the
+// quit prompt, whether the key reaches the shell's window or the editor's child, and the
+// editor closes for it. While a field is open for typing the chord is the field's.
+std::optional<ScenarioResult> runAudioEditorQuitKey (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.isAudioCallbackRegistered() || ! host.autosaveRunning() || host.engineDetached())
+        return ScenarioResult::skip ("requires live audio and autosave");
+    const auto sessionJson = ctx.tempDir() / "Saved song" / "session.json";
+    std::filesystem::create_directories (sessionJson.parent_path());
+    applySessionDirectory (session, sessionJson.parent_path());
+    if (! SessionSerializer::save (session, sessionJson)) return ScenarioResult::fail ("could not save the session fixture");
+    reopenSavedSession (host, sessionJson);
+    if (! host.sessionOnDisk() || ! host.modalStackEmpty())
+        return ScenarioResult::fail ("the saved session fixture did not open");
+
+    auto& track = session.track (0);
+    if (! addLevelTakes (ctx, track, 2)) return ScenarioResult::fail ("could not write take fixture");
+    promoteTakeRange (session, track, track.takes[0], 0, kTakeCaseLength);
+    promoteTakeRange (session, track, track.takes[1], kTakeCaseLength / 2, kTakeCaseLength);
+    if (track.regions.size() != 2) return ScenarioResult::fail ("the setup did not leave two regions");
+    engine.getUndoManager().clearUndoHistory();
+    ctx.cleanup ([&engine] { engine.reattachAudioCallback(); });
+    ctx.cleanup (host.preserveKeyboardFocus());
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    const auto written = fileBytes (sessionJson);
+    const auto shellQuit = [&host]
+    { host.pressPeerKey ("command + " + keyCodeDescription ('q'), controlCharacter ('q')); };
+    const auto laidOut = [&host] { return host.audioEditorPoint ("wave", 12000).size() == 2; };
+    const auto requests = std::make_shared<int> (0);
+    // A session with nothing to save quits at the chord, which ends the run.
+    const auto unsaved = [&ctx, &track]
+    { return ctx.expect (track.regions.size() == 1, "the editor's Delete left the session as it was saved"); };
+    const auto cancelPrompt = [&host, &ctx, sessionJson, written] (const std::string& how)
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save changes before quitting?", 0) == 0,
+                          how + " showed '" + host.modalText() + "' rather than the quit prompt"))
+            return;
+        ctx.expect (! host.audioEditorOpen(), how + " left the editor up over the quit prompt");
+        ctx.expect (fileBytes (sessionJson) == written, how + " saved the session before the prompt was answered");
+        ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt did not offer Cancel");
+    };
+    const auto running = [&host, &ctx, &engine, &track] (const std::string& how)
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel after " + how + " left '" + host.modalText() + "' up");
+        ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached() && host.autosaveRunning(),
+                    "Cancel after " + how + " left audio or autosave parked");
+        ctx.expect (track.regions.size() == 1, "Cancel after " + how + " did not leave the session as it was");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not delivered to the editor"); },
+    laidOut, "the editor never laid out" });
+    steps->push_back ({ 100, [&ctx, unsaved, shellQuit]
+    {
+        if (! unsaved()) { ctx.complete (ctx.verdict()); return; }
+        shellQuit();
+    }, [&track] { return track.regions.size() == 1; }, "Delete did not delete the focused region" });
+    steps->push_back ({ 100, [cancelPrompt] { cancelPrompt ("Quit at the shell's window"); },
+                        [&host] { return ! host.modalStackEmpty(); },
+                        "Quit pressed at the shell's window over the editor did not ask about the unsaved edit" });
+    steps->push_back ({ 400, [&host, &ctx, running]
+    {
+        running ("Quit at the shell's window");
+        ctx.expect (host.openAudioEditor (0, 0), "the editor did not reopen after the cancelled quit");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, unsaved]
+    {
+        if (! unsaved()) { ctx.complete (ctx.verdict()); return; }
+        ctx.expect (host.pressAudioEditorKey ("command + Q"), "Quit was not delivered to the editor");
+    }, laidOut, "the reopened editor never laid out" });
+    steps->push_back ({ 100, [cancelPrompt] { cancelPrompt ("Quit at the editor's child"); },
+                        [&host] { return ! host.modalStackEmpty(); },
+                        "Quit pressed at the editor's child did not ask about the unsaved edit" });
+    steps->push_back ({ 400, [&host, &ctx, running]
+    {
+        running ("Quit at the editor's child");
+        ctx.expect (host.openAudioEditor (0, 0), "the editor did not reopen after the second cancelled quit");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, requests]
+    {
+        *requests = host.audioEditorKeyboardRequests();
+        ctx.expect (host.doubleClickAudioEditorButton ("Gain"), "no gain readout to double-click");
+    }, laidOut, "the editor never laid out for the field" });
+    steps->push_back ({ 100, [&host, &ctx, unsaved, shellQuit]
+    {
+        if (! unsaved()) { ctx.complete (ctx.verdict()); return; }
+        ctx.expect (host.pressAudioEditorKey ("command + Q"), "Quit was not delivered to the open field");
+        ctx.expect (host.audioEditorKeyboardFocus (false), "the editor's child could not give up the keyboard");
+        shellQuit();
+    }, [&host, requests] { return host.audioEditorKeyboardRequests() > *requests; },
+    "a double-click on the gain readout did not open it for typing" });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty(), "Quit typed into the open gain field showed '" + host.modalText() + "'");
+        ctx.expect (host.audioEditorOpen(), "Quit typed into the open gain field closed the editor");
+        ctx.expect (host.pressAudioEditorKey ("escape"), "Escape was not delivered to the field");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorQuitKey { Scenario {
+    "gui.audio_editor_quit_key", { "gui", "keyboard", "editor", "take", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorQuitKey (host, ctx); }
+} };
+
 // Cmd+Y redoes in the editor as Cmd+Shift+Z does, at the editor's child or the shell's
 // window: the editor stays up on the region it was showing.
 std::optional<ScenarioResult> runAudioEditorRedoKey (GuiHost& host, ScenarioContext& ctx)

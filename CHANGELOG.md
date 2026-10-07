@@ -163,9 +163,13 @@ Takes live on the track now, and the audio editor is where you comp them.
   picked. The editor now stays on its region, or moves to the take that
   replaced it. With no region in focus a click on a region did nothing; it now
   focuses the region, and a paste focuses the region it pastes.
-- **Save works while the audio editor is open** (#852). **Cmd+S** did nothing
-  there and said nothing. It now saves, **Cmd+Shift+S** opens Save As, and
-  **Cmd+Y** redoes as **Cmd+Shift+Z** does.
+- **Save and Quit work while the audio editor is open** (#852). **Cmd+S** and
+  **Cmd+Q** did nothing there and said nothing. **Cmd+S** now saves,
+  **Cmd+Shift+S** opens Save As, **Cmd+Q** quits, asking first about unsaved
+  changes, and **Cmd+Y** redoes as **Cmd+Shift+Z** does.
+- **A join in the audio editor leaves the joined region in focus.** When an
+  unselected region sat between the joined ones in the track's stored order,
+  the focus landed on that region instead, and Delete then removed it.
 
 ## [0.14.0] - 2026-09-29
 
