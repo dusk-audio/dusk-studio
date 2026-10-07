@@ -128,6 +128,10 @@ Takes live on the track now, and the audio editor is where you comp them.
   Delete or Cut removed the next region on the track whole, locked or not. The
   range now goes when its region no longer covers it, and Delete and Cut take
   only the part of a range the region covers.
+- **A 0.14 recording with a punch inside it loads as one whole take** (#849).
+  Its take used to cover only the part under the punch, and the pieces of the
+  recording either side of the punch named no take. The take now spans the
+  whole recording and both pieces name it.
 - **A locked region takes no edit** (#816, #827). In the audio editor Delete,
   Split, Normalize, Reset gain, Reset fades, a typed gain or fade and
   Properties > Delete region all edited a locked region, and so did the
