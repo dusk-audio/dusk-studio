@@ -4671,6 +4671,187 @@ const ScenarioRegistrar audioEditorHoldsTimelineKeys { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorHoldsTimelineKeys (host, ctx); }
 } };
 
+// Save is the session's key, not the timeline's: with the editor up on a saved session
+// Cmd+S writes session.json with the editor's edits in it, whether the key reaches the
+// shell's window or the editor's child, and Cmd+Shift+S closes the editor for the Save As
+// browser. While a field is open for typing the chord is the field's and saves nothing,
+// and S alone still does nothing.
+std::optional<ScenarioResult> runAudioEditorSaveKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    const auto sessionJson = ctx.tempDir() / "Saved song" / "session.json";
+    std::filesystem::create_directories (sessionJson.parent_path());
+    applySessionDirectory (session, sessionJson.parent_path());
+    if (! SessionSerializer::save (session, sessionJson)) return ScenarioResult::fail ("could not save the session fixture");
+    reopenSavedSession (host, sessionJson);
+    if (! host.sessionOnDisk() || ! host.modalStackEmpty())
+        return ScenarioResult::fail ("the saved session fixture did not open");
+
+    auto& track = session.track (0);
+    if (! addLevelTakes (ctx, track, 2)) return ScenarioResult::fail ("could not write take fixture");
+    promoteTakeRange (session, track, track.takes[0], 0, kTakeCaseLength);
+    promoteTakeRange (session, track, track.takes[1], kTakeCaseLength / 2, kTakeCaseLength);
+    if (track.regions.size() != 2) return ScenarioResult::fail ("the setup did not leave two regions");
+    track.strip.solo.store (false);
+    engine.getUndoManager().clearUndoHistory();
+    ctx.cleanup (host.preserveKeyboardFocus());
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    const auto savedRegions = [sessionJson]
+    {
+        Session probe;
+        return SessionSerializer::load (probe, sessionJson) ? (int) probe.track (0).regions.size() : -1;
+    };
+    const auto shellChord = [&host] (char letter)
+    { host.pressPeerKey ("command + " + keyCodeDescription (letter), controlCharacter (letter)); };
+    const auto requests = std::make_shared<int> (0);
+    const auto written = std::make_shared<std::string>();
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto rewritten = [sessionJson, written] { return fileBytes (sessionJson) != *written; };
+    steps->push_back ({ 100, [&host, &ctx, sessionJson, written, savedRegions]
+    {
+        *written = fileBytes (sessionJson);
+        ctx.expect (savedRegions() == 0, "the fixture session was saved with regions on its first track");
+        ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not delivered to the editor");
+    }, [&host] { return host.audioEditorPoint ("wave", 12000).size() == 2; }, "the editor never laid out" });
+    steps->push_back ({ 100, [shellChord] { shellChord ('s'); },
+                        [&track] { return track.regions.size() == 1; }, "Delete did not delete the focused region" });
+    steps->push_back ({ 100, [&host, &ctx, sessionJson, written, savedRegions]
+    {
+        ctx.expect (savedRegions() == 1, "Save at the shell's window wrote the session without the editor's edit");
+        ctx.expect (host.audioEditorOpen(), "Save at the shell's window closed the editor");
+        *written = fileBytes (sessionJson);
+        ctx.expect (host.pressAudioEditorKey ("command + Z"), "Undo was not delivered to the editor");
+    }, rewritten, "Save pressed at the shell's window over the editor did not write session.json" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressAudioEditorKey ("command + S"), "Save was not delivered to the editor"); },
+    [&track] { return track.regions.size() == 2; }, "Undo did not bring the region back" });
+    steps->push_back ({ 100, [&host, &ctx, sessionJson, written, savedRegions]
+    {
+        ctx.expect (savedRegions() == 2, "Save at the editor's child wrote the session without the editor's undo");
+        ctx.expect (host.audioEditorOpen(), "Save at the editor's child closed the editor");
+        *written = fileBytes (sessionJson);
+        host.pressPeerKey (keyCodeDescription ('s'), 's');
+        ctx.expect (host.pressAudioEditorKey ("S"), "S was not delivered to the editor");
+        ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not delivered to the editor");
+    }, rewritten, "Save pressed at the editor's child did not write session.json" });
+    steps->push_back ({ 100, [&host, &ctx, requests]
+    {
+        *requests = host.audioEditorKeyboardRequests();
+        ctx.expect (host.doubleClickAudioEditorButton ("Gain"), "no gain readout to double-click");
+    }, [&track] { return track.regions.size() == 1; }, "the second Delete did not delete the focused region" });
+    steps->push_back ({ 100, [&host, &ctx, shellChord]
+    {
+        ctx.expect (host.pressAudioEditorKey ("command + S"), "Save was not delivered to the open field");
+        ctx.expect (host.audioEditorKeyboardFocus (false), "the editor's child could not give up the keyboard");
+        shellChord ('s');
+    }, [&host, requests] { return host.audioEditorKeyboardRequests() > *requests; },
+    "a double-click on the gain readout did not open it for typing" });
+    steps->push_back ({ 300, [&host, &ctx, &track, sessionJson, written]
+    {
+        ctx.expect (fileBytes (sessionJson) == *written,
+                    "S alone, or Save typed into the open gain field, wrote session.json");
+        ctx.expect (! track.strip.solo.load(), "S over the editor soloed the track behind it");
+        ctx.expect (host.audioEditorOpen(), "Save typed into the open gain field closed the editor");
+        ctx.expect (host.pressAudioEditorKey ("escape"), "Escape was not delivered to the field");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.pressAudioEditorKey ("command + shift + S"), "Save As was not delivered to the editor"); } });
+    steps->push_back ({ 100, [&host, &ctx, sessionJson, written]
+    {
+        ctx.expect (host.focusFileName(), "Save As over the editor did not open its browser");
+        ctx.expect (fileBytes (sessionJson) == *written, "Save As wrote session.json before it asked where");
+        drainModals (host);
+    }, [&host] { return ! host.audioEditorOpen() && ! host.modalStackEmpty(); },
+    "Save As pressed at the editor's child did not close the editor for its browser" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorSaveKeys { Scenario {
+    "gui.audio_editor_save_keys", { "gui", "keyboard", "editor", "take" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorSaveKeys (host, ctx); }
+} };
+
+// Cmd+Y redoes in the editor as Cmd+Shift+Z does, at the editor's child or the shell's
+// window: the editor stays up on the region it was showing.
+std::optional<ScenarioResult> runAudioEditorRedoKey (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    const auto ids = addLevelTakes (ctx, track, 2);
+    if (! ids) return ScenarioResult::fail ("could not write take fixture");
+    for (const auto& [from, to] : { std::pair<std::int64_t, std::int64_t> { 0, 24000 }, { 24000, 48000 }, { 72000, 96000 } })
+        if (auto region = regionFromTake (track.takes[0], from, to))
+            track.regions.push_back (*region);
+    session.audioEditorSnap = false;
+    const auto other = ids->back();
+    ctx.cleanup (host.preserveKeyboardFocus());
+    if (! host.openAudioEditorOnTakes (0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    const auto focusedStart = [&host, &track]
+    {
+        const auto selection = host.audioEditorSelection();
+        if (selection.size() != 4 || selection[0] < 0 || selection[0] >= (std::int64_t) track.regions.size())
+            return std::int64_t { -1 };
+        return track.regions[(std::size_t) selection[0]].timelineStart;
+    };
+    const auto promoted = [&track, other] { return ! takeCoverage (track, other).empty(); };
+    const auto stillThere = [&host, &ctx, focusedStart] (const std::string& what)
+    {
+        ctx.expect (host.audioEditorOpen(), what + " closed the editor");
+        ctx.expect (focusedStart() == 72000, "after " + what + " the editor shows the region at "
+                                                 + std::to_string (focusedStart()) + " rather than the one it showed");
+    };
+    const auto shellChord = [&host] (char letter)
+    { host.pressPeerKey ("command + " + keyCodeDescription (letter), controlCharacter (letter)); };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx, other]
+    {
+        const auto from = host.audioEditorTakePoint ("lane", other, 20000);
+        const auto to = host.audioEditorTakePoint ("lane", other, 52000);
+        if (! ctx.expect (from.size() == 2 && to.size() == 2, "take lane geometry unavailable")) return;
+        host.audioEditorPointer (from[0], from[1], true);
+        host.audioEditorPointer (to[0], to[1], true);
+        host.audioEditorPointer (to[0], to[1], false);
+    }, [&host] { return host.audioEditorTakeLanes().size() == 2; }, "the take lanes never showed" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickAudioEditorSample (84000), "the last region is not clickable"); },
+    promoted, "the drag did not promote the take" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressAudioEditorKey ("command + Z"), "Undo was not delivered to the editor"); },
+    [focusedStart] { return focusedStart() == 72000; }, "the click did not focus the last region" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressAudioEditorKey ("command + Y"), "Cmd+Y was not delivered to the editor"); },
+    [promoted] { return ! promoted(); }, "Undo at the editor's child did not take the promote back" });
+    steps->push_back ({ 100, [stillThere, shellChord]
+    {
+        stillThere ("Cmd+Y at the editor's child");
+        shellChord ('z');
+    }, promoted, "Cmd+Y pressed at the editor's child did not redo the promote" });
+    steps->push_back ({ 100, [shellChord] { shellChord ('y'); },
+                        [promoted] { return ! promoted(); }, "Undo at the shell's window did not take the promote back" });
+    steps->push_back ({ 100, [&ctx, &engine = ctx.engine(), stillThere]
+    {
+        stillThere ("Cmd+Y at the shell's window");
+        ctx.expect (! engine.getUndoManager().canRedo(), "Cmd+Y left the promote to redo");
+    }, promoted, "Cmd+Y pressed at the shell's window over the editor did not redo the promote" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorRedoKey { Scenario {
+    "gui.audio_editor_redo_key", { "gui", "keyboard", "editor", "take", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorRedoKey (host, ctx); }
+} };
+
 // Undo and Redo from the editor keep it on the region it was showing, found again by
 // what the region is rather than where it sat in the track's list, which a promote
 // reorders.

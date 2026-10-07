@@ -25,6 +25,11 @@ struct AudioEditorHost
     // move's undo is refused, with the reason, on the same grounds. The engine's
     // undo manager when unset.
     std::function<void (bool redo)> undo;
+    // Save the session, or ask where to with saveAs, as the shell's own keys do.
+    // Called from inside a frame, and Save As raises a browser that closes the
+    // editor, so the shell defers it until the frame has returned. Unset, the
+    // editor leaves the Save keys alone.
+    std::function<void (bool saveAs)> save;
 };
 
 // The audio region editor: toolbar, bar ruler, the track's regions around the focused

@@ -1333,9 +1333,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // The audio editor's keys land here whenever its child does not have the
     // keyboard, which on Windows is always. While one of its fields or menus is
     // open every key is the editor's, typed into it; otherwise the editor answers
-    // first. Of what it declines the shell takes only the transport keys the child
-    // would pass on, Escape, which closes the editor, and '?', whose list replaces
-    // it; the timeline behind the dim gets nothing.
+    // first, Save and Save As among its answers. Of what it declines the shell takes
+    // only the transport keys the child would pass on, Escape, which closes the
+    // editor, and '?', whose list replaces it; the timeline behind the dim gets
+    // nothing.
     if (audioEditorShowing() && audioEditorView != nullptr)
     {
         const auto description = key.getTextDescription().toStdString();
@@ -6351,6 +6352,14 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
     {
         if (auto* self = safeThis.getComponent())
             self->undoOrRedo (redo);
+    };
+    host.save = [safeThis] (bool saveAs)
+    {
+        dusk::callAsync ([safeThis, saveAs]
+        {
+            if (auto* self = safeThis.getComponent())
+                self->menuItemSelected (saveAs ? kMenuFileSaveAs : kMenuFileSave, 0);
+        });
     };
     auto view = imgui::makeAudioEditorView (session, engine, trackIdx, regionIdx, std::move (host));
     audioEditorView = view.get();

@@ -205,6 +205,7 @@ constexpr EditorKey kEditorKeys[] = {
     { ImGuiKey_Delete, false }, { ImGuiKey_Backspace, false }, { ImGuiKey_Equal, true },
     { ImGuiKey_Minus, true }, { ImGuiKey_KeypadAdd, true }, { ImGuiKey_KeypadSubtract, true },
     { ImGuiKey_0, false }, { ImGuiKey_UpArrow, false }, { ImGuiKey_DownArrow, false }, { ImGuiKey_T, false },
+    { ImGuiKey_Y, true }, { ImGuiKey_S, false },
 };
 
 bool repeatsWhenHeld (ImGuiKey key) noexcept
@@ -1542,6 +1543,19 @@ private:
         if (command && is (ImGuiKey_Z))
         {
             undoStep (k.shift);
+            return true;
+        }
+        if (command && is (ImGuiKey_Y))
+        {
+            undoStep (true);
+            return true;
+        }
+
+        // The session's key rather than the timeline's, so it is not left to die
+        // with the keys the editor has no use for.
+        if (command && is (ImGuiKey_S) && host.save)
+        {
+            host.save (k.shift);
             return true;
         }
 

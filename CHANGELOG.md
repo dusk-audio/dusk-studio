@@ -161,6 +161,9 @@ Takes live on the track now, and the audio editor is where you comp them.
   picked. The editor now stays on its region, or moves to the take that
   replaced it. With no region in focus a click on a region did nothing; it now
   focuses the region, and a paste focuses the region it pastes.
+- **Save works while the audio editor is open** (#852). **Cmd+S** did nothing
+  there and said nothing. It now saves, **Cmd+Shift+S** opens Save As, and
+  **Cmd+Y** redoes as **Cmd+Shift+Z** does.
 
 ## [0.14.0] - 2026-09-29
 
