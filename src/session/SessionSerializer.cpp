@@ -522,8 +522,14 @@ void migrateAudioTakeHistoryToTrackTakes (nlohmann::json& root)
             if (! findPass (json::getString (*region, "file"), parseTakeProvenance (*region).loopPassOrdinal))
                 continue;
             const auto timelineStart = std::max ((std::int64_t) 0, json::getInt64 (*region, "timeline_start", 0));
-            if (const auto own = contribute (*region, timelineStart, 1))
+            // The pass was started from another region's history, which had only
+            // that region's channel count to go by; this one plays the file itself.
+            const int numChannels = jlimit (1, 2, json::getInt (*region, "num_channels", 1));
+            if (const auto own = contribute (*region, timelineStart, numChannels))
+            {
+                passes[*own].numChannels = numChannels;
                 regionPasses.emplace_back (region, *own);
+            }
         }
 
         std::vector<std::size_t> timedPlaces;

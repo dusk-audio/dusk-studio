@@ -555,20 +555,21 @@ TEST_CASE ("Loading a v8 session makes one take of a recording a punch split in 
            "[session][serializer][migration][takes]")
 {
     // Written by 0.14, which stamped a capture time on loop passes only: A
-    // recorded over ten seconds, B punched into the middle of it, and beside
+    // recorded in stereo over ten seconds, B punched into the middle of it in
+    // mono, so the history that starts A's pass does not know its channels, and beside
     // them an imported file. A second track holds a recording nothing replaced.
     const Json original {
         { "version", 8 },
         { "tracks", Json::array ({
             { { "regions", Json::array ({
                   { { "file", "audio/a.wav" }, { "timeline_start", 0 }, { "length", 144064 },
-                    { "source_offset", 0 } },
+                    { "source_offset", 0 }, { "num_channels", 2 } },
                   { { "file", "audio/b.wav" }, { "timeline_start", 144000 }, { "length", 144000 },
                     { "source_offset", 0 },
                     { "previous_takes", Json::array ({
                         { { "file", "audio/a.wav" }, { "source_offset", 144000 }, { "length", 144000 } } }) } },
                   { { "file", "audio/a.wav" }, { "timeline_start", 287936 }, { "length", 192064 },
-                    { "source_offset", 287936 } },
+                    { "source_offset", 287936 }, { "num_channels", 2 } },
                   { { "file", "audio/imported.wav" }, { "timeline_start", 600000 }, { "length", 48000 },
                     { "source_offset", 0 } } }) } },
             { { "regions", Json::array ({
@@ -602,7 +603,7 @@ TEST_CASE ("Loading a v8 session makes one take of a recording a punch split in 
 
     const auto& track = loaded->track (0);
     REQUIRE (track.takes.size() == 2);
-    checkTake (track.takes[0], { 1, "Take 1", "audio/a.wav", 0,      480000, 0, 1, {} });
+    checkTake (track.takes[0], { 1, "Take 1", "audio/a.wav", 0,      480000, 0, 2, {} });
     checkTake (track.takes[1], { 2, "Take 2", "audio/b.wav", 144000, 144000, 0, 1, {} });
 
     REQUIRE (track.regions.size() == 4);
