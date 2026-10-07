@@ -25,6 +25,12 @@ struct AudioEditorHost
     // move's undo is refused, with the reason, on the same grounds. The engine's
     // undo manager when unset.
     std::function<void (bool redo)> undo;
+    // Save, Save As or Quit, as the shell's own keys run them. Called from inside a
+    // frame, and Save As and the quit prompt each raise a modal that closes the
+    // editor, so the shell defers it until the frame has returned. Unset, the editor
+    // leaves these keys alone.
+    enum class ShellCommand { save, saveAs, quit };
+    std::function<void (ShellCommand)> shellCommand;
 };
 
 // The audio region editor: toolbar, bar ruler, the track's regions around the focused
@@ -95,7 +101,7 @@ public:
     // same body-relative design pixels as gesturePointForScenario.
     virtual bool automationPointForScenario (std::int64_t timelineSample, float value, ImVec2& point) const = 0;
 
-    // { regionIndex, rangeActive, rangeStart, rangeEnd }.
+    // { regionIndex, rangeActive, rangeStart, rangeEnd, additionalCount }.
     virtual std::vector<std::int64_t> selectionForScenario() const = 0;
 
     // Fits the whole track in view and scrolls the take lanes to the take's lane, the

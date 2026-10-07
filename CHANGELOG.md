@@ -128,6 +128,10 @@ Takes live on the track now, and the audio editor is where you comp them.
   Delete or Cut removed the next region on the track whole, locked or not. The
   range now goes when its region no longer covers it, and Delete and Cut take
   only the part of a range the region covers.
+- **A 0.14 recording with a punch inside it loads as one whole take** (#849).
+  Its take used to cover only the part under the punch, and the pieces of the
+  recording either side of the punch named no take. The take now spans the
+  whole recording and both pieces name it.
 - **A locked region takes no edit** (#816, #827). In the audio editor Delete,
   Split, Normalize, Reset gain, Reset fades, a typed gain or fade and
   Properties > Delete region all edited a locked region, and so did the
@@ -143,6 +147,29 @@ Takes live on the track now, and the audio editor is where you comp them.
   with no latency got no reset at the wrap, so a note sounding across it rang
   until Stop. With an instrument that reports latency, a wrap could reset it
   twice and re-attack the held notes.
+- **Joining regions keeps the crossfades between them** (#850). The joined
+  file summed overlapping regions at full level and left their fades out, so
+  every comp seam came out at twice its level for the length of the crossfade.
+  A join now renders what the regions played: each fade with its shape, and
+  each overlap crossfaded as playback crossfades it. A fade at an outer edge
+  stays on the joined region, unless another region sounds under it, and then
+  it is rendered into the file. Regions that play one unbroken stretch of one
+  recording at one gain, such as a comp section switched back to its own take,
+  join into one region of that recording with nothing rendered and no fade
+  left at the joins.
+- **The audio editor keeps its focus when a take lands, and a click gets it
+  back** (#851). A recording that stopped with the editor open left it on no
+  region, or on a different one, so Delete could remove a region that was never
+  picked. The editor now stays on its region, or moves to the take that
+  replaced it. With no region in focus a click on a region did nothing; it now
+  focuses the region, and a paste focuses the region it pastes.
+- **Save and Quit work while the audio editor is open** (#852). **Cmd+S** and
+  **Cmd+Q** did nothing there and said nothing. **Cmd+S** now saves,
+  **Cmd+Shift+S** opens Save As, **Cmd+Q** quits, asking first about unsaved
+  changes, and **Cmd+Y** redoes as **Cmd+Shift+Z** does.
+- **A join in the audio editor leaves the joined region in focus.** When an
+  unselected region sat between the joined ones in the track's stored order,
+  the focus landed on that region instead, and Delete then removed it.
 
 ## [0.14.0] - 2026-09-29
 

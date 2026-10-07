@@ -551,6 +551,77 @@ TEST_CASE ("Loading a v8 session keeps take audio only a region's history holds"
     dir.deleteRecursively();
 }
 
+TEST_CASE ("Loading a v8 session makes one take of a recording a punch split in two",
+           "[session][serializer][migration][takes]")
+{
+    // Written by 0.14, which stamped a capture time on loop passes only: A
+    // recorded in stereo over ten seconds, B punched into the middle of it in
+    // mono, so the history that starts A's pass does not know its channels, and beside
+    // them an imported file. A second track holds a recording nothing replaced.
+    const Json original {
+        { "version", 8 },
+        { "tracks", Json::array ({
+            { { "regions", Json::array ({
+                  { { "file", "audio/a.wav" }, { "timeline_start", 0 }, { "length", 144064 },
+                    { "source_offset", 0 }, { "num_channels", 2 } },
+                  { { "file", "audio/b.wav" }, { "timeline_start", 144000 }, { "length", 144000 },
+                    { "source_offset", 0 },
+                    { "previous_takes", Json::array ({
+                        { { "file", "audio/a.wav" }, { "source_offset", 144000 }, { "length", 144000 } } }) } },
+                  { { "file", "audio/a.wav" }, { "timeline_start", 287936 }, { "length", 192064 },
+                    { "source_offset", 287936 }, { "num_channels", 2 } },
+                  { { "file", "audio/imported.wav" }, { "timeline_start", 600000 }, { "length", 48000 },
+                    { "source_offset", 0 } } }) } },
+            { { "regions", Json::array ({
+                  { { "file", "audio/plain.wav" }, { "timeline_start", 0 }, { "length", 96000 },
+                    { "source_offset", 0 } } }) } } }) }
+    };
+
+    auto migrated = original;
+    REQUIRE (migrateSession (migrated, 8));
+    for (size_t t = 0; t < original["tracks"].size(); ++t)
+    {
+        const auto& before = original["tracks"][t]["regions"];
+        const auto& after = migrated["tracks"][t]["regions"];
+        REQUIRE (after.size() == before.size());
+        for (size_t r = 0; r < before.size(); ++r)
+        {
+            INFO ("track " << t << " region " << r);
+            CHECK (withoutKey (after[r], "take_id") == withoutKey (before[r], "previous_takes"));
+        }
+    }
+    CHECK_FALSE (migrated["tracks"][0]["regions"][3].contains ("take_id"));
+    CHECK_FALSE (migrated["tracks"][1]["regions"][0].contains ("take_id"));
+    CHECK_FALSE (migrated["tracks"][1].contains ("takes"));
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+    writeJson (target, original);
+    auto loaded = std::make_unique<Session>();
+    loaded->setSessionDirectory (dir);
+    REQUIRE (SessionSerializer::load (*loaded, target));
+
+    const auto& track = loaded->track (0);
+    REQUIRE (track.takes.size() == 2);
+    checkTake (track.takes[0], { 1, "Take 1", "audio/a.wav", 0,      480000, 0, 2, {} });
+    checkTake (track.takes[1], { 2, "Take 2", "audio/b.wav", 144000, 144000, 0, 1, {} });
+
+    REQUIRE (track.regions.size() == 4);
+    CHECK (track.regions[0].takeId == 1);
+    CHECK (track.regions[1].takeId == 2);
+    CHECK (track.regions[2].takeId == 1);
+    CHECK (track.regions[3].takeId == 0);
+    CHECK (takeCoverage (track, 1)
+           == std::vector<std::pair<std::int64_t, std::int64_t>> { { 0, 144064 }, { 287936, 480000 } });
+
+    CHECK (loaded->track (1).takes.empty());
+    REQUIRE (loaded->track (1).regions.size() == 1);
+    CHECK (loaded->track (1).regions[0].takeId == 0);
+
+    CHECK (loaded->allocateTakeId() == 3);
+    dir.deleteRecursively();
+}
+
 TEST_CASE ("Loading gives zero and duplicate take ids fresh ones", "[session][serializer][takes]")
 {
     const Json root {

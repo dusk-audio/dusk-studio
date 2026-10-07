@@ -1,4 +1,5 @@
 #include "RegionEditActions.h"
+#include "RegionJoin.h"
 #include "TakeComp.h"
 #include "ParamEditAction.h"
 #include "../engine/AudioEngine.h"
@@ -9,7 +10,6 @@
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
 #include "../foundation/Base64.h"
-#include "../foundation/Decibels.h"
 #include "../foundation/PlanarBuffer.h"
 
 #include <algorithm>
@@ -1648,13 +1648,14 @@ JoinRegionsAction::JoinRegionsAction (Session& s, AudioEngine& e,
     : session (s), engine (e), trackIdx (t), indices (idxs)
 {
     // Deduplicate + sort by timelineStart so the action records a stable
-    // order independent of the user's click sequence.
+    // order independent of the user's click sequence. Equal starts keep track
+    // order, the order playback sums them in.
     std::sort (indices.begin(), indices.end());
     indices.erase (std::unique (indices.begin(), indices.end()), indices.end());
     if (trackIdx >= 0 && trackIdx < Session::kNumTracks)
     {
         auto& regs = session.track (trackIdx).regions;
-        std::sort (indices.begin(), indices.end(),
+        std::stable_sort (indices.begin(), indices.end(),
                     [&] (int a, int b)
                     {
                         if (a < 0 || a >= (int) regs.size()) return false;
@@ -1686,28 +1687,6 @@ bool JoinRegionsAction::perform()
     else if (beforeRegions.size() != indices.size())
     {
         return false;   // shouldn't happen, defensive
-    }
-
-    // Fast-path eligibility: every selected region references the same
-    // file, the sourceOffsets form a contiguous run, and timelinePositions
-    // abut. "Abut" tolerates a 1-sample rounding gap so a series of splits
-    // that snapped to slightly different sub-sample boundaries still
-    // collapse cleanly.
-    constexpr std::int64_t kAbutTolerance = 1;
-    auto abs64 = [] (std::int64_t v) noexcept -> std::int64_t
-    { return v < 0 ? -v : v; };
-    bool sameFile = true, abuts = true;
-    for (size_t i = 1; i < beforeRegions.size(); ++i)
-    {
-        const auto& prev = beforeRegions[i - 1];
-        const auto& cur  = beforeRegions[i];
-        if (cur.file != prev.file) { sameFile = false; break; }
-        const auto prevEnd = prev.timelineStart + prev.lengthInSamples;
-        const auto gap = cur.timelineStart - prevEnd;
-        const auto srcDelta = cur.sourceOffset
-                                - (prev.sourceOffset + prev.lengthInSamples);
-        if (abs64 (gap) > kAbutTolerance) { abuts = false; break; }
-        if (abs64 (srcDelta) > kAbutTolerance) { abuts = false; break; }
     }
 
     const auto firstStart = beforeRegions.front().timelineStart;
@@ -1746,7 +1725,7 @@ bool JoinRegionsAction::perform()
             break;
         }
 
-    if (sameFile && abuts && uniformGainMute)
+    if (uniformGainMute && regionsPlayOneFileStretch (beforeRegions))
     {
         const auto sharedTake = beforeRegions.front().takeId;
         const bool oneTake = std::all_of (beforeRegions.begin(), beforeRegions.end(),
@@ -1774,10 +1753,10 @@ bool JoinRegionsAction::perform()
         return true;
     }
 
-    // Slow path: render to a new WAV in <session>/takes/. Mix every
-    // selected region into one buffer at its proper timeline offset
-    // (gaps become silence; overlaps sum). Uses the source files'
-    // sample rate / channel count from the leading region.
+    // Slow path: render to a new WAV in <session>/takes/, every selected
+    // region at its timeline offset, faded and crossfaded as it played (gaps
+    // become silence). Uses the source files' sample rate / channel count
+    // from the leading region.
     if (! joinSelectionInBounds (regs, sortedDesc))
         return false;
     auto firstReader = dusk::audio::FileReader::open (
@@ -1793,30 +1772,11 @@ bool JoinRegionsAction::perform()
     if (! mixBuf.setSize (chs, totalSamples))
         return false;   // join spans more audio than one buffer can hold
 
-    for (const auto& reg : beforeRegions)
-    {
-        if (reg.muted) continue;
-        auto rdr = dusk::audio::FileReader::open (audioPath (reg.file));
-        if (rdr == nullptr) continue;
-        const int regSamples = (int) std::clamp<std::int64_t> (
-            reg.lengthInSamples, 0, std::numeric_limits<int>::max());
-        if (regSamples == 0) continue;
-        dusk::audio::PlanarBuffer tmp;
-        if (! tmp.setSize (chs, regSamples))
-            return false;
-        if (rdr->read (tmp.data(), chs, reg.sourceOffset, regSamples) != regSamples)
-            return false;   // unreadable region body - abort the join, leave regions unchanged
-                            // (no output file created yet, nothing to clean up)
-        const float gain = dusk::audio::decibelsToGain (
-            std::clamp (reg.gainDb, -60.0f, 24.0f), -60.0f);
-        const int destOffset = (int) (reg.timelineStart - firstStart);
-        for (int c = 0; c < chs; ++c)
-        {
-            float* src = tmp.channel (c);
-            for (int i = 0; i < regSamples; ++i) src[i] *= gain;
-            dusk::audio::vecAdd (mixBuf.channel (c) + destOffset, src, regSamples);
-        }
-    }
+    // A region that cannot be read aborts the join with the regions unchanged;
+    // no output file exists yet, so there is nothing to clean up.
+    JoinedFades outerFades;
+    if (! mixRegionsAsPlayed (beforeRegions, mixBuf, outerFades))
+        return false;
 
     auto takesDir = session.getSessionDirectory().getChildFile ("takes");
     if (! takesDir.exists())
@@ -1848,14 +1808,16 @@ bool JoinRegionsAction::perform()
     merged.sourceOffset    = 0;
     merged.lengthInSamples = totalLen;
     merged.numChannels     = chs;
-    merged.fadeInSamples   = beforeRegions.front().fadeInSamples;
-    merged.fadeInShape     = beforeRegions.front().fadeInShape;
-    merged.fadeOutSamples  = latestEnding->fadeOutSamples;
-    merged.fadeOutShape    = latestEnding->fadeOutShape;
-    merged.fadeOutAuto     = latestEnding->fadeOutAuto;
+    merged.fadeInSamples   = outerFades.fadeInSamples;
+    merged.fadeInShape     = outerFades.fadeInShape;
+    merged.fadeInAuto      = outerFades.fadeInAuto;
+    merged.fadeOutSamples  = outerFades.fadeOutSamples;
+    merged.fadeOutShape    = outerFades.fadeOutShape;
+    merged.fadeOutAuto     = outerFades.fadeOutAuto;
     merged.takeId          = 0;
     merged.reversedFrom.reset();
-    // Gain and mute are baked into the rendered file.
+    // Gain, mute and every fade but the two above are baked into the
+    // rendered file.
     merged.gainDb          = 0.0f;
     merged.muted           = false;
 

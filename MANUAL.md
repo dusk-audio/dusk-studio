@@ -1325,7 +1325,7 @@ A right-click on any region shows a context menu:
 
 - **Loop region**: set the transport loop to span the region's boundaries.
 - **Split at playhead**.
-- **Join selected regions** (enabled when two or more regions are selected): glue them into one.
+- **Join selected regions** (enabled when two or more regions are selected): glue them into one. Regions that together play one unbroken stretch of one recording at one gain become a single region of it, with no fade left at the joins. Otherwise the join renders a new file that plays as the regions did, fades and crossfades included.
 - **Label**: type a custom name.
 - **Mute** the region (silences it without deleting it).
 - **Lock** the region (prevents accidental edits).
@@ -1412,7 +1412,7 @@ It is marked **experimental** because parts of the DP file format are reverse-en
 
 ![Region editor modal over a region with fades.](docs/images/ed-04-region-editor-modal.png)
 
-Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. On a track with takes it opens zoomed out to show every take, so a take that starts later still shows in its lane; **0** zooms to the focused region. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. Other keys do nothing until you let go. A recording on the track that stops while you drag a region, from a punch that ends on its own, a Stop sent over MIDI or a sync stop, cancels the drag the way **Esc** does before the take lands: the take goes down over the region as it was before the drag, undoing the take brings that region back, and letting go records nothing. While the editor is up, a key it has no use for does nothing: **S**, **M**, a page digit and the timeline's other shortcuts never reach the timeline behind it. **Space**, **.**, **L**, **P** and **F11** still work, and **?** closes the editor to open the shortcut list. Holding a key does its job once, so holding **Delete** deletes one region; only **Left** and **Right** (which nudge the selected regions), the zoom keys and **Cmd+Z** repeat while held. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
+Double-click an audio region in the tape strip to open the audio region editor. It opens inside the main window over a dimmed backdrop and shows every region on the track, with the one you opened in focus. On a track with takes it opens zoomed out to show every take, so a take that starts later still shows in its lane; **0** zooms to the focused region. Press **Esc** or click outside to close. **Esc** during a drag cancels the drag instead, putting back what it changed, and the editor stays open. Other keys do nothing until you let go. A recording on the track that stops while you drag a region, from a punch that ends on its own, a Stop sent over MIDI or a sync stop, cancels the drag the way **Esc** does before the take lands: the take goes down over the region as it was before the drag, undoing the take brings that region back, and letting go records nothing. A take that lands on the track while the editor is up leaves the editor on the region it had in focus. If the take replaced that region, the take's region comes into focus instead, with no range and nothing else selected. While the editor is up, a key it has no use for does nothing: **S**, **M**, a page digit and the timeline's other shortcuts never reach the timeline behind it. **Space**, **.**, **L**, **P** and **F11** still work, **Cmd+S** saves the session, **Cmd+Shift+S** closes the editor to open Save As, **Cmd+Q** quits as it does with the editor closed, asking first about unsaved changes, and **?** closes the editor to open the shortcut list. While a readout or a name is open for typing, every key goes to it: **Cmd+S** saves nothing and **Cmd+Q** does not quit. Holding a key does its job once, so holding **Delete** deletes one region; only **Left** and **Right** (which nudge the selected regions), the zoom keys, **Cmd+Z**, **Cmd+Shift+Z** and **Cmd+Y** repeat while held. An alert or another panel that opens while the editor is up closes the editor first, so nothing opens hidden behind it. Clicking a track's take count opens the same editor on its take lanes, and it opens that way even when no region on the track plays.
 
 ## What's editable
 
@@ -1429,7 +1429,7 @@ You **cannot** edit individual samples. There is no zoom-to-sample, no spectral 
 
 The top is a row of icon buttons. Hover over one for its name and shortcut:
 
-- **Undo / Redo** (also **Cmd+Z** and **Cmd+Shift+Z**).
+- **Undo / Redo** (also **Cmd+Z**, and **Cmd+Shift+Z** or **Cmd+Y**).
 - **Split** at the edit cursor (also **Cmd/Ctrl+E**; unavailable on a locked region or a frozen track).
 - **Normalize** (adjusts gain toward a peak just below 0 dBFS, within the gain limits; unavailable on a locked region or a frozen track).
 - **Reverse** (the same non-destructive reverse as the tape strip's **Reverse region**; unavailable on a locked region or a frozen track).
@@ -1497,7 +1497,7 @@ Every lane edit is one undo step and is saved with the session. While the transp
 - "A region cut from this take is locked. Unlock it to delete the take."
 - "Unfreeze this track to change its takes."
 
-A track with takes but no region shows "No region plays on this track" in the waveform area, above "Click or drag across a take below to put it on the track."
+A track with takes but no region shows "No region plays on this track" in the waveform area, above "Click or drag across a take below to put it on the track." Whenever no region is in focus, clicking a region in the waveform area focuses it, and **Cmd+V** pastes at the playhead and focuses the pasted region.
 
 To build a comp, see *Splicing a vocal comp from multiple takes* in Tips and recipes.
 

@@ -233,6 +233,8 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/session/MidiBindingsPreset.cpp
     ${CMAKE_SOURCE_DIR}/src/session/UnreferencedAudio.cpp
     ${CMAKE_SOURCE_DIR}/src/session/TakeComp.cpp
+    region_join.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/RegionJoin.cpp
     session_templates.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionTemplates.cpp)
 

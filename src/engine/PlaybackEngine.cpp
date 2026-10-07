@@ -1,6 +1,7 @@
 #include "PlaybackEngine.h"
 #include "Transport.h"
 #include "../foundation/Decibels.h"
+#include "../session/RegionEnvelope.h"
 #include "../session/TakeComp.h"
 #include <algorithm>
 #include <cassert>
@@ -217,8 +218,9 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
         rs.timelineStart   = region.timelineStart;
         rs.lengthInSamples = region.lengthInSamples;
         rs.sourceOffset    = region.sourceOffset;
-        rs.fadeInSamples   = std::max ((std::int64_t) 0, region.fadeInSamples);
-        rs.fadeOutSamples  = std::max ((std::int64_t) 0, region.fadeOutSamples);
+        rs.fadeInSamples   = region.fadeInSamples;
+        rs.fadeOutSamples  = region.fadeOutSamples;
+        fitFadesToLength (rs.fadeInSamples, rs.fadeOutSamples, rs.lengthInSamples);
         rs.fadeInShape     = region.fadeInShape;
         rs.fadeOutShape    = region.fadeOutShape;
         // Channel count comes from the DECODED file, not the model's copy:
@@ -235,18 +237,6 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
         rs.gainLinear = dusk::audio::decibelsToGain (
             std::clamp (region.gainDb, -60.0f, 24.0f), -60.0f);
         rs.muted = region.muted;
-        // Enforce non-overlap: if fadeIn + fadeOut > length the multiplied
-        // ramps produce a gain-notch in the middle. Shrink proportionally
-        // so the ramps meet at a single sample instead.
-        if (rs.fadeInSamples + rs.fadeOutSamples > rs.lengthInSamples)
-        {
-            const auto total = rs.fadeInSamples + rs.fadeOutSamples;
-            if (total > 0)
-            {
-                rs.fadeInSamples = (rs.fadeInSamples * rs.lengthInSamples) / total;
-                rs.fadeOutSamples = rs.lengthInSamples - rs.fadeInSamples;
-            }
-        }
         stream->regions.push_back (std::move (rs));
     }
 
@@ -271,15 +261,10 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
     {
         auto& a = stream->regions[i - 1];
         auto& b = stream->regions[i];
-        const std::int64_t aEnd = a.timelineStart + a.lengthInSamples;
-        if (aEnd > b.timelineStart)
-        {
-            const std::int64_t overlap = std::min (
-                aEnd - b.timelineStart,
-                std::min (a.lengthInSamples, b.lengthInSamples));
-            a.overlapNextLen = overlap;
-            b.overlapPrevLen = overlap;
-        }
+        const std::int64_t overlap = overlapWithNext (a.timelineStart, a.lengthInSamples,
+                                                      b.timelineStart, b.lengthInSamples);
+        a.overlapNextLen = overlap;
+        b.overlapPrevLen = overlap;
     }
 
     if (stream->regions.empty())
