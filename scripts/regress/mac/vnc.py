@@ -29,84 +29,68 @@ def luma(p):
     return (299 * p[0] + 587 * p[1] + 114 * p[2]) // 1000
 
 
-def close(a, b, tolerance=12):
-    return sum(abs(i - j) for i, j in zip(a, b)) <= tolerance
+def label_runs(img, y, x0, x1):
+    """Column runs (first, last) of label text on the line centred on y,
+    between x0 and x1.
 
-
-def button_at(img, x, y):
-    """The prompt button whose label is centred on (x, y), as (left, right,
-    label_left, label_right), or a string saying why there is none.
-
-    Measured on the node's microphone prompt: buttons about 110 x 28 px, 9 px
-    apart, the label about 11 px tall and centred on the point; "Allow" is 32
-    px wide and "Don't Allow" 69. In the light appearance the fill is light and
-    the label dark; the node switches to the dark appearance at night, where
-    the fill is dark grey and the label light.
+    The prompt is translucent and takes on whatever lies under it, a busy
+    mixer as much as the desktop, so its buttons have no fill of their own to
+    measure. The labels keep their contrast: a pixel is text when it stands
+    well off the median of its own row around it. Letters of one label are a
+    few pixels apart and the words of "Don't Allow" about five, so gaps of up
+    to six columns stay inside a run.
     """
-    w, h = img.size
-    if not (100 <= x < w - 100 and 40 <= y < h - 40):
-        return f"({x},{y}) is too near the edge of the {w}x{h} screen"
     px = img.getpixel
-    row = y - 8
-    fill = px((x, row))
-    light = luma(fill) >= 150
-    if not light and not 25 <= luma(fill) <= 110:
-        return f"({x},{row}) is {fill}, neither a light nor a dark button fill"
-    # The dark prompt is translucent: what lies under it tints the fill by up
-    # to about 20, while the fill still stands about 50 off the prompt around it.
-    tolerance = 12 if light else 30
-    left = x
-    while left > x - 90 and close(px((left - 1, row)), fill, tolerance):
-        left -= 1
-    right = x
-    while right < x + 90 and close(px((right + 1, row)), fill, tolerance):
-        right += 1
-    if not 80 <= right - left <= 160:
-        return f"the fill at ({x},{row}) is {right - left + 1} px wide, not a button"
-    # A column clear of the label, and of the pointer a previous click left on it.
-    col = left + 10
-    if not close(px((col, y + 8)), fill, tolerance):
-        return f"({col},{y + 8}) is {px((col, y + 8))}, not the button fill below the label"
-    top = row
-    while top > row - 30 and close(px((col, top - 1)), fill, tolerance):
-        top -= 1
-    bottom = y + 8
-    while bottom < y + 30 and close(px((col, bottom + 1)), fill, tolerance):
-        bottom += 1
-    if not 20 <= bottom - top <= 40:
-        return f"the fill at column {col} is {bottom - top + 1} px tall, not a button"
-    def on_label(p):
-        return luma(p) < luma(fill) - 60 if light else luma(p) > luma(fill) + 60
-
-    cols = [cx for cx in range(left + 4, right - 3)
-            if any(on_label(px((cx, cy))) for cy in range(top + 4, bottom - 3))]
-    if not cols:
-        return f"the button at ({x},{y}) has no label"
-    return left, right, cols[0], cols[-1]
+    rows = range(y - 6, y + 7)
+    lum = {(cx, cy): luma(px((cx, cy))) for cy in rows for cx in range(x0 - 20, x1 + 21)}
+    ink = []
+    for cx in range(x0, x1 + 1):
+        hit = False
+        for cy in rows:
+            window = sorted(lum[(wx, cy)] for wx in range(cx - 20, cx + 21, 2))
+            if abs(lum[(cx, cy)] - window[len(window) // 2]) > 55:
+                hit = True
+                break
+        ink.append(hit)
+    runs, start, gap = [], None, 0
+    for i, hit in enumerate(ink):
+        if hit:
+            if start is None:
+                start = i
+            gap = 0
+        elif start is not None:
+            gap += 1
+            if gap > 6:
+                runs.append((x0 + start, x0 + i - gap))
+                start, gap = None, 0
+    if start is not None:
+        runs.append((x0 + start, x1 - gap))
+    return runs
 
 
 def check_allow(img, x, y):
     """None when (x, y) is the Allow button of a two-button privacy prompt
-    with Don't Allow on its left, otherwise why it is not."""
-    button = button_at(img, x, y)
-    if isinstance(button, str):
-        return button
-    left, right, label_left, label_right = button
-    width = label_right - label_left + 1
-    if not 22 <= width <= 44:
-        return f"the label at ({x},{y}) is {width} px wide, not \"Allow\""
-    if abs((label_left + label_right) - (left + right)) > 16:
-        return f"the label at ({x},{y}) is off the centre of its button"
-    partner = "nothing"
-    for gap in range(4, 20):
-        partner = button_at(img, left - gap - (right - left) // 2, y)
-        if not isinstance(partner, str):
-            break
-    else:
-        return f"no button left of ({x},{y}): {partner}"
-    width = partner[3] - partner[2] + 1
-    if not 55 <= width <= 85:
-        return f"the button left of ({x},{y}) has a {width} px label, not \"Don't Allow\""
+    with Don't Allow on its left, otherwise why it is not.
+
+    Measured on the node's microphone prompt: the labels sit on one line,
+    "Allow" about 32 px wide and centred on the point, "Don't Allow" about 69
+    px wide with its centre about 118 px to the left, and nothing between.
+    """
+    w, h = img.size
+    if not (220 <= x < w - 80 and 40 <= y < h - 40):
+        return f"({x},{y}) is too near the edge of the {w}x{h} screen"
+    runs = label_runs(img, y, x - 200, x + 60)
+    allow = [r for r in runs if abs((r[0] + r[1]) / 2 - x) <= 10]
+    if not allow:
+        return f"no label centred on ({x},{y}); text runs {runs}"
+    a = allow[0]
+    if not 22 <= a[1] - a[0] + 1 <= 44:
+        return f"the label at ({x},{y}) is {a[1] - a[0] + 1} px wide, not \"Allow\""
+    left = [r for r in runs if r[1] < a[0] and 100 <= x - (r[0] + r[1]) / 2 <= 140]
+    if not left or not 55 <= left[-1][1] - left[-1][0] + 1 <= 85:
+        return f"no \"Don't Allow\" label left of ({x},{y}); text runs {runs}"
+    if any(left[-1][1] < r[0] and r[1] < a[0] for r in runs):
+        return f"text between the two labels at ({x},{y}); text runs {runs}"
     return None
 
 
@@ -155,9 +139,20 @@ def main():
                 if reason:
                     print(f"vnc.py: not clicked: {reason}", file=sys.stderr)
                     return NOT_ON_SCREEN
+            # A privacy prompt ignores a press that arrives with the pointer: it
+            # takes the click only once the pointer has come onto the button and
+            # rested there, and a press and release sent as one event does not
+            # count. Approach from the side, wait, then press and let go.
+            client.mouseMove(args.x - 30, args.y - 10)
+            time.sleep(0.3)
+            for step in range(1, 7):
+                client.mouseMove(args.x - 30 + 5 * step, args.y - 10 + step * 10 // 6)
+                time.sleep(0.05)
             client.mouseMove(args.x, args.y)
-            time.sleep(0.2)
-            client.mousePress(1)
+            time.sleep(1.0)
+            client.mouseDown(1)
+            time.sleep(0.15)
+            client.mouseUp(1)
             time.sleep(2)
         elif args.cmd == "unlock":
             client.keyPress("shift")
