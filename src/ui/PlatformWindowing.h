@@ -75,6 +75,17 @@ double nativeViewBackingScale (void* nativeViewHandle);
 // macOS / Windows: false; nothing captures there.
 bool captureNativeWindowToPpm (std::uintptr_t nativeWindow, const std::string& path);
 
+// Tap Escape at a window through the display server, so it arrives the way a
+// key the user presses does: queued on the application's own connection and
+// read only when its message loop gets back to the window system. GUI
+// scenarios use it to prove that loop is still being reached.
+//
+// Linux: KeyPress then KeyRelease via XSendEvent on a connection of its own.
+//        False when the window is gone or the server refused either event.
+// macOS / Windows: false, not implemented. SendInput / CGEventPost would
+//        reach the input queue but need the window focused at the OS level.
+bool sendEscapeThroughDisplayServer (std::uintptr_t nativeWindow);
+
 // Bring the given window's native peer to the foreground and grant it
 // focus. Used after creating a fresh top-level window (main window,
 // plugin editor) so the WM doesn't bury it under existing windows or

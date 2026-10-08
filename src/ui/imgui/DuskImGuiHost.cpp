@@ -2,6 +2,7 @@
 #include "FirstFrameProbe.h"
 #include "DuskImGuiScale.h"
 #include "../../foundation/MessageThread.h"
+#include "PumpPacing.h"
 
 #if defined (_WIN32)
 # ifndef WIN32_LEAN_AND_MEAN
@@ -15,6 +16,7 @@
 
 #include <OpenGL.hpp>
 
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <utility>
@@ -32,6 +34,8 @@ const char* glString (unsigned int name)
 
 struct DuskImGuiHost::Impl final : private dusk::Timer
 {
+    static constexpr int kPumpIntervalMs = 16;
+
     class EmbeddedApplication final : public DGL::Application
     {
     public:
@@ -189,7 +193,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             return false;
         }
 
-        startTimer (16);
+        startTimer (kPumpIntervalMs);
         return true;
     }
 
@@ -226,8 +230,12 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
         window->setEmbeddedOffset (geometry.x, geometry.y);
     }
 
+    // Paced by nextPumpAfter, stamped in pumpEvents() before any callback runs. A
+    // requested close is not paced, so the teardown keeps its two prompt ticks.
     void timerCallback() override
     {
+        if (! closeRequested && std::chrono::steady_clock::now() < nextPumpAt)
+            return;
         if (! pumpEvents())
             return;
         // Close requests come from the native host boundary. Wait until the
@@ -261,7 +269,10 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     {
         try
         {
+            const auto started = std::chrono::steady_clock::now();
             app.idle();
+            const auto finished = std::chrono::steady_clock::now();
+            nextPumpAt = nextPumpAfter (started, finished, kPumpIntervalMs);
             if (! firstFrameConfirmed)
             {
                 firstFrameConfirmed = true;
@@ -346,6 +357,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     bool armedMarker = false;
     bool closeRequested = false;
     bool closeWasPumped = false;
+    std::chrono::steady_clock::time_point nextPumpAt {};
 };
 
 DuskImGuiHost::DuskImGuiHost (Identity identity, std::filesystem::path firstFrameMarker)

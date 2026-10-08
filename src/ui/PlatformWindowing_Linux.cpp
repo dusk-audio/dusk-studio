@@ -10,6 +10,7 @@
 
 #include <X11/Xproto.h>
 #include <X11/Xutil.h>
+#include <X11/keysym.h>
 
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -388,6 +389,42 @@ bool hasUsableDisplay()
 }
 
 double nativeViewBackingScale (void*) { return 1.0; }
+
+bool sendEscapeThroughDisplayServer (std::uintptr_t nativeWindow)
+{
+    if (nativeWindow == 0)
+        return false;
+    auto* display = ::XOpenDisplay (nullptr);
+    if (display == nullptr)
+        return false;
+
+    bool sent = false;
+    {
+        const std::lock_guard<std::mutex> lock (editorTeardownTrapMutex);
+        ScopedCaptureErrorTrap errors (display);
+        ::XKeyEvent key {};
+        key.display = display;
+        key.window = (::Window) nativeWindow;
+        key.root = DefaultRootWindow (display);
+        key.time = CurrentTime;
+        key.same_screen = True;
+        key.keycode = ::XKeysymToKeycode (display, XK_Escape);
+        if (key.keycode != 0)
+        {
+            // Xlib's KeyPress, whose macro the framework's X headers undefine.
+            constexpr int keyPressEvent = 2;
+            key.type = keyPressEvent;
+            sent = ::XSendEvent (display, key.window, True, KeyPressMask,
+                                 reinterpret_cast<::XEvent*> (&key)) != 0;
+            key.type = KeyRelease;
+            sent = sent && ::XSendEvent (display, key.window, True, KeyReleaseMask,
+                                         reinterpret_cast<::XEvent*> (&key)) != 0;
+            sent = sent && errors.ok();
+        }
+    }
+    ::XCloseDisplay (display);
+    return sent;
+}
 
 bool captureNativeWindowToPpm (std::uintptr_t nativeWindow, const std::string& path)
 {

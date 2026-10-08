@@ -534,6 +534,19 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         if (auto* strip = owner.consoleView->getStripComponent (track)) strip->closeBuiltinForScenario();
     }
+    bool pressEscapeThroughDisplayServer() override
+    {
+        auto* peer = owner.getPeer();
+        return peer != nullptr
+            && platform::sendEscapeThroughDisplayServer (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()));
+    }
+    bool clickBuiltinEditorDim (int track) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        if (strip == nullptr || ! strip->hasOpenBuiltinEditorForScenario()) return false;
+        const auto corner = owner.getTopLevelComponent()->getLocalBounds().getTopLeft().translated (4, 4).toFloat();
+        return clickAt (corner.x, corner.y, 1);
+    }
     bool openAudioEditor (int track, int region) override
     {
         if (owner.audioEditorOpen() || owner.pianoRoll != nullptr) return false;

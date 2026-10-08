@@ -1836,7 +1836,7 @@ It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and c
 
 ### Editing a unit
 
-Picking a unit from the picker opens its editor. After that, on a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, or click the slot again, to dismiss it.
+Picking a unit from the picker opens its editor. After that, on a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, click the slot again or press **Escape** to dismiss it.
 
 **DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. Utility has no editor of its own, so Dusk Studio draws it from its parameter table as a panel of knobs and toggles.
 

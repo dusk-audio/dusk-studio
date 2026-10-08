@@ -243,6 +243,7 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
 }
 bool hasUsableDisplay() { return true; }   // native windowing always present
 bool captureNativeWindowToPpm (std::uintptr_t, const std::string&) { return false; }
+bool sendEscapeThroughDisplayServer (std::uintptr_t) { return false; }
 double nativeViewBackingScale (void*) { return 1.0; }
 void clearXInputFocus() {}                 // X-only; no-op on Windows
 void requestFocusOnMainWaylandSurface() {} // Wayland-only; no-op on Windows

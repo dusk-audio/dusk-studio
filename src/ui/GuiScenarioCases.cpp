@@ -1987,6 +1987,90 @@ const ScenarioRegistrar sunsetReopenKeepsEdit { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runSunsetReopenKeepsEdit (host, ctx); }
 } };
 
+// The manual dismisses a built-in unit's editor with Escape or a click outside
+// it. On Linux the Escape goes through the display server, which the message
+// loop reads only when it is otherwise idle, so the case fails if an editor that
+// draws slower than its pump interval (Sunset's on a software renderer) is
+// pumped without pacing. Elsewhere the key and the click go to the window's peer
+// and prove only the dismiss paths themselves.
+std::optional<ScenarioResult> runBuiltinEditorDismiss (GuiHost& host, ScenarioContext& ctx, const std::string& unitId)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    return ScenarioResult::skip ("requires native UI");
+   #endif
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("requires a window the unit's editor can embed into");
+    auto& engine = ctx.engine();
+    auto& strip = engine.getChannelStrip (0);
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (strip.getPluginSlot().isLoaded() || strip.isBuiltinLoaded() || strip.isNativeClapLoaded()
+        || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded() || strip.isNativeAuLoaded()
+        || strip.isNativeMultisampleLoaded() || strip.builtinReloadFailed())
+        return ScenarioResult::skip ("requires an empty first insert");
+    const auto mode = strip.insertMode.load();
+    const auto stage = engine.getStage();
+    ctx.cleanup ([&host, &engine, &strip, mode, stage]
+    {
+        drainModals (host);
+        host.closeBuiltin (0);
+        engine.suspendProcessing();
+        strip.unloadBuiltin();
+        strip.insertMode.store (mode);
+        engine.resumeProcessing();
+        if (auto* handle = host.strip (0)) handle->refreshInsertButton();
+        host.switchToStage (guiStage (stage));
+    });
+    host.switchToStage (GuiHost::Stage::Mixing);
+    std::string error;
+    engine.suspendProcessing();
+    const bool loaded = strip.loadBuiltin (unitId, error);
+    if (loaded) strip.insertMode.store (ChannelStrip::kInsertPlugin);
+    engine.resumeProcessing();
+    if (! loaded) return ScenarioResult::fail ("could not load " + unitId + ": " + error);
+    if (! strip.getBuiltinSlot().hasPluginEditor()) return ScenarioResult::fail (unitId + " brought no editor of its own");
+    if (auto* handle = host.strip (0)) handle->refreshInsertButton();
+
+    const auto editorUp = [&host] { auto* s = host.strip (0); return s != nullptr && s->hasOpenBuiltinEditor(); };
+    const auto editorDown = [editorUp] { return ! editorUp(); };
+    // Long enough for the editor's pump to settle into its own pace, which is
+    // when a pump that overruns has the message loop to itself.
+    constexpr int kOpenForMs = 1500;
+    constexpr int kDismissBoundMs = 5000;
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.clickInsert (0, false), "insert button unavailable"); } });
+    steps->push_back ({ 0, [] {}, editorUp, "the editor did not open" });
+    steps->push_back ({ kOpenForMs, [&host, &ctx]
+    {
+       #if defined (__linux__)
+        ctx.expect (host.pressEscapeThroughDisplayServer(), "the X server took no Escape for the window");
+       #else
+        ctx.note ("no display server route for the key here; Escape went to the window's peer");
+        ctx.expect (host.pressPeerKey ("escape"), "the window took no Escape");
+       #endif
+    } });
+    steps->push_back ({ 0, [] {}, editorDown, "Escape at the window did not close " + unitId + "'s editor", {}, kDismissBoundMs });
+    steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.clickInsert (0, false), "insert button unavailable for the reopen"); } });
+    steps->push_back ({ 0, [] {}, editorUp, "the editor did not reopen" });
+    steps->push_back ({ kOpenForMs, [&host, &ctx]
+    { ctx.expect (host.clickBuiltinEditorDim (0), "no editor to click outside of"); } });
+    steps->push_back ({ 0, [] {}, editorDown, "a click on the dim did not close " + unitId + "'s editor", {}, kDismissBoundMs });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar sunsetEditorDismiss { Scenario {
+    "gui.sunset_editor_dismiss", { "gui" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBuiltinEditorDismiss (host, ctx, "dusk.builtin.synth"); }
+} };
+
+const ScenarioRegistrar duskverbEditorDismiss { Scenario {
+    "gui.duskverb_editor_dismiss", { "gui" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBuiltinEditorDismiss (host, ctx, "dusk.builtin.reverb"); }
+} };
+
 // ------------------------------------------- MIDI Learn on a native host
 
 // The manual promises "MIDI Learn last-touched parameter" for every native
