@@ -18,7 +18,8 @@ std::filesystem::path firstFrameMarkerPath (const std::string& logTag);
 // A built-in unit's own plug-in editor, hosted inside a native parent Dusk Studio
 // owns. The editor brings its own window and its own event loop, so this gives it
 // what DuskImGuiHost gives Dusk Studio's own views: a display that cannot carry an
-// embedded child is refused, the loop is pumped on a message-thread timer, a
+// embedded child is refused, the loop is pumped on a message-thread timer paced
+// so an editor that draws slower than the timer still leaves the shell time, a
 // graphics failure inside that pump closes the editor rather than the application,
 // teardown takes the two ticks the platform needs, and a display-scale change
 // rebuilds the window.

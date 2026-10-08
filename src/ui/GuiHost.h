@@ -132,6 +132,13 @@ public:
 
     virtual bool builtinPointer (int track, const std::string& control, float position, bool pressed) = 0;
     virtual void closeBuiltin (int track) = 0;
+    // Escape at the window, sent through the display server so the message loop
+    // has to reach the window system to read it. False where the platform has no
+    // such route.
+    virtual bool pressEscapeThroughDisplayServer() = 0;
+    // A press on the dim behind a track's built-in editor, in the window's corner,
+    // which the centred editor never covers. False when no editor is up.
+    virtual bool clickBuiltinEditorDim (int track) = 0;
     virtual bool openAudioEditor (int track, int region) = 0;
     virtual bool clickAudioEditorButton (const std::string& name) = 0;
     // Both clicks in one call, so the pair is a double-click however slowly the editor draws.

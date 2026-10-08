@@ -2,7 +2,9 @@
 #include "DuskImGuiScale.h"
 #include "../../foundation/AppConfigDir.h"
 #include "../../foundation/MessageThread.h"
+#include "PumpPacing.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -183,7 +185,10 @@ struct DafEditorHost::Impl final : private dusk::Timer
         if (editor != nullptr)
         {
             turn = Turn { true };
+            const auto started = std::chrono::steady_clock::now();
             const bool alive = editor->idle();
+            const auto finished = std::chrono::steady_clock::now();
+            nextTickAt = nextPumpAfter (started, finished, pumpIntervalMs);
             const auto worked = std::exchange (turn, Turn {});
             if (! alive)
             {
@@ -233,7 +238,17 @@ struct DafEditorHost::Impl final : private dusk::Timer
         followGeometry();
     }
 
-    void timerCallback() override { tick(); }
+    // Paced by nextPumpAfter: Sunset's editor on a software renderer takes about
+    // 40 ms a frame, which unpaced would leave Escape and a click on the dim
+    // unread. The wait is stamped in tick() before any callback runs, since a
+    // closed callback may take this host down with it. A requested close is not
+    // paced, so the teardown keeps its two prompt ticks.
+    void timerCallback() override
+    {
+        if (! closeRequested && std::chrono::steady_clock::now() < nextTickAt)
+            return;
+        tick();
+    }
 
     // The gestures of one turn of the editor's own loop. A hand works one control
     // at a time, so a turn that opens gestures on several parameters is a program
@@ -320,6 +335,7 @@ struct DafEditorHost::Impl final : private dusk::Timer
     std::string displayName;
     FirstFrameProbe probe;
     int pumpIntervalMs = 16;
+    std::chrono::steady_clock::time_point nextTickAt {};
     Unit unit;
     Callbacks callbacks;
     std::string lastFailure;

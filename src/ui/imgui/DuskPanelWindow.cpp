@@ -532,10 +532,9 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         // drawn the clock moves no faster than a 60 Hz frame; the time between one
         // input being drawn and the next being sent still counts in full.
         //
-        // The frame after the input was drawn is held too. A renderer slow enough to
-        // keep the message thread busy starts that frame before the runner's timer for
-        // its next step can fire, however short the step's delay, so it is time no
-        // step asked to wait.
+        // The frame after the input was drawn is held too. A slow renderer can start
+        // that frame before the runner's timer for its next step fires, however short
+        // the step's delay, so it is time no step asked to wait.
         void onImGuiPrepareFrame() override
         {
             if (quietFrames >= kSettledFrames && ! std::exchange (holdNextFrame, false))
