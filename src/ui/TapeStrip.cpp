@@ -259,7 +259,7 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
     };
     wireZoom (zoomOutButton, "Zoom out (-)",        [this] { zoomByFactor (1.0f / 1.25f); });
     wireZoom (zoomInButton,  "Zoom in (=)",         [this] { zoomByFactor (1.25f); });
-    wireZoom (zoomFitButton, "Zoom to fit (Cmd+0)", [this] { zoomFit(); });
+    wireZoom (zoomFitButton, "Zoom to fit (0)", [this] { zoomFit(); });
 
     // SNAP: lives alongside the zoom HUD so the user can toggle grid
     // snapping without having to look up at the transport bar.

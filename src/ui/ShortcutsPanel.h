@@ -47,7 +47,7 @@ public:
                 { "]", "Set loop / punch out" }, { "L", "Toggle loop" },
                 { "P", "Toggle punch" } } },
             { "Zoom", {
-                { "-", "Zoom out" }, { "=", "Zoom in" }, { mod ('0'), "Zoom to fit" } } },
+                { "-", "Zoom out" }, { "=", "Zoom in" }, { "0", "Zoom to fit" } } },
             { "Selected track", {
                 { utf8 ("\xe2\x86\x90 / \xe2\x86\x92"), "Focus prev / next strip" },
                 { "A", "Arm" }, { "S", "Solo" }, { "X", "Mute" } } },

@@ -275,6 +275,8 @@ public:
     virtual std::vector<int> modalLayout() const = 0;
     virtual bool clickModalBackdrop() = 0;
     virtual bool modalHasKeyboardFocus() const = 0;
+    // True when the top modal's body is what the window shows at the body's centre.
+    virtual bool modalBodyOnTop() const = 0;
     // The open context menu's rows in order: separators as "-", headers by
     // their text.
     virtual std::vector<std::string> contextMenuItems() const = 0;

@@ -973,6 +973,113 @@ TEST_CASE ("A comp seam without fades still keeps its overlap inside both region
     CHECK (track.regions[1].lengthInSamples - latest == overlap + 1);
 }
 
+TEST_CASE ("A seam whose regions read outside their takes holds still for a drag of nothing",
+           "[session][takes][seam]")
+{
+    Track track;
+    fillSeamTrack (track);
+    const CompSeam seam { 0, 1 };
+
+    SECTION ("the left region reads past the end of its take")
+    {
+        track.takes[0].lengthInSamples = 20000;
+        CHECK (clampSeamShift (track, seam, 0) == 0);
+        CHECK (clampSeamShift (track, seam, 500) == 0);
+        CHECK (clampSeamShift (track, seam, -500) == -500);
+        const auto before = track.regions;
+        shiftSeam (track, seam, 0);
+        CHECK (track.regions[0].lengthInSamples == before[0].lengthInSamples);
+        CHECK (track.regions[1].timelineStart == before[1].timelineStart);
+    }
+    SECTION ("the right region reads from before the start of its take")
+    {
+        track.takes[1].timelineStart = track.takes[1].sourceOffset = 30000;
+        CHECK (clampSeamShift (track, seam, 0) == 0);
+        CHECK (clampSeamShift (track, seam, -500) == 0);
+        CHECK (clampSeamShift (track, seam, 500) == 500);
+    }
+    SECTION ("the right region is shorter than its fades")
+    {
+        track.regions[1].lengthInSamples = kPunchFadeSamples - 10;
+        CHECK (clampSeamShift (track, seam, 0) == 0);
+        CHECK (clampSeamShift (track, seam, 5) == 0);
+    }
+}
+
+namespace
+{
+std::optional<CompSeam> compSeamNearByEveryPair (const Track& track, std::int64_t at, std::int64_t tolerance)
+{
+    std::optional<CompSeam> nearest;
+    std::int64_t best = std::numeric_limits<std::int64_t>::max();
+    const auto& regs = track.regions;
+    for (int l = 0; l < static_cast<int> (regs.size()); ++l)
+        for (int r = 0; r < static_cast<int> (regs.size()); ++r)
+        {
+            const auto& left = regs[(std::size_t) l];
+            const auto& right = regs[(std::size_t) r];
+            const auto overlap = left.timelineStart + left.lengthInSamples - right.timelineStart;
+            if (l == r || left.takeId == 0 || right.takeId == 0 || left.timelineStart >= right.timelineStart
+                || overlap < 0 || overlap > kPunchFadeSamples)
+                continue;
+            const auto from = right.timelineStart;
+            const auto to = left.timelineStart + left.lengthInSamples;
+            const auto distance = at < from ? from - at : at > to ? at - to : 0;
+            if (distance <= tolerance && distance < best)
+            {
+                best = distance;
+                nearest = CompSeam { l, r };
+            }
+        }
+    return nearest;
+}
+} // namespace
+
+TEST_CASE ("The comp seam near a point is the one pairing every region would find",
+           "[session][takes][seam]")
+{
+    std::uint64_t state = 0x9e3779b97f4a7c15ull;
+    const auto next = [&state] (std::int64_t below)
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return static_cast<std::int64_t> (state % static_cast<std::uint64_t> (below));
+    };
+    for (int round = 0; round < 200; ++round)
+    {
+        Track track;
+        // Regions packed close together, many of them meeting within a seam fade,
+        // some sharing a start or an end, so ties and near misses are common.
+        std::int64_t at = 0;
+        const auto count = 2 + next (40);
+        for (std::int64_t i = 0; i < count; ++i)
+        {
+            AudioRegion r;
+            r.takeId = static_cast<TakeId> (next (4));
+            r.timelineStart = at;
+            r.lengthInSamples = 1 + next (400);
+            at += next (2) == 0 ? r.lengthInSamples - next (kPunchFadeSamples + 8) : next (300);
+            at = std::max<std::int64_t> (0, at);
+            track.regions.push_back (r);
+        }
+        for (int probe = 0; probe < 40; ++probe)
+        {
+            const auto point = next (at + 200) - 100;
+            const auto tolerance = next (3) == 0 ? 0 : next (120);
+            const auto expected = compSeamNearByEveryPair (track, point, tolerance);
+            const auto found = compSeamNear (track, point, tolerance);
+            REQUIRE (found.has_value() == expected.has_value());
+            if (found)
+            {
+                CHECK (found->left == expected->left);
+                CHECK (found->right == expected->right);
+            }
+        }
+    }
+    CHECK_FALSE (compSeamNear (Track {}, 0, 10).has_value());
+}
+
 TEST_CASE ("The comp section under a point is the region playing there, or the gap around it",
            "[session][takes][comp]")
 {

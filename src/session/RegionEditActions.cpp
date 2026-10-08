@@ -453,6 +453,7 @@ bool PasteRegionAction::perform()
     auto& regs = track.regions;
     insertedAt = (int) regs.size();
     regs.push_back (regionToInsert);
+    regs.back().timelineStart = std::max<std::int64_t> (0, regs.back().timelineStart);
     if (const auto* take = findTake (track, regionToInsert.takeId);
         take == nullptr || take->file != regionToInsert.file)
         regs.back().takeId = 0;

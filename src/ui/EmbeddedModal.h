@@ -656,6 +656,19 @@ public:
         return true;
     }
 
+    // Puts every open modal back above the views its host has added since it
+    // opened, lowest first. A session load rebuilds the console over whatever
+    // alert is up, which leaves the alert hidden and its dim taking the next click.
+    static void raiseOpenModals()
+    {
+        for (auto* modal : activeModalStack())
+        {
+            if (modal->dim_ != nullptr) modal->dim_->toFront (false);
+            if (modal->backdrop_ != nullptr) modal->backdrop_->toFront (false);
+            if (auto* body = modal->getBody()) body->toFront (false);
+        }
+    }
+
     // True while any open modal was shown with forwardShortcuts=false. The
     // app's shortcut handler asks this instead of relying on the forwarder: a
     // key the body declines still travels up to the host, and a click on the

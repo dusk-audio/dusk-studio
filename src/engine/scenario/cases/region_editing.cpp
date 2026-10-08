@@ -91,7 +91,8 @@ ScenarioResult frozenTrackRefusesEdits (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
-// Paste and duplicate insert a copy; undo takes the same copy back out.
+// Paste and duplicate insert a copy; undo takes the same copy back out. A copy placed
+// before the timeline's start lands at it.
 ScenarioResult pasteInsertsAndUndoRemoves (ScenarioContext& ctx)
 {
     auto& regs = regionsOf (ctx);
@@ -108,6 +109,13 @@ ScenarioResult pasteInsertsAndUndoRemoves (ScenarioContext& ctx)
                 "the copy did not land where it was placed");
     ctx.expect (undo.undo() && regs.size() == 1 && sameSpan (regs[0], 0, 48000, 0),
                 "undo did not remove the copy");
+
+    copy.timelineStart = -12000;
+    undo.beginNewTransaction();
+    ctx.expect (undo.perform (new PasteRegionAction (ctx.session(), ctx.engine(), kTrack, copy)),
+                "the paste before the timeline's start was refused");
+    ctx.expect (regs.size() == 2 && sameSpan (regs[1], 0, 48000, 0),
+                "a paste placed before the timeline's start did not land at its start");
     return ctx.verdict();
 }
 

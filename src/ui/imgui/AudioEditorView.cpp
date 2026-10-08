@@ -59,7 +59,10 @@ constexpr float kStatusH = 30.0f;
 constexpr float kScrollH = 12.0f;
 constexpr float kLaneInset = 4.0f;
 
+// Zoom out stops at kMinPixelsPerSample, or further out where the whole track needs it,
+// so a fit shows all of a long region. kLeastPixelsPerSample only keeps the zoom above 0.
 constexpr float kMinPixelsPerSample = 1.0e-5f;
+constexpr float kLeastPixelsPerSample = 1.0e-9f;
 constexpr float kMaxPixelsPerSample = 1.0f;
 // What time is read at when no file, device or session gives a rate.
 constexpr double kFallbackSampleRate = 48000.0;
@@ -486,8 +489,7 @@ public:
     {
         regionIdx = index;
         if (const auto* r = region())
-            editCursorSample = std::clamp (editCursorSample, r->sourceOffset,
-                                           r->sourceOffset + r->lengthInSamples);
+            placeCursor (std::clamp (cursorSample(), r->sourceOffset, r->sourceOffset + r->lengthInSamples));
         noteSelection();
     }
 
@@ -515,7 +517,7 @@ public:
     std::vector<double> viewForScenario() const override
     {
         return { static_cast<double> (pixelsPerSample), static_cast<double> (scrollSamples),
-                 static_cast<double> (editCursorSample) };
+                 static_cast<double> (cursorSample()) };
     }
 
     std::vector<double> rulerForScenario() const override
@@ -774,12 +776,15 @@ private:
     float viewWidth = -1.0f;
 
     // The view spans the whole track, [anchorStart, anchorStart + anchorLength), in
-    // timeline samples; the edit cursor is a file sample of the focused region.
+    // timeline samples; the edit cursor is a file sample of the region it was placed
+    // on, read through cursorSample().
     std::int64_t anchorStart = 0;
     std::int64_t anchorLength = 1;
     float pixelsPerSample = 0.0f;
     std::int64_t scrollSamples = 0;
     std::int64_t editCursorSample = 0;
+    std::optional<AudioRegion> cursorOn;
+    int cursorOnIndex = -1;
     float panRemainder = 0.0f;
     // Bar numbers or time stamps the ruler drew in its last frame.
     int rulerMarks = 0;
@@ -1065,6 +1070,35 @@ private:
             return anchorStart;
         return anchorStart + scrollSamples
              + static_cast<std::int64_t> (std::llround ((x - layout.lanes.x0) / pixelsPerSampleOnScreen()));
+    }
+
+    // The edit cursor in the focused region's file. On the region it was placed on it
+    // goes with that region's audio through a move; on another region, or on one that
+    // now plays another file (a reverse, a join, an undo), it keeps its place on the
+    // timeline, inside the region.
+    std::int64_t cursorSample() const
+    {
+        const auto* r = region();
+        if (r == nullptr || ! cursorOn || (cursorOnIndex == regionIdx && r->sameFile (*cursorOn)))
+            return editCursorSample;
+        const auto at = cursorOn->timelineStart + (editCursorSample - cursorOn->sourceOffset);
+        return r->sourceOffset + std::clamp<std::int64_t> (at - r->timelineStart, 0, r->lengthInSamples);
+    }
+
+    void placeCursor (std::int64_t fileSample)
+    {
+        editCursorSample = fileSample;
+        if (const auto* r = region())
+        {
+            cursorOn = *r;
+            cursorOnIndex = regionIdx;
+        }
+    }
+
+    std::int64_t cursorTimeline() const
+    {
+        const auto* r = region();
+        return r == nullptr ? 0 : r->timelineStart + (cursorSample() - r->sourceOffset);
     }
 
     float xForFileSample (std::int64_t fileSample) const
@@ -1411,13 +1445,13 @@ private:
         anchorStart = lo;
         anchorLength = std::max<std::int64_t> (1, hi - lo);
 
-        const float width = std::max (1.0f, layout.wave.width() / layout.scale - 2.0f * kLaneInset);
+        const float width = fitWidth();
         pixelsPerSample = std::clamp (width / static_cast<float> (std::max<std::int64_t> (1, r->lengthInSamples)),
-                                      kMinPixelsPerSample, kMaxPixelsPerSample);
+                                      minPixelsPerSample(), kMaxPixelsPerSample);
         const auto fitSamples = static_cast<std::int64_t> (std::llround (width / pixelsPerSample));
         scrollSamples = std::clamp<std::int64_t> (r->timelineStart - anchorStart, 0,
                                                   std::max<std::int64_t> (0, anchorLength - fitSamples));
-        editCursorSample = r->sourceOffset;
+        placeCursor (r->sourceOffset);
     }
 
     // With takes on the track the view fits all of them, so a take that starts past
@@ -1431,7 +1465,7 @@ private:
         }
         zoomToTrack();
         if (const auto* r = region())
-            editCursorSample = r->sourceOffset;
+            placeCursor (r->sourceOffset);
     }
 
     // The whole track across the view, takes included.
@@ -1442,10 +1476,17 @@ private:
             return;
         anchorStart = lo;
         anchorLength = hi - lo;
-        const float width = std::max (1.0f, layout.wave.width() / layout.scale - 2.0f * kLaneInset);
-        pixelsPerSample = std::clamp (width / static_cast<float> (anchorLength), kMinPixelsPerSample,
+        pixelsPerSample = std::clamp (fitWidth() / static_cast<float> (anchorLength), minPixelsPerSample(),
                                       kMaxPixelsPerSample);
         scrollSamples = 0;
+    }
+
+    float fitWidth() const { return std::max (1.0f, layout.wave.width() / layout.scale - 2.0f * kLaneInset); }
+
+    float minPixelsPerSample() const
+    {
+        const auto wholeTrack = fitWidth() / static_cast<float> (std::max<std::int64_t> (1, anchorLength));
+        return std::max (kLeastPixelsPerSample, std::min (kMinPixelsPerSample, wholeTrack));
     }
 
     void clampScroll()
@@ -1457,7 +1498,9 @@ private:
     void zoomAround (float x, float factor)
     {
         const auto before = timelineForX (x);
-        pixelsPerSample = std::clamp (pixelsPerSample * factor, kMinPixelsPerSample, kMaxPixelsPerSample);
+        // A window widened since the fit must not turn a zoom out into a zoom in.
+        const float least = std::min (minPixelsPerSample(), std::max (kLeastPixelsPerSample, pixelsPerSample));
+        pixelsPerSample = std::clamp (pixelsPerSample * factor, least, kMaxPixelsPerSample);
         scrollSamples += before - timelineForX (x);
         clampScroll();
     }
@@ -1465,7 +1508,7 @@ private:
     void zoomOnCursor (float factor)
     {
         if (region() != nullptr)
-            zoomAround (xForFileSample (editCursorSample), factor);
+            zoomAround (xForFileSample (cursorSample()), factor);
         else if (takeCount() > 0)
             zoomAround (layout.lanes.at (0.5f, 0.0f).x, factor);
     }
@@ -1588,7 +1631,7 @@ private:
             if (r != nullptr && (is (ImGuiKey_LeftBracket) || is (ImGuiKey_RightBracket)))
             {
                 const bool punch = k.shift;
-                const auto cursor = editCursorSample + (r->timelineStart - r->sourceOffset);
+                const auto cursor = cursorTimeline();
                 if (is (ImGuiKey_LeftBracket))
                 {
                     if (punch) transport.placePunchRange (cursor, std::max (transport.getPunchOut(), cursor));
@@ -1736,6 +1779,7 @@ private:
 
     void noteSelection()
     {
+        placeCursor (cursorSample());
         focusSeen.reset();
         additionalSeen.clear();
         if (const auto* r = region())
@@ -1927,10 +1971,8 @@ private:
         if (! clip.hasContent) return;
         AudioRegion pasted = clip.region;
         const bool unfocused = region() == nullptr;
-        if (const auto* r = region())
-            pasted.timelineStart = r->timelineStart + (editCursorSample - r->sourceOffset);
-        else
-            pasted.timelineStart = engine.getTransport().getPlayhead();
+        pasted.timelineStart = std::max<std::int64_t> (0, unfocused ? engine.getTransport().getPlayhead()
+                                                                    : cursorTimeline());
         auto& undo = engine.getUndoManager();
         undo.beginNewTransaction ("Paste region");
         // The paste goes on the end of the track's list.
@@ -1938,7 +1980,7 @@ private:
         {
             regionIdx = static_cast<int> (trackRegions().size()) - 1;
             if (const auto* r = region())
-                editCursorSample = r->sourceOffset;
+                placeCursor (r->sourceOffset);
         }
     }
 
@@ -2057,7 +2099,7 @@ private:
         }
         regionIdx = std::clamp (regionIdx, 0, total - 1);
         if (const auto* r = region())
-            editCursorSample = std::clamp (editCursorSample, r->sourceOffset, r->sourceOffset + r->lengthInSamples);
+            placeCursor (std::clamp (cursorSample(), r->sourceOffset, r->sourceOffset + r->lengthInSamples));
     }
 
     // One beat, or one bar with Shift, for the focused region and every selected one.
@@ -2281,7 +2323,7 @@ private:
         const float whole = std::trunc (panRemainder);
         panRemainder -= whole;
         scrollSamples = std::clamp<std::int64_t> (
-            scrollSamples + static_cast<std::int64_t> (std::llround (whole / std::max (1.0e-5f, pixelsPerSample))),
+            scrollSamples + static_cast<std::int64_t> (std::llround (whole / std::max (kLeastPixelsPerSample, pixelsPerSample))),
             0, std::max<std::int64_t> (0, anchorLength - 1));
     }
 
@@ -2514,8 +2556,8 @@ private:
             rangeActive = false;
             regionIdx = hit;
             r = region();
-            editCursorSample = r->sourceOffset
-                             + std::clamp<std::int64_t> (timelineForX (p.x) - r->timelineStart, 0, r->lengthInSamples);
+            placeCursor (r->sourceOffset
+                         + std::clamp<std::int64_t> (timelineForX (p.x) - r->timelineStart, 0, r->lengthInSamples));
         }
         const auto& io = ImGui::GetIO();
         const bool command = io.KeyCtrl || io.KeySuper;
@@ -2563,7 +2605,7 @@ private:
                 return;
             }
             if (inWave)
-                editCursorSample = snapFileSample (fileSampleForX (p.x), command);
+                placeCursor (snapFileSample (fileSampleForX (p.x), command));
             ImGui::OpenPopup (kContextMenu);
             return;
         }
@@ -2656,7 +2698,7 @@ private:
                 additional.clear();
                 regionIdx = hit;
                 regionAtDragStart = *region();
-                editCursorSample = snapFileSample (fileSampleForX (p.x), command);
+                placeCursor (snapFileSample (fileSampleForX (p.x), command));
             }
             rangeStartSample = rangeEndSample = fileSampleForX (p.x);
             rangeActive = false;
@@ -2686,13 +2728,13 @@ private:
             const auto* r = region();
             regionAtDragStart = *r;
             dragOriginGainDb = r->gainDb;
-            editCursorSample = r->sourceOffset
-                             + std::clamp<std::int64_t> (timelineForX (p.x) - r->timelineStart, 0, r->lengthInSamples);
+            placeCursor (r->sourceOffset
+                         + std::clamp<std::int64_t> (timelineForX (p.x) - r->timelineStart, 0, r->lengthInSamples));
             drag = Drag::moveRegion;
         }
         else
         {
-            editCursorSample = snapFileSample (fileSampleForX (p.x), command);
+            placeCursor (snapFileSample (fileSampleForX (p.x), command));
             drag = Drag::moveCursor;
         }
         dragOriginTimeline = region()->timelineStart;
@@ -2752,7 +2794,7 @@ private:
         if (drag == Drag::pan)
         {
             const auto samples = static_cast<std::int64_t> (std::llround (
-                -(p.x - dragDown.x) / std::max (1.0e-5f, pixelsPerSampleOnScreen())));
+                -(p.x - dragDown.x) / std::max (kLeastPixelsPerSample, pixelsPerSampleOnScreen())));
             scrollSamples = std::clamp<std::int64_t> (panStartScroll + samples, 0,
                                                       std::max<std::int64_t> (0, anchorLength - 1));
             return;
@@ -2778,7 +2820,7 @@ private:
         {
             if (r->locked || std::abs (p.x - dragDown.x) <= layout.s (3.0f))
             {
-                editCursorSample = fileSampleForX (p.x);
+                placeCursor (fileSampleForX (p.x));
                 return;
             }
             drag = Drag::moveRegion;
@@ -3016,13 +3058,13 @@ private:
     void splitAtCursor()
     {
         if (! focusedEditable()) return;
-        const auto* r = region();
-        const auto at = r->timelineStart + (editCursorSample - r->sourceOffset);
+        const auto at = cursorTimeline();
         engine.getUndoManager().beginNewTransaction ("Split region");
         splitRegion (regionIdx, at);
     }
 
-    // Non-destructive: raises the region gain so the slice's peak lands at 0.99.
+    // Non-destructive: sets the region gain so the slice's peak lands at 0.99. The peak
+    // is the file's, so a second press finds the same gain and changes nothing.
     void normalize()
     {
         if (! focusedEditable()) return;
@@ -3060,9 +3102,9 @@ private:
 
         const AudioRegion before = *r;
         AudioRegion after = before;
-        after.gainDb = std::clamp (before.gainDb + dusk::audio::gainToDecibels (0.99f / peak),
-                                   -24.0f, 12.0f);
-        commit ("Normalize", before, after);
+        after.gainDb = std::clamp (dusk::audio::gainToDecibels (0.99f / peak), -24.0f, 12.0f);
+        if (std::abs (after.gainDb - before.gainDb) > 1.0e-4f)
+            commit ("Normalize", before, after);
     }
 
     void toggleMute()
@@ -3563,7 +3605,7 @@ private:
         const float bpm = std::max (1.0f, session.tempoBpm.load (std::memory_order_relaxed));
         const int bpb = std::max (1, session.beatsPerBar.load (std::memory_order_relaxed));
         const auto mode = static_cast<TimeDisplayMode> (session.timeDisplayMode.load (std::memory_order_relaxed));
-        const auto cursor = r->timelineStart + (editCursorSample - r->sourceOffset);
+        const auto cursor = cursorTimeline();
 
         const auto position = "pos " + formatSamplePosition (cursor, sr, session.tempoMap, bpm, bpb, mode);
         readout (ctx, pos, position.c_str(), dw::Align::left);
@@ -4170,7 +4212,7 @@ private:
     void drawEditCursor (const dw::Context& ctx) const
     {
         const auto& wave = layout.wave;
-        const float x = std::floor (xForFileSample (editCursorSample));
+        const float x = std::floor (xForFileSample (cursorSample()));
         if (x < wave.x0 - ctx.s (1.0f) || x > wave.x1 + ctx.s (1.0f)) return;
         vline (ctx.dl, x, wave.y0, wave.y1, argb (kEditCursor, 0.7f), ctx.s (1.0f));
         const float mid = x + ctx.s (0.5f);

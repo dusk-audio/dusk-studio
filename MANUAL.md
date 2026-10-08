@@ -1431,13 +1431,13 @@ The top is a row of icon buttons. Hover over one for its name and shortcut:
 
 - **Undo / Redo** (also **Cmd+Z**, and **Cmd+Shift+Z** or **Cmd+Y**).
 - **Split** at the edit cursor (also **Cmd/Ctrl+E**; unavailable on a locked region or a frozen track).
-- **Normalize** (adjusts gain toward a peak just below 0 dBFS, within the gain limits; unavailable on a locked region or a frozen track).
+- **Normalize** (sets the region's gain so its peak lands just below 0 dBFS, within the gain limits, whatever gain it had before; pressing it again changes nothing; unavailable on a locked region or a frozen track).
 - **Reverse** (the same non-destructive reverse as the tape strip's **Reverse region**; unavailable on a locked region or a frozen track).
 - **Properties** (label, mute, lock, colour and delete actions, with file name, sample rate, channel count and length shown below).
-- **Grab**, **Range**, **Cut**, **Draw**, then the editor's own **Snap** toggle and grid resolution, set apart from the timeline's.
+- **Grab**, **Range**, **Cut**, **Draw**, then the editor's own **Snap** toggle, set apart from the timeline's, and the grid resolution, which the editor shares with the timeline: picking one here changes the timeline's too.
 - **Auto: Off**, which picks an automation lane to show over the waveform (see *Editing breakpoints in the region editor* under Mixing).
 - The track name and the region's title. Double-click the title to rename the region in place; Enter keeps the new name, Esc keeps the old one, and accepting the title as shown (the take's name, or the file name for a region with no named take) leaves the region unlabelled.
-- **Chase** and **Zoom out / Zoom in / Zoom fit** at the right (also **−**, **+**, **0**). Zoom in stops at one sample per pixel. Resizing the window keeps the zoom and the edit cursor where they are; **Zoom fit** fits the view to the new size.
+- **Chase** and **Zoom out / Zoom in / Zoom fit** at the right (also **−**, **+**, **0**). Zoom in stops at one sample per pixel; **Zoom fit** shows the whole region however long it is. Resizing the window keeps the zoom and the edit cursor where they are; **Zoom fit** fits the view to the new size.
 
 The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. The range belongs to the region you drew it on: clicking another region with Grab or Cut clears it, and so does a split or a trim that leaves the region holding none of it. Cut splits the region at every click. Draw is the automation pencil: with an automation lane selected (see below) it draws a freehand breakpoint curve; with no lane selected it does nothing (it never moves the region).
 

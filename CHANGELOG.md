@@ -96,6 +96,9 @@ Takes live on the track now, and the audio editor is where you comp them.
   one row now, beside Apple Music and Broadcast (EBU R128). A session saved
   with the old list opens on the row holding that platform's target.
 - **CLAP headers updated to 1.2.10.**
+- **Paste in the audio editor lands on the editor's track.** **Cmd+V** puts
+  the copy on the track the editor is open on, at the edit cursor. In 0.14 it
+  went to the track the region was copied from.
 
 ### Fixed
 

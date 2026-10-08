@@ -6031,6 +6031,88 @@ const ScenarioRegistrar audioEditorJoinFocusesJoined { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorJoinFocusesJoined (host, ctx); }
 } };
 
+// The edit cursor keeps its place on the timeline when the focused region comes to
+// play another file, and when the Cut tool moves the focus: Reverse leaves a paste
+// where the cursor was, and a Cut click on a region moved ahead of its audio leaves it
+// inside that region, never before the timeline's start.
+std::optional<ScenarioResult> runAudioEditorCursorKeepsItsPlace (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr std::int64_t kReversedStart = 24000;
+    static constexpr std::int64_t kMovedOffset = 72000;
+    static constexpr std::int64_t kCutAt = 12000;
+    if (auto early = beginSpansCase (host, ctx, { { kReversedStart, 48000 }, { kMovedOffset, kTakeCaseLength } }))
+        return early;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    // The second region plays the end of the take from the timeline's start.
+    track.regions[1].timelineStart = 0;
+    const auto folder = ctx.tempDir() / "cursor";
+    std::filesystem::create_directories (folder);
+    applySessionDirectory (session, folder);
+    ctx.cleanup ([&session, mode = session.editMode] { session.editMode = mode; });
+    const auto clipboard = engine.getRegionClipboard();
+    ctx.cleanup ([&engine, clipboard] { engine.getRegionClipboard() = clipboard; });
+    const auto cursor = std::make_shared<std::int64_t> (0);
+    const auto press = [&host, &ctx] (const char* key)
+    { ctx.expect (host.pressAudioEditorKey (key), std::string (key) + " was not handled"); };
+    const auto pastedAt = [&track] (std::size_t count)
+    { return track.regions.size() == count ? track.regions.back().timelineStart : std::int64_t { -1 }; };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx] { clickEditorWave (host, ctx, 36000); },
+                        [&host] { return host.audioEditorPoint ("wave", 36000).size() == 2; }, "the editor never laid out" });
+    steps->push_back ({ 150, [&host, &ctx, cursor]
+    {
+        const auto view = host.audioEditorView();
+        if (! ctx.expect (view.size() == 3 && std::abs (view[2] - 36000.0) < 1000.0,
+                          "the click did not put the edit cursor in the first region")) return;
+        *cursor = (std::int64_t) view[2];
+        ctx.expect (host.clickAudioEditorButton ("Reverse"), "no Reverse button");
+    }, [&host, &track] { return editorShows (host, track, kReversedStart); }, "the click did not focus the first region" });
+    steps->push_back ({ 150, [&host, &ctx, cursor, press]
+    {
+        const auto view = host.audioEditorView();
+        ctx.expect (view.size() == 3 && (std::int64_t) view[2] == *cursor - kReversedStart,
+                    "Reverse left the edit cursor on the old file's sample");
+        press ("command + C");
+        press ("command + V");
+    }, [&track] { return track.regions[0].reversedFrom.has_value(); }, "Reverse did not reverse the region" });
+    steps->push_back ({ 150, [&ctx, &host, &session, &engine, cursor, pastedAt]
+    {
+        ctx.expect (pastedAt (3) == *cursor, "a paste after Reverse did not land where the edit cursor stood");
+        ctx.expect (undoDescription (engine) == "Paste region", "the paste is not one \"Paste region\" step");
+        session.editMode = EditMode::Cut;
+        clickEditorWave (host, ctx, kCutAt);
+    }, [&track] { return track.regions.size() == 3; }, "Cmd+V after Reverse pasted nothing" });
+    // The cursor stood past the piece the Cut click focuses, so it goes to that piece's end.
+    const auto pieceEnd = std::make_shared<std::int64_t> (-1);
+    steps->push_back ({ 150, [&ctx, &host, &session, &track, press, pieceEnd]
+    {
+        session.editMode = EditMode::Grab;
+        const auto focus = editorFocus (host, track);
+        if (! ctx.expect (focus && focus->lengthInSamples > 0 && focus->lengthInSamples < 24000,
+                          "the Cut click did not split the moved region")) return;
+        *pieceEnd = focus->lengthInSamples;
+        const auto view = host.audioEditorView();
+        ctx.expect (view.size() == 3 && (std::int64_t) view[2] == kMovedOffset + *pieceEnd,
+                    "the Cut tool's focus change did not keep the edit cursor inside the region it focused");
+        press ("command + V");
+    }, [&host, &track] { return track.regions.size() == 4 && editorShows (host, track, 0); },
+       "the Cut click did not split the moved region and focus its first piece" });
+    steps->push_back ({ 150, [&ctx, pastedAt, pieceEnd]
+    { ctx.expect (pastedAt (5) == *pieceEnd, "a paste after the Cut tool's focus change did not land at the edit cursor"); },
+       [&track] { return track.regions.size() == 5; }, "Cmd+V after the Cut click pasted nothing" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorCursorKeepsItsPlace { Scenario {
+    "gui.audio_editor_cursor_keeps_its_place", { "gui", "keyboard", "editor" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorCursorKeepsItsPlace (host, ctx); }
+} };
+
 // A region fixture for the editor cases below: one mono region of a steady level over
 // the first two seconds of track 1, its own file, naming no take.
 std::optional<ScenarioResult> beginEditorRegionCase (GuiHost& host, ScenarioContext& ctx)
@@ -6385,6 +6467,68 @@ const ScenarioRegistrar audioEditorTinyRegionZoom { Scenario {
     "gui.audio_editor_tiny_region_zoom", { "gui", "editor" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorTinyRegionZoom (host, ctx); }
+} };
+
+// A region two hours long, past where zoom out stops, still fits the editor's width
+// whole, as wide as a two-second one does; - holds that fit and 0 comes back to it.
+std::optional<ScenarioResult> runAudioEditorLongRegionFits (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr std::int64_t kLong = 48000LL * 60 * 60 * 2;
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& track = ctx.session().track (0);
+    if (! addLevelTake (ctx, track, "Fixture", 0, kTakeCaseLength, 0.5f))
+        return ScenarioResult::fail ("could not write region fixture");
+    auto region = regionFromTake (track.takes.front(), 0, kTakeCaseLength);
+    track.takes.clear();
+    if (! region) return ScenarioResult::fail ("could not cut the region fixture");
+    region->takeId = 0;
+    auto longRegion = *region;
+    longRegion.timelineStart = kTakeCaseLength;
+    longRegion.lengthInSamples = kLong;
+    track.regions = { *region, longRegion };
+    ctx.session().audioEditorSnap = false;
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    const auto fitWidth = std::make_shared<double> (0.0);
+    const auto fitsWhole = [&host, &ctx, fitWidth] (const std::string& when)
+    {
+        const auto view = host.audioEditorView();
+        if (! ctx.expect (view.size() == 3, "editor view unavailable")) return;
+        const auto width = view[0] * static_cast<double> (kLong);
+        ctx.expect (std::abs (width / *fitWidth - 1.0) < 0.01,
+                    when + " the two-hour region spans " + std::to_string (width) + " pixels, not the "
+                        + std::to_string (*fitWidth) + " a short region fits");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx, fitWidth]
+    {
+        const auto view = host.audioEditorView();
+        if (! ctx.expect (view.size() == 3 && view[0] > 0.0, "editor view unavailable")) return;
+        *fitWidth = view[0] * static_cast<double> (kTakeCaseLength);
+        host.closeAudioEditor();
+        ctx.expect (host.openAudioEditor (0, 1), "the editor did not open on the long region");
+    }, [&host] { return host.audioEditorPoint ("wave", 48000).size() == 2; }, "the editor never laid out" });
+    steps->push_back ({ 150, [&host, &ctx, fitsWhole]
+    {
+        fitsWhole ("opened on it,");
+        ctx.expect (host.pressAudioEditorKey ("-"), "- was not delivered");
+    }, [&host] { return host.audioEditorPoint ("wave", kTakeCaseLength + kLong / 2).size() == 2; },
+       "the editor never laid out on the long region" });
+    steps->push_back ({ 150, [&host, &ctx, fitsWhole]
+    {
+        fitsWhole ("after -,");
+        ctx.expect (host.pressAudioEditorKey ("="), "= was not delivered");
+    } });
+    steps->push_back ({ 150, [&host, &ctx] { ctx.expect (host.pressAudioEditorKey ("0"), "0 was not delivered"); } });
+    steps->push_back ({ 150, [fitsWhole] { fitsWhole ("after = and 0,"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorLongRegionFits { Scenario {
+    "gui.audio_editor_long_region_fits", { "gui", "keyboard", "editor" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorLongRegionFits (host, ctx); }
 } };
 
 // Resizing the window keeps the editor's zoom and edit cursor; 0 then fits the
@@ -6890,8 +7034,12 @@ std::optional<ScenarioResult> runAudioEditorToolbar (GuiHost& host, ScenarioCont
     { *initialView = host.audioEditorView(); click ("Normalize"); } });
     steps->push_back ({ 150, [gain, normalized, click] { gain (normalized); click ("Undo"); } });
     steps->push_back ({ 150, [gain, click] { gain (0.0f); click ("Redo"); } });
-    steps->push_back ({ 150, [gain, normalized, &host, &ctx]
+    steps->push_back ({ 150, [gain, normalized, click] { gain (normalized); click ("Normalize"); } });
+    steps->push_back ({ 150, [gain, normalized, &host, &ctx, &session]
     {
+        const auto& regions = session.track (0).regions;
+        ctx.expect (regions.size() == 1 && std::abs (regions[0].gainDb - normalized) < 0.001f,
+                    "a second Normalize changed the gain the first one set");
         gain (normalized);
         ctx.expect (host.clickAudioEditorSample (24000), "waveform click failed");
     } });
@@ -15766,6 +15914,47 @@ const ScenarioRegistrar modalDismissal { Scenario {
     "gui.modal_escape_and_backdrop", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runModalDismissal (host, ctx); }
+} };
+
+// An alert that is up when a session loads stays above the console the load
+// rebuilds, as the notice of a missing audio device is at startup, so it shows and
+// a click outside it is not taken by a dim hidden under the console.
+std::optional<ScenarioResult> runModalAboveSessionLoad (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto folder = ctx.tempDir() / "load";
+    std::filesystem::create_directories (folder);
+    const auto saved = folder / "session.json";
+    if (! SessionSerializer::save (session, saved)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &session, originalDir]
+    {
+        drainModals (host);
+        applySessionDirectory (session, originalDir);
+    });
+    host.raiseAlert ("Audio device unavailable", "No audio device could be opened.");
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, [&host, &ctx, saved]
+    {
+        ctx.expect (host.modalBodyOnTop(), "the alert was not on top before the load");
+        ctx.expect (host.openSession (saved), "the session did not load");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.modalCount() == 1, "the session load closed the alert");
+        ctx.expect (host.modalBodyOnTop(), "the session load left the alert under the console");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar modalAboveSessionLoad { Scenario {
+    "gui.modal_above_session_load", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runModalAboveSessionLoad (host, ctx); }
 } };
 
 // Double-clicking the strip's name renames the track; right-clicking it offers

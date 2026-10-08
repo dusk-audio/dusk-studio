@@ -737,7 +737,7 @@ MainComponent::MainComponent()
     styleHdrPill (hdrZoomFitBtn);
     hdrZoomOutBtn.setTooltip ("Zoom out (-)");
     hdrZoomInBtn .setTooltip ("Zoom in (=)");
-    hdrZoomFitBtn.setTooltip ("Zoom to fit (Cmd+0)");
+    hdrZoomFitBtn.setTooltip ("Zoom to fit (0)");
     hdrZoomOutBtn.onClick = [this]
     {
         if (tapeStrip != nullptr) tapeStrip->zoomByFactor (1.0f / 1.25f);
@@ -4579,6 +4579,9 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // strip is hidden now but laid out (and repainted) on the next stage switch.
     if (tapeStrip != nullptr)
         tapeStrip->refreshAfterSessionLoad();
+    // The rebuilt console went in above any alert already up, such as the
+    // startup notice of a missing audio device.
+    EmbeddedModal::raiseOpenModals();
     const auto tAfterConsole = juce::Time::getMillisecondCounterHiRes();
 
     RecentSessions::add (toPath (dir));
@@ -5966,6 +5969,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                     // Re-apply the compact/expanded strip mode the rebuilt view
                     // would otherwise default away from (mirrors the ctor + load).
                     consoleView->setStripsCompactMode (tapeStripExpanded);
+                    EmbeddedModal::raiseOpenModals();
                     if (tapeStrip != nullptr) tapeStrip->repaint();
                     resized();
                 });

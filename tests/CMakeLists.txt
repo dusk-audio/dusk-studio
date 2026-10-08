@@ -79,6 +79,7 @@ add_executable(dusk-studio-tests
     insert_mode_defaults.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/AuxLaneStrip.cpp
     channel_strip_context_rename.cpp
+    shortcuts_reference.cpp
     snap_helpers.cpp
     fade_shapes.cpp
     crossfade.cpp

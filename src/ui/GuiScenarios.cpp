@@ -1253,6 +1253,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return body != nullptr && body->hasKeyboardFocus (true);
     }
 
+    bool modalBodyOnTop() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        auto* body = stack.empty() ? nullptr : stack.back()->getBody();
+        auto* top = owner.getTopLevelComponent();
+        if (body == nullptr || top == nullptr) return false;
+        auto* shown = top->getComponentAt (top->getLocalPoint (body, body->getLocalBounds().getCentre()));
+        return shown != nullptr && (shown == body || body->isParentOf (shown));
+    }
+
     std::vector<std::string> contextMenuItems() const override { return contextMenuItemsForScenario(); }
 
     // Just inside the window's top-left corner, which a centred body and its
