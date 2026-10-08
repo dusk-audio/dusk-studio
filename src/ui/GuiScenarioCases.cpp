@@ -2042,9 +2042,12 @@ std::optional<ScenarioResult> runBuiltinEditorDismiss (GuiHost& host, ScenarioCo
     steps->push_back ({ 0, [] {}, editorUp, "the editor did not open" });
     steps->push_back ({ kOpenForMs, [&host, &ctx]
     {
-        if (host.pressEscapeThroughDisplayServer()) return;
+       #if defined (__linux__)
+        ctx.expect (host.pressEscapeThroughDisplayServer(), "the X server took no Escape for the window");
+       #else
         ctx.note ("no display server route for the key here; Escape went to the window's peer");
         ctx.expect (host.pressPeerKey ("escape"), "the window took no Escape");
+       #endif
     } });
     steps->push_back ({ 0, [] {}, editorDown, "Escape at the window did not close " + unitId + "'s editor", {}, kDismissBoundMs });
     steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.clickInsert (0, false), "insert button unavailable for the reopen"); } });
