@@ -69,6 +69,7 @@ add_executable(dusk-studio-tests
     x11_anti_pattern_guard.cpp
     platform_window_activation.cpp
     ipc_mac_backend_contract.cpp
+    ipc_midi_wire.cpp
     ipc_param_push_queue.cpp
     ipc_windows_backend_contract.cpp
     single_instance_windows_contract.cpp

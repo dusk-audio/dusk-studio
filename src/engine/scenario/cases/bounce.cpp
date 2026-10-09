@@ -1567,6 +1567,11 @@ std::optional<ScenarioResult> latencyRiseDropsBridgedNote (ScenarioContext& ctx)
                       + std::to_string (offs) + " note-off");
             ctx.expect (! sounding, "the note inside the bridged stretch was left sounding: its "
                                     "note-off went out ahead of its note-on");
+            // Dropped, not missed: the window read the note, held its note-on
+            // back and let its note-off go.
+            ctx.expect (ons == 0 && offs == 1, "the note inside the bridged stretch was not dropped: "
+                                               "expected its note-off alone, got " + std::to_string (ons)
+                                               + " note-on, " + std::to_string (offs) + " note-off");
         });
     }, "the fixture's look-ahead never became the track's latency");
     return std::nullopt;

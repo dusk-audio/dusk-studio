@@ -771,6 +771,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/oop_unload_reaps_child.cpp
     src/engine/scenario/cases/pipeline_selftest.cpp
     src/engine/scenario/cases/print_freeze.cpp
+    src/engine/scenario/cases/realtime_restore.cpp
     src/engine/scenario/cases/region_editing.cpp
     src/engine/scenario/cases/scan_cancel_au.cpp
     src/engine/scenario/cases/scan_cancel_lv2.cpp

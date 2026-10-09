@@ -113,6 +113,9 @@ public:
     // between captures.
     void setWorkerCountForTest (int n);
 
+    // Test-only, Linux: the kernel thread id of every DSP worker, in lane order.
+    std::vector<std::int64_t> dspWorkerThreadIdsForTest() const { return workerPool.workerThreadIdsForTest(); }
+
     // The audio-device orchestrator. The settings UI + self-test drive it through
     // the dusk API (IODevice / DeviceSetup / listener callbacks); no JUCE device
     // type crosses this boundary.

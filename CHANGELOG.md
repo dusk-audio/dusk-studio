@@ -242,8 +242,9 @@ Takes live on the track now, and the audio editor is where you comp them.
   session stays open. A Multicore DSP thread goes back to realtime priority
   the next time the transport is stopped. The audio device's own thread stays
   at normal priority until the device is opened again in Settings > Audio. The
-  DSP readout counts each thread moved, as `RT 1` and up, and the log names
-  it.
+  DSP readout counts these warnings, as `RT 1` and up, including one that
+  reaches a thread not running at realtime priority and so moves nothing, and
+  the log names each thread moved.
 - **Large sessions no longer hold gigabytes of memory on Linux.** With
   unlimited locked memory, as the audio group usually has, every thread's
   whole stack was locked in RAM, and playback runs one per region: a
