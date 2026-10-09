@@ -990,6 +990,12 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return clickFileBrowserChild ([] (const auto& child) { return child.getName() == "up"; }, false);
     }
+    bool clickFileBrowserFileField() override
+    {
+        using Editor = std::remove_pointer_t<decltype (owner.statusLabel.getCurrentTextEditor())>;
+        return clickFileBrowserChild ([] (const auto& child) { return dynamic_cast<const Editor*> (&child) != nullptr; },
+                                      false);
+    }
     template <typename Matches>
     bool clickFileBrowserChild (Matches matches, bool nearLeftEdge)
     {

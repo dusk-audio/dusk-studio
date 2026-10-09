@@ -696,6 +696,14 @@ public:
         return false;
     }
 
+    static bool keyboardInsideModal()
+    {
+        for (const auto* modal : activeModalStack())
+            if (const auto* body = modal->getBody(); body != nullptr && body->hasKeyboardFocus (true))
+                return true;
+        return false;
+    }
+
     unsigned long long showGeneration() const noexcept { return showGeneration_; }
 
     juce::Component* getBody() const noexcept

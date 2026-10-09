@@ -298,6 +298,12 @@ Takes live on the track now, and the audio editor is where you comp them.
   the new position on its own, and the region still plays from where you drag
   it. Changing an audio region's gain or mute while it plays is safe the same
   way.
+- **Keys typed into a file browser stay in it** (#858). Any key a dialog did
+  not use went on to the main window behind it, so typing in the Import
+  browser's file box, or with a Save As list focused, could drop a marker
+  and open its Name marker prompt over the browser, toggle the click or the
+  count-in, or hide the timeline. A dialog now passes on only the transport
+  keys, Undo and Redo. This came in with 0.14.
 
 ## [0.14.0] - 2026-09-29
 

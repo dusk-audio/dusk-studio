@@ -13674,6 +13674,89 @@ const ScenarioRegistrar fileBrowserHeldUp { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserHeldUp (host, ctx); }
 } };
 
+// Keys a file browser does not take stay in it: the Import browser's "file:"
+// field, read-only there, and a Save As file list pass on only the transport
+// keys. M, C, Shift+C, T and ? leave the session and the window alone, and L
+// still toggles the loop.
+std::optional<ScenarioResult> runFileBrowserKeysStayInside (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& transport = ctx.engine().getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
+    const bool loop = transport.isLoopEnabled();
+    const bool shown = host.setTimelineShown (true);
+    ctx.keep (session.metronomeEnabled);
+    ctx.keep (session.countInEnabled);
+    ctx.cleanup ([&host, &session, &transport, originalDir, restore, loop, shown]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        transport.setLoopEnabled (loop);
+        host.setTimelineShown (shown);
+    });
+
+    struct Browser { const char* menuItem; const char* where; bool fileField; };
+    const std::array<Browser, 2> browsers {{
+        { "Import Audio or MIDI...", "the Import browser's file field", true },
+        { "Save as...", "the Save As file list", false },
+    }};
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const auto browser : browsers)
+    {
+        const std::string where = browser.where;
+        pushFileMenuSteps (host, ctx, *steps, browser.menuItem);
+        steps->push_back ({ 400, [&host, &ctx, browser, where]
+        {
+            if (browser.fileField)
+                ctx.expect (! host.focusFileName(), "the Import browser's file field takes typing");
+            ctx.expect (browser.fileField ? host.clickFileBrowserFileField() : host.clickFileBrowserControl (false),
+                        where + " is not there to click");
+        } });
+        auto before = std::make_shared<std::array<bool, 3>>();
+        auto markers = std::make_shared<std::size_t>();
+        steps->push_back ({ 100, [&host, &session, before, markers]
+        {
+            *markers = session.getMarkers().size();
+            *before = { session.metronomeEnabled.load(), session.countInEnabled.load(), host.timelineViewMatches (true) };
+            host.pressPeerKey (keyCodeDescription ('m'), 'm');
+            host.pressPeerKey (keyCodeDescription ('c'), 'c');
+            host.pressPeerKey ("shift + C", 'C');
+            host.pressPeerKey ("T", 't');
+            host.pressPeerKey ("shift + /", '?');
+        } });
+        steps->push_back ({ 300, [&host, &ctx, &session, &transport, before, markers, where]
+        {
+            ctx.expect (session.getMarkers().size() == *markers, "M in " + where + " dropped a marker");
+            ctx.expect (session.metronomeEnabled.load() == (*before)[0], "C in " + where + " toggled the click");
+            ctx.expect (session.countInEnabled.load() == (*before)[1], "Shift+C in " + where + " toggled the count-in");
+            ctx.expect (host.timelineViewMatches (true) == (*before)[2], "T in " + where + " toggled the timeline");
+            ctx.expect (! host.shortcutsOpen() && ! host.fileBrowserFolder().empty(),
+                        "the File browser is no longer on top after keys in " + where + ": '" + host.modalText() + "'");
+            *before = { transport.isLoopEnabled(), false, false };
+            host.pressPeerKey (keyCodeDescription ('l'), 'l');
+        } });
+        steps->push_back ({ 200, [&host, &ctx, &transport, before, where]
+        {
+            ctx.expect (transport.isLoopEnabled() != (*before)[0], "L in " + where + " did not reach the loop");
+            transport.setLoopEnabled ((*before)[0]);
+            drainModals (host);
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar fileBrowserKeysStayInside { Scenario {
+    "gui.file_browser_keys_stay_inside", { "gui", "import", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserKeysStayInside (host, ctx); }
+} };
+
 const ScenarioRegistrar timelineDrawer { Scenario {
     "gui.timeline_drawer", { "gui", "timeline" }, Needs::Engine | Needs::Gui,
     {}, {}, 10000,

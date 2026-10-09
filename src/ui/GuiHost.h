@@ -219,6 +219,8 @@ public:
     virtual void holdFileBrowserFolderChecks (bool held) = 0;
     virtual bool clickFileBrowserControl (bool path) = 0;
     virtual bool clickFileBrowserUp() = 0;
+    // The "file:" field, editable or not.
+    virtual bool clickFileBrowserFileField() = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
     virtual bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) = 0;
     // Files held over the point dropFilesOnTrack drops on, then taken away:
