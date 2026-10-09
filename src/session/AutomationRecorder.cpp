@@ -18,7 +18,7 @@ void AutomationPassRecorder::record (AutomationLane& lane, std::int64_t playhead
                                      float value, float bpm, std::uint32_t locates,
                                      std::int64_t returnSamples)
 {
-    if (active() && &lane.pointsConst() != base)
+    if (active() && lane.snapshot.generation() != baseGeneration)
         drop (lane);
     if (active() && (playhead < spanEnd || locates != passLocates))
         close (lane, 0);
@@ -31,7 +31,7 @@ void AutomationPassRecorder::record (AutomationLane& lane, std::int64_t playhead
     if (! active())
     {
         lane.passOpen.store (true, std::memory_order_release);
-        base = &lane.pointsConst();
+        baseGeneration = lane.snapshot.generation();
         passLocates = locates;
         passReturn = returnSamples;
         pass.push_back (point);
@@ -70,7 +70,7 @@ void AutomationPassRecorder::finish (AutomationLane& lane)
 void AutomationPassRecorder::close (AutomationLane& lane, std::int64_t returnSamples)
 {
     if (! active()) return;
-    if (&lane.pointsConst() != base)
+    if (lane.snapshot.generation() != baseGeneration)
     {
         drop (lane);
         return;

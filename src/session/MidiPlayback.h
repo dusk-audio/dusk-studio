@@ -3,8 +3,10 @@
 #include "MidiEvents.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace duskstudio
@@ -116,4 +118,56 @@ inline MidiPlaybackRegion buildMidiPlayback (const std::vector<MidiNote>& notes,
     }
     return playback;
 }
+
+// Where a region sits on the timeline and whether it plays.
+struct MidiRegionPlacement
+{
+    std::int64_t timelineStart   = 0;
+    std::int64_t lengthInSamples = 0;
+    std::int64_t lengthInTicks   = 0;
+    bool         muted           = false;
+};
+
+// A placement the message thread changes while the audio thread plays it, so a
+// region dragged along the timeline plays from where it is without a publish.
+// Each field is atomic on its own: a block that reads across a change can pair
+// one field's old value with another's new one, which the next block's edit
+// count catches.
+class LiveMidiPlacement
+{
+public:
+    void store (const MidiRegionPlacement& p) noexcept
+    {
+        timelineStart.store (p.timelineStart, std::memory_order_relaxed);
+        lengthInSamples.store (p.lengthInSamples, std::memory_order_relaxed);
+        lengthInTicks.store (p.lengthInTicks, std::memory_order_relaxed);
+        muted.store (p.muted, std::memory_order_relaxed);
+    }
+
+    MidiRegionPlacement load() const noexcept
+    {
+        return { timelineStart.load (std::memory_order_relaxed),
+                 lengthInSamples.load (std::memory_order_relaxed),
+                 lengthInTicks.load (std::memory_order_relaxed),
+                 muted.load (std::memory_order_relaxed) };
+    }
+
+private:
+    std::atomic<std::int64_t> timelineStart { 0 };
+    std::atomic<std::int64_t> lengthInSamples { 0 };
+    std::atomic<std::int64_t> lengthInTicks { 0 };
+    std::atomic<bool>         muted { false };
+};
+
+// A track's MIDI timeline the way the audio thread plays it, one entry per
+// region: its events, fixed when the regions are published, and its placement,
+// which an edit in place changes. The audio thread reads nothing else of a
+// region.
+struct MidiTimeline
+{
+    std::vector<MidiPlaybackRegion>      playback;
+    std::unique_ptr<LiveMidiPlacement[]> placement;   // playback.size() of them
+
+    std::size_t size() const noexcept { return playback.size(); }
+};
 } // namespace duskstudio

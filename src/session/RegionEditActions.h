@@ -152,9 +152,8 @@ private:
 // between the drag start and finalise.
 //
 // Several regions on one track go in one action: each perform and undo
-// publishes the track's regions once, however many it changes. The snapshot
-// keeps a single retired vector, so a second publish inside one audio block
-// would free the vector that block is still reading.
+// publishes the track's regions once, however many it changes, so the audio
+// thread hears the edit whole and its timeline is rebuilt once.
 class MidiRegionEditAction final : public UndoableAction
 {
 public:
@@ -339,8 +338,8 @@ private:
 };
 
 // MIDI counterpart to DeleteRegionAction. Erase/insert reshape the
-// vector, so both go through mutate() (copy + publish) - never
-// currentMutable() while the audio thread iterates the snapshot. Several
+// vector, so both go through mutate() (copy + publish): an edit in place
+// cannot add or remove a region the audio thread plays. Several
 // regions on one track are one action for the reason MidiRegionEditAction
 // gives: one publish per perform and per undo.
 class DeleteMidiRegionAction final : public UndoableAction

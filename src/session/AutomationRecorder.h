@@ -52,7 +52,7 @@ private:
 
     AutomationParam param;
     std::vector<AutomationPoint> pass;
-    const std::vector<AutomationPoint>* base = nullptr;
+    std::uint64_t baseGeneration = 0;   // the lane's publishes when the pass opened
     std::int64_t spanEnd = 0;
     std::uint32_t passLocates = 0;
     std::int64_t passReturn = 0;

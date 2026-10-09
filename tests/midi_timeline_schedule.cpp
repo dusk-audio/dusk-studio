@@ -26,20 +26,20 @@ struct Event
 struct Timeline
 {
     std::vector<MidiRegion> regions;
-    std::vector<MidiPlaybackRegion> playback;
+    std::unique_ptr<MidiTimeline> published = buildMidiTimeline ({});
     midischedule::ControllerChase chase;
 
     void add (MidiRegion region)
     {
-        playback.push_back (buildMidiPlayback (region.notes, region.ccs));
         regions.push_back (std::move (region));
+        published = buildMidiTimeline (regions);
     }
 
     midischedule::Outcome play (std::int64_t start, std::int64_t end, bool chased,
                                 std::vector<Event>& out, int& scans)
     {
         return midischedule::scheduleSpan (
-            regions, playback, nullptr, kRate, kBpm, { start, end, chased }, scans, chase,
+            *published, nullptr, kRate, kBpm, { start, end, chased }, scans, chase,
             [&out, start] (std::uint8_t s, std::uint8_t d1, std::uint8_t d2, std::int64_t inSpan)
             {
                 out.push_back ({ s, d1, d2, start + inSpan });
@@ -199,7 +199,7 @@ TEST_CASE ("an event the block cannot take stops the span", "[midi][schedule]")
 
     int taken = 0, scans = 32768;
     const auto outcome = midischedule::scheduleSpan (
-        timeline.regions, timeline.playback, nullptr, kRate, kBpm, { 0, 256, false }, scans,
+        *timeline.published, nullptr, kRate, kBpm, { 0, 256, false }, scans,
         timeline.chase, [&taken] (std::uint8_t, std::uint8_t, std::uint8_t, std::int64_t)
         { return ++taken < 2; });
     CHECK (outcome == midischedule::Outcome::eventRefused);
@@ -286,7 +286,7 @@ TEST_CASE ("a changed timeline ends only the notes it no longer ends itself",
     std::vector<Event> offs;
     int scans = 32768;
     const auto at = ticksToSamples (1000, kRate, kBpm);
-    REQUIRE (midischedule::releaseStranded (timeline.regions, timeline.playback, nullptr, kRate, kBpm, at,
+    REQUIRE (midischedule::releaseStranded (*timeline.published, nullptr, kRate, kBpm, at,
                                             scans, sounding, held,
                                             [&offs] (std::uint8_t s, std::uint8_t d1, std::uint8_t d2, std::int64_t)
                                             {
@@ -311,11 +311,68 @@ TEST_CASE ("a changed timeline ends only the notes it no longer ends itself",
     {
         sounding.clear();
         int untouched = 7;
-        CHECK (midischedule::releaseStranded (timeline.regions, timeline.playback, nullptr, kRate, kBpm, at,
+        CHECK (midischedule::releaseStranded (*timeline.published, nullptr, kRate, kBpm, at,
                                               untouched, sounding, held,
                                               [] (std::uint8_t, std::uint8_t, std::uint8_t, std::int64_t)
                                               { return true; })
                == midischedule::Outcome::complete);
         CHECK (untouched == 7);
+    }
+}
+
+TEST_CASE ("a region moved in place plays from where it is, before any publish",
+           "[midi][schedule][regression]")
+{
+    // A drag moves the region in the message thread's own copy and hands the
+    // audio thread the new position through editedInPlace(); the notes stay
+    // the copies the publish took.
+    MidiRegionSnapshot snapshot;
+    auto region = regionOfTicks (400);
+    region.notes.push_back ({ 1, 60, 100, 0, 100 });
+    snapshot.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    const auto* timeline = snapshot.read();
+    const auto edits = snapshot.edits();
+
+    const auto movedTo = ticksToSamples (1000, kRate, kBpm);
+    snapshot.currentMutable().front().timelineStart = movedTo;
+    snapshot.currentMutable().front().notes.front().noteNumber = 72;
+
+    SECTION ("the move is not heard until it is handed over")
+    {
+        CHECK (timeline->placement[0].load().timelineStart == 0);
+    }
+
+    SECTION ("handed over, it plays at once from the same timeline")
+    {
+        snapshot.editedInPlace();
+        REQUIRE (snapshot.read() == timeline);
+        CHECK (snapshot.edits() == edits + 1);
+        CHECK (snapshot.generation() == 1);
+
+        midischedule::ControllerChase chase;
+        std::vector<Event> events;
+        int scans = 32768;
+        REQUIRE (midischedule::scheduleSpan (*timeline, nullptr, kRate, kBpm, { 0, movedTo, false }, scans, chase,
+                                             [&events] (std::uint8_t s, std::uint8_t d1, std::uint8_t d2, std::int64_t at)
+                                             {
+                                                 events.push_back ({ s, d1, d2, at });
+                                                 return true;
+                                             })
+                 == midischedule::Outcome::complete);
+        CHECK (events.empty());
+
+        REQUIRE (midischedule::scheduleSpan (*timeline, nullptr, kRate, kBpm, { movedTo, movedTo + 256, false }, scans,
+                                             chase,
+                                             [&events, movedTo] (std::uint8_t s, std::uint8_t d1, std::uint8_t d2,
+                                                                 std::int64_t at)
+                                             {
+                                                 events.push_back ({ s, d1, d2, movedTo + at });
+                                                 return true;
+                                             })
+                 == midischedule::Outcome::complete);
+        REQUIRE (events.size() == 1);
+        CHECK (events[0].status == 0x90);
+        CHECK (events[0].data1 == 60);   // the published note, not the edit
+        CHECK (events[0].at == movedTo);
     }
 }

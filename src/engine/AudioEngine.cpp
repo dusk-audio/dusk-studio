@@ -4385,6 +4385,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     };
     const InFlightGuard inFlightGuard { callbacksInFlight };
 
+    // Every session snapshot this block reads, on this thread or a worker lane,
+    // stays alive until the block returns, however often the message thread
+    // publishes meanwhile.
+    const SnapshotReadScope snapshotReads;
+
     // offlineRenderActive spans the render's re-prepares on either side, while
     // the device can still be running, so it cannot tell a native insert that
     // waiting is safe. The context can: only the render driver sets it.
@@ -6177,17 +6182,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 return std::max (0, offsetInWindow + windowToBuffer);
             };
 
-            // Acquire-load the track's MIDI region snapshot once for the
-            // block. Mutated on the message thread by RecordManager (when
-            // a take finishes) and SessionSerializer (load); the snapshot
-            // pointer is stable for the rest of this callback.
-            // MidiRegionSnapshot publishes an empty timeline at construction,
-            // so this pointer is non-null. The edit count is loaded first, so
-            // the regions are at least as new as the count says.
+            // The track's MIDI timeline, loaded once for the block and kept
+            // alive by the callback's snapshot scope. Its regions' placements
+            // can still move under a drag; the edit count, loaded first, is at
+            // least as old as any of them.
             MidiTimelineStamp timelineStamp { session.track (t).midiRegions.edits(), 0, tm };
             std::memcpy (&timelineStamp.bpmBits, &bpm, sizeof (timelineStamp.bpmBits));
             const auto& midiTimeline = *session.track (t).midiRegions.read();
-            const auto& midiRegionsForBlock = *midiTimeline.regions;
             // Due until the window's head has looked; a block that never gets
             // there leaves it to the next.
             bool strandedCheckDue = midiTrack && timelineStamp != midiTimelineSeen[(size_t) t];
@@ -6287,7 +6288,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     {
                         strandedCheckDue = false;
                         const auto released = midischedule::releaseStranded (
-                            midiRegionsForBlock, midiTimeline.playback, useMap ? tm : nullptr, sr, bpm,
+                            midiTimeline, useMap ? tm : nullptr, sr, bpm,
                             span.timelineStart, midiScheduleScansRemaining, timelineSounding,
                             midiTimelineHeldScratch,
                             [&] (std::uint8_t status, std::uint8_t data1, std::uint8_t data2,
@@ -6304,7 +6305,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     }
 
                     const auto outcome = midischedule::scheduleSpan (
-                        midiRegionsForBlock, midiTimeline.playback, useMap ? tm : nullptr, sr, bpm,
+                        midiTimeline, useMap ? tm : nullptr, sr, bpm,
                         { span.timelineStart, span.timelineStart + span.length, chase },
                         midiScheduleScansRemaining, midiControllerChase,
                         [&] (std::uint8_t status, std::uint8_t data1, std::uint8_t data2,

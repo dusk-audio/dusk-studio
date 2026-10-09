@@ -93,10 +93,10 @@ void PlaybackEngine::refreshLiveRegionParams()
     // applies when the stream still matches the region by file +
     // timeline position + length; structural mismatches (split / join
     // / move) leave the stream untouched and the next preparePlayback
-    // rebuilds. Single field overwrites are hardware-atomic for the
-    // naturally-aligned scalar types involved. A track with a rebuild
-    // waiting to be handed over is left alone: the rebuild already carries
-    // these values, and the crossfade to it brings them in without a step.
+    // rebuilds. Both fields are atomics the audio thread loads per block. A
+    // track with a rebuild waiting to be handed over is left alone: the
+    // rebuild already carries these values, and the crossfade to it brings
+    // them in without a step.
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto* stream = slots[(size_t) t].current.load (std::memory_order_acquire);
@@ -114,9 +114,9 @@ void PlaybackEngine::refreshLiveRegionParams()
                 if (audioPath (region.file) != rs.sourcePath
                     || region.timelineStart   != rs.timelineStart
                     || region.lengthInSamples != rs.lengthInSamples) continue;
-                rs.gainLinear = dusk::audio::decibelsToGain (
-                    std::clamp (region.gainDb, -60.0f, 24.0f), -60.0f);
-                rs.muted = region.muted;
+                rs.gainLinear.store (dusk::audio::decibelsToGain (
+                    std::clamp (region.gainDb, -60.0f, 24.0f), -60.0f));
+                rs.muted.store (region.muted);
                 break;
             }
         }
@@ -234,9 +234,9 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
         // dB at extreme values to avoid wild values from a hand-
         // edited session.json producing audible clip on first
         // play. The Alt-drag clamps tighter ([-24, +12]) at the UI.
-        rs.gainLinear = dusk::audio::decibelsToGain (
-            std::clamp (region.gainDb, -60.0f, 24.0f), -60.0f);
-        rs.muted = region.muted;
+        rs.gainLinear.store (dusk::audio::decibelsToGain (
+            std::clamp (region.gainDb, -60.0f, 24.0f), -60.0f));
+        rs.muted.store (region.muted);
         stream->regions.push_back (std::move (rs));
     }
 
@@ -612,7 +612,7 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
     for (auto& r : slotRef.regions)
     {
         if (r.reader == nullptr) continue;
-        if (r.muted) continue;
+        if (r.muted.load()) continue;
 
         // Regions are sorted by timelineStart - once we see one that begins
         // past the block, no later region can overlap us either.
@@ -672,7 +672,7 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
                                               r.overlapPrevLen, r.overlapNextLen);
         const auto* srcL = readScratch.channel (0);
         const auto* srcR = readStereo ? readScratch.channel (1) : srcL;
-        const float regionGain = r.gainLinear;
+        const float regionGain = r.gainLinear.load();
         const std::int64_t sinceStart = firstWithin - r.timelineStart;
         const std::int64_t untilEnd   = regionEnd - firstWithin;
         float* dstL = outL + outOffset;

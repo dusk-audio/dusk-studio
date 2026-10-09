@@ -27,7 +27,7 @@ AutomationPoint pt (juce::int64 t, float v)
 
 // The lane is now an AtomicSnapshot; these pin the accessor contract the
 // audio thread (pointsForRead) and the message thread (pointsConst /
-// mutableForWritePass / publishPoints / mutatePoints) rely on.
+// publishPoints / mutatePoints) rely on.
 TEST_CASE ("AutomationLane: default lane reads a non-null empty vector", "[automation][snapshot]")
 {
     AutomationLane lane;
@@ -48,26 +48,11 @@ TEST_CASE ("AutomationLane: publishPoints swaps the audio-visible vector", "[aut
     REQUIRE (lane.pointsConst().size() == 2);
     REQUIRE (lane.snapshot.read() != before);           // pointer actually swapped
 
-    // A second publish keeps reads coherent (one-publish-behind retire keeps
-    // the prior alive; the latest is always what read() returns).
+    // A second publish keeps reads coherent: the latest is always what read()
+    // returns.
     lane.publishPoints ({ pt (0, 0.5f) });
     REQUIRE (lane.pointsForRead().size() == 1);
     REQUIRE_THAT (lane.pointsForRead().front().value, WithinAbs (0.5f, 1e-6f));
-}
-
-TEST_CASE ("AutomationLane: mutableForWritePass appends in place, no swap", "[automation][snapshot]")
-{
-    AutomationLane lane;
-    const auto* owned = lane.snapshot.read();
-
-    // The Write-mode capture path mutates the owned vector in place — the
-    // audio thread observes it through its existing acquire-loaded pointer,
-    // so the pointer must NOT change.
-    lane.mutableForWritePass().push_back (pt (1000, 0.25f));
-
-    REQUIRE (lane.snapshot.read() == owned);            // same buffer, mutated in place
-    REQUIRE (lane.pointsForRead().size() == 1);
-    REQUIRE (lane.pointsConst().size() == 1);
 }
 
 TEST_CASE ("AutomationLane: mutatePoints copy-applies-publishes", "[automation][snapshot]")
@@ -83,15 +68,11 @@ TEST_CASE ("AutomationLane: mutatePoints copy-applies-publishes", "[automation][
     REQUIRE (lane.pointsForRead()[1].timeSamples == 20);
 }
 
-// The snapshot retires one value per publish, so an edit that publishes twice
-// inside one audio block frees what the block may still read. Region edits
-// count publishes through generation() to prove they publish once.
-TEST_CASE ("AtomicSnapshot: generation counts publishes, not in-place edits", "[automation][snapshot]")
+// Region edits count publishes through generation() to prove they publish
+// once however many regions they touch.
+TEST_CASE ("AtomicSnapshot: generation counts publishes", "[automation][snapshot]")
 {
     duskstudio::AtomicSnapshot<std::vector<int>> snapshot;
-    REQUIRE (snapshot.generation() == 0);
-
-    snapshot.currentMutable().push_back (1);
     REQUIRE (snapshot.generation() == 0);
 
     snapshot.mutate ([] (std::vector<int>& v) { v.push_back (2); v.push_back (3); });

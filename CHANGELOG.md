@@ -270,6 +270,16 @@ Takes live on the track now, and the audio editor is where you comp them.
   Stop. Each now ends at its region's end or at once, without a reset, so the
   track's other notes play on. A region also no longer plays a note or
   controller that starts past its end.
+- **Quick edits during playback can no longer crash the audio.** Two changes
+  to one automation lane, MIDI track, hardware insert or MIDI binding inside a
+  single audio block, as holding Undo with a large buffer size can make, freed
+  what the audio thread was still reading. What a block reads now stays until
+  the block ends, however quickly edits arrive.
+- **Dragging a MIDI region while it plays is safe.** The drag wrote the
+  region's position while the audio thread read it. The audio thread now gets
+  the new position on its own, and the region still plays from where you drag
+  it. Changing an audio region's gain or mute while it plays is safe the same
+  way.
 
 ## [0.14.0] - 2026-09-29
 

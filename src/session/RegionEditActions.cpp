@@ -352,15 +352,14 @@ MidiRegionEditAction::MidiRegionEditAction (Session& s, AudioEngine& e,
 bool MidiRegionEditAction::perform() { return apply (true); }
 bool MidiRegionEditAction::undo()    { return apply (false); }
 
-// Assigning a whole MidiRegion frees the old notes/ccs storage, so this
-// must swap-publish like Create/RecordCommit - currentMutable() is only
-// safe for value edits inside existing entries.
+// A region's notes and controllers reach the audio thread only through a
+// publish, so this swap-publishes like Create/RecordCommit.
 bool MidiRegionEditAction::apply (bool forward)
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks || changes.empty()) return false;
     if (frozenLocked (session, trackIdx)) return false;
-    // Bail before mutate(): a no-op publish would burn the snapshot's single
-    // retire slot on an identical vector.
+    // Bail before mutate(): an invalid index must not publish an identical
+    // timeline.
     const int count = (int) session.track (trackIdx).midiRegions.current().size();
     for (const auto& c : changes)
         if (c.regionIdx < 0 || c.regionIdx >= count) return false;

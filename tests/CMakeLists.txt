@@ -149,6 +149,7 @@ add_executable(dusk-studio-tests
     automation_lane_edit.cpp
     ${CMAKE_SOURCE_DIR}/src/session/AutomationLaneEdit.cpp
     automation_lane_snapshot.cpp
+    atomic_snapshot_reclaim.cpp
     pdc_math.cpp
     session_midi_tempolock_roundtrip.cpp
     session_apply_tempo_change.cpp

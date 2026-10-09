@@ -80,18 +80,12 @@ struct AutomationPoint
 // Points sorted by timeSamples; binary search at lookup. Backed by an
 // AtomicSnapshot so the message thread can reshape the lane (add / drag /
 // delete a breakpoint, undo, thin, load) while the audio thread reads it in
-// Read/Touch mode without a data race. See AtomicSnapshot.h for the
-// one-publish-behind reclamation contract.
+// Read/Touch mode without a data race. Every change publishes.
 //
 // Accessor discipline:
-//   pointsForRead()      - audio thread (acquire-load). Never null post-ctor.
+//   pointsForRead()      - audio thread, inside its SnapshotReadScope.
 //   pointsConst()        - message-thread read.
-//   mutableForWritePass()- in-place edit with NO publish, for breakpoint
-//                          gestures gated on a stopped transport, so the
-//                          audio thread is not reading the lane. A resize
-//                          under a concurrent reader is UB; everything else
-//                          uses mutatePoints / publishPoints.
-//   publishPoints/mutate - safe swap for every edit / load / thin path.
+//   publishPoints/mutate - every edit / load / thin path.
 struct AutomationLane
 {
     AtomicSnapshot<std::vector<AutomationPoint>> snapshot;
@@ -102,7 +96,6 @@ struct AutomationLane
 
     const std::vector<AutomationPoint>& pointsForRead() const noexcept { return *snapshot.read(); }
     const std::vector<AutomationPoint>& pointsConst()   const noexcept { return snapshot.current(); }
-    std::vector<AutomationPoint>&       mutableForWritePass() noexcept  { return snapshot.currentMutable(); }
 
     void publishPoints (std::vector<AutomationPoint> pts)
     {
@@ -824,59 +817,69 @@ struct MidiRegion
     double recordedAtBPM = 120.0;
 };
 
-// A track's MIDI regions, published to the audio thread as AtomicSnapshot
-// publishes a value (its lifetime contract holds here too), with every
-// region's time-sorted playback copy built beside them on the publishing
-// thread. read() hands the audio thread both from one publish.
+inline MidiRegionPlacement placementOf (const MidiRegion& region) noexcept
+{
+    return { region.timelineStart, region.lengthInSamples, region.lengthInTicks, region.muted };
+}
+
+inline std::unique_ptr<MidiTimeline> buildMidiTimeline (const std::vector<MidiRegion>& regions)
+{
+    auto timeline = std::make_unique<MidiTimeline>();
+    timeline->playback.reserve (regions.size());
+    timeline->placement = std::make_unique<LiveMidiPlacement[]> (regions.size());
+    for (std::size_t i = 0; i < regions.size(); ++i)
+    {
+        timeline->playback.push_back (buildMidiPlayback (regions[i].notes, regions[i].ccs));
+        timeline->placement[i].store (placementOf (regions[i]));
+    }
+    return timeline;
+}
+
+// A track's MIDI regions, which only the message thread reads and writes, and
+// the timeline the audio thread plays, built from them at each publish and
+// published through an AtomicSnapshot.
 class MidiRegionSnapshot
 {
 public:
-    struct Published
-    {
-        std::unique_ptr<std::vector<MidiRegion>> regions;
-        std::vector<MidiPlaybackRegion>          playback;   // one per region, as published
-    };
-
     MidiRegionSnapshot()
-        : owned (index (std::make_unique<std::vector<MidiRegion>>()))
-    {
-        currentPtr.store (owned.get(), std::memory_order_release);
-    }
+        : regions (std::make_unique<std::vector<MidiRegion>>())
+    {}
 
-    // Audio thread.
-    const Published* read() const noexcept
-    {
-        return currentPtr.load (std::memory_order_acquire);
-    }
+    // Audio thread, inside its SnapshotReadScope. Never null.
+    const MidiTimeline* read() const noexcept { return timeline.read(); }
 
-    const std::vector<MidiRegion>& current() const noexcept { return *owned->regions; }
+    const std::vector<MidiRegion>& current() const noexcept { return *regions; }
 
-    // In-place value edits, as AtomicSnapshot::currentMutable: the audio thread
-    // reads a region's position, length and mute through its pointer. The notes
-    // and controllers it plays are the copies the last publish took, so an
-    // edit to those sounds once it is published. Call editedInPlace() after
-    // one.
-    std::vector<MidiRegion>& currentMutable() noexcept { return *owned->regions; }
+    // In-place edits. editedInPlace() afterwards makes a region's new position,
+    // length or mute heard; a change to its notes or controllers is heard once
+    // published. Adding or removing a region takes a publish.
+    std::vector<MidiRegion>& currentMutable() noexcept { return *regions; }
 
     void publish (std::unique_ptr<std::vector<MidiRegion>> fresh)
     {
         assert (fresh != nullptr && "MidiRegionSnapshot::publish requires a non-null value");
         if (fresh == nullptr) return;
-        auto next = index (std::move (fresh));
-        currentPtr.store (next.get(), std::memory_order_release);
-        previous = std::move (owned);
-        owned    = std::move (next);
-        ++publishes;
-        editedInPlace();
+        timeline.publish (buildMidiTimeline (*fresh));
+        regions = std::move (fresh);
+        editCount.fetch_add (1, std::memory_order_release);
     }
 
-    std::uint64_t generation() const noexcept { return publishes; }
+    std::uint64_t generation() const noexcept { return timeline.generation(); }
+
+    void editedInPlace() noexcept
+    {
+        const auto& live = timeline.current();
+        assert (live.size() == regions->size() && "an edit in place cannot add or remove a region");
+        const auto count = std::min (live.size(), regions->size());
+        for (std::size_t i = 0; i < count; ++i)
+            live.placement[i].store (placementOf ((*regions)[i]));
+        editCount.fetch_add (1, std::memory_order_release);
+    }
 
     // Counts every change the audio thread can hear, a publish or an in-place
     // edit, after the change. The engine compares it from block to block: a
     // changed timeline may no longer end notes it started. Load it before
     // read(), so what read() returns is at least as new.
-    void editedInPlace() noexcept { editCount.fetch_add (1, std::memory_order_release); }
     std::uint32_t edits() const noexcept { return editCount.load (std::memory_order_acquire); }
 
     template <typename Fn>
@@ -888,21 +891,9 @@ public:
     }
 
 private:
-    static std::unique_ptr<Published> index (std::unique_ptr<std::vector<MidiRegion>> regions)
-    {
-        auto published = std::make_unique<Published>();
-        published->playback.reserve (regions->size());
-        for (const auto& region : *regions)
-            published->playback.push_back (buildMidiPlayback (region.notes, region.ccs));
-        published->regions = std::move (regions);
-        return published;
-    }
-
-    std::atomic<const Published*> currentPtr { nullptr };
-    std::unique_ptr<Published>    owned;
-    std::unique_ptr<Published>    previous;   // kept alive for one publish
-    std::uint64_t                 publishes = 0;
-    std::atomic<std::uint32_t>    editCount { 0 };
+    std::unique_ptr<std::vector<MidiRegion>> regions;
+    AtomicSnapshot<MidiTimeline>             timeline;
+    std::atomic<std::uint32_t>               editCount { 0 };
 };
 
 inline MidiTakeRef makeMidiTakeRef (const MidiRegion& region)

@@ -1998,11 +1998,10 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         && (drag.op == RegionOp::Move || midiDrag.active()))
         onMouseMovedForCursor (*this, { e.x, e.y }, EditMode::Grab, {});
 
-    // MIDI region move-drag. In-place mutation of timelineStart on
-    // the AtomicSnapshot's mutable copy so the audio thread's
-    // scheduler picks it up without a publish (no reallocation, no
-    // shifting, structural integrity preserved per AtomicSnapshot's
-    // contract). mouseUp finalises through MidiRegionEditAction.
+    // MIDI region move-drag. Moves the region in place and hands the audio
+    // thread its new position through editedInPlace(), so it plays from where
+    // it is as the pointer goes, without a publish. mouseUp finalises through
+    // MidiRegionEditAction.
     if (midiDrag.active())
     {
         auto& snapshot = session.track (midiDrag.track).midiRegions;
@@ -2391,18 +2390,24 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
     // action so the recorded transaction is the canonical one.
     if (midiDrag.active())
     {
-        auto& v = session.track (midiDrag.track).midiRegions.currentMutable();
+        auto& regions = session.track (midiDrag.track).midiRegions;
+        auto& v = regions.currentMutable();
         if (midiDrag.regionIdx >= 0 && midiDrag.regionIdx < (int) v.size())
         {
             const auto afterState = v[(size_t) midiDrag.regionIdx];
             if (afterState.timelineStart != midiDrag.origState.timelineStart)
             {
                 v[(size_t) midiDrag.regionIdx] = midiDrag.origState;
+                const auto published = regions.generation();
                 auto& um = engine.getUndoManager();
                 um.beginNewTransaction ("Move MIDI region");
                 performInPlace (new MidiRegionEditAction (
                     session, engine, midiDrag.track, midiDrag.regionIdx,
                     midiDrag.origState, afterState));
+                // A refused move leaves the region where it started, and the
+                // audio thread plays it there too.
+                if (regions.generation() == published)
+                    regions.editedInPlace();
             }
         }
         midiDrag.clear();
@@ -3252,10 +3257,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
 
     // Rename / clear-label. AlertWindow modal text input, same flow
     // as the audio version. Mutation goes through
-    // midiRegions.currentMutable() - the message thread is the only
-    // mutator and the audio thread reads via its acquire-loaded
-    // pointer, same race profile the existing per-note PianoRoll
-    // edits already accept.
+    // midiRegions.currentMutable(): the audio thread never reads a label.
     const auto currentLabel = region.label;
     const juce::String renameLabel = currentLabel.isEmpty()
         ? juce::String ("Add label...")

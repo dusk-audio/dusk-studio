@@ -128,10 +128,10 @@ inline int searchCost (std::size_t n) noexcept
     return probes;
 }
 
-inline std::int64_t regionEnd (const MidiRegion& region, const RegionClock& clock) noexcept
+inline std::int64_t regionEnd (const MidiRegionPlacement& place, const RegionClock& clock) noexcept
 {
-    return clock.map != nullptr ? clock.at (region.lengthInTicks)
-                                : region.timelineStart + region.lengthInSamples;
+    return clock.map != nullptr ? clock.at (place.lengthInTicks)
+                                : place.timelineStart + place.lengthInSamples;
 }
 
 inline bool takeScans (int& scans, int n) noexcept
@@ -184,21 +184,20 @@ bool forEachNoteSoundingAt (const MidiPlaybackRegion& events, const RegionClock&
 // notes are held at its start; scans bounds that work, and running out of it
 // is reported.
 template <typename Emit>
-Outcome scheduleSpan (const std::vector<MidiRegion>& regions,
-                      const std::vector<MidiPlaybackRegion>& playback,
+Outcome scheduleSpan (const MidiTimeline& timeline,
                       const TempoMap* map, double sampleRate, float bpm,
                       const Span& span, int& scans, ControllerChase& chase,
                       Emit&& emit) noexcept
 {
     const auto take = [&scans] (int n) noexcept { return takeScans (scans, n); };
     const TempoMap* tempoMap = (map != nullptr && ! map->empty()) ? map : nullptr;
-    const auto clockOf = [&] (const MidiRegion& region) noexcept
+    const auto clockOf = [&] (const MidiRegionPlacement& place) noexcept
     {
-        return RegionClock (tempoMap, sampleRate, bpm, region.timelineStart);
+        return RegionClock (tempoMap, sampleRate, bpm, place.timelineStart);
     };
-    const auto overlapsSpan = [&] (const MidiRegion& region, std::int64_t end) noexcept
+    const auto overlapsSpan = [&] (const MidiRegionPlacement& place, std::int64_t end) noexcept
     {
-        return end > span.start && region.timelineStart < span.end;
+        return end > span.start && place.timelineStart < span.end;
     };
     const auto firstFrom = [&] (const auto& events, const RegionClock& clock, auto tickOf) noexcept
     {
@@ -209,18 +208,19 @@ Outcome scheduleSpan (const std::vector<MidiRegion>& regions,
     {
         return (std::uint8_t) (kind | channel);
     };
-    const std::size_t count = std::min (regions.size(), playback.size());
+    const std::size_t count = timeline.size();
 
     if (span.chase)
         chase.clear();
     for (std::size_t i = 0; i < count; ++i)
     {
         if (! take (1)) return Outcome::scanBudgetSpent;
-        const auto& region = regions[i];
-        const auto& events = playback[i];
-        if (region.muted || events.controllers.empty()) continue;
-        const auto clock = clockOf (region);
-        const auto end = regionEnd (region, clock);
+        const auto& events = timeline.playback[i];
+        if (events.controllers.empty()) continue;
+        const auto place = timeline.placement[i].load();
+        if (place.muted) continue;
+        const auto clock = clockOf (place);
+        const auto end = regionEnd (place, clock);
         if (span.chase)
         {
             const auto upTo = std::min (span.start, end);
@@ -249,7 +249,7 @@ Outcome scheduleSpan (const std::vector<MidiRegion>& regions,
                     chase.explicitAtStart[key] = true;
             }
         }
-        if (! overlapsSpan (region, end)) continue;
+        if (! overlapsSpan (place, end)) continue;
         if (! take (searchCost (events.controllers.size()))) return Outcome::scanBudgetSpent;
         for (auto c = firstFrom (events.controllers, clock, [] (const auto& e) { return e.tick; });
              c != events.controllers.end(); ++c)
@@ -274,12 +274,13 @@ Outcome scheduleSpan (const std::vector<MidiRegion>& regions,
     for (std::size_t i = 0; i < count; ++i)
     {
         if (! take (1)) return Outcome::scanBudgetSpent;
-        const auto& region = regions[i];
-        const auto& events = playback[i];
-        if (region.muted || events.releases.empty()) continue;
-        const auto clock = clockOf (region);
-        const auto end = regionEnd (region, clock);
-        if (overlapsSpan (region, end))
+        const auto& events = timeline.playback[i];
+        if (events.releases.empty()) continue;
+        const auto place = timeline.placement[i].load();
+        if (place.muted) continue;
+        const auto clock = clockOf (place);
+        const auto end = regionEnd (place, clock);
+        if (overlapsSpan (place, end))
         {
             if (! take (searchCost (events.releases.size()))) return Outcome::scanBudgetSpent;
             for (auto r = firstFrom (events.releases, clock, [] (const auto& e) { return e.endTick; });
@@ -311,11 +312,12 @@ Outcome scheduleSpan (const std::vector<MidiRegion>& regions,
         for (std::size_t i = 0; i < count; ++i)
         {
             if (! take (1)) return Outcome::scanBudgetSpent;
-            const auto& region = regions[i];
-            const auto& events = playback[i];
-            if (region.muted || events.notes.empty()) continue;
-            const auto clock = clockOf (region);
-            if (! overlapsSpan (region, regionEnd (region, clock))) continue;
+            const auto& events = timeline.playback[i];
+            if (events.notes.empty()) continue;
+            const auto place = timeline.placement[i].load();
+            if (place.muted) continue;
+            const auto clock = clockOf (place);
+            if (! overlapsSpan (place, regionEnd (place, clock))) continue;
             if (! take (searchCost (events.notes.size()))) return Outcome::scanBudgetSpent;
             const auto started = (std::size_t) (firstFrom (events.notes, clock,
                                                            [] (const auto& e) { return e.startTick; })
@@ -340,12 +342,13 @@ Outcome scheduleSpan (const std::vector<MidiRegion>& regions,
     for (std::size_t i = 0; i < count; ++i)
     {
         if (! take (1)) return Outcome::scanBudgetSpent;
-        const auto& region = regions[i];
-        const auto& events = playback[i];
-        if (region.muted || events.notes.empty()) continue;
-        const auto clock = clockOf (region);
-        const auto end = regionEnd (region, clock);
-        if (! overlapsSpan (region, end)) continue;
+        const auto& events = timeline.playback[i];
+        if (events.notes.empty()) continue;
+        const auto place = timeline.placement[i].load();
+        if (place.muted) continue;
+        const auto clock = clockOf (place);
+        const auto end = regionEnd (place, clock);
+        if (! overlapsSpan (place, end)) continue;
         if (! take (searchCost (events.notes.size()))) return Outcome::scanBudgetSpent;
         for (auto n = firstFrom (events.notes, clock, [] (const auto& e) { return e.startTick; });
              n != events.notes.end(); ++n)
@@ -386,8 +389,7 @@ Outcome releaseBeyond (NoteCount& sounding, const NoteCount& held, Emit&& emit) 
 // sounds at `at` and will end itself are left alone; every other note
 // `sounding` counts is released (releaseBeyond). `held` is scratch.
 template <typename Emit>
-Outcome releaseStranded (const std::vector<MidiRegion>& regions,
-                         const std::vector<MidiPlaybackRegion>& playback,
+Outcome releaseStranded (const MidiTimeline& timeline,
                          const TempoMap* map, double sampleRate, float bpm,
                          std::int64_t at, int& scans, NoteCount& sounding, NoteCount& held,
                          Emit&& emit) noexcept
@@ -395,15 +397,15 @@ Outcome releaseStranded (const std::vector<MidiRegion>& regions,
     if (sounding.total == 0) return Outcome::complete;
     const TempoMap* tempoMap = (map != nullptr && ! map->empty()) ? map : nullptr;
     held.clear();
-    const std::size_t count = std::min (regions.size(), playback.size());
-    for (std::size_t i = 0; i < count; ++i)
+    for (std::size_t i = 0; i < timeline.size(); ++i)
     {
         if (! takeScans (scans, 1)) return Outcome::scanBudgetSpent;
-        const auto& region = regions[i];
-        const auto& events = playback[i];
-        if (region.muted || events.releases.empty()) continue;
-        const RegionClock clock (tempoMap, sampleRate, bpm, region.timelineStart);
-        const auto end = regionEnd (region, clock);
+        const auto& events = timeline.playback[i];
+        if (events.releases.empty()) continue;
+        const auto place = timeline.placement[i].load();
+        if (place.muted) continue;
+        const RegionClock clock (tempoMap, sampleRate, bpm, place.timelineStart);
+        const auto end = regionEnd (place, clock);
         if (end < at) continue;
         if (! forEachNoteSoundingAt (events, clock, end, at, scans, [&held] (const auto& note) noexcept
             {

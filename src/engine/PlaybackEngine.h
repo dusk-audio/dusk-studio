@@ -113,6 +113,23 @@ private:
     std::uint64_t rebuilds = 0;
     std::uint64_t swaps = 0;
 
+    // A field refreshLiveRegionParams changes while the audio thread reads it.
+    // Copying one, which only building a stream does, reads it relaxed too.
+    template <typename T>
+    class LiveField
+    {
+    public:
+        LiveField (T v) noexcept : value (v) {}
+        LiveField (const LiveField& o) noexcept : value (o.load()) {}
+        LiveField& operator= (const LiveField& o) noexcept { store (o.load()); return *this; }
+
+        T    load() const noexcept { return value.load (std::memory_order_relaxed); }
+        void store (T v) noexcept  { value.store (v, std::memory_order_relaxed); }
+
+    private:
+        std::atomic<T> value;
+    };
+
     struct RegionStream
     {
         std::unique_ptr<dusk::audio::BufferedFileReader> reader;
@@ -132,13 +149,10 @@ private:
         std::int64_t overlapPrevLen  = 0;
         std::int64_t overlapNextLen  = 0;
         int         numChannels     = 1;
-        // gainLinear + muted are plain non-atomic so RegionStream stays
-        // movable. refreshLiveRegionParams overwrites them while the
-        // audio thread reads; both fields are naturally-aligned and
-        // hardware-atomic on supported targets, and one-block stale
-        // reads are benign for gain ramps.
-        float       gainLinear      = 1.0f;
-        bool        muted           = false;
+        // refreshLiveRegionParams overwrites these while the audio thread
+        // reads them; a block that reads one a block stale is benign.
+        LiveField<float> gainLinear { 1.0f };
+        LiveField<bool>  muted      { false };
 
         // Loop-start pre-cache. The reader's window follows playback
         // forward, so the backward seek at every loop wrap misses and
