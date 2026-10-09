@@ -1850,7 +1850,7 @@ It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and c
 
 ### Editing a unit
 
-Picking a unit from the picker opens its editor. After that, on a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, click the slot again or press **Escape** to dismiss it.
+Picking a unit from the picker opens its editor. After that, on a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window. Click outside it, click the slot again or press **Escape** to dismiss it.
 
 **DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. Utility has no editor of its own, so Dusk Studio draws it from its parameter table as a panel of knobs and toggles.
 
@@ -1858,7 +1858,7 @@ On an aux lane there is nothing to open: the unit's controls are always on scree
 
 On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Click a toggle to switch it on or off. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
 
-The transport keys keep working while an editor is open. A click into a plug-in's editor gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again.
+Unlike the channel compressor's editor or a third-party plug-in's, a unit's editor leaves the keyboard with the main window, so every shortcut keeps working while it is open, not just the transport keys. A click into the editor gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again.
 
 **MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in a unit's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot, choose **MIDI Learn last-touched parameter**, and choose **MIDI Learn (this track)...** in the next menu. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
 
@@ -2433,7 +2433,8 @@ An open chord slot takes the keys instead:
 - Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback.
 - **M** drops a marker at the playhead, not mute; per-track mute is **X** to avoid the clash with the marker action.
 - Plain **B** taps tempo; **Cmd+B** triggers Bounce (Logic convention).
-- While a prompt that decides what happens to your session is up, no shortcut works: the unsaved-changes prompt when you quit, open or start another session, and **Recover from autosave?**. **Space** and **R** do nothing until you answer it. A control surface or a MIDI binding can still start a take behind it, and so can **R** in the Save As browser that **Save** opens for a session you have never saved; **Save** stops that take first and saves it with the session. **Escape** still does whatever that prompt allows. Other dialogs and editors pass the transport keys through as usual, and Undo and Redo as well. A dialog keeps every other key to itself: **M**, **C** or **T** typed into a file browser does nothing behind it. The Import browser's **file:** box lists the files you have picked and takes no typing; to go to another folder, type it into the path box at the top and press Enter.
+- While a prompt that decides what happens to your session is up, no shortcut works: the unsaved-changes prompt when you quit, open or start another session, and **Recover from autosave?**. **Space** and **R** do nothing until you answer it. A control surface or a MIDI binding can still start a take behind it, and so can **R** in the Save As browser that **Save** opens for a session you have never saved; **Save** stops that take first and saves it with the session. **Escape** still does whatever that prompt allows.
+- Every other dialog, menu and popup, and the EQ, compressor, aux and plug-in editors that open over the window, lets through only these keys: **Space**, **R**, **Home**, **.**, **L**, **P**, **[**, **]**, **Shift+[**, **Shift+]** and **F11**, then **Cmd+Z**, **Cmd+Shift+Z** and **Cmd+Y** (Undo and Redo), **Cmd+S** (Save), **Cmd+Shift+S** (Save As) and **Cmd+Q** (Quit). It keeps every other key to itself, even after a click on the dimmed window behind it: **M**, **C** or **T** typed into a file browser or the import target picker does nothing behind it, and **Tab** moves only between its own controls. The audio region editor and the notepad have their own rules, given with them, and a built-in unit's editor leaves every shortcut working. The Import browser's **file:** box lists the files you have picked and takes no typing; to go to another folder, type it into the path box at the top and press Enter.
 
 \newpage
 

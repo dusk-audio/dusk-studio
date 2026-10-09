@@ -274,28 +274,14 @@ public:
     // With nothing focused, which is where macOS leaves JUCE once an embedded
     // editor's view has been first responder, a key arrives at the window
     // rather than at any component inside it. A key the focused content passed
-    // up has already been offered to it.
-    //
-    // An open modal sits beside the content, so a key its body passed up comes
-    // here too. The modal has already handed on the transport keys; of the
-    // rest only Undo and Redo go on, and a track move's undo waits by itself
-    // while a dialog holds a track. Anything else would act on the session
-    // hidden behind the dialog.
+    // up has already been offered to it. An open modal sits beside the content,
+    // so a key its body passed up comes here too; the content keeps from it
+    // whatever a modal holds back.
     bool keyPressed (const juce::KeyPress& key) override
     {
         auto* content = getContentComponent();
-        if (content == nullptr || content->hasKeyboardFocus (true))
-            return false;
-        if (EmbeddedModal::keyboardInsideModal())
-        {
-            const auto mods = key.getModifiers();
-            const int code = key.getKeyCode();
-            const bool undoOrRedo = mods.isCommandDown() && ! mods.isAltDown()
-                                 && (code == 'Z' || code == 'z' || code == 'Y' || code == 'y');
-            if (! undoOrRedo)
-                return false;
-        }
-        return content->keyPressed (key);
+        return content != nullptr && ! content->hasKeyboardFocus (true)
+            && content->keyPressed (key);
     }
 
     // Windows leaves nothing focused too, once a native child takes the keyboard. The

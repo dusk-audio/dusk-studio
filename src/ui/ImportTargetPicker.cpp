@@ -192,6 +192,7 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
       sessionBpm (bpm),
       beatsPerBar (bpb),
       timeDisplayMode (displayMode),
+      preferredTrack (preferredTrackIndex),
       onCommit (std::move (commit)),
       onCancel (std::move (cancel))
 {
@@ -215,7 +216,35 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
     headerPlaceAt.setFont (juce::Font (juce::FontOptions (11.0f)));
     addAndMakeVisible (headerPlaceAt);
 
-    // Build per-track records + sort.
+    buildRows (preferredTrack);
+
+    listViewport.setViewedComponent (&listContainer, false);
+    listViewport.setScrollBarsShown (true, false);
+    addAndMakeVisible (listViewport);
+
+    cancelButton.onClick = [this] { if (onCancel) onCancel(); };
+    importButton.onClick = [this] { commitSelection(); };
+    importButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a5a3a));
+    importButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    addAndMakeVisible (cancelButton);
+    addAndMakeVisible (importButton);
+
+    // setSize last - all children + listContainer rows are now created
+    // and addAndMakeVisible'd, so the resized() that setSize fires lays
+    // everything out. EmbeddedModal::show resizes the panel only on a host
+    // too small for it, and setBounds with no size change doesn't trigger
+    // resized() - meaning rows would never be positioned if setSize ran at
+    // the top of the ctor.
+    setSize (kPanelW, kPanelH);
+}
+
+ImportTargetPicker::~ImportTargetPicker() = default;
+
+void ImportTargetPicker::buildRows (int trackToSelect)
+{
+    rows.clear();
+    selectedRowIdx = -1;
+
     std::vector<SortRecord> records;
     records.reserve (Session::kNumTracks);
     for (int i = 0; i < Session::kNumTracks; ++i)
@@ -264,54 +293,54 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
         rows.push_back (std::move (row));
     }
 
-    if (! rows.empty())
+    if (rows.empty())
+        return;
+
+    // The track the file was dropped on stays selected so Import goes where the
+    // user aimed, but it takes the recommendation only when the picker would
+    // recommend such a track at all.
+    int preferredRowIdx = -1;
+    for (size_t i = 0; i < rows.size(); ++i)
     {
-        // The track the file was dropped on stays selected so Import goes
-        // where the user aimed, but it takes the recommendation only when the
-        // picker would recommend such a track at all.
-        int preferredRowIdx = -1;
-        for (size_t i = 0; i < rows.size(); ++i)
-            if (rows[i]->trackIndex == preferredTrackIndex)
-                preferredRowIdx = (int) i;
-
-        int recommendedRowIdx = -1;
-        if (preferredRowIdx >= 0 && recommendable (rows[(size_t) preferredRowIdx]->bucket))
-            recommendedRowIdx = preferredRowIdx;
-        else if (recommendable (rows.front()->bucket))
-            recommendedRowIdx = 0;
-        if (recommendedRowIdx >= 0)
-            rows[(size_t) recommendedRowIdx]->recommended = true;
-
-        selectedRowIdx = preferredRowIdx >= 0 ? preferredRowIdx : std::max (recommendedRowIdx, 0);
+        if (rows[i]->trackIndex == preferredTrack)
+            preferredRowIdx = (int) i;
+        if (rows[i]->trackIndex == trackToSelect)
+            selectedRowIdx = (int) i;
     }
 
-    listViewport.setViewedComponent (&listContainer, false);
-    listViewport.setScrollBarsShown (true, false);
-    addAndMakeVisible (listViewport);
+    int recommendedRowIdx = -1;
+    if (preferredRowIdx >= 0 && recommendable (rows[(size_t) preferredRowIdx]->bucket))
+        recommendedRowIdx = preferredRowIdx;
+    else if (recommendable (rows.front()->bucket))
+        recommendedRowIdx = 0;
+    if (recommendedRowIdx >= 0)
+        rows[(size_t) recommendedRowIdx]->recommended = true;
 
-    cancelButton.onClick = [this] { if (onCancel) onCancel(); };
-    importButton.onClick = [this] { commitSelection(); };
-    importButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a5a3a));
-    importButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
-    addAndMakeVisible (cancelButton);
-    addAndMakeVisible (importButton);
-
-    // setSize last - all children + listContainer rows are now created
-    // and addAndMakeVisible'd, so the resized() that setSize fires lays
-    // everything out. EmbeddedModal::show will only call setBounds
-    // (position-only on a fixed-size panel), and setBounds with no size
-    // change doesn't trigger resized() - meaning rows would never be
-    // positioned if setSize ran at the top of the ctor.
-    setSize (kPanelW, kPanelH);
-
-    // A dropped-on track the picker does not recommend sorts near the bottom,
-    // out of view, yet Import goes to it.
-    if (selectedRowIdx >= 0)
-        listViewport.setViewPosition (0, std::max (0, rows[(size_t) selectedRowIdx]->getBottom() + kListPad
-                                                          - listViewport.getMaximumVisibleHeight()));
+    if (selectedRowIdx < 0)
+        selectedRowIdx = std::max (recommendedRowIdx, 0);
 }
 
-ImportTargetPicker::~ImportTargetPicker() = default;
+void ImportTargetPicker::refresh()
+{
+    const bool anySelected = selectedRowIdx >= 0 && selectedRowIdx < (int) rows.size();
+    buildRows (anySelected ? rows[(size_t) selectedRowIdx]->trackIndex : preferredTrack);
+    resized();
+    repaint();
+}
+
+// A dropped-on track the picker does not recommend sorts near the bottom, and
+// a host too short for the whole panel shrinks the list, yet Import goes to
+// the selected row wherever it is.
+void ImportTargetPicker::keepSelectedRowInView()
+{
+    if (selectedRowIdx < 0 || selectedRowIdx >= (int) rows.size()) return;
+    const auto row = rows[(size_t) selectedRowIdx]->getBounds();
+    const auto view = listViewport.getViewArea();
+    if (row.getY() < view.getY())
+        listViewport.setViewPosition (0, std::max (0, row.getY() - kListPad));
+    else if (row.getBottom() > view.getBottom())
+        listViewport.setViewPosition (0, row.getBottom() + kListPad - view.getHeight());
+}
 
 void ImportTargetPicker::selectRow (int index)
 {
@@ -323,11 +352,13 @@ void ImportTargetPicker::selectRow (int index)
 void ImportTargetPicker::commitSelection()
 {
     if (selectedRowIdx < 0 || selectedRowIdx >= (int) rows.size()) return;
-    const auto& r = *rows[(size_t) selectedRowIdx];
-    const int trackIndex = r.trackIndex;
-    const bool needsModeFlip = switchesMode (r.bucket);
+    const int trackIndex = rows[(size_t) selectedRowIdx]->trackIndex;
 
-    if (! needsModeFlip)
+    // The track's mode as it is now, not as its row was drawn: an undo may
+    // have changed it since.
+    const auto currentMode = (Track::Mode) session.track (trackIndex).mode.load (std::memory_order_relaxed);
+    const Track::Mode newMode = summary.trackMode();
+    if (currentMode == newMode)
     {
         if (onCommit) onCommit (trackIndex, std::nullopt);
         return;
@@ -336,10 +367,6 @@ void ImportTargetPicker::commitSelection()
     // Mode-flip needed (e.g. dropping a MIDI file on an audio track,
     // or vice versa). Explicit confirm so the user doesn't silently
     // discover their track changed mode after the fact.
-    auto& trackRef = session.track (trackIndex);
-    const auto currentMode = (Track::Mode) trackRef.mode.load (std::memory_order_relaxed);
-    const Track::Mode newMode = summary.trackMode();
-
     auto modeName = [] (Track::Mode m) -> juce::String
     {
         switch (m)
@@ -422,5 +449,6 @@ void ImportTargetPicker::resized()
         y += kRowH + kRowGap;
     }
     listContainer.setSize (rowW, std::max (y + kListPad, bounds.getHeight()));
+    keepSelectedRowInView();
 }
 } // namespace duskstudio

@@ -145,6 +145,10 @@ Takes live on the track now, and the audio editor is where you comp them.
   mode now shows that it will switch even when it is recommended, and a track
   that would be switched while it holds regions is never recommended; the
   track you drop on stays selected, and the Switch prompt still asks first.
+  The picker also follows an undo made while it is up: Import used to put
+  audio on a track the undo had put back in MIDI mode without asking, and now
+  asks before switching it. In a window too short for the whole list, the
+  track you drop on stays in view.
 - **A locked region takes no edit** (#816, #827). In the audio editor Delete,
   Split, Normalize, Reset gain, Reset fades, a typed gain or fade and
   Properties > Delete region all edited a locked region, and so did the
@@ -304,12 +308,19 @@ Takes live on the track now, and the audio editor is where you comp them.
   the new position on its own, and the region still plays from where you drag
   it. Changing an audio region's gain or mute while it plays is safe the same
   way.
-- **Keys typed into a file browser stay in it** (#858). Any key a dialog did
-  not use went on to the main window behind it, so typing in the Import
-  browser's file box, or with a Save As list focused, could drop a marker
-  and open its Name marker prompt over the browser, toggle the click or the
-  count-in, or hide the timeline. A dialog now passes on only the transport
-  keys, Undo and Redo. This came in with 0.14.
+- **Keys a dialog does not use stay in it** (#858). Any key a dialog, menu or
+  editor did not use went on to the main window behind it, so typing in the
+  Import browser's file box, pressing **M** with the import target picker up,
+  or pressing a key after a click on a dialog's dimmed backdrop could drop a
+  marker and open its Name marker prompt over the dialog, toggle the click or
+  the count-in, or hide the timeline, and **Tab** could carry the keyboard out
+  of the dialog to a control behind it. Every dialog, menu and popup, and the
+  EQ, compressor, aux and plug-in editors, now let through only the transport
+  keys (**Space**, **R**, **Home**, **.**, **L**, **P**, **[**, **]**,
+  **Shift+[**, **Shift+]** and **F11**), Undo, Redo, Save, Save As and Quit,
+  however the key reaches the window, and **Tab** goes round the dialog's own
+  controls. The editors passed on every key from 0.14, and the file browsers
+  leaked them from 0.14.
 
 ## [0.14.0] - 2026-09-29
 

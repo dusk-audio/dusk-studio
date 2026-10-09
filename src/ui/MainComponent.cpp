@@ -1316,6 +1316,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     const bool cmd     = mods.isCommandDown();   // Ctrl on Linux/Windows, Cmd on macOS
     const bool shift   = mods.isShiftDown();
     const bool escape  = code == juce::KeyPress::escapeKey;
+    const bool left    = code == juce::KeyPress::leftKey;
+    const bool right   = code == juce::KeyPress::rightKey;
 
     if (escape && tapeStrip != nullptr && tapeStrip->cancelTrackMoveDrag())
         return true;
@@ -1325,10 +1327,19 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (escape && ! mods.isAnyModifierKeyDown() && EmbeddedModal::escapeTopModal())
         return true;
 
-    // A prompt deciding what happens to the session is up. Unhandled rather
-    // than consumed, so Tab still moves between its buttons.
-    if (EmbeddedModal::shortcutsWithheld())
-        return false;
+    // With a modal open a key gets here passed up by its body, sent on by its
+    // forwarder, or straight from the window once a click on the dim or a native
+    // child has taken the keyboard from the body. Only the transport keys and the
+    // session shortcuts act behind it, and nothing does while a prompt deciding
+    // the session's fate is up.
+    if (! EmbeddedModal::activeModalStack().empty())
+    {
+        if (code == juce::KeyPress::tabKey && ! cmd && ! mods.isAltDown())
+            return EmbeddedModal::moveFocusWithinTopModal (! shift);
+        if (EmbeddedModal::shortcutsWithheld()
+            || ! (isModalForwardableShortcut (key) || isModalSessionShortcut (code, cmd, shift, mods.isAltDown())))
+            return false;
+    }
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
     // The audio editor's keys land here whenever its child does not have the
@@ -1442,16 +1453,14 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // previous / next marker, with the buttons' stopped-and-empty fallbacks
     // (start of session / last record point). Cmd+arrows are region nudge,
     // plain arrows are strip focus - this claims the remaining pair.
-    if (shift && ! cmd && ! mods.isAltDown()
-        && (code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey))
+    if (shift && ! cmd && ! mods.isAltDown() && (left || right))
     {
-        const bool back = code == juce::KeyPress::leftKey;
         if (engine.getTransport().isStopped() && session.getMarkers().empty())
         {
-            if (back) engine.jumpToZero();
+            if (left) engine.jumpToZero();
             else      engine.jumpToLastRecordPoint();
         }
-        else if (back) engine.jumpToPrevMarker();
+        else if (left) engine.jumpToPrevMarker();
         else           engine.jumpToNextMarker();
         return true;
     }
@@ -1575,8 +1584,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         // nudge matches the user's musical grid. Cmd was already used
         // for clipboard / save / open so it composes cleanly with
         // arrow keys (no existing binding).
-        if ((code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey)
-            && cmd)
+        if ((left || right) && cmd)
         {
             const double sr   = engine.getTimelineSampleRate();
             const float  bpm  = session.tempoBpm.load (std::memory_order_relaxed);
@@ -1588,7 +1596,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
                 const double stepSamples = shift ? beatSamples * (double) beatsPerBar
                                                   : beatSamples;
                 const std::int64_t delta = (std::int64_t) std::round (stepSamples);
-                const std::int64_t signedDelta = code == juce::KeyPress::leftKey ? -delta : delta;
+                const std::int64_t signedDelta = left ? -delta : delta;
                 if (tapeStrip->nudgeSelectedRegion (signedDelta)) return true;
             }
         }
@@ -6733,6 +6741,8 @@ void MainComponent::undoOrRedo (bool redo)
         }
     }
     undoOrExplain (engine, *this, redo);
+    if (auto* picker = dynamic_cast<ImportTargetPicker*> (importTargetModal.getBody()))
+        picker->refresh();
 }
 
 void MainComponent::closeVirtualKeyboard()

@@ -2049,7 +2049,17 @@ std::optional<ScenarioResult> runBuiltinEditorDismiss (GuiHost& host, ScenarioCo
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.clickInsert (0, false), "insert button unavailable"); } });
     steps->push_back ({ 0, [] {}, editorUp, "the editor did not open" });
-    steps->push_back ({ kOpenForMs, [&host, &ctx]
+    // Not a dialog: the keyboard stays with the window, so a shortcut no modal
+    // would pass on still acts.
+    steps->push_back ({ kOpenForMs, [&host, &ctx, editorUp]
+    {
+        auto& click = ctx.session().metronomeEnabled;
+        const bool before = click.load();
+        host.pressPeerKey (keyCodeDescription ('c'), 'c');
+        ctx.expect (editorUp() && click.load() != before, "C at the window did not toggle the click with the editor open");
+        click.store (before);
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
     {
        #if defined (__linux__)
         ctx.expect (host.pressEscapeThroughDisplayServer(), "the X server took no Escape for the window");
@@ -7726,12 +7736,9 @@ const ScenarioRegistrar importModeConfirmation { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runImportModeConfirmation (host, ctx); }
 } };
 
-// The single-file picker says what each track holds, whichever kind of file is
-// coming, marks every track the import would switch, recommended or not, and
-// recommends no track whose content a switch would leave behind. A stereo file
-// dropped on a MIDI track with a region keeps that track selected, still asks
-// before switching it, and recommends the empty stereo track instead.
-std::optional<ScenarioResult> runImportTargetRows (GuiHost& host, ScenarioContext& ctx)
+// Checks a single-file picker case can run, puts the session back after it,
+// and leaves every track an empty Mono track with nothing to undo.
+std::optional<ScenarioResult> beginImportPickerCase (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
     auto& engine = ctx.engine();
@@ -7746,13 +7753,19 @@ std::optional<ScenarioResult> runImportTargetRows (GuiHost& host, ScenarioContex
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
     const bool shown = host.setTimelineShown (true);
-    ctx.cleanup ([&host, &session, originalDir, restore, shown]
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore, shown]
     {
         drainModals (host);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
         host.setTimelineShown (shown);
+        engine.getUndoManager().clearUndoHistory();
     });
+    // An import copies its file into the session's audio folder.
+    const auto importDir = ctx.tempDir() / "session";
+    std::error_code madeDir;
+    std::filesystem::create_directories (importDir / "audio", madeDir);
+    applySessionDirectory (session, importDir);
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
@@ -7760,33 +7773,40 @@ std::optional<ScenarioResult> runImportTargetRows (GuiHost& host, ScenarioContex
         track.regions.clear();
         track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
     }
+    engine.getUndoManager().clearUndoHistory();
+    return std::nullopt;
+}
+
+void giveMidiRegion (ScenarioContext& ctx, int track)
+{
     MidiRegion region;
     region.lengthInTicks = 3840;
-    region.lengthInSamples = session.ticksToSamples (region.lengthInTicks, engine.getCurrentSampleRate());
-    session.track (0).mode.store ((int) Track::Mode::Midi);
-    session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::initializer_list<MidiRegion> { region }));
-    session.track (2).mode.store ((int) Track::Mode::Stereo);
+    region.lengthInSamples = ctx.session().ticksToSamples (region.lengthInTicks, ctx.engine().getCurrentSampleRate());
+    ctx.session().track (track).mode.store ((int) Track::Mode::Midi);
+    ctx.session().track (track).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::initializer_list<MidiRegion> { region }));
+}
 
-    const auto file = ctx.tempDir() / "Stereo.wav";
+bool writeStereoSilence (const std::filesystem::path& path)
+{
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = 48000;
+    spec.numChannels = 2;
+    auto writer = dusk::audio::FileWriter::create (path, spec);
+    std::array<float, 4800> silence {};
+    const float* data[] = { silence.data(), silence.data() };
+    return writer != nullptr && writer->write (data, 2, 4800) && writer->flush();
+}
+
+// The single-file picker's row for a track, split at its tabs: the number, what
+// it holds, "RECOMMENDED", the switch hint, "selected" and "in view", "-" where
+// one does not apply. Empty when the picker is not up or has no such row.
+std::vector<std::string> importTargetRow (const GuiHost& host, int trackNumber)
+{
+    const auto prefix = std::to_string (trackNumber) + "\t";
+    for (const auto& row : host.importTargetRows())
     {
-        dusk::audio::WriteSpec spec;
-        spec.sampleRate = 48000;
-        spec.numChannels = 2;
-        auto writer = dusk::audio::FileWriter::create (file, spec);
-        std::array<float, 4800> silence {};
-        const float* data[] = { silence.data(), silence.data() };
-        if (! writer || ! writer->write (data, 2, 4800) || ! writer->flush())
-            return ScenarioResult::fail ("could not write the audio import fixture");
-    }
-    const auto rowFor = [&host] (int trackNumber)
-    {
-        const auto prefix = std::to_string (trackNumber) + "\t";
-        for (const auto& row : host.importTargetRows())
-            if (row.rfind (prefix, 0) == 0) return row;
-        return std::string {};
-    };
-    const auto fields = [] (const std::string& row)
-    {
+        if (row.rfind (prefix, 0) != 0) continue;
         std::vector<std::string> parts;
         std::size_t start = 0;
         for (auto tab = row.find ('\t'); tab != std::string::npos; tab = row.find ('\t', start))
@@ -7796,24 +7816,50 @@ std::optional<ScenarioResult> runImportTargetRows (GuiHost& host, ScenarioContex
         }
         parts.push_back (row.substr (start));
         return parts;
-    };
-    const auto switches = [] (const std::string& hint) { return hint.find ("will switch to Stereo") != std::string::npos; };
+    }
+    return {};
+}
+
+bool switchesToStereo (const std::string& hint) { return hint.find ("will switch to Stereo") != std::string::npos; }
+
+std::string joinedRow (const std::vector<std::string>& fields)
+{
+    std::string joined;
+    for (const auto& field : fields) joined += (joined.empty() ? "" : " | ") + field;
+    return joined;
+}
+
+// The single-file picker says what each track holds, whichever kind of file is
+// coming, marks every track the import would switch, recommended or not, and
+// recommends no track whose content a switch would leave behind. A stereo file
+// dropped on a MIDI track with a region keeps that track selected, still asks
+// before switching it, and recommends the empty stereo track instead. With
+// every track holding regions it would switch, none is recommended.
+std::optional<ScenarioResult> runImportTargetRows (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginImportPickerCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    giveMidiRegion (ctx, 0);
+    session.track (2).mode.store ((int) Track::Mode::Stereo);
+
+    const auto file = ctx.tempDir() / "Stereo.wav";
+    if (! writeStereoSilence (file)) return ScenarioResult::fail ("could not write the audio import fixture");
 
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 250, [&host, &ctx, file]
     { ctx.expect (host.dropFilesOnTrack (0, { file }), "the drop on the MIDI track was rejected"); } });
-    steps->push_back ({ 300, [&host, &ctx, rowFor, fields, switches]
+    steps->push_back ({ 300, [&host, &ctx]
     {
-        const auto midi = fields (rowFor (1));
+        const auto midi = importTargetRow (host, 1);
         if (! ctx.expect (midi.size() == 6, "the picker has no row for the MIDI track")) return;
         ctx.expect (midi[1] == "1 region", "the MIDI track holding a region reads '" + midi[1] + "'");
         ctx.expect (midi[2] == "-", "the MIDI track an audio import would switch, region and all, is recommended");
-        ctx.expect (switches (midi[3]), "the MIDI track an audio import would switch shows no switch hint");
+        ctx.expect (switchesToStereo (midi[3]), "the MIDI track an audio import would switch shows no switch hint");
         ctx.expect (midi[4] == "selected", "the track the file was dropped on is not the one selected");
         ctx.expect (midi[5] == "in view", "the selected MIDI track is scrolled out of view");
-        const auto stereo = fields (rowFor (3));
+        const auto stereo = importTargetRow (host, 3);
         ctx.expect (stereo.size() == 6 && stereo[1] == "empty" && stereo[2] == "RECOMMENDED" && stereo[3] == "-",
-                    "the empty stereo track is not the recommended one: '" + rowFor (3) + "'");
+                    "the empty stereo track is not the recommended one: '" + joinedRow (stereo) + "'");
         const auto rows = host.importTargetRows();
         ctx.expect (! rows.empty() && rows.front().rfind ("3\t", 0) == 0 && rows.back().rfind ("1\t", 0) == 0,
                     "the empty stereo track is not first and the MIDI track holding a region not last");
@@ -7837,13 +7883,37 @@ std::optional<ScenarioResult> runImportTargetRows (GuiHost& host, ScenarioContex
     steps->push_back ({ 250, [&host, &ctx, file]
     { ctx.expect (host.dropFilesOnTrack (1, { file }), "the drop on the empty mono track was rejected"); },
                        [&host] { return host.modalStackEmpty(); }, "the first picker did not close" });
-    steps->push_back ({ 300, [&host, &ctx, rowFor, fields, switches]
+    steps->push_back ({ 300, [&host, &ctx]
     {
-        const auto mono = fields (rowFor (2));
+        const auto mono = importTargetRow (host, 2);
         if (! ctx.expect (mono.size() == 6, "the picker has no row for the mono track")) return;
         ctx.expect (mono[1] == "empty" && mono[2] == "RECOMMENDED" && mono[4] == "selected",
-                    "the empty mono track the file was dropped on is not recommended and selected: '" + rowFor (2) + "'");
-        ctx.expect (switches (mono[3]), "the recommended mono track a stereo import would switch shows no switch hint");
+                    "the empty mono track the file was dropped on is not recommended and selected: '"
+                        + joinedRow (mono) + "'");
+        ctx.expect (switchesToStereo (mono[3]), "the recommended mono track a stereo import would switch shows no switch hint");
+        drainModals (host);
+    } });
+    steps->push_back ({ 250, [&host, &ctx, file]
+    {
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            giveMidiRegion (ctx, t);
+        ctx.expect (host.dropFilesOnTrack (1, { file }), "the drop with every track holding MIDI was rejected");
+    }, [&host] { return host.modalStackEmpty(); }, "the second picker did not close" });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        const auto rows = host.importTargetRows();
+        ctx.expect (rows.size() == (std::size_t) Session::kNumTracks, "the picker does not list every track");
+        for (int t = 1; t <= Session::kNumTracks; ++t)
+        {
+            const auto row = importTargetRow (host, t);
+            if (! ctx.expect (row.size() == 6 && row[2] == "-" && switchesToStereo (row[3]),
+                              "with every track holding regions a switch would leave, track " + std::to_string (t)
+                                  + " reads '" + joinedRow (row) + "'"))
+                return;
+        }
+        const auto dropped = importTargetRow (host, 2);
+        ctx.expect (dropped[4] == "selected" && dropped[5] == "in view",
+                    "the track the file was dropped on is not selected and in view: '" + joinedRow (dropped) + "'");
         drainModals (host);
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
@@ -7854,6 +7924,143 @@ const ScenarioRegistrar importTargetRows { Scenario {
     "gui.import_target_rows", { "gui", "import" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runImportTargetRows (host, ctx); }
+} };
+
+// An undo under the single-file picker can put the track it would import onto
+// back in another mode. Its rows follow the undo, and Import still asks before
+// switching that track rather than landing audio on a MIDI track.
+std::optional<ScenarioResult> runImportTargetFollowsUndo (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginImportPickerCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    const auto file = ctx.tempDir() / "Stereo.wav";
+    if (! writeStereoSilence (file)) return ScenarioResult::fail ("could not write the audio import fixture");
+    const auto trackIs = [&session] (Track::Mode mode, std::size_t regions)
+    {
+        const auto& track = session.track (0);
+        return track.mode.load() == (int) mode && track.regions.size() == regions && track.midiRegions.current().empty();
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 250, [&host, &ctx, file]
+    { ctx.expect (host.dropFilesOnTrack (0, { file }), "the drop on the empty MIDI track was rejected"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        const auto row = importTargetRow (host, 1);
+        ctx.expect (row.size() == 6 && switchesToStereo (row[3]), "the empty MIDI track reads '" + joinedRow (row) + "'");
+        ctx.expect (host.clickModalButton ("Import"), "the picker's Import button is unavailable");
+    } });
+    steps->push_back ({ 250, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Switch"), "importing onto the MIDI track did not ask to switch it"); } });
+    steps->push_back ({ 250, [&host, &ctx, trackIs, file]
+    {
+        ctx.expect (trackIs (Track::Mode::Stereo, 1), "the first import did not switch track 1 to Stereo with its region");
+        ctx.expect (host.dropFilesOnTrack (0, { file }), "the drop on the stereo track was rejected");
+    }, [&host] { return host.modalStackEmpty(); }, "the first import left a modal up" });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        const auto row = importTargetRow (host, 1);
+        ctx.expect (row.size() == 6 && row[1] == "1 region" && row[3] == "-" && row[4] == "selected",
+                    "the stereo track holding the first import reads '" + joinedRow (row) + "'");
+        ctx.expect (host.pressPeerKey ("command + Z"), "Undo under the picker was not handled");
+    } });
+    steps->push_back ({ 250, [&host, &ctx, trackIs]
+    {
+        if (! ctx.expect (trackIs (Track::Mode::Midi, 0), "Undo under the picker did not put track 1 back to an empty MIDI track"))
+            return;
+        const auto row = importTargetRow (host, 1);
+        ctx.expect (row.size() == 6 && row[1] == "empty" && switchesToStereo (row[3]) && row[4] == "selected",
+                    "after the undo the picker's row for track 1 reads '" + joinedRow (row) + "'");
+        ctx.expect (host.clickModalButton ("Import"), "the picker did not stay up through the undo");
+    } });
+    steps->push_back ({ 250, [&host, &ctx]
+    {
+        ctx.expect (host.confirmationText() == std::vector<std::string> {
+                        "Switch track to Stereo?",
+                        "Track 1 is currently in MIDI mode. Importing this audio file will switch the track to Stereo mode. Proceed?" },
+                    "Import after the undo did not ask before switching the MIDI track");
+        if (! host.modalStackEmpty() && host.confirmationText().size() == 2)
+            ctx.expect (host.clickModalButton ("Cancel"), "the switch prompt has no Cancel");
+    } });
+    steps->push_back ({ 250, [&host, &ctx, trackIs]
+    {
+        ctx.expect (trackIs (Track::Mode::Midi, 0), "Import after the undo put audio on track 1 while it was in MIDI mode");
+        drainModals (host);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar importTargetFollowsUndo { Scenario {
+    "gui.import_target_follows_undo", { "gui", "import", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runImportTargetFollowsUndo (host, ctx); }
+} };
+
+// A window too short for the whole single-file picker shrinks its list, and the
+// track the file was dropped on stays in view even when it sorts last.
+std::optional<ScenarioResult> runImportTargetShortWindow (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("the UI scale needs the native UI");
+   #else
+    const auto launch = host.mainWindowSize();
+    if (launch.size() < 4) return ScenarioResult::fail ("the main window reported no size");
+    if (auto early = beginImportPickerCase (host, ctx)) return early;
+    const auto originalScale = static_cast<float> (host.uiScale());
+    ctx.cleanup ([&host, originalScale, launch]
+    {
+        drainModals (host);
+        host.restoreUiScale (originalScale);
+        host.resizeMainWindow (launch[0], launch[1]);
+    });
+    giveMidiRegion (ctx, 0);
+    const auto file = ctx.tempDir() / "Stereo.wav";
+    if (! writeStereoSilence (file)) return ScenarioResult::fail ("could not write the audio import fixture");
+
+    // The UI scale lowers the window's smallest height below the picker's.
+    static constexpr float kScale = 1.25f;
+    static constexpr int kShortHeight = 540;
+    static constexpr int kPickerHeight = 560;
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host] { host.restoreUiScale (kScale); } });
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        const auto size = host.mainWindowSize();
+        if (size.size() < 4 || ! host.resizeMainWindow (size[0], kShortHeight))
+            ctx.complete (ScenarioResult::skip ("the window cannot be made shorter than the picker here"));
+    }, [&host] { return std::abs (host.uiScale() - kScale) < 0.001; }, "the UI scale did not change" });
+    steps->push_back ({ 200, [&host, &ctx, file]
+    { ctx.expect (host.dropFilesOnTrack (0, { file }), "the drop on the MIDI track was rejected"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        const auto layout = host.modalLayout();
+        if (! ctx.expect (layout.size() == 7, "the picker reported no layout")) return;
+        if (layout[3] >= kPickerHeight)
+        {
+            ctx.complete (ScenarioResult::skip ("a " + std::to_string (layout[5]) + "-unit window still holds the whole picker"));
+            return;
+        }
+        const auto rows = host.importTargetRows();
+        ctx.expect (! rows.empty() && rows.back().rfind ("1\t", 0) == 0, "the MIDI track holding a region does not sort last");
+        const auto row = importTargetRow (host, 1);
+        ctx.expect (row.size() == 6 && row[4] == "selected" && row[5] == "in view",
+                    "in a " + std::to_string (layout[3]) + "-unit picker the dropped-on track reads '"
+                        + joinedRow (row) + "'");
+        drainModals (host);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar importTargetShortWindow { Scenario {
+    "gui.import_target_short_window", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runImportTargetShortWindow (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioContext& ctx)
@@ -13885,6 +14092,170 @@ const ScenarioRegistrar fileBrowserKeysStayInside { Scenario {
     "gui.file_browser_keys_stay_inside", { "gui", "import", "keyboard" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserKeysStayInside (host, ctx); }
+} };
+
+// The import pickers sit inside the main window's content, so a key they decline
+// goes straight on to the shortcuts. They pass on only the transport keys and
+// Undo, Redo, Save, Save As and Quit, by whatever route the key arrives: from the
+// picker itself, from the window after a click on the multi-import picker's dim
+// took the keyboard, or with nothing holding the keyboard at all. M, C, Shift+C,
+// T and ? do nothing behind the picker, L toggles the loop, and Cmd+Z, Cmd+Y and
+// Cmd+Shift+Z reach the history. Tab moves the keyboard round the picker and
+// never out to the window behind it.
+std::optional<ScenarioResult> runDialogKeysStayInside (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginImportPickerCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    auto& transport = ctx.engine().getTransport();
+    auto& um = ctx.engine().getUndoManager();
+    const bool loop = transport.isLoopEnabled();
+    ctx.keep (session.metronomeEnabled);
+    ctx.keep (session.countInEnabled);
+    auto giveBack = std::make_shared<std::function<void()>>();
+    ctx.cleanup ([&transport, loop, giveBack]
+    {
+        if (*giveBack) (*giveBack)();
+        transport.setLoopEnabled (loop);
+    });
+    const auto first = ctx.tempDir() / "First.wav";
+    const auto second = ctx.tempDir() / "Second.wav";
+    if (! writeStereoSilence (first) || ! writeStereoSilence (second))
+        return ScenarioResult::fail ("could not write the audio import fixtures");
+    // A session on disk, so Save writes it in place rather than asking where.
+    const auto sessionJson = ctx.tempDir() / "Keys" / "session.json";
+    std::error_code madeDir;
+    std::filesystem::create_directories (sessionJson.parent_path(), madeDir);
+    if (! SessionSerializer::save (session, sessionJson) || ! host.openSession (sessionJson))
+        return ScenarioResult::fail ("could not open a saved session");
+
+    enum class Route { Picker, AfterDimClick, NothingFocused };
+    struct Leg { Route route; const char* where; std::vector<std::filesystem::path> files; };
+    const std::vector<Leg> legs {
+        { Route::Picker,         "the import target picker",                         { first } },
+        { Route::AfterDimClick,  "the multi-import picker after a click on its dim", { first, second } },
+        { Route::NothingFocused, "the import target picker with nothing focused",    { first } },
+    };
+    const auto pickerUp = [&host] (const Leg& leg)
+    {
+        return leg.files.size() == 1 ? ! host.importTargetRows().empty() : ! host.multiImportRows().empty();
+    };
+    auto edits = std::make_shared<int> (0);
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const auto& leg : legs)
+    {
+        const std::string where = leg.where;
+        steps->push_back ({ 250, [&host, &ctx, leg, where]
+        {
+            host.setTimelineShown (true);
+            ctx.expect (host.dropFilesOnTrack (0, leg.files), "the drop for " + where + " was rejected");
+        }, [&host] { return host.modalStackEmpty(); }, "the previous picker did not close" });
+        auto before = std::make_shared<std::array<bool, 3>>();
+        auto markers = std::make_shared<std::size_t>();
+        steps->push_back ({ 300, [&host, &ctx, &session, leg, where, pickerUp, before, markers, giveBack]
+        {
+            if (! ctx.expect (pickerUp (leg), where + " did not open")) return;
+            if (leg.route == Route::AfterDimClick)
+            {
+                ctx.expect (host.clickModalBackdrop(), "the dim behind " + where + " took no click");
+                ctx.expect (pickerUp (leg), "a click on the dim closed " + where);
+                ctx.expect (! host.modalHasKeyboardFocus(),
+                            "the click on the dim left the keyboard in the picker, so the window's route goes untested");
+            }
+            else if (leg.route == Route::NothingFocused)
+            {
+                *giveBack = host.unfocusWindow();
+                ctx.expect (! host.modalHasKeyboardFocus(), "the picker kept the keyboard");
+            }
+            else
+            {
+                ctx.expect (host.modalHasKeyboardFocus(), where + " did not take the keyboard");
+            }
+            *markers = session.getMarkers().size();
+            *before = { session.metronomeEnabled.load(), session.countInEnabled.load(), host.timelineViewMatches (true) };
+            host.pressPeerKey (keyCodeDescription ('m'), 'm');
+            host.pressPeerKey (keyCodeDescription ('c'), 'c');
+            host.pressPeerKey ("shift + C", 'C');
+            host.pressPeerKey ("T", 't');
+            host.pressPeerKey ("shift + /", '?');
+        } });
+        steps->push_back ({ 300, [&host, &ctx, &session, &transport, leg, where, pickerUp, before, markers]
+        {
+            ctx.expect (session.getMarkers().size() == *markers, "M in " + where + " dropped a marker");
+            ctx.expect (session.metronomeEnabled.load() == (*before)[0], "C in " + where + " toggled the click");
+            ctx.expect (session.countInEnabled.load() == (*before)[1], "Shift+C in " + where + " toggled the count-in");
+            ctx.expect (host.timelineViewMatches (true) == (*before)[2], "T in " + where + " toggled the timeline");
+            ctx.expect (! host.shortcutsOpen() && pickerUp (leg),
+                        where + " is no longer on top after the keys: '" + host.modalText() + "'");
+            (*before)[0] = transport.isLoopEnabled();
+            host.pressPeerKey (keyCodeDescription ('l'), 'l');
+        } });
+        steps->push_back ({ 200, [&host, &ctx, &transport, &um, where, before, edits]
+        {
+            ctx.expect (transport.isLoopEnabled() != (*before)[0], "L in " + where + " did not reach the loop");
+            transport.setLoopEnabled ((*before)[0]);
+            um.beginNewTransaction ("Dialog key probe");
+            um.perform (new ParamEditAction ([edits] { ++*edits; }, [edits] { --*edits; }));
+            const int start = *edits;
+            struct Chord { const char* description; const char* name; int after; };
+            for (const auto& chord : { Chord { "command + Z", "Cmd+Z", start - 1 },
+                                       Chord { "command + Y", "Cmd+Y", start },
+                                       Chord { "command + Z", "Cmd+Z", start - 1 },
+                                       Chord { "command + shift + Z", "Cmd+Shift+Z", start } })
+            {
+                host.pressPeerKey (chord.description);
+                if (! ctx.expect (*edits == chord.after, std::string (chord.name) + " in " + where + " did not reach the history"))
+                    return;
+            }
+        } });
+        if (leg.route == Route::Picker)
+        {
+            steps->push_back ({ 200, [&host, &ctx, leg, where, pickerUp, sessionJson]
+            {
+                std::error_code error;
+                const auto backdated = std::filesystem::file_time_type::clock::now() - std::chrono::hours (1);
+                std::filesystem::last_write_time (sessionJson, backdated, error);
+                if (! ctx.expect (! error, "could not backdate the saved session")) return;
+                host.pressPeerKey ("command + S");
+                ctx.expect (std::filesystem::last_write_time (sessionJson, error) > backdated && ! error,
+                            "Cmd+S in " + where + " did not save the session in place");
+                ctx.expect (pickerUp (leg), "Cmd+S in " + where + " took the picker down: '" + host.modalText() + "'");
+                host.pressPeerKey ("command + shift + S");
+            } });
+            steps->push_back ({ 300, [&host, &ctx, leg, where, pickerUp]
+            {
+                if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                                  "Cmd+Shift+S in " + where + " showed '" + host.modalText() + "' rather than Save As"))
+                    return;
+                host.closeTopModal();
+                ctx.expect (pickerUp (leg), "closing Save As did not leave " + where + " on top");
+            } });
+        }
+        steps->push_back ({ 100, [&host, &ctx, leg, where, pickerUp, giveBack]
+        {
+            for (int press = 0; press < 8; ++press)
+            {
+                host.pressPeerKey (press % 3 == 2 ? "shift + tab" : "tab");
+                if (! ctx.expect (host.modalHasKeyboardFocus() && pickerUp (leg),
+                                  "Tab " + std::to_string (press + 1) + " in " + where
+                                      + " left the keyboard outside the picker"))
+                    break;
+            }
+            if (*giveBack)
+            {
+                (*giveBack)();
+                *giveBack = {};
+            }
+            drainModals (host);
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar dialogKeysStayInside { Scenario {
+    "gui.dialog_keys_stay_inside", { "gui", "import", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runDialogKeysStayInside (host, ctx); }
 } };
 
 const ScenarioRegistrar timelineDrawer { Scenario {

@@ -15,9 +15,10 @@ namespace duskstudio
 // Global shortcuts that stay live while a modal / popup holds keyboard
 // focus, forwarded to the registered MainComponent. Deliberately limited to
 // transport + loop/punch + playhead navigation + window fullscreen: edit /
-// clipboard / destructive keys (Delete, split, nudge, undo, save, marker, ...)
-// are NOT forwarded because they would act on the arrangement hidden behind
-// the modal - e.g. Delete silently removing a region the user can't even see.
+// clipboard / destructive keys (Delete, split, nudge, marker, ...) never reach
+// the app while a modal is up, because they would act on the arrangement hidden
+// behind it - e.g. Delete silently removing a region the user can't even see.
+// The only other keys the app takes then are isModalSessionShortcut's.
 // The loop/punch keys ARE forwarded so the engineer can set a loop and audition
 // it while a comp / EQ / plugin editor is open (none of L / P / [ / ] has a
 // Cmd-binding, so forwarding can't trip a destructive op). A focused child
@@ -43,6 +44,16 @@ inline bool isModalForwardableShortcut (const juce::KeyPress& k) noexcept
         || kc == '[' || kc == ']'                         // set loop in/out at playhead
         || kc == '{' || kc == '}'                         // Shift+bracket (X11 shifted glyph) = punch in/out
         || k == juce::KeyPress::F11Key;
+}
+
+// Undo, Redo, Save, Save As and Quit act on the session as a whole, so they
+// still work from behind any modal that forwards shortcuts. keyCode is
+// upper-cased; command is Cmd on macOS and Ctrl elsewhere.
+inline bool isModalSessionShortcut (int keyCode, bool command, bool shift, bool alt) noexcept
+{
+    if (! command || alt)
+        return false;
+    return keyCode == 'Z' || keyCode == 'S' || (! shift && (keyCode == 'Y' || keyCode == 'Q'));
 }
 
 // Implemented by a modal body that binds bare typing keys to its own input -
@@ -696,12 +707,30 @@ public:
         return false;
     }
 
-    static bool keyboardInsideModal()
+    // For a Tab or Shift+Tab nothing inside the modals took. JUCE would carry the
+    // keyboard on through the whole window, out of the modal to whatever control
+    // sits behind it, so the keyboard goes round the top modal's body instead.
+    static bool moveFocusWithinTopModal (bool forward)
     {
-        for (const auto* modal : activeModalStack())
-            if (const auto* body = modal->getBody(); body != nullptr && body->hasKeyboardFocus (true))
+        const auto& stack = activeModalStack();
+        auto* body = stack.empty() ? nullptr : stack.back()->getBody();
+        if (body == nullptr) return false;
+        if (const auto traverser = body->createKeyboardFocusTraverser())
+        {
+            const auto order = traverser->getAllComponents (body);
+            if (! order.empty())
+            {
+                const auto at = std::find_if (order.begin(), order.end(),
+                                              [] (auto* c) { return c->hasKeyboardFocus (false); });
+                auto* next = at == order.end() ? (forward ? order.front() : order.back())
+                           : forward           ? (std::next (at) == order.end() ? order.front() : *std::next (at))
+                                               : (at == order.begin() ? order.back() : *std::prev (at));
+                next->grabKeyboardFocus();
                 return true;
-        return false;
+            }
+        }
+        body->grabKeyboardFocus();
+        return true;
     }
 
     unsigned long long showGeneration() const noexcept { return showGeneration_; }
