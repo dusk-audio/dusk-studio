@@ -208,11 +208,6 @@ Takes live on the track now, and the audio editor is where you comp them.
   stopped, or for good. The track's instrument now gets an all-notes-off the
   moment it stops taking that input, and notes the timeline is holding are
   played again. Choosing another MIDI input already did this.
-- **Fewer dropouts on Windows while an editor draws.** The extra cores that
-  Multicore DSP uses ran at normal priority, so anything else busy on the
-  machine, such as a plug-in editor drawn without a graphics card, slowed them
-  down and the audio overran waiting for them. They now run at the audio
-  thread's priority, as they already did on Linux.
 - **A plug-in that stops getting a track's MIDI lets go of its notes.** A
   MIDI-playing plug-in left loaded when its track switched to Mono or Stereo,
   or a frozen track's plug-in, never heard the note-offs for keys released in
@@ -222,21 +217,50 @@ Takes live on the track now, and the audio editor is where you comp them.
   input on top of a dense timeline, the whole block was dropped, note-offs
   included. The instrument now gets an all-notes-off in its place, and the
   next block plays the timeline's held notes again.
-- **Fewer dropouts on Linux without realtime permissions.** Where the system
-  does not let Dusk Studio set realtime priority itself, PipeWire still gets it
-  for the audio thread through RTKit, but the Multicore DSP threads ran at
-  normal priority and the audio overran waiting for them while an editor
-  drew. They now ask RTKit for the same priority, or failing that for a raised
-  one.
+- **The Multicore DSP threads ask for the audio thread's priority.** Where
+  they ran at normal priority under the realtime audio thread that waits for
+  them, anything else busy on the machine, a plug-in editor drawn without a
+  graphics card among them, slowed them down and the audio overran waiting.
+  They now ask the operating system for the audio thread's priority. On Linux
+  without realtime permissions they ask RTKit, as PipeWire does for its own
+  audio thread, and take a raised priority where RTKit refuses.
+- **Changing Multicore DSP keeps every thread at that priority.** RTKit grants
+  a user about 25 requests in 20 seconds. Every change to the setting started
+  the threads afresh and asked again for each one, so on a machine with many
+  cores a change soon after starting could run out and leave some threads at
+  normal priority beside realtime ones. The threads now outlast a change, and
+  only a new one asks.
+- **The ALSA backend's audio thread asks RTKit too.** Where the system does not
+  let Dusk Studio set realtime priority itself, the audio thread of the ALSA
+  backend ran at normal priority. It now asks RTKit, as the Multicore DSP
+  threads do.
+- **A plug-in stuck in its block no longer ends Dusk Studio on Linux.** Under
+  the limit RTKit and PipeWire set, a realtime thread that computes for 200 ms
+  without a break is killed with the whole process, with no crash report and
+  no autosave. Dusk Studio now takes the kernel's warning that comes first and
+  moves that thread to normal priority: the stall costs dropouts, and the
+  session stays open. The log names the thread.
 - **Large sessions no longer hold gigabytes of memory on Linux.** With
   unlimited locked memory, as the audio group usually has, every thread's
   whole stack was locked in RAM, and playback runs one per region: a
   1,440-region session held over 12 GB while playing. It now holds about
   480 MB, and a 40-region one 120 MB instead of 570 MB.
-- **On macOS the Multicore DSP threads keep the audio deadline.** They ran at
-  normal priority under the realtime CoreAudio thread that waits on them. They
-  now join the device's audio workgroup and take realtime scheduling for its
-  buffer period.
+- **A MIDI region with a long controller take plays its notes.** A region with
+  more than about 32,000 controller events, breath or expression held through
+  a long take, played nothing at all: each block read the region's controllers
+  from the start and ran out of time before it reached a note. Each block now
+  reads only the events that fall in it.
+- **A sampler instrument lets go of its notes after a mode switch.** A
+  multisample (SFZ or SF2) instrument on a track switched to Mono or Stereo
+  with a key down, an import's switch undone while playing for one, held that
+  note when the track came back to MIDI. It now gets an all-notes-off then, as
+  plug-ins already did.
+- **Plug-ins keep their note-offs in a dense block of MIDI.** CLAP, LV2 and
+  out-of-process plug-ins each had a fixed room for a block's MIDI, and what
+  did not fit was dropped from the end, note-offs included, leaving notes
+  held. Each has more room now, and a block that still does not fit keeps
+  every note-off and drops other events first. Out of process, the room is the
+  most a track can send in one block.
 
 ## [0.14.0] - 2026-09-29
 

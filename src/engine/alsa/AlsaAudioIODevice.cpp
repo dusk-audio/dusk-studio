@@ -1,4 +1,5 @@
 #include "AlsaAudioIODevice.h"
+#include "../RealtimeKit.h"
 #include "../RtPriority.h"
 #include "../../foundation/Text.h"
 
@@ -9,8 +10,10 @@
 #include <cstring>
 #include <cstdint>
 #include <sys/resource.h>
+#include <sys/syscall.h>
 #include <pthread.h>
 #include <sched.h>
+#include <unistd.h>
 
 namespace duskstudio
 {
@@ -886,9 +889,19 @@ void AlsaAudioIODevice::start (device::IODeviceCallback* newCallback)
     }
 
     // The I/O thread self-promotes to SCHED_RR as its first act (see
-    // ioThreadRun); on kernel refusal it runs as a plain SCHED_OTHER thread.
+    // ioThreadRun). Where RLIMIT_RTPRIO refuses it, RTKit may still grant it
+    // realtime, as it does the DSP workers and PipeWire's own data thread; it
+    // is asked from here, so the D-Bus round trip never delays a block.
     ioShouldExit.store (false, std::memory_order_release);
+    ioThreadId.store (0, std::memory_order_relaxed);
     ioThread = std::thread ([this] { ioThreadRun(); });
+    if (ioThreadScheduled.wait (1000))
+    {
+        const auto threadId = ioThreadId.load (std::memory_order_relaxed);
+        if (threadId != 0 && ! ioThreadRealtime.load (std::memory_order_relaxed))
+            std::fprintf (stderr, "[Dusk Studio/ALSA] I/O thread without RLIMIT_RTPRIO: %s\n",
+                          rt::raiseThreadsWithoutRtPrio ({ threadId }).c_str());
+    }
 
     isStarted.store (true, std::memory_order_release);
 }
@@ -1079,8 +1092,11 @@ void AlsaAudioIODevice::ioThreadRun()
     // SCHED_RR), so request RT for it too. On kernel refusal this stays a plain
     // SCHED_OTHER thread.
     const auto rtInfo = rt::queryRealtimePriority();
-    if (rtInfo.jucePriority >= 0)
-        rt::applyRealtimeSchedRR (rtInfo.jucePriority);
+    const bool realtime = rtInfo.jucePriority >= 0
+                       && rt::applyRealtimeSchedRR (rtInfo.jucePriority);
+    ioThreadRealtime.store (realtime, std::memory_order_relaxed);
+    ioThreadId.store ((std::int64_t) syscall (SYS_gettid), std::memory_order_relaxed);
+    ioThreadScheduled.signal();
 
     // Resolve and log the actual kernel sched_priority post-promotion so
     // regressions in the priority mapping are visible without re-reading

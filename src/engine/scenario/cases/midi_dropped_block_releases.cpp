@@ -98,7 +98,7 @@ constexpr int kShortNoteTicks = 54;
 constexpr int kLongNoteTicks = 200;
 constexpr int kBurstBlock = 10;
 // More controllers than the generated-event budget lets one block carry.
-constexpr int kDenseControllers = 4000;
+constexpr int kDenseControllers = 6000;
 
 ScenarioResult runDenseTimelineBlock (ScenarioContext& ctx)
 {
@@ -145,12 +145,115 @@ ScenarioResult runDenseTimelineBlock (ScenarioContext& ctx)
     ctx.expect (afterLongNote <= 0, "a note-off the dense block could not carry left its note held");
     return ctx.verdict();
 }
+// Breath or expression recorded with a long take: more controllers in one
+// region than the scheduler may look at in a block. Only the ones that fall in
+// the block are its business, so the notes beside them must still play.
+constexpr int kDenseTakeControllers = 40000;
+constexpr int kDenseTakeNoteTick = 100;
+constexpr int kDenseTakeNoteTicks = 200;
+
+ScenarioResult runDenseControllerTake (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (kTrack);
+    track.mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+    ctx.keep (session.tempoBpm);
+    session.tempoBpm.store (120.0f, std::memory_order_release);
+    session.recomputeRtCounters();
+    if (! loadProbe (ctx)) return ctx.verdict();
+    ctx.cleanup ([&engine, &track]
+    {
+        engine.stop();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+    });
+
+    auto regions = std::make_unique<std::vector<MidiRegion>>();
+    MidiRegion region;
+    region.timelineStart = 0;
+    region.lengthInTicks = kDenseTakeControllers;
+    region.lengthInSamples = ticksToSamples (region.lengthInTicks, ScenarioContext::kSampleRate, 120.0f);
+    for (int i = 0; i < kDenseTakeControllers; ++i)
+        region.ccs.push_back ({ 1, 2, i & 0x7F, i });
+    region.notes.push_back ({ 1, 60, 100, kDenseTakeNoteTick, kDenseTakeNoteTicks });
+    regions->push_back (std::move (region));
+    track.midiRegions.publish (std::move (regions));
+    ctx.pump (kSettleBlocks);
+
+    const auto blockOf = [] (int tick)
+    {
+        return (int) (ticksToSamples (tick, ScenarioContext::kSampleRate, 120.0f)
+                      / ScenarioContext::kBlockSize);
+    };
+    engine.getTransport().setPlayhead (0);
+    engine.play();
+    ctx.pump (blockOf (kDenseTakeNoteTick + kDenseTakeNoteTicks / 2));
+    const int during = voicesHeld (ctx);
+    ctx.pump (blockOf (kDenseTakeNoteTick + kDenseTakeNoteTicks) + 2
+              - blockOf (kDenseTakeNoteTick + kDenseTakeNoteTicks / 2));
+    const int after = voicesHeld (ctx);
+    ctx.note ("voices in the note " + std::to_string (during) + ", after it "
+              + std::to_string (after));
+    ctx.expect (during == 1, "the note beside a dense controller take never played");
+    ctx.expect (after <= 0, "the note beside a dense controller take did not end");
+    return ctx.verdict();
+}
+
+// More regions than the scheduler may look at in a block. Whatever it could
+// not get through may hold a note-off, so the block is the hanging reset, not
+// a silent gap that leaves the instrument as it was.
+constexpr int kOverfullRegions = 33000;
+
+ScenarioResult runOverfullTimeline (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (kTrack);
+    track.mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+    ctx.keep (session.tempoBpm);
+    session.tempoBpm.store (120.0f, std::memory_order_release);
+    session.recomputeRtCounters();
+    if (! loadProbe (ctx)) return ctx.verdict();
+    ctx.cleanup ([&engine, &track]
+    {
+        engine.stop();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+    });
+
+    // Far past where the transport plays, so none of them sounds.
+    auto regions = std::make_unique<std::vector<MidiRegion>>();
+    regions->reserve ((std::size_t) kOverfullRegions);
+    for (int i = 0; i < kOverfullRegions; ++i)
+    {
+        MidiRegion region;
+        region.timelineStart = 100000000 + (std::int64_t) i * 100;
+        region.lengthInTicks = 1;
+        region.lengthInSamples = ticksToSamples (1, ScenarioContext::kSampleRate, 120.0f);
+        regions->push_back (std::move (region));
+    }
+    track.midiRegions.publish (std::move (regions));
+    ctx.pump (kSettleBlocks);
+
+    // Starting the transport sends its own reset; count the ones after it.
+    const auto chokes = [&ctx] { return (int) midiprobe::counter (ctx, kTrack, "chokesSeen"); };
+    engine.getTransport().setPlayhead (0);
+    engine.play();
+    ctx.pump (2);
+    const int started = chokes();
+    ctx.pump (4);
+    const int rolling = chokes();
+    ctx.note ("chokes once rolling " + std::to_string (started) + ", four blocks later "
+              + std::to_string (rolling));
+    ctx.expect (rolling > started, "a block the scheduler could not get through reached the instrument without a reset");
+    return ctx.verdict();
+}
 #else
 ScenarioResult withoutClap (ScenarioContext&)
 {
     return ScenarioResult::skip ("built without the native CLAP host");
 }
-constexpr Run runRoutingOverflow = withoutClap, runDenseTimelineBlock = withoutClap;
+constexpr Run runRoutingOverflow = withoutClap, runDenseTimelineBlock = withoutClap,
+              runDenseControllerTake = withoutClap, runOverfullTimeline = withoutClap;
 #endif
 
 const std::vector<std::string> kTags { "midi", "panic", "clap" };
@@ -165,5 +268,9 @@ const ScenarioRegistrar overflowRegistrar { Scenario {
     "midi.release_on_routing_overflow", kTags, Needs::Engine, kFixtures, running (runRoutingOverflow) } };
 const ScenarioRegistrar denseRegistrar { Scenario {
     "midi.release_on_dense_timeline_block", kTags, Needs::Engine, kFixtures, running (runDenseTimelineBlock) } };
+const ScenarioRegistrar denseTakeRegistrar { Scenario {
+    "midi.notes_beside_dense_controllers", kTags, Needs::Engine, kFixtures, running (runDenseControllerTake) } };
+const ScenarioRegistrar overfullRegistrar { Scenario {
+    "midi.release_on_overfull_timeline", kTags, Needs::Engine, kFixtures, running (runOverfullTimeline) } };
 } // namespace
 } // namespace duskstudio::scenario

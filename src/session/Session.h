@@ -19,6 +19,8 @@
 #include <utility>
 #include <vector>
 #include "AtomicSnapshot.h"
+#include "MidiEvents.h"
+#include "MidiPlayback.h"
 #include "MidiBindings.h"
 #include "SessionLayout.h"
 #include "TrackMove.h"
@@ -785,42 +787,6 @@ inline std::string formatSamplePosition (std::int64_t samples,
     return formatBarBeatTick (bar + 1, beat + 1, tick);
 }
 
-// Off events folded into lengthInTicks - no dangling on/off bookkeeping.
-// Negative or zero length = "all-notes-off across region" sentinel.
-struct MidiNote
-{
-    int  channel       = 1;     // 1..16
-    int  noteNumber    = 60;    // 0..127
-    int  velocity      = 100;   // 1..127 (recorded notes always >= 1)
-    std::int64_t startTick     = 0;
-    std::int64_t lengthInTicks = 0;
-
-    bool operator== (const MidiNote& o) const noexcept
-    {
-        return channel == o.channel && noteNumber == o.noteNumber
-            && velocity == o.velocity && startTick == o.startTick
-            && lengthInTicks == o.lengthInTicks;
-    }
-    bool operator!= (const MidiNote& o) const noexcept { return ! (*this == o); }
-};
-
-// `controller` doubles as message-type discriminator: 0..127 = CC.
-// Sentinels for pitch-bend / aftertouch land when piano roll surfaces them.
-struct MidiCc
-{
-    int  channel    = 1;
-    int  controller = 64;       // sustain pedal
-    int  value      = 0;
-    std::int64_t atTick = 0;
-
-    bool operator== (const MidiCc& o) const noexcept
-    {
-        return channel == o.channel && controller == o.controller
-            && value == o.value && atTick == o.atTick;
-    }
-    bool operator!= (const MidiCc& o) const noexcept { return ! (*this == o); }
-};
-
 struct MidiTakeRef
 {
     std::int64_t           lengthInTicks = 0;
@@ -856,6 +822,77 @@ struct MidiRegion
 
     // Conversion anchor for tempo-locked retime.
     double recordedAtBPM = 120.0;
+};
+
+// A track's MIDI regions, published to the audio thread as AtomicSnapshot
+// publishes a value (its lifetime contract holds here too), with every
+// region's time-sorted playback copy built beside them on the publishing
+// thread. read() hands the audio thread both from one publish.
+class MidiRegionSnapshot
+{
+public:
+    struct Published
+    {
+        std::unique_ptr<std::vector<MidiRegion>> regions;
+        std::vector<MidiPlaybackRegion>          playback;   // one per region, as published
+    };
+
+    MidiRegionSnapshot()
+        : owned (index (std::make_unique<std::vector<MidiRegion>>()))
+    {
+        currentPtr.store (owned.get(), std::memory_order_release);
+    }
+
+    // Audio thread.
+    const Published* read() const noexcept
+    {
+        return currentPtr.load (std::memory_order_acquire);
+    }
+
+    const std::vector<MidiRegion>& current() const noexcept { return *owned->regions; }
+
+    // In-place value edits, as AtomicSnapshot::currentMutable: the audio thread
+    // reads a region's position, length and mute through its pointer. The notes
+    // and controllers it plays are the copies the last publish took, so an
+    // edit to those sounds once it is published.
+    std::vector<MidiRegion>& currentMutable() noexcept { return *owned->regions; }
+
+    void publish (std::unique_ptr<std::vector<MidiRegion>> fresh)
+    {
+        assert (fresh != nullptr && "MidiRegionSnapshot::publish requires a non-null value");
+        if (fresh == nullptr) return;
+        auto next = index (std::move (fresh));
+        currentPtr.store (next.get(), std::memory_order_release);
+        previous = std::move (owned);
+        owned    = std::move (next);
+        ++publishes;
+    }
+
+    std::uint64_t generation() const noexcept { return publishes; }
+
+    template <typename Fn>
+    void mutate (Fn&& fn)
+    {
+        auto fresh = std::make_unique<std::vector<MidiRegion>> (current());
+        fn (*fresh);
+        publish (std::move (fresh));
+    }
+
+private:
+    static std::unique_ptr<Published> index (std::unique_ptr<std::vector<MidiRegion>> regions)
+    {
+        auto published = std::make_unique<Published>();
+        published->playback.reserve (regions->size());
+        for (const auto& region : *regions)
+            published->playback.push_back (buildMidiPlayback (region.notes, region.ccs));
+        published->regions = std::move (regions);
+        return published;
+    }
+
+    std::atomic<const Published*> currentPtr { nullptr };
+    std::unique_ptr<Published>    owned;
+    std::unique_ptr<Published>    previous;   // kept alive for one publish
+    std::uint64_t                 publishes = 0;
 };
 
 inline MidiTakeRef makeMidiTakeRef (const MidiRegion& region)
@@ -1093,9 +1130,9 @@ struct Track
     // regions: written only at session load, audio reads via the
     // PlaybackEngine snapshot. midiRegions: written at load AND at
     // recording-stop, audio reads directly during MIDI playback -
-    // wrapped in AtomicSnapshot for the lock-free swap.
+    // wrapped in MidiRegionSnapshot for the lock-free swap.
     std::vector<AudioRegion>                regions;
-    AtomicSnapshot<std::vector<MidiRegion>> midiRegions;
+    MidiRegionSnapshot                      midiRegions;
 
     // Oldest first. Message thread only.
     std::vector<AudioTake> takes;

@@ -328,6 +328,87 @@ TEST_CASE ("the host turns a hosted panic into a choke on every CLAP note port",
     REQUIRE_THAT (probe.counter ("noteOffsSeen"), WithinAbs (0.0, 1.0e-9));
 }
 
+namespace
+{
+void addMidiAt (dusk::MidiBuffer& buffer, std::uint8_t status, std::uint8_t d1,
+                std::uint8_t d2, int samplePosition)
+{
+    const std::array<std::uint8_t, 3> bytes { status, d1, d2 };
+    buffer.addEvent (bytes.data(), (int) bytes.size(), samplePosition);
+}
+} // namespace
+
+TEST_CASE ("a hosted CLAP block bigger than the host's event list still ends its notes",
+           "[clap][fixture][panic][midi]")
+{
+    ClapProbe probe;
+    REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH));
+    constexpr int kFlood = 12000;
+
+    SECTION ("a flood of other events between a note's start and its end")
+    {
+        // The probe's primary note port takes CLAP notes only, so the flood is
+        // note-ons, repeated on one other key: each still takes an event.
+        dusk::MidiBuffer block;
+        addMidiAt (block, 0x90, 60, 100, 0);
+        for (int i = 0; i < kFlood; ++i)
+            addMidiAt (block, 0x90, 61, 100, 1 + i * (kBlock - 2) / kFlood);
+        addMidiAt (block, 0x80, 60, 0, kBlock - 1);
+        probe.runHosted (block);
+        REQUIRE_THAT (probe.counter ("noteOffsSeen"), WithinAbs (1.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (1.0, 1.0e-9));   // 61 alone
+    }
+
+    SECTION ("more note-offs than the host can carry")
+    {
+        dusk::MidiBuffer start;
+        addMidiAt (start, 0x90, 60, 100, 0);
+        probe.runHosted (start);
+        REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (1.0, 1.0e-9));
+
+        // Keys other than the held one, then its own note-off last.
+        dusk::MidiBuffer block;
+        for (int i = 0; i < kFlood; ++i)
+            addMidiAt (block, 0x80, (std::uint8_t) (61 + i % 60), 0, i * (kBlock - 1) / kFlood);
+        addMidiAt (block, 0x80, 60, 0, kBlock - 1);
+        probe.runHosted (block);
+        REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (0.0, 1.0e-9));
+    }
+}
+
+TEST_CASE ("a bypassed native insert that swallowed a note-off is reset when it comes back",
+           "[clap][fixture][panic][midi]")
+{
+    ClapProbe probe;
+    REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH));
+
+    dusk::MidiBuffer on;
+    addMidiAt (on, 0x90, 60, 100, 0);
+    probe.runHosted (on);
+    REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (1.0, 1.0e-9));
+
+    probe.slot.setBypassed (true);
+    dusk::MidiBuffer off;
+    addMidiAt (off, 0x80, 60, 0, 0);
+    probe.runHosted (off);
+    probe.slot.setBypassed (false);
+
+    const dusk::MidiBuffer none;
+    probe.runHosted (none);
+    REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (0.0, 1.0e-9));
+    REQUIRE (probe.counter ("chokesSeen") >= 2.0);
+
+    // Bypassed with nothing to swallow, it owes nothing.
+    probe.runHosted (on);
+    probe.slot.setBypassed (true);
+    probe.runHosted (none);
+    probe.slot.setBypassed (false);
+    const double chokes = probe.counter ("chokesSeen");
+    probe.runHosted (none);
+    REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (1.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("chokesSeen"), WithinAbs (chokes, 1.0e-9));
+}
+
 TEST_CASE ("no-window CLAP fixture passes audio and advertises a GUI it never fills",
            "[clap][fixture][editor]")
 {

@@ -243,11 +243,13 @@ struct AudioWorkerPool::Worker
 
             // A wake from quiesce() must NOT run the job: the lane inputs
             // (trackJobs device-input pointers) may already be freed by the
-            // device close path. Ack the epoch so quiesce can complete.
-            if (! pool.quiescing.load (std::memory_order_acquire))
+            // device close path. Ack the epoch so quiesce can complete. Nor
+            // may a parked lane, past the count, run one.
+            const int active = pool.numWorkers.load (std::memory_order_relaxed);
+            if (! pool.quiescing.load (std::memory_order_acquire) && lane < active)
             {
                 pool.job_ (lane);
-                if (pool.done.fetch_add (1, std::memory_order_release) + 1 == pool.numWorkers)
+                if (pool.done.fetch_add (1, std::memory_order_release) + 1 == active)
                     pool.completion.signal();
             }
             acked.store (s, std::memory_order_release);
@@ -297,35 +299,39 @@ AudioWorkerPool::~AudioWorkerPool()
 
 void AudioWorkerPool::start (int workers, std::function<void (int)> job, int rtJucePriority)
 {
-    stop();
+    // Every held lane parked and acknowledged before the job or the count
+    // changes under it.
+    quiesce();
     job_ = std::move (job);
     quit.store (false, std::memory_order_release);
-    quiescing.store (false, std::memory_order_release);
-    seq.store (0, std::memory_order_release);
     done.store (0, std::memory_order_release);
 
     const int want = std::max (0, workers);
-    for (int i = 0; i < want; ++i)
+    const auto held = workers_.size();
+    for (auto lane = held; lane < (std::size_t) want; ++lane)
     {
-        auto w = std::make_unique<Worker> (*this, (int) workers_.size(), rtJucePriority);
+        auto w = std::make_unique<Worker> (*this, (int) lane, rtJucePriority);
+        // Born at the current epoch: nothing dispatched before it is its to run.
+        w->acked.store (seq.load (std::memory_order_acquire), std::memory_order_relaxed);
         w->start();
         workers_.push_back (std::move (w));
     }
-    numWorkers = (int) workers_.size();
 
-    // Every worker has its scheduling before the first block can wait on it.
-    for (auto& w : workers_)
-        while (! w->started.load (std::memory_order_acquire))
+    // Every new worker has its scheduling before the first block can wait on it.
+    for (auto lane = held; lane < workers_.size(); ++lane)
+        while (! workers_[lane]->started.load (std::memory_order_acquire))
             std::this_thread::sleep_for (std::chrono::milliseconds (1));
+    numWorkers.store (want, std::memory_order_relaxed);
 
    #if defined(__linux__)
     // Without RLIMIT_RTPRIO a worker stays at the default class while the
     // device's thread may well be realtime through RTKit (PipeWire's is), and
-    // the callback then waits on lanes anything else can preempt.
+    // the callback then waits on lanes anything else can preempt. A thread
+    // kept from an earlier call already has its answer.
     std::vector<std::int64_t> denied;
-    for (auto& w : workers_)
-        if (! w->gotRealtime.load (std::memory_order_relaxed))
-            denied.push_back (w->threadId.load (std::memory_order_relaxed));
+    for (auto lane = held; lane < workers_.size(); ++lane)
+        if (! workers_[lane]->gotRealtime.load (std::memory_order_relaxed))
+            denied.push_back (workers_[lane]->threadId.load (std::memory_order_relaxed));
     if (! denied.empty())
         std::fprintf (stderr, "[DuskStudio] DSP workers without RLIMIT_RTPRIO: %s\n",
                       rt::raiseThreadsWithoutRtPrio (denied).c_str());
@@ -359,7 +365,7 @@ void AudioWorkerPool::setDeviceDeadline (double sampleRate, int blockSize,
 
 void AudioWorkerPool::stop()
 {
-    if (workers_.empty()) { numWorkers = 0; return; }
+    if (workers_.empty()) { numWorkers.store (0, std::memory_order_relaxed); return; }
 
     quiesce();   // joins in-flight lanes so no thread is killed mid-job
 
@@ -369,12 +375,13 @@ void AudioWorkerPool::stop()
     for (auto& w : workers_)
         w->join();
     workers_.clear();
-    numWorkers = 0;
+    numWorkers.store (0, std::memory_order_relaxed);
 }
 
 void AudioWorkerPool::runBlock() noexcept
 {
-    if (numWorkers <= 0)
+    const int active = numWorkers.load (std::memory_order_relaxed);
+    if (active <= 0)
     {
         if (job_) job_ (0);           // inactive: caller is the only lane
         return;
@@ -382,10 +389,10 @@ void AudioWorkerPool::runBlock() noexcept
 
     done.store (0, std::memory_order_release);
     seq.fetch_add (1, std::memory_order_release);
-    for (auto& w : workers_)
-        w->wake.signal();             // dispatch lanes [0, numWorkers)
+    for (int lane = 0; lane < active; ++lane)
+        workers_[(std::size_t) lane]->wake.signal();   // dispatch lanes [0, active)
 
-    job_ (numWorkers);                // caller runs the last lane
+    job_ (active);                    // caller runs the last lane
 
     // Fast path: workers usually finish within a short spin. Past that, BLOCK
     // on the completion event - never spin unboundedly: sched_yield from a
@@ -396,12 +403,12 @@ void AudioWorkerPool::runBlock() noexcept
     // bounds any stale-signal consumption.
     for (int i = 0; i < 1024; ++i)
     {
-        if (done.load (std::memory_order_acquire) >= numWorkers)
+        if (done.load (std::memory_order_acquire) >= active)
             return;
         std::this_thread::yield();
     }
     int waitedMs = 0;
-    while (done.load (std::memory_order_acquire) < numWorkers)
+    while (done.load (std::memory_order_acquire) < active)
     {
         completion.wait (1);
         // Stall diagnostic. A worker wedged inside a plugin's processBlock holds
@@ -416,7 +423,9 @@ void AudioWorkerPool::runBlock() noexcept
 
 void AudioWorkerPool::quiesce()
 {
-    if (numWorkers <= 0)
+    // A parked lane has nothing in flight: the call that parked it quiesced
+    // first, and no block since has dispatched it.
+    if (workers_.empty())
         return;
 
     const auto s = seq.load (std::memory_order_acquire);
@@ -438,14 +447,25 @@ void AudioWorkerPool::quiesce()
 
 void AudioWorkerPool::dispatchForTest (int signalOnlyFirst)
 {
-    if (numWorkers <= 0)
+    const int active = numWorkers.load (std::memory_order_relaxed);
+    if (active <= 0)
         return;
 
     done.store (0, std::memory_order_release);
     seq.fetch_add (1, std::memory_order_release);
-    const int n = signalOnlyFirst < 0 ? numWorkers
-                                      : std::min (signalOnlyFirst, numWorkers);
+    const int n = signalOnlyFirst < 0 ? active
+                                      : std::min (signalOnlyFirst, active);
     for (int i = 0; i < n; ++i)
         workers_[(size_t) i]->wake.signal();
+}
+
+std::vector<std::int64_t> AudioWorkerPool::workerThreadIdsForTest() const
+{
+    std::vector<std::int64_t> ids;
+   #if defined(__linux__)
+    for (const auto& w : workers_)
+        ids.push_back (w->threadId.load (std::memory_order_relaxed));
+   #endif
+    return ids;
 }
 } // namespace duskstudio

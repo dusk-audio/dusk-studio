@@ -4,6 +4,7 @@
 
 #include <juce_core/juce_core.h>   // test-side timing / manual-reset gate only
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -232,3 +233,51 @@ TEST_CASE ("AudioWorkerPool: a device deadline reaches every worker without runn
         REQUIRE (counters.get (lane) == 3);
     pool.stop();
 }
+
+#if defined(__linux__)
+TEST_CASE ("AudioWorkerPool: a worker-count change keeps the threads it already has",
+           "[worker-pool]")
+{
+    // RTKit grants a user about 25 requests in 20 s. A pool that replaced its
+    // threads on every count change asked again for each of them, ran out,
+    // and left some lanes at nice and others realtime. Every thread keeps the
+    // scheduling it was given at birth, and a lane parked by a smaller count
+    // runs nothing until a larger one wakes it.
+    AudioWorkerPool pool;
+    LaneCounters counters;
+    pool.start (3, [&] (int lane) { counters.hit (lane); });
+    const auto born = pool.workerThreadIdsForTest();
+    REQUIRE (born.size() == 3);
+
+    pool.start (1, [&] (int lane) { counters.hit (lane); });
+    REQUIRE (pool.laneCount() == 2);
+    callWithWatchdog ("runBlock()", [&pool] { pool.runBlock(); });
+    REQUIRE (counters.get (0) == 1);
+    REQUIRE (counters.get (1) == 1);
+    REQUIRE (counters.get (2) == 0);
+    REQUIRE (counters.get (3) == 0);
+
+    pool.start (0, [&] (int lane) { counters.hit (lane); });
+    REQUIRE_FALSE (pool.isActive());
+    pool.runBlock();
+    REQUIRE (counters.get (0) == 2);
+
+    pool.start (3, [&] (int lane) { counters.hit (lane); });
+    REQUIRE (pool.workerThreadIdsForTest() == born);
+    callWithWatchdog ("runBlock()", [&pool] { pool.runBlock(); });
+    REQUIRE (counters.get (0) == 3);
+    REQUIRE (counters.get (1) == 2);
+    REQUIRE (counters.get (2) == 1);
+    REQUIRE (counters.get (3) == 1);
+
+    // Growing past what it holds adds threads, and only those are new.
+    pool.start (4, [&] (int lane) { counters.hit (lane); });
+    const auto grown = pool.workerThreadIdsForTest();
+    REQUIRE (grown.size() == 4);
+    REQUIRE (std::equal (born.begin(), born.end(), grown.begin()));
+    callWithWatchdog ("quiesce()", [&pool] { pool.quiesce(); });
+    callWithWatchdog ("runBlock()", [&pool] { pool.runBlock(); });
+    REQUIRE (counters.get (4) == 1);
+    pool.stop();
+}
+#endif

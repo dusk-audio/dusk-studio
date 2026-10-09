@@ -3,6 +3,7 @@
 #include "Lv2StatePaths.h"
 #include "Lv2UridMap.h"
 #include "Lv2Worker.h"
+#include "../hosting/MidiFit.h"
 #include "../hosting/SpscRing.h"
 
 #include <lilv/lilv.h>
@@ -38,6 +39,12 @@
 
 namespace duskstudio::lv2
 {
+namespace
+{
+// The control input's sequence: the staged patches, then the block's MIDI.
+constexpr size_t kControlInBytes = 64 * 1024;
+} // namespace
+
 struct Lv2Instance::Impl
 {
     // Bumped whenever a LilvInstance is destroyed, so an embedded UI holding
@@ -899,7 +906,12 @@ bool Lv2Instance::activate (double sampleRate, int maxBlockFrames, std::string& 
     impl->atomBuffers.clear();
     auto connectAtom = [&] (uint32_t idx, bool input)
     {
-        constexpr size_t kCap = 8192;
+        // The control input carries the block's MIDI after the staged patches:
+        // room for a dense block, and a denser one keeps its releases
+        // (MidiFit.h).
+        const bool control = input && ! impl->atomInPorts.empty()
+                          && idx == impl->atomInPorts[(size_t) impl->controlAtomInPos];
+        const size_t kCap = control ? kControlInBytes : 8192;
         impl->atomBuffers.emplace_back (kCap, (uint8_t) 0);
         auto* buf = impl->atomBuffers.back().data();
         auto* atom = reinterpret_cast<LV2_Atom*> (buf);
@@ -1057,13 +1069,20 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
         auto& buf = impl->atomBuffers[(size_t) impl->controlAtomInPos];
         auto* seq = reinterpret_cast<LV2_Atom_Sequence*> (buf.data());
         seq->atom.size = sizeof (LV2_Atom_Sequence_Body);
+        const auto midiEventBytes = [] (const uint8_t*, int numBytes) -> size_t
+        {
+            return numBytes > 0 && numBytes <= 3
+                       ? lv2_atom_pad_size ((uint32_t) sizeof (LV2_Atom_Event) + (uint32_t) numBytes)
+                       : 0;
+        };
+        const size_t resetBytes = (size_t) midi::kHangingResetMessageCount * midiEventBytes (nullptr, 3);
         auto appendEvent = [&] (int64_t frames, uint32_t type,
-                                const uint8_t* data, uint32_t size)
+                                const uint8_t* data, uint32_t size, size_t limit)
         {
             const uint32_t evSize = (uint32_t) sizeof (LV2_Atom_Event) + size;
             const uint32_t padded = lv2_atom_pad_size (evSize);
             const uint32_t used   = (uint32_t) sizeof (LV2_Atom) + seq->atom.size;
-            if (used + padded > buf.size()) return;   // sequence full - drop
+            if (used + padded > limit) return;   // sequence full - drop
             auto* ev = reinterpret_cast<LV2_Atom_Event*> (buf.data() + used);
             ev->time.frames = frames;
             ev->body.size   = size;
@@ -1071,18 +1090,22 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
             std::memcpy (ev + 1, data, size);
             seq->atom.size += padded;
         };
+        // Patches leave the MIDI room for at least the hanging reset.
         impl->atomRing.drain ([&] (const Impl::AtomBlob& blob)
         {
             // blob is a full atom (header + body); re-emit as header + payload.
             const auto* atom = reinterpret_cast<const LV2_Atom*> (blob.data);
             appendEvent (0, atom->type,
-                         blob.data + sizeof (LV2_Atom), atom->size);
+                         blob.data + sizeof (LV2_Atom), atom->size, buf.size() - resetBytes);
         });
         if (io.midiIn != nullptr)
-            for (const auto meta : *io.midiIn)
-                if (meta.numBytes > 0 && meta.numBytes <= 3)
-                    appendEvent ((int64_t) meta.samplePosition, impl->uridMidiEvent,
-                                 meta.data, (uint32_t) meta.numBytes);
+            hosting::deliverWithinRoom (
+                *io.midiIn, buf.size() - sizeof (LV2_Atom) - seq->atom.size, midiEventBytes,
+                [&] (const uint8_t* data, int numBytes, int samplePosition)
+                {
+                    appendEvent ((int64_t) samplePosition, impl->uridMidiEvent,
+                                 data, (uint32_t) numBytes, buf.size());
+                });
     }
 
     // Re-advertise output-atom capacity before every run(): the plugin overwrites

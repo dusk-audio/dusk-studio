@@ -1485,6 +1485,7 @@ void handleSetParamAsync (HostState& host,
 void audioWorkerLoop (HostState& host) noexcept
 {
     juce::MidiBuffer midiScratch;
+    midiScratch.ensureSize (kMidiBytes);
     std::uint32_t lastSeq = 0;
 
     while (! host.shouldQuit.load (std::memory_order_acquire))

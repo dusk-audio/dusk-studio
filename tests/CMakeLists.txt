@@ -56,6 +56,7 @@ add_executable(dusk-studio-tests
     default_input_choice.cpp
     session_tick_conversion.cpp
     tempo_map_conversion.cpp
+    midi_timeline_schedule.cpp
     output_pair_routing.cpp
     multiband_comp_presets.cpp
     atomic_park.cpp
@@ -305,6 +306,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         ${CMAKE_SOURCE_DIR}/src/engine/alsa/AlsaAudioIODevice.cpp
         # AudioWorkerPool raises RT-denied workers through it; built without
         # RTKit here, so a test never reaches for the system bus.
+        realtime_cpu_guard.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/RealtimeKit.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
 elseif(APPLE AND DUSKSTUDIO_NATIVE_COREMIDI)
@@ -474,9 +476,12 @@ if(DUSKSTUDIO_NATIVE_LV2)
         "${CMAKE_CURRENT_BINARY_DIR}/many-patch-fixture.lv2")
     set(DUSKSTUDIO_WORKER_LV2_BUNDLE
         "${CMAKE_CURRENT_BINARY_DIR}/worker-fixture.lv2")
+    set(DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE
+        "${CMAKE_CURRENT_BINARY_DIR}/midi-probe-fixture.lv2")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_WORKER_LV2_BUNDLE}")
+    file(MAKE_DIRECTORY "${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}")
     configure_file(fixtures/file_state_manifest.ttl
         "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
     # The bundle only declares a UI where one can be built: the fixture UI is an
@@ -560,11 +565,25 @@ if(DUSKSTUDIO_NATIVE_LV2)
     find_package(Threads REQUIRED)
     target_link_libraries(dusk-studio-worker-lv2-fixture PRIVATE PkgConfig::LV2 Threads::Threads)
 
+    configure_file(fixtures/midi_probe_manifest.ttl
+        "${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
+    configure_file(fixtures/midi_probe_plugin.ttl
+        "${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}/midi_probe_plugin.ttl" COPYONLY)
+    add_library(dusk-studio-midi-probe-lv2-fixture MODULE
+        fixtures/midi_probe_lv2.cpp)
+    set_target_properties(dusk-studio-midi-probe-lv2-fixture PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "midi_probe_fixture"
+        LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}>")
+    target_compile_features(dusk-studio-midi-probe-lv2-fixture PRIVATE cxx_std_17)
+    target_link_libraries(dusk-studio-midi-probe-lv2-fixture PRIVATE PkgConfig::LV2)
+
     target_sources(dusk-studio-tests PRIVATE
         lv2_bundle_load.cpp
         lv2_file_state.cpp
         lv2_patch_feedback.cpp
         lv2_instance_process.cpp
+        lv2_midi_probe.cpp
         lv2_native_slot.cpp
         lv2_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
@@ -576,11 +595,13 @@ if(DUSKSTUDIO_NATIVE_LV2)
         DUSKSTUDIO_HAS_NATIVE_LV2=1
         DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH="${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}"
         DUSKSTUDIO_MANY_PATCH_LV2_FIXTURE_PATH="${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}"
-        DUSKSTUDIO_WORKER_LV2_FIXTURE_PATH="${DUSKSTUDIO_WORKER_LV2_BUNDLE}")
+        DUSKSTUDIO_WORKER_LV2_FIXTURE_PATH="${DUSKSTUDIO_WORKER_LV2_BUNDLE}"
+        DUSKSTUDIO_MIDI_PROBE_LV2_FIXTURE_PATH="${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}")
     add_dependencies(dusk-studio-tests
         dusk-studio-file-state-lv2-fixture
         dusk-studio-many-patch-lv2-fixture
-        dusk-studio-worker-lv2-fixture)
+        dusk-studio-worker-lv2-fixture
+        dusk-studio-midi-probe-lv2-fixture)
 endif()
 
 if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3)

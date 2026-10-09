@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../foundation/MidiBuffer.h"
+#include "../MidiPanic.h"
 
 #include "InsertAdapter.h"
 #include "SpscRing.h"
@@ -43,7 +44,7 @@ public:
     using Bundle   = typename Traits::Bundle;
     using Instance = typename Traits::Instance;
 
-    NativeInsertSlot() = default;
+    NativeInsertSlot() { owedResetMidi.reserveBytes (kOwedResetMidiBytes); }
 
     // Message thread: load the bundle at `path` and instantiate `pluginId` (empty =
     // the format's default pick - the first effect), replacing any prior load.
@@ -71,6 +72,7 @@ public:
 
         // Publish only after both are fully built; the audio thread's acquire-load
         // of `ready` pairs with this release so it never sees a half-built instance.
+        owesMidiReset = false;
         bundle     = std::move (b);
         instance   = std::move (inst);
         adapter.prepare (instance->portLayout(), maxBlock);   // size the fold scratch
@@ -238,6 +240,10 @@ public:
         if (! processingOnline.load (std::memory_order_acquire)
             || bypassed.load (std::memory_order_relaxed))
         {
+            // MIDI that never reaches the plug-in may hold the note-off for a
+            // key it is sounding, so it owes the hanging reset when it runs.
+            if (midiIn != nullptr && ! midiIn->isEmpty())
+                owesMidiReset = true;
             // Passthrough - copy in->out (a no-op when called in-place).
             if (outL != nullptr && outL != inL) std::memcpy (outL, inL, n);
             const float* r = (inR != nullptr) ? inR : inL;
@@ -269,7 +275,7 @@ public:
         if (outR != r)  std::memcpy (outR, r, n);
 
         adapter.process (*instance, outL, outR, numFrames,
-                         nullptr, nullptr, midiIn, transport,
+                         nullptr, nullptr, settleOwedReset (midiIn), transport,
                          offlineRender.load (std::memory_order_acquire),
                          offlineCancel.load (std::memory_order_relaxed));
     }
@@ -309,6 +315,25 @@ public:
     virtual ~NativeInsertSlot() = default;
 
 protected:
+    // The block's MIDI, behind the hanging reset when one is owed. The reset
+    // always goes; the block's own events go with it when they fit whole.
+    const dusk::MidiBuffer* settleOwedReset (const dusk::MidiBuffer* midiIn) noexcept
+    {
+        if (! owesMidiReset) return midiIn;
+        owesMidiReset = false;
+        owedResetMidi.clear();
+        midi::emitHangingReset (owedResetMidi, 0);
+        if (midiIn != nullptr)
+            for (const auto meta : *midiIn)
+                if (! owedResetMidi.addEvent (meta.data, meta.numBytes, meta.samplePosition))
+                {
+                    owedResetMidi.clear();
+                    midi::emitHangingReset (owedResetMidi, 0);
+                    break;
+                }
+        return &owedResetMidi;
+    }
+
     // Exchanged before the call, so a hook that unloads again cannot recurse
     // and a spent registration cannot fire against the next occupant.
     void releaseAttachedEditor()
@@ -333,6 +358,10 @@ protected:
     std::atomic<bool>          ready    { false };
     std::atomic<bool>          processingOnline { false };
     std::atomic<bool>          bypassed { false };
+    // Audio thread, and the message thread with the engine gate holding it out.
+    static constexpr std::size_t kOwedResetMidiBytes = 4096;
+    bool                       owesMidiReset = false;
+    dusk::MidiBuffer           owedResetMidi;
     std::atomic<bool>          offlineRender { false };
     std::atomic<const std::atomic<bool>*> offlineCancel { nullptr };
     std::atomic<std::uint64_t> gen      { 0 };

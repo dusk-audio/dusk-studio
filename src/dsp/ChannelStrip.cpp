@@ -1023,9 +1023,21 @@ bool ChannelStrip::hasLoadedMidiConsumer() const noexcept
     return pluginSlot.isLoaded();
 }
 
+bool ChannelStrip::hasLoadedEffectMidiConsumer() const noexcept
+{
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (nativeMultisampleSlot.isLoaded()) return false;
+#endif
+    return hasLoadedMidiConsumer();
+}
+
 const dusk::MidiBuffer* ChannelStrip::takeOwedMidiReset() noexcept
 {
-    if (! insertOwesMidiReset) return nullptr;
+    // The multisample host plays on a MIDI track only: when it is what the
+    // insert holds, the effect chain below runs nothing that could take the
+    // reset, so the debt stays for the engine to pay when the track is fed
+    // MIDI again.
+    if (! insertOwesMidiReset || ! hasLoadedEffectMidiConsumer()) return nullptr;
     insertOwesMidiReset = false;
     nativeMidiScratch.clear();
     midi::emitHangingReset (nativeMidiScratch, 0);

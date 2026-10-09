@@ -1,5 +1,6 @@
 #include "ClapInstance.h"
 #include "ClapBundle.h"
+#include "../hosting/MidiFit.h"
 
 #include <clap/clap.h>
 
@@ -277,7 +278,8 @@ bool ClapInstance::activate (double sampleRate, int maxBlock, std::string& error
     outScratchR.assign ((size_t) maxFrames, 0.0f);
     // Params, a block's ordinary MIDI, and the extra fan-out required when the
     // transport's 16-channel panic becomes one NOTE_CHOKE per CLAP note port.
-    constexpr size_t kMidiEventCapacity = 512;
+    // A denser block keeps its releases and drops other events (MidiFit.h).
+    constexpr size_t kMidiEventCapacity = 2048;
     constexpr size_t kMidiChannelCount = 16;
     const size_t panicFanOut = kMidiChannelCount * clapNoteInputPorts.size();
     eventScratch.assign ((size_t) kParamRingCap + kMidiEventCapacity + panicFanOut,
@@ -471,72 +473,93 @@ void ClapInstance::drainParamRing() noexcept
     }, (uint32_t) eventScratch.size());
 }
 
+std::size_t ClapInstance::clapEventsFor (const uint8_t* d, int numBytes) const noexcept
+{
+    if (numBytes < 1) return 0;
+    const auto status = (uint8_t) (d[0] & 0xF0u);
+    const bool noteOn  = status == 0x90 && numBytes >= 3 && d[2] > 0;
+    const bool noteOff = numBytes >= 3 && (status == 0x80 || (status == 0x90 && d[2] == 0));
+    const bool allSoundOff = status == 0xB0 && numBytes >= 3 && d[1] == 120;
+
+    std::size_t events = 0;
+    if (! clapNoteInputPorts.empty() && allSoundOff)
+    {
+        events += clapNoteInputPorts.size();
+        if (! noteDialectMidi) return events;
+    }
+    if (noteDialectClap && (noteOn || noteOff))
+        return events + 1;
+    if (noteDialectMidi && numBytes <= 3 && status >= 0x80 && status <= 0xE0)
+        return events + 1;
+    return events;
+}
+
+void ClapInstance::appendMidiEvent (const uint8_t* d, int numBytes, int samplePosition) noexcept
+{
+    const uint32_t cap = (uint32_t) eventScratch.size();
+    if (numBytes < 1) return;
+    const auto status  = (uint8_t) (d[0] & 0xF0u);
+    const auto channel = (int16_t) (d[0] & 0x0Fu);
+    const bool noteOn  = status == 0x90 && numBytes >= 3 && d[2] > 0;
+    const bool noteOff = numBytes >= 3 && (status == 0x80 || (status == 0x90 && d[2] == 0));
+    const bool allSoundOff = status == 0xB0 && numBytes >= 3 && d[1] == 120;
+
+    if (! clapNoteInputPorts.empty() && allSoundOff)
+    {
+        for (const int16_t port : clapNoteInputPorts)
+        {
+            if (eventCount >= cap) return;
+            auto& ev = eventScratch[(size_t) eventCount].note;
+            ev.header = { (uint32_t) sizeof (clap_event_note_t),
+                          (uint32_t) samplePosition, CLAP_CORE_EVENT_SPACE_ID,
+                          CLAP_EVENT_NOTE_CHOKE, 0 };
+            ev.note_id    = -1;
+            ev.port_index = port;
+            ev.channel    = channel;
+            ev.key        = -1;
+            ev.velocity   = 0.0;
+            ++eventCount;
+        }
+        if (! noteDialectMidi) return;
+    }
+    if (eventCount >= cap) return;
+
+    if (noteDialectClap && (noteOn || noteOff))
+    {
+        auto& ev = eventScratch[(size_t) eventCount].note;
+        ev.header = { (uint32_t) sizeof (clap_event_note_t),
+                      (uint32_t) samplePosition, CLAP_CORE_EVENT_SPACE_ID,
+                      (uint16_t) (noteOn ? CLAP_EVENT_NOTE_ON : CLAP_EVENT_NOTE_OFF), 0 };
+        ev.note_id    = -1;
+        ev.port_index = primaryNoteInputPort;
+        ev.channel    = channel;
+        ev.key        = (int16_t) d[1];
+        ev.velocity   = (double) d[2] / 127.0;
+        ++eventCount;
+    }
+    else if (noteDialectMidi && numBytes <= 3 && status >= 0x80 && status <= 0xE0)
+    {
+        // Everything else (CC, pitch bend, aftertouch - and the notes
+        // themselves when the plugin only takes raw MIDI).
+        auto& ev = eventScratch[(size_t) eventCount].midi;
+        ev.header = { (uint32_t) sizeof (clap_event_midi_t),
+                      (uint32_t) samplePosition, CLAP_CORE_EVENT_SPACE_ID,
+                      CLAP_EVENT_MIDI, 0 };
+        ev.port_index = (uint16_t) primaryNoteInputPort;
+        ev.data[0] = d[0];
+        ev.data[1] = (uint8_t) (numBytes > 1 ? d[1] : 0);
+        ev.data[2] = (uint8_t) (numBytes > 2 ? d[2] : 0);
+        ++eventCount;
+    }
+}
+
 void ClapInstance::appendMidiEvents (const dusk::MidiBuffer& midi) noexcept
 {
     if (! noteInPort) return;
-    const uint32_t cap = (uint32_t) eventScratch.size();
-    for (const auto meta : midi)
-    {
-        if (eventCount >= cap) break;   // scratch full - drop the tail
-        const auto* d = meta.data;
-        if (meta.numBytes < 1) continue;
-        const auto status  = (uint8_t) (d[0] & 0xF0u);
-        const auto channel = (int16_t) (d[0] & 0x0Fu);
-        const bool noteOn  = status == 0x90 && meta.numBytes >= 3 && d[2] > 0;
-        const bool noteOff = meta.numBytes >= 3
-                             && (status == 0x80 || (status == 0x90 && d[2] == 0));
-        const bool allSoundOff = status == 0xB0 && meta.numBytes >= 3 && d[1] == 120;
-
-        if (! clapNoteInputPorts.empty() && allSoundOff)
-        {
-            for (const int16_t port : clapNoteInputPorts)
-            {
-                if (eventCount >= cap) break;
-                auto& ev = eventScratch[(size_t) eventCount].note;
-                ev.header = { (uint32_t) sizeof (clap_event_note_t),
-                              (uint32_t) meta.samplePosition, CLAP_CORE_EVENT_SPACE_ID,
-                              CLAP_EVENT_NOTE_CHOKE, 0 };
-                ev.note_id    = -1;
-                ev.port_index = port;
-                ev.channel    = channel;
-                ev.key        = -1;
-                ev.velocity   = 0.0;
-                ++eventCount;
-            }
-            if (! noteDialectMidi) continue;
-            if (eventCount >= cap) break;
-        }
-
-        if (noteDialectClap && (noteOn || noteOff))
-        {
-            auto& slot = eventScratch[(size_t) eventCount];
-            auto& ev = slot.note;
-            ev.header = { (uint32_t) sizeof (clap_event_note_t),
-                          (uint32_t) meta.samplePosition, CLAP_CORE_EVENT_SPACE_ID,
-                          (uint16_t) (noteOn ? CLAP_EVENT_NOTE_ON : CLAP_EVENT_NOTE_OFF), 0 };
-            ev.note_id    = -1;
-            ev.port_index = primaryNoteInputPort;
-            ev.channel    = channel;
-            ev.key        = (int16_t) d[1];
-            ev.velocity   = (double) d[2] / 127.0;
-            ++eventCount;
-        }
-        else if (noteDialectMidi && meta.numBytes <= 3 && status >= 0x80 && status <= 0xE0)
-        {
-            auto& slot = eventScratch[(size_t) eventCount];
-            // Everything else (CC, pitch bend, aftertouch - and the notes
-            // themselves when the plugin only takes raw MIDI).
-            auto& ev = slot.midi;
-            ev.header = { (uint32_t) sizeof (clap_event_midi_t),
-                          (uint32_t) meta.samplePosition, CLAP_CORE_EVENT_SPACE_ID,
-                          CLAP_EVENT_MIDI, 0 };
-            ev.port_index = (uint16_t) primaryNoteInputPort;
-            ev.data[0] = d[0];
-            ev.data[1] = (uint8_t) (meta.numBytes > 1 ? d[1] : 0);
-            ev.data[2] = (uint8_t) (meta.numBytes > 2 ? d[2] : 0);
-            ++eventCount;
-        }
-    }
+    const auto room = eventScratch.size() - std::min ((size_t) eventCount, eventScratch.size());
+    hosting::deliverWithinRoom (midi, room,
+                                [this] (const uint8_t* d, int n) { return clapEventsFor (d, n); },
+                                [this] (const uint8_t* d, int n, int at) { appendMidiEvent (d, n, at); });
 }
 
 void ClapInstance::processStereo (const float* inL, const float* inR,

@@ -174,8 +174,7 @@ struct CopyOut
     {
         stage.routing = std::make_unique<HardwareInsertRouting> (from.current());
     }
-    void midiRegions (AtomicSnapshot<std::vector<MidiRegion>>&,
-                      const AtomicSnapshot<std::vector<MidiRegion>>& from)
+    void midiRegions (MidiRegionSnapshot&, const MidiRegionSnapshot& from)
     {
         stage.midiRegions = std::make_unique<std::vector<MidiRegion>> (from.current());
     }
@@ -216,8 +215,7 @@ struct Land
     {
         to.publish (std::move (stage.routing));
     }
-    void midiRegions (AtomicSnapshot<std::vector<MidiRegion>>& to,
-                      AtomicSnapshot<std::vector<MidiRegion>>&) noexcept
+    void midiRegions (MidiRegionSnapshot& to, MidiRegionSnapshot&)
     {
         to.publish (std::move (stage.midiRegions));
     }

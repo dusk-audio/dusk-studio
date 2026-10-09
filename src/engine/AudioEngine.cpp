@@ -33,6 +33,9 @@
 #if ! defined(__linux__) && ! DUSKSTUDIO_HAS_NATIVE_COREMIDI
  #include "midi/JuceMidiBackend.h"
 #endif
+#if defined(__linux__)
+ #include "RealtimeKit.h"
+#endif
 #include "../foundation/Decibels.h"
 #include "../foundation/VectorOps.h"
 #include "../foundation/ScopedNoDenormals.h"
@@ -1752,6 +1755,22 @@ AudioEngine::~AudioEngine()
 
 void AudioEngine::drainCallbackDiagnostics()
 {
+   #if defined(__linux__)
+    // PipeWire's module-rt sets the soft RLIMIT_RTTIME back to the hard one
+    // each time it takes realtime for a data thread, which leaves a stalled
+    // realtime thread a kill with no warning until the guard is put back.
+    rt::guardRealtimeCpuTime();
+    const auto demotions = rt::realtimeDemotions();
+    if (demotions.count != lastReportedRealtimeDemotions)
+    {
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] realtime thread %lld computed past the "
+                              "RLIMIT_RTTIME warning without blocking and now runs at normal "
+                              "priority (%d moved so far): a plug-in stalled in its block\n",
+                      (long long) demotions.lastThreadId, demotions.count);
+        lastReportedRealtimeDemotions = demotions.count;
+    }
+   #endif
+
     const auto gated = earlyOutBlocks.load (std::memory_order_relaxed);
     if (gated != lastReportedGated)
     {
@@ -4058,10 +4077,8 @@ void AudioEngine::reconcileWorkerPool (int target)
     if (n == cur)
         return;
 
-    workerPool.stop();
-    if (n > 0)
-        workerPool.start (n, [this] (int lane) { processStripLane (lane); },
-                          rt::queryRealtimePriority().jucePriority);
+    workerPool.start (n, [this] (int lane) { processStripLane (lane); },
+                      rt::queryRealtimePriority().jucePriority);
 
     // One-line stderr marker so it's obvious whether the parallel path is live.
     std::fprintf (stderr, "[DuskStudio] parallel strip DSP: %d worker(s)\n", n);
@@ -6013,11 +6030,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // and its own overflow.
         bool midiEventsDropped = false;
         bool liveRecordOverflow = false;
-        constexpr int kGeneratedEventBytes = 6 + 3;
-        constexpr int kGeneratedMidiBudget = 2 * (int) dusk::kMidiBlockBytes;
+        constexpr int kGeneratedMidiBudget = kGeneratedMidiBudgetBytes;
         constexpr int kMidiScheduleScanBudget = 32768;
-        constexpr int kHangingResetBytes = midi::kHangingResetMessageCount
-                                         * kGeneratedEventBytes;
         static_assert (kGeneratedMidiBudget
                        >= (8192 / kMinLoopRecordSamples + 1)
                             * kHangingResetBytes);
@@ -6043,13 +6057,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                                       sampleOffset);
             if (! added) midiEventsDropped = true;
             return added;
-        };
-        auto addGeneratedController = [&] (int channel, int controller,
-                                           int value, int sampleOffset) noexcept
-        {
-            return addGeneratedMidi ((std::uint8_t) (0xB0 | (channel - 1)),
-                                     (std::uint8_t) controller, (std::uint8_t) value,
-                                     sampleOffset);
         };
         auto emitHangingMidiReset = [&] (int sampleOffset) noexcept
         {
@@ -6153,9 +6160,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // block. Mutated on the message thread by RecordManager (when
             // a take finishes) and SessionSerializer (load); the snapshot
             // pointer is stable for the rest of this callback.
-            // AtomicSnapshot's default ctor publishes an empty vector at
-            // construction time so this pointer is non-null.
-            const auto& midiRegionsForBlock = *session.track (t).midiRegions.read();
+            // MidiRegionSnapshot publishes an empty timeline at construction,
+            // so this pointer is non-null.
+            const auto& midiTimeline = *session.track (t).midiRegions.read();
+            const auto& midiRegionsForBlock = *midiTimeline.regions;
 
             // Loop recording already rejects ranges shorter than the shared
             // recording minimum.
@@ -6166,12 +6174,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 && static_cast<std::uint64_t> (loopReadEnd)
                      - static_cast<std::uint64_t> (loopReadStart)
                    >= static_cast<std::uint64_t> (kMinLoopRecordSamples);
-            std::array<int, 16 * 128> chasedControllerValue;
-            std::array<std::int64_t, 16 * 128> chasedControllerAt;
-            std::array<bool, 16 * 128> chasedControllerSeen;
-            std::array<bool, 16 * 128> controllerExplicitAtStart;
-            std::array<int, 16 * 128> chasedControllerKeys;
-            int chasedControllerKeyCount = 0;
 
             // Reserve every reset before discretionary notes/controllers can
             // consume their bytes. At the supported 8192-frame maximum, plus a
@@ -6219,13 +6221,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 (void) reserved;
             }
 
-            auto takeScheduleScan = [&] () noexcept
-            {
-                if (midiScheduleScansRemaining <= 0)
-                    return false;
-                --midiScheduleScansRemaining;
-                return true;
-            };
             forEachLoopTimelineSpan (
                 windowStart, windowLength, midiLoopActive, loopReadStart, loopReadEnd,
                 [&] (const LoopTimelineSpan& span) noexcept
@@ -6242,185 +6237,34 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                         return;
                     }
 
-                    if (generatedMidiBudget.discretionaryBytesAvailable()
-                            < kGeneratedEventBytes)
+                    // What the span cannot carry, or the scan budget leaves
+                    // unread, may hold a note-off: the block gives way to the
+                    // reset below either way.
+                    if (generatedMidiBudget.discretionaryBytesAvailable() < kGeneratedEventBytes
+                        || midiScheduleScansRemaining <= 0)
                     {
                         midiEventsDropped = true;
                         return;
                     }
-                    if (midiScheduleScansRemaining <= 0)
-                        return;
 
                     // Every reset at the head silences the timeline's notes as
                     // well as the live ones, so the head chases the ones held
                     // across it whatever caused the reset.
                     const bool chase = midiTrack && (seam
                                     || (span.bufferOffset == 0 && perTrackFlush));
-                    const int chaseOffset = bufferOffsetOf (span.bufferOffset);
-                    const auto spanEnd = span.timelineStart + span.length;
-                    if (chase)
-                    {
-                        chasedControllerValue.fill (0);
-                        chasedControllerAt.fill (
-                            std::numeric_limits<std::int64_t>::min());
-                        chasedControllerSeen.fill (false);
-                        controllerExplicitAtStart.fill (false);
-                        chasedControllerKeyCount = 0;
-                    }
-
-                    // Controllers are a distinct first pass. This makes equal-
-                    // sample insertion order reset -> explicit/chased state ->
-                    // every note-on, independent of region storage order.
-                    bool controllerPassComplete = true;
-                    for (const auto& region : midiRegionsForBlock)
-                    {
-                        if (! takeScheduleScan())
+                    const auto outcome = midischedule::scheduleSpan (
+                        midiRegionsForBlock, midiTimeline.playback, useMap ? tm : nullptr, sr, bpm,
+                        { span.timelineStart, span.timelineStart + span.length, chase },
+                        midiScheduleScansRemaining, midiControllerChase,
+                        [&] (std::uint8_t status, std::uint8_t data1, std::uint8_t data2,
+                             std::int64_t sampleInSpan) noexcept
                         {
-                            controllerPassComplete = false;
-                            break;
-                        }
-                        if (region.muted) continue;
-                        const auto regStart = region.timelineStart;
-                        const auto regStartTick = useMap
-                            ? tm->samplesToTicks (regStart, sr) : std::int64_t { 0 };
-                        auto absOf = [&] (std::int64_t relTick)
-                        {
-                            return useMap
-                                ? tm->ticksToSamples (regStartTick + relTick, sr)
-                                : regStart + ticksToSamples (relTick, sr, bpm);
-                        };
-                        const auto regEnd = useMap ? absOf (region.lengthInTicks)
-                                                   : regStart + region.lengthInSamples;
-                        const bool overlapsSpan = regEnd > span.timelineStart
-                                               && regStart < spanEnd;
-                        if (! overlapsSpan && ! chase)
-                            continue;
-
-                        for (const auto& c : region.ccs)
-                        {
-                            if (! takeScheduleScan())
-                            {
-                                controllerPassComplete = false;
-                                break;
-                            }
-                            const auto at = absOf (c.atTick);
-                            const bool validController = c.channel >= 1 && c.channel <= 16
-                                                      && c.controller >= 0
-                                                      && c.controller < 128;
-                            const int controllerKey = validController
-                                ? (c.channel - 1) * 128 + c.controller : -1;
-                            if (chase && controllerKey >= 0)
-                            {
-                                if (at < span.timelineStart
-                                    && (! chasedControllerSeen[(size_t) controllerKey]
-                                        || at >= chasedControllerAt[(size_t) controllerKey]))
-                                {
-                                    if (! chasedControllerSeen[(size_t) controllerKey])
-                                    {
-                                        chasedControllerKeys[(size_t) chasedControllerKeyCount++]
-                                            = controllerKey;
-                                    }
-                                    chasedControllerSeen[(size_t) controllerKey] = true;
-                                    chasedControllerAt[(size_t) controllerKey] = at;
-                                    chasedControllerValue[(size_t) controllerKey] = c.value;
-                                }
-                                if (at == span.timelineStart)
-                                    controllerExplicitAtStart[(size_t) controllerKey] = true;
-                            }
-                            if (at >= span.timelineStart && at < spanEnd)
-                            {
-                                if (! addGeneratedMidi (
-                                    (std::uint8_t) (0xB0 | (c.channel - 1)),
-                                    (std::uint8_t) c.controller,
-                                    (std::uint8_t) c.value,
-                                    bufferOffsetOf (span.bufferOffset
-                                                    + (int) (at - span.timelineStart))))
-                                {
-                                    controllerPassComplete = false;
-                                    break;
-                                }
-                            }
-                        }
-                        if (! controllerPassComplete)
-                            break;
-                    }
-
-                    if (! controllerPassComplete)
-                        return;
-
-                    if (chase)
-                    {
-                        for (int i = 0; i < chasedControllerKeyCount; ++i)
-                        {
-                            const int key = chasedControllerKeys[(size_t) i];
-                            if (controllerExplicitAtStart[(size_t) key])
-                                continue;
-                            if (! addGeneratedController (
-                                    key / 128 + 1, key % 128,
-                                    chasedControllerValue[(size_t) key], chaseOffset))
-                                return;
-                        }
-                    }
-
-                    // Notes are deliberately scanned only after all controller
-                    // state has been inserted. Retrigger every sustained note
-                    // occurrence: overlapping regions may legitimately hold the
-                    // same channel/note and must not be key-deduplicated.
-                    for (const auto& region : midiRegionsForBlock)
-                    {
-                        if (! takeScheduleScan())
-                            return;
-                        if (region.muted) continue;
-                        const auto regStart = region.timelineStart;
-                        const auto regStartTick = useMap
-                            ? tm->samplesToTicks (regStart, sr) : std::int64_t { 0 };
-                        auto absOf = [&] (std::int64_t relTick)
-                        {
-                            return useMap
-                                ? tm->ticksToSamples (regStartTick + relTick, sr)
-                                : regStart + ticksToSamples (relTick, sr, bpm);
-                        };
-                        const auto regEnd = useMap ? absOf (region.lengthInTicks)
-                                                   : regStart + region.lengthInSamples;
-                        if (regEnd <= span.timelineStart || regStart >= spanEnd)
-                            continue;
-
-                        for (const auto& n : region.notes)
-                        {
-                            if (! takeScheduleScan())
-                                return;
-                            const auto onAbs  = absOf (n.startTick);
-                            const auto offAbs = absOf (n.startTick + n.lengthInTicks);
-                            if (chase && onAbs < span.timelineStart
-                                      && offAbs > span.timelineStart)
-                            {
-                                if (! addGeneratedMidi (
-                                        (std::uint8_t) (0x90 | (n.channel - 1)),
-                                        (std::uint8_t) n.noteNumber,
-                                        (std::uint8_t) n.velocity, chaseOffset))
-                                    return;
-                            }
-                            if (onAbs >= span.timelineStart && onAbs < spanEnd)
-                            {
-                                if (! addGeneratedMidi (
-                                        (std::uint8_t) (0x90 | (n.channel - 1)),
-                                        (std::uint8_t) n.noteNumber,
-                                        (std::uint8_t) n.velocity,
-                                        bufferOffsetOf (span.bufferOffset
-                                                        + (int) (onAbs - span.timelineStart))))
-                                    return;
-                            }
-                            if (offAbs >= span.timelineStart && offAbs < spanEnd)
-                            {
-                                if (! addGeneratedMidi (
-                                        (std::uint8_t) (0x80 | (n.channel - 1)),
-                                        (std::uint8_t) n.noteNumber, 0,
-                                        bufferOffsetOf (span.bufferOffset
-                                                        + (int) (offAbs - span.timelineStart))))
-                                    return;
-                            }
-                        }
-                    }
+                            return addGeneratedMidi (
+                                status, data1, data2,
+                                bufferOffsetOf (span.bufferOffset + (int) sampleInSpan));
+                        });
+                    if (outcome == midischedule::Outcome::scanBudgetSpent)
+                        midiEventsDropped = true;
                 });
 
             // Play-along overlay. Live-MIDI delivery is a PER-BRANCH obligation:

@@ -43,14 +43,19 @@ public:
     AudioWorkerPool();
     ~AudioWorkerPool();
 
-    // Message thread only. Spawns `workers` real-time threads at the given
-    // realtime priority on JUCE's 0..10 scale (see RtPriority.h), and returns
-    // once every one has its scheduling. On Linux a thread RLIMIT_RTPRIO
-    // refuses is raised through RTKit, or failing that to a better nice level
-    // (RealtimeKit.h); on Windows each joins the MMCSS "Pro Audio" task. `job`
-    // is stored once (never reallocated per block) and invoked as job(lane). A
-    // count <= 0 leaves the pool inactive (runBlock then runs job(0) inline on
-    // the caller).
+    // Message thread only, with no runBlock in flight. Runs `workers` lanes on
+    // real-time threads at the given realtime priority on JUCE's 0..10 scale
+    // (see RtPriority.h), and returns once every one has its scheduling. On
+    // Linux a thread RLIMIT_RTPRIO refuses is raised through RTKit, or failing
+    // that to a better nice level (RealtimeKit.h); on Windows each joins the
+    // MMCSS "Pro Audio" task. `job` is stored once (never reallocated per
+    // block) and invoked as job(lane). A count <= 0 leaves the pool inactive
+    // (runBlock then runs job(0) inline on the caller).
+    //
+    // Threads outlive a call: a smaller count parks the ones past it and a
+    // larger one wakes them again before it spawns any, so each thread asks
+    // for its scheduling once. RTKit grants a user about 25 requests in 20 s,
+    // and a lane it refuses runs at nice beside realtime ones.
     void start (int workers, std::function<void (int lane)> job, int rtJucePriority = 5);
     void stop();   // message thread only; quiesces, then joins every worker.
 
@@ -62,8 +67,8 @@ public:
     // has taken it; workers started later take it as they start.
     void setDeviceDeadline (double sampleRate, int blockSize, const std::string& deviceName);
 
-    bool isActive()  const noexcept { return numWorkers > 0; }
-    int  laneCount() const noexcept { return numWorkers + 1; }
+    bool isActive()  const noexcept { return numWorkers.load (std::memory_order_relaxed) > 0; }
+    int  laneCount() const noexcept { return numWorkers.load (std::memory_order_relaxed) + 1; }
 
     // Audio thread. Dispatches lanes [0, workers) to the worker threads, runs
     // lane `workers` on the caller, and returns once every lane has finished.
@@ -80,6 +85,10 @@ public:
     // workers (all if negative).
     void dispatchForTest (int signalOnlyFirst = -1);
 
+    // Test-only, Linux: the kernel thread id of every worker thread the pool
+    // holds, active or parked, in lane order. Empty elsewhere.
+    std::vector<std::int64_t> workerThreadIdsForTest() const;
+
     // Times the per-block join blocked >2 s (a worker wedged in a plugin's
     // processBlock). Bumped RT-safely from runBlock; poll from a non-RT thread.
     int joinStallCount() const noexcept { return joinStalls.load (std::memory_order_relaxed); }
@@ -88,7 +97,9 @@ private:
     struct Worker;
     std::vector<std::unique_ptr<Worker>> workers_;
     std::function<void (int)> job_;
-    int numWorkers = 0;
+    // Lanes dispatched per block; workers_ past it are parked. Written by the
+    // message thread with no block in flight, published to the workers by seq.
+    std::atomic<int>      numWorkers { 0 };
     std::atomic<int>      done { 0 };
     std::atomic<uint32_t> seq { 0 };          // dispatch epoch; equality-compared only
     std::atomic<bool>     quiescing { false };

@@ -13,24 +13,32 @@ namespace duskstudio::midi
 // same process pass.
 constexpr int kHangingResetMessageCount = 16 * 3;
 
+// Hands each message of the reset, in order, to fn (data, numBytes), which
+// returns false to stop. False when it stopped.
+template <typename Fn>
+inline bool forEachHangingResetMessage (Fn&& fn) noexcept
+{
+    for (int ch = 1; ch <= 16; ++ch)
+    {
+        const auto status = (std::uint8_t) (0xB0 | (ch - 1));
+        for (const std::uint8_t controller : { (std::uint8_t) 64, (std::uint8_t) 123, (std::uint8_t) 120 })
+        {
+            const std::array<std::uint8_t, 3> message { status, controller, 0 };
+            if (! fn (message.data(), (int) message.size()))
+                return false;
+        }
+    }
+    return true;
+}
+
 // Appends the whole reset at sampleOffset. Callers reserve the capacity up
 // front (see the generated-MIDI budget in AudioEngine), so a false return means
 // the block overflowed and the caller must flag it rather than retry. Audio
 // thread: allocation-free as long as out was reserveBytes()'d off the RT path.
 inline bool emitHangingReset (dusk::MidiBuffer& out, int sampleOffset) noexcept
 {
-    for (int ch = 1; ch <= 16; ++ch)
-    {
-        const auto status = (std::uint8_t) (0xB0 | (ch - 1));
-        const std::array<std::uint8_t, 3> sustainOff  { status, 64, 0 };
-        const std::array<std::uint8_t, 3> allNotesOff { status, 123, 0 };
-        const std::array<std::uint8_t, 3> allSoundOff { status, 120, 0 };
-        if (! out.addEvent (sustainOff.data(),  (int) sustainOff.size(),  sampleOffset)
-            || ! out.addEvent (allNotesOff.data(), (int) allNotesOff.size(), sampleOffset)
-            || ! out.addEvent (allSoundOff.data(), (int) allSoundOff.size(), sampleOffset))
-            return false;
-    }
-    return true;
+    return forEachHangingResetMessage ([&out, sampleOffset] (const std::uint8_t* data, int numBytes)
+                                       { return out.addEvent (data, numBytes, sampleOffset); });
 }
 
 // The live MIDI a track takes in one block: its input, the on-screen keyboard

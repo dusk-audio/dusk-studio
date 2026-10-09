@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -127,6 +128,61 @@ ScenarioResult runMonitorOff (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// The reset a narrowed route sends silences the timeline's notes with the live
+// ones, so a note the timeline is holding must sound again at once.
+ScenarioResult runMonitorOffTimelineChase (ScenarioContext& ctx)
+{
+    const int input = ctx.engine().getVirtualKeyboardInputIndex();
+    if (input < 0) return ScenarioResult::skip ("the MIDI input bank has no injectable input");
+    if (! setUpProbeTrack (ctx, input)) return ctx.verdict();
+
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (kTrack);
+    ctx.keep (session.tempoBpm);
+    session.tempoBpm.store (120.0f, std::memory_order_release);
+    ctx.cleanup ([&engine, &track]
+    {
+        engine.stop();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+    });
+
+    // A held chord tone well clear of the live keys, sounding for minutes.
+    constexpr int kTimelineKey = 48;
+    constexpr std::int64_t kLongTicks = 480 * 400;
+    auto regions = std::make_unique<std::vector<MidiRegion>>();
+    MidiRegion region;
+    region.timelineStart = 0;
+    region.lengthInTicks = kLongTicks;
+    region.lengthInSamples = ticksToSamples (kLongTicks, ScenarioContext::kSampleRate, 120.0f);
+    region.notes.push_back ({ 1, kTimelineKey, 100, 0, kLongTicks });
+    regions->push_back (std::move (region));
+    track.midiRegions.publish (std::move (regions));
+
+    engine.getTransport().setPlayhead (0);
+    engine.play();
+    ctx.pump (kSettleBlocks);
+    const auto timelineOnly = readCounters (ctx, kTrack);
+    if (! ctx.expect (timelineOnly.voicesHeld == 1, "the timeline's note never reached the instrument"))
+        return ctx.verdict();
+
+    keys (ctx, input, true, 1);
+    const auto withKeys = readCounters (ctx, kTrack);
+    if (! ctx.expect (withKeys.voicesHeld == 3, "the live keys did not sound over the timeline"))
+        return ctx.verdict();
+
+    track.inputMonitor.store (false);
+    session.recomputeRtCounters();
+    ctx.pump (1);
+    keys (ctx, input, false, 1);
+    const auto after = readCounters (ctx, kTrack);
+    ctx.note ("timeline only " + describe (timelineOnly) + " / with keys " + describe (withKeys)
+              + " / IN off and keys up " + describe (after));
+    ctx.expect (after.chokesSeen > withKeys.chokesSeen, "turning IN off sent the instrument no reset");
+    ctx.expect (after.voicesHeld == 1, "the timeline's held note did not sound again after the reset");
+    return ctx.verdict();
+}
+
 ScenarioResult runDisarm (ScenarioContext& ctx)
 {
     const int input = ctx.engine().getVirtualKeyboardInputIndex();
@@ -240,7 +296,8 @@ ScenarioResult withoutClap (ScenarioContext&)
     return ScenarioResult::skip ("built without the native CLAP host");
 }
 constexpr Run runInputChange = withoutClap, runMonitorOff = withoutClap, runDisarm = withoutClap,
-              runChannelFilter = withoutClap, runTrackMove = withoutClap;
+              runChannelFilter = withoutClap, runTrackMove = withoutClap,
+              runMonitorOffTimelineChase = withoutClap;
 #endif
 
 const std::vector<std::string> kTags { "midi", "panic", "clap" };
@@ -255,6 +312,9 @@ const ScenarioRegistrar inputRegistrar { Scenario {
     "midi.release_on_input_change", kTags, Needs::Engine, kFixtures, running (runInputChange) } };
 const ScenarioRegistrar monitorRegistrar { Scenario {
     "midi.release_on_monitor_off", kTags, Needs::Engine, kFixtures, running (runMonitorOff) } };
+const ScenarioRegistrar monitorChaseRegistrar { Scenario {
+    "midi.timeline_note_resounds_after_monitor_off", kTags, Needs::Engine, kFixtures,
+    running (runMonitorOffTimelineChase) } };
 const ScenarioRegistrar disarmRegistrar { Scenario {
     "midi.release_on_disarm", kTags, Needs::Engine, kFixtures, running (runDisarm) } };
 const ScenarioRegistrar channelRegistrar { Scenario {

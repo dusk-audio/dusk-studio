@@ -32,6 +32,7 @@
 #include "device/IODeviceCallback.h"
 #include "device/MicrophoneAccess.h"
 #include "../session/Session.h"
+#include "MidiTimelineSchedule.h"
 #include "AudioWorkerPool.h"
 #include "MasteringPlayer.h"
 #include "PlaybackEngine.h"
@@ -980,6 +981,8 @@ private:
     std::vector<dusk::MidiBuffer> perInputMidi;
     // Per-track routing buffer feeding native MIDI consumers and the recorder.
     std::array<dusk::MidiBuffer, Session::kNumTracks> perTrackMidi;
+    // The timeline scheduler's controller chase, audio thread only.
+    midischedule::ControllerChase midiControllerChase;
     // JUCE-only scratch passed through the existing instrument-hosting API.
     std::array<juce::MidiBuffer, Session::kNumTracks> perTrackMidiScratch;
     // Timestamp-sorted raw live input accepted by pullInput for the armed MIDI
@@ -1158,6 +1161,7 @@ private:
     CallbackDiagnosticTimer diagTimer { *this };
     std::int64_t lastReportedGated  = 0;   // diagTimer (message thread) only
     std::int64_t lastReportedSilent = 0;
+    int          lastReportedRealtimeDemotions = 0;
 
     std::atomic<int>    xrunCount         { 0 };
     // Device xrun count at the last resetXRunCounts(); subtracted in

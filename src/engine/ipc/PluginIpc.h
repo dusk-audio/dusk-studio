@@ -23,10 +23,14 @@ namespace duskstudio::ipc
 {
 
 constexpr std::uint32_t kMagic     = 0x46434C30;  // 'FCL0'
-constexpr std::uint32_t kVersion   = 3;
+constexpr std::uint32_t kVersion   = 4;
 constexpr int           kMaxBlock  = 1024;        // upper bound on numSamples per block
 constexpr int           kMaxChans  = 2;           // stereo plenty for this host
-constexpr std::size_t   kMidiBytes = 16 * 1024;   // serialised MIDI-block byte cap
+// Serialised MIDI-block byte cap. At least a track's routing ceiling
+// (dusk::kMidiRoutingBlockBytes, checked where the host feeds it): the wire
+// spends 6 bytes on an event's header where the routing buffer spends 8, so a
+// block the engine delivers always crosses whole.
+constexpr std::size_t   kMidiBytes = 80 * 1024;
 constexpr std::size_t   kStateBytes = 4 * 1024 * 1024; // up to 4 MB plugin state blob
 // Hard cap on a single control-socket payload. Legit payloads are small
 // (LoadPlugin XML is the largest, a few KB); anything bigger goes via the SHM

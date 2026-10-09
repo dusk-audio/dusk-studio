@@ -364,6 +364,8 @@ public:
 
 private:
     bool hasLoadedMidiConsumer() const noexcept;
+    // A loaded slot the effect insert path runs: every host but multisample.
+    bool hasLoadedEffectMidiConsumer() const noexcept;
     // The owed reset as the MIDI for an insert run without the track's MIDI,
     // or null when none is owed. Settles the debt; call only where a slot runs.
     const dusk::MidiBuffer* takeOwedMidiReset() noexcept;
