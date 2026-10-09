@@ -19506,6 +19506,66 @@ const ScenarioRegistrar virtualKeyboardKeys { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runVirtualKeyboardKeys (host, ctx); }
 } };
 
+// However the virtual keyboard closes, the window's shortcuts answer at once,
+// with no click to hand the window its keyboard back. Each close starts with
+// nothing in the window holding the keyboard, as the keyboard's native child
+// leaves it on Windows. The Win32 focus itself is not reproduced here; what
+// is checked is that every close puts the keyboard back on the canvas.
+std::optional<ScenarioResult> runVirtualKeyboardCloseFocus (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    return ScenarioResult::skip ("built without the native keyboard");
+   #endif
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty() || host.virtualKeyboardOpen())
+        return ScenarioResult::skip ("requires a stopped transport, no modal and no keyboard");
+    auto& um = engine.getUndoManager();
+    ctx.cleanup ([&host, &um]
+    {
+        host.closeVirtualKeyboard();
+        drainModals (host);
+        um.clearUndoHistory();
+    });
+    auto edits = std::make_shared<int> (0);
+    struct Route { std::string name; std::function<bool()> close; };
+    const std::vector<Route> routes {
+        { "Escape in the keyboard",       [&host] { return host.inputVirtualKeyboard ("escape"); } },
+        { "K in the keyboard",            [&host] { return host.inputVirtualKeyboard ("k"); } },
+        { "the keyboard button",          [&host] { return host.clickVirtualKeyboardButton(); } },
+        { "a click outside the keyboard", [&host] { return host.clickVirtualKeyboardDim(); } }
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const auto& route : routes)
+    {
+        steps->push_back ({ 150, [&host, &ctx, &um, edits]
+        {
+            um.beginNewTransaction ("Keyboard focus probe");
+            um.perform (new ParamEditAction ([edits] { ++*edits; }, [edits] { --*edits; }));
+            ctx.expect (host.pressKey ("K", 'k'), "K was not handled");
+        } });
+        steps->push_back ({ 600, [&host, &ctx, route]
+        {
+            if (! ctx.expect (host.virtualKeyboardOpen(), "K did not open the keyboard before " + route.name)) return;
+            (void) host.unfocusWindow();
+            ctx.expect (route.close(), route.name + " did not reach the keyboard");
+        } });
+        steps->push_back ({ 0, [&host, &ctx, edits, route]
+        {
+            ctx.expect (host.canvasHasKeyboardFocus(), route.name + " left the canvas without the keyboard");
+            ctx.expect (host.pressPeerKey ("command + Z", 0) && *edits == 0,
+                        "Undo at the window did nothing after " + route.name);
+        }, [&host] { return ! host.virtualKeyboardOpen(); }, route.name + " did not close the keyboard" });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar virtualKeyboardCloseFocus { Scenario {
+    "gui.virtual_keyboard_close_focus", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runVirtualKeyboardCloseFocus (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPluginKindMismatch (GuiHost& host, ScenarioContext& ctx)
 {
     const auto instrument = ctx.fixture ("panic_probe.vst3");
@@ -22102,7 +22162,8 @@ bool writeSilenceFixture (const std::filesystem::path& path, double sampleRate, 
 // Each imported file is its own undo step. Undoing a recording made on the
 // track before the import leaves the imported region on it, once the import's
 // own step has gone, and redo brings both back; the track takes its old name
-// back with the import's undo. Audio and MIDI alike.
+// back with the import's undo. Audio and MIDI alike. An import that switched the
+// track's mode puts the old mode back with the same undo.
 std::optional<ScenarioResult> runImportUndoStep (GuiHost& host, ScenarioContext& ctx)
 {
     AudioRegion region;
@@ -22193,6 +22254,36 @@ std::optional<ScenarioResult> runImportUndoStep (GuiHost& host, ScenarioContext&
                         "redoing the " + what + " import did not name the track again");
         } });
     }
+    // The audio track again, now holding the recording and the imported file.
+    auto& switched = session.track (audioTrack);
+    const auto midiCount = [&switched] { return (int) switched.midiRegions.current().size(); };
+    steps->push_back ({ 300, [&host, &ctx, mid]
+    { ctx.expect (host.dropFilesOnTrack (audioTrack, { mid }), "the drop on the audio track was rejected"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Import"), "the import target picker did not open for the switching import"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Switch"), "the import did not ask to switch the track to MIDI"); } });
+    steps->push_back ({ 700, [&host, &ctx, &engine, &switched, midiCount]
+    {
+        ctx.expect (switched.mode.load() == (int) Track::Mode::Midi && midiCount() == 1,
+                    "the switching import did not turn the track to MIDI and add its region");
+        ctx.expect (engine.getUndoManager().getUndoDescription() == "Import file",
+                    "the switching import is not its own undo step");
+        ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &switched, midiCount]
+    {
+        ctx.expect (midiCount() == 0 && switched.regions.size() == 2,
+                    "undoing the switching import did not take its region alone off");
+        ctx.expect (switched.mode.load() == (int) Track::Mode::Mono,
+                    "undoing the switching import left the track in MIDI mode");
+        ctx.expect (host.pressKey ("command + shift + Z"), "Redo was not handled");
+    } });
+    steps->push_back ({ 300, [&ctx, &switched, midiCount]
+    {
+        ctx.expect (switched.mode.load() == (int) Track::Mode::Midi && midiCount() == 1,
+                    "redoing the switching import did not switch the track and bring its region back");
+    } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }

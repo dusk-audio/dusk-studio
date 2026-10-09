@@ -1367,6 +1367,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
     }
     void closeVirtualKeyboard() override { owner.closeVirtualKeyboard(); }
+    bool clickVirtualKeyboardButton() override
+    { return owner.transportBar != nullptr && owner.transportBar->clickKeyboardForScenario(); }
+    bool clickVirtualKeyboardDim() override
+    {
+        if (! virtualKeyboardOpen()) return false;
+        const auto corner = owner.getTopLevelComponent()->getLocalBounds().getTopLeft().translated (4, 4).toFloat();
+        return clickAt (corner.x, corner.y, 1);
+    }
+    bool canvasHasKeyboardFocus() const override { return owner.hasKeyboardFocus (false); }
 
     bool openAudioSettings() override { owner.openAudioSettings(); return audioSettingsOpen(); }
     void closeAudioSettings() override { owner.closeAudioSettings(); }

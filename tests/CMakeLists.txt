@@ -367,6 +367,7 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
     target_sources(dusk-studio-tests PRIVATE
         imgui_widget_kit.cpp
         imgui_panel_controls.cpp
+        startup_recent_dates.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/DuskTheme.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelControls.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/StartupView.cpp

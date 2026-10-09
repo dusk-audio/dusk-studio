@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 #include "../session/Session.h"
 
@@ -16,8 +17,7 @@ namespace duskstudio
 // Smart sort: tracks whose mode matches the file's channel layout
 // bubble to the top (empty ones first, occupied next); mismatched-mode
 // tracks render greyed at the bottom and tag their row with a hint
-// that picking them will flip the track mode atomically before the
-// import runs.
+// that picking them switches the track's mode with the import.
 class ImportTargetPicker final : public juce::Component
 {
 public:
@@ -32,9 +32,11 @@ public:
         bool         isMidi        = false;
     };
 
-    // onCommit fires with the resolved (0-based) target track index AFTER
-    // the picker has flipped the track mode if needed. onCancel fires on
-    // Cancel / Esc / click-outside. Both close the host modal.
+    // onCommit fires with the resolved (0-based) target track index and, once
+    // the user has agreed to it, the mode the import switches the track to.
+    // The picker leaves the track as it is, so the switch can join the import's
+    // undo step. onCancel fires on Cancel / Esc / click-outside. Both close
+    // the host modal.
     ImportTargetPicker (Session& session,
                          FileSummary summary,
                          std::int64_t timelineStartSamples,
@@ -43,7 +45,7 @@ public:
                          int         beatsPerBar,
                          int         timeDisplayMode,
                          int         preferredTrackIndex,
-                         std::function<void (int trackIndex)> onCommit,
+                         std::function<void (int trackIndex, std::optional<Track::Mode> switchTo)> onCommit,
                          std::function<void()> onCancel);
     ~ImportTargetPicker() override;
 
@@ -63,7 +65,7 @@ private:
     int     beatsPerBar;
     int     timeDisplayMode;
 
-    std::function<void (int)>  onCommit;
+    std::function<void (int, std::optional<Track::Mode>)> onCommit;
     std::function<void()>      onCancel;
 
     juce::Label headerTitle;

@@ -178,7 +178,7 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
                                             int         bpb,
                                             int         displayMode,
                                             int         preferredTrackIndex,
-                                            std::function<void (int)> commit,
+                                            std::function<void (int, std::optional<Track::Mode>)> commit,
                                             std::function<void()> cancel)
     : session (s),
       summary (std::move (fileSummary)),
@@ -325,7 +325,7 @@ void ImportTargetPicker::commitSelection()
 
     if (! needsModeFlip)
     {
-        if (onCommit) onCommit (trackIndex);
+        if (onCommit) onCommit (trackIndex, std::nullopt);
         return;
     }
 
@@ -361,24 +361,13 @@ void ImportTargetPicker::commitSelection()
                        + modeName (newMode) + " mode. Proceed?";
 
     juce::Component::SafePointer<juce::Component> safeHost (host);
-    Session* sessionPtr = &session;
-    auto commitCb       = onCommit;
-    auto isMidiCopy     = summary.isMidi;
-    auto numChCopy      = summary.numChannels;
+    auto commitCb = onCommit;
     showDuskConfirm (*host, title, message,
                        /*primary*/   "Switch",
-                       /*onPrimary*/ [safeHost, sessionPtr, trackIndex, commitCb,
-                                       isMidiCopy, numChCopy]
+                       /*onPrimary*/ [safeHost, trackIndex, commitCb, newMode]
                        {
-                           if (safeHost.getComponent() == nullptr || sessionPtr == nullptr) return;
-                           const Track::Mode m = isMidiCopy
-                                                    ? Track::Mode::Midi
-                                                    : (numChCopy == 2
-                                                            ? Track::Mode::Stereo
-                                                            : Track::Mode::Mono);
-                           sessionPtr->track (trackIndex).mode.store ((int) m,
-                                                                        std::memory_order_relaxed);
-                           if (commitCb) commitCb (trackIndex);
+                           if (safeHost.getComponent() == nullptr) return;
+                           if (commitCb) commitCb (trackIndex, newMode);
                        },
                        /*secondary*/   "Cancel",
                        /*onSecondary*/ {});

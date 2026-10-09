@@ -400,6 +400,13 @@ public:
     virtual bool tunerOpen() const = 0;
     virtual bool inputVirtualKeyboard (const std::string& key) = 0;
     virtual void closeVirtualKeyboard() = 0;
+    // The transport bar's keyboard button, pressed the way its click handler runs.
+    virtual bool clickVirtualKeyboardButton() = 0;
+    // A press on the dim behind the keyboard, in the window's corner. False when the
+    // keyboard is not up.
+    virtual bool clickVirtualKeyboardDim() = 0;
+    // The main canvas, the window's own shortcut handler, holds the keyboard.
+    virtual bool canvasHasKeyboardFocus() const = 0;
 
     virtual bool meterClip (int index) = 0;
     virtual bool openMidiIo (int index) = 0;

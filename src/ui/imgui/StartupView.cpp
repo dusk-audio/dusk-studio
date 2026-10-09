@@ -93,10 +93,27 @@ std::string formatBitDepth (int bits, bool isFloat)
     return std::to_string (bits) + "-bit" + (isFloat ? " float" : "");
 }
 
-std::string formatLastModified (const std::filesystem::path& path)
+// The folder's own time moves whenever a file inside it is created or removed, as
+// every autosave's temp-file-and-rename does, so it dates the save only as a last
+// resort. A folder never saved dates its autosave, the state a recovery would open.
+std::filesystem::path savedStateOf (const std::filesystem::path& sessionDir)
 {
     std::error_code error;
-    const auto written = std::filesystem::last_write_time (path, error);
+    if (! std::filesystem::is_directory (sessionDir, error))
+        return sessionDir;
+    for (const char* name : { "session.json", "session.json.autosave" })
+    {
+        auto file = sessionDir / name;
+        if (std::filesystem::is_regular_file (file, error))
+            return file;
+    }
+    return sessionDir;
+}
+
+std::string formatLastModified (const std::filesystem::path& sessionDir)
+{
+    std::error_code error;
+    const auto written = std::filesystem::last_write_time (savedStateOf (sessionDir), error);
     if (error)
         return {};
 
