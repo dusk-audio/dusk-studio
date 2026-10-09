@@ -1577,9 +1577,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         if ((code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey)
             && cmd)
         {
-            const double sr   = engine.getCurrentSampleRate();
+            const double sr   = engine.getTimelineSampleRate();
             const float  bpm  = session.tempoBpm.load (std::memory_order_relaxed);
-            if (sr > 0.0 && bpm > 0.0f)
+            if (bpm > 0.0f)
             {
                 const int beatsPerBar = std::max (1,
                     session.beatsPerBar.load (std::memory_order_relaxed));
@@ -4886,7 +4886,7 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
         session,
         std::move (summary),
         timelineStart,
-        engine.getCurrentSampleRate(),
+        engine.getTimelineSampleRate(),
         session.tempoBpm.load (std::memory_order_relaxed),
         session.beatsPerBar.load (std::memory_order_relaxed),
         session.timeDisplayMode.load (std::memory_order_relaxed),
@@ -4977,7 +4977,7 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
         session,
         std::move (summary),
         timelineStart,
-        engine.getCurrentSampleRate(),
+        engine.getTimelineSampleRate(),
         session.tempoBpm.load (std::memory_order_relaxed),
         session.beatsPerBar.load (std::memory_order_relaxed),
         session.timeDisplayMode.load (std::memory_order_relaxed),

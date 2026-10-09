@@ -155,6 +155,7 @@ add_executable(dusk-studio-tests
     transport_state_machine.cpp
     transport_stop_locate.cpp
     timeline_follow.cpp
+    timeline_sample_rate.cpp
     aux_send_text.cpp
     loop_timeline.cpp
     generated_midi_budget.cpp

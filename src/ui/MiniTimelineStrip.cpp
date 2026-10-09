@@ -51,8 +51,7 @@ std::int64_t MiniTimelineStrip::songEndSamples() const noexcept
     // the right edge and mis-hit-test in the collapsed timeline.
     for (const auto& mk : session.getMarkers())
         end = std::max (end, mk.timelineSamples);
-    const double sr = engine.getCurrentSampleRate();
-    const std::int64_t floorLen = (std::int64_t) ((sr > 0.0 ? sr : 48000.0) * 60.0);  // 60 s
+    const auto floorLen = (std::int64_t) (engine.getTimelineSampleRate() * 60.0);
     return std::max (end, floorLen);
 }
 

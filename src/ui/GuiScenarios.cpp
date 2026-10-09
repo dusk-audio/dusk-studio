@@ -1020,6 +1020,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.pianoRoll != nullptr ? owner.pianoRoll->selectionForScenario() : std::vector<int> {};
     }
+    std::int64_t pianoEditCursor() const override
+    {
+        return owner.pianoRoll != nullptr ? owner.pianoRoll->editCursorForScenario() : -1;
+    }
     int pianoCcController() const override
     {
         return owner.pianoRoll != nullptr ? owner.pianoRoll->ccControllerForScenario() : -1;

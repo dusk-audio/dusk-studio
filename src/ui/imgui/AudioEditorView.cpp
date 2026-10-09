@@ -64,8 +64,6 @@ constexpr float kLaneInset = 4.0f;
 constexpr float kMinPixelsPerSample = 1.0e-5f;
 constexpr float kLeastPixelsPerSample = 1.0e-9f;
 constexpr float kMaxPixelsPerSample = 1.0f;
-// What time is read at when no file, device or session gives a rate.
-constexpr double kFallbackSampleRate = 48000.0;
 constexpr float kZoomStep = 1.15f;
 constexpr float kWheelPanPixels = 12.5f;
 
@@ -1391,11 +1389,7 @@ private:
         if (const auto* source = focusedSource(); source != nullptr && source->snapshot.info)
             if (source->snapshot.info->sampleRate > 0.0)
                 return source->snapshot.info->sampleRate;
-        for (const double rate : { engine.getCurrentSampleRate(), engine.getLastDeviceSampleRate(),
-                                   session.sessionSampleRate })
-            if (rate > 0.0)
-                return rate;
-        return kFallbackSampleRate;
+        return engine.getTimelineSampleRate();
     }
 
     // Every region and take on the track, as [first, second) in timeline samples;

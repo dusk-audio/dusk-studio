@@ -17480,6 +17480,181 @@ const ScenarioRegistrar pianoRollNavigation { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoRollNavigation (host, ctx); }
 } };
 
+// With no audio device running the timeline still lays the session out at the
+// rate the device last ran at: the ruler reads the times it read with the device
+// up, an audio region draws on its row, and a MIDI region is there to double-click.
+std::optional<ScenarioResult> runTimelineWithoutDevice (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    const double rate = engine.getCurrentSampleRate();
+    if (host.engineDetached() || ! engine.isAudioCallbackRegistered() || rate <= 0.0)
+        return ScenarioResult::skip ("requires a running audio device");
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
+    auto& midiTrack = session.track (0);
+    auto& audioTrack = session.track (1);
+    ctx.keep (midiTrack.mode);
+    ctx.keep (midiTrack.frozen);
+    ctx.keep (audioTrack.frozen);
+    const auto view = host.tapeView();
+    const bool timeline = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &engine, &midiTrack, &audioTrack, timeline, view,
+                  midi = midiTrack.midiRegions.current(), audio = audioTrack.regions]
+    {
+        host.closePianoRoll();
+        if (! engine.isAudioCallbackRegistered()) engine.reattachAudioCallback();
+        midiTrack.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (midi));
+        audioTrack.regions = audio;
+        host.setTimelineShown (timeline);
+        host.restoreTapeView (view);
+    });
+    midiTrack.mode.store ((int) Track::Mode::Midi);
+    midiTrack.frozen.store (false);
+    audioTrack.frozen.store (false);
+    MidiRegion midi;
+    midi.timelineStart = (std::int64_t) std::llround (rate * 2.0);
+    midi.lengthInTicks = 3840;
+    midi.lengthInSamples = session.ticksToSamples (session.samplesToTicks (midi.timelineStart, rate) + midi.lengthInTicks, rate)
+                         - midi.timelineStart;
+    midi.notes = { { 1, 60, 100, 0, 480 } };
+    midiTrack.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { midi }));
+    AudioRegion audio;
+    audio.lengthInSamples = (std::int64_t) std::llround (rate * 4.0);
+    audioTrack.regions.clear();
+    audioTrack.regions.push_back (audio);
+
+    const auto rulerAt = std::make_shared<std::int64_t> (0);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("0", '0'), "the zoom-to-fit key was not handled"); } });
+    steps->push_back ({ 200, [&host, &ctx, &engine, rulerAt]
+    {
+        *rulerAt = host.tapeRulerSample (0.5f);
+        ctx.expect (*rulerAt > 0, "with the device up the ruler's middle reads sample 0");
+        engine.detachAudioCallback();
+        ctx.expect (engine.getCurrentSampleRate() <= 0.0, "a detached engine still reads a running rate");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, rulerAt]
+    {
+        const auto now = host.tapeRulerSample (0.5f);
+        ctx.expect (now == *rulerAt, "with no device running the ruler's middle reads sample " + std::to_string (now)
+                                         + ", not the " + std::to_string (*rulerAt) + " it read with the device up");
+        ctx.expect (host.tapeRegionShown (1, 0), "with no device running the tape strip does not draw track 2's region");
+        ctx.expect (host.doubleClickMidiRegion (0, 0), "with no device running track 1's MIDI region is not on screen");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.pianoRollOpen() && host.pianoRollRegion() == 0,
+                    "double-clicking the MIDI region with no device running did not open it");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar timelineWithoutDevice { Scenario {
+    "gui.timeline_without_device", { "gui", "tape" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTimelineWithoutDevice (host, ctx); }
+} };
+
+// With no audio device running the piano roll measures time at the rate the
+// device last ran at, so [ and ] put the loop, and Shift with them the punch,
+// on the timeline sample under the edit cursor, not at a sample worked out at 1 Hz.
+std::optional<ScenarioResult> runPianoLoopKeysWithoutDevice (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    const double rate = engine.getCurrentSampleRate();
+    if (host.engineDetached() || ! engine.isAudioCallbackRegistered() || rate <= 0.0)
+        return ScenarioResult::skip ("requires a running audio device");
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    auto& track = session.track (0);
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&host, &engine, &track, &transport, regions = track.midiRegions.current(),
+                  loop = transport.isLoopEnabled(), loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd(),
+                  punch = transport.isPunchEnabled(), punchIn = transport.getPunchIn(), punchOut = transport.getPunchOut()]
+    {
+        host.closePiano();
+        if (! engine.isAudioCallbackRegistered()) engine.reattachAudioCallback();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+        transport.setLoopRange (loopStart, loopEnd);
+        transport.setLoopEnabled (loop);
+        transport.setPunchRange (punchIn, punchOut);
+        transport.setPunchEnabled (punch);
+    });
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
+    MidiRegion region;
+    region.timelineStart = (std::int64_t) std::llround (rate * 2.0);
+    region.lengthInTicks = 7680;
+    region.lengthInSamples = session.ticksToSamples (session.samplesToTicks (region.timelineStart, rate) + region.lengthInTicks, rate)
+                           - region.timelineStart;
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    engine.detachAudioCallback();
+    if (engine.getCurrentSampleRate() > 0.0)
+        return ScenarioResult::fail ("a detached engine still reads a running rate");
+    if (! host.openPiano (0, 0)) return ScenarioResult::fail ("piano roll did not open");
+
+    const auto sampleAt = [&session, rate, start = region.timelineStart] (std::int64_t tick)
+    { return session.ticksToSamples (session.samplesToTicks (start, rate) + tick, rate); };
+    const auto click = [&host, &ctx] (std::int64_t tick)
+    { ctx.expect (host.clickPianoGrid (tick, 72), "the piano grid did not take a click at tick " + std::to_string (tick)); };
+    const auto press = [&host, &ctx] (std::int64_t tick, const std::string& key)
+    {
+        ctx.expect (host.pianoEditCursor() == tick, "the click left the edit cursor at tick "
+                                                        + std::to_string (host.pianoEditCursor()) + ", not "
+                                                        + std::to_string (tick));
+        ctx.expect (host.pressPianoRollKey (key), "the piano roll did not handle " + key);
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [click] { click (1920); } });
+    steps->push_back ({ 150, [press] { press (1920, "["); } });
+    steps->push_back ({ 150, [&ctx, &transport, sampleAt, click]
+    {
+        ctx.expect (transport.getLoopStart() == sampleAt (1920),
+                    "[ put the loop start at sample " + std::to_string (transport.getLoopStart()) + ", not "
+                        + std::to_string (sampleAt (1920)) + " under the edit cursor");
+        click (5760);
+    } });
+    steps->push_back ({ 150, [press] { press (5760, "]"); } });
+    steps->push_back ({ 150, [&ctx, &transport, sampleAt, click]
+    {
+        ctx.expect (transport.getLoopStart() == sampleAt (1920) && transport.getLoopEnd() == sampleAt (5760)
+                        && transport.isLoopEnabled(),
+                    "] left the loop at " + std::to_string (transport.getLoopStart()) + " to "
+                        + std::to_string (transport.getLoopEnd()) + ", not " + std::to_string (sampleAt (1920))
+                        + " to " + std::to_string (sampleAt (5760)));
+        click (2880);
+    } });
+    steps->push_back ({ 150, [press] { press (2880, "shift + " + keyCodeDescription ('{')); } });
+    steps->push_back ({ 150, [click] { click (4800); } });
+    steps->push_back ({ 150, [press] { press (4800, "shift + " + keyCodeDescription ('}')); } });
+    steps->push_back ({ 150, [&ctx, &transport, sampleAt]
+    {
+        ctx.expect (transport.getPunchIn() == sampleAt (2880) && transport.getPunchOut() == sampleAt (4800)
+                        && transport.isPunchEnabled(),
+                    "Shift+[ and Shift+] left the punch at " + std::to_string (transport.getPunchIn()) + " to "
+                        + std::to_string (transport.getPunchOut()) + ", not " + std::to_string (sampleAt (2880))
+                        + " to " + std::to_string (sampleAt (4800)));
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoLoopKeysWithoutDevice { Scenario {
+    "gui.piano_loop_keys_without_device", { "gui", "piano", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoLoopKeysWithoutDevice (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPianoNoteCreation (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();

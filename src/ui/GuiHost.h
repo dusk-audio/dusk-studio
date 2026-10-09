@@ -184,6 +184,8 @@ public:
     virtual int pianoCcController() const = 0;
     virtual bool pianoNotePointer (std::int64_t tick, int pitch, bool down, int modifiers = 0) = 0;
     virtual std::vector<int> pianoSelection() const = 0;
+    // The open piano roll's edit cursor, in ticks from the region's start; -1 when none is open.
+    virtual std::int64_t pianoEditCursor() const = 0;
     virtual bool setTimelineShown (bool shown) = 0;
     virtual std::vector<double> tapeView() const = 0;
     virtual void restoreTapeView (const std::vector<double>& view) = 0;

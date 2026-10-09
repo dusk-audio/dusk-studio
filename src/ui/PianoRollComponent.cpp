@@ -724,7 +724,7 @@ int PianoRollComponent::activeVelocity() const noexcept
 void PianoRollComponent::refreshStatusBarReadouts()
 {
     const auto mode = (TimeDisplayMode) session.timeDisplayMode.load (std::memory_order_relaxed);
-    const double sr  = std::max (1.0, engine.getCurrentSampleRate());
+    const double sr  = engine.getTimelineSampleRate();
     const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
     const int    bpb = session.beatsPerBar.load (std::memory_order_relaxed);
     std::int64_t timelineSample = 0;
@@ -867,7 +867,7 @@ void PianoRollComponent::paintLoopPunchBrackets (juce::Graphics& g,
 {
     const auto* r = region();
     if (r == nullptr) return;
-    const double sr  = std::max (1.0, engine.getCurrentSampleRate());
+    const double sr  = engine.getTimelineSampleRate();
     auto& transport = engine.getTransport();
 
     const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
@@ -1094,7 +1094,7 @@ void PianoRollComponent::paintBeatRuler (juce::Graphics& g, juce::Rectangle<int>
     else
     {
         // Time mode - label every Nth second (5 / 10 / 30 by zoom).
-        const double sr  = std::max (1.0, engine.getCurrentSampleRate());
+        const double sr  = engine.getTimelineSampleRate();
         const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
         if (bpm <= 0.0f) return;
         const double samplesPerTick = sr * 60.0 / ((double) bpm * (double) kMidiTicksPerQuarter);
@@ -1106,7 +1106,10 @@ void PianoRollComponent::paintBeatRuler (juce::Graphics& g, juce::Rectangle<int>
 
         const double regionLenSec = (double) r->lengthInSamples / sr;
         const double regionStartSec = (double) r->timelineStart / sr;
-        for (double sec = 0.0; sec <= regionLenSec + 0.5; sec += tickEverySec)
+        const double firstSec = std::floor ((double) scrollX / pxPerSec / tickEverySec) * tickEverySec;
+        const double lastSec = std::min (regionLenSec + 0.5,
+                                         (double) (area.getRight() - kKeyboardWidth + scrollX) / pxPerSec);
+        for (double sec = std::max (0.0, firstSec); sec <= lastSec; sec += tickEverySec)
         {
             const auto t = (std::int64_t) std::round (samplesToTicks ((std::int64_t) (sec * sr),
                                                                         sr, bpm));
@@ -1765,9 +1768,9 @@ void PianoRollComponent::stepRecordNoteOn (int noteNumber, int velocity)
 {
     auto* r = region();
     if (r == nullptr) return;
-    const double sr  = engine.getCurrentSampleRate();
+    const double sr  = engine.getTimelineSampleRate();
     const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
-    if (sr <= 0.0 || bpm <= 0.0f) return;
+    if (bpm <= 0.0f) return;
 
     // Step length: piano-roll snap when set, otherwise default to a
     // 1/16 note. snapTicks=0 means "no snap" for note-edit drags;
@@ -2326,7 +2329,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // loop edges take priority over punch when both land under the cursor.
     if (rulerBand.contains (e.x, e.y) && ! e.mods.isPopupMenu())
     {
-        const double sr  = std::max (1.0, engine.getCurrentSampleRate());
+        const double sr  = engine.getTimelineSampleRate();
         auto& transport  = engine.getTransport();
         const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
         auto xForSample  = [&] (std::int64_t s)
@@ -2355,7 +2358,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
         // Plain ruler click seeks the transport playhead (Reaper / Ardour
         // muscle memory), parity with the audio editor.
         const auto tickHere = std::max<std::int64_t> (0, tickForX (e.x));
-        const double sr  = engine.getCurrentSampleRate();
+        const double sr  = engine.getTimelineSampleRate();
         const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
         const auto sampleOffset = session.ticksToSamples (regStartTick + tickHere, sr)
                                       - r->timelineStart;
@@ -2639,7 +2642,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
     if (dragMode == DragMode::LoopIn || dragMode == DragMode::LoopOut
         || dragMode == DragMode::PunchIn || dragMode == DragMode::PunchOut)
     {
-        const double sr  = std::max (1.0, engine.getCurrentSampleRate());
+        const double sr  = engine.getTimelineSampleRate();
         auto& transport  = engine.getTransport();
         const auto tickHere = std::max<std::int64_t> (0, tickForX (e.x));
         const auto tl = session.ticksToSamples (
@@ -2867,7 +2870,7 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
     {
         if (const auto* r = region())
         {
-            const double sr  = std::max (1.0, engine.getCurrentSampleRate());
+            const double sr  = engine.getTimelineSampleRate();
             auto& transport  = engine.getTransport();
             const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
             auto xForSample  = [&] (std::int64_t s)
@@ -3163,7 +3166,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             if (kc == 'P' && ! sh) { transport.setPunchEnabled (! transport.isPunchEnabled()); repaint(); return true; }
             if (const auto* r = region(); r != nullptr && (kc == '[' || kc == ']'))
             {
-                const double sr  = std::max (1.0, engine.getCurrentSampleRate());
+                const double sr  = engine.getTimelineSampleRate();
                 const auto cursorTl = session.ticksToSamples (
                     session.samplesToTicks (r->timelineStart, sr) + editCursorTick, sr);
                 if (kc == '[') { if (sh) transport.placePunchRange (cursorTl, std::max (transport.getPunchOut(), cursorTl));
@@ -3927,7 +3930,7 @@ int PianoRollComponent::transportPlayheadX (juce::Rectangle<int> gridArea) const
     const auto playheadSample = engine.getTransport().getPlayhead();
     const auto localSample = playheadSample - r->timelineStart;
     if (localSample < 0 || localSample > r->lengthInSamples) return -1;
-    const double sr = std::max (1.0, engine.getCurrentSampleRate());
+    const double sr = engine.getTimelineSampleRate();
     // Fractional ticks so the playhead advances sub-tick smoothly. The integer
     // samplesToTicks quantises to whole ticks, so x would jump in tick-sized
     // steps (several pixels when zoomed in) - a glitchy line. xForTick's pixel
@@ -4019,7 +4022,7 @@ void PianoRollComponent::timerCallback()
             const auto localSample = playheadSample - r->timelineStart;
             if (localSample >= 0 && localSample <= r->lengthInSamples)
             {
-                const double sr  = std::max (1.0, engine.getCurrentSampleRate());
+                const double sr  = engine.getTimelineSampleRate();
                 const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
                 const auto localTick = session.samplesToTicks (localSample + r->timelineStart, sr) - regStartTick;
                 const double playheadPx = (double) localTick * pixelsPerTick;

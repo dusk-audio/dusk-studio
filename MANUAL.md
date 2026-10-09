@@ -2367,6 +2367,7 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 | **Cmd+←** / **Cmd+→**             | Pan the view horizontally                                    |
 | **Home** / **End**                | Jump view to region start / end                              |
 | **Cmd+]** / **Cmd+[**             | Next / previous MIDI region                                  |
+| **[** / **]**                     | Set the loop in / out point at the edit cursor (**Shift** = punch in / out) |
 | **Esc**                           | Close modal                                                  |
 
 ## Notepad
@@ -2555,7 +2556,7 @@ If the interface saved in your settings is held by another application when Dusk
 - On any platform, the last resort is the default device of every other backend that is present — on Windows that's what carries you off a busy or powered-down ASIO driver onto shared Windows Audio. Shared and exclusive Windows backends can expose the same endpoint name; Dusk Studio still detects the backend change.
 - When the backend has nothing else to offer (macOS has CoreAudio alone), Dusk Studio opens its default output without an input, since an input that fails takes the output it was paired with down too.
 - If that lands on a **different** working device or backend, you keep working and see *"Your saved audio setup for … could not be opened … Audio has switched to …"*. Your saved setup is **not** changed — it's tried again on the next launch once you free it.
-- If nothing opens, you get a clear warning. With no device open the playhead and meters won't move, recording is disabled, and plugin and soundfont loading is refused — the channel strips take their sample rate and block size from the running device, so there is nothing to prepare an insert against until one opens.
+- If nothing opens, you get a clear warning. With no device open the playhead and meters won't move, recording is disabled, and plugin and soundfont loading is refused — the channel strips take their sample rate and block size from the running device, so there is nothing to prepare an insert against until one opens. The timeline and the piano roll still show and edit the session, timed at the rate the device last ran at; with none since launch, at the rate the session was saved at (48 kHz for a new one).
 
 Either way, free the device in the other app (or run `pactl suspend-sink <sink-name> 1` to release a PipeWire/PulseAudio hold), then pick it again in **Settings → Audio**. Your saved setup returns automatically next launch once it's free.
 

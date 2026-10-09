@@ -36,6 +36,7 @@
 #include "PlaybackEngine.h"
 #include "PluginManager.h"
 #include "RecordManager.h"
+#include "TimelineSampleRate.h"
 #include "Transport.h"
 #include "DuskStudioPlayHead.h"
 
@@ -622,6 +623,12 @@ public:
     // knows the rate the session's audio was made at. An offline render's own
     // rate never lands here.
     double getLastDeviceSampleRate() const noexcept { return lastDeviceSampleRate.load (std::memory_order_relaxed); }
+
+    // Message thread only: it reads the session's saved rate.
+    double getTimelineSampleRate() const noexcept
+    {
+        return timelineSampleRate (getCurrentSampleRate(), getLastDeviceSampleRate(), session.sessionSampleRate);
+    }
 
     // Engine-side xrun: callback wall-clock exceeded the buffer's
     // audio time. Distinct from getBackendXRunCount.

@@ -389,6 +389,7 @@ public:
     }
     int ccControllerForScenario() const { return activeCcController; }
     const auto& selectionForScenario() const { return selectedNotes; }
+    std::int64_t editCursorForScenario() const { return editCursorTick; }
 
 private:
     // Note grid (excludes toolbar / ruler / keyboard column / velocity +
