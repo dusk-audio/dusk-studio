@@ -7,6 +7,8 @@
 #include "../foundation/Fs.h"
 
 #include "../engine/AudioEngine.h"
+#include "../engine/McuController.h"
+#include "../engine/McuProtocol.h"
 #include "../engine/audiofile/FileWriter.h"
 #include "../engine/builtin/BuiltinRegistry.h"
 #include "../engine/PluginSlot.h"
@@ -16,6 +18,7 @@
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/cases/OopStubHarness.h"
 #include "../dsp/ChannelStrip.h"
+#include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
 #include "../session/Session.h"
 #include "../session/SessionSerializer.h"
@@ -7695,16 +7698,18 @@ const ScenarioRegistrar importModeConfirmation { Scenario {
 std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
-    if (! ctx.engine().getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
     if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no open modal");
     const auto originalDir = currentSessionDirectory (session);
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
-    ctx.cleanup ([&host, &session, originalDir, restore]
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
     {
         drainModals (host);
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
+        engine.getUndoManager().clearUndoHistory();
     });
     for (const auto* name : { "ZZ0000_1.wav", "ZZ0001_1.wav", "ZZ0001_2.wav", "ZZ0003_2.wav" })
     {
@@ -7735,7 +7740,7 @@ std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioCo
     { ctx.expect (host.clickFileMenu(), "File menu is unavailable"); } });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickContextMenuItem ("Import DP-24/32 Session (experimental)..."), "DP import menu item is unavailable"); } });
-    steps->push_back ({ 250, [&host, &ctx]
+    const auto chooseFile = [&host, &ctx]
     {
         ctx.expect (host.focusFileName(), "DP file browser did not open");
        #if defined (__APPLE__)
@@ -7746,7 +7751,8 @@ std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioCo
         for (const char ch : (ctx.tempDir() / "ZZ0000_1.wav").string())
             host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
         ctx.expect (host.clickModalButton ("Open"), "DP browser Open button is unavailable");
-    } });
+    };
+    steps->push_back ({ 250, chooseFile });
     steps->push_back ({ 500, [&host, &ctx, unchanged]
     {
         const auto text = host.dpImportSummary();
@@ -7761,11 +7767,35 @@ std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioCo
         unchanged();
         ctx.expect (host.clickModalButton ("Cancel"), "DP confirmation Cancel is unavailable");
     } });
-    steps->push_back ({ 250, [&host, &ctx, unchanged]
+    // Then an import itself, which clears the undo history.
+    steps->push_back ({ 250, [&host, &ctx, &session, &engine, unchanged]
     {
         ctx.expect (host.modalStackEmpty(), "Cancel left the DP confirmation open");
         unchanged();
+        const auto importDir = ctx.tempDir() / "session";
+        std::error_code error;
+        std::filesystem::create_directories (importDir / "audio", error);
+        applySessionDirectory (session, importDir);
+        auto& um = engine.getUndoManager();
+        um.beginNewTransaction ("Edit before the import");
+        um.perform (new ParamEditAction ([] {}, [] {}));
+        ctx.expect (host.clickFileMenu(), "File menu is unavailable");
     } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickContextMenuItem ("Import DP-24/32 Session (experimental)..."), "DP import menu item is unavailable"); } });
+    steps->push_back ({ 250, chooseFile });
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Import"), "DP confirmation Import is unavailable"); } });
+    Step imported { 300, [&host, &ctx, &engine]
+    {
+        ctx.expect (host.modalText().rfind ("Import DP-24/32 Session\nImported ", 0) == 0,
+                    "the DP import ended with '" + host.modalText() + "'");
+        ctx.expect (! engine.getUndoManager().canUndo(), "the DP import left the undo history from before it");
+        dismissAlert (host);
+    } };
+    imported.until = [&host] { return host.modalText().rfind ("Import DP-24/32 Session\n", 0) == 0; };
+    imported.timeout = "the DP import did not finish";
+    steps->push_back (std::move (imported));
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -17007,8 +17037,9 @@ const ScenarioRegistrar timelineTrackMove { Scenario {
 
 // A file dropped on the tape strip lands at the playhead, where the drop line
 // stands while the file is held over the strip. With Alt held it lands, and
-// the line stands, under the pointer. With the landing point scrolled out of
-// view there is no line.
+// the line stands, under the pointer, and Alt pressed or let go with the file
+// held still moves the line. With the landing point scrolled out of view there
+// is no line.
 std::optional<ScenarioResult> runDropAtPlayhead (GuiHost& host, ScenarioContext& ctx)
 {
     AudioRegion region;
@@ -17021,7 +17052,11 @@ std::optional<ScenarioResult> runDropAtPlayhead (GuiHost& host, ScenarioContext&
         session.track (t).mode.store ((int) Track::Mode::Mono);
         session.track (t).frozen.store (false);
     }
-    ctx.cleanup ([&host] { host.forceDropAtMouse (std::nullopt); });
+    ctx.cleanup ([&host]
+    {
+        host.tapeDropLeave();
+        host.forceDropAtMouse (std::nullopt);
+    });
     host.forceDropAtMouse (false);
     std::error_code error;
     std::filesystem::create_directories (ctx.tempDir() / "session" / "audio", error);
@@ -17063,6 +17098,29 @@ std::optional<ScenarioResult> runDropAtPlayhead (GuiHost& host, ScenarioContext&
         const auto& regions = session.track (1).regions;
         ctx.expect (regions.size() == 1 && regions.front().timelineStart == playhead,
                     "the dropped file did not land at the playhead");
+    } });
+    // Alt pressed, then let go, with the files held still: the line follows
+    // the key within a tick, so it never stands where the drop would not land.
+    const auto heldX = std::make_shared<int> (-1);
+    steps->push_back ({ 300, [&host, &ctx, file, playhead, heldX]
+    {
+        const auto shown = host.tapeDropHold (2, { file });
+        if (! ctx.expect (shown.size() == 2 && shown[0] == host.tapeXForSample (playhead),
+                          "files held over the strip do not stand the drop line at the playhead"))
+            return;
+        *heldX = shown[1];
+        host.forceDropAtMouse (true);
+    } });
+    steps->push_back ({ 300, [&host, &ctx, heldX]
+    {
+        ctx.expect (host.tapeDropLine() == *heldX, "with Alt pressed and the files held still, the drop line did not move to the pointer");
+        host.forceDropAtMouse (false);
+    } });
+    steps->push_back ({ 300, [&host, &ctx, playhead]
+    {
+        ctx.expect (host.tapeDropLine() == host.tapeXForSample (playhead),
+                    "with Alt let go and the files held still, the drop line did not go back to the playhead");
+        host.tapeDropLeave();
     } });
     importAfterDrop (2, [&host, &ctx, file, pointerSample, playhead]
     {
@@ -21767,6 +21825,532 @@ const ScenarioRegistrar quickstartEntry { Scenario {
     "gui.settings_quickstart_entry", { "gui", "settings" }, Needs::Engine | Needs::Gui,
     {}, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runQuickstartEntry (host, ctx); }
+} };
+
+// A track move's undo and redo wait while a menu or a dialog is open over the
+// window: the track name menu and the import target picker hold a track by its
+// row, and the move would put another track under them.
+std::optional<ScenarioResult> runTrackMoveUndoUnderMenu (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion region;
+    if (auto early = seedTapeRegion (host, ctx, region)) return early;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    for (const int t : { 1, 2 })
+    {
+        if (session.track (t).frozen.load() || ! session.track (t).midiRegions.current().empty())
+            return ScenarioResult::skip ("requires tracks 2 and 3 unfrozen with no MIDI regions");
+        session.track (t).regions = { region };
+    }
+    std::array<const ChannelStrip*, Session::kNumTracks> launched {};
+    for (int t = 0; t < Session::kNumTracks; ++t) launched[(std::size_t) t] = &engine.getChannelStrip (t);
+    ctx.cleanup ([&host, &engine, launched]
+    {
+        drainModals (host);
+        std::array<int, Session::kNumTracks> newToOld {};
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            int now = 0;
+            while (now < Session::kNumTracks - 1 && &engine.getChannelStrip (now) != launched[(std::size_t) t]) ++now;
+            newToOld[(std::size_t) t] = now;
+        }
+        if (const auto back = trackMoveFromNewToOld (newToOld)) engine.moveTracks (*back);
+        engine.getUndoManager().clearUndoHistory();
+    });
+    const auto movedUp = [&engine, launched]
+    {
+        return &engine.getChannelStrip (0) == launched[2] && &engine.getChannelStrip (2) == launched[1];
+    };
+    const auto inPlace = [&engine, launched]
+    {
+        for (int t = 0; t < 3; ++t)
+            if (&engine.getChannelStrip (t) != launched[(std::size_t) t]) return false;
+        return true;
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.dragTapeTrackName (2, 0), "track 3's name did not take a drag"); } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, movedUp]
+    {
+        ctx.expect (movedUp() && engine.getUndoManager().getUndoDescription() == kMoveTracksTransaction,
+                    "dragging track 3 to the top did not move it there as one undo step");
+        ctx.expect (host.clickTapeTrackName (0, 1, 4), "the moved track's name did not take a right-click");
+    } });
+    for (const bool redo : { false, true })
+    {
+        const std::string step = redo ? "redo" : "undo";
+        steps->push_back ({ 300, [&host, &ctx, step, redo]
+        {
+            ctx.expect (! host.contextMenuItems().empty(), "the track name menu did not open for the " + step);
+            ctx.expect (host.pressPeerKey (redo ? "command + shift + Z" : "command + Z"),
+                        "the window did not take the " + step + " key with the menu open");
+        } });
+        steps->push_back ({ 300, [&host, &ctx, &engine, step, redo, movedUp, inPlace]
+        {
+            ctx.expect (host.modalText() == "Can't move tracks\nClose the open menu or dialog, then " + step + " the move again.",
+                        "the " + step + " under the menu read '" + host.modalText() + "'");
+            ctx.expect (redo ? inPlace() : movedUp(), "the " + step + " ran under the open menu");
+            auto& um = engine.getUndoManager();
+            ctx.expect ((redo ? um.getRedoDescription() : um.getUndoDescription()) == kMoveTracksTransaction,
+                        "a refused " + step + " took the move out of the history");
+            ctx.expect (host.clickModalButton ("OK"), "the alert has no OK button");
+        } });
+        steps->push_back ({ 300, [&host, &ctx]
+        {
+            ctx.expect (! host.contextMenuItems().empty(), "the alert took the track name menu down");
+            ctx.expect (host.pressPeerKey ("escape"), "Escape was not handled with the menu open");
+        } });
+        steps->push_back ({ 300, [&host, &ctx, step, redo]
+        {
+            ctx.expect (host.modalStackEmpty(), "Escape left '" + host.modalText() + "' up");
+            ctx.expect (host.pressPeerKey (redo ? "command + shift + Z" : "command + Z"), "the window did not take the " + step + " key");
+        } });
+        steps->push_back ({ 300, [&host, &ctx, step, redo, movedUp, inPlace]
+        {
+            ctx.expect (redo ? movedUp() : inPlace(), "the " + step + " with the menu closed did not run");
+            if (! redo) ctx.expect (host.clickTapeTrackName (2, 1, 4), "track 3's name did not take a right-click");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar trackMoveUndoUnderMenu { Scenario {
+    "gui.track_move_undo_under_menu", { "gui", "region", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTrackMoveUndoUnderMenu (host, ctx); }
+} };
+
+// A locked region, audio or MIDI, takes a click on the tape strip but not a
+// drag; unlocked, the same drag moves it.
+std::optional<ScenarioResult> runTapeLockedRegionsStay (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
+    auto& midiTrack = session.track (0);
+    auto& audioTrack = session.track (1);
+    ctx.keep (midiTrack.mode);
+    for (auto* track : { &midiTrack, &audioTrack })
+    {
+        ctx.keep (track->frozen);
+        track->frozen.store (false);
+    }
+    const auto view = host.tapeView();
+    const bool timeline = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &engine, &session, &midiTrack, &audioTrack, timeline, view, snap = session.snapToGrid,
+                  midi = midiTrack.midiRegions.current(), midiAudio = midiTrack.regions, audio = audioTrack.regions]
+    {
+        midiTrack.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (midi));
+        midiTrack.regions = midiAudio;
+        audioTrack.regions = audio;
+        session.snapToGrid = snap;
+        engine.getUndoManager().clearUndoHistory();
+        host.setTimelineShown (timeline);
+        host.restoreTapeView (view);
+    });
+    session.snapToGrid = false;
+    midiTrack.mode.store ((int) Track::Mode::Midi);
+    midiTrack.regions.clear();
+    const double rate = engine.getTimelineSampleRate();
+    MidiRegion midi;
+    midi.timelineStart = (std::int64_t) std::llround (rate * 2.0);
+    midi.lengthInTicks = 3840;
+    midi.lengthInSamples = (std::int64_t) std::llround (rate * 2.0);
+    midi.notes = { { 1, 60, 100, 0, 480 } };
+    midi.locked = true;
+    midiTrack.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { midi }));
+    AudioRegion audio;
+    audio.timelineStart = midi.timelineStart;
+    audio.lengthInSamples = midi.lengthInSamples;
+    audio.locked = true;
+    audioTrack.regions = { audio };
+    engine.getUndoManager().clearUndoHistory();
+
+    const auto start = [&midiTrack, &audioTrack] (bool isMidi)
+    {
+        if (isMidi) return midiTrack.midiRegions.current().empty() ? (std::int64_t) -1 : midiTrack.midiRegions.current().front().timelineStart;
+        return audioTrack.regions.empty() ? (std::int64_t) -1 : audioTrack.regions.front().timelineStart;
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("0", '0'), "the zoom-to-fit key was not handled"); } });
+    for (const bool isMidi : { true, false })
+    {
+        const std::string what = isMidi ? "MIDI" : "audio";
+        const int track = isMidi ? 0 : 1;
+        steps->push_back ({ 300, [&host, &ctx, what, track, isMidi]
+        { ctx.expect (host.dragTapeRegion (track, 0, isMidi, 120), "the locked " + what + " region was not on screen to drag"); } });
+        steps->push_back ({ 300, [&ctx, &engine, &midiTrack, &audioTrack, start, what, isMidi, from = midi.timelineStart]
+        {
+            ctx.expect (start (isMidi) == from, "a drag moved the locked " + what + " region to sample " + std::to_string (start (isMidi)));
+            ctx.expect (! engine.getUndoManager().canUndo(), "a drag on the locked " + what + " region left an undo step");
+            if (isMidi) midiTrack.midiRegions.currentMutable().front().locked = false;
+            else        audioTrack.regions.front().locked = false;
+        } });
+        steps->push_back ({ 300, [&host, &ctx, what, track, isMidi]
+        { ctx.expect (host.dragTapeRegion (track, 0, isMidi, 120), "the unlocked " + what + " region was not on screen to drag"); } });
+        steps->push_back ({ 300, [&ctx, &engine, start, what, isMidi, from = midi.timelineStart]
+        {
+            ctx.expect (start (isMidi) > from, "the same drag did not move the " + what + " region once unlocked");
+            engine.getUndoManager().clearUndoHistory();
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar tapeLockedRegionsStay { Scenario {
+    "gui.tape_locked_regions_stay", { "gui", "tape", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTapeLockedRegionsStay (host, ctx); }
+} };
+
+// A region that reaches a track with nothing announcing it, as a take committed
+// when the device stops does, shows on the tape strip within a tick of its timer.
+std::optional<ScenarioResult> runTapeRepaintsUnannouncedRegions (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
+    auto& midiTrack = session.track (0);
+    auto& audioTrack = session.track (1);
+    ctx.keep (midiTrack.mode);
+    const auto view = host.tapeView();
+    const bool timeline = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &midiTrack, &audioTrack, timeline, view,
+                  midi = midiTrack.midiRegions.current(), audio = audioTrack.regions]
+    {
+        midiTrack.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (midi));
+        audioTrack.regions = audio;
+        host.setTimelineShown (timeline);
+        host.restoreTapeView (view);
+    });
+    midiTrack.mode.store ((int) Track::Mode::Midi);
+    const double rate = engine.getTimelineSampleRate();
+    MidiRegion midi;
+    midi.timelineStart = (std::int64_t) std::llround (rate);
+    midi.lengthInTicks = 1920;
+    midi.lengthInSamples = (std::int64_t) std::llround (rate);
+    midi.notes = { { 1, 60, 100, 0, 480 } };
+    midiTrack.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { midi }));
+    AudioRegion audio;
+    audio.lengthInSamples = (std::int64_t) std::llround (rate);
+    audioTrack.regions = { audio };
+
+    const auto paints = std::make_shared<int> (-1);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("0", '0'), "the zoom-to-fit key was not handled"); } });
+    steps->push_back ({ 500, [&host, paints] { *paints = host.tapePaints(); } });
+    steps->push_back ({ 500, [&host, &ctx, &midiTrack, midi, rate, paints]
+    {
+        if (! ctx.expect (host.tapePaints() == *paints, "the tape strip repainted with nothing changed, so the check proves nothing"))
+            return;
+        auto later = midi;
+        later.timelineStart += (std::int64_t) std::llround (rate * 2.0);
+        midiTrack.midiRegions.mutate ([&later] (std::vector<MidiRegion>& v) { v.push_back (later); });
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &audioTrack, audio, rate, paints]
+    {
+        ctx.expect (host.tapePaints() > *paints, "a MIDI region committed with no broadcast did not repaint the tape strip");
+        *paints = host.tapePaints();
+        auto later = audio;
+        later.timelineStart += (std::int64_t) std::llround (rate * 2.0);
+        audioTrack.regions.push_back (later);
+    } });
+    steps->push_back ({ 300, [&host, &ctx, paints]
+    { ctx.expect (host.tapePaints() > *paints, "an audio region committed with no broadcast did not repaint the tape strip"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar tapeRepaintsUnannouncedRegions { Scenario {
+    "gui.tape_repaints_unannounced_regions", { "gui", "tape" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTapeRepaintsUnannouncedRegions (host, ctx); }
+} };
+
+bool writeMidiImportFixture (const std::filesystem::path& path)
+{
+    const unsigned char midi[] = {
+        'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 1, 0xe0,
+        'M', 'T', 'r', 'k', 0, 0, 0, 13,
+        0, 0x90, 60, 100, 0x83, 0x60, 0x80, 60, 0, 0, 0xff, 0x2f, 0
+    };
+    std::ofstream output (path, std::ios::binary);
+    output.write (reinterpret_cast<const char*> (midi), sizeof (midi));
+    output.close();
+    return static_cast<bool> (output);
+}
+
+bool writeSilenceFixture (const std::filesystem::path& path, double sampleRate, int frames)
+{
+    auto writer = dusk::audio::FileWriter::create (path, { sampleRate, 1, 24 });
+    std::vector<float> silence ((std::size_t) frames);
+    const float* data[] = { silence.data() };
+    return writer != nullptr && writer->write (data, 1, frames) && writer->flush();
+}
+
+// Each imported file is its own undo step. Undoing a recording made on the
+// track before the import leaves the imported region on it, once the import's
+// own step has gone, and redo brings both back; the track takes its old name
+// back with the import's undo. Audio and MIDI alike.
+std::optional<ScenarioResult> runImportUndoStep (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion region;
+    if (auto early = seedTapeRegion (host, ctx, region)) return early;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    static constexpr int audioTrack = 1;
+    static constexpr int midiTrack = 2;
+    for (const int t : { audioTrack, midiTrack })
+    {
+        auto& track = session.track (t);
+        if (! track.regions.empty() || ! track.midiRegions.current().empty())
+            return ScenarioResult::skip ("requires tracks 2 and 3 empty");
+        ctx.keep (track.mode);
+        ctx.keep (track.frozen);
+        track.frozen.store (false);
+        track.name = std::to_string (t + 1).c_str();
+    }
+    session.track (audioTrack).mode.store ((int) Track::Mode::Mono);
+    session.track (midiTrack).mode.store ((int) Track::Mode::Midi);
+    const auto wav = ctx.tempDir() / "Dropped.wav";
+    const auto mid = ctx.tempDir() / "Notes.mid";
+    if (! writeSilenceFixture (wav, engine.getTimelineSampleRate(), 4800) || ! writeMidiImportFixture (mid))
+        return ScenarioResult::fail ("could not write the import fixtures");
+    auto& transport = engine.getTransport();
+    transport.locate (0);
+
+    // The take a record pass would have committed, as RecordCommitAction holds it.
+    auto recorded = region;
+    MidiRegion played;
+    played.timelineStart = region.timelineStart;
+    played.lengthInTicks = 1920;
+    played.lengthInSamples = region.lengthInSamples;
+    const auto count = [&session] (int t)
+    {
+        return t == audioTrack ? (int) session.track (t).regions.size() : (int) session.track (t).midiRegions.current().size();
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const int t : { audioTrack, midiTrack })
+    {
+        const std::string what = t == audioTrack ? "audio" : "MIDI";
+        steps->push_back ({ 300, [&host, &ctx, &session, &engine, t, recorded, played, wav, mid]
+        {
+            RecordCommitAction::TrackDiff diff;
+            diff.trackIndex = t;
+            if (t == audioTrack)
+            {
+                diff.audioAfter = { recorded };
+                session.track (t).regions = diff.audioAfter;
+            }
+            else
+            {
+                diff.midiAfter = { played };
+                session.track (t).midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (diff.midiAfter));
+            }
+            auto& um = engine.getUndoManager();
+            um.beginNewTransaction ("Record");
+            um.perform (new RecordCommitAction (session, engine, { diff }));
+            ctx.expect (host.dropFilesOnTrack (t, { t == audioTrack ? wav : mid }), "the drop was rejected");
+        } });
+        steps->push_back ({ 300, [&host, &ctx, what]
+        { ctx.expect (host.clickModalButton ("Import"), "the import target picker did not open for the " + what + " file"); } });
+        steps->push_back ({ 700, [&host, &ctx, &session, &engine, t, what, count]
+        {
+            ctx.expect (count (t) == 2, "the " + what + " import did not add a region beside the recorded one");
+            ctx.expect (session.track (t).name.toStdString() == (t == audioTrack ? "Dropped" : "Notes"),
+                        "the " + what + " import did not name the track after the file");
+            ctx.expect (engine.getUndoManager().getUndoDescription() == "Import file",
+                        "the " + what + " import is not its own undo step");
+            ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+        } });
+        steps->push_back ({ 300, [&host, &ctx, &session, t, what, count]
+        {
+            ctx.expect (count (t) == 1, "undoing the " + what + " import did not take off its region alone");
+            ctx.expect (session.track (t).name.toStdString() == std::to_string (t + 1),
+                        "undoing the " + what + " import did not give the track its name back");
+            ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+        } });
+        steps->push_back ({ 300, [&host, &ctx, t, count]
+        {
+            ctx.expect (count (t) == 0, "undoing the recording did not take its region off");
+            ctx.expect (host.pressKey ("command + shift + Z") && host.pressKey ("command + shift + Z"), "Redo was not handled");
+        } });
+        steps->push_back ({ 300, [&ctx, &session, t, what, count]
+        {
+            ctx.expect (count (t) == 2, "redo did not bring back the recording and the " + what + " import");
+            ctx.expect (session.track (t).name.toStdString() == (t == audioTrack ? "Dropped" : "Notes"),
+                        "redoing the " + what + " import did not name the track again");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar importUndoStep { Scenario {
+    "gui.import_undo_step", { "gui", "import", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runImportUndoStep (host, ctx); }
+} };
+
+// With no audio device running a file is imported at the rate the timeline
+// measures time at, the rate the device last ran at: an audio file is
+// converted to it, a session with no rate yet takes it, and a MIDI file's
+// length is worked out at it.
+std::optional<ScenarioResult> runImportWithoutDevice (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    const double rate = engine.getCurrentSampleRate();
+    if (host.engineDetached() || ! engine.isAudioCallbackRegistered() || rate <= 0.0)
+        return ScenarioResult::skip ("requires a running audio device");
+    AudioRegion region;
+    if (auto early = seedTapeRegion (host, ctx, region)) return early;
+    auto& session = ctx.session();
+    static constexpr int audioTrack = 1;
+    static constexpr int midiTrack = 2;
+    for (const int t : { audioTrack, midiTrack })
+    {
+        auto& track = session.track (t);
+        if (! track.regions.empty() || ! track.midiRegions.current().empty())
+            return ScenarioResult::skip ("requires tracks 2 and 3 empty");
+        ctx.keep (track.mode);
+        ctx.keep (track.frozen);
+        track.frozen.store (false);
+    }
+    session.track (audioTrack).mode.store ((int) Track::Mode::Mono);
+    session.track (midiTrack).mode.store ((int) Track::Mode::Midi);
+    // Away from the 48 kHz an importer would fall back to.
+    const double standIn = std::abs (rate - 44100.0) < 0.5 ? 88200.0 : 44100.0;
+    ctx.cleanup ([&engine, &session, rate, sessionRate = session.sessionSampleRate]
+    {
+        session.sessionSampleRate = sessionRate;
+        engine.setLastDeviceSampleRateForScenario (rate);
+        if (! engine.isAudioCallbackRegistered()) engine.reattachAudioCallback();
+    });
+    // A session never saved has no rate of its own until its audio gives it one.
+    session.sessionSampleRate = 0.0;
+    const auto wav = ctx.tempDir() / "Dropped.wav";
+    const auto mid = ctx.tempDir() / "Notes.mid";
+    static constexpr int frames = 4800;
+    if (! writeSilenceFixture (wav, rate, frames) || ! writeMidiImportFixture (mid))
+        return ScenarioResult::fail ("could not write the import fixtures");
+    engine.getTransport().locate (0);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx, &engine, standIn, wav]
+    {
+        engine.detachAudioCallback();
+        engine.setLastDeviceSampleRateForScenario (standIn);
+        ctx.expect (engine.getCurrentSampleRate() <= 0.0 && std::abs (engine.getTimelineSampleRate() - standIn) < 0.5,
+                    "the detached engine does not measure the timeline at the stand-in rate");
+        ctx.expect (host.dropFilesOnTrack (audioTrack, { wav }), "the audio drop was rejected");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Import"), "the import target picker did not open for the audio file"); } });
+    steps->push_back ({ 700, [&host, &ctx, &session, rate, standIn, mid]
+    {
+        const auto& regions = session.track (audioTrack).regions;
+        if (ctx.expect (regions.size() == 1, "the audio file was not imported"))
+        {
+            const auto expected = (std::int64_t) std::llround (frames * standIn / rate);
+            ctx.expect (regions.front().lengthInSamples == expected,
+                        "the imported region is " + std::to_string (regions.front().lengthInSamples)
+                            + " samples long, not the " + std::to_string (expected) + " it runs at the timeline's rate");
+            auto reader = dusk::audio::FileReader::open (regions.front().filePath());
+            ctx.expect (reader != nullptr && std::abs (reader->info().sampleRate - standIn) < 0.5,
+                        "the imported file was not written at the timeline's rate");
+            ctx.expect (std::abs (session.sessionSampleRate - standIn) < 0.5,
+                        "the session did not take the imported audio's rate as its own");
+        }
+        ctx.expect (host.dropFilesOnTrack (midiTrack, { mid }), "the MIDI drop was rejected");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Import"), "the import target picker did not open for the MIDI file"); } });
+    steps->push_back ({ 700, [&ctx, &session, standIn]
+    {
+        const auto& regions = session.track (midiTrack).midiRegions.current();
+        if (! ctx.expect (regions.size() == 1, "the MIDI file was not imported")) return;
+        const auto expected = ticksToSamples (regions.front().lengthInTicks, standIn,
+                                              session.tempoBpm.load (std::memory_order_relaxed));
+        ctx.expect (regions.front().lengthInSamples == expected,
+                    "the imported MIDI region is " + std::to_string (regions.front().lengthInSamples)
+                        + " samples long, not the " + std::to_string (expected) + " it runs at the timeline's rate");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar importWithoutDevice { Scenario {
+    "gui.import_without_device", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runImportWithoutDevice (host, ctx); }
+} };
+
+// With no audio device running a Mackie control surface's timecode counts bars
+// at the rate the timeline measures time at, the rate the device last ran at.
+std::optional<ScenarioResult> runMcuTimecodeWithoutDevice (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    const double rate = engine.getCurrentSampleRate();
+    if (host.engineDetached() || ! engine.isAudioCallbackRegistered() || rate <= 0.0)
+        return ScenarioResult::skip ("requires a running audio device");
+    if (! transport.isStopped()) return ScenarioResult::skip ("requires stopped transport");
+    auto* const mcu = engine.getMcuController();
+    if (mcu == nullptr) return ScenarioResult::skip ("requires the Mackie controller");
+    ctx.keep (session.tempoBpm);
+    ctx.keep (session.beatsPerBar);
+    const double standIn = std::abs (rate - 44100.0) < 0.5 ? 88200.0 : 44100.0;
+    ctx.cleanup ([&engine, &transport, mcu, rate, playhead = transport.getPlayhead()]
+    {
+        engine.setLastDeviceSampleRateForScenario (rate);
+        if (! engine.isAudioCallbackRegistered()) engine.reattachAudioCallback();
+        transport.setPlayhead (playhead);
+        mcu->forceResync();
+    });
+    session.tempoBpm.store (120.0f);
+    session.beatsPerBar.store (4);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&ctx, &engine, &transport, mcu, standIn]
+    {
+        engine.detachAudioCallback();
+        engine.setLastDeviceSampleRateForScenario (standIn);
+        // One bar of 4/4 at 120 BPM is two seconds.
+        transport.setPlayhead ((std::int64_t) std::llround (standIn * 2.0));
+        std::string shown;
+        for (const auto meta : mcu->buildBufferForTest())
+        {
+            const auto& message = meta.getMessage();
+            const auto* raw = message.getRawData();
+            const int size = message.getRawDataSize();
+            const int digits = mcu::sysex::kTimecodeDigits;
+            if (raw != nullptr && size >= (int) mcu::sysex::kPrefixLen + 1 + digits
+                && raw[mcu::sysex::kPrefixLen] == mcu::sysex::kCmdTimecode)
+                shown.assign (reinterpret_cast<const char*> (raw) + mcu::sysex::kPrefixLen + 1, (std::size_t) digits);
+        }
+        ctx.expect (shown.rfind ("0020101", 0) == 0,
+                    "two seconds in, with no device running, the timecode reads '" + shown + "', not bar 2 beat 1");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar mcuTimecodeWithoutDevice { Scenario {
+    "gui.mcu_timecode_without_device", { "gui", "mcu" }, Needs::Engine | Needs::Gui,
+    {}, {}, 5000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMcuTimecodeWithoutDevice (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario

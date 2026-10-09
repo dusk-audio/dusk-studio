@@ -1247,9 +1247,9 @@ void TapeStrip::resized()
 
 void TapeStrip::timerCallback()
 {
-    // Detect track color / name / take-badge changes and repaint the whole
-    // strip if anything changed. Cheap - there are 24 tracks and we just
-    // compare a String, a Colour and a short badge text each tick.
+    // Detect track color / name / take-badge / region changes and repaint the
+    // whole strip if anything changed. Cheap - there are 24 tracks and we just
+    // compare a String, a Colour, a short badge text and two counts each tick.
     bool stateChanged = false;
     bool namesChanged = false;
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -1257,6 +1257,16 @@ void TapeStrip::timerCallback()
         const auto& tr = session.track (t);
         if (lastNames[(size_t) t]   != tr.name)   { lastNames[(size_t) t]   = tr.name;   stateChanged = true; namesChanged = true; }
         if (lastColours[(size_t) t] != tr.colour) { lastColours[(size_t) t] = tr.colour; stateChanged = true; }
+        if (const auto generation = tr.midiRegions.generation(); generation != lastMidiGenerations[(size_t) t])
+        {
+            lastMidiGenerations[(size_t) t] = generation;
+            stateChanged = true;
+        }
+        if (tr.regions.size() != lastAudioRegionCounts[(size_t) t])
+        {
+            lastAudioRegionCounts[(size_t) t] = tr.regions.size();
+            stateChanged = true;
+        }
         if (auto badge = takeBadgeText (t); badge != lastTakeBadges[(size_t) t])
         {
             lastTakeBadges[(size_t) t] = std::move (badge);
@@ -1299,6 +1309,7 @@ void TapeStrip::timerCallback()
     rebuildVisibleTrackOrder();
 
     if (trackMove.active) autoScrollTrackMove();
+    refreshDropLine();
 
     if (stateChanged) repaint();
 
@@ -1911,11 +1922,15 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                 const int x0 = xForSample (r.timelineStart);
                 const int x1 = xForSample (r.timelineStart + r.lengthInSamples);
                 if (e.x < x0 || e.x > x1) continue;
-                midiDrag.track             = t;
-                midiDrag.regionIdx         = i;
-                midiDrag.mouseDownSample   = sampleAtX (e.x);
-                midiDrag.origTimelineStart = r.timelineStart;
-                midiDrag.origState         = r;
+                // A locked region is selected but not dragged, as on the audio side.
+                if (! r.locked)
+                {
+                    midiDrag.track             = t;
+                    midiDrag.regionIdx         = i;
+                    midiDrag.mouseDownSample   = sampleAtX (e.x);
+                    midiDrag.origTimelineStart = r.timelineStart;
+                    midiDrag.origState         = r;
+                }
                 selectedMidiTrack  = t;
                 selectedMidiRegion = i;
                 // Plain MIDI click clears the audio selection so the two
@@ -3503,6 +3518,7 @@ void TapeStrip::showTrackContextMenu (std::vector<int> tracks, juce::Point<int> 
 
 void TapeStrip::paint (juce::Graphics& g)
 {
+    ++paints;
     g.fillAll (juce::Colour (0xff0e0e10));
 
     auto label = labelColumnBounds();
@@ -4830,10 +4846,18 @@ bool TapeStrip::dropAtMouse() const
 
 void TapeStrip::fileDragMove (const juce::StringArray&, int x, int y)
 {
+    dropPointerX = x;
+    dropPointerY = y;
+    refreshDropLine();
+}
+
+void TapeStrip::refreshDropLine()
+{
     if (! dropAccepted) return;
+    const int x = dropPointerX;
     int hoveredTrack = -1;
     for (int t = 0; t < Session::kNumTracks; ++t)
-        if (rowBounds (t).contains (x, y)) { hoveredTrack = t; break; }
+        if (rowBounds (t).contains (x, dropPointerY)) { hoveredTrack = t; break; }
     // The line stands where the drop will land, and only while that is in
     // view: a playhead scrolled off the timeline would put it over the names
     // or past the edge.

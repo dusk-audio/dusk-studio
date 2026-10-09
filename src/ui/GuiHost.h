@@ -222,6 +222,14 @@ public:
     // the drop line's x and the pointer's, in the tape strip. The line is -1
     // when none shows; empty when the row is not on screen.
     virtual std::vector<int> tapeDropHover (int track, const std::vector<std::filesystem::path>& files) = 0;
+    // The same files brought over that point and held there until tapeDropLeave:
+    // the drop line's x and the pointer's, as tapeDropHover gives them.
+    virtual std::vector<int> tapeDropHold (int track, const std::vector<std::filesystem::path>& files) = 0;
+    // The drop line's x while files are held; -1 when none shows.
+    virtual int tapeDropLine() const = 0;
+    virtual void tapeDropLeave() = 0;
+    // How many times the tape strip has painted; -1 without one.
+    virtual int tapePaints() const = 0;
     // The sample under the point dropFilesOnTrack drops on.
     virtual std::int64_t tapeDropPointSample (int track) const = 0;
     virtual int tapeXForSample (std::int64_t sample) const = 0;
@@ -441,6 +449,8 @@ public:
     // Modifiers as pianoNotePointer takes them: 1 Shift, 2 Cmd/Ctrl.
     virtual bool clickAudioRegion (int track, int region, bool right = false, int modifiers = 0) = 0;
     virtual bool clickMidiRegion (int track, int region, bool right = false) = 0;
+    // Presses a region's middle and drags it `pixels` to the right.
+    virtual bool dragTapeRegion (int track, int region, bool midi, int pixels) = 0;
     // The take-count badge in a track's label cell, as drawn ("3 takes"), and
     // one or more clicks on it. Empty text and false when that track shows no badge.
     virtual std::string tapeTakeBadgeText (int track) const = 0;

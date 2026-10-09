@@ -480,10 +480,16 @@ CreateMidiRegionAction::CreateMidiRegionAction (Session& s,
                                                   std::int64_t startSamples,
                                                   std::int64_t lenSamples,
                                                   std::int64_t lenTicks)
-    : session (s), trackIdx (t),
-      timelineStart (startSamples),
-      lengthInSamples (lenSamples),
-      lengthInTicks (lenTicks)
+    : session (s), trackIdx (t)
+{
+    region.timelineStart   = startSamples;
+    region.lengthInSamples = lenSamples;
+    region.lengthInTicks   = lenTicks;
+    region.recordedAtBPM   = (double) session.tempoBpm.load (std::memory_order_relaxed);
+}
+
+CreateMidiRegionAction::CreateMidiRegionAction (Session& s, int t, MidiRegion r)
+    : session (s), trackIdx (t), region (std::move (r))
 {}
 
 bool CreateMidiRegionAction::perform()
@@ -491,17 +497,11 @@ bool CreateMidiRegionAction::perform()
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
 
-    MidiRegion region;
-    region.timelineStart   = timelineStart;
-    region.lengthInSamples = lengthInSamples;
-    region.lengthInTicks   = lengthInTicks;
-    region.recordedAtBPM   = (double) session.tempoBpm.load (std::memory_order_relaxed);
-
     int idx = -1;
     session.track (trackIdx).midiRegions.mutate (
-        [&region, &idx] (std::vector<MidiRegion>& mregs)
+        [this, &idx] (std::vector<MidiRegion>& mregs)
         {
-            mregs.push_back (std::move (region));
+            mregs.push_back (region);
             idx = (int) mregs.size() - 1;
         });
     insertedAt = idx;
@@ -1756,8 +1756,7 @@ bool JoinRegionsAction::perform()
 
     // Slow path: render to a new WAV in <session>/takes/, every selected
     // region at its timeline offset, faded and crossfaded as it played (gaps
-    // become silence). Uses the source files' sample rate / channel count
-    // from the leading region.
+    // become silence). Uses the leading region's sample rate and bit depth.
     if (! joinSelectionInBounds (regs, sortedDesc))
         return false;
     auto firstReader = dusk::audio::FileReader::open (
@@ -1765,7 +1764,7 @@ bool JoinRegionsAction::perform()
     if (firstReader == nullptr) return false;
     const double sr   = firstReader->info().sampleRate;
     const int    bits = std::max (16, firstReader->info().bitsPerSample);
-    const int    chs  = std::clamp ((int) beforeRegions.front().numChannels, 1, 2);
+    const int    chs  = channelsAsPlayed (beforeRegions);
 
     const auto totalSamples = (int) std::clamp<std::int64_t> (
         totalLen, 1, std::numeric_limits<int>::max());

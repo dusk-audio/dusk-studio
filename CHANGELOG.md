@@ -173,6 +173,34 @@ Takes live on the track now, and the audio editor is where you comp them.
 - **A join in the audio editor leaves the joined region in focus.** When an
   unselected region sat between the joined ones in the track's stored order,
   the focus landed on that region instead, and Delete then removed it.
+- **Undoing a track move waits for an open menu or dialog.** With the track
+  name menu or the import target picker open, **Cmd+Z** could undo a move
+  under it, and the item you then picked acted on whichever track now sat in
+  that row. The undo and redo of a move now say to close the menu or dialog
+  first.
+- **A track you haven't named shows its row's number after a move.** It used
+  to keep the number of the row it came from, so the rows read 2, 3, 1, and an
+  import onto it no longer named it after the file.
+- **The drop line follows Alt.** Pressing or letting go of Alt with files held
+  still over the timeline left the line where it was, while the drop landed by
+  the key.
+- **A locked MIDI region no longer moves on the timeline.** It takes the click
+  but not the drag, as a locked audio region does.
+- **Undo no longer drops an imported region.** An import had no undo step of
+  its own, so undoing a recording or a take-lane edit made on the track before
+  it took the imported region away for good. Each imported file is now its own
+  undo step. A DP-24/32 import clears the undo history.
+- **A join of mono and stereo regions keeps both channels.** The render took
+  its channel count from the first region, so a stereo region after a mono one
+  lost its right channel. A join is now stereo when any of its regions plays a
+  stereo file.
+- **The timeline redraws whenever a track's regions change.** It redrew on the
+  change messages edits send, and a MIDI take was seen to stay hidden until a
+  switch to MIXING. It now also checks every track's regions on its own timer,
+  so a region shows within a frame however it got there.
+- **Imports with no audio device run at the timeline's rate.** They were
+  converted to 48 kHz while the timeline measured time at the rate the device
+  last ran at. A Mackie surface's timecode counts at that rate too.
 
 ## [0.14.0] - 2026-09-29
 

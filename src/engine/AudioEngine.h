@@ -623,6 +623,8 @@ public:
     // knows the rate the session's audio was made at. An offline render's own
     // rate never lands here.
     double getLastDeviceSampleRate() const noexcept { return lastDeviceSampleRate.load (std::memory_order_relaxed); }
+    // Stands in for a device last opened at another rate; the next open writes over it.
+    void setLastDeviceSampleRateForScenario (double rate) noexcept { lastDeviceSampleRate.store (rate, std::memory_order_relaxed); }
 
     // Message thread only: it reads the session's saved rate.
     double getTimelineSampleRate() const noexcept

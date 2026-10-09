@@ -1048,6 +1048,9 @@ struct Track
     juce::String name;
     juce::Colour colour;
     std::string nameUtf8() const { return name.toStdString(); }
+    // A track never named carries its slot's number, empty reading the same.
+    static std::string defaultName (int slot) { return std::to_string (slot + 1); }
+    bool hasDefaultName (int slot) const;
     std::uint32_t colourArgb() const noexcept { return colour.getARGB(); }
     ChannelStripParams strip;
 

@@ -44,8 +44,9 @@ public:
         transportProvider = std::move (fn);
     }
 
-    // Live device sample rate for the BBT timecode readout. Unset falls
-    // back to 48 kHz (readout only - nothing audible depends on it).
+    // The rate the timeline is measured at, for the BBT timecode readout;
+    // called on the message thread. Unset falls back to 48 kHz (readout
+    // only - nothing audible depends on it).
     void setSampleRateProvider (std::function<double()> fn) noexcept
     {
         sampleRateProvider = std::move (fn);

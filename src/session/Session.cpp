@@ -228,11 +228,17 @@ struct Land
 };
 } // namespace
 
+bool Track::hasDefaultName (int slot) const
+{
+    const auto trimmed = name.trim();
+    return trimmed.isEmpty() || trimmed.toStdString() == defaultName (slot);
+}
+
 Session::Session()
 {
     for (int i = 0; i < kNumTracks; ++i)
     {
-        tracks[(size_t) i].name = juce::String (i + 1);
+        tracks[(size_t) i].name = Track::defaultName (i);
         tracks[(size_t) i].colour = juce::Colour::fromHSV (i / (float) kNumTracks, 0.45f, 0.75f, 1.0f);
     }
 
@@ -458,6 +464,8 @@ std::optional<Session::StagedTrackMove> Session::stageTrackMove (const TrackMove
         auto stage = std::make_unique<StagedTrack>();
         CopyOut copy { *stage };
         eachTrackField (stage->fields, tracks[(size_t) from], copy);
+        if (stage->fields.hasDefaultName (from))
+            stage->fields.name = Track::defaultName (to);
         auto& tag = stage->fields.lv2StateTag;
         if (tag.empty())
             tag = defaultLv2StateTag (from);

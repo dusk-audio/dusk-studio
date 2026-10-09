@@ -759,7 +759,8 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         if (outIdx >= 0) midiOut.send (outIdx, buf);
     });
     mcuController->setTransportProvider ([this] { return &transport; });
-    mcuController->setSampleRateProvider ([this] { return getCurrentSampleRate(); });
+    // The controller ticks on the message thread, which the timeline rate is read on.
+    mcuController->setSampleRateProvider ([this] { return getTimelineSampleRate(); });
     playbackEngine.bindTransport (transport);
     // 500 units covers thousands of edits while bounding memory under
     // multi-hour sessions; without this the stack grows unbounded.

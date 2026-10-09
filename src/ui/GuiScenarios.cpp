@@ -143,6 +143,22 @@ auto dispatchFileHover (Component& component, void (Component::*leave) (const Fi
     return shown;
 }
 
+// Enters the drag and leaves the files held there, until dispatchFileLeave.
+template <typename Component, typename Files>
+void dispatchFileHold (Component& component, void (Component::*enter) (const Files&, int, int),
+                       const std::vector<std::filesystem::path>& files, int x, int y)
+{
+    Files names;
+    for (const auto& path : files) names.add (HostString::fromUTF8 (path.u8string().c_str()));
+    (component.*enter) (names, x, y);
+}
+
+template <typename Component, typename Files>
+void dispatchFileLeave (Component& component, void (Component::*leave) (const Files&))
+{
+    (component.*leave) (Files {});
+}
+
 template <typename Peer, typename Source, typename Point, typename Time, typename Wheel>
 void dispatchWheel (Peer& peer, void (Peer::*handler) (Source, Point, Time, const Wheel&, int),
                     float x, float y, std::int64_t time, float delta)
@@ -844,6 +860,27 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const int line = dispatchFileHover (*tape, &TapeStrip::fileDragExit, files, point.x, point.y,
                                             [tape] { return tape->dropLineXForScenario(); });
         return { line, point.x };
+    }
+    std::vector<int> tapeDropHold (int track, const std::vector<std::filesystem::path>& files) override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()) return {};
+        const auto point = tape->dropPointForScenario (track);
+        if (! tape->getLocalBounds().contains (point)) return {};
+        dispatchFileHold (*tape, &TapeStrip::fileDragEnter, files, point.x, point.y);
+        return { tape->dropLineXForScenario(), point.x };
+    }
+    int tapeDropLine() const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->dropLineXForScenario() : -1;
+    }
+    void tapeDropLeave() override
+    {
+        if (owner.tapeStrip != nullptr) dispatchFileLeave (*owner.tapeStrip, &TapeStrip::fileDragExit);
+    }
+    int tapePaints() const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->paintsForScenario() : -1;
     }
     std::int64_t tapeDropPointSample (int track) const override
     {
@@ -2034,6 +2071,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (bounds.isEmpty()) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
         return clickAt (point.x, point.y, 1, right);
+    }
+    bool dragTapeRegion (int track, int region, bool midi, int pixels) override
+    {
+        if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;
+        const auto bounds = midi ? owner.tapeStrip->midiRegionScreenRect (track, region)
+                                 : owner.tapeStrip->audioRegionScreenRect (track, region);
+        if (bounds.isEmpty()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
+        return dragAt (point.x, point.y, point.x + (float) pixels, point.y);
     }
 
     std::string tapeTakeBadgeText (int track) const override

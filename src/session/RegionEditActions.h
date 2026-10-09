@@ -112,11 +112,11 @@ private:
     int insertedAt = -1;
 };
 
-// Adds a fresh empty MidiRegion to a MIDI track at a given timeline
-// sample. Used by the TIMELINE-view double-click-to-create gesture so a
-// user can hand-author MIDI without first having to record. Undo
-// removes the region; redo re-inserts at the same position. Note pile
-// stays empty - the user adds notes via the piano roll separately.
+// Adds a MidiRegion to the end of a MIDI track's regions. The first form makes
+// a fresh empty one at the session's tempo, for the TIMELINE-view
+// double-click-to-create gesture, so a user can hand-author MIDI without first
+// having to record; the second adds a region as given, as an import does. Undo
+// removes the region; redo re-inserts the same one.
 class CreateMidiRegionAction final : public UndoableAction
 {
 public:
@@ -125,6 +125,7 @@ public:
                               std::int64_t timelineStart,
                               std::int64_t lengthInSamples,
                               std::int64_t lengthInTicks);
+    CreateMidiRegionAction (Session& session, int trackIdx, MidiRegion region);
 
     bool perform() override;
     bool undo()    override;
@@ -138,9 +139,7 @@ public:
 private:
     Session&    session;
     int         trackIdx;
-    std::int64_t timelineStart;
-    std::int64_t lengthInSamples;
-    std::int64_t lengthInTicks;
+    MidiRegion  region;
     int         insertedAt = -1;
 };
 

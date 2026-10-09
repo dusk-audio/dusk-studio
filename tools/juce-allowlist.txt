@@ -48,7 +48,7 @@ src/session/MidiBindings.h	8
 src/session/ParamEditAction.h	2
 src/session/RegionEditActions.cpp	20
 src/session/RegionEditActions.h	4
-src/session/Session.cpp	10
+src/session/Session.cpp	9
 src/session/Session.h	61
 src/session/SessionSerializer.cpp	77
 src/session/SessionSerializer.h	13
@@ -105,7 +105,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	426
+src/ui/MainComponent.cpp	425
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	328
 src/ui/MasterStripComponent.h	55
