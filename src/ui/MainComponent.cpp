@@ -51,6 +51,7 @@
 #include "MiniTimelineStrip.h"
 #include "TransportBar.h"
 #include "../session/MarkerEditActions.h"
+#include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
 #include "../session/RecentSessions.h"
 #include "../session/SessionSerializer.h"
@@ -737,7 +738,7 @@ MainComponent::MainComponent()
     styleHdrPill (hdrZoomFitBtn);
     hdrZoomOutBtn.setTooltip ("Zoom out (-)");
     hdrZoomInBtn .setTooltip ("Zoom in (=)");
-    hdrZoomFitBtn.setTooltip ("Zoom to fit (Cmd+0)");
+    hdrZoomFitBtn.setTooltip ("Zoom to fit (0)");
     hdrZoomOutBtn.onClick = [this]
     {
         if (tapeStrip != nullptr) tapeStrip->zoomByFactor (1.0f / 1.25f);
@@ -1577,9 +1578,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         if ((code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey)
             && cmd)
         {
-            const double sr   = engine.getCurrentSampleRate();
+            const double sr   = engine.getTimelineSampleRate();
             const float  bpm  = session.tempoBpm.load (std::memory_order_relaxed);
-            if (sr > 0.0 && bpm > 0.0f)
+            if (bpm > 0.0f)
             {
                 const int beatsPerBar = std::max (1,
                     session.beatsPerBar.load (std::memory_order_relaxed));
@@ -1998,7 +1999,7 @@ void MainComponent::resized()
     const int kMenuBarW = menuBar.getRequiredWidth();
     menuBar.setBounds (menuRow.withWidth (kMenuBarW));
     if (systemStatusBar != nullptr)
-        systemStatusBar->setBounds (menuRow.withTrimmedLeft (menuRow.getWidth() - 300));
+        systemStatusBar->setBounds (menuRow.withTrimmedLeft (menuRow.getWidth() - 320));
     area.removeFromTop (4);
 
     const auto curStage = engine.getStage();
@@ -4579,6 +4580,9 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // strip is hidden now but laid out (and repainted) on the next stage switch.
     if (tapeStrip != nullptr)
         tapeStrip->refreshAfterSessionLoad();
+    // The rebuilt console went in above any alert already up, such as the
+    // startup notice of a missing audio device.
+    EmbeddedModal::raiseOpenModals();
     const auto tAfterConsole = juce::Time::getMillisecondCounterHiRes();
 
     RecentSessions::add (toPath (dir));
@@ -4844,19 +4848,34 @@ void MainComponent::openBounceStemsDialog()
     });
 }
 
-// True when the track's name is empty or still the default "N" string.
-// Used by the import flow to decide whether to auto-rename the track to
-// the imported file's basename (preserves user-renamed tracks).
-static bool trackHasDefaultName (const Track& t, int idx)
+// One undo step per imported file, so undoing a step from before it that puts
+// a whole region list back, as a recording or a take-lane edit does, cannot
+// drop the import unseen. A track still under its number takes the file's name,
+// and a track the picker switched to the file's kind goes back with the same undo.
+static void commitImport (Session& session, AudioEngine& engine, int trackIndex,
+                          std::optional<Track::Mode> switchTo,
+                          UndoableAction* addRegion, const juce::File& source)
 {
-    const auto trimmed = t.name.trim();
-    return trimmed.isEmpty() || trimmed == juce::String (idx + 1);
-}
-
-static void maybeRenameTrackFromFile (Track& t, int idx, const juce::File& f)
-{
-    if (trackHasDefaultName (t, idx))
-        t.name = f.getFileNameWithoutExtension();
+    // The import was made at the timeline's rate; a session with no rate yet
+    // would otherwise take one from whatever device opens next.
+    if (session.sessionSampleRate <= 0.0)
+        session.sessionSampleRate = engine.getTimelineSampleRate();
+    auto& um = engine.getUndoManager();
+    um.beginNewTransaction ("Import file");
+    if (switchTo)
+    {
+        const int before = session.track (trackIndex).mode.load (std::memory_order_relaxed);
+        const int after = (int) *switchTo;
+        um.perform (new ParamEditAction (
+            [&session, trackIndex, after]  { session.track (trackIndex).mode.store (after, std::memory_order_relaxed); },
+            [&session, trackIndex, before] { session.track (trackIndex).mode.store (before, std::memory_order_relaxed); }));
+    }
+    um.perform (addRegion);
+    if (! session.track (trackIndex).hasDefaultName (trackIndex)) return;
+    const auto before = session.track (trackIndex).name;
+    const auto after = source.getFileNameWithoutExtension();
+    um.perform (new ParamEditAction ([&session, trackIndex, after]  { session.track (trackIndex).name = after; },
+                                     [&session, trackIndex, before] { session.track (trackIndex).name = before; }));
 }
 
 void MainComponent::runAudioImportFlow (const juce::File& source,
@@ -4883,13 +4902,13 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
         session,
         std::move (summary),
         timelineStart,
-        engine.getCurrentSampleRate(),
+        engine.getTimelineSampleRate(),
         session.tempoBpm.load (std::memory_order_relaxed),
         session.beatsPerBar.load (std::memory_order_relaxed),
         session.timeDisplayMode.load (std::memory_order_relaxed),
         trackHint,
         [safeThis = juce::Component::SafePointer<MainComponent> (this),
-         source, timelineStart] (int trackIndex)
+         source, timelineStart] (int trackIndex, std::optional<Track::Mode> switchTo)
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
@@ -4919,13 +4938,13 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
                 self->cancelImportChain();
                 return;
             }
-            const auto mode = (Track::Mode) track.mode.load (std::memory_order_relaxed);
+            const auto mode = switchTo.value_or ((Track::Mode) track.mode.load (std::memory_order_relaxed));
 
             duskstudio::fileimport::AudioImportRequest req;
             req.source            = source;
             req.audioDir          = self->session.getAudioDirectory();
             req.trackIndex        = trackIndex;
-            req.sessionSampleRate = self->engine.getCurrentSampleRate();
+            req.sessionSampleRate = self->engine.getTimelineSampleRate();
             req.targetChannels    = (mode == Track::Mode::Stereo) ? 2 : 1;
             req.timelineStart     = timelineStart;
 
@@ -4937,11 +4956,9 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
             }
 
             // Transport is stopped (re-checked above), so PlaybackEngine
-            // isn't iterating Track::regions on the audio thread - mutating
-            // in place is safe; the next play() pulls the new layout via
-            // preparePlayback.
-            track.regions.push_back (std::move (res.region));
-            duskstudio::maybeRenameTrackFromFile (track, trackIndex, source);
+            // isn't iterating Track::regions on the audio thread.
+            commitImport (self->session, self->engine, trackIndex, switchTo,
+                          new PasteRegionAction (self->session, self->engine, trackIndex, res.region), source);
             if (self->tapeStrip != nullptr) self->tapeStrip->repaint();
             self->pendingImportLastCommitted = trackIndex;
             self->kickNextImport();
@@ -4974,13 +4991,13 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
         session,
         std::move (summary),
         timelineStart,
-        engine.getCurrentSampleRate(),
+        engine.getTimelineSampleRate(),
         session.tempoBpm.load (std::memory_order_relaxed),
         session.beatsPerBar.load (std::memory_order_relaxed),
         session.timeDisplayMode.load (std::memory_order_relaxed),
         trackHint,
         [safeThis = juce::Component::SafePointer<MainComponent> (this),
-         source, timelineStart] (int trackIndex)
+         source, timelineStart] (int trackIndex, std::optional<Track::Mode> switchTo)
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
@@ -5015,7 +5032,7 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
 
             duskstudio::fileimport::MidiImportRequest req;
             req.source            = source;
-            req.sessionSampleRate = self->engine.getCurrentSampleRate();
+            req.sessionSampleRate = self->engine.getTimelineSampleRate();
             req.sessionBpm        = self->session.tempoBpm.load (std::memory_order_relaxed);
             req.timelineStart     = timelineStart;
 
@@ -5026,11 +5043,8 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
                 return;
             }
 
-            track.midiRegions.mutate ([&] (std::vector<MidiRegion>& v)
-            {
-                v.push_back (std::move (res.region));
-            });
-            duskstudio::maybeRenameTrackFromFile (track, trackIndex, source);
+            commitImport (self->session, self->engine, trackIndex, switchTo,
+                          new CreateMidiRegionAction (self->session, trackIndex, std::move (res.region)), source);
             if (self->tapeStrip != nullptr) self->tapeStrip->repaint();
             self->pendingImportLastCommitted = trackIndex;
             self->kickNextImport();
@@ -5199,11 +5213,7 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
     }
     if (dpImportJob != nullptr) return;   // one import at a time
 
-    double sr = engine.getCurrentSampleRate();
-    // Device not open yet -> SR reads 0; FileImporter resamples content to 48k in
-    // that case, so use the same fallback here or every clip/marker would be
-    // placed at 0 (timeline offsets multiplied by sr).
-    if (sr <= 0.0) sr = 48000.0;
+    const double sr = engine.getTimelineSampleRate();
 
     std::array<bool, Session::kNumTracks> frozen {};
     for (int i = 0; i < Session::kNumTracks; ++i)
@@ -5336,6 +5346,13 @@ void MainComponent::finishDpImport()
         if (transportBar != nullptr) transportBar->refreshTimeSigButton();
     }
 
+    if (imported > 0 && session.sessionSampleRate <= 0.0)
+        session.sessionSampleRate = sr;
+
+    // The import rewrites tracks, the mixer and the tempo with no undo step of
+    // its own, and an older step that puts a track's whole region list back
+    // would take the imported regions with it.
+    engine.getUndoManager().clearUndoHistory();
     if (tapeStrip != nullptr) tapeStrip->repaint();
 
     juce::String msg;
@@ -5389,7 +5406,8 @@ void MainComponent::enqueueImportsWithTargets (
         PendingImport p;
         p.file       = a.file;
         p.trackIndex = a.trackIndex;   // pre-assigned, picker skipped
-        p.isMidi     = a.isMidi;
+        p.isMidi     = a.mode == Track::Mode::Midi;
+        p.mode       = a.mode;
         pendingImportQueue.push_back (std::move (p));
     }
     kickNextImport();
@@ -5408,7 +5426,7 @@ void MainComponent::kickNextImport()
         MultiImportTargetPicker::Assignment a;
         a.file       = entry.file;
         a.trackIndex = entry.trackIndex;
-        a.isMidi     = entry.isMidi;
+        a.mode       = entry.mode;
         commitImportNoModal (a, pendingImportTimelineStart);
         return;
     }
@@ -5440,9 +5458,10 @@ void MainComponent::commitImportNoModal (
     // Mirror the per-file picker's onCommit body but without re-opening
     // a modal. Mid-batch transport state changes abort the whole queue,
     // same as the single-file path.
+    const bool isMidi = a.mode == Track::Mode::Midi;
     if (! engine.getTransport().isStopped())
     {
-        showImportError (a.isMidi ? "Import MIDI" : "Import audio",
+        showImportError (isMidi ? "Import MIDI" : "Import audio",
                           "Stop playback before importing files.");
         cancelImportChain();
         return;
@@ -5453,17 +5472,22 @@ void MainComponent::commitImportNoModal (
     // file, continue the batch) rather than desync it.
     if (track.frozen.load (std::memory_order_relaxed))
     {
-        showImportError (a.isMidi ? "Import MIDI" : "Import audio",
+        showImportError (isMidi ? "Import MIDI" : "Import audio",
                           "This track is frozen. Unfreeze it before importing onto it.");
         kickNextImport();
         return;
     }
 
-    if (a.isMidi)
+    // The picker's row said the mode will flip; the flip joins the file's undo step.
+    std::optional<Track::Mode> switchTo;
+    if (track.mode.load (std::memory_order_relaxed) != (int) a.mode)
+        switchTo = a.mode;
+
+    if (isMidi)
     {
         duskstudio::fileimport::MidiImportRequest req;
         req.source            = a.file;
-        req.sessionSampleRate = engine.getCurrentSampleRate();
+        req.sessionSampleRate = engine.getTimelineSampleRate();
         req.sessionBpm        = session.tempoBpm.load (std::memory_order_relaxed);
         req.timelineStart     = timelineStart;
 
@@ -5474,21 +5498,17 @@ void MainComponent::commitImportNoModal (
             kickNextImport();
             return;
         }
-        track.midiRegions.mutate ([&] (std::vector<MidiRegion>& v)
-        {
-            v.push_back (std::move (res.region));
-        });
+        commitImport (session, engine, a.trackIndex, switchTo,
+                      new CreateMidiRegionAction (session, a.trackIndex, std::move (res.region)), a.file);
     }
     else
     {
-        const auto mode = (Track::Mode) track.mode.load (std::memory_order_relaxed);
-
         duskstudio::fileimport::AudioImportRequest req;
         req.source            = a.file;
         req.audioDir          = session.getAudioDirectory();
         req.trackIndex        = a.trackIndex;
-        req.sessionSampleRate = engine.getCurrentSampleRate();
-        req.targetChannels    = (mode == Track::Mode::Stereo) ? 2 : 1;
+        req.sessionSampleRate = engine.getTimelineSampleRate();
+        req.targetChannels    = (a.mode == Track::Mode::Stereo) ? 2 : 1;
         req.timelineStart     = timelineStart;
 
         auto res = duskstudio::fileimport::importAudio (req);
@@ -5498,10 +5518,10 @@ void MainComponent::commitImportNoModal (
             kickNextImport();
             return;
         }
-        track.regions.push_back (std::move (res.region));
+        commitImport (session, engine, a.trackIndex, switchTo,
+                      new PasteRegionAction (session, engine, a.trackIndex, res.region), a.file);
     }
 
-    duskstudio::maybeRenameTrackFromFile (track, a.trackIndex, a.file);
     if (tapeStrip != nullptr) tapeStrip->repaint();
     pendingImportLastCommitted = a.trackIndex;
     kickNextImport();
@@ -5966,6 +5986,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                     // Re-apply the compact/expanded strip mode the rebuilt view
                     // would otherwise default away from (mirrors the ctor + load).
                     consoleView->setStripsCompactMode (tapeStripExpanded);
+                    EmbeddedModal::raiseOpenModals();
                     if (tapeStrip != nullptr) tapeStrip->repaint();
                     resized();
                 });
@@ -6695,12 +6716,22 @@ void MainComponent::undoOrRedo (bool redo)
 {
     auto& um = engine.getUndoManager();
     if ((redo ? um.getRedoDescription() : um.getUndoDescription()) == kMoveTracksTransaction)
+    {
+        // A menu or a dialog can hold a track by its row, as the track name
+        // menu and the import target picker do, and would then act on whichever
+        // track the move put there.
+        const std::string step = redo ? "redo" : "undo";
         if (const auto dialog = openRenderDialog(); ! dialog.empty())
         {
-            explainTrackMoveRefused (*this, "Close the " + dialog + " dialog, then "
-                                                + (redo ? "redo" : "undo") + " the move again.");
+            explainTrackMoveRefused (*this, "Close the " + dialog + " dialog, then " + step + " the move again.");
             return;
         }
+        if (EmbeddedModal::trackMoveMustWait())
+        {
+            explainTrackMoveRefused (*this, "Close the open menu or dialog, then " + step + " the move again.");
+            return;
+        }
+    }
     undoOrExplain (engine, *this, redo);
 }
 
@@ -6973,7 +7004,7 @@ void MainComponent::reclaimFocusFromNotepad()
     // top-level window.
     if (tearingDown)
         return;
-    // The native child held keyboard focus at the X11 level; pull it back so
+    // The native child held keyboard focus at the window-system level; pull it back so
     // transport / edit shortcuts work without a stray click first (same reason
     // as dismissStartupDialog).
     if (auto* window = getTopLevelComponent())
@@ -6986,6 +7017,11 @@ void MainComponent::reclaimFocusFromNotepad()
             peer->grabFocus();
        #else
         window->toFront (true);
+        // Raising an already active window moves no keyboard on Windows, where the
+        // child's teardown can leave it on no window at all, and a canvas JUCE still
+        // counts as focused would never ask for it back.
+        if (auto* peer = window->getPeer(); peer != nullptr && ! peer->isFocused())
+            peer->grabFocus();
        #endif
     }
     focusCanvasOrTopModal();

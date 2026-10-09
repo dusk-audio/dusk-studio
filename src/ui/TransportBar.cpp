@@ -433,8 +433,8 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     clockLabel.onTextChange = [this]
     {
         const auto text = clockLabel.getText().trim();
-        const double sr = engine.getCurrentSampleRate();
-        if (text.isEmpty() || sr <= 0.0) return;
+        const double sr = engine.getTimelineSampleRate();
+        if (text.isEmpty()) return;
 
         // Bar.beat.sub: any '.' or '|' separator and no ':'. Sub is
         // 1-indexed sixteenths within the beat (1..4 in 4/4) for parity
@@ -734,66 +734,63 @@ void TransportBar::timerCallback()
     // stays silent and the audio thread sees a "playhead jumped" event
     // (which fires the existing All Notes Off MIDI flush; safe).
     const auto nowMs = juce::Time::currentTimeMillis();
-    const double sr  = engine.getCurrentSampleRate();
-    if (sr > 0.0)
+    const double sr  = engine.getTimelineSampleRate();
+    const auto handleScrub = [&] (bool isHeld,
+                                    std::int64_t& pressedAt,
+                                    bool& scrubbing,
+                                    int direction)
     {
-        const auto handleScrub = [&] (bool isHeld,
-                                        std::int64_t& pressedAt,
-                                        bool& scrubbing,
-                                        int direction)
-        {
-            if (! isHeld || pressedAt == 0) return;
-            const auto held = nowMs - pressedAt;
-            if (held < kHoldThresholdMs) return;
-            scrubbing = true;
-            // First scrub tick: seed lastScrubTickMs so the delta is the
-            // tick period, not "ms since press" (which would teleport on
-            // the threshold crossing).
-            if (lastScrubTickMs == 0 || lastScrubTickMs < pressedAt)
-                lastScrubTickMs = nowMs;
-            const auto dtMs = nowMs - lastScrubTickMs;
+        if (! isHeld || pressedAt == 0) return;
+        const auto held = nowMs - pressedAt;
+        if (held < kHoldThresholdMs) return;
+        scrubbing = true;
+        // First scrub tick: seed lastScrubTickMs so the delta is the
+        // tick period, not "ms since press" (which would teleport on
+        // the threshold crossing).
+        if (lastScrubTickMs == 0 || lastScrubTickMs < pressedAt)
             lastScrubTickMs = nowMs;
-            const auto delta = (std::int64_t) ((double) dtMs * 0.001 * sr * kScrubMultiplier);
-            const auto cur = engine.getTransport().getPlayhead();
-            engine.getTransport().locate (std::max ((std::int64_t) 0,
-                cur + (std::int64_t) direction * delta));
-        };
+        const auto dtMs = nowMs - lastScrubTickMs;
+        lastScrubTickMs = nowMs;
+        const auto delta = (std::int64_t) ((double) dtMs * 0.001 * sr * kScrubMultiplier);
+        const auto cur = engine.getTransport().getPlayhead();
+        engine.getTransport().locate (std::max ((std::int64_t) 0,
+            cur + (std::int64_t) direction * delta));
+    };
 
-        // MCU REW/FFWD have no Component events; synthesise press/release
-        // edges from the receiver's held-flags so they share the buttons'
-        // tap-on-release + hold-scrub gesture.
-        auto& sess = engine.getSession();
-        const bool mcuRew  = sess.mcu.rewHeld.load  (std::memory_order_relaxed);
-        const bool mcuFfwd = sess.mcu.ffwdHeld.load (std::memory_order_relaxed);
-        const auto mcuEdge = [&] (bool isHeld, std::uint32_t pressCount, std::uint32_t& lastCount,
-                                  std::int64_t& pressedAt, bool& scrubbing, auto tap)
+    // MCU REW/FFWD have no Component events; synthesise press/release
+    // edges from the receiver's held-flags so they share the buttons'
+    // tap-on-release + hold-scrub gesture.
+    auto& sess = engine.getSession();
+    const bool mcuRew  = sess.mcu.rewHeld.load  (std::memory_order_relaxed);
+    const bool mcuFfwd = sess.mcu.ffwdHeld.load (std::memory_order_relaxed);
+    const auto mcuEdge = [&] (bool isHeld, std::uint32_t pressCount, std::uint32_t& lastCount,
+                              std::int64_t& pressedAt, bool& scrubbing, auto tap)
+    {
+        const bool newPress = pressCount != lastCount;
+        lastCount = pressCount;
+        if (isHeld && pressedAt == 0)
+            pressedAt = nowMs;
+        else if (! isHeld && pressedAt != 0)
         {
-            const bool newPress = pressCount != lastCount;
-            lastCount = pressCount;
-            if (isHeld && pressedAt == 0)
-                pressedAt = nowMs;
-            else if (! isHeld && pressedAt != 0)
-            {
-                const bool wasScrub = scrubbing;
-                pressedAt = 0;
-                scrubbing = false;
-                if (! wasScrub) tap();   // short press -> marker jump
-            }
-            else if (! isHeld && pressedAt == 0 && newPress)
-                tap();   // press+release fell entirely between two polls -> fast tap
-        };
-        mcuEdge (mcuRew,  sess.mcu.rewPressCount.load  (std::memory_order_relaxed),
-                 mcuRewLastPressCount,  mcuRewPressedAtMs,  mcuRewIsScrubbing,  [this] { rewindTap();  });
-        mcuEdge (mcuFfwd, sess.mcu.ffwdPressCount.load (std::memory_order_relaxed),
-                 mcuFfwdLastPressCount, mcuFfwdPressedAtMs, mcuFfwdIsScrubbing, [this] { forwardTap(); });
+            const bool wasScrub = scrubbing;
+            pressedAt = 0;
+            scrubbing = false;
+            if (! wasScrub) tap();   // short press -> marker jump
+        }
+        else if (! isHeld && pressedAt == 0 && newPress)
+            tap();   // press+release fell entirely between two polls -> fast tap
+    };
+    mcuEdge (mcuRew,  sess.mcu.rewPressCount.load  (std::memory_order_relaxed),
+             mcuRewLastPressCount,  mcuRewPressedAtMs,  mcuRewIsScrubbing,  [this] { rewindTap();  });
+    mcuEdge (mcuFfwd, sess.mcu.ffwdPressCount.load (std::memory_order_relaxed),
+             mcuFfwdLastPressCount, mcuFfwdPressedAtMs, mcuFfwdIsScrubbing, [this] { forwardTap(); });
 
-        handleScrub (rewButton.isHeldDown(),  rewPressedAtMs,  rewIsScrubbing,  -1);
-        handleScrub (ffwdButton.isHeldDown(), ffwdPressedAtMs, ffwdIsScrubbing, +1);
-        handleScrub (mcuRew,  mcuRewPressedAtMs,  mcuRewIsScrubbing,  -1);
-        handleScrub (mcuFfwd, mcuFfwdPressedAtMs, mcuFfwdIsScrubbing, +1);
-        if (! rewIsScrubbing && ! ffwdIsScrubbing
-            && ! mcuRewIsScrubbing && ! mcuFfwdIsScrubbing) lastScrubTickMs = 0;
-    }
+    handleScrub (rewButton.isHeldDown(),  rewPressedAtMs,  rewIsScrubbing,  -1);
+    handleScrub (ffwdButton.isHeldDown(), ffwdPressedAtMs, ffwdIsScrubbing, +1);
+    handleScrub (mcuRew,  mcuRewPressedAtMs,  mcuRewIsScrubbing,  -1);
+    handleScrub (mcuFfwd, mcuFfwdPressedAtMs, mcuFfwdIsScrubbing, +1);
+    if (! rewIsScrubbing && ! ffwdIsScrubbing
+        && ! mcuRewIsScrubbing && ! mcuFfwdIsScrubbing) lastScrubTickMs = 0;
 
     const auto playhead = engine.getTransport().getPlayhead();
 
@@ -821,7 +818,7 @@ void TransportBar::timerCallback()
             const float bpm = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
             const int   bpb = engine.getSession().beatsPerBar.load (std::memory_order_relaxed);
             clockLabel.setText (formatSamplePosition (playhead,
-                                                        engine.getCurrentSampleRate(),
+                                                        engine.getTimelineSampleRate(),
                                                         engine.getSession().tempoMap,
                                                         bpm, bpb, mode),
                                  juce::dontSendNotification);
@@ -1524,7 +1521,7 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
     const bool empty = (lockedMidi == 0 && floatMidi == 0 && autoPoints == 0);
     if (empty)
     {
-        applyTempoChange (s, newBpm, engine.getCurrentSampleRate());
+        applyTempoChange (s, newBpm, engine.getTimelineSampleRate());
         bpmValue.setText (formatBpm (newBpm), juce::dontSendNotification);
         return;
     }
@@ -1564,7 +1561,7 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
                        {
                            if (safe == nullptr) return;
                            applyTempoChange (safe->engine.getSession(), newBpm,
-                                               safe->engine.getCurrentSampleRate());
+                                               safe->engine.getTimelineSampleRate());
                            safe->bpmValue.setText (formatBpm (newBpm),
                                                      juce::dontSendNotification);
                        },

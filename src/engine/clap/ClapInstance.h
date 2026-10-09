@@ -189,8 +189,12 @@ private:
     std::vector<int16_t> clapNoteInputPorts;
 
     // Audio thread. Convert the block's MidiBuffer into note / raw-MIDI events
-    // appended after the drained param changes.
+    // appended after the drained param changes. A block the event list cannot
+    // hold keeps its releases (hosting/MidiFit.h).
     void appendMidiEvents (const dusk::MidiBuffer& midi) noexcept;
+    // CLAP events one MIDI message becomes here; appendMidiEvent appends them.
+    std::size_t clapEventsFor (const uint8_t* data, int numBytes) const noexcept;
+    void appendMidiEvent (const uint8_t* data, int numBytes, int samplePosition) noexcept;
     uint32_t             eventCount = 0;
     clap_input_events_t  inEvents {};
 

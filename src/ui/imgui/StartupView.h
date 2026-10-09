@@ -19,8 +19,8 @@ struct RecentSession
     std::string lastModified;
 };
 
-// Reads each session directory's modification time and the format of the first audio
-// file in it. session.json carries no session-level sample rate, so peeking at a
+// Reads when each session was saved (its session.json, else its autosave, else the
+// directory itself) and the format of the first audio file in it. session.json carries no session-level sample rate, so peeking at a
 // header is the only way to fill those columns without a running engine.
 std::vector<RecentSession> scanRecentSessions (const std::vector<std::filesystem::path>& paths);
 

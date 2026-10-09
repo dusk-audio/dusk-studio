@@ -185,7 +185,7 @@ At a take boundary, create the existing 64-sample raised-cosine overlap used by 
 
 For MIDI, materialize plain MIDI regions plus one derived `MidiRegion` per active folder comp. Include a note when its absolute note-on belongs to the selection, but retain its complete duration. Include CC/other events according to their timestamp. Set the derived region’s scheduler extent through the latest selected note-off; otherwise the current scheduler can skip the region before that note-off (`src/engine/AudioEngine.cpp:5678-5681`). One region per folder also avoids multiplying the fixed per-block MIDI scheduling budget (`src/engine/AudioEngine.cpp:5305-5325`).
 
-Both materializers run on the message thread. Comp/cardinality edits should initially require stopped transport: current structural edits are intentionally deferred until Stop+Play (`src/session/RegionEditActions.cpp:25-40`), and `AtomicSnapshot` retains only one prior generation. Live swipe audition would require an epoch/retirement hand-off, not rapid mutation of the current snapshots.
+Both materializers run on the message thread. Comp/cardinality edits should initially require stopped transport: current structural edits are intentionally deferred until Stop+Play (`src/session/RegionEditActions.cpp:25-40`). `AtomicSnapshot` frees a retired generation only once no audio-side read scope that may hold it is open, so rapid publishes are safe; live swipe audition still needs its own design, not rapid mutation of the current snapshots.
 
 ## 3. Behavior mapping, §1–§10
 

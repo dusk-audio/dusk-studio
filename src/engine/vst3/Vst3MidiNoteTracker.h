@@ -31,6 +31,16 @@ public:
         return valid (channel, key) && noteOnCounts[index (channel, key)] > 0;
     }
 
+    // The note-offs releaseChannel would send for `channel` now.
+    std::size_t soundingOnChannel (int channel) const noexcept
+    {
+        if (channel < 0 || channel >= kChannels) return 0;
+        std::size_t sounding = 0;
+        for (int key = 0; key < kKeys; ++key)
+            sounding += noteOnCounts[index (channel, key)];
+        return sounding;
+    }
+
     template <typename Emit>
     void releaseChannel (int channel, Emit&& emit) noexcept
     {

@@ -50,10 +50,15 @@ Json withoutKey (Json object, const char* key)
     return object;
 }
 
-// Recorded in format 8: one region carrying two displaced passes, one of them
-// the same file on another loop pass, a region split in two whose right half
-// was moved earlier, an imported region, a MIDI track with its own history, and
-// a second audio track.
+// Written the way 0.14 wrote format 8, which stamped a capture time on loop
+// passes only, wrote no channel count into a history, and split a region by
+// copying its history whole into both halves.
+//
+// Vox: a plain take (pass0, trimmed at its head), then a loop over it stopped
+// partway through the second pass, so the second pass plays with the first
+// and pass0 under it; then a one-pass loop split in two with its right half
+// moved earlier, and an import. Keys: a MIDI loop. Gtr: a plain take recorded
+// over another.
 Json v8Session()
 {
     return Json {
@@ -62,19 +67,19 @@ Json v8Session()
             { { "name", "Vox" },
               { "regions", Json::array ({
                   { { "file", "audio/pass1.wav" }, { "timeline_start", 48000 }, { "length", 24000 },
-                    { "source_offset", 12000 }, { "num_channels", 2 }, { "gain_db", -2.0 },
-                    { "fade_in", 480 }, { "label", "Verse" },
-                    { "take_provenance", { { "captured_at_ms", 1000 }, { "loop_pass", 1 } } },
+                    { "source_offset", 36000 }, { "num_channels", 2 }, { "fade_in", 480 },
+                    { "gain_db", -2.0 }, { "label", "Verse" },
+                    { "take_provenance", { { "captured_at_ms", 1000 }, { "loop_pass", 2 }, { "partial", true } } },
                     { "previous_takes", Json::array ({
                         { { "file", "audio/pass1.wav" }, { "source_offset", 0 }, { "length", 36000 },
-                          { "take_provenance", { { "captured_at_ms", 900 }, { "loop_pass", 2 } } } },
+                          { "take_provenance", { { "captured_at_ms", 1000 }, { "loop_pass", 1 } } } },
                         { { "file", "audio/pass0.wav" }, { "source_offset", 500 }, { "length", 10000 } } }) } },
                   { { "file", "audio/split.wav" }, { "timeline_start", 100000 }, { "length", 5000 },
                     { "source_offset", 0 },
-                    { "take_provenance", { { "captured_at_ms", 2000 }, { "partial", true } } } },
+                    { "take_provenance", { { "captured_at_ms", 2000 }, { "loop_pass", 1 }, { "partial", true } } } },
                   { { "file", "audio/split.wav" }, { "timeline_start", 104000 }, { "length", 7000 },
                     { "source_offset", 5000 },
-                    { "take_provenance", { { "captured_at_ms", 2000 }, { "partial", true } } } },
+                    { "take_provenance", { { "captured_at_ms", 2000 }, { "loop_pass", 1 }, { "partial", true } } } },
                   { { "file", "audio/imported.wav" }, { "timeline_start", 0 }, { "length", 1000 },
                     { "source_offset", 0 } } }) } },
             { { "name", "Keys" },
@@ -83,17 +88,19 @@ Json v8Session()
                   { { "timeline_start", 0 }, { "length_samples", 24000 }, { "length_ticks", 960 },
                     { "notes", Json::array ({ { { "ch", 1 }, { "note", 60 }, { "vel", 100 },
                                                 { "start", 0 }, { "len", 240 } } }) },
-                    { "take_provenance", { { "captured_at_ms", 3000 } } },
+                    { "take_provenance", { { "captured_at_ms", 3000 }, { "loop_pass", 2 } } },
+                    { "recorded_at_bpm", 120.0 },
                     { "previous_takes", Json::array ({
-                        { { "length_ticks", 480 },
+                        { { "length_ticks", 960 },
+                          { "take_provenance", { { "captured_at_ms", 3000 }, { "loop_pass", 1 } } },
                           { "notes", Json::array ({ { { "ch", 1 }, { "note", 64 }, { "vel", 90 },
-                                                      { "start", 0 }, { "len", 120 } } }) },
-                          { "take_provenance", { { "captured_at_ms", 2500 }, { "loop_pass", 3 } } } } }) } } }) } },
+                                                      { "start", 0 }, { "len", 120 } } }) } } }) } } }) } },
             { { "name", "Gtr" },
               { "regions", Json::array ({
                   { { "file", "audio/gtr.wav" }, { "timeline_start", 9600 }, { "length", 4800 },
                     { "source_offset", 0 },
-                    { "take_provenance", { { "captured_at_ms", 4000 } } } } }) } } }) }
+                    { "previous_takes", Json::array ({
+                        { { "file", "audio/gtr0.wav" }, { "source_offset", 0 }, { "length", 4800 } } }) } } }) } } }) }
     };
 }
 
@@ -268,15 +275,15 @@ TEST_CASE ("Loading a v8 session turns audio take history into track takes",
     REQUIRE (SessionSerializer::load (*loaded, target));
 
     // Oldest first: the pass with no capture time sat at the bottom of the
-    // history, and the other two follow their capture times.
+    // history, and the loop's passes follow it in order.
     const auto& vox = loaded->track (0);
     REQUIRE (vox.takes.size() == 4);
     checkTake (vox.takes[0], { 1, "Take 1", "audio/pass0.wav", 48000, 10000, 500,   2, {} });
-    checkTake (vox.takes[1], { 2, "Take 2", "audio/pass1.wav", 48000, 36000, 0,     2, { 900, 2, false } });
-    checkTake (vox.takes[2], { 3, "Take 3", "audio/pass1.wav", 48000, 24000, 12000, 2, { 1000, 1, false } });
+    checkTake (vox.takes[1], { 2, "Take 2", "audio/pass1.wav", 48000, 36000, 0,     2, { 1000, 1, false } });
+    checkTake (vox.takes[2], { 3, "Take 3", "audio/pass1.wav", 48000, 24000, 36000, 2, { 1000, 2, true } });
     // The split pair is one pass: the union of both halves, placed where the
     // earlier of the two puts the file.
-    checkTake (vox.takes[3], { 4, "Take 4", "audio/split.wav", 99000, 12000, 0,     1, { 2000, 0, true } });
+    checkTake (vox.takes[3], { 4, "Take 4", "audio/split.wav", 99000, 12000, 0,     1, { 2000, 1, true } });
 
     REQUIRE (vox.regions.size() == 4);
     CHECK (vox.regions[0].takeId == 3);
@@ -285,7 +292,7 @@ TEST_CASE ("Loading a v8 session turns audio take history into track takes",
     CHECK (vox.regions[3].takeId == 0);
     CHECK (vox.regions[0].timelineStart == 48000);
     CHECK (vox.regions[0].lengthInSamples == 24000);
-    CHECK (vox.regions[0].sourceOffset == 12000);
+    CHECK (vox.regions[0].sourceOffset == 36000);
     CHECK (vox.regions[0].numChannels == 2);
     CHECK (vox.regions[0].fadeInSamples == 480);
     CHECK (vox.regions[0].label == "Verse");
@@ -293,19 +300,20 @@ TEST_CASE ("Loading a v8 session turns audio take history into track takes",
     CHECK (vox.regions[2].sourceOffset == 5000);
 
     const auto& gtr = loaded->track (2);
-    REQUIRE (gtr.takes.size() == 1);
-    checkTake (gtr.takes[0], { 5, "Take 1", "audio/gtr.wav", 9600, 4800, 0, 1, { 4000, 0, false } });
+    REQUIRE (gtr.takes.size() == 2);
+    checkTake (gtr.takes[0], { 5, "Take 1", "audio/gtr0.wav", 9600, 4800, 0, 1, {} });
+    checkTake (gtr.takes[1], { 6, "Take 2", "audio/gtr.wav",  9600, 4800, 0, 1, {} });
     REQUIRE (gtr.regions.size() == 1);
-    CHECK (gtr.regions[0].takeId == 5);
+    CHECK (gtr.regions[0].takeId == 6);
 
     const auto& keys = loaded->track (1).midiRegions.current();
     REQUIRE (keys.size() == 1);
     REQUIRE (keys[0].previousTakes.size() == 1);
-    CHECK (keys[0].previousTakes[0].lengthInTicks == 480);
-    CHECK (keys[0].previousTakes[0].provenance.loopPassOrdinal == 3);
+    CHECK (keys[0].previousTakes[0].lengthInTicks == 960);
+    CHECK (keys[0].previousTakes[0].provenance.loopPassOrdinal == 1);
     CHECK (loaded->track (1).takes.empty());
 
-    CHECK (loaded->allocateTakeId() == 6);
+    CHECK (loaded->allocateTakeId() == 7);
 
     REQUIRE (SessionSerializer::save (*loaded, target));
     const auto resaved = readJson (target);
@@ -345,11 +353,11 @@ TEST_CASE ("Loading a v9 session turns audio take history into track takes",
     const auto& vox = loaded->track (0);
     REQUIRE (vox.takes.size() == 4);
     checkTake (vox.takes[0], { 1, "Take 1", "audio/pass0.wav", 48000, 10000, 500,   2, {} });
-    checkTake (vox.takes[2], { 3, "Take 3", "audio/pass1.wav", 48000, 24000, 12000, 2, { 1000, 1, false } });
+    checkTake (vox.takes[2], { 3, "Take 3", "audio/pass1.wav", 48000, 24000, 36000, 2, { 1000, 2, true } });
     REQUIRE (vox.regions.size() == 4);
     CHECK (vox.regions[0].takeId == 3);
-    REQUIRE (loaded->track (2).takes.size() == 1);
-    CHECK (loaded->track (2).regions[0].takeId == 5);
+    REQUIRE (loaded->track (2).takes.size() == 2);
+    CHECK (loaded->track (2).regions[0].takeId == 6);
 
     dir.deleteRecursively();
 }
@@ -424,17 +432,18 @@ TEST_CASE ("Loading a v8 session numbers each track's takes oldest first",
 TEST_CASE ("Loading a v8 session starts no take before the timeline and keeps it whole",
            "[session][serializer][migration][takes]")
 {
-    // One pass split in two, its right half moved near the start: where that
-    // half puts the file, the pass would begin 3000 samples before zero, so it
-    // sits where the left half puts it instead.
+    // A one-pass loop split in two, its right half moved near the start: where
+    // that half puts the file, the pass would begin 3000 samples before zero, so
+    // it sits where the left half puts it instead.
+    const Json provenance { { "captured_at_ms", 2000 }, { "loop_pass", 1 } };
     const Json root {
         { "version", 8 },
         { "tracks", Json::array ({
             { { "regions", Json::array ({
                   { { "file", "audio/split.wav" }, { "timeline_start", 100000 }, { "length", 5000 },
-                    { "source_offset", 0 }, { "take_provenance", { { "captured_at_ms", 2000 } } } },
+                    { "source_offset", 0 }, { "take_provenance", provenance } },
                   { { "file", "audio/split.wav" }, { "timeline_start", 2000 }, { "length", 7000 },
-                    { "source_offset", 5000 }, { "take_provenance", { { "captured_at_ms", 2000 } } } } }) } } }) }
+                    { "source_offset", 5000 }, { "take_provenance", provenance } } }) } } }) }
     };
 
     auto migrated = root;
@@ -487,24 +496,23 @@ TEST_CASE ("Loading a v8 session keeps take audio only a region's history holds"
            "[session][serializer][migration][takes]")
 {
     // Recorded in 0.14: C at 48000, then A over it, A split at 96000, A's right
-    // half moved to 10000, then B exactly over A's left half. A's left half now
-    // lives only in B's history, and where the moved half puts A's file it
-    // would begin 38000 samples before zero.
-    const auto piece = [] (const char* file, std::int64_t offset, std::int64_t length, std::int64_t capturedAtMs)
+    // half moved to 10000, then B exactly over A's left half. The split gave
+    // both halves all of C as their history. A's left half now lives only in
+    // B's history, and where the moved half puts A's file it would begin 38000
+    // samples before zero.
+    const auto piece = [] (const char* file, std::int64_t offset, std::int64_t length)
     {
-        return Json { { "file", file }, { "source_offset", offset }, { "length", length },
-                      { "take_provenance", { { "captured_at_ms", capturedAtMs } } } };
+        return Json { { "file", file }, { "source_offset", offset }, { "length", length } };
     };
-    auto overLeft = piece ("audio/b.wav", 0, 48000, 3000);
+    auto overLeft = piece ("audio/b.wav", 0, 48000);
     overLeft["timeline_start"] = 48000;
-    overLeft["previous_takes"] = Json::array ({ piece ("audio/a.wav", 0, 48000, 2000),
-                                                piece ("audio/c.wav", 0, 48000, 1000) });
-    auto movedRight = piece ("audio/a.wav", 48000, 96000, 2000);
+    overLeft["previous_takes"] = Json::array ({ piece ("audio/a.wav", 0, 48000), piece ("audio/c.wav", 0, 144000) });
+    auto movedRight = piece ("audio/a.wav", 48000, 96000);
     movedRight["timeline_start"] = 10000;
-    movedRight["previous_takes"] = Json::array ({ piece ("audio/c.wav", 48000, 96000, 1000) });
+    movedRight["previous_takes"] = Json::array ({ piece ("audio/c.wav", 0, 144000) });
     const Json root {
         { "version", 8 },
-        { "tracks", Json::array ({ { { "regions", Json::array ({ overLeft, movedRight }) } } }) }
+        { "tracks", Json::array ({ { { "regions", Json::array ({ movedRight, overLeft }) } } }) }
     };
 
     const auto dir = makeTempSessionDir();
@@ -544,10 +552,10 @@ TEST_CASE ("Loading a v8 session keeps take audio only a region's history holds"
     CHECK (underB->lengthInSamples == 48000);
 
     REQUIRE (track.regions.size() == 2);
-    CHECK (track.regions[0].takeId == takeOf ("b.wav")->id);
-    CHECK (track.regions[1].takeId == a->id);
-    CHECK (track.regions[1].timelineStart == 10000);
-    CHECK (track.regions[1].sourceOffset == 48000);
+    CHECK (track.regions[0].takeId == a->id);
+    CHECK (track.regions[0].timelineStart == 10000);
+    CHECK (track.regions[0].sourceOffset == 48000);
+    CHECK (track.regions[1].takeId == takeOf ("b.wav")->id);
     dir.deleteRecursively();
 }
 
@@ -558,18 +566,24 @@ TEST_CASE ("Loading a v8 session makes one take of a recording a punch split in 
     // recorded in stereo over ten seconds, B punched into the middle of it in
     // mono, so the history that starts A's pass does not know its channels, and beside
     // them an imported file. A second track holds a recording nothing replaced.
+    // The punch left A's halves in place, appended its own region after them, and
+    // crossfaded both seams over 64 samples.
+    constexpr int kRaisedCosine = 5;
     const Json original {
         { "version", 8 },
         { "tracks", Json::array ({
             { { "regions", Json::array ({
                   { { "file", "audio/a.wav" }, { "timeline_start", 0 }, { "length", 144064 },
-                    { "source_offset", 0 }, { "num_channels", 2 } },
+                    { "source_offset", 0 }, { "num_channels", 2 }, { "fade_out", 64 },
+                    { "fade_out_shape", kRaisedCosine } },
+                  { { "file", "audio/a.wav" }, { "timeline_start", 287936 }, { "length", 192064 },
+                    { "source_offset", 287936 }, { "num_channels", 2 }, { "fade_in", 64 },
+                    { "fade_in_shape", kRaisedCosine } },
                   { { "file", "audio/b.wav" }, { "timeline_start", 144000 }, { "length", 144000 },
-                    { "source_offset", 0 },
+                    { "source_offset", 0 }, { "fade_in", 64 }, { "fade_out", 64 },
+                    { "fade_in_shape", kRaisedCosine }, { "fade_out_shape", kRaisedCosine },
                     { "previous_takes", Json::array ({
                         { { "file", "audio/a.wav" }, { "source_offset", 144000 }, { "length", 144000 } } }) } },
-                  { { "file", "audio/a.wav" }, { "timeline_start", 287936 }, { "length", 192064 },
-                    { "source_offset", 287936 }, { "num_channels", 2 } },
                   { { "file", "audio/imported.wav" }, { "timeline_start", 600000 }, { "length", 48000 },
                     { "source_offset", 0 } } }) } },
             { { "regions", Json::array ({
@@ -608,8 +622,8 @@ TEST_CASE ("Loading a v8 session makes one take of a recording a punch split in 
 
     REQUIRE (track.regions.size() == 4);
     CHECK (track.regions[0].takeId == 1);
-    CHECK (track.regions[1].takeId == 2);
-    CHECK (track.regions[2].takeId == 1);
+    CHECK (track.regions[1].takeId == 1);
+    CHECK (track.regions[2].takeId == 2);
     CHECK (track.regions[3].takeId == 0);
     CHECK (takeCoverage (track, 1)
            == std::vector<std::pair<std::int64_t, std::int64_t>> { { 0, 144064 }, { 287936, 480000 } });
@@ -971,6 +985,113 @@ TEST_CASE ("A comp seam without fades still keeps its overlap inside both region
     // Later, the right region keeps the overlap and a sample.
     const auto latest = clampSeamShift (track, seam, 1'000'000);
     CHECK (track.regions[1].lengthInSamples - latest == overlap + 1);
+}
+
+TEST_CASE ("A seam whose regions read outside their takes holds still for a drag of nothing",
+           "[session][takes][seam]")
+{
+    Track track;
+    fillSeamTrack (track);
+    const CompSeam seam { 0, 1 };
+
+    SECTION ("the left region reads past the end of its take")
+    {
+        track.takes[0].lengthInSamples = 20000;
+        CHECK (clampSeamShift (track, seam, 0) == 0);
+        CHECK (clampSeamShift (track, seam, 500) == 0);
+        CHECK (clampSeamShift (track, seam, -500) == -500);
+        const auto before = track.regions;
+        shiftSeam (track, seam, 0);
+        CHECK (track.regions[0].lengthInSamples == before[0].lengthInSamples);
+        CHECK (track.regions[1].timelineStart == before[1].timelineStart);
+    }
+    SECTION ("the right region reads from before the start of its take")
+    {
+        track.takes[1].timelineStart = track.takes[1].sourceOffset = 30000;
+        CHECK (clampSeamShift (track, seam, 0) == 0);
+        CHECK (clampSeamShift (track, seam, -500) == 0);
+        CHECK (clampSeamShift (track, seam, 500) == 500);
+    }
+    SECTION ("the right region is shorter than its fades")
+    {
+        track.regions[1].lengthInSamples = kPunchFadeSamples - 10;
+        CHECK (clampSeamShift (track, seam, 0) == 0);
+        CHECK (clampSeamShift (track, seam, 5) == 0);
+    }
+}
+
+namespace
+{
+std::optional<CompSeam> compSeamNearByEveryPair (const Track& track, std::int64_t at, std::int64_t tolerance)
+{
+    std::optional<CompSeam> nearest;
+    std::int64_t best = std::numeric_limits<std::int64_t>::max();
+    const auto& regs = track.regions;
+    for (int l = 0; l < static_cast<int> (regs.size()); ++l)
+        for (int r = 0; r < static_cast<int> (regs.size()); ++r)
+        {
+            const auto& left = regs[(std::size_t) l];
+            const auto& right = regs[(std::size_t) r];
+            const auto overlap = left.timelineStart + left.lengthInSamples - right.timelineStart;
+            if (l == r || left.takeId == 0 || right.takeId == 0 || left.timelineStart >= right.timelineStart
+                || overlap < 0 || overlap > kPunchFadeSamples)
+                continue;
+            const auto from = right.timelineStart;
+            const auto to = left.timelineStart + left.lengthInSamples;
+            const auto distance = at < from ? from - at : at > to ? at - to : 0;
+            if (distance <= tolerance && distance < best)
+            {
+                best = distance;
+                nearest = CompSeam { l, r };
+            }
+        }
+    return nearest;
+}
+} // namespace
+
+TEST_CASE ("The comp seam near a point is the one pairing every region would find",
+           "[session][takes][seam]")
+{
+    std::uint64_t state = 0x9e3779b97f4a7c15ull;
+    const auto next = [&state] (std::int64_t below)
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return static_cast<std::int64_t> (state % static_cast<std::uint64_t> (below));
+    };
+    for (int round = 0; round < 200; ++round)
+    {
+        Track track;
+        // Regions packed close together, many of them meeting within a seam fade,
+        // some sharing a start or an end, so ties and near misses are common.
+        std::int64_t at = 0;
+        const auto count = 2 + next (40);
+        for (std::int64_t i = 0; i < count; ++i)
+        {
+            AudioRegion r;
+            r.takeId = static_cast<TakeId> (next (4));
+            r.timelineStart = at;
+            r.lengthInSamples = 1 + next (400);
+            at += next (2) == 0 ? r.lengthInSamples - next (kPunchFadeSamples + 8) : next (300);
+            at = std::max<std::int64_t> (0, at);
+            track.regions.push_back (r);
+        }
+        for (int probe = 0; probe < 40; ++probe)
+        {
+            const auto point = next (at + 200) - 100;
+            const auto tolerance = next (3) == 0 ? 0 : next (120);
+            const auto expected = compSeamNearByEveryPair (track, point, tolerance);
+            const auto found = compSeamNear (track, point, tolerance);
+            REQUIRE (found.has_value() == expected.has_value());
+            if (found)
+            {
+                CHECK (found->left == expected->left);
+                CHECK (found->right == expected->right);
+            }
+        }
+    }
+    CHECK_FALSE (compSeamNear (Track {}, 0, 10).has_value());
 }
 
 TEST_CASE ("The comp section under a point is the region playing there, or the gap around it",

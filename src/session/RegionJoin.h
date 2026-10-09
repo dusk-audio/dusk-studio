@@ -42,4 +42,11 @@ struct JoinedFades
 // False when a region's audio cannot be read in full.
 bool mixRegionsAsPlayed (const std::vector<AudioRegion>& regions,
                          dusk::audio::PlanarBuffer& mix, JoinedFades& outer);
+
+// The channel count a join renders at: stereo when any region's file is.
+// Playback reads each file by its own channel count, a mono one into both
+// channels, and a mono track plays the left one, so a render this wide plays
+// as its regions did on either kind of track, and keeps a stereo region's
+// right channel for when the track turns stereo.
+int channelsAsPlayed (const std::vector<AudioRegion>& regions);
 } // namespace duskstudio

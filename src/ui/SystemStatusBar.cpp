@@ -29,6 +29,7 @@ void SystemStatusBar::timerCallback()
     lastCpuUsage     = cpu;
     lastEngineXruns  = engineXruns;
     lastBackendXruns = backendXruns;
+    lastRealtimeDemotions = engine.getRealtimeDemotionCount();
     lastAudioWarn    = ! engine.hasUsableOutputs() && sr > 0.0;
 
     if (sr > 0.0 && bs > 0)
@@ -63,6 +64,9 @@ void SystemStatusBar::timerCallback()
     // cost reads as an inexplicable load spike.
     if (const int ox = engine.getSession().oversamplingFactor.load (std::memory_order_relaxed); ox > 1)
         dspInfo += " @" + juce::String (ox) + "x";
+    // Audio threads a stalled plug-in pushed off realtime priority.
+    if (lastRealtimeDemotions > 0)
+        dspInfo += (" RT " + std::to_string (lastRealtimeDemotions)).c_str();
 
     // Chord readout. Audio thread maintains heldMidiNotes; we snapshot
     // here, fingerprint to skip re-analysis when nothing changed, and
@@ -102,7 +106,7 @@ void SystemStatusBar::timerCallback()
     // colour repaints when warn flips even if the dspInfo string is unchanged -
     // e.g. cpu crossing 0.85 within the same rounded "85%".
     const bool dspWarn = lastCpuUsage > 0.85
-                      || (lastEngineXruns + lastBackendXruns) > 0;
+                      || (lastEngineXruns + lastBackendXruns + lastRealtimeDemotions) > 0;
 
     if (audioInfo     != paintedAudioInfo
         || dspInfo    != paintedDspInfo
@@ -140,7 +144,7 @@ void SystemStatusBar::paint (juce::Graphics& g)
     // tick snapshot so paint colour and dspInfo text always agree - re-
     // querying the engine here can race a fresh timer tick mid-frame.
     const double cpu   = lastCpuUsage;
-    const int    xruns = lastEngineXruns + lastBackendXruns;
+    const int    xruns = lastEngineXruns + lastBackendXruns + lastRealtimeDemotions;
     const bool   warn  = cpu > 0.85 || xruns > 0;
 
     // DSP info now reads "DSP: 12% (3/0)" at worst - engine/backend xrun

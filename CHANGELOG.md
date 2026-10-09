@@ -64,7 +64,11 @@ Takes live on the track now, and the audio editor is where you comp them.
   row lights in the track's colour. Double-click renames in place, one undo
   step. Drag a name up or down to move the track to another row, with
   everything on it: regions, takes, strip settings, insert and automation.
-  Clicking a name used to do nothing.
+  A track you haven't named shows the number of the row it lands in. A move is
+  one undo step, and its undo and redo wait while a menu or a dialog is open,
+  since an item picked there could act on whichever track the move put in its
+  row. An editor open on a track that moves closes instead. Clicking a name
+  used to do nothing.
 - **Select several tracks by name.** Shift+click takes in every row shown
   between two names and Cmd/Ctrl+click adds or removes one. **A / S / X** then
   act on all of them: off everywhere when any selected track has the state on,
@@ -96,6 +100,9 @@ Takes live on the track now, and the audio editor is where you comp them.
   one row now, beside Apple Music and Broadcast (EBU R128). A session saved
   with the old list opens on the row holding that platform's target.
 - **CLAP headers updated to 1.2.10.**
+- **Paste in the audio editor lands on the editor's track.** **Cmd+V** puts
+  the copy on the track the editor is open on, at the edit cursor. In 0.14 it
+  went to the track the region was copied from.
 
 ### Fixed
 
@@ -170,6 +177,127 @@ Takes live on the track now, and the audio editor is where you comp them.
 - **A join in the audio editor leaves the joined region in focus.** When an
   unselected region sat between the joined ones in the track's stored order,
   the focus landed on that region instead, and Delete then removed it.
+- **The drop line follows Alt.** Pressing or letting go of Alt with files held
+  still over the timeline left the line where it was, while the drop landed by
+  the key.
+- **A locked MIDI region no longer moves on the timeline.** It takes the click
+  but not the drag, as a locked audio region does.
+- **A multi-file import switches a track's mode as its row says.** A
+  destination marked "mode will flip" kept its mode, so a stereo file landed on
+  a mono track as mono and a MIDI file landed on an audio track. The import now
+  switches the track to the file's mode, and that file's undo switches it back.
+- **Undo no longer drops an imported region.** An import had no undo step of
+  its own, so undoing a recording or a take-lane edit made on the track before
+  it took the imported region away for good. Each imported file is now its own
+  undo step. A DP-24/32 import clears the undo history.
+- **A join of mono and stereo regions keeps both channels.** The render took
+  its channel count from the first region, so a stereo region after a mono one
+  lost its right channel. A join is now stereo when any of its regions plays a
+  stereo file.
+- **The timeline redraws whenever a track's regions change.** It redrew on the
+  change messages edits send, and a MIDI take was seen to stay hidden until a
+  switch to MIXING. It now also checks every track's regions on its own timer,
+  so a region shows within a frame however it got there.
+- **Imports with no audio device run at the timeline's rate.** They were
+  converted to 48 kHz while the timeline measured time at the rate the device
+  last ran at. A Mackie surface's timecode counts at that rate too.
+- **A held note no longer sticks when its track stops listening.** Turning IN
+  off while the transport rolls, disarming a track that plays the on-screen
+  keyboard, or moving a MIDI track's channel off the note's channel used to
+  drop the note-off, and the instrument held the note until the transport
+  stopped, or for good. The track's instrument now gets an all-notes-off the
+  moment it stops taking that input, and notes the timeline is holding are
+  played again. Choosing another MIDI input already did this.
+- **A plug-in that stops getting a track's MIDI lets go of its notes.** A
+  MIDI-playing plug-in left loaded when its track switched to Mono or Stereo,
+  or a frozen track's plug-in, never heard the note-offs for keys released in
+  the meantime and held those notes. It now gets an all-notes-off.
+- **A block of MIDI too dense to deliver no longer leaves notes hanging.**
+  When a track's MIDI for one block overflowed what the engine can carry, live
+  input on top of a dense timeline, the whole block was dropped, note-offs
+  included. The instrument now gets an all-notes-off in its place, and the
+  next block plays the timeline's held notes again.
+- **The Multicore DSP threads get the audio thread's priority on Linux.**
+  Where they ran at normal priority under the realtime audio thread that waits
+  for them, anything else busy on the machine, a plug-in editor drawn without
+  a graphics card among them, slowed them down and the audio overran waiting.
+  On Linux they now run at the audio thread's realtime priority. Without
+  realtime permissions they ask RTKit, as PipeWire does for its own audio
+  thread, and take a raised priority where RTKit refuses.
+- **Changing Multicore DSP keeps every thread at that priority.** RTKit grants
+  a user about 25 requests in 20 seconds. Every change to the setting started
+  the threads afresh and asked again for each one, so on a machine with many
+  cores a change soon after starting could run out and leave some threads at
+  normal priority beside realtime ones. The threads now outlast a change, and
+  only a new one asks.
+- **The ALSA backend's audio thread asks RTKit too.** Where the system does not
+  let Dusk Studio set realtime priority itself, the audio thread of the ALSA
+  backend ran at normal priority. It now asks RTKit, as the Multicore DSP
+  threads do.
+- **A plug-in stuck in its block no longer ends Dusk Studio on Linux.** Under
+  the limit RTKit and PipeWire set, a realtime thread that computes for 200 ms
+  without a break is killed with the whole process, with no crash report and
+  no autosave. Dusk Studio now takes the kernel's warning that comes first and
+  moves that thread to normal priority: the stall costs dropouts, and the
+  session stays open. A Multicore DSP thread goes back to realtime priority
+  the next time the transport is stopped. The audio device's own thread stays
+  at normal priority until the device is opened again in Settings > Audio. The
+  DSP readout counts these warnings, as `RT 1` and up, including one that
+  reaches a thread not running at realtime priority and so moves nothing, and
+  the log names each thread moved.
+- **Large sessions no longer hold gigabytes of memory on Linux.** With
+  unlimited locked memory, as the audio group usually has, every thread's
+  whole stack was locked in RAM, and playback runs one per region: a
+  1,440-region session held over 12 GB while playing. It now holds about
+  480 MB, and a 40-region one 120 MB instead of 570 MB.
+- **A MIDI region with a long controller take plays its notes.** A region with
+  more than about 32,000 controller events, breath or expression held through
+  a long take, played nothing at all: each block read the region's controllers
+  from the start and ran out of time before it reached a note. Each block now
+  reads only the events that fall in it, and on a track of thousands of
+  regions only the regions around it.
+- **Tempo changes and track moves stay quick with a lot of MIDI.** A tempo
+  change copied and re-sorted the events of every MIDI region in the session,
+  though only where the regions sit changes, and dragging the tempo did that
+  at each step. A track move did the same work with the audio held off. Both
+  now keep the events they already have.
+- **A sampler instrument lets go of its notes after a mode switch.** A
+  multisample (SFZ or SF2) instrument on a track switched to Mono or Stereo
+  with a key down, an import's switch undone while playing for one, held that
+  note when the track came back to MIDI. It now gets an all-notes-off then, as
+  plug-ins already did.
+- **Plug-ins keep their note-offs in a dense block of MIDI.** CLAP, VST3, LV2
+  and out-of-process plug-ins each had a fixed room for a block's MIDI, and what
+  did not fit was dropped from the end, note-offs included, leaving notes
+  held. A block that does not fit now keeps every note-off, and every sustain,
+  sostenuto or hold pedal coming up, and drops other events first. CLAP, LV2
+  and out-of-process plug-ins have more room too; out of process, the room is
+  the most a track can send in one block. An out-of-process plug-in also lost
+  everything after a sysex message longer than 256 bytes in its block, and now
+  gets it all.
+- **A MIDI note no longer hangs when the timeline stops playing it.** A note
+  that ran past the end of its region never got its note-off, and neither did
+  a note sounding when its region was muted, moved, deleted or cut short, its
+  take switched, the note edited in the piano roll, the tempo changed, or one
+  of those undone or redone. Pressing Record during playback did the same to
+  the notes an armed MIDI track was playing. The instrument held them until
+  Stop. Each now ends at its region's end or at once, without a reset, so the
+  track's other notes play on. A region also no longer plays a note or
+  controller that starts past its end.
+- **Quick edits during playback can no longer crash the audio.** Two changes
+  to one automation lane, MIDI track, hardware insert or MIDI binding inside a
+  single audio block, as holding Undo with a large buffer size can make, freed
+  what the audio thread was still reading. What a block reads now stays until
+  the block ends, however quickly edits arrive.
+- **Editing as a stem bounce starts is safe.** The bounce worked out which
+  stems to write a second time on its own thread, reading MIDI regions and
+  automation an edit could free under it. It now writes the stems it named
+  when it started.
+- **Dragging a MIDI region while it plays is safe.** The drag wrote the
+  region's position while the audio thread read it. The audio thread now gets
+  the new position on its own, and the region still plays from where you drag
+  it. Changing an audio region's gain or mute while it plays is safe the same
+  way.
 
 ## [0.14.0] - 2026-09-29
 

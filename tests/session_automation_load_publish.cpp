@@ -6,6 +6,10 @@
 
 #include <juce_core/juce_core.h>
 
+#include <array>
+#include <cstdint>
+#include <optional>
+
 using Catch::Matchers::WithinAbs;
 using duskstudio::AutomationParam;
 using duskstudio::AutomationPoint;
@@ -35,14 +39,10 @@ AutomationPoint pt (juce::int64 t, float v)
 
 // Loading a session into a Session whose lanes already hold points is the
 // mid-run "open another session" path: the audio thread can be holding a
-// lane's read() pointer across the load. AtomicSnapshot retires exactly one
-// previous value, so the load must publish each lane exactly ONCE - a
-// clear-then-publish pair on the same lane frees the pre-load vector while
-// it may still be read. This pins the observable half of that contract:
-// after a load, the pre-load vector must still be alive (retired, not
-// destroyed). Under the old double-publish load this dereference is
-// use-after-free - ASAN/TSan builds catch it even when a plain build
-// happens to pass.
+// lane's read() pointer across the load. The load publishes each lane once,
+// so the audio thread never reads a lane cleared but not yet loaded, and every
+// pre-load vector a callback read stays alive until its read scope closes.
+// ASan builds catch a free under the scope even when a plain build passes.
 TEST_CASE ("Session load publishes each automation lane exactly once",
            "[session][serializer][automation]")
 {
@@ -69,6 +69,19 @@ TEST_CASE ("Session load publishes each automation lane exactly once",
     auxLaneAbsent  .publishPoints ({ pt (80, 0.9f) });
     busLaneAbsent  .publishPoints ({ pt (90, 1.0f), pt (95, 0.0f) });
 
+    const auto generationOf = [&]
+    {
+        return std::array<std::uint64_t, 5> { trackLaneLoaded.snapshot.generation(),
+                                              trackLaneAbsent.snapshot.generation(),
+                                              masterLane.snapshot.generation(),
+                                              auxLaneAbsent.snapshot.generation(),
+                                              busLaneAbsent.snapshot.generation() };
+    };
+    const auto preGenerations = generationOf();
+
+    // A callback in flight across the load.
+    std::optional<duskstudio::SnapshotReadScope> callback;
+    callback.emplace();
     const auto* preTrackLoaded = trackLaneLoaded.snapshot.read();
     const auto* preTrackAbsent = trackLaneAbsent.snapshot.read();
     const auto* preMaster      = masterLane.snapshot.read();
@@ -89,21 +102,23 @@ TEST_CASE ("Session load publishes each automation lane exactly once",
     REQUIRE (auxLaneAbsent.pointsConst().empty());
     REQUIRE (busLaneAbsent.pointsConst().empty());
 
-    // Every touched lane swapped its audio-visible pointer once...
-    REQUIRE (trackLaneLoaded.snapshot.read() != preTrackLoaded);
-    REQUIRE (trackLaneAbsent.snapshot.read() != preTrackAbsent);
-    REQUIRE (masterLane.snapshot.read()      != preMaster);
-    REQUIRE (auxLaneAbsent.snapshot.read()   != preAux);
-    REQUIRE (busLaneAbsent.snapshot.read()   != preBus);
+    // Every touched lane published once...
+    const auto postGenerations = generationOf();
+    for (size_t i = 0; i < preGenerations.size(); ++i)
+        REQUIRE (postGenerations[i] == preGenerations[i] + 1);
 
-    // ...and the pre-load vectors are still alive as the retired value:
-    // exactly one publish per lane. Sizes must match what was published
-    // before the load.
+    // ...and the pre-load vectors the callback read are still alive, with
+    // what was published before the load.
     REQUIRE (preTrackLoaded->size() == 2);
     REQUIRE (preTrackAbsent->size() == 1);
     REQUIRE (preMaster->size() == 4);
     REQUIRE (preAux->size() == 1);
     REQUIRE (preBus->size() == 2);
+
+    // Once the callback returns, the next publish frees them.
+    callback.reset();
+    trackLaneLoaded.publishPoints ({});
+    REQUIRE (trackLaneLoaded.snapshot.retiredCount() == 0);
 
     dir.deleteRecursively();
 }

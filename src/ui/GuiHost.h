@@ -77,6 +77,9 @@ public:
     virtual void clickAutomationMode() = 0;
     virtual void restoreTrackMode (int mode) = 0;
     virtual bool instrumentControlsMatch (int input, bool monitor) const = 0;
+    // The mode selector shows mode, a Track::Mode, and the input rows are the ones
+    // that mode uses.
+    virtual bool modeControlsMatch (int mode) const = 0;
 };
 
 // One aux lane's plug-in slots.
@@ -184,6 +187,8 @@ public:
     virtual int pianoCcController() const = 0;
     virtual bool pianoNotePointer (std::int64_t tick, int pitch, bool down, int modifiers = 0) = 0;
     virtual std::vector<int> pianoSelection() const = 0;
+    // The open piano roll's edit cursor, in ticks from the region's start; -1 when none is open.
+    virtual std::int64_t pianoEditCursor() const = 0;
     virtual bool setTimelineShown (bool shown) = 0;
     virtual std::vector<double> tapeView() const = 0;
     virtual void restoreTapeView (const std::vector<double>& view) = 0;
@@ -220,6 +225,14 @@ public:
     // the drop line's x and the pointer's, in the tape strip. The line is -1
     // when none shows; empty when the row is not on screen.
     virtual std::vector<int> tapeDropHover (int track, const std::vector<std::filesystem::path>& files) = 0;
+    // The same files brought over that point and held there until tapeDropLeave:
+    // the drop line's x and the pointer's, as tapeDropHover gives them.
+    virtual std::vector<int> tapeDropHold (int track, const std::vector<std::filesystem::path>& files) = 0;
+    // The drop line's x while files are held; -1 when none shows.
+    virtual int tapeDropLine() const = 0;
+    virtual void tapeDropLeave() = 0;
+    // How many times the tape strip has painted; -1 without one.
+    virtual int tapePaints() const = 0;
     // The sample under the point dropFilesOnTrack drops on.
     virtual std::int64_t tapeDropPointSample (int track) const = 0;
     virtual int tapeXForSample (std::int64_t sample) const = 0;
@@ -275,6 +288,8 @@ public:
     virtual std::vector<int> modalLayout() const = 0;
     virtual bool clickModalBackdrop() = 0;
     virtual bool modalHasKeyboardFocus() const = 0;
+    // True when the top modal's body is what the window shows at the body's centre.
+    virtual bool modalBodyOnTop() const = 0;
     // The open context menu's rows in order: separators as "-", headers by
     // their text.
     virtual std::vector<std::string> contextMenuItems() const = 0;
@@ -388,6 +403,13 @@ public:
     virtual bool tunerOpen() const = 0;
     virtual bool inputVirtualKeyboard (const std::string& key) = 0;
     virtual void closeVirtualKeyboard() = 0;
+    // The transport bar's keyboard button, pressed the way its click handler runs.
+    virtual bool clickVirtualKeyboardButton() = 0;
+    // A press on the dim behind the keyboard, in the window's corner. False when the
+    // keyboard is not up.
+    virtual bool clickVirtualKeyboardDim() = 0;
+    // The main canvas, the window's own shortcut handler, holds the keyboard.
+    virtual bool canvasHasKeyboardFocus() const = 0;
 
     virtual bool meterClip (int index) = 0;
     virtual bool openMidiIo (int index) = 0;
@@ -403,6 +425,10 @@ public:
     virtual bool clickModalButton (const std::string& label) = 0;
     virtual void openAbout() = 0;
     virtual bool shortcutsOpen() const = 0;
+    // The open Keyboard Shortcuts panel's width and height, the row height it drew
+    // at, its full and its smallest row height, then x, y, width and height of each
+    // row in the panel. Empty when closed.
+    virtual std::vector<int> shortcutsLayout() const = 0;
     virtual void startMixdown() = 0;
     virtual bool fullScreen() const = 0;
     virtual int activeAuxLane() const = 0;
@@ -437,6 +463,8 @@ public:
     // Modifiers as pianoNotePointer takes them: 1 Shift, 2 Cmd/Ctrl.
     virtual bool clickAudioRegion (int track, int region, bool right = false, int modifiers = 0) = 0;
     virtual bool clickMidiRegion (int track, int region, bool right = false) = 0;
+    // Presses a region's middle and drags it `pixels` to the right.
+    virtual bool dragTapeRegion (int track, int region, bool midi, int pixels) = 0;
     // The take-count badge in a track's label cell, as drawn ("3 takes"), and
     // one or more clicks on it. Empty text and false when that track shows no badge.
     virtual std::string tapeTakeBadgeText (int track) const = 0;

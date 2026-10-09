@@ -313,11 +313,28 @@ std::pair<std::int64_t, std::int64_t> compSectionAt (const Track& track, std::in
 
 std::optional<CompSeam> compSeamNear (const Track& track, std::int64_t at, std::int64_t tolerance)
 {
+    if (tolerance < 0) return std::nullopt;
+    // A seam's crossfade runs from the right region's start to the left one's end, at
+    // most a seam fade later, so only regions that start or end that close to `at`
+    // can make one. Pairing only those spares a hover from pairing every region with
+    // every other.
+    const auto& regs = track.regions;
+    std::vector<int> lefts, rights;
+    for (int i = 0; i < static_cast<int> (regs.size()); ++i)
+    {
+        const auto& r = regs[(std::size_t) i];
+        if (r.takeId == 0) continue;
+        const auto end = r.timelineStart + r.lengthInSamples;
+        if (end >= at - tolerance && end <= at + tolerance + kPunchFadeSamples)
+            lefts.push_back (i);
+        if (r.timelineStart >= at - tolerance - kPunchFadeSamples && r.timelineStart <= at + tolerance)
+            rights.push_back (i);
+    }
+
     std::optional<CompSeam> nearest;
     std::int64_t best = std::numeric_limits<std::int64_t>::max();
-    const auto& regs = track.regions;
-    for (int l = 0; l < static_cast<int> (regs.size()); ++l)
-        for (int r = 0; r < static_cast<int> (regs.size()); ++r)
+    for (const int l : lefts)
+        for (const int r : rights)
         {
             if (l == r || ! seamBetween (regs[(std::size_t) l], regs[(std::size_t) r])) continue;
             const auto from = regs[(std::size_t) r].timelineStart;
@@ -355,8 +372,10 @@ std::int64_t clampSeamShift (const Track& track, CompSeam seam, std::int64_t del
     auto least = keep (left) - left.lengthInSamples;
     least = std::max ({ least, rightTake == nullptr ? 0 : rightTake->sourceOffset - right.sourceOffset,
                         -right.timelineStart });
-    if (least > most) return 0;
-    return std::clamp (delta, least, most);
+    // A trim is bounded by the file, not the take, so a region can already read past
+    // its take or keep less than its fades. The seam then only moves back toward
+    // what it may hold; a drag of nothing leaves it where it is.
+    return std::clamp (delta, std::min<std::int64_t> (least, 0), std::max<std::int64_t> (most, 0));
 }
 
 void shiftSeam (Track& track, CompSeam seam, std::int64_t delta)

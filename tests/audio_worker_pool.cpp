@@ -4,6 +4,7 @@
 
 #include <juce_core/juce_core.h>   // test-side timing / manual-reset gate only
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -46,7 +47,8 @@ void requireBefore (Pred pred, int timeoutMs = 2000)
 // failure instead of letting the whole job time out minutes later. The main
 // thread is blocked inside quiesce() during a hang, so only an external thread
 // can react, and the only way for it to fail fast is to terminate the process.
-void quiesceWithWatchdog (AudioWorkerPool& pool, int timeoutMs = 5000)
+template <typename Call>
+void callWithWatchdog (const char* what, Call call, int timeoutMs = 5000)
 {
     std::atomic<bool> done { false };
     std::thread watchdog ([&]
@@ -57,15 +59,20 @@ void quiesceWithWatchdog (AudioWorkerPool& pool, int timeoutMs = 5000)
             juce::Thread::sleep (10);
         if (! done.load (std::memory_order_acquire))
         {
-            std::fprintf (stderr, "AudioWorkerPool::quiesce() did not return within %d ms "
-                                  "- deadlock regression.\n", timeoutMs);
+            std::fprintf (stderr, "AudioWorkerPool::%s did not return within %d ms "
+                                  "- deadlock regression.\n", what, timeoutMs);
             std::fflush (stderr);
             std::abort();
         }
     });
-    pool.quiesce();
+    call();
     done.store (true, std::memory_order_release);
     watchdog.join();
+}
+
+void quiesceWithWatchdog (AudioWorkerPool& pool)
+{
+    callWithWatchdog ("quiesce()", [&pool] { pool.quiesce(); });
 }
 } // namespace
 
@@ -195,3 +202,82 @@ TEST_CASE ("AudioWorkerPool: quiesce on a partially-signalled orphan skips undis
 
     pool.stop();
 }
+
+TEST_CASE ("AudioWorkerPool: a device deadline reaches every worker without running a lane",
+           "[worker-pool]")
+{
+    // The setter wakes each parked worker to take the deadline on its own
+    // thread (an audio workgroup can only be joined from inside), then waits
+    // for all of them. Elsewhere than macOS taking it changes nothing, but the
+    // handshake is the same, so it is held here.
+    AudioWorkerPool pool;
+    LaneCounters counters;
+    pool.start (3, [&] (int lane) { counters.hit (lane); });
+
+    callWithWatchdog ("setDeviceDeadline()", [&pool] { pool.setDeviceDeadline (48000.0, 256, "Device A"); });
+    for (int lane = 0; lane < 4; ++lane)
+        REQUIRE (counters.get (lane) == 0);
+
+    pool.runBlock();
+    callWithWatchdog ("setDeviceDeadline()", [&pool] { pool.setDeviceDeadline (44100.0, 512, "Device B"); });
+    pool.runBlock();
+    for (int lane = 0; lane < 4; ++lane)
+        REQUIRE (counters.get (lane) == 2);
+
+    // Workers started after it take the deadline as they start.
+    pool.stop();
+    pool.start (2, [&] (int lane) { counters.hit (lane); });
+    callWithWatchdog ("setDeviceDeadline()", [&pool] { pool.setDeviceDeadline (48000.0, 128, "Device C"); });
+    pool.runBlock();
+    for (int lane = 0; lane < 3; ++lane)
+        REQUIRE (counters.get (lane) == 3);
+    pool.stop();
+}
+
+#if defined(__linux__)
+TEST_CASE ("AudioWorkerPool: a worker-count change keeps the threads it already has",
+           "[worker-pool]")
+{
+    // RTKit grants a user about 25 requests in 20 s. A pool that replaced its
+    // threads on every count change asked again for each of them, ran out,
+    // and left some lanes at nice and others realtime. Every thread keeps the
+    // scheduling it was given at birth, and a lane parked by a smaller count
+    // runs nothing until a larger one wakes it.
+    AudioWorkerPool pool;
+    LaneCounters counters;
+    pool.start (3, [&] (int lane) { counters.hit (lane); });
+    const auto born = pool.workerThreadIdsForTest();
+    REQUIRE (born.size() == 3);
+
+    pool.start (1, [&] (int lane) { counters.hit (lane); });
+    REQUIRE (pool.laneCount() == 2);
+    callWithWatchdog ("runBlock()", [&pool] { pool.runBlock(); });
+    REQUIRE (counters.get (0) == 1);
+    REQUIRE (counters.get (1) == 1);
+    REQUIRE (counters.get (2) == 0);
+    REQUIRE (counters.get (3) == 0);
+
+    pool.start (0, [&] (int lane) { counters.hit (lane); });
+    REQUIRE_FALSE (pool.isActive());
+    pool.runBlock();
+    REQUIRE (counters.get (0) == 2);
+
+    pool.start (3, [&] (int lane) { counters.hit (lane); });
+    REQUIRE (pool.workerThreadIdsForTest() == born);
+    callWithWatchdog ("runBlock()", [&pool] { pool.runBlock(); });
+    REQUIRE (counters.get (0) == 3);
+    REQUIRE (counters.get (1) == 2);
+    REQUIRE (counters.get (2) == 1);
+    REQUIRE (counters.get (3) == 1);
+
+    // Growing past what it holds adds threads, and only those are new.
+    pool.start (4, [&] (int lane) { counters.hit (lane); });
+    const auto grown = pool.workerThreadIdsForTest();
+    REQUIRE (grown.size() == 4);
+    REQUIRE (std::equal (born.begin(), born.end(), grown.begin()));
+    callWithWatchdog ("quiesce()", [&pool] { pool.quiesce(); });
+    callWithWatchdog ("runBlock()", [&pool] { pool.runBlock(); });
+    REQUIRE (counters.get (4) == 1);
+    pool.stop();
+}
+#endif

@@ -21,6 +21,7 @@
 #include "engine/BounceEngine.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
+#include "engine/RtPriority.h"
 #include "engine/scenario/SuiteRunner.h"
 #if DUSKSTUDIO_HAS_MULTISAMPLE
   #include "engine/multisample/NativeMultisampleSlot.h"
@@ -47,6 +48,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -54,10 +56,6 @@
 #include <cstring>
 #include <thread>
 
-#if JUCE_LINUX
- #include <sys/mman.h>
- #include <sys/resource.h>
-#endif
 #include "ui/PlatformWindowing.h"
 
 // Embedded brand icon - wired in CMakeLists.txt via juce_add_binary_data.
@@ -357,11 +355,11 @@ static bool displayUsableOrExplain()
 #if JUCE_LINUX
 static void primeRealtimeAudio()
 {
-    // Pin every page of the process in physical RAM so the audio thread
-    // never blocks on a page fault during a callback. Ardour, Bitwig, and
-    // every other low-latency Linux DAW does this. Requires `memlock` rlimit
-    // - typically `unlimited` for the audio group via /etc/security/limits.d.
-    if (mlockall (MCL_CURRENT | MCL_FUTURE) != 0)
+    // Pin the process in physical RAM so the audio thread never blocks on a
+    // page fault during a callback. Ardour, Bitwig, and every other
+    // low-latency Linux DAW does this. Requires `memlock` rlimit - typically
+    // `unlimited` for the audio group via /etc/security/limits.d.
+    if (! rt::lockProcessMemory())
     {
         DBG ("mlockall failed (errno=" << errno
              << ") - audio thread may suffer page-fault stalls under memory pressure");

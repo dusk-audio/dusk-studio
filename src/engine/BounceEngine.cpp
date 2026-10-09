@@ -247,7 +247,7 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
                             Mode mode, Format format, int mp3BitrateKbps,
                             int wavBitDepth, bool realtimeCapture)
 {
-    if (rendering.load (std::memory_order_relaxed)) return false;
+    if (rendering.load (std::memory_order_acquire)) return false;
 
     // FreezeTrack is reachable only through startFreeze(), which initialises
     // freezeTrackIndex / freezeLenSamples. Entering the generic path would run a
@@ -317,18 +317,18 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     // Pre-compute the stem-file count so the UI's "N stems" label has its
     // total available immediately (otherwise the dialog flashes 0 until
     // the worker thread enters its loop).
-    int stems = 0;
+    stemTargets.clear();
     if (renderMode == Mode::Stems)
     {
-        stems = (int) collectStemTargets (session, outputFile).size();
-        if (stems == 0)
+        stemTargets = collectStemTargets (session, outputFile);
+        if (stemTargets.empty())
         {
             const juce::ScopedLock lock (lastErrorLock);
             lastError = "No tracks with content or armed for recording";
             return false;
         }
     }
-    totalStemsToRender.store (stems, std::memory_order_relaxed);
+    totalStemsToRender.store ((int) stemTargets.size(), std::memory_order_relaxed);
 
     if (onAccepted) onAccepted();
 
@@ -352,7 +352,7 @@ void BounceEngine::run()
     if (renderRealtime)
     {
         const bool ok = runRealtimeMode();
-        rendering.store (false, std::memory_order_relaxed);
+        rendering.store (false, std::memory_order_release);
         std::string errSnapshot;
         {
             const juce::ScopedLock lock (lastErrorLock);
@@ -365,7 +365,7 @@ void BounceEngine::run()
     if (renderMode == Mode::Stems)
     {
         const bool ok = runStemsMode();
-        rendering.store (false, std::memory_order_relaxed);
+        rendering.store (false, std::memory_order_release);
         std::string errSnapshot;
         {
             const juce::ScopedLock lock (lastErrorLock);
@@ -380,7 +380,7 @@ void BounceEngine::run()
         const bool ok = renderFreezeTrack (freezeTrackIndex, outputFile,
                                             freezeLenSamples, renderSampleRate,
                                             renderBlockSize);
-        rendering.store (false, std::memory_order_relaxed);
+        rendering.store (false, std::memory_order_release);
         std::string errSnapshot;
         {
             const juce::ScopedLock lock (lastErrorLock);
@@ -401,7 +401,7 @@ void BounceEngine::run()
             const juce::ScopedLock lock (lastErrorLock);
             lastError = writerErr;
         }
-        rendering.store (false, std::memory_order_relaxed);
+        rendering.store (false, std::memory_order_release);
         if (onFinished) onFinished (false, writerErr);
         return;
     }
@@ -426,7 +426,7 @@ void BounceEngine::run()
         // state. Drop the partial file and bail.
         writer.reset();
         outputFile.deleteFile();
-        rendering.store (false, std::memory_order_relaxed);
+        rendering.store (false, std::memory_order_release);
         return;
     }
 
@@ -612,7 +612,7 @@ void BounceEngine::run()
             engine.restoreMasteringLoudness (*measured);
     });
 
-    rendering.store (false, std::memory_order_relaxed);
+    rendering.store (false, std::memory_order_release);
     std::string errSnapshot;
     {
         const juce::ScopedLock lock (lastErrorLock);
@@ -656,14 +656,7 @@ std::int64_t BounceEngine::leadInFor (StemTarget::Kind kind) const
 
 bool BounceEngine::runStemsMode()
 {
-    const auto targets = collectStemTargets (session, outputFile);
-    if (targets.empty())
-    {
-        const juce::ScopedLock lock (lastErrorLock);
-        lastError = "No tracks with content or armed for recording";
-        return false;
-    }
-    totalStemsToRender.store ((int) targets.size(), std::memory_order_relaxed);
+    const auto& targets = stemTargets;
 
     ScopedOfflineRender offlineGuard (engine);
     // Detach + re-prepare on the message thread (plugin (de)activate must not run
@@ -877,20 +870,9 @@ bool BounceEngine::runRealtimeMode()
     // their external loop for real - the whole point of this mode.
     std::vector<StemTarget> files;
     if (renderMode == Mode::Stems)
-    {
-        files = collectStemTargets (session, outputFile);
-        if (files.empty())
-        {
-            const juce::ScopedLock lock (lastErrorLock);
-            lastError = "No tracks with content or armed for recording";
-            return false;
-        }
-        totalStemsToRender.store ((int) files.size(), std::memory_order_relaxed);
-    }
+        files = stemTargets;
     else
-    {
         files.push_back ({ StemTarget::Kind::Mix, -1, outputFile });
-    }
     const int numFiles = (int) files.size();
 
     // Capture scratches sized to the live block; the callback never hands the
@@ -1099,7 +1081,7 @@ bool BounceEngine::runRealtimeMode()
 bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
                                 std::int64_t lenSamples, double sampleRate, int blockSize)
 {
-    if (rendering.load (std::memory_order_relaxed))
+    if (rendering.load (std::memory_order_acquire))
         return false;
 
     outputFile       = outFile;

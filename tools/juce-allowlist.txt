@@ -8,7 +8,7 @@ src/dsp/MasteringChain.h	4
 src/engine/AudioEngine.cpp	80
 src/engine/AudioEngine.h	14
 src/engine/AudioPipelineSelfTest.cpp	22
-src/engine/BounceEngine.cpp	43
+src/engine/BounceEngine.cpp	41
 src/engine/BounceEngine.h	17
 src/engine/DpAligner.cpp	3
 src/engine/DpAligner.h	3
@@ -30,7 +30,7 @@ src/engine/device/DeviceManager.h	3
 src/engine/device/DeviceManagerJuce.cpp	44
 src/engine/hosting/NativePluginId.h	8
 src/engine/ipc/IpcSelfTest.cpp	5
-src/engine/ipc/PluginHostMain.cpp	48
+src/engine/ipc/PluginHostMain.cpp	47
 src/engine/midi/JuceMidiBackend.cpp	13
 src/engine/midi/JuceMidiBackend.h	2
 src/engine/multisample/AriaBank.cpp	12
@@ -48,7 +48,7 @@ src/session/MidiBindings.h	8
 src/session/ParamEditAction.h	2
 src/session/RegionEditActions.cpp	20
 src/session/RegionEditActions.h	4
-src/session/Session.cpp	10
+src/session/Session.cpp	9
 src/session/Session.h	61
 src/session/SessionSerializer.cpp	77
 src/session/SessionSerializer.h	13
@@ -105,7 +105,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	426
+src/ui/MainComponent.cpp	425
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	328
 src/ui/MasterStripComponent.h	55

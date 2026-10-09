@@ -352,15 +352,14 @@ MidiRegionEditAction::MidiRegionEditAction (Session& s, AudioEngine& e,
 bool MidiRegionEditAction::perform() { return apply (true); }
 bool MidiRegionEditAction::undo()    { return apply (false); }
 
-// Assigning a whole MidiRegion frees the old notes/ccs storage, so this
-// must swap-publish like Create/RecordCommit - currentMutable() is only
-// safe for value edits inside existing entries.
+// A region's notes and controllers reach the audio thread only through a
+// publish, so this swap-publishes like Create/RecordCommit.
 bool MidiRegionEditAction::apply (bool forward)
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks || changes.empty()) return false;
     if (frozenLocked (session, trackIdx)) return false;
-    // Bail before mutate(): a no-op publish would burn the snapshot's single
-    // retire slot on an identical vector.
+    // Bail before mutate(): an invalid index must not publish an identical
+    // timeline.
     const int count = (int) session.track (trackIdx).midiRegions.current().size();
     for (const auto& c : changes)
         if (c.regionIdx < 0 || c.regionIdx >= count) return false;
@@ -453,6 +452,7 @@ bool PasteRegionAction::perform()
     auto& regs = track.regions;
     insertedAt = (int) regs.size();
     regs.push_back (regionToInsert);
+    regs.back().timelineStart = std::max<std::int64_t> (0, regs.back().timelineStart);
     if (const auto* take = findTake (track, regionToInsert.takeId);
         take == nullptr || take->file != regionToInsert.file)
         regs.back().takeId = 0;
@@ -479,10 +479,16 @@ CreateMidiRegionAction::CreateMidiRegionAction (Session& s,
                                                   std::int64_t startSamples,
                                                   std::int64_t lenSamples,
                                                   std::int64_t lenTicks)
-    : session (s), trackIdx (t),
-      timelineStart (startSamples),
-      lengthInSamples (lenSamples),
-      lengthInTicks (lenTicks)
+    : session (s), trackIdx (t)
+{
+    region.timelineStart   = startSamples;
+    region.lengthInSamples = lenSamples;
+    region.lengthInTicks   = lenTicks;
+    region.recordedAtBPM   = (double) session.tempoBpm.load (std::memory_order_relaxed);
+}
+
+CreateMidiRegionAction::CreateMidiRegionAction (Session& s, int t, MidiRegion r)
+    : session (s), trackIdx (t), region (std::move (r))
 {}
 
 bool CreateMidiRegionAction::perform()
@@ -490,17 +496,11 @@ bool CreateMidiRegionAction::perform()
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
 
-    MidiRegion region;
-    region.timelineStart   = timelineStart;
-    region.lengthInSamples = lengthInSamples;
-    region.lengthInTicks   = lengthInTicks;
-    region.recordedAtBPM   = (double) session.tempoBpm.load (std::memory_order_relaxed);
-
     int idx = -1;
     session.track (trackIdx).midiRegions.mutate (
-        [&region, &idx] (std::vector<MidiRegion>& mregs)
+        [this, &idx] (std::vector<MidiRegion>& mregs)
         {
-            mregs.push_back (std::move (region));
+            mregs.push_back (region);
             idx = (int) mregs.size() - 1;
         });
     insertedAt = idx;
@@ -1755,8 +1755,7 @@ bool JoinRegionsAction::perform()
 
     // Slow path: render to a new WAV in <session>/takes/, every selected
     // region at its timeline offset, faded and crossfaded as it played (gaps
-    // become silence). Uses the source files' sample rate / channel count
-    // from the leading region.
+    // become silence). Uses the leading region's sample rate and bit depth.
     if (! joinSelectionInBounds (regs, sortedDesc))
         return false;
     auto firstReader = dusk::audio::FileReader::open (
@@ -1764,7 +1763,7 @@ bool JoinRegionsAction::perform()
     if (firstReader == nullptr) return false;
     const double sr   = firstReader->info().sampleRate;
     const int    bits = std::max (16, firstReader->info().bitsPerSample);
-    const int    chs  = std::clamp ((int) beforeRegions.front().numChannels, 1, 2);
+    const int    chs  = channelsAsPlayed (beforeRegions);
 
     const auto totalSamples = (int) std::clamp<std::int64_t> (
         totalLen, 1, std::numeric_limits<int>::max());

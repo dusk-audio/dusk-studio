@@ -1,7 +1,18 @@
 #pragma once
 
+#include "MidiPanic.h"
+
 namespace duskstudio
 {
+// What one generated three-byte message takes in the track's routing buffer,
+// and so what it is charged against the budget.
+constexpr int kGeneratedEventBytes = (int) dusk::MidiBuffer::recordBytes (3);
+constexpr int kHangingResetBytes = midi::kHangingResetMessageCount * kGeneratedEventBytes;
+constexpr int kGeneratedMidiBudgetBytes = (int) dusk::kMidiGeneratedBlockBytes;
+static_assert ((std::size_t) kGeneratedMidiBudgetBytes + 2 * dusk::kMidiBlockBytes
+                   <= dusk::kMidiRoutingBlockBytes,
+               "the routing buffer must hold the generated block and both live inputs");
+
 // Fixed-capacity accounting for MIDI generated inside the audio callback.
 // Structural bytes are protected from discretionary scheduling until the
 // corresponding all-or-nothing message group is emitted.

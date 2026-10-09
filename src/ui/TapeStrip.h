@@ -202,6 +202,7 @@ public:
     auto dropPointForScenario (int track) const { return rowBounds (track).getCentre(); }
     std::int64_t dropPointSampleForScenario (int track) const { return sampleAtX (dropPointForScenario (track).x); }
     int dropLineXForScenario() const { return dropAccepted ? dropHoverX : -1; }
+    int paintsForScenario() const noexcept { return paints; }
     int xForSampleForScenario (std::int64_t sample) const { return xForSample (sample); }
     // Stands in for the Alt key a drop reads; nullopt goes back to the key.
     void setDropAtMouseForScenario (std::optional<bool> atMouse) { dropAtMouseOverride = atMouse; }
@@ -482,6 +483,10 @@ private:
     std::array<juce::String, Session::kNumTracks> lastNames;
     std::array<juce::Colour, Session::kNumTracks> lastColours;
     std::array<std::string, Session::kNumTracks> lastTakeBadges;
+    // Regions can land with nothing announcing them, as a take committed when
+    // the device stops does.
+    std::array<std::uint64_t, Session::kNumTracks> lastMidiGenerations {};
+    std::array<std::size_t, Session::kNumTracks> lastAudioRegionCounts {};
 
     bool        lastLoopEnabled  = false;
     std::int64_t lastLoopStart    = -1;
@@ -614,9 +619,16 @@ private:
     int  dropHoverTrack = -1;
     int  dropHoverX     = -1;
     bool dropAccepted   = false;
-    // Drops land at the playhead, or at the pointer while Alt is held.
+    int  dropPointerX   = 0;
+    int  dropPointerY   = 0;
+    // Drops land at the playhead, or at the pointer while Alt is held. The
+    // timer refreshes the line too: Alt can change with the files held still,
+    // and no drag move then comes to show it.
     bool dropAtMouse() const;
+    void refreshDropLine();
     std::optional<bool> dropAtMouseOverride;
+
+    int paints = 0;
 
     // Audio + MIDI share a vector index space within a track but are
     // distinct types - separate selection slots avoid "which type is

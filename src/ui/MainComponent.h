@@ -280,6 +280,7 @@ private:
         juce::File file;
         int        trackIndex = -1;   // -1 = needs picker; >=0 pre-assigned
         bool       isMidi     = false;
+        Track::Mode mode      = Track::Mode::Mono;   // pre-assigned only
     };
     std::vector<PendingImport> pendingImportQueue;
     std::int64_t pendingImportTimelineStart = 0;

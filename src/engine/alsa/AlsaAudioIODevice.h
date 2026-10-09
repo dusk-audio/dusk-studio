@@ -219,6 +219,11 @@ private:
     std::thread          ioThread;
     std::atomic<bool>    ioShouldExit { false };
     dusk::AutoResetEvent ioExited;
+    // What scheduling the I/O thread got, reported as it starts for start()
+    // to ask RTKit on its behalf when RLIMIT_RTPRIO refused it.
+    std::atomic<std::int64_t> ioThreadId { 0 };
+    std::atomic<bool>         ioThreadRealtime { false };
+    dusk::AutoResetEvent      ioThreadScheduled;
     std::atomic<bool>    threadAbandoned { false };
 
     std::atomic<bool> isDeviceOpen { false };

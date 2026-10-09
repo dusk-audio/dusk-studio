@@ -151,4 +151,13 @@ bool mixRegionsAsPlayed (const std::vector<AudioRegion>& regions,
     }
     return true;
 }
+
+int channelsAsPlayed (const std::vector<AudioRegion>& regions)
+{
+    int channels = 1;
+    for (const auto& reg : regions)
+        if (const auto reader = dusk::audio::FileReader::open (reg.filePath()))
+            channels = std::max (channels, std::clamp (reader->info().numChannels, 1, 2));
+    return channels;
+}
 } // namespace duskstudio

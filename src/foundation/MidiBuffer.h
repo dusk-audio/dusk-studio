@@ -13,11 +13,16 @@
 // the decoders read raw bytes directly.
 namespace dusk
 {
-// 16 KB clears a dense controller burst plus a 1 kB-class sysex. Per-track
-// routing can merge four such sources, so every buffer after that merge shares
-// the larger ceiling through to the hardware-output queue.
+// 16 KB clears a dense controller burst plus a 1 kB-class sysex.
 constexpr std::size_t kMidiBlockBytes = 16 * 1024;
-constexpr std::size_t kMidiRoutingBlockBytes = 4 * kMidiBlockBytes;
+// What the engine may generate for one track in one block: the timeline's
+// events, with room for a reset at every seam of the shortest loop.
+constexpr std::size_t kMidiGeneratedBlockBytes = 3 * kMidiBlockBytes;
+// A track's routing buffer merges the generated block with a block from its
+// MIDI input and one from the on-screen keyboard an armed track also hears.
+// Every buffer after that merge shares this ceiling through to the
+// hardware-output queue.
+constexpr std::size_t kMidiRoutingBlockBytes = kMidiGeneratedBlockBytes + 2 * kMidiBlockBytes;
 
 // Non-owning view of one message's raw bytes (valid while its MidiBuffer lives).
 class MidiMessage
@@ -58,6 +63,12 @@ public:
     static constexpr std::size_t minimumEventStorageBytes() noexcept
     {
         return kHeader + 1;
+    }
+
+    // What one event of numBytes takes in a buffer.
+    static constexpr std::size_t recordBytes (int numBytes) noexcept
+    {
+        return kHeader + (std::size_t) numBytes;
     }
 
     void clear()               noexcept { data.clear(); }

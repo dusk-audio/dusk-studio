@@ -50,6 +50,7 @@
 //                          atomic instance pointer so the parent's audio
 //                          thread isn't gated on control-plane traffic.
 
+#include "MidiWire.h"
 #include "ParamPushQueue.h"
 #include "PluginIpc.h"
 #include "PluginScanProtocol.h"
@@ -151,6 +152,18 @@ bool armParentDeathSignal (int argc, char* const* argv) noexcept
     return true;
 }
 #endif
+
+// The echo stubs hand back what they were handed, read and written through
+// the wire codec the plug-in host itself uses. Returns the bytes written.
+std::uint32_t echoMidi (void* shmBase, std::uint32_t midiInBytes) noexcept
+{
+    std::uint8_t* out = midiOut (shmBase);
+    std::uint32_t written = 0;
+    midiwire::forEachEvent (midiIn (shmBase), midiInBytes,
+                            [out, &written] (const std::uint8_t* data, int numBytes, int sample)
+                            { midiwire::append (out, written, kMidiBytes, data, numBytes, sample); });
+    return written;
+}
 
 // Single mutex guards every outbound write on the control socket so the
 // sockThread's sync-RPC replies cannot interleave with the message thread's
@@ -425,9 +438,7 @@ int runIpcStub (int argc, const char* const* argv, StubReplyMode replyMode) noex
         }
 
         const auto midiInBytes = hdr->midiInBytes <= kMidiBytes ? hdr->midiInBytes : 0u;
-        hdr->midiOutBytes = midiInBytes;
-        if (midiInBytes > 0)
-            std::memcpy (midiOut (shm.data()), midiIn (shm.data()), midiInBytes);
+        hdr->midiOutBytes = echoMidi (shm.data(), midiInBytes);
 
         lastSeq = cmd;
         if (replyMode == StubReplyMode::SuddenDeath)
@@ -603,9 +614,7 @@ int runIpcLoadStub (int argc, const char* const* argv, bool ackHandshake,
 
                 const auto midiInBytes = block->midiInBytes <= kMidiBytes
                                            ? block->midiInBytes : 0u;
-                block->midiOutBytes = midiInBytes;
-                if (midiInBytes > 0)
-                    std::memcpy (midiOut (shm.data()), midiIn (shm.data()), midiInBytes);
+                block->midiOutBytes = echoMidi (shm.data(), midiInBytes);
 
                 lastSeq = cmd;
                 block->replySeq.store (cmd, std::memory_order_release);
@@ -1485,6 +1494,7 @@ void handleSetParamAsync (HostState& host,
 void audioWorkerLoop (HostState& host) noexcept
 {
     juce::MidiBuffer midiScratch;
+    midiScratch.ensureSize (kMidiBytes);
     std::uint32_t lastSeq = 0;
 
     while (! host.shouldQuit.load (std::memory_order_acquire))
@@ -1530,25 +1540,10 @@ void audioWorkerLoop (HostState& host) noexcept
 
             midiScratch.clear();
             const auto midiInBytes = host.hdr->midiInBytes;
-            if (midiInBytes > 0 && midiInBytes <= kMidiBytes)
-            {
-                const std::uint8_t* base = midiIn (host.shm.data());
-                std::uint32_t off = 0;
-                std::uint8_t evBuf[256];
-                while (off + 6 <= midiInBytes)
-                {
-                    int sample = 0;
-                    std::memcpy (&sample, base + off, 4); off += 4;
-                    std::uint16_t l16 = 0;
-                    std::memcpy (&l16, base + off, 2); off += 2;
-                    const int eventLen = (int) l16;
-                    if (eventLen <= 0 || eventLen > (int) sizeof (evBuf)) break;
-                    if (off + (std::uint32_t) eventLen > midiInBytes) break;
-                    std::memcpy (evBuf, base + off, (std::size_t) eventLen);
-                    off += (std::uint32_t) eventLen;
-                    midiScratch.addEvent (juce::MidiMessage (evBuf, eventLen), sample);
-                }
-            }
+            if (midiInBytes <= kMidiBytes)
+                midiwire::forEachEvent (midiIn (host.shm.data()), midiInBytes,
+                                        [&midiScratch] (const std::uint8_t* data, int numBytes, int sample)
+                                        { midiScratch.addEvent (data, numBytes, sample); });
 
             juce::AudioBuffer<float> view (host.workBuffer.getArrayOfWritePointers(),
                                               bufCh, n);
@@ -1570,17 +1565,7 @@ void audioWorkerLoop (HostState& host) noexcept
             std::uint8_t* out = midiOut (host.shm.data());
             std::uint32_t written = 0;
             for (const auto meta : midiScratch)
-            {
-                const auto m = meta.getMessage();
-                const int len = m.getRawDataSize();
-                if (written + 4 + 2 + (std::uint32_t) len > kMidiBytes) break;
-                const int sample = meta.samplePosition;
-                std::memcpy (out + written, &sample, 4); written += 4;
-                const std::uint16_t l16 = (std::uint16_t) len;
-                std::memcpy (out + written, &l16, 2); written += 2;
-                std::memcpy (out + written, m.getRawData(), (std::size_t) len);
-                written += (std::uint32_t) len;
-            }
+                midiwire::append (out, written, kMidiBytes, meta.data, meta.numBytes, meta.samplePosition);
             host.hdr->midiOutBytes = written;
         }
 

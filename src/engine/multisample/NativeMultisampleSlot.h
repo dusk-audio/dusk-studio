@@ -127,6 +127,7 @@ public:
     {
         if (! primed) return false;
         unload();
+        owesMidiReset = false;
         bundle   = std::move (primed.bundle);
         instance = std::move (primed.instance);
         adapter.prepare (instance->portLayout(), maxBlock);

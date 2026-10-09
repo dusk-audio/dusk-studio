@@ -174,10 +174,9 @@ struct CopyOut
     {
         stage.routing = std::make_unique<HardwareInsertRouting> (from.current());
     }
-    void midiRegions (AtomicSnapshot<std::vector<MidiRegion>>&,
-                      const AtomicSnapshot<std::vector<MidiRegion>>& from)
+    void midiRegions (MidiRegionSnapshot&, const MidiRegionSnapshot& from)
     {
-        stage.midiRegions = std::make_unique<std::vector<MidiRegion>> (from.current());
+        stage.midiRegions = MidiRegionSnapshot::stage (from);
     }
     void lane (size_t p, AutomationLane&, const AutomationLane& from)
     {
@@ -201,7 +200,8 @@ struct RefreshAtomics
 };
 
 // Stage -> live track: values swapped in, so what they replace is freed with the
-// stage rather than here; atomics stored; the staged snapshots published.
+// stage rather than here; atomics stored; the staged snapshots published, what
+// they retire left for reclaimTrackSnapshots().
 struct Land
 {
     StagedTrack& stage;
@@ -212,27 +212,32 @@ struct Land
                  std::memory_order order = kRelaxed) noexcept { to.store (from.load (kRelaxed), order); }
     void dial (LegacyEqDial& to, const LegacyEqDial& from) noexcept { to.setRaw (from.raw()); }
     template <typename T> void gesture (std::atomic<T>& to) noexcept { to.store (T {}, kRelaxed); }
-    void routing (AtomicSnapshot<HardwareInsertRouting>& to, AtomicSnapshot<HardwareInsertRouting>&) noexcept
+    void routing (AtomicSnapshot<HardwareInsertRouting>& to, AtomicSnapshot<HardwareInsertRouting>&)
     {
-        to.publish (std::move (stage.routing));
+        to.publishDeferred (std::move (stage.routing));
     }
-    void midiRegions (AtomicSnapshot<std::vector<MidiRegion>>& to,
-                      AtomicSnapshot<std::vector<MidiRegion>>&) noexcept
+    void midiRegions (MidiRegionSnapshot& to, MidiRegionSnapshot&)
     {
-        to.publish (std::move (stage.midiRegions));
+        to.land (stage.midiRegions);
     }
-    void lane (size_t p, AutomationLane& to, AutomationLane&) noexcept
+    void lane (size_t p, AutomationLane& to, AutomationLane&)
     {
-        to.snapshot.publish (std::move (stage.lanes[p]));
+        to.snapshot.publishDeferred (std::move (stage.lanes[p]));
     }
 };
 } // namespace
+
+bool Track::hasDefaultName (int slot) const
+{
+    const auto trimmed = name.trim();
+    return trimmed.isEmpty() || trimmed.toStdString() == defaultName (slot);
+}
 
 Session::Session()
 {
     for (int i = 0; i < kNumTracks; ++i)
     {
-        tracks[(size_t) i].name = juce::String (i + 1);
+        tracks[(size_t) i].name = Track::defaultName (i);
         tracks[(size_t) i].colour = juce::Colour::fromHSV (i / (float) kNumTracks, 0.45f, 0.75f, 1.0f);
     }
 
@@ -458,6 +463,8 @@ std::optional<Session::StagedTrackMove> Session::stageTrackMove (const TrackMove
         auto stage = std::make_unique<StagedTrack>();
         CopyOut copy { *stage };
         eachTrackField (stage->fields, tracks[(size_t) from], copy);
+        if (stage->fields.hasDefaultName (from))
+            stage->fields.name = Track::defaultName (to);
         auto& tag = stage->fields.lv2StateTag;
         if (tag.empty())
             tag = defaultLv2StateTag (from);
@@ -499,11 +506,24 @@ void Session::landTrackMove (StagedTrackMove& staged)
         audition.trackIdx = staged.plan.oldToNew[(size_t) audition.trackIdx];
 }
 
+void Session::reclaimTrackSnapshots() noexcept
+{
+    for (auto& t : tracks)
+    {
+        t.midiRegions.reclaim();
+        t.hardwareInsert.routing.reclaim();
+        for (auto& lane : t.automationLanes)
+            lane.snapshot.reclaim();
+    }
+}
+
 bool Session::permuteTracks (const TrackMovePlan& plan, const TrackSlotMask& refollow)
 {
     auto staged = stageTrackMove (plan, refollow);
     if (! staged) return false;
     landTrackMove (*staged);
+    staged.reset();
+    reclaimTrackSnapshots();
     return true;
 }
 
@@ -852,10 +872,10 @@ void applyTempoChange (Session& s, float newBpm, double sampleRate) noexcept
             auto& holder = s.track (ti).midiRegions;
             if (holder.current().empty()) continue;
 
-            // mutate() copies the current snapshot, runs the lambda, and
-            // republishes with release ordering. The audio thread's next
-            // read() picks up the new positions atomically.
-            holder.mutate ([factor, sampleRate, newBpm] (std::vector<MidiRegion>& v)
+            // Only where the regions sit changes, so the timeline that goes
+            // out shares every region's events with the one it replaces. The
+            // audio thread's next read() picks up the new positions together.
+            holder.mutatePlacements ([factor, sampleRate, newBpm] (std::vector<MidiRegion>& v)
             {
                 for (auto& r : v)
                 {

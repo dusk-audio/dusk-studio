@@ -765,3 +765,26 @@ TEST_CASE ("Session track move: a load drops tags that are malformed or share a 
     std::error_code ignored;
     std::filesystem::remove_all (dir, ignored);
 }
+
+TEST_CASE ("Session track move: a track never named shows the number of the row it lands in",
+           "[session][track-move]")
+{
+    Session session;
+    session.track (5).name = "Bass";
+    const auto plan = planBlockMove ({ 0, 5 }, 10);
+    const auto names = [&session] (int bass, const std::string& when)
+    {
+        for (int k = 0; k < kN; ++k)
+        {
+            INFO (when << ", slot " << k);
+            CHECK (session.track (k).name.toStdString() == (k == bass ? std::string ("Bass") : std::to_string (k + 1)));
+        }
+    };
+
+    session.permuteTracks (plan);
+    REQUIRE (plan.oldToNew[5] != 5);
+    names (plan.oldToNew[5], "after the move");
+
+    session.permuteTracks (invertTrackMove (plan));
+    names (5, "after the move back");
+}

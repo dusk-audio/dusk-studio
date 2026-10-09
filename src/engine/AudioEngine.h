@@ -24,6 +24,7 @@
 #include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
 #include "MidiTimeCodeEmitter.h"
+#include "MidiPanic.h"
 #include "midi/MidiDevices.h"
 #include "midi/MidiSort.h"
 #include "device/DeviceManager.h"
@@ -31,11 +32,13 @@
 #include "device/IODeviceCallback.h"
 #include "device/MicrophoneAccess.h"
 #include "../session/Session.h"
+#include "MidiTimelineSchedule.h"
 #include "AudioWorkerPool.h"
 #include "MasteringPlayer.h"
 #include "PlaybackEngine.h"
 #include "PluginManager.h"
 #include "RecordManager.h"
+#include "TimelineSampleRate.h"
 #include "Transport.h"
 #include "DuskStudioPlayHead.h"
 
@@ -109,6 +112,9 @@ public:
     // drives the callback synchronously, so the A/B harness can flip the count
     // between captures.
     void setWorkerCountForTest (int n);
+
+    // Test-only, Linux: the kernel thread id of every DSP worker, in lane order.
+    std::vector<std::int64_t> dspWorkerThreadIdsForTest() const { return workerPool.workerThreadIdsForTest(); }
 
     // The audio-device orchestrator. The settings UI + self-test drive it through
     // the dusk API (IODevice / DeviceSetup / listener callbacks); no JUCE device
@@ -567,6 +573,12 @@ public:
     // AFTER collector drain. Cleared after one block.
     void stageTestMidiInjection (int inputIdx, dusk::MidiBuffer events);
 
+    // Test-only, message thread; holds the callback out while it runs. Caps
+    // the track's routing buffer at `bytes` so a block can overflow it, which
+    // the real ceiling only allows with two busy inputs and a dense timeline
+    // at once. dusk::kMidiRoutingBlockBytes puts it back.
+    void setTrackMidiCapacityForTest (int trackIndex, std::size_t bytes);
+
     // Bookends around SessionSerializer save/load. publish copies each
     // PluginSlot's description + state into the Track fields; consume
     // restores in reverse.
@@ -622,6 +634,14 @@ public:
     // knows the rate the session's audio was made at. An offline render's own
     // rate never lands here.
     double getLastDeviceSampleRate() const noexcept { return lastDeviceSampleRate.load (std::memory_order_relaxed); }
+    // Stands in for a device last opened at another rate; the next open writes over it.
+    void setLastDeviceSampleRateForScenario (double rate) noexcept { lastDeviceSampleRate.store (rate, std::memory_order_relaxed); }
+
+    // Message thread only: it reads the session's saved rate.
+    double getTimelineSampleRate() const noexcept
+    {
+        return timelineSampleRate (getCurrentSampleRate(), getLastDeviceSampleRate(), session.sessionSampleRate);
+    }
 
     // Engine-side xrun: callback wall-clock exceeded the buffer's
     // audio time. Distinct from getBackendXRunCount.
@@ -641,8 +661,15 @@ public:
 
     // Zero both xrun readouts (status-bar double-click). The backend
     // counter is device-owned and can't be cleared, so it's offset
-    // against a baseline instead. Message thread.
+    // against a baseline instead. The realtime count below goes with them.
+    // Message thread.
     void   resetXRunCounts() noexcept;
+
+    // Linux: how often since resetXRunCounts() a thread computed past the
+    // realtime CPU-time warning without blocking and was moved to normal
+    // priority (RealtimeKit.h), warnings that found no realtime thread to move
+    // included. 0 elsewhere. Any thread; one atomic load per counter.
+    int    getRealtimeDemotionCount() const noexcept;
 
     // Per-section callback timing (see PerfSections below). Capture is
     // normally enabled by DUSKSTUDIO_PERF=1 + a 2 s reporter timer; the
@@ -964,6 +991,8 @@ private:
     std::vector<dusk::MidiBuffer> perInputMidi;
     // Per-track routing buffer feeding native MIDI consumers and the recorder.
     std::array<dusk::MidiBuffer, Session::kNumTracks> perTrackMidi;
+    // The timeline scheduler's controller chase, audio thread only.
+    midischedule::ControllerChase midiControllerChase;
     // JUCE-only scratch passed through the existing instrument-hosting API.
     std::array<juce::MidiBuffer, Session::kNumTracks> perTrackMidiScratch;
     // Timestamp-sorted raw live input accepted by pullInput for the armed MIDI
@@ -983,11 +1012,16 @@ private:
     std::atomic<int>  testInjectInputIdx { -1 };
     std::atomic<bool> testInjectReady    { false };
 
-    // Previous block's midiInputIndex per track - detects mid-play
-    // input swaps so we can fire All-Notes-Off + Sustain-Off on the
-    // new input. Without this, held notes from the previous device
-    // keep ringing (Note Off never arrives on the now-unrouted source).
-    std::array<int, Session::kNumTracks> lastMidiInputIndex {};
+    // The live MIDI each track took last block. A block whose route narrows
+    // (midi::liveRouteNarrows) resets the track's instrument, since the
+    // note-off for a key held through the change never reaches it. Audio
+    // thread, except that a track move remaps it with the callback suspended.
+    std::array<midi::LiveMidiRoute, Session::kNumTracks> lastLiveMidiRoute {};
+
+    // Set when a track's MIDI block lost events and went out as a bare reset
+    // instead: the next block resets again and chases the timeline's held
+    // notes back in. Same threading as lastLiveMidiRoute.
+    std::array<bool, Session::kNumTracks> midiChaseAfterDrop {};
 
     // Where each MIDI track's last timeline window ended, in samples past the
     // next block's start, so the next window carries on from there when the
@@ -1002,6 +1036,26 @@ private:
     // and resets and chases at its head. Read only while midiScheduledAhead is
     // not -1; same threading.
     std::array<std::int64_t, Session::kNumTracks> midiScheduledUpTo {};
+
+    // The notes each track's timeline started on its instrument and has not
+    // ended, and the timeline they were scheduled from: the regions' edit
+    // count, the tempo and the tempo map. A block that finds the timeline
+    // changed sends the note-offs the change took away, and one that no longer
+    // plays the timeline sends them all. Same threading as midiScheduledAhead.
+    struct MidiTimelineStamp
+    {
+        std::uint32_t   edits = 0;
+        std::uint32_t   bpmBits = 0;
+        const TempoMap* tempoMap = nullptr;
+
+        bool operator!= (const MidiTimelineStamp& o) const noexcept
+        {
+            return edits != o.edits || bpmBits != o.bpmBits || tempoMap != o.tempoMap;
+        }
+    };
+    std::array<midischedule::NoteCount, Session::kNumTracks> midiTimelineSounding {};
+    std::array<MidiTimelineStamp, Session::kNumTracks> midiTimelineSeen {};
+    midischedule::NoteCount midiTimelineHeldScratch;
 
     // MIDI hot-plug. The backend's MIDI thread reports that the OS port set
     // moved; noteMidiDeviceChange arms a single delayed pass so one plug (a
@@ -1135,8 +1189,18 @@ private:
         AudioEngine& owner;
     };
     CallbackDiagnosticTimer diagTimer { *this };
+   #if defined(__linux__)
+    // diagTimer: the DSP lanes a stalled block moved off realtime go back on
+    // it (AudioWorkerPool::restoreRealtime).
+    void restoreRealtimeLanes();
+    int  realtimeRestoreTriedAt = 0;   // rt::realtimeDemotions().count then
+   #endif
     std::int64_t lastReportedGated  = 0;   // diagTimer (message thread) only
     std::int64_t lastReportedSilent = 0;
+    int          lastReportedRealtimeDemotions = 0;
+    int          lastReportedUnattributedOverruns = 0;
+    // rt::realtimeDemotions() count plus unattributed at the last reset.
+    std::atomic<int>    realtimeDemotionBaseline { 0 };
 
     std::atomic<int>    xrunCount         { 0 };
     // Device xrun count at the last resetXRunCounts(); subtracted in

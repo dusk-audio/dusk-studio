@@ -112,11 +112,11 @@ private:
     int insertedAt = -1;
 };
 
-// Adds a fresh empty MidiRegion to a MIDI track at a given timeline
-// sample. Used by the TIMELINE-view double-click-to-create gesture so a
-// user can hand-author MIDI without first having to record. Undo
-// removes the region; redo re-inserts at the same position. Note pile
-// stays empty - the user adds notes via the piano roll separately.
+// Adds a MidiRegion to the end of a MIDI track's regions. The first form makes
+// a fresh empty one at the session's tempo, for the TIMELINE-view
+// double-click-to-create gesture, so a user can hand-author MIDI without first
+// having to record; the second adds a region as given, as an import does. Undo
+// removes the region; redo re-inserts the same one.
 class CreateMidiRegionAction final : public UndoableAction
 {
 public:
@@ -125,6 +125,7 @@ public:
                               std::int64_t timelineStart,
                               std::int64_t lengthInSamples,
                               std::int64_t lengthInTicks);
+    CreateMidiRegionAction (Session& session, int trackIdx, MidiRegion region);
 
     bool perform() override;
     bool undo()    override;
@@ -138,9 +139,7 @@ public:
 private:
     Session&    session;
     int         trackIdx;
-    std::int64_t timelineStart;
-    std::int64_t lengthInSamples;
-    std::int64_t lengthInTicks;
+    MidiRegion  region;
     int         insertedAt = -1;
 };
 
@@ -153,9 +152,8 @@ private:
 // between the drag start and finalise.
 //
 // Several regions on one track go in one action: each perform and undo
-// publishes the track's regions once, however many it changes. The snapshot
-// keeps a single retired vector, so a second publish inside one audio block
-// would free the vector that block is still reading.
+// publishes the track's regions once, however many it changes, so the audio
+// thread hears the edit whole and its timeline is rebuilt once.
 class MidiRegionEditAction final : public UndoableAction
 {
 public:
@@ -340,8 +338,8 @@ private:
 };
 
 // MIDI counterpart to DeleteRegionAction. Erase/insert reshape the
-// vector, so both go through mutate() (copy + publish) - never
-// currentMutable() while the audio thread iterates the snapshot. Several
+// vector, so both go through mutate() (copy + publish): an edit in place
+// cannot add or remove a region the audio thread plays. Several
 // regions on one track are one action for the reason MidiRegionEditAction
 // gives: one publish per perform and per undo.
 class DeleteMidiRegionAction final : public UndoableAction

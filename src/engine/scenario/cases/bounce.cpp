@@ -8,6 +8,7 @@
 #include "../../audiofile/FileReader.h"
 #include "../../audiofile/FileWriter.h"
 #include "../../../dsp/ChannelStrip.h"
+#include "../../../foundation/AutoResetEvent.h"
 #include "../../../session/Session.h"
 
 #include <algorithm>
@@ -165,10 +166,12 @@ struct BounceRun
 };
 
 std::shared_ptr<BounceRun> startRender (ScenarioContext& ctx, const std::filesystem::path& out,
-                                        const Render& render)
+                                        const Render& render,
+                                        std::function<void()> onWorkerStarted = {})
 {
     auto run = std::make_shared<BounceRun>();
     run->bounce = std::make_unique<BounceEngine> (ctx.engine(), ctx.session());
+    run->bounce->onStarted = std::move (onWorkerStarted);
     // Joins the worker before the world resets, even when a wait times out.
     ctx.cleanup ([run] { run->bounce.reset(); });
     run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
@@ -725,6 +728,61 @@ std::optional<ScenarioResult> stemsRebuildTheMix (ScenarioContext& ctx)
     return std::nullopt;
 }
 
+// A stems bounce renders the stems it named when it started. Its worker used
+// to name them again on its own thread, reading regions, names and automation
+// lanes the message thread replaces as it edits. The worker is held at its
+// start while track 6 gains a region; the render still writes the one stem
+// start() counted.
+std::optional<ScenarioResult> stemsRenderWhatStartNamed (ScenarioContext& ctx)
+{
+    static constexpr int kLength = 4800;
+    static constexpr int kLateTrack = 5;
+    const auto source = ctx.tempDir() / "take.wav";
+    if (! writeMono (source, sine (220.0f, 0.2f, kLength)))
+        return ScenarioResult::fail ("could not write the source take");
+    placeRegion (ctx, 0, source, 0, kLength);
+
+    const auto stemDir = ctx.sessionDir() / "stems-named";
+    std::error_code fsError;
+    std::filesystem::create_directories (stemDir, fsError);
+    const auto base = stemDir / "mix.wav";
+    Render stemRender;
+    stemRender.mode = BounceEngine::Mode::Stems;
+    stemRender.tailSeconds = 0.1;
+
+    auto held = std::make_shared<dusk::AutoResetEvent>();
+    auto run = startRender (ctx, base, stemRender, [held] { held->wait(); });
+    if (run == nullptr) return std::nullopt;
+    // Runs ahead of the join startRender queued, so a failed wait still lets
+    // the worker go.
+    ctx.cleanup ([held] { held->signal(); });
+
+    const int named = run->bounce->getTotalStemsToRender();
+    ctx.expect (named == 1, "start() named " + std::to_string (named) + " stems, not one");
+    placeRegion (ctx, kLateTrack, source, 0, kLength);
+    const auto lateStem = pathOf (BounceEngine::stemOutputFile (
+        sessionFile (base), kLateTrack, ctx.session().track (kLateTrack).name.toStdString()));
+    held->signal();
+
+    ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire)
+                                  && ! run->bounce->isRendering(); },
+                   kRenderTimeoutMs,
+                   [&ctx, run, named, lateStem]
+                   {
+                       ctx.expect (run->ok, "the stem bounce failed: " + run->error);
+                       const int rendered = run->bounce->getTotalStemsToRender();
+                       ctx.note ("named at start " + std::to_string (named) + ", rendered "
+                                 + std::to_string (rendered));
+                       ctx.expect (rendered == named, "the render counted stems start() never named");
+                       std::error_code existsError;
+                       ctx.expect (! std::filesystem::exists (lateStem, existsError),
+                                   "the render wrote a stem for a track that had no content when it started");
+                       ctx.complete (ctx.verdict());
+                   },
+                   "the bounce never finished");
+    return std::nullopt;
+}
+
 // An impulse on a direct track and one on a bus-routed track, rendered as a
 // mix and as stems, all land where they sit on the timeline.
 std::optional<ScenarioResult> rendersLandOnTheTimeline (ScenarioContext& ctx)
@@ -989,6 +1047,11 @@ RecordingMidiBackend* sunsetsIntoRecorders (ScenarioContext& ctx, const std::vec
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
     const int numTracks = (int) oversampling.size();
+
+    // The engine remembers each track's live MIDI route from the last block it
+    // ran, which may have been the previous scenario's. One block with these
+    // tracks still audio settles that, so a reset it owes is not recorded here.
+    ctx.pump (1);
 
     auto owned = std::make_unique<RecordingMidiBackend> (numTracks);
     auto* const recorder = owned.get();
@@ -1407,6 +1470,113 @@ std::optional<ScenarioResult> sunsetOversamplingFlipsMidRoll (ScenarioContext& c
     });
     return std::nullopt;
 }
+
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+// A latency rise while the transport rolls is bridged: the next block's window
+// starts where the last one ended and stretches to the new lead, and what it
+// holds before the block's first sample lands on that sample. A note that
+// starts and ends inside that stretch went out note-off first, then note-on,
+// and hung. The latency fixture's look-ahead goes from 0 to 512 between two
+// blocks, and a 9-tick note sits in the 512 samples the next block bridges.
+std::optional<ScenarioResult> latencyRiseDropsBridgedNote (ScenarioContext& ctx)
+{
+    static constexpr int kTrack = 0;
+    static constexpr int kLookAhead = 512;
+    static constexpr int kKey = 61;
+    static constexpr std::int64_t kNoteTicks = 9;
+    static constexpr std::int64_t kIntoBridge = 32;
+
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto& track = session.track (kTrack);
+    auto& strip = engine.getChannelStrip (kTrack);
+    auto& slot = strip.getNativeClapSlot();
+
+    ctx.pump (1);
+    auto owned = std::make_unique<RecordingMidiBackend>();
+    auto* const recorder = owned.get();
+    engine.installMidiOutputBackend (std::move (owned));
+    if (engine.getMidiOutputDevices().empty() || ! engine.ensureMidiOutputOpen (0))
+        return ScenarioResult::fail ("the recording MIDI output would not open");
+
+    ctx.keep (track.mode);
+    ctx.cleanup ([&engine, &track, &slot]
+    {
+        engine.stop();
+        track.midiOutputIndex.store (-1, std::memory_order_relaxed);
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+        slot.unload();
+    });
+    track.mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+    const auto fixture = ctx.fixture ("latency.clap");
+    std::string error;
+    if (! ctx.expect (fixture.has_value()
+                          && slot.load (*fixture, kRate, ScenarioContext::kBlockSize, error,
+                                        "studio.dusk.test.latency"),
+                      "the latency fixture did not load: " + error))
+        return ctx.verdict();
+    const clap::ClapInstance::ParamInfo* lookAhead = nullptr;
+    for (int i = 0; i < slot.paramCount() && lookAhead == nullptr; ++i)
+        if (const auto* info = slot.paramInfo (i); info != nullptr && info->name == "Look-ahead")
+            lookAhead = info;
+    if (! ctx.expect (lookAhead != nullptr, "the latency fixture has no Look-ahead"))
+        return ctx.verdict();
+    track.midiOutputIndex.store (0, std::memory_order_relaxed);
+
+    transport.setLoopEnabled (false);
+    transport.setPlayhead (0);
+    engine.play();
+    ctx.pump (8);
+    slot.setParamValue (lookAhead->id, kLookAhead);
+    ctx.pump (1);   // the fixture asks for its restart from process()
+
+    ctx.waitUntil ([&strip] { return strip.getInsertPluginLatencySamples() == kLookAhead; }, 2000,
+                   [&ctx, &engine, &transport, &session, &track, recorder]
+    {
+        // The next block plays from here, and so does its window.
+        const auto from = transport.getPlayhead();
+        const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
+        const auto noteSamples = ticksToSamples (kNoteTicks, kRate, bpm);
+        ctx.expect (kIntoBridge + noteSamples < kLookAhead, "the note does not fit the bridged stretch");
+        auto regions = std::make_unique<std::vector<MidiRegion>>();
+        MidiRegion region;
+        region.timelineStart = from + kIntoBridge;
+        region.lengthInTicks = 4 * kNoteTicks;
+        region.lengthInSamples = ticksToSamples (region.lengthInTicks, kRate, bpm);
+        region.notes.push_back ({ 1, kKey, 100, 0, kNoteTicks });
+        regions->push_back (region);
+        track.midiRegions.publish (std::move (regions));
+
+        ctx.pump (16);
+        engine.stop();
+        ctx.pump (4);
+        whenRecorderSettles (ctx, recorder, [&ctx] (const std::vector<RecordingMidiBackend::Message>& messages)
+        {
+            int ons = 0, offs = 0;
+            bool sounding = false;
+            for (const auto& m : messages)
+            {
+                const int kind = m.bytes[0] & 0xF0;
+                if (m.numBytes != 3 || m.bytes[1] != kKey || (kind != 0x80 && kind != 0x90))
+                    continue;
+                sounding = kind == 0x90 && m.bytes[2] > 0;
+                ++(sounding ? ons : offs);
+            }
+            ctx.note ("the bridged note: " + std::to_string (ons) + " note-on, "
+                      + std::to_string (offs) + " note-off");
+            ctx.expect (! sounding, "the note inside the bridged stretch was left sounding: its "
+                                    "note-off went out ahead of its note-on");
+            // Dropped, not missed: the window read the note, held its note-on
+            // back and let its note-off go.
+            ctx.expect (ons == 0 && offs == 1, "the note inside the bridged stretch was not dropped: "
+                                               "expected its note-off alone, got " + std::to_string (ons)
+                                               + " note-on, " + std::to_string (offs) + " note-off");
+        });
+    }, "the fixture's look-ahead never became the track's latency");
+    return std::nullopt;
+}
+#endif
 
 // A MIDI track's window runs its instrument's latency ahead of the block, so
 // with Sunset at 2x it crosses the loop end a block before the transport does
@@ -1916,6 +2086,9 @@ const ScenarioRegistrar faderRegistrar { Scenario {
 const ScenarioRegistrar stemsRegistrar { Scenario {
     "bounce.stems_rebuild_the_mix", { "bounce", "stems" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return stemsRebuildTheMix (ctx); }, 180000 } };
+const ScenarioRegistrar stemsNamedRegistrar { Scenario {
+    "bounce.stems_render_what_start_named", { "bounce", "stems" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return stemsRenderWhatStartNamed (ctx); }, 120000 } };
 const ScenarioRegistrar timelineRegistrar { Scenario {
     "bounce.renders_land_on_the_timeline", { "bounce", "stems", "pdc" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return rendersLandOnTheTimeline (ctx); }, 180000 } };
@@ -1945,6 +2118,17 @@ const ScenarioRegistrar sunsetAlignRegistrar { Scenario {
 const ScenarioRegistrar sunsetOversamplingRegistrar { Scenario {
     "mix.sunset_oversampling_mid_roll", { "mix", "midi", "builtin" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return sunsetOversamplingFlipsMidRoll (ctx); }, 120000 } };
+const ScenarioRegistrar latencyBridgeRegistrar { Scenario {
+    "mix.latency_rise_drops_bridged_note", { "mix", "midi", "clap" }, Needs::Engine, { "latency.clap" },
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_CLAP
+        return latencyRiseDropsBridgedNote (ctx);
+       #else
+        (void) ctx;
+        return ScenarioResult::skip ("built without the native CLAP host");
+       #endif
+    }, 120000 } };
 const ScenarioRegistrar sunsetLoopSeamRegistrar { Scenario {
     "mix.sunset_loop_seam_resets_once", { "mix", "midi", "builtin" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return sunsetLoopSeamResetsOnce (ctx); }, 120000 } };

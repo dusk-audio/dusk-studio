@@ -6,6 +6,7 @@
 #include "engine/Transport.h"
 #include "engine/audiofile/FileWriter.h"
 #include "foundation/PlanarBuffer.h"
+#include "session/RegionEnvelope.h"
 #include "session/RegionJoin.h"
 #include "session/Session.h"
 
@@ -51,6 +52,16 @@ SessionFile writeMono (const std::filesystem::path& path, const float* samples, 
     return SessionFile (path.u8string().c_str());
 }
 
+SessionFile writeChannels (const std::filesystem::path& path, const std::vector<const float*>& channels, int frames)
+{
+    std::filesystem::create_directories (path.parent_path());
+    auto writer = dusk::audio::FileWriter::create (path, { 48000.0, (int) channels.size(), 32 });
+    REQUIRE (writer != nullptr);
+    REQUIRE (writer->write (channels.data(), (int) channels.size(), frames));
+    writer.reset();
+    return SessionFile (path.u8string().c_str());
+}
+
 AudioRegion regionOf (const SessionFile& file, std::int64_t start, std::int64_t length, std::int64_t offset)
 {
     AudioRegion r;
@@ -75,6 +86,23 @@ std::vector<float> played (Session& session, const std::vector<AudioRegion>& reg
     pe.preparePlayback();
     std::vector<float> out ((std::size_t) kFrames, 0.0f);
     pe.readForTrack (kTrack, 0, out.data(), nullptr, kFrames, 0, kFrames);
+    pe.stopPlayback();
+    return out;
+}
+
+// Both channels as a stereo track plays them.
+std::vector<std::vector<float>> playedStereo (Session& session, const std::vector<AudioRegion>& regions)
+{
+    session.track (kTrack).regions = regions;
+    Transport transport;
+    transport.setLoopRange (0, kFrames);
+    transport.setLoopEnabled (true);
+    PlaybackEngine pe (session);
+    pe.bindTransport (transport);
+    pe.prepare (kFrames);
+    pe.preparePlayback();
+    std::vector<std::vector<float>> out (2, std::vector<float> ((std::size_t) kFrames, 0.0f));
+    pe.readForTrack (kTrack, 0, out[0].data(), out[1].data(), kFrames, 0, kFrames);
     pe.stopPlayback();
     return out;
 }
@@ -267,6 +295,38 @@ TEST_CASE ("A join render plays as its regions did however they overlap", "[regi
     CHECK_THAT (furthestApart (joinedPlay, before), WithinAbs (0.0f, 1.0e-4f));
 }
 
+TEST_CASE ("A region's unfaded run is exactly where its envelope leaves the gain alone", "[region][join][playback]")
+{
+    constexpr std::int64_t kLength = 1000;
+    constexpr float kGain = 0.7f;
+    struct Fades { std::int64_t in, out, overlapPrev, overlapNext; };
+    for (const auto fades : { Fades { 0, 0, 0, 0 }, Fades { 100, 0, 0, 0 }, Fades { 0, 250, 0, 0 },
+                              Fades { 100, 250, 0, 0 }, Fades { 50, 0, 300, 0 }, Fades { 0, 20, 0, 400 },
+                              Fades { 600, 400, 0, 0 }, Fades { 0, 0, 700, 600 } })
+    {
+        const auto envelope = regionEnvelope (fades.in, FadeShape::Sigmoid, fades.out, FadeShape::Log,
+                                              fades.overlapPrev, fades.overlapNext);
+        for (const std::int64_t start : { (std::int64_t) 0, (std::int64_t) 90, (std::int64_t) 500, kLength - 256 })
+        {
+            const std::int64_t n = std::min ((std::int64_t) 256, kLength - start);
+            const auto run = envelope.unfaded (start, kLength - start, n);
+            REQUIRE (run.first >= 0);
+            REQUIRE (run.first <= run.last);
+            REQUIRE (run.last <= n);
+            for (std::int64_t i = 0; i < n; ++i)
+            {
+                const bool fadeReaches = (envelope.fadeIn > 0 && start + i < envelope.fadeIn)
+                                      || (envelope.fadeOut > 0 && kLength - start - i < envelope.fadeOut);
+                const bool inRun = i >= run.first && i < run.last;
+                CAPTURE (fades.in, fades.out, fades.overlapPrev, fades.overlapNext, start, i);
+                CHECK (inRun == ! fadeReaches);
+                if (inRun)
+                    CHECK_THAT (envelope.gainAt (kGain, start + i, kLength - start - i), WithinAbs (kGain, 0.0f));
+            }
+        }
+    }
+}
+
 TEST_CASE ("A join render refuses a region its file cannot fill", "[region][join]")
 {
     Fixture f;
@@ -293,4 +353,54 @@ TEST_CASE ("A join render puts a mono file on every channel of a stereo mix", "[
         REQUIRE_THAT (mix.channel (0)[i], Catch::Matchers::WithinAbs (source[(std::size_t) i], 1.0e-6f));
         REQUIRE_THAT (mix.channel (1)[i], Catch::Matchers::WithinAbs (source[(std::size_t) i], 1.0e-6f));
     }
+}
+
+TEST_CASE ("A join render plays as its regions did on a mono or a stereo track, whichever leads",
+           "[region][join][playback]")
+{
+    Fixture f;
+    const auto left = tone (0.5f), right = tone (0.2f);
+    const auto stereo = writeChannels (f.dir.path() / "audio" / "stereo.wav", { left.data(), right.data() }, kFrames);
+    auto mono = regionOf (f.quiet, 0, 4000, 0);
+    auto wide = regionOf (stereo, 4000, kFrames - 4000, 4000);
+    wide.numChannels = 2;
+
+    std::vector<AudioRegion> regions;
+    SECTION ("mono then stereo") { regions = { mono, wide }; }
+    SECTION ("stereo then mono")
+    {
+        wide.timelineStart = 0;
+        wide.lengthInSamples = 4000;
+        wide.sourceOffset = 0;
+        mono.timelineStart = 4000;
+        mono.lengthInSamples = kFrames - 4000;
+        mono.sourceOffset = 4000;
+        regions = { wide, mono };
+    }
+    const int chs = channelsAsPlayed (regions);
+    REQUIRE (chs == 2);
+
+    dusk::audio::PlanarBuffer mix;
+    REQUIRE (mix.setSize (chs, kFrames));
+    for (int c = 0; c < chs; ++c)
+        std::fill_n (mix.channel (c), kFrames, 0.0f);
+    JoinedFades outer;
+    REQUIRE (mixRegionsAsPlayed (regions, mix, outer));
+    auto joinedRegion = regionOf (writeChannels (f.dir.path() / "takes" / "wide.wav", { mix.channel (0), mix.channel (1) },
+                                                 kFrames),
+                                  0, kFrames, 0);
+    joinedRegion.numChannels = chs;
+
+    const auto before = playedStereo (*f.session, regions);
+    const auto after = playedStereo (*f.session, { joinedRegion });
+    CHECK_THAT (furthestApart (after[0], before[0]), WithinAbs (0.0f, 1.0e-4f));
+    CHECK_THAT (furthestApart (after[1], before[1]), WithinAbs (0.0f, 1.0e-4f));
+    CHECK_THAT (furthestApart (played (*f.session, { joinedRegion }), played (*f.session, regions)),
+                WithinAbs (0.0f, 1.0e-4f));
+}
+
+TEST_CASE ("A join of mono files renders mono", "[region][join]")
+{
+    Fixture f;
+    CHECK (channelsAsPlayed ({ regionOf (f.loud, 0, 1000, 0), regionOf (f.quiet, 1000, 1000, 1000) }) == 1);
 }

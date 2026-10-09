@@ -540,6 +540,8 @@ Modal dialogs (audio settings, plugin picker, region editor, piano roll, import 
 
 The readout in the menu bar's right corner shows the device state (`Audio: 48 kHz 5.3 ms`) and the engine load (`DSP: 12% (0/0)`). The parenthesised pair counts audio dropouts: engine-side overruns / backend (driver) xruns. The segment turns red when load passes ~85% or either counter is non-zero. **Double-click the DSP readout to reset the counters** — useful after fixing whatever caused a dropout so you can watch for fresh ones.
 
+On Linux the readout can also end in `RT 1` (or a higher count). Under the limit RTKit and PipeWire set, a plug-in that holds a realtime audio thread for about 200 ms without a break has the system end Dusk Studio. Instead, the thread is moved to normal priority on the kernel's warning shortly before that, and the count says how many of those warnings came. A warning that reaches a thread not running at realtime priority moves nothing, but it is counted too. A Multicore DSP thread goes back to realtime priority by itself the next time the transport is stopped. The audio device's own thread stays at normal priority, so dropouts are more likely, until you open the device again in **Settings > Audio**. The double-click resets this count too.
+
 ## The four stages
 
 Only one stage is visible at a time. RECORDING, MIXING and AUX share the mix engine, so audio keeps flowing when switching among them. MASTERING has a separate playback path; entering or leaving it stops playback.
@@ -596,7 +598,7 @@ In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and
 
 The ⌨ button (or **K**) opens an on-screen MIDI keyboard. It belongs to the transport bar, not to any one view: it opens in any stage, with or without the piano roll. It appears as a MIDI source called **Virtual Keyboard (Dusk Studio)** in each track's MIDI input picker, and loading an instrument onto a track with no input bound selects it automatically and turns on **IN**, so the instrument is playable straight away.
 
-Each key is labelled with the typing letter that plays it, and every C is labelled with its octave. **Oct -** / **Oct +** and the **Up** / **Down** arrows move the octave, **Ch -** / **Ch +** and **Left** / **Right** move the MIDI channel, and you can click or drag across the keys with the mouse for a glissando. While it is open, every letter and digit in its layout belongs to the keyboard rather than to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard.
+Each key is labelled with the typing letter that plays it, and every C is labelled with its octave. **Oct -** / **Oct +** and the **Up** / **Down** arrows move the octave, **Ch -** / **Ch +** and **Left** / **Right** move the MIDI channel, and you can click or drag across the keys with the mouse for a glissando. While it is open, every letter and digit in its layout belongs to the keyboard rather than to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard, as do the ⌨ button and a click outside it. However it closes, the shortcuts work again at once, with no click on the window first.
 
 ## The notepad
 
@@ -741,6 +743,8 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 - **Channel** (MIDI mode): **Omni** (all 16 channels) or a single channel filter.
 - **MIDI out** (MIDI mode): optional external MIDI output to drive a hardware synth as you play, or **None**.
 - **Activity LED**: blinks green when MIDI arrives on the chosen channel.
+
+A note you are holding ends when the track stops listening to it: choosing another **MIDI port**, setting **Channel** to one the note is not on, turning **IN** off while the transport rolls, or disarming a track that plays the on-screen keyboard sends the track's instrument all notes off. Notes the timeline is holding sound again at once. Opening the channel up to **Omni** leaves held notes alone. The same goes for a plug-in that stops getting the track's MIDI at all: switched to **Mono** or **Stereo** with the plug-in still loaded, it gets all notes off the first time it runs as an effect, or when the track goes back to MIDI if it never ran, and a frozen track's plug-in gets it when you unfreeze.
 
 ## ARM, IN, PRINT/FREEZE (RECORDING stage)
 
@@ -1283,9 +1287,9 @@ To select several tracks, **Shift+click** a name to take in every row shown betw
 
 Double-click a name to rename the track in place. **Enter**, or clicking anywhere else, keeps the new name; **Escape** keeps the old one. An empty name falls back to the track number, and **Cmd/Ctrl+Z** undoes a rename.
 
-Drag a name up or down to move the track to another row. A line shows where it will land, and the tracks between its old row and the new one each shift one slot to make room. Everything on the track goes with it: name, colour, regions and takes, channel strip settings, the insert with its plug-in's current state, and automation. A take solo stays on its track, and so does an audio editor that is open when you undo or redo a move. Every track that changes row, the shifted ones included, keeps the input it had: an input that followed the track number becomes that same input, fixed, so the track still records from the same channel. Drag one of several selected names and they all move together as one block, in their order. With **ALL** off, a drop between two shown rows lands right after the upper one, so the hidden tracks under that row stay under the moved track; a drop just above a row that is moving leaves the tracks where they are. **Escape** cancels the drag, and a click that doesn't drag still selects the track as before. After the drop the console pages to the moved track.
+Drag a name up or down to move the track to another row. A line shows where it will land, and the tracks between its old row and the new one each shift one slot to make room. Everything on the track goes with it: name, colour, regions and takes, channel strip settings, the insert with its plug-in's current state, and automation. A track you haven't named shows the number of the row it lands in. A take solo stays on its track, and so does an audio editor that is open when you undo or redo a move. Every track that changes row, the shifted ones included, keeps the input it had: an input that followed the track number becomes that same input, fixed, so the track still records from the same channel. Drag one of several selected names and they all move together as one block, in their order. With **ALL** off, a drop between two shown rows lands right after the upper one, so the hidden tracks under that row stay under the moved track; a drop just above a row that is moving leaves the tracks where they are. **Escape** cancels the drag, and a click that doesn't drag still selects the track as before. After the drop the console pages to the moved track.
 
-A move is one undo step, and its undo sets the inputs it fixed back to following the track number. It clears the undo history from before it, though, because those steps name tracks by their number. Stop playback before moving tracks, unfreeze any frozen track that would move or shift, and let a plug-in that is still loading on one of them finish: otherwise the move is refused with [Can't move tracks](#cant-move-tracks). Plug-in parameter and track MIDI controller bindings stay on the track number, so after a move they drive whichever track now sits there.
+A move is one undo step, and its undo sets the inputs it fixed back to following the track number. It clears the undo history from before it, though, because those steps name tracks by their number. The move's undo and redo wait while a menu or a dialog is open, since it may be acting on a track by its row. An open editor doesn't hold them up: a plug-in editor or a strip's EQ, aux, I/O or hardware insert panel closes if its track changes row, and stays open otherwise. Stop playback before moving tracks, unfreeze any frozen track that would move or shift, and let a plug-in that is still loading on one of them finish: otherwise the move is refused with [Can't move tracks](#cant-move-tracks). Plug-in parameter and track MIDI controller bindings stay on the track number, so after a move they drive whichever track now sits there.
 
 ## The ruler
 
@@ -1297,11 +1301,15 @@ Click the ruler to seek the playhead. Drag across the ruler, then choose **Set l
 
 Each region is drawn as a rounded coloured rectangle. Audio regions show a waveform thumbnail; MIDI regions show a piano-keyboard glyph and the first few notes. The region's left edge is its start position; the right edge is start + length.
 
+A MIDI region plays only what lies inside it. A note that runs past the right edge stops at the edge, and a note that starts after it does not play. A note still sounding at a loop end stops there.
+
+An edit made while a MIDI track plays never leaves a note hanging. Mute, move or delete a region, switch its take, edit its notes in the piano roll, change the tempo, or undo or redo any of these, and each sounding note the timeline no longer plays where the transport is stops at once. The track's other notes play on, and a note the edit leaves under the transport ends where it now ends. Pressing **Record** during playback stops the notes an armed MIDI track was playing.
+
 ### Selecting and moving
 
 - Click a region to select it. Other regions deselect.
 - **Cmd+click** (Linux/Mac) or **Ctrl+click** (Windows) toggles selection — useful for moving multiple regions together.
-- Drag a region body to move it. With **SNAP** on, it snaps to the grid resolution.
+- Drag a region body to move it. With **SNAP** on, it snaps to the grid resolution. A locked region, audio or MIDI, takes the click but doesn't move.
 - Drag the left or right edge to trim.
 - Drag the pink fade discs in the top corners to set fade-in / fade-out lengths.
 
@@ -1325,7 +1333,7 @@ A right-click on any region shows a context menu:
 
 - **Loop region**: set the transport loop to span the region's boundaries.
 - **Split at playhead**.
-- **Join selected regions** (enabled when two or more regions are selected): glue them into one. Regions that together play one unbroken stretch of one recording at one gain become a single region of it, with no fade left at the joins. Otherwise the join renders a new file that plays as the regions did, fades and crossfades included.
+- **Join selected regions** (enabled when two or more regions are selected): glue them into one. Regions that together play one unbroken stretch of one recording at one gain become a single region of it, with no fade left at the joins. Otherwise the join renders a new file that plays as the regions did, fades and crossfades included. The file is stereo when any of the joined regions plays a stereo file, so it sounds the same on a mono track or a stereo one.
 - **Label**: type a custom name.
 - **Mute** the region (silences it without deleting it).
 - **Lock** the region (prevents accidental edits).
@@ -1390,7 +1398,9 @@ Recording keeps your zoom. When the playhead reaches the right-hand edge the vie
 
 ## Drag-and-drop import
 
-Drop audio or MIDI files onto the tape strip. They land at the playhead, the same place **File → Import Audio or MIDI…** puts them; hold **Alt** as you drop to land them where the pointer is instead. While you hold files over the strip, a line shows where they will land, as long as that spot is in view on the timeline. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use **Auto-assign** to assign files to tracks in order; **Clear** removes those assignments. You can choose each destination manually. Each file needs a distinct track.
+Drop audio or MIDI files onto the tape strip. They land at the playhead, the same place **File → Import Audio or MIDI…** puts them; hold **Alt** as you drop to land them where the pointer is instead. While you hold files over the strip, a line shows where they will land, as long as that spot is in view on the timeline. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use **Auto-assign** to assign files to tracks in order; **Clear** removes those assignments. You can choose each destination manually. Each file needs a distinct track. A destination whose mode doesn't suit its file is marked `mode will flip`, and importing switches that track to the file's mode: Mono or Stereo for an audio file by its channels, MIDI for a MIDI file.
+
+Each imported file is its own undo step: **Cmd/Ctrl+Z** takes its region off the track again, a track that took the file's name gets its number back, and a track the import switched to another mode gets its old mode back.
 
 **File → Import Audio or MIDI…** (or **Cmd+I**) picks the files in a file browser instead and opens the same pickers. Pressing **Open** there without picking a file closes the browser, the same as **Cancel**.
 
@@ -1405,6 +1415,8 @@ It is marked **experimental** because parts of the DP file format are reverse-en
 - **Track grouping**: each `ZZ####` fragment is imported onto its own track, *not* grouped back into the device's original tracks (the fragment-to-track table isn't stored in a form we can read). Discarded takes are skipped.
 - **Timeline placement**: clip start positions are recovered from `song.sys` (and, when an in-folder master mixdown is present, by onset-aligning fragments to it) where they decode confidently; otherwise a clip lands at song start, which is correct for a full-length take. Re-check positions after import.
 - **Mixer recall** (fader / pan / 3-band EQ) is decoded where present and applied to tracks **by order** — the device's channel-to-track mapping isn't stored, so re-check assignments. Song **tempo**, **time signature**, and **markers** are decoded where present and applied to the session as a whole (they are not track-scoped).
+
+The import can't be undone, and it clears the undo history.
 
 \newpage
 
@@ -1431,13 +1443,13 @@ The top is a row of icon buttons. Hover over one for its name and shortcut:
 
 - **Undo / Redo** (also **Cmd+Z**, and **Cmd+Shift+Z** or **Cmd+Y**).
 - **Split** at the edit cursor (also **Cmd/Ctrl+E**; unavailable on a locked region or a frozen track).
-- **Normalize** (adjusts gain toward a peak just below 0 dBFS, within the gain limits; unavailable on a locked region or a frozen track).
+- **Normalize** (sets the region's gain so its peak lands just below 0 dBFS, within the gain limits, whatever gain it had before; pressing it again changes nothing; unavailable on a locked region or a frozen track).
 - **Reverse** (the same non-destructive reverse as the tape strip's **Reverse region**; unavailable on a locked region or a frozen track).
 - **Properties** (label, mute, lock, colour and delete actions, with file name, sample rate, channel count and length shown below).
-- **Grab**, **Range**, **Cut**, **Draw**, then the editor's own **Snap** toggle and grid resolution, set apart from the timeline's.
+- **Grab**, **Range**, **Cut**, **Draw**, then the editor's own **Snap** toggle, set apart from the timeline's, and the grid resolution, which the editor shares with the timeline: picking one here changes the timeline's too.
 - **Auto: Off**, which picks an automation lane to show over the waveform (see *Editing breakpoints in the region editor* under Mixing).
 - The track name and the region's title. Double-click the title to rename the region in place; Enter keeps the new name, Esc keeps the old one, and accepting the title as shown (the take's name, or the file name for a region with no named take) leaves the region unlabelled.
-- **Chase** and **Zoom out / Zoom in / Zoom fit** at the right (also **−**, **+**, **0**). Zoom in stops at one sample per pixel. Resizing the window keeps the zoom and the edit cursor where they are; **Zoom fit** fits the view to the new size.
+- **Chase** and **Zoom out / Zoom in / Zoom fit** at the right (also **−**, **+**, **0**). Zoom in stops at one sample per pixel; **Zoom fit** shows the whole region however long it is. Resizing the window keeps the zoom and the edit cursor where they are; **Zoom fit** fits the view to the new size.
 
 The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. The range belongs to the region you drew it on: clicking another region with Grab or Cut clears it, and so does a split or a trim that leaves the region holding none of it. Cut splits the region at every click. Draw is the automation pencil: with an automation lane selected (see below) it draws a freehand breakpoint curve; with no lane selected it does nothing (it never moves the region).
 
@@ -2367,6 +2379,7 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 | **Cmd+←** / **Cmd+→**             | Pan the view horizontally                                    |
 | **Home** / **End**                | Jump view to region start / end                              |
 | **Cmd+]** / **Cmd+[**             | Next / previous MIDI region                                  |
+| **[** / **]**                     | Set the loop in / out point at the edit cursor (**Shift** = punch in / out) |
 | **Esc**                           | Close modal                                                  |
 
 ## Notepad
@@ -2555,7 +2568,7 @@ If the interface saved in your settings is held by another application when Dusk
 - On any platform, the last resort is the default device of every other backend that is present — on Windows that's what carries you off a busy or powered-down ASIO driver onto shared Windows Audio. Shared and exclusive Windows backends can expose the same endpoint name; Dusk Studio still detects the backend change.
 - When the backend has nothing else to offer (macOS has CoreAudio alone), Dusk Studio opens its default output without an input, since an input that fails takes the output it was paired with down too.
 - If that lands on a **different** working device or backend, you keep working and see *"Your saved audio setup for … could not be opened … Audio has switched to …"*. Your saved setup is **not** changed — it's tried again on the next launch once you free it.
-- If nothing opens, you get a clear warning. With no device open the playhead and meters won't move, recording is disabled, and plugin and soundfont loading is refused — the channel strips take their sample rate and block size from the running device, so there is nothing to prepare an insert against until one opens.
+- If nothing opens, you get a clear warning. With no device open the playhead and meters won't move, recording is disabled, and plugin and soundfont loading is refused — the channel strips take their sample rate and block size from the running device, so there is nothing to prepare an insert against until one opens. The timeline and the piano roll still show and edit the session, timed at the rate the device last ran at; with none since launch, at the rate the session was saved at (48 kHz for a new one). Files you import are converted to that rate, and a Mackie surface's timecode counts at it.
 
 Either way, free the device in the other app (or run `pactl suspend-sink <sink-name> 1` to release a PipeWire/PulseAudio hold), then pick it again in **Settings → Audio**. Your saved setup returns automatically next launch once it's free.
 
@@ -2781,10 +2794,10 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 
 ### Can't move tracks
 
-- **When**: You drop a dragged track name, or undo or redo a track move, while the transport is playing or recording, while a frozen track would move or shift, while a plug-in is still loading into a track that would move or shift, or while a render's dialog is open.
-- **Text**: "Stop playback, then move the tracks again." (Or "Unfreeze track [N], then move the tracks again. A frozen track can't be moved or shifted." when a frozen track is in the way, "Wait for the plug-in to finish loading, then move the tracks again." while a plug-in loads, or "Close the [render] dialog, then move the tracks again." while the bounce, stem bounce, mixdown, master export or freeze dialog is open. For an undo or a redo, "move the tracks again" reads "undo the move again" or "redo the move again".)
+- **When**: You drop a dragged track name, or undo or redo a track move, while the transport is playing or recording, while a frozen track would move or shift, while a plug-in is still loading into a track that would move or shift, or while a render's dialog is open. Undo and redo of a move are also refused while a menu or any other dialog is open.
+- **Text**: "Stop playback, then move the tracks again." (Or "Unfreeze track [N], then move the tracks again. A frozen track can't be moved or shifted." when a frozen track is in the way, "Wait for the plug-in to finish loading, then move the tracks again." while a plug-in loads, or "Close the [render] dialog, then move the tracks again." while the bounce, stem bounce, mixdown, master export or freeze dialog is open, or "Close the open menu or dialog, then undo the move again." for an undo or a redo with a menu or another dialog open. For an undo or a redo, "move the tracks again" reads "undo the move again" or "redo the move again".)
 - **Buttons**: OK.
-- **Action**: Stop the transport, unfreeze the track, wait for the plug-in, or close the dialog, then try again. Nothing moved, and the undo history is as it was.
+- **Action**: Stop the transport, unfreeze the track, wait for the plug-in, or close the dialog or menu, then try again. Nothing moved, and the undo history is as it was.
 
 ## Startup
 

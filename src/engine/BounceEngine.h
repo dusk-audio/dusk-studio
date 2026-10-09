@@ -122,9 +122,10 @@ public:
 
     // The stem files a Stems bounce against `base` would write, in render
     // order: tracks with content or armed, then buses any of those tracks
-    // route into, then aux lanes any of them send to. Message-thread safe
-    // (atomic reads only). Used by the render itself and by the UI's
-    // overwrite-conflict check so the two can't drift.
+    // route into, then aux lanes any of them send to. Message thread: it reads
+    // the regions, names and automation lanes edits replace. start() takes the
+    // render's list from here and the UI's overwrite-conflict check does too,
+    // so the two can't drift.
     struct StemTarget
     {
         // Mix is never produced by collectStemTargets; the realtime
@@ -170,7 +171,7 @@ public:
                         > ChannelStripParams::kAuxSendOffDb;
                 const auto param = (AutomationParam) ((int) AutomationParam::AuxSend1 + a);
                 const bool automated =
-                    ! tr.automationLanes[(size_t) param].pointsForRead().empty();
+                    ! tr.automationLanes[(size_t) param].pointsConst().empty();
                 if (manualOn || automated)
                     auxActive[(size_t) a] = true;
             }
@@ -258,7 +259,7 @@ public:
     bool startFreeze (int trackIndex, const juce::File& outFile,
                       std::int64_t lenSamples, double sampleRate, int blockSize = 1024);
 
-    bool         isRendering() const noexcept { return rendering.load (std::memory_order_relaxed); }
+    bool         isRendering() const noexcept { return rendering.load (std::memory_order_acquire); }
     float        getProgress() const noexcept { return progress.load (std::memory_order_relaxed); }
     int          getTotalStemsToRender() const noexcept
         { return totalStemsToRender.load (std::memory_order_relaxed); }
@@ -315,6 +316,9 @@ private:
     Session&     session;
 
     juce::File   outputFile;
+    // Mode::Stems: what collectStemTargets found when start() ran on the
+    // message thread, before the worker exists. The worker only reads it.
+    std::vector<StemTarget> stemTargets;
     double       renderSampleRate = 0.0;
     int          renderBlockSize  = 1024;
     double       tailSeconds      = 5.0;

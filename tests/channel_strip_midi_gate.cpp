@@ -9,7 +9,10 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <random>
+#include <system_error>
 
 using Catch::Matchers::WithinAbs;
 
@@ -52,6 +55,27 @@ struct StripHarness
                                     masterL.data(), masterR.data(),
                                     busLPtrs, busRPtrs, auxLPtrs, auxRPtrs,
                                     kBlock, passByGate);
+    }
+
+    // A block of a stereo audio track: silent input, no MIDI.
+    void runStereoBlock()
+    {
+        static const std::array<float, kBlock> silence {};
+        juce::MidiBuffer none;
+        strip.processAndAccumulate (silence.data(), silence.data(), none, false,
+                                    masterL.data(), masterR.data(),
+                                    busLPtrs, busRPtrs, auxLPtrs, auxRPtrs,
+                                    kBlock, true);
+    }
+
+    void clearAccumulators()
+    {
+        masterL.fill (0.0f);
+        masterR.fill (0.0f);
+        for (auto& b : busL) b.fill (0.0f);
+        for (auto& b : busR) b.fill (0.0f);
+        for (auto& a : auxL) a.fill (0.0f);
+        for (auto& a : auxR) a.fill (0.0f);
     }
 
     float accumulatorPeak() const
@@ -122,4 +146,63 @@ TEST_CASE ("MIDI strips with no instrument skip the chain",
     REQUIRE (h.strip.getLastProcessedSamples() == 0);
     REQUIRE_THAT (h.strip.getOutLDb(), WithinAbs (-100.0f, 1e-6f));
     REQUIRE (h.accumulatorPeak() <= 0.0f);
+}
+
+TEST_CASE ("a multisample instrument that leaves MIDI mode is reset when the track comes back",
+           "[channel-strip][midi][multisample][regression]")
+{
+   #if ! DUSKSTUDIO_HAS_MULTISAMPLE
+    SKIP ("needs the multisample host to load an instrument into the strip");
+   #else
+    // The multisample slot plays only on a MIDI track; as an effect insert the
+    // strip runs the other hosts. An audio-mode block must therefore leave the
+    // owed reset for the engine to send when the track is fed MIDI again (an
+    // import's switch to Stereo, then its undo), or the key held across the
+    // switch sounds until Stop.
+    const auto sfz = std::filesystem::temp_directory_path()
+                   / ("dusk-strip-owed-reset-" + std::to_string (std::random_device{}()) + ".sfz");
+    struct Remove
+    {
+        std::filesystem::path path;
+        ~Remove() { std::error_code ec; std::filesystem::remove (path, ec); }
+    } remove { sfz };
+    {
+        std::ofstream out (sfz);
+        out << "<region> key=60 sample=*sine\n";
+    }
+
+    StripHarness h { duskstudio::ChannelStrip::kInsertPlugin };
+    std::string error;
+    REQUIRE (h.strip.loadNativeMultisample (juce::File (sfz.string()), error));
+
+    const auto runMidi = [&h] (bool keyDown)
+    {
+        juce::MidiBuffer midi;
+        if (keyDown)
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (std::uint8_t) 100), 0);
+        // What AudioEngine adds when the strip reports the debt: the reset
+        // heads the first block the track is fed MIDI again.
+        if (h.strip.owesMidiReset())
+            for (int ch = 1; ch <= 16; ++ch)
+                for (const int cc : { 64, 123, 120 })
+                    midi.addEvent (juce::MidiMessage::controllerEvent (ch, cc, 0), 0);
+        h.clearAccumulators();
+        h.runMidiBlock (midi, true);
+        return h.accumulatorPeak();
+    };
+
+    runMidi (true);
+    float sounding = 0.0f;
+    for (int b = 0; b < 8; ++b)
+        sounding = runMidi (false);
+    REQUIRE (sounding > 0.01f);
+
+    h.runStereoBlock();
+    REQUIRE (h.strip.owesMidiReset());
+
+    float after = 1.0f;
+    for (int b = 0; b < 64; ++b)
+        after = runMidi (false);
+    REQUIRE (after < 1.0e-4f);
+   #endif
 }

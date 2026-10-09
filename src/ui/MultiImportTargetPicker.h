@@ -26,9 +26,9 @@ class MultiImportTargetPicker final : public juce::Component
 public:
     struct Assignment
     {
-        juce::File file;
-        int        trackIndex = -1;
-        bool       isMidi     = false;
+        juce::File  file;
+        int         trackIndex = -1;
+        Track::Mode mode       = Track::Mode::Mono;   // the mode the file needs its track in
     };
 
     MultiImportTargetPicker (Session& session,

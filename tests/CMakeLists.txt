@@ -56,6 +56,8 @@ add_executable(dusk-studio-tests
     default_input_choice.cpp
     session_tick_conversion.cpp
     tempo_map_conversion.cpp
+    midi_timeline_schedule.cpp
+    hosting_midi_fit.cpp
     output_pair_routing.cpp
     multiband_comp_presets.cpp
     atomic_park.cpp
@@ -67,6 +69,7 @@ add_executable(dusk-studio-tests
     x11_anti_pattern_guard.cpp
     platform_window_activation.cpp
     ipc_mac_backend_contract.cpp
+    ipc_midi_wire.cpp
     ipc_param_push_queue.cpp
     ipc_windows_backend_contract.cpp
     single_instance_windows_contract.cpp
@@ -79,6 +82,7 @@ add_executable(dusk-studio-tests
     insert_mode_defaults.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/AuxLaneStrip.cpp
     channel_strip_context_rename.cpp
+    shortcuts_reference.cpp
     snap_helpers.cpp
     fade_shapes.cpp
     crossfade.cpp
@@ -147,6 +151,7 @@ add_executable(dusk-studio-tests
     automation_lane_edit.cpp
     ${CMAKE_SOURCE_DIR}/src/session/AutomationLaneEdit.cpp
     automation_lane_snapshot.cpp
+    atomic_snapshot_reclaim.cpp
     pdc_math.cpp
     session_midi_tempolock_roundtrip.cpp
     session_apply_tempo_change.cpp
@@ -154,6 +159,7 @@ add_executable(dusk-studio-tests
     transport_state_machine.cpp
     transport_stop_locate.cpp
     timeline_follow.cpp
+    timeline_sample_rate.cpp
     aux_send_text.cpp
     loop_timeline.cpp
     generated_midi_budget.cpp
@@ -300,7 +306,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         # ALSA audio backend: the wedged-I/O-thread abandon/park path needs no
         # hardware (test-injected thread body, PCMs never opened).
         alsa_thread_teardown.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/alsa/AlsaAudioIODevice.cpp)
+        ${CMAKE_SOURCE_DIR}/src/engine/alsa/AlsaAudioIODevice.cpp
+        # AudioWorkerPool raises RT-denied workers through it; built without
+        # RTKit here, so a test never reaches for the system bus.
+        realtime_cpu_guard.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/RealtimeKit.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
 elseif(APPLE AND DUSKSTUDIO_NATIVE_COREMIDI)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_COREMIDI=1)
@@ -362,6 +372,7 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
     target_sources(dusk-studio-tests PRIVATE
         imgui_widget_kit.cpp
         imgui_panel_controls.cpp
+        startup_recent_dates.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/DuskTheme.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelControls.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/StartupView.cpp
@@ -468,9 +479,12 @@ if(DUSKSTUDIO_NATIVE_LV2)
         "${CMAKE_CURRENT_BINARY_DIR}/many-patch-fixture.lv2")
     set(DUSKSTUDIO_WORKER_LV2_BUNDLE
         "${CMAKE_CURRENT_BINARY_DIR}/worker-fixture.lv2")
+    set(DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE
+        "${CMAKE_CURRENT_BINARY_DIR}/midi-probe-fixture.lv2")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_WORKER_LV2_BUNDLE}")
+    file(MAKE_DIRECTORY "${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}")
     configure_file(fixtures/file_state_manifest.ttl
         "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
     # The bundle only declares a UI where one can be built: the fixture UI is an
@@ -554,11 +568,25 @@ if(DUSKSTUDIO_NATIVE_LV2)
     find_package(Threads REQUIRED)
     target_link_libraries(dusk-studio-worker-lv2-fixture PRIVATE PkgConfig::LV2 Threads::Threads)
 
+    configure_file(fixtures/midi_probe_manifest.ttl
+        "${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
+    configure_file(fixtures/midi_probe_plugin.ttl
+        "${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}/midi_probe_plugin.ttl" COPYONLY)
+    add_library(dusk-studio-midi-probe-lv2-fixture MODULE
+        fixtures/midi_probe_lv2.cpp)
+    set_target_properties(dusk-studio-midi-probe-lv2-fixture PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "midi_probe_fixture"
+        LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}>")
+    target_compile_features(dusk-studio-midi-probe-lv2-fixture PRIVATE cxx_std_17)
+    target_link_libraries(dusk-studio-midi-probe-lv2-fixture PRIVATE PkgConfig::LV2)
+
     target_sources(dusk-studio-tests PRIVATE
         lv2_bundle_load.cpp
         lv2_file_state.cpp
         lv2_patch_feedback.cpp
         lv2_instance_process.cpp
+        lv2_midi_probe.cpp
         lv2_native_slot.cpp
         lv2_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
@@ -570,11 +598,13 @@ if(DUSKSTUDIO_NATIVE_LV2)
         DUSKSTUDIO_HAS_NATIVE_LV2=1
         DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH="${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}"
         DUSKSTUDIO_MANY_PATCH_LV2_FIXTURE_PATH="${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}"
-        DUSKSTUDIO_WORKER_LV2_FIXTURE_PATH="${DUSKSTUDIO_WORKER_LV2_BUNDLE}")
+        DUSKSTUDIO_WORKER_LV2_FIXTURE_PATH="${DUSKSTUDIO_WORKER_LV2_BUNDLE}"
+        DUSKSTUDIO_MIDI_PROBE_LV2_FIXTURE_PATH="${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}")
     add_dependencies(dusk-studio-tests
         dusk-studio-file-state-lv2-fixture
         dusk-studio-many-patch-lv2-fixture
-        dusk-studio-worker-lv2-fixture)
+        dusk-studio-worker-lv2-fixture
+        dusk-studio-midi-probe-lv2-fixture)
 endif()
 
 if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3)
@@ -910,17 +940,22 @@ catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[alsa]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES RUN_SERIAL TRUE)
+# [host-limits] cases need realtime scheduling or mlockall, which a CI runner's
+# rlimits may refuse; they SKIP() there, so the same flag keeps that a pass.
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[host-limits]"
+    EXTRA_ARGS --allow-running-no-tests)
 # [ipc] cases start the plug-in host process and several assert on timing windows
 # (the park-timeout stub parks against a 250 ms block). Under ctest --parallel the
 # runner's cores are shared, so those windows close; run them serially.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]~[ipc]")
+    TEST_SPEC "~[alsa]~[ipc]~[host-limits]")
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[ipc]"
     PROPERTIES RUN_SERIAL TRUE)
 
 if(APPLE)
-    target_link_libraries(dusk-studio-tests PRIVATE dusk-coremidi)
+    target_link_libraries(dusk-studio-tests PRIVATE dusk-coremidi "-framework CoreAudio")
     add_executable(dusk-coremidi-tests core_midi_backend.mm)
     set_target_properties(dusk-coremidi-tests PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED ON)
     target_compile_options(dusk-coremidi-tests PRIVATE -Wall -Wextra -Wpedantic -fblocks)

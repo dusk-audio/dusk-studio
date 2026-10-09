@@ -19,6 +19,8 @@
 #include <utility>
 #include <vector>
 #include "AtomicSnapshot.h"
+#include "MidiEvents.h"
+#include "MidiPlayback.h"
 #include "MidiBindings.h"
 #include "SessionLayout.h"
 #include "TrackMove.h"
@@ -78,18 +80,12 @@ struct AutomationPoint
 // Points sorted by timeSamples; binary search at lookup. Backed by an
 // AtomicSnapshot so the message thread can reshape the lane (add / drag /
 // delete a breakpoint, undo, thin, load) while the audio thread reads it in
-// Read/Touch mode without a data race. See AtomicSnapshot.h for the
-// one-publish-behind reclamation contract.
+// Read/Touch mode without a data race. Every change publishes.
 //
 // Accessor discipline:
-//   pointsForRead()      - audio thread (acquire-load). Never null post-ctor.
+//   pointsForRead()      - audio thread, inside its SnapshotReadScope.
 //   pointsConst()        - message-thread read.
-//   mutableForWritePass()- in-place edit with NO publish, for breakpoint
-//                          gestures gated on a stopped transport, so the
-//                          audio thread is not reading the lane. A resize
-//                          under a concurrent reader is UB; everything else
-//                          uses mutatePoints / publishPoints.
-//   publishPoints/mutate - safe swap for every edit / load / thin path.
+//   publishPoints/mutate - every edit / load / thin path.
 struct AutomationLane
 {
     AtomicSnapshot<std::vector<AutomationPoint>> snapshot;
@@ -100,7 +96,6 @@ struct AutomationLane
 
     const std::vector<AutomationPoint>& pointsForRead() const noexcept { return *snapshot.read(); }
     const std::vector<AutomationPoint>& pointsConst()   const noexcept { return snapshot.current(); }
-    std::vector<AutomationPoint>&       mutableForWritePass() noexcept  { return snapshot.currentMutable(); }
 
     void publishPoints (std::vector<AutomationPoint> pts)
     {
@@ -785,42 +780,6 @@ inline std::string formatSamplePosition (std::int64_t samples,
     return formatBarBeatTick (bar + 1, beat + 1, tick);
 }
 
-// Off events folded into lengthInTicks - no dangling on/off bookkeeping.
-// Negative or zero length = "all-notes-off across region" sentinel.
-struct MidiNote
-{
-    int  channel       = 1;     // 1..16
-    int  noteNumber    = 60;    // 0..127
-    int  velocity      = 100;   // 1..127 (recorded notes always >= 1)
-    std::int64_t startTick     = 0;
-    std::int64_t lengthInTicks = 0;
-
-    bool operator== (const MidiNote& o) const noexcept
-    {
-        return channel == o.channel && noteNumber == o.noteNumber
-            && velocity == o.velocity && startTick == o.startTick
-            && lengthInTicks == o.lengthInTicks;
-    }
-    bool operator!= (const MidiNote& o) const noexcept { return ! (*this == o); }
-};
-
-// `controller` doubles as message-type discriminator: 0..127 = CC.
-// Sentinels for pitch-bend / aftertouch land when piano roll surfaces them.
-struct MidiCc
-{
-    int  channel    = 1;
-    int  controller = 64;       // sustain pedal
-    int  value      = 0;
-    std::int64_t atTick = 0;
-
-    bool operator== (const MidiCc& o) const noexcept
-    {
-        return channel == o.channel && controller == o.controller
-            && value == o.value && atTick == o.atTick;
-    }
-    bool operator!= (const MidiCc& o) const noexcept { return ! (*this == o); }
-};
-
 struct MidiTakeRef
 {
     std::int64_t           lengthInTicks = 0;
@@ -856,6 +815,135 @@ struct MidiRegion
 
     // Conversion anchor for tempo-locked retime.
     double recordedAtBPM = 120.0;
+};
+
+inline MidiRegionPlacement placementOf (const MidiRegion& region) noexcept
+{
+    return { region.timelineStart, region.lengthInSamples, region.lengthInTicks, region.muted };
+}
+
+// A timeline for `regions`: each region's events copied out and sorted, unless
+// `sameEvents` hands it the ones it already has. Message thread.
+inline std::unique_ptr<MidiTimeline> buildMidiTimeline (const std::vector<MidiRegion>& regions,
+                                                        const MidiTimeline* sameEvents = nullptr)
+{
+    auto timeline = std::make_unique<MidiTimeline>();
+    timeline->playback.reserve (regions.size());
+    timeline->placement.reserve (regions.size());
+    for (std::size_t i = 0; i < regions.size(); ++i)
+    {
+        if (sameEvents != nullptr)
+            timeline->playback.push_back (sameEvents->playback[i]);
+        else
+            timeline->playback.push_back (std::make_shared<const MidiPlaybackRegion> (
+                buildMidiPlayback (regions[i].notes, regions[i].ccs)));
+        timeline->placement.push_back (placementOf (regions[i]));
+    }
+    indexMidiTimeline (*timeline);
+    return timeline;
+}
+
+// A track's MIDI regions, which only the message thread reads and writes, and
+// the timeline the audio thread plays, built from them at each publish and
+// published through an AtomicSnapshot.
+class MidiRegionSnapshot
+{
+public:
+    MidiRegionSnapshot()
+        : regions (std::make_unique<std::vector<MidiRegion>>())
+    {}
+
+    // Audio thread, inside its SnapshotReadScope. Never null.
+    const MidiTimeline* read() const noexcept { return timeline.read(); }
+
+    const std::vector<MidiRegion>& current() const noexcept { return *regions; }
+
+    // In-place edits. editedInPlace() afterwards makes a region's new position,
+    // length or mute heard; a change to its notes or controllers is heard once
+    // published. Adding or removing a region takes a publish.
+    std::vector<MidiRegion>& currentMutable() noexcept { return *regions; }
+
+    void publish (std::unique_ptr<std::vector<MidiRegion>> fresh)
+    {
+        assert (fresh != nullptr && "MidiRegionSnapshot::publish requires a non-null value");
+        if (fresh == nullptr) return;
+        timeline.publish (buildMidiTimeline (*fresh));
+        regions = std::move (fresh);
+        editCount.fetch_add (1, std::memory_order_release);
+    }
+
+    std::uint64_t generation() const noexcept { return timeline.generation(); }
+
+    // Publishes where the regions sit now, with the events they were published
+    // with: no event is copied or sorted.
+    void editedInPlace()
+    {
+        assert (timeline.current().size() == regions->size() && "an edit in place cannot add or remove a region");
+        if (timeline.current().size() != regions->size()) return;
+        timeline.publish (buildMidiTimeline (*regions, &timeline.current()));
+        editCount.fetch_add (1, std::memory_order_release);
+    }
+
+    // Counts every change the audio thread can hear, after the change. The
+    // engine compares it from block to block: a changed timeline may no longer
+    // end notes it started. Load it before read(), so what read() returns is
+    // at least as new.
+    std::uint32_t edits() const noexcept { return editCount.load (std::memory_order_acquire); }
+
+    template <typename Fn>
+    void mutate (Fn&& fn)
+    {
+        auto fresh = std::make_unique<std::vector<MidiRegion>> (current());
+        fn (*fresh);
+        publish (std::move (fresh));
+    }
+
+    // mutate() for an edit that moves, resizes or mutes regions and leaves
+    // every region's notes and controllers as they are, as a tempo change does.
+    template <typename Fn>
+    void mutatePlacements (Fn&& fn)
+    {
+        fn (*regions);
+        editedInPlace();
+    }
+
+    // A copy of `from` to land on another snapshot, made ahead of the landing:
+    // the regions, and a timeline that shares from's events.
+    struct Staged
+    {
+        std::unique_ptr<std::vector<MidiRegion>> regions;
+        std::unique_ptr<MidiTimeline>            timeline;
+    };
+
+    static Staged stage (const MidiRegionSnapshot& from)
+    {
+        Staged staged;
+        staged.regions = std::make_unique<std::vector<MidiRegion>> (from.current());
+        const auto& published = from.timeline.current();
+        assert (published.size() == staged.regions->size() && "stage() needs the regions as last published");
+        staged.timeline = buildMidiTimeline (*staged.regions,
+                                             published.size() == staged.regions->size() ? &published : nullptr);
+        return staged;
+    }
+
+    // Publishes a staged copy, copying and freeing nothing, for a caller
+    // holding the audio off: the regions it replaces go back into `staged`,
+    // and the timeline waits for reclaim(). A Staged lands once.
+    void land (Staged& staged)
+    {
+        assert (staged.timeline != nullptr && staged.regions != nullptr && "a Staged lands once");
+        if (staged.timeline == nullptr || staged.regions == nullptr) return;
+        timeline.publishDeferred (std::move (staged.timeline));
+        std::swap (regions, staged.regions);
+        editCount.fetch_add (1, std::memory_order_release);
+    }
+
+    void reclaim() noexcept { timeline.reclaim(); }
+
+private:
+    std::unique_ptr<std::vector<MidiRegion>> regions;
+    AtomicSnapshot<MidiTimeline>             timeline;
+    std::atomic<std::uint32_t>               editCount { 0 };
 };
 
 inline MidiTakeRef makeMidiTakeRef (const MidiRegion& region)
@@ -1048,6 +1136,9 @@ struct Track
     juce::String name;
     juce::Colour colour;
     std::string nameUtf8() const { return name.toStdString(); }
+    // A track never named carries its slot's number, empty reading the same.
+    static std::string defaultName (int slot) { return std::to_string (slot + 1); }
+    bool hasDefaultName (int slot) const;
     std::uint32_t colourArgb() const noexcept { return colour.getARGB(); }
     ChannelStripParams strip;
 
@@ -1090,9 +1181,9 @@ struct Track
     // regions: written only at session load, audio reads via the
     // PlaybackEngine snapshot. midiRegions: written at load AND at
     // recording-stop, audio reads directly during MIDI playback -
-    // wrapped in AtomicSnapshot for the lock-free swap.
+    // wrapped in MidiRegionSnapshot for the lock-free swap.
     std::vector<AudioRegion>                regions;
-    AtomicSnapshot<std::vector<MidiRegion>> midiRegions;
+    MidiRegionSnapshot                      midiRegions;
 
     // Oldest first. Message thread only.
     std::vector<AudioTake> takes;
@@ -1170,7 +1261,7 @@ struct Track
 struct StagedTrack
 {
     Track fields;
-    std::unique_ptr<std::vector<MidiRegion>> midiRegions;
+    MidiRegionSnapshot::Staged midiRegions;
     std::unique_ptr<HardwareInsertRouting> routing;
     std::array<std::unique_ptr<std::vector<AutomationPoint>>, kNumAutomationParams> lanes;
 };
@@ -1847,10 +1938,13 @@ public:
     // not moved: they belong to the controls. Each snapshot of a moved track
     // publishes once. The solo and arm counters are the caller's to recompute.
     //
-    // stageTrackMove copies the contents out, and allocates; landTrackMove then
-    // refreshes the atomics from the tracks, swaps values and publishes, and
-    // copies nothing big, so AudioEngine::moveTracks runs it with the audio
-    // callback held off. A stage lands once. permuteTracks does both. Message
+    // stageTrackMove copies the contents out and builds what each snapshot
+    // will publish, and allocates; landTrackMove then refreshes the atomics
+    // from the tracks, swaps values and publishes, copying nothing big and
+    // freeing nothing, so AudioEngine::moveTracks runs it with the audio
+    // callback held off. What it replaces goes with the stage, and what the
+    // snapshots retire with reclaimTrackSnapshots(), both once the callback
+    // runs again. A stage lands once. permuteTracks does all of it. Message
     // thread.
     struct StagedTrackMove
     {
@@ -1861,6 +1955,7 @@ public:
     std::optional<StagedTrackMove> stageTrackMove (const TrackMovePlan& plan,
                                                    const TrackSlotMask& refollow = {}) const;
     void landTrackMove (StagedTrackMove& staged);
+    void reclaimTrackSnapshots() noexcept;
     bool permuteTracks (const TrackMovePlan& plan, const TrackSlotMask& refollow = {});
 
     // The directory name under state/lv2 for track trackIndex's LV2 file state.

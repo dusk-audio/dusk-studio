@@ -2,6 +2,15 @@
 
 #include "engine/RtPriority.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <vector>
+
+#if defined(__linux__)
+ #include <sys/mman.h>
+ #include <unistd.h>
+#endif
+
 // jucePriorityForSchedCeiling inverts JUCE's integer jmap of realtime priority
 // [0,10] onto SCHED_RR [rrMin,rrMax]. The contract: the returned priority's
 // forward-mapped sched value must never exceed the rlimit ceiling (EPERM →
@@ -59,3 +68,37 @@ TEST_CASE ("rt priority: lowest-but-valid ceiling maps to priority 0", "[rt-prio
     REQUIRE (jucePriorityForSchedCeiling (5, 1, 99) == 0);     // p=1 needs sched 10; p=0 → sched 1 fits
     REQUIRE (jucePriorityForSchedCeiling (1, 1, 99) == 0);     // ceiling == rrMin exactly
 }
+
+#if defined(__linux__)
+TEST_CASE ("rt memory lock leaves a new mapping unfaulted until it is touched", "[rt-priority][host-limits]")
+{
+    if (! duskstudio::rt::lockProcessMemory())
+        SKIP ("the memlock limit refuses mlockall");
+    struct Unlock { ~Unlock() { munlockall(); } } unlock;
+
+    // As much as a thread stack maps by default. Locked whole as it is mapped,
+    // all of it would be resident before anything ran on it.
+    constexpr std::size_t kBytes = std::size_t { 8 } << 20;
+    void* mapped = mmap (nullptr, kBytes, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
+    REQUIRE (mapped != MAP_FAILED);
+    struct Unmap { void* p; ~Unmap() { munmap (p, kBytes); } } unmap { mapped };
+
+    const auto page = (std::size_t) sysconf (_SC_PAGESIZE);
+    std::vector<unsigned char> resident (kBytes / page);
+    const auto residentPages = [&]
+    {
+        REQUIRE (mincore (mapped, kBytes, resident.data()) == 0);
+        return std::count_if (resident.begin(), resident.end(),
+                              [] (unsigned char r) { return (r & 1) != 0; });
+    };
+
+    CHECK (residentPages() == 0);
+    // The touched page comes in, and nothing like the whole mapping with it (a
+    // transparent huge page may bring its neighbours).
+    static_cast<volatile char*> (mapped)[0] = 1;
+    const auto touched = residentPages();
+    CHECK (touched >= 1);
+    CHECK ((std::size_t) touched < resident.size() / 2);
+}
+#endif

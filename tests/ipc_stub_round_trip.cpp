@@ -583,6 +583,90 @@ TEST_CASE ("ipc-stub: rejects oversize block", "[ipc]")
     REQUIRE_FALSE (conn.isCrashed());  // bad-input rejection isn't a crash
 }
 
+TEST_CASE ("ipc-stub: the densest block the engine routes crosses whole", "[ipc][midi]")
+{
+    // A track's routing buffer can carry far more than 16 KB of MIDI. A wire
+    // cap under it cut the block's tail, and a note-off there left its note
+    // held in the out-of-process plug-in.
+    duskstudio::ipc::RemotePluginConnection conn;
+    std::string err;
+    REQUIRE (conn.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-stub", err));
+
+    std::vector<float> silence ((std::size_t) kBlockSize, 0.0f);
+    const float* in[kNumChans] { silence.data(), silence.data() };
+
+    dusk::MidiBuffer midi;
+    midi.reserveBytes (dusk::kMidiRoutingBlockBytes);
+    const std::uint8_t noteOn[3] { 0x90, 60, 100 };
+    const std::uint8_t noteOff[3] { 0x80, 60, 0 };
+    REQUIRE (midi.addEvent (noteOn, 3, 0));
+    int sent = 1;
+    for (std::uint8_t value = 0;; ++value)
+    {
+        const std::uint8_t controller[3] { 0xB0, 1, (std::uint8_t) (value & 0x7F) };
+        if (! midi.addEvent (controller, 3, 1)) break;
+        ++sent;
+    }
+    // The cap is full of controllers; make room for the note-off at the end.
+    dusk::MidiBuffer block;
+    block.reserveBytes (dusk::kMidiRoutingBlockBytes);
+    int kept = 0;
+    for (const auto meta : midi)
+        if (++kept < sent) block.addEvent (meta.data, meta.numBytes, meta.samplePosition);
+    REQUIRE (block.addEvent (noteOff, 3, kBlockSize - 1));
+
+    REQUIRE (conn.processBlockSync (in, kNumChans, kNumChans, kBlockSize, block, kTimeoutNs));
+
+    int echoed = 0;
+    bool lastIsNoteOff = false;
+    for (const auto meta : block)
+    {
+        ++echoed;
+        lastIsNoteOff = meta.numBytes == 3 && meta.data[0] == noteOff[0]
+                     && meta.data[1] == noteOff[1] && meta.samplePosition == kBlockSize - 1;
+    }
+    REQUIRE (echoed == sent);
+    REQUIRE (lastIsNoteOff);
+}
+
+TEST_CASE ("ipc-stub: a long sysex does not cut off the events after it", "[ipc][midi]")
+{
+    // The child reads each event of the wire block into what the plug-in gets.
+    // An event longer than its old 256-byte copy stopped that read, and every
+    // note-off after a long sysex was lost.
+    duskstudio::ipc::RemotePluginConnection conn;
+    std::string err;
+    REQUIRE (conn.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-stub", err));
+
+    std::vector<float> silence ((std::size_t) kBlockSize, 0.0f);
+    const float* in[kNumChans] { silence.data(), silence.data() };
+
+    std::vector<std::uint8_t> sysex (300, 0x11);
+    sysex.front() = 0xF0;
+    sysex.back() = 0xF7;
+    const std::uint8_t noteOn[3] { 0x90, 60, 100 };
+    const std::uint8_t noteOff[3] { 0x80, 60, 0 };
+
+    dusk::MidiBuffer block;
+    block.reserveBytes (dusk::kMidiRoutingBlockBytes);
+    REQUIRE (block.addEvent (noteOn, 3, 0));
+    REQUIRE (block.addEvent (sysex.data(), (int) sysex.size(), 1));
+    REQUIRE (block.addEvent (noteOff, 3, kBlockSize - 1));
+
+    REQUIRE (conn.processBlockSync (in, kNumChans, kNumChans, kBlockSize, block, kTimeoutNs));
+
+    std::vector<int> lengths;
+    bool lastIsNoteOff = false;
+    for (const auto meta : block)
+    {
+        lengths.push_back (meta.numBytes);
+        lastIsNoteOff = meta.numBytes == 3 && meta.data[0] == noteOff[0] && meta.data[1] == noteOff[1]
+                     && meta.samplePosition == kBlockSize - 1;
+    }
+    REQUIRE (lengths == std::vector<int> { 3, 300, 3 });
+    REQUIRE (lastIsNoteOff);
+}
+
 TEST_CASE ("ipc-stub: timeout is bounded and marks the connection crashed", "[ipc]")
 {
     duskstudio::ipc::RemotePluginConnection conn;

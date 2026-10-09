@@ -1805,10 +1805,8 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
     }
 
     // Automation - per-strip mode + per-param point arrays. Each lane gets
-    // exactly ONE publish per load (empty when absent from the JSON):
-    // AtomicSnapshot retires only one previous value, so a clear-then-
-    // publish pair on the same lane would free the pre-load vector the
-    // audio thread can still be reading.
+    // exactly ONE publish per load (empty when absent from the JSON), so the
+    // audio thread never reads a lane cleared but not yet loaded.
     //
     // Note: lanes publish BEFORE the new automationMode. Publishing the
     // mode first would let the audio thread observe Read/Touch and pull
@@ -2750,8 +2748,7 @@ bool SessionSerializer::load (Session& s, const File& source)
 
             // Mode publish happens AFTER the lane publishes below - same
             // ordering rationale as the track-load block, and exactly one
-            // publish per lane (empty when absent) per the AtomicSnapshot
-            // one-publish-behind contract.
+            // publish per lane (empty when absent).
             {
                 const auto& autoObj = json::child (v, "automation");
                 for (int p = 0; p < kNumAutomationParams; ++p)

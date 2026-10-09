@@ -87,6 +87,12 @@ public:
         recordButton.triggerClick();
         return true;
     }
+    bool clickKeyboardForScenario()
+    {
+        if (! keyboardButton.isShowing()) return false;
+        keyboardButton.triggerClick();
+        return true;
+    }
     std::string clockTextForScenario() const { return clockLabel.getText().toStdString(); }
     // The time the last tap was stamped with, on the clock onTap reads; 0 before any.
     std::int64_t lastTapForScenario() const

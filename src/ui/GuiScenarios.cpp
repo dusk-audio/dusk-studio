@@ -31,6 +31,7 @@
 #include "SystemStatusBar.h"
 #include "TransportBar.h"
 #include "SaveTargetChecks.h"
+#include "ShortcutsPanel.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/SuiteRunner.h"
 #include "../session/TrackMove.h"
@@ -141,6 +142,22 @@ auto dispatchFileHover (Component& component, void (Component::*leave) (const Fi
     const auto shown = read();
     (component.*leave) (names);
     return shown;
+}
+
+// Enters the drag and leaves the files held there, until dispatchFileLeave.
+template <typename Component, typename Files>
+void dispatchFileHold (Component& component, void (Component::*enter) (const Files&, int, int),
+                       const std::vector<std::filesystem::path>& files, int x, int y)
+{
+    Files names;
+    for (const auto& path : files) names.add (HostString::fromUTF8 (path.u8string().c_str()));
+    (component.*enter) (names, x, y);
+}
+
+template <typename Component, typename Files>
+void dispatchFileLeave (Component& component, void (Component::*leave) (const Files&))
+{
+    (component.*leave) (Files {});
 }
 
 template <typename Peer, typename Source, typename Point, typename Time, typename Wheel>
@@ -342,6 +359,12 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         return component != nullptr && component->instrumentControlsMatchForScenario (input, monitor);
     }
 
+    bool modeControlsMatch (int mode) const override
+    {
+        auto* component = strip();
+        return component != nullptr && component->modeControlsMatchForScenario (mode);
+    }
+
     ChannelStripComponent* strip() const
     {
         return owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index)
@@ -480,6 +503,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             launch.tapeChase = owner.tapeStrip->isChaseEnabled();
             launch.tapeShowAll = owner.tapeStrip->showsAllTracksForScenario();
             launch.tapeSelectedTrack = owner.tapeStrip->getSelectedTrack();
+            const auto view = owner.tapeStrip->viewForScenario();
+            launch.tapeZoom = view[0];
+            launch.tapeScroll = view[1];
+            launch.tapeRowScroll = view[2];
         }
         if (owner.consoleView != nullptr)
         {
@@ -845,6 +872,27 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                                             [tape] { return tape->dropLineXForScenario(); });
         return { line, point.x };
     }
+    std::vector<int> tapeDropHold (int track, const std::vector<std::filesystem::path>& files) override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()) return {};
+        const auto point = tape->dropPointForScenario (track);
+        if (! tape->getLocalBounds().contains (point)) return {};
+        dispatchFileHold (*tape, &TapeStrip::fileDragEnter, files, point.x, point.y);
+        return { tape->dropLineXForScenario(), point.x };
+    }
+    int tapeDropLine() const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->dropLineXForScenario() : -1;
+    }
+    void tapeDropLeave() override
+    {
+        if (owner.tapeStrip != nullptr) dispatchFileLeave (*owner.tapeStrip, &TapeStrip::fileDragExit);
+    }
+    int tapePaints() const override
+    {
+        return owner.tapeStrip != nullptr ? owner.tapeStrip->paintsForScenario() : -1;
+    }
     std::int64_t tapeDropPointSample (int track) const override
     {
         return owner.tapeStrip != nullptr ? owner.tapeStrip->dropPointSampleForScenario (track) : -1;
@@ -1019,6 +1067,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::vector<int> pianoSelection() const override
     {
         return owner.pianoRoll != nullptr ? owner.pianoRoll->selectionForScenario() : std::vector<int> {};
+    }
+    std::int64_t pianoEditCursor() const override
+    {
+        return owner.pianoRoll != nullptr ? owner.pianoRoll->editCursorForScenario() : -1;
     }
     int pianoCcController() const override
     {
@@ -1253,6 +1305,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return body != nullptr && body->hasKeyboardFocus (true);
     }
 
+    bool modalBodyOnTop() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        auto* body = stack.empty() ? nullptr : stack.back()->getBody();
+        auto* top = owner.getTopLevelComponent();
+        if (body == nullptr || top == nullptr) return false;
+        auto* shown = top->getComponentAt (top->getLocalPoint (body, body->getLocalBounds().getCentre()));
+        return shown != nullptr && (shown == body || body->isParentOf (shown));
+    }
+
     std::vector<std::string> contextMenuItems() const override { return contextMenuItemsForScenario(); }
 
     // Just inside the window's top-left corner, which a centred body and its
@@ -1316,8 +1378,28 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
     }
     void closeVirtualKeyboard() override { owner.closeVirtualKeyboard(); }
+    bool clickVirtualKeyboardButton() override
+    { return owner.transportBar != nullptr && owner.transportBar->clickKeyboardForScenario(); }
+    bool clickVirtualKeyboardDim() override
+    {
+        if (! virtualKeyboardOpen()) return false;
+        const auto corner = owner.getTopLevelComponent()->getLocalBounds().getTopLeft().translated (4, 4).toFloat();
+        return clickAt (corner.x, corner.y, 1);
+    }
+    bool canvasHasKeyboardFocus() const override { return owner.hasKeyboardFocus (false); }
 
-    bool openAudioSettings() override { owner.openAudioSettings(); return audioSettingsOpen(); }
+    bool openAudioSettings() override
+    {
+        const bool wasOpen = audioSettingsOpen();
+        owner.openAudioSettings();
+        if (! audioSettingsOpen()) return false;
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        // Counted as input to draw, so the next step waits for the panel's first
+        // frames rather than a delay a slow renderer can outlast.
+        if (! wasOpen) owner.audioSettingsWindow->expectInputForScenario();
+       #endif
+        return true;
+    }
     void closeAudioSettings() override { owner.closeAudioSettings(); }
     bool audioSettingsOpen() const override
     {
@@ -1849,6 +1931,17 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     void openAbout() override { owner.menuItemSelected (2002, 2); }
     bool shortcutsOpen() const override { return owner.shortcutsModal.isOpen(); }
+    std::vector<int> shortcutsLayout() const override
+    {
+        const auto* panel = dynamic_cast<const ShortcutsPanel*> (owner.shortcutsModal.getBody());
+        if (panel == nullptr) return {};
+        const auto placed = panel->layout();
+        std::vector<int> out { panel->getWidth(), panel->getHeight(), placed.rowH,
+                               ShortcutsPanel::kRowH, ShortcutsPanel::kMinRowH };
+        for (const auto& row : placed.rows)
+            out.insert (out.end(), { row.getX(), row.getY(), row.getWidth(), row.getHeight() });
+        return out;
+    }
     void startMixdown() override { owner.menuItemSelected (1010, 0); }
 
     bool fullScreen() const override
@@ -2020,6 +2113,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (bounds.isEmpty()) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
         return clickAt (point.x, point.y, 1, right);
+    }
+    bool dragTapeRegion (int track, int region, bool midi, int pixels) override
+    {
+        if (owner.tapeStrip == nullptr || ! owner.tapeStrip->isShowing()) return false;
+        const auto bounds = midi ? owner.tapeStrip->midiRegionScreenRect (track, region)
+                                 : owner.tapeStrip->audioRegionScreenRect (track, region);
+        if (bounds.isEmpty()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
+        return dragAt (point.x, point.y, point.x + (float) pixels, point.y);
     }
 
     std::string tapeTakeBadgeText (int track) const override
@@ -2574,6 +2676,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             owner.tapeStrip->setShowAllTracksForScenario (launch.tapeShowAll);
             owner.tapeStrip->setSelectedTrack (launch.tapeSelectedTrack);
             owner.tapeStrip->clearSelectionsForScenario();
+            // A case that puts its session back refits the zoom to whatever the
+            // transport holds then, and a playhead left near zero zooms the next
+            // case's regions off screen.
+            auto view = tapeView();
+            view[0] = launch.tapeZoom;
+            view[1] = launch.tapeScroll;
+            view[2] = launch.tapeRowScroll;
+            owner.tapeStrip->restoreViewForScenario (view);
         }
 
         owner.engine.getUndoManager().clearUndoHistory();
@@ -2624,6 +2734,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         bool tapeExpanded = false;
         bool tapeChase = false;
         bool tapeShowAll = false;
+        double tapeZoom = 1.0;
+        double tapeScroll = 0.0;
+        double tapeRowScroll = 0.0;
         bool masterMute = false;
         int tapeSelectedTrack = -1;
         int consoleBank = 0;

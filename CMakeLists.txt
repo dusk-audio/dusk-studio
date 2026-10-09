@@ -755,8 +755,12 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/lv2_worker_bounce.cpp
     src/engine/scenario/cases/markers.cpp
     src/engine/scenario/cases/midi_bindings.cpp
+    src/engine/scenario/cases/midi_dropped_block_releases.cpp
+    src/engine/scenario/cases/midi_insert_unfed_releases.cpp
     src/engine/scenario/cases/midi_out_dense_block.cpp
     src/engine/scenario/cases/midi_panic_all_paths.cpp
+    src/engine/scenario/cases/midi_route_change_releases.cpp
+    src/engine/scenario/cases/midi_timeline_edit_releases.cpp
     src/engine/scenario/cases/mint_oop_fixture.cpp
     src/engine/scenario/cases/move_tracks.cpp
     src/engine/scenario/cases/offline_insert_no_pdc.cpp
@@ -767,6 +771,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/oop_unload_reaps_child.cpp
     src/engine/scenario/cases/pipeline_selftest.cpp
     src/engine/scenario/cases/print_freeze.cpp
+    src/engine/scenario/cases/realtime_restore.cpp
     src/engine/scenario/cases/region_editing.cpp
     src/engine/scenario/cases/scan_cancel_au.cpp
     src/engine/scenario/cases/scan_cancel_lv2.cpp
@@ -1042,6 +1047,26 @@ if(UNIX AND NOT APPLE)
         src/ui/KeyboardStateLinux.cpp)
     target_link_libraries(DuskStudio PRIVATE asound X11 ${CMAKE_DL_LIBS})  # X11/dl: clap host + windowing
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
+
+    # DSP workers that RLIMIT_RTPRIO keeps off SCHED_RR ask RTKit over the
+    # system bus, as PipeWire's own data thread does. Without the libdbus
+    # development files they fall back to a nice level alone.
+    target_sources(DuskStudio PRIVATE src/engine/RealtimeKit.cpp)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(DUSKSTUDIO_DBUS IMPORTED_TARGET dbus-1)
+    endif()
+    if(DUSKSTUDIO_DBUS_FOUND)
+        target_link_libraries(DuskStudio PRIVATE PkgConfig::DUSKSTUDIO_DBUS)
+        target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_RTKIT=1)
+    else()
+        message(STATUS "Dusk Studio: dbus-1 not found - DSP workers without RLIMIT_RTPRIO get no RTKit realtime")
+    endif()
+endif()
+
+# The DSP worker pool reads the device's IO workgroup through the HAL.
+if(APPLE)
+    target_link_libraries(DuskStudio PRIVATE "-framework CoreAudio")
 endif()
 
 option(DUSKSTUDIO_NATIVE_COREMIDI "Use the native CoreMIDI device backend on macOS" OFF)

@@ -259,7 +259,7 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
     };
     wireZoom (zoomOutButton, "Zoom out (-)",        [this] { zoomByFactor (1.0f / 1.25f); });
     wireZoom (zoomInButton,  "Zoom in (=)",         [this] { zoomByFactor (1.25f); });
-    wireZoom (zoomFitButton, "Zoom to fit (Cmd+0)", [this] { zoomFit(); });
+    wireZoom (zoomFitButton, "Zoom to fit (0)", [this] { zoomFit(); });
 
     // SNAP: lives alongside the zoom HUD so the user can toggle grid
     // snapping without having to look up at the transport bar.
@@ -724,8 +724,7 @@ std::int64_t TapeStrip::rightmostContentSample() const noexcept
 
 double TapeStrip::pixelsPerSecond() const noexcept
 {
-    const double sr = engine.getCurrentSampleRate();
-    if (sr <= 0.0) return 0.0;
+    const double sr = engine.getTimelineSampleRate();
 
     // Find the rightmost sample we need to show, then add a margin so there's
     // always blank tape past the last recorded thing.
@@ -745,10 +744,10 @@ void TapeStrip::zoomByFactor (float factor, int anchorX)
     userZoomFactor = jlimit (0.1f, 32.0f, userZoomFactor * factor);
     if (anchorX >= 0)
     {
-        const double sr = engine.getCurrentSampleRate();
+        const double sr = engine.getTimelineSampleRate();
         const double px = pixelsPerSecond();
         auto col = tracksColumnBounds();
-        if (sr > 0.0 && px > 0.0)
+        if (px > 0.0)
         {
             // After zoom: anchorX should resolve to anchorSampleBefore.
             // Rearranged: scrollSamples = anchorSampleBefore - (anchorX - col.x) * sr / px
@@ -767,9 +766,8 @@ void TapeStrip::zoomByFactor (float factor, int anchorX)
 void TapeStrip::zoomFit() noexcept
 {
     scrollSamples = 0;
-    const double sr = engine.getCurrentSampleRate();
-    userZoomFactor = sr > 0.0 ? tapeStripFitZoom ((double) rightmostContentSample() / sr)
-                              : 1.0f;
+    const double sr = engine.getTimelineSampleRate();
+    userZoomFactor = tapeStripFitZoom ((double) rightmostContentSample() / sr);
     repaint();
 }
 
@@ -799,9 +797,9 @@ void TapeStrip::refreshAfterSessionLoad()
 
 std::int64_t TapeStrip::sampleAtX (int x) const noexcept
 {
-    const double sr = engine.getCurrentSampleRate();
+    const double sr = engine.getTimelineSampleRate();
     const double px = pixelsPerSecond();
-    if (sr <= 0.0 || px <= 0.0) return 0;
+    if (px <= 0.0) return 0;
     auto col = tracksColumnBounds();
     const double seconds = (double) (x - col.getX()) / px;
     return scrollSamples + (std::int64_t) std::max (0.0, seconds * sr);
@@ -809,9 +807,9 @@ std::int64_t TapeStrip::sampleAtX (int x) const noexcept
 
 int TapeStrip::xForSample (std::int64_t s) const noexcept
 {
-    const double sr = engine.getCurrentSampleRate();
+    const double sr = engine.getTimelineSampleRate();
     const double px = pixelsPerSecond();
-    if (sr <= 0.0 || px <= 0.0) return tracksColumnBounds().getX();
+    if (px <= 0.0) return tracksColumnBounds().getX();
     const auto rel = s - scrollSamples;
     return tracksColumnBounds().getX() + (int) ((double) rel / sr * px);
 }
@@ -1249,9 +1247,9 @@ void TapeStrip::resized()
 
 void TapeStrip::timerCallback()
 {
-    // Detect track color / name / take-badge changes and repaint the whole
-    // strip if anything changed. Cheap - there are 24 tracks and we just
-    // compare a String, a Colour and a short badge text each tick.
+    // Detect track color / name / take-badge / region changes and repaint the
+    // whole strip if anything changed. Cheap - there are 24 tracks and we just
+    // compare a String, a Colour, a short badge text and two counts each tick.
     bool stateChanged = false;
     bool namesChanged = false;
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -1259,6 +1257,16 @@ void TapeStrip::timerCallback()
         const auto& tr = session.track (t);
         if (lastNames[(size_t) t]   != tr.name)   { lastNames[(size_t) t]   = tr.name;   stateChanged = true; namesChanged = true; }
         if (lastColours[(size_t) t] != tr.colour) { lastColours[(size_t) t] = tr.colour; stateChanged = true; }
+        if (const auto generation = tr.midiRegions.generation(); generation != lastMidiGenerations[(size_t) t])
+        {
+            lastMidiGenerations[(size_t) t] = generation;
+            stateChanged = true;
+        }
+        if (tr.regions.size() != lastAudioRegionCounts[(size_t) t])
+        {
+            lastAudioRegionCounts[(size_t) t] = tr.regions.size();
+            stateChanged = true;
+        }
         if (auto badge = takeBadgeText (t); badge != lastTakeBadges[(size_t) t])
         {
             lastTakeBadges[(size_t) t] = std::move (badge);
@@ -1301,6 +1309,7 @@ void TapeStrip::timerCallback()
     rebuildVisibleTrackOrder();
 
     if (trackMove.active) autoScrollTrackMove();
+    refreshDropLine();
 
     if (stateChanged) repaint();
 
@@ -1344,10 +1353,10 @@ void TapeStrip::syncRecordingState()
 
 bool TapeStrip::followPlayhead (std::int64_t playhead) noexcept
 {
-    const double sr = engine.getCurrentSampleRate();
+    const double sr = engine.getTimelineSampleRate();
     const double px = pixelsPerSecond();
     const auto  col = tracksColumnBounds();
-    if (sr <= 0.0 || px <= 0.0 || col.getWidth() <= 0) return false;
+    if (px <= 0.0 || col.getWidth() <= 0) return false;
 
     const auto visible = (std::int64_t) std::llround ((double) col.getWidth() / px * sr);
     const auto next = followPlayheadScroll (playhead, scrollSamples, visible);
@@ -1598,7 +1607,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                         // Snap the spawn position to the grid when SNAP
                         // is on so newly-added markers land on bar/beat
                         // lines (mirrors the drag-snap path below).
-                        const auto sr = safeThis->engine.getCurrentSampleRate();
+                        const auto sr = safeThis->engine.getTimelineSampleRate();
                         const auto spawn = snap::snapAbsoluteToGrid (
                             clickedSample, safeThis->session, sr);
                         auto& um = safeThis->engine.getUndoManager();
@@ -1617,14 +1626,12 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                     });
         if (! session.getMarkers().empty())
         {
-            const double sr = engine.getCurrentSampleRate();
+            const double sr = engine.getTimelineSampleRate();
             juce::PopupMenu jumpSub;
             for (int i = 0; i < (int) session.getMarkers().size(); ++i)
             {
                 const auto& mk = session.getMarkers()[(size_t) i];
-                const int secs = sr > 0.0
-                                   ? (int) ((double) mk.timelineSamples / sr)
-                                   : 0;
+                const int secs = (int) ((double) mk.timelineSamples / sr);
                 jumpSub.addItem (mk.name + "  (" + juce::String (secs) + "s)",
                                   [safeThis = juce::Component::SafePointer<TapeStrip> (this),
                                    i]
@@ -1670,7 +1677,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
             else                                  // empty spot -> add a change
             {
                 const auto snapped = snap::snapAbsoluteToGrid (
-                    clickedSample, session, engine.getCurrentSampleRate());
+                    clickedSample, session, engine.getTimelineSampleRate());
                 m.addItem ("Set tempo here...", [safeThis = SP (this), snapped]
                     { if (safeThis != nullptr) safeThis->promptAddTempoPoint (snapped); });
             }
@@ -1915,11 +1922,15 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                 const int x0 = xForSample (r.timelineStart);
                 const int x1 = xForSample (r.timelineStart + r.lengthInSamples);
                 if (e.x < x0 || e.x > x1) continue;
-                midiDrag.track             = t;
-                midiDrag.regionIdx         = i;
-                midiDrag.mouseDownSample   = sampleAtX (e.x);
-                midiDrag.origTimelineStart = r.timelineStart;
-                midiDrag.origState         = r;
+                // A locked region is selected but not dragged, as on the audio side.
+                if (! r.locked)
+                {
+                    midiDrag.track             = t;
+                    midiDrag.regionIdx         = i;
+                    midiDrag.mouseDownSample   = sampleAtX (e.x);
+                    midiDrag.origTimelineStart = r.timelineStart;
+                    midiDrag.origState         = r;
+                }
                 selectedMidiTrack  = t;
                 selectedMidiRegion = i;
                 // Plain MIDI click clears the audio selection so the two
@@ -1958,7 +1969,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
     clearAllSelections();
 
     const auto sample = snap::snapAbsoluteToGrid (
-        sampleAtX (e.x), session, engine.getCurrentSampleRate());
+        sampleAtX (e.x), session, engine.getTimelineSampleRate());
     engine.getTransport().locate (sample);
     // Remember this click so a future Stop in "Return to last clicked" mode
     // lands here.
@@ -1987,22 +1998,23 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         && (drag.op == RegionOp::Move || midiDrag.active()))
         onMouseMovedForCursor (*this, { e.x, e.y }, EditMode::Grab, {});
 
-    // MIDI region move-drag. In-place mutation of timelineStart on
-    // the AtomicSnapshot's mutable copy so the audio thread's
-    // scheduler picks it up without a publish (no reallocation, no
-    // shifting, structural integrity preserved per AtomicSnapshot's
-    // contract). mouseUp finalises through MidiRegionEditAction.
+    // MIDI region move-drag. Moves the region in place and hands the audio
+    // thread its new position through editedInPlace(), so it plays from where
+    // it is as the pointer goes; the events it plays are the ones it was last
+    // published with. mouseUp finalises through MidiRegionEditAction.
     if (midiDrag.active())
     {
-        auto& v = session.track (midiDrag.track).midiRegions.currentMutable();
+        auto& snapshot = session.track (midiDrag.track).midiRegions;
+        auto& v = snapshot.currentMutable();
         if (midiDrag.regionIdx < 0 || midiDrag.regionIdx >= (int) v.size()) return;
 
         std::int64_t deltaSamples = sampleAtX (e.x) - midiDrag.mouseDownSample;
         // Snap-to-beat - same model as the audio drag below.
-        deltaSamples = snap::snapDeltaToGrid (deltaSamples, session, engine.getCurrentSampleRate());
+        deltaSamples = snap::snapDeltaToGrid (deltaSamples, session, engine.getTimelineSampleRate());
         const auto newStart = std::max<std::int64_t> (
             0, midiDrag.origTimelineStart + deltaSamples);
         v[(size_t) midiDrag.regionIdx].timelineStart = newStart;
+        snapshot.editedInPlace();
         repaint();
         return;
     }
@@ -2045,7 +2057,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             // user is dragging it toward.
             std::int64_t newPos = std::max ((std::int64_t) 0, cur);
             newPos = snap::snapAbsoluteToGrid (newPos, session,
-                                                engine.getCurrentSampleRate());
+                                                engine.getTimelineSampleRate());
             session.getMarkers()[(size_t) markerDrag.index].timelineSamples = newPos;
             repaint();
         }
@@ -2071,7 +2083,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         {
             std::int64_t newPos = std::max ((std::int64_t) 1, cur);
             newPos = snap::snapAbsoluteToGrid (newPos, session,
-                                                engine.getCurrentSampleRate());
+                                                engine.getTimelineSampleRate());
             newPos = std::max ((std::int64_t) 1, newPos);
 
             auto working = tempoDrag.orig;
@@ -2169,7 +2181,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
     // The delta is rounded (not the absolute target) so a region whose
     // origin is mid-step stays mid-step on small drags - only large
     // drags re-align it to the grid.
-    deltaSamples = snap::snapDeltaToGrid (deltaSamples, session, engine.getCurrentSampleRate());
+    deltaSamples = snap::snapDeltaToGrid (deltaSamples, session, engine.getTimelineSampleRate());
 
     constexpr std::int64_t kMinLengthSamples = 1024;  // ~21 ms @ 48k
     auto& r = regions[(size_t) drag.regionIdx];
@@ -2319,7 +2331,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         if (b - a <= kMinUsefulRangeSamples)
         {
             const auto sample = snap::snapAbsoluteToGrid (
-                std::max ((std::int64_t) 0, a), session, engine.getCurrentSampleRate());
+                std::max ((std::int64_t) 0, a), session, engine.getTimelineSampleRate());
             engine.getTransport().locate (sample);
             // Remember this click so a future Stop in "Return to last
             // clicked" mode lands here.
@@ -2378,18 +2390,24 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
     // action so the recorded transaction is the canonical one.
     if (midiDrag.active())
     {
-        auto& v = session.track (midiDrag.track).midiRegions.currentMutable();
+        auto& regions = session.track (midiDrag.track).midiRegions;
+        auto& v = regions.currentMutable();
         if (midiDrag.regionIdx >= 0 && midiDrag.regionIdx < (int) v.size())
         {
             const auto afterState = v[(size_t) midiDrag.regionIdx];
             if (afterState.timelineStart != midiDrag.origState.timelineStart)
             {
                 v[(size_t) midiDrag.regionIdx] = midiDrag.origState;
+                const auto published = regions.generation();
                 auto& um = engine.getUndoManager();
                 um.beginNewTransaction ("Move MIDI region");
                 performInPlace (new MidiRegionEditAction (
                     session, engine, midiDrag.track, midiDrag.regionIdx,
                     midiDrag.origState, afterState));
+                // A refused move leaves the region where it started, and the
+                // audio thread plays it there too.
+                if (regions.generation() == published)
+                    regions.editedInPlace();
             }
         }
         midiDrag.clear();
@@ -2739,10 +2757,10 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
     // split, marker add). Without this the user could create a region
     // and then have no way to undo if they wanted to redo a recording
     // capture into the same slot.
-    const auto sr  = engine.getCurrentSampleRate();
+    const auto sr  = engine.getTimelineSampleRate();
     const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
     const int beatsBar = std::max (1, session.beatsPerBar.load (std::memory_order_relaxed));
-    if (sr <= 0.0 || bpm <= 0.0f) return;
+    if (bpm <= 0.0f) return;
 
     std::int64_t startSample = std::max ((std::int64_t) 0, sampleAtX (e.x));
 
@@ -3003,16 +3021,13 @@ void TapeStrip::mouseWheelMove (const juce::MouseEvent& e,
     }
     if (userZoomFactor > 1.0f)
     {
-        const double sr = engine.getCurrentSampleRate();
-        if (sr > 0.0)
-        {
-            // A tenth of a second per notch. Sign: positive deltaY (away
-            // from user) = scroll left = decrease scrollSamples.
-            const float dx = std::abs (w.deltaX) > 0.001f ? w.deltaX : w.deltaY;
-            const auto delta = (std::int64_t) ((double) wheel::notches (dx, w.isSmooth) * sr * 0.1);
-            scrollSamples = std::max<std::int64_t> (0, scrollSamples - delta);
-            repaint();
-        }
+        // A tenth of a second per notch. Sign: positive deltaY (away
+        // from user) = scroll left = decrease scrollSamples.
+        const double sr = engine.getTimelineSampleRate();
+        const float dx = std::abs (w.deltaX) > 0.001f ? w.deltaX : w.deltaY;
+        const auto delta = (std::int64_t) ((double) wheel::notches (dx, w.isSmooth) * sr * 0.1);
+        scrollSamples = std::max<std::int64_t> (0, scrollSamples - delta);
+        repaint();
     }
 }
 
@@ -3242,10 +3257,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
 
     // Rename / clear-label. AlertWindow modal text input, same flow
     // as the audio version. Mutation goes through
-    // midiRegions.currentMutable() - the message thread is the only
-    // mutator and the audio thread reads via its acquire-loaded
-    // pointer, same race profile the existing per-note PianoRoll
-    // edits already accept.
+    // midiRegions.currentMutable(): the audio thread never reads a label.
     const auto currentLabel = region.label;
     const juce::String renameLabel = currentLabel.isEmpty()
         ? juce::String ("Add label...")
@@ -3334,9 +3346,9 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                     // at the session's current tempo. PlaybackEngine will
                     // also rebuild on the next preparePlayback if tempo
                     // changes later.
-                    const double sr = safeThis->engine.getCurrentSampleRate();
+                    const double sr = safeThis->engine.getTimelineSampleRate();
                     const float bpm = safeThis->session.tempoBpm.load (std::memory_order_relaxed);
-                    if (sr > 0.0 && bpm > 0.0f)
+                    if (bpm > 0.0f)
                     {
                         const double samplesPerTick =
                             (sr * 60.0) / ((double) bpm * (double) kMidiTicksPerQuarter);
@@ -3510,6 +3522,7 @@ void TapeStrip::showTrackContextMenu (std::vector<int> tracks, juce::Point<int> 
 
 void TapeStrip::paint (juce::Graphics& g)
 {
+    ++paints;
     g.fillAll (juce::Colour (0xff0e0e10));
 
     auto label = labelColumnBounds();
@@ -3523,8 +3536,8 @@ void TapeStrip::paint (juce::Graphics& g)
     g.drawHorizontalLine (ruler.getBottom() - 1, (float) ruler.getX(), (float) ruler.getRight());
 
     const double px = pixelsPerSecond();
-    const double sr = engine.getCurrentSampleRate();
-    if (px > 0.0 && sr > 0.0)
+    const double sr = engine.getTimelineSampleRate();
+    if (px > 0.0)
     {
         g.setColour (juce::Colour (0xff707074));
         g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
@@ -4779,9 +4792,9 @@ bool TapeStrip::cycleSelectedMidiTake (bool forward)
     MidiRegion after = before;
     if (! cycleTake (after, forward)) return false;
 
-    const double sr = engine.getCurrentSampleRate();
+    const double sr = engine.getTimelineSampleRate();
     const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
-    if (sr > 0.0 && bpm > 0.0f)
+    if (bpm > 0.0f)
     {
         const double samplesPerTick =
             (sr * 60.0) / ((double) bpm * (double) kMidiTicksPerQuarter);
@@ -4837,10 +4850,18 @@ bool TapeStrip::dropAtMouse() const
 
 void TapeStrip::fileDragMove (const juce::StringArray&, int x, int y)
 {
+    dropPointerX = x;
+    dropPointerY = y;
+    refreshDropLine();
+}
+
+void TapeStrip::refreshDropLine()
+{
     if (! dropAccepted) return;
+    const int x = dropPointerX;
     int hoveredTrack = -1;
     for (int t = 0; t < Session::kNumTracks; ++t)
-        if (rowBounds (t).contains (x, y)) { hoveredTrack = t; break; }
+        if (rowBounds (t).contains (x, dropPointerY)) { hoveredTrack = t; break; }
     // The line stands where the drop will land, and only while that is in
     // view: a playhead scrolled off the timeline would put it over the names
     // or past the edge.
