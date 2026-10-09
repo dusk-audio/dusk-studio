@@ -777,9 +777,6 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                                                   &session.tempoBpm,
                                                   &currentSampleRate);
 
-    // -1 sentinel so the first block sees a "swap" if a device is
-    // already selected (harmless flush - no notes held yet).
-    lastMidiInputIndex.fill (-1);
     midiScheduledAhead.fill (-1);
 
     publishTempoMap();   // seed the snapshot (empty -> constant tempoBpm)
@@ -1526,7 +1523,7 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
     session.midiLearnPending.store (-1, std::memory_order_relaxed);
 
     const auto stripsWere = strips;
-    const auto midiInputsWere = lastMidiInputIndex;
+    const auto liveMidiWas = lastLiveMidiRoute;
     const auto midiAheadWas = midiScheduledAhead;
     const auto midiUpToWas = midiScheduledUpTo;
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -1534,7 +1531,7 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
         const auto from = (size_t) plan.newToOld[(size_t) t];
         auto* strip = stripsWere[from];
         strips[(size_t) t] = strip;
-        lastMidiInputIndex[(size_t) t] = midiInputsWere[from];
+        lastLiveMidiRoute[(size_t) t] = liveMidiWas[from];
         midiScheduledAhead[(size_t) t] = midiAheadWas[from];
         midiScheduledUpTo[(size_t) t] = midiUpToWas[from];
         strip->bind (session.track (t).strip);
@@ -5902,15 +5899,40 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         //
         // These triggers warrant a flush, all OR'd together:
         //   - engine-wide flushHangingMidi (transport stop / playhead jump)
-        //   - this track's midiInputIndex changed since last block (the
-        //     user swapped MIDI controllers - held notes from the old
-        //     device would otherwise hang on the synth forever).
+        //   - the track's live MIDI route narrowed since last block: it no
+        //     longer reads a source it read (another input chosen, IN off
+        //     while the timeline plays, the on-screen keyboard's audition
+        //     ended with the arm) or its channel filter now drops a channel.
+        //     The note-off for a key held through that arrives where the
+        //     track no longer listens, and the synth would hold it forever.
         //   - the instrument's latency rose further than a window can bridge
         //     (below), which is handled as a locate.
-        const int currentMidiIdx = session.track (t).midiInputIndex.load (
-                                       std::memory_order_relaxed);
-        const bool midiInputSwapped = (currentMidiIdx != lastMidiInputIndex[(size_t) t]);
-        lastMidiInputIndex[(size_t) t] = currentMidiIdx;
+        //
+        // The route is exactly what pullLiveMidi reads below. A MIDI track
+        // takes live input except in an offline render, which must stay
+        // deterministic. A track playing its timeline takes it only with IN
+        // on; otherwise the input is what the instrument plays, whatever IN
+        // says. A record-armed track also auditions the on-screen keyboard,
+        // so it plays from the keyboard however the instrument was loaded,
+        // unless its input already is the keyboard and events would double.
+        const bool pullsLiveMidi = midiTrack && ! offlineRender
+                                && (monitorEnabled || ! (willReadFromDisk && ! isFrozen));
+        midi::LiveMidiRoute liveRoute;
+        if (pullsLiveMidi)
+        {
+            const int numInputs = (int) perInputMidi.size();
+            const auto readable = [numInputs] (int index) noexcept
+            {
+                return index >= 0 && index < numInputs ? index : -1;
+            };
+            liveRoute.input = readable (session.track (t).midiInputIndex.load (std::memory_order_relaxed));
+            const int keyboard = readable (midiIn.getVirtualKeyboardIndex());
+            if (armed && keyboard != liveRoute.input)
+                liveRoute.keyboard = keyboard;
+            liveRoute.channel = session.track (t).midiChannel.load (std::memory_order_relaxed);
+        }
+        const bool liveRouteNarrowed = midi::liveRouteNarrows (lastLiveMidiRoute[(size_t) t], liveRoute);
+        lastLiveMidiRoute[(size_t) t] = liveRoute;
 
         // A MIDI track reports 0 to PDC (recomputePdc), so its instrument's
         // latency comes out of the timeline window instead: the window runs
@@ -5950,7 +5972,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         {
             midiScheduledAhead[(size_t) t] = -1;
         }
-        const bool perTrackFlush = flushHangingMidi || midiInputSwapped || latencyLocate;
+        const bool perTrackFlush = flushHangingMidi || liveRouteNarrowed || latencyLocate;
         const bool midiWindowContinues = schedulesTimelineMidi && scheduledAhead >= 0
                                       && ! perTrackFlush;
 
@@ -5965,7 +5987,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         static_assert (kGeneratedMidiBudget
                        >= (8192 / kMinLoopRecordSamples + 1)
                             * kHangingResetBytes);
-        // A bridged window's seams, plus the flush an input swap can add.
+        // A bridged window's seams, plus the flush a narrowed live route can add.
         static_assert (kGeneratedMidiBudget
                        >= ((8192 + kMaxMidiLatencyBridge) / kMinLoopRecordSamples + 2)
                             * kHangingResetBytes);
@@ -6066,28 +6088,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 }
             }
         };
+        // Reads the route the flush above judged, not the session again: a
+        // message-thread change between the two reads would otherwise pull
+        // from a source the flush never compared.
         auto pullLiveMidi = [&] ()
         {
-            // Channel filter loaded once per pull, so only tracks that actually
-            // monitor pay the read (0 = omni).
-            const int chFilter = session.track (t).midiChannel.load (std::memory_order_relaxed);
-
-            // The track's explicitly-selected MIDI input. Reuse currentMidiIdx
-            // (loaded above for the hanging-note flush) rather than re-loading:
-            // a message-thread device swap between the two loads would otherwise
-            // pull from the new device here while the flush targeted the old one.
-            pullInput (currentMidiIdx, chFilter);
-
-            // A record-armed MIDI track ALWAYS auditions the on-screen
-            // keyboard, even when its explicit input isn't the VK. This
-            // makes the keyboard "just work" no matter how the instrument
-            // was loaded (editor Browse, session restore, picker) - the
-            // user expects an armed instrument track to play from the
-            // virtual keyboard. Skip when the explicit input already IS
-            // the VK so events aren't doubled.
-            const int vkbIdx = midiIn.getVirtualKeyboardIndex();
-            if (armed && vkbIdx != currentMidiIdx)
-                pullInput (vkbIdx, chFilter);
+            pullInput (liveRoute.input, liveRoute.channel);
+            pullInput (liveRoute.keyboard, liveRoute.channel);
         };
 
         if (willReadFromDisk && ! isFrozen)
@@ -6220,9 +6227,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                         || midiScheduleScansRemaining <= 0)
                         return;
 
+                    // Every reset at the head silences the timeline's notes as
+                    // well as the live ones, so the head chases the ones held
+                    // across it whatever caused the reset.
                     const bool chase = midiTrack && (seam
-                                    || (span.bufferOffset == 0
-                                        && (flushHangingMidi || latencyLocate)));
+                                    || (span.bufferOffset == 0 && perTrackFlush));
                     const int chaseOffset = bufferOffsetOf (span.bufferOffset);
                     const auto spanEnd = span.timelineStart + span.length;
                     if (chase)
@@ -6398,18 +6407,20 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             //   - stopped/record (the else branch below): monitorPasses is the
             //     master-accumulation gate, and it already folds in IN.
             //   - playing (here): monitorPasses is forced open during playback,
-            //     so IN has to be checked explicitly instead.
+            //     so pullsLiveMidi checks IN explicitly instead.
             // A future third source branch must likewise pull live input under
-            // whichever gate governs its audibility. With IN engaged the live
-            // controller (and, on an armed track, the on-screen keyboard) merges
-            // ON TOP of the scheduled timeline notes so the instrument sounds
-            // both the recorded part and what the user plays while the transport
-            // rolls. Overlay events are additive, so the recorder (armed +
-            // Recording only, below) and scheduled playback are untouched.
-            if (midiTrack && monitorEnabled && ! offlineRender)
+            // whichever gate governs its audibility, and pullsLiveMidi has to
+            // say so, or the flush judges a route the branch does not read.
+            // With IN engaged the live controller (and, on an armed track, the
+            // on-screen keyboard) merges ON TOP of the scheduled timeline notes
+            // so the instrument sounds both the recorded part and what the user
+            // plays while the transport rolls. Overlay events are additive, so
+            // the recorder (armed + Recording only, below) and scheduled
+            // playback are untouched.
+            if (pullsLiveMidi)
                 pullLiveMidi();
         }
-        else if (midiTrack && ! offlineRender)
+        else if (pullsLiveMidi)
         {
             // Live monitoring path - only meaningful on MIDI tracks; effect
             // inserts on Mono / Stereo strips don't consume per-track MIDI

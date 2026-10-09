@@ -24,6 +24,7 @@
 #include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
 #include "MidiTimeCodeEmitter.h"
+#include "MidiPanic.h"
 #include "midi/MidiDevices.h"
 #include "midi/MidiSort.h"
 #include "device/DeviceManager.h"
@@ -992,11 +993,11 @@ private:
     std::atomic<int>  testInjectInputIdx { -1 };
     std::atomic<bool> testInjectReady    { false };
 
-    // Previous block's midiInputIndex per track - detects mid-play
-    // input swaps so we can fire All-Notes-Off + Sustain-Off on the
-    // new input. Without this, held notes from the previous device
-    // keep ringing (Note Off never arrives on the now-unrouted source).
-    std::array<int, Session::kNumTracks> lastMidiInputIndex {};
+    // The live MIDI each track took last block. A block whose route narrows
+    // (midi::liveRouteNarrows) resets the track's instrument, since the
+    // note-off for a key held through the change never reaches it. Audio
+    // thread, except that a track move remaps it with the callback suspended.
+    std::array<midi::LiveMidiRoute, Session::kNumTracks> lastLiveMidiRoute {};
 
     // Where each MIDI track's last timeline window ended, in samples past the
     // next block's start, so the next window carries on from there when the

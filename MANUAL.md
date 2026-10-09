@@ -742,6 +742,8 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 - **MIDI out** (MIDI mode): optional external MIDI output to drive a hardware synth as you play, or **None**.
 - **Activity LED**: blinks green when MIDI arrives on the chosen channel.
 
+A note you are holding ends when the track stops listening to it: choosing another **MIDI port**, setting **Channel** to one the note is not on, turning **IN** off while the transport rolls, or disarming a track that plays the on-screen keyboard sends the track's instrument all notes off. Notes the timeline is holding sound again at once. Opening the channel up to **Omni** leaves held notes alone.
+
 ## ARM, IN, PRINT/FREEZE (RECORDING stage)
 
 - **ARM**: light red when on. Marks the track for recording on the next Record press and shows its live pre-fader input level in the Recording stage; it does not make that input audible.

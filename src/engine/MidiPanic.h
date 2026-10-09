@@ -32,4 +32,30 @@ inline bool emitHangingReset (dusk::MidiBuffer& out, int sampleOffset) noexcept
     }
     return true;
 }
+
+// The live MIDI a track takes in one block: its input, the on-screen keyboard
+// an armed track auditions besides it, and the channel filter over both. -1 is
+// no source; channel 0 passes every channel.
+struct LiveMidiRoute
+{
+    int input    = -1;
+    int keyboard = -1;
+    int channel  = 0;
+};
+
+// True when `now` stops taking something `was` took: a source it no longer
+// reads, or a channel its filter now drops. The note-off for a key held there
+// is dropped with it, so the track's instrument needs the hanging reset. A
+// route that only widens leaves held notes to their own note-offs.
+inline bool liveRouteNarrows (const LiveMidiRoute& was, const LiveMidiRoute& now) noexcept
+{
+    const auto stillRead = [&now] (int source) noexcept
+    {
+        return source < 0 || source == now.input || source == now.keyboard;
+    };
+    if (! stillRead (was.input) || ! stillRead (was.keyboard))
+        return true;
+    const bool readAny = was.input >= 0 || was.keyboard >= 0;
+    return readAny && now.channel != 0 && now.channel != was.channel;
+}
 } // namespace duskstudio::midi

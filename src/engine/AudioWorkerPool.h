@@ -44,7 +44,8 @@ public:
 
     // Message thread only. Spawns `workers` real-time threads at the given
     // realtime priority on JUCE's 0..10 scale (see RtPriority.h; < 0 or an
-    // RT-denied thread runs at the OS default scheduling class); `job` is stored
+    // RT-denied thread runs at the OS default scheduling class; on Windows
+    // each joins the MMCSS "Pro Audio" task instead); `job` is stored
     // once (never reallocated per block) and invoked as job(lane). A count <= 0
     // leaves the pool inactive (runBlock then runs job(0) inline on the caller).
     void start (int workers, std::function<void (int lane)> job, int rtJucePriority = 5);

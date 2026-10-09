@@ -9,9 +9,8 @@ namespace duskstudio
 {
 // The gain a region's fades and its overlap with its neighbours give each of
 // its samples, shared by playback and the join render so a joined file holds
-// what its regions played. PlaybackEngine::readSpanForTrack still spells out
-// regionEnvelope and gainAt in its own loop; tests/region_join.cpp holds the
-// two to the same samples.
+// what its regions played. Playback reads it on the audio thread, so
+// everything here stays inline and allocation-free.
 
 // Fades longer than the region would multiply into a notch mid-region; they
 // shrink in proportion so the ramps meet at one sample.
@@ -54,6 +53,24 @@ struct RegionEnvelope
         if (fadeOut > 0 && untilEnd < fadeOut)
             gain *= applyFadeShape ((float) untilEnd / (float) fadeOut, fadeOutShape);
         return gain;
+    }
+
+    // Where neither fade reaches in a run of numSamples whose first sample is
+    // sinceStart and untilEnd as gainAt counts them: [first, last), counted
+    // from the run's start, in which gainAt gives the region gain untouched.
+    // Empty when the fades meet inside the run.
+    struct Unfaded
+    {
+        std::int64_t first = 0;
+        std::int64_t last  = 0;
+    };
+
+    Unfaded unfaded (std::int64_t sinceStart, std::int64_t untilEnd, std::int64_t numSamples) const noexcept
+    {
+        Unfaded run;
+        run.first = std::clamp (fadeIn - sinceStart, (std::int64_t) 0, numSamples);
+        run.last  = std::clamp (untilEnd - fadeOut + 1, run.first, numSamples);
+        return run;
     }
 };
 

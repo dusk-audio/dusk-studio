@@ -6,6 +6,7 @@
 #include "engine/Transport.h"
 #include "engine/audiofile/FileWriter.h"
 #include "foundation/PlanarBuffer.h"
+#include "session/RegionEnvelope.h"
 #include "session/RegionJoin.h"
 #include "session/Session.h"
 
@@ -292,6 +293,38 @@ TEST_CASE ("A join render plays as its regions did however they overlap", "[regi
     const auto before = played (*f.session, regions);
     auto joinedPlay = played (*f.session, { joined (f.dir.path(), "any", regions).region });
     CHECK_THAT (furthestApart (joinedPlay, before), WithinAbs (0.0f, 1.0e-4f));
+}
+
+TEST_CASE ("A region's unfaded run is exactly where its envelope leaves the gain alone", "[region][join][playback]")
+{
+    constexpr std::int64_t kLength = 1000;
+    constexpr float kGain = 0.7f;
+    struct Fades { std::int64_t in, out, overlapPrev, overlapNext; };
+    for (const auto fades : { Fades { 0, 0, 0, 0 }, Fades { 100, 0, 0, 0 }, Fades { 0, 250, 0, 0 },
+                              Fades { 100, 250, 0, 0 }, Fades { 50, 0, 300, 0 }, Fades { 0, 20, 0, 400 },
+                              Fades { 600, 400, 0, 0 }, Fades { 0, 0, 700, 600 } })
+    {
+        const auto envelope = regionEnvelope (fades.in, FadeShape::Sigmoid, fades.out, FadeShape::Log,
+                                              fades.overlapPrev, fades.overlapNext);
+        for (const std::int64_t start : { (std::int64_t) 0, (std::int64_t) 90, (std::int64_t) 500, kLength - 256 })
+        {
+            const std::int64_t n = std::min ((std::int64_t) 256, kLength - start);
+            const auto run = envelope.unfaded (start, kLength - start, n);
+            REQUIRE (run.first >= 0);
+            REQUIRE (run.first <= run.last);
+            REQUIRE (run.last <= n);
+            for (std::int64_t i = 0; i < n; ++i)
+            {
+                const bool fadeReaches = (envelope.fadeIn > 0 && start + i < envelope.fadeIn)
+                                      || (envelope.fadeOut > 0 && kLength - start - i < envelope.fadeOut);
+                const bool inRun = i >= run.first && i < run.last;
+                CAPTURE (fades.in, fades.out, fades.overlapPrev, fades.overlapNext, start, i);
+                CHECK (inRun == ! fadeReaches);
+                if (inRun)
+                    CHECK_THAT (envelope.gainAt (kGain, start + i, kLength - start - i), WithinAbs (kGain, 0.0f));
+            }
+        }
+    }
 }
 
 TEST_CASE ("A join render refuses a region its file cannot fill", "[region][join]")

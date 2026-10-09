@@ -201,6 +201,18 @@ Takes live on the track now, and the audio editor is where you comp them.
 - **Imports with no audio device run at the timeline's rate.** They were
   converted to 48 kHz while the timeline measured time at the rate the device
   last ran at. A Mackie surface's timecode counts at that rate too.
+- **A held note no longer sticks when its track stops listening.** Turning IN
+  off while the transport rolls, disarming a track that plays the on-screen
+  keyboard, or moving a MIDI track's channel off the note's channel used to
+  drop the note-off, and the instrument held the note until the transport
+  stopped, or for good. The track's instrument now gets an all-notes-off the
+  moment it stops taking that input, and notes the timeline is holding are
+  played again. Choosing another MIDI input already did this.
+- **Fewer dropouts on Windows while an editor draws.** The extra cores that
+  Multicore DSP uses ran at normal priority, so anything else busy on the
+  machine, such as a plug-in editor drawn without a graphics card, slowed them
+  down and the audio overran waiting for them. They now run at the audio
+  thread's priority, as they already did on Linux.
 
 ## [0.14.0] - 2026-09-29
 

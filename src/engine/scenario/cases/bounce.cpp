@@ -990,6 +990,11 @@ RecordingMidiBackend* sunsetsIntoRecorders (ScenarioContext& ctx, const std::vec
     auto& transport = engine.getTransport();
     const int numTracks = (int) oversampling.size();
 
+    // The engine remembers each track's live MIDI route from the last block it
+    // ran, which may have been the previous scenario's. One block with these
+    // tracks still audio settles that, so a reset it owes is not recorded here.
+    ctx.pump (1);
+
     auto owned = std::make_unique<RecordingMidiBackend> (numTracks);
     auto* const recorder = owned.get();
     engine.installMidiOutputBackend (std::move (owned));

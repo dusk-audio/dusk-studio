@@ -8,10 +8,70 @@
 
 #if defined(__linux__)
  #include <pthread.h>
+#elif defined(_WIN32)
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+ #endif
+ #include <windows.h>
 #endif
 
 namespace duskstudio
 {
+#if defined(_WIN32)
+namespace
+{
+// The WASAPI callback thread runs in the MMCSS "Pro Audio" task, which JUCE's
+// device thread joins. The workers that thread waits on every block have to
+// run in it too: at normal priority they share the cores with every other
+// normal thread, a software GL renderer's while an editor draws among them,
+// and the callback overruns waiting for its lanes. avrt.dll is loaded at run
+// time, as JUCE does, so nothing new is linked.
+struct ProAudioTask
+{
+    HMODULE avrt = nullptr;
+    HANDLE  task = nullptr;
+};
+
+// GetProcAddress hands back a generic pointer; going through void (*)() is the
+// cast compilers accept to any other function type without a warning.
+template <typename Function>
+Function avrtFunction (HMODULE avrt, const char* name) noexcept
+{
+    return reinterpret_cast<Function> (reinterpret_cast<void (*)()> (GetProcAddress (avrt, name)));
+}
+
+ProAudioTask joinProAudioTask() noexcept
+{
+    using Join = HANDLE (WINAPI*) (LPCWSTR, LPDWORD);
+    ProAudioTask joined;
+    joined.avrt = LoadLibraryW (L"avrt.dll");
+    if (joined.avrt != nullptr)
+        if (const auto join = avrtFunction<Join> (joined.avrt, "AvSetMmThreadCharacteristicsW"))
+        {
+            DWORD taskIndex = 0;
+            joined.task = join (L"Pro Audio", &taskIndex);
+        }
+    // Without MMCSS, still above every normal-priority thread.
+    if (joined.task == nullptr)
+        SetThreadPriority (GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    return joined;
+}
+
+void leaveProAudioTask (const ProAudioTask& joined) noexcept
+{
+    using Leave = BOOL (WINAPI*) (HANDLE);
+    if (joined.task != nullptr)
+        if (const auto leave = avrtFunction<Leave> (joined.avrt, "AvRevertMmThreadCharacteristics"))
+            leave (joined.task);
+    if (joined.avrt != nullptr)
+        FreeLibrary (joined.avrt);
+}
+} // namespace
+#endif
+
 struct AudioWorkerPool::Worker
 {
     Worker (AudioWorkerPool& p, int idx, int rtPrio)
@@ -29,8 +89,17 @@ struct AudioWorkerPool::Worker
         char name[16];
         std::snprintf (name, sizeof name, "DuskDSP %d", lane);
         pthread_setname_np (pthread_self(), name);
+       #elif defined(_WIN32)
+        const auto proAudio = joinProAudioTask();
        #endif
+        runLanes();
+       #if defined(_WIN32)
+        leaveProAudioTask (proAudio);
+       #endif
+    }
 
+    void runLanes()
+    {
         while (! shouldExit.load (std::memory_order_acquire))
         {
             // Park until dispatched (or quiesced, or quitting). Auto-reset

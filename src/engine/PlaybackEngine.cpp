@@ -662,51 +662,43 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
                               r.loopCacheR.data() + srcOff, sizeof (float) * (size_t) n);
         }
 
-        // Apply fade-in / fade-out envelope in scratch, then SUM (instead
-        // of REPLACE) into the output buffer(s). Summing lets two regions
-        // overlap during a crossfade window. Mono regions duplicate the
-        // L channel into outR (when outR is non-null) so the strip's
+        // SUM (instead of REPLACE) into the output buffer(s) under the
+        // region's envelope, the one the join render bakes. Summing lets two
+        // regions overlap during a crossfade window. Mono regions duplicate
+        // the L channel into outR (when outR is non-null) so the strip's
         // stereo path sees a center-panned signal.
-        //
-        // Effective fade = max(explicit, implicit overlap). Shape uses the
-        // user's pick when the explicit length wins, EqualPower otherwise
-        // so two adjacent regions sum to constant power across the overlap.
-        const std::int64_t explicitIn  = r.fadeInSamples;
-        const std::int64_t explicitOut = r.fadeOutSamples;
-        const std::int64_t implicitIn  = r.overlapPrevLen;
-        const std::int64_t implicitOut = r.overlapNextLen;
-        const std::int64_t fadeIn   = std::max (explicitIn,  implicitIn);
-        const std::int64_t fadeOut  = std::max (explicitOut, implicitOut);
-        const FadeShape fadeInShape  = (explicitIn  >= implicitIn)
-                                         ? r.fadeInShape  : FadeShape::EqualPower;
-        const FadeShape fadeOutShape = (explicitOut >= implicitOut)
-                                         ? r.fadeOutShape : FadeShape::EqualPower;
-        const std::int64_t regionStart = r.timelineStart;
-        const float fadeInDenom  = (fadeIn  > 0) ? (float) fadeIn  : 1.0f;
-        const float fadeOutDenom = (fadeOut > 0) ? (float) fadeOut : 1.0f;
+        const auto envelope = regionEnvelope (r.fadeInSamples, r.fadeInShape,
+                                              r.fadeOutSamples, r.fadeOutShape,
+                                              r.overlapPrevLen, r.overlapNextLen);
         const auto* srcL = readScratch.channel (0);
         const auto* srcR = readStereo ? readScratch.channel (1) : srcL;
         const float regionGain = r.gainLinear;
-        for (int i = 0; i < withinSamples; ++i)
+        const std::int64_t sinceStart = firstWithin - r.timelineStart;
+        const std::int64_t untilEnd   = regionEnd - firstWithin;
+        float* dstL = outL + outOffset;
+        float* dstR = outR != nullptr ? outR + outOffset : nullptr;
+        const auto faded = [&] (int from, int to) noexcept
         {
-            const std::int64_t timelineSample = firstWithin + i;
-            float gain = regionGain;
-            if (fadeIn > 0)
+            for (int i = from; i < to; ++i)
             {
-                const std::int64_t inPos = timelineSample - regionStart;
-                if (inPos < fadeIn)
-                    gain *= applyFadeShape ((float) inPos / fadeInDenom, fadeInShape);
+                const float gain = envelope.gainAt (regionGain, sinceStart + i, untilEnd - i);
+                dstL[i] += srcL[i] * gain;
+                if (dstR != nullptr)
+                    dstR[i] += srcR[i] * gain;
             }
-            if (fadeOut > 0)
-            {
-                const std::int64_t outPos = regionEnd - timelineSample;
-                if (outPos < fadeOut)
-                    gain *= applyFadeShape ((float) outPos / fadeOutDenom, fadeOutShape);
-            }
-            outL[outOffset + i] += srcL[i] * gain;
-            if (outR != nullptr)
-                outR[outOffset + i] += srcR[i] * gain;
-        }
+        };
+        // Most of a region sits between its fades, where the gain is the
+        // region's alone: a plain multiply-add the compiler vectorises.
+        const auto unfaded = envelope.unfaded (sinceStart, untilEnd, withinSamples);
+        const int first = (int) unfaded.first;
+        const int last  = (int) unfaded.last;
+        faded (0, first);
+        for (int i = first; i < last; ++i)
+            dstL[i] += srcL[i] * regionGain;
+        if (dstR != nullptr)
+            for (int i = first; i < last; ++i)
+                dstR[i] += srcR[i] * regionGain;
+        faded (last, withinSamples);
     }
 }
 } // namespace duskstudio
