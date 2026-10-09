@@ -452,7 +452,19 @@ scripts/regress.sh windows --release-run 1234567890
 scripts/regress.sh windows --release-run 1234567890 --fixtures-run 2345678901
 scripts/regress.sh all --perf --msi /path/to/installer.msi
 scripts/regress.sh all --release-run 1234567890 --fixtures-run 2345678901
+scripts/regress.sh prepush               # linux + mac source legs, before a push
 ```
+
+`prepush` is the check before a branch goes to GitHub: the Linux and macOS
+source legs (build, tests, `ctest-runner-limits`, JUCE gate, self-test,
+headless scenarios) run at the same time, since one runs here and the other on
+the Air, and one table ends the run. Each platform's output goes to a log under
+`$TMPDIR` named above the table. Linux options and `--host` pass through;
+package, release-run and Windows options are refused. Windows is left to CI:
+the `windows-tests.yml` run builds the MSVC artifact the guest tests. Green here
+means CI should find nothing new, so a branch needs one CI round rather than
+several, and pushes are batched, because each one cancels the macOS job in
+progress (about 45 minutes on a cold cache) and starts it again.
 
 `all` routes each option to the platform that owns it, so one command line can
 carry Linux, macOS and Windows options at once. An option no platform claims is
@@ -488,6 +500,7 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 | `configure-check` | both build dirs build the donor from `DONOR_REV`: no `DUSK_PLUGINS_PATH` override, and `_deps/dusk-plugins` checked out at that commit. Any other donor changes the DSP under test, and the failure then reads as a Dusk Studio regression. A mismatch aborts the run before anything is built. |
 | `build-app` / `build-tests` | both targets compile at `-j6`. |
 | `ctest` | the Catch2 suite in `build-tests/`. |
+| `ctest-runner-limits` | the same suite again with `ulimit -r 0` and `ulimit -l 64`, the hosted Ubuntu runners' realtime-priority and memlock limits. A test that needs either and does not skip cleanly without it (an all-skipped Catch2 run exits 4 unless its tag is discovered with `--allow-running-no-tests`) fails here instead of in CI. |
 | `juce-gate` | `tools/juce-gate.sh`: no file gained JUCE and no listed file gained occurrences. |
 | `selftest-xvfb` | `scripts/run-selftest-xvfb.sh` - the headless audio self-test on a private X display, with `DUSKSTUDIO_CLAP_STATE_FIXTURE` pointing at the multi-bus CLAP fixture when `build-tests/` has it, so the clone-track leg runs instead of skipping. |
 | `ipc-selftest` | `DUSKSTUDIO_RUN_IPC_SELFTEST=1`: the shm + futex round-trip against the `dusk-studio-plugin-host` stub. |

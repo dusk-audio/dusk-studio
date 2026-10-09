@@ -201,6 +201,10 @@ cmake --build build-tests --target dusk-studio-tests -j6 && ctest --test-dir bui
 
 If a change touches a unit that has tests, those tests must pass. If it touches a unit that *doesn't* have tests but easily could, add at least one.
 
+### Before a push
+
+Run `scripts/regress.sh prepush` (`TMPDIR=/var/tmp` on the Linux dev box) and push only on `regress prepush: OK`. It builds and tests the checkout on Linux and on the macOS build node at once, including the suite under CI's realtime and memlock limits. Windows compiles only in CI. Batch fixes into one push: every push restarts the macOS CI job from the beginning.
+
 ### The two contracts around the suite
 
 Both fail the build, and both are easy to forget because neither is about the code you changed.
