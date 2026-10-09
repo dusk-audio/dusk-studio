@@ -138,8 +138,8 @@ private:
     // Compact-mode popups: clicking the placeholder button shows a
     // mini-editor mirroring the bus's EQ / COMP knobs so the user can
     // tweak without expanding the strip back to full mode.
-    EmbeddedModal eqEditorModal;
-    EmbeddedModal compEditorModal;
+    EmbeddedModal eqEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
+    EmbeddedModal compEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
     void openEqEditorPopup();
     void openCompEditorPopup();
     // Unified section context menus (right-click on a header or compact pill):

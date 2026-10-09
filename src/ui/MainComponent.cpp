@@ -5406,7 +5406,8 @@ void MainComponent::enqueueImportsWithTargets (
         PendingImport p;
         p.file       = a.file;
         p.trackIndex = a.trackIndex;   // pre-assigned, picker skipped
-        p.isMidi     = a.isMidi;
+        p.isMidi     = a.mode == Track::Mode::Midi;
+        p.mode       = a.mode;
         pendingImportQueue.push_back (std::move (p));
     }
     kickNextImport();
@@ -5425,7 +5426,7 @@ void MainComponent::kickNextImport()
         MultiImportTargetPicker::Assignment a;
         a.file       = entry.file;
         a.trackIndex = entry.trackIndex;
-        a.isMidi     = entry.isMidi;
+        a.mode       = entry.mode;
         commitImportNoModal (a, pendingImportTimelineStart);
         return;
     }
@@ -5457,9 +5458,10 @@ void MainComponent::commitImportNoModal (
     // Mirror the per-file picker's onCommit body but without re-opening
     // a modal. Mid-batch transport state changes abort the whole queue,
     // same as the single-file path.
+    const bool isMidi = a.mode == Track::Mode::Midi;
     if (! engine.getTransport().isStopped())
     {
-        showImportError (a.isMidi ? "Import MIDI" : "Import audio",
+        showImportError (isMidi ? "Import MIDI" : "Import audio",
                           "Stop playback before importing files.");
         cancelImportChain();
         return;
@@ -5470,13 +5472,18 @@ void MainComponent::commitImportNoModal (
     // file, continue the batch) rather than desync it.
     if (track.frozen.load (std::memory_order_relaxed))
     {
-        showImportError (a.isMidi ? "Import MIDI" : "Import audio",
+        showImportError (isMidi ? "Import MIDI" : "Import audio",
                           "This track is frozen. Unfreeze it before importing onto it.");
         kickNextImport();
         return;
     }
 
-    if (a.isMidi)
+    // The picker's row said the mode will flip; the flip joins the file's undo step.
+    std::optional<Track::Mode> switchTo;
+    if (track.mode.load (std::memory_order_relaxed) != (int) a.mode)
+        switchTo = a.mode;
+
+    if (isMidi)
     {
         duskstudio::fileimport::MidiImportRequest req;
         req.source            = a.file;
@@ -5491,19 +5498,17 @@ void MainComponent::commitImportNoModal (
             kickNextImport();
             return;
         }
-        commitImport (session, engine, a.trackIndex, std::nullopt,
+        commitImport (session, engine, a.trackIndex, switchTo,
                       new CreateMidiRegionAction (session, a.trackIndex, std::move (res.region)), a.file);
     }
     else
     {
-        const auto mode = (Track::Mode) track.mode.load (std::memory_order_relaxed);
-
         duskstudio::fileimport::AudioImportRequest req;
         req.source            = a.file;
         req.audioDir          = session.getAudioDirectory();
         req.trackIndex        = a.trackIndex;
         req.sessionSampleRate = engine.getTimelineSampleRate();
-        req.targetChannels    = (mode == Track::Mode::Stereo) ? 2 : 1;
+        req.targetChannels    = (a.mode == Track::Mode::Stereo) ? 2 : 1;
         req.timelineStart     = timelineStart;
 
         auto res = duskstudio::fileimport::importAudio (req);
@@ -5513,7 +5518,7 @@ void MainComponent::commitImportNoModal (
             kickNextImport();
             return;
         }
-        commitImport (session, engine, a.trackIndex, std::nullopt,
+        commitImport (session, engine, a.trackIndex, switchTo,
                       new PasteRegionAction (session, engine, a.trackIndex, res.region), a.file);
     }
 
@@ -6721,7 +6726,7 @@ void MainComponent::undoOrRedo (bool redo)
             explainTrackMoveRefused (*this, "Close the " + dialog + " dialog, then " + step + " the move again.");
             return;
         }
-        if (! EmbeddedModal::activeModalStack().empty())
+        if (EmbeddedModal::trackMoveMustWait())
         {
             explainTrackMoveRefused (*this, "Close the open menu or dialog, then " + step + " the move again.");
             return;

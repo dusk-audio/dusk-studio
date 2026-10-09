@@ -364,7 +364,7 @@ private:
     // text into auxKnobLabels[auxIdx].
     void refreshAuxSendLabel (int auxIdx);
     // I/O config popup (mode + input routing) hosted as a centred EmbeddedModal.
-    EmbeddedModal ioConfigModal;
+    EmbeddedModal ioConfigModal { EmbeddedModal::SafeAcrossTrackMove {} };
     // Repainted by the 30 Hz timer when engine sets track.midiActivity
     // (clear-on-read).
     struct MidiActivityLed : juce::Component
@@ -434,7 +434,7 @@ private:
     // Flips insertMode to Hardware and shows HardwareInsertEditor in
     // an EmbeddedModal owned by this strip.
     void openHardwareInsertEditor();
-    EmbeddedModal hardwareInsertModal;
+    EmbeddedModal hardwareInsertModal { EmbeddedModal::SafeAcrossTrackMove {} };
     // Async freeze progress (FreezeDialog) hosted as an EmbeddedModal.
     EmbeddedModal freezeModal;
     void showPluginSlotMenu();
@@ -447,7 +447,7 @@ private:
     // generic-fallback and native editors share this modal - X11 sub-
     // window reparents into the modal wrapper without its own top-
     // level peer.
-    EmbeddedModal pluginEditorModal;
+    EmbeddedModal pluginEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
     std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
     juce::AudioProcessor* pluginEditorOwner = nullptr;
 
@@ -560,8 +560,8 @@ private:
     // backdrop, Esc / click-outside dismiss, transport-key forwarding, focus
     // restore all handled internally). Mutually exclusive - opening one closes
     // the others.
-    EmbeddedModal eqEditorModal;
-    EmbeddedModal auxEditorModal;
+    EmbeddedModal eqEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
+    EmbeddedModal auxEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
     // COMP is native: a framework child covering the host window, drawing its own
     // dim and plate. Built on first open because the framework window is a real
     // graphics resource and most strips never open one.

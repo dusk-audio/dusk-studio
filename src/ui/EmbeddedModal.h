@@ -262,8 +262,23 @@ public:
         return hook;
     }
 
+    // A modal no track move can leave acting on the wrong track: an editor the
+    // move closes along with its strip, or one that belongs to a bus or the
+    // master. Every other open modal may hold a track by its row, so a move's
+    // undo and redo wait for it.
+    struct SafeAcrossTrackMove {};
+
     EmbeddedModal()  = default;
+    explicit EmbeddedModal (SafeAcrossTrackMove) : safeAcrossTrackMove_ (true) {}
     ~EmbeddedModal() override { close(); }
+
+    static bool trackMoveMustWait()
+    {
+        for (const auto* modal : activeModalStack())
+            if (! modal->safeAcrossTrackMove_)
+                return true;
+        return false;
+    }
 
     // Modal takes ownership of body; close destructs it.
     //
@@ -894,6 +909,7 @@ private:
     bool escapeDismisses = true;
     bool forwardShortcuts_ = true;
     bool listeningForOutsideClicks = false;
+    const bool safeAcrossTrackMove_ = false;
 
     // Plugin editors (OOP / XEmbed / GL-rendering hosts especially) paint
     // above the modal in the native window's z-order regardless of toFront(),

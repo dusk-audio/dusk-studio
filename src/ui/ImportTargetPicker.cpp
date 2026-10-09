@@ -24,18 +24,8 @@ struct SortRecord
     Bucket bucket;
 };
 
-Bucket bucketFor (const Track::Mode trackMode,
-                    int numRegions,
-                    bool isMidi,
-                    int  numChannels)
+Bucket bucketFor (const Track::Mode trackMode, int numRegions, const Track::Mode wanted)
 {
-    if (isMidi)
-    {
-        if (trackMode == Track::Mode::Midi)
-            return numRegions == 0 ? Bucket::MatchEmpty : Bucket::MatchOccupied;
-        return Bucket::Mismatch;
-    }
-    const auto wanted = (numChannels == 2) ? Track::Mode::Stereo : Track::Mode::Mono;
     if (trackMode == wanted)
         return numRegions == 0 ? Bucket::MatchEmpty : Bucket::MatchOccupied;
     return Bucket::Mismatch;
@@ -220,8 +210,7 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
         const int regionCount = summary.isMidi
                                    ? (int) t.midiRegions.current().size()
                                    : (int) t.regions.size();
-        records.push_back ({ i, bucketFor (mode, regionCount,
-                                              summary.isMidi, summary.numChannels) });
+        records.push_back ({ i, bucketFor (mode, regionCount, summary.trackMode()) });
     }
     std::stable_sort (records.begin(), records.end(),
         [] (const SortRecord& a, const SortRecord& b)
@@ -334,11 +323,7 @@ void ImportTargetPicker::commitSelection()
     // discover their track changed mode after the fact.
     auto& trackRef = session.track (trackIndex);
     const auto currentMode = (Track::Mode) trackRef.mode.load (std::memory_order_relaxed);
-    const Track::Mode newMode = summary.isMidi
-                                   ? Track::Mode::Midi
-                                   : (summary.numChannels == 2
-                                          ? Track::Mode::Stereo
-                                          : Track::Mode::Mono);
+    const Track::Mode newMode = summary.trackMode();
 
     auto modeName = [] (Track::Mode m) -> juce::String
     {

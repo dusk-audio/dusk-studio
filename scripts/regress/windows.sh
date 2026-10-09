@@ -327,6 +327,11 @@ phase_body() {
     tail -c "+$(($1 + 1))" "$REPORT" 2>/dev/null | tr -d '\r'
 }
 
+# Every line of $1 that the guest has finished writing.
+whole_lines() {
+    [[ "$1" == *$'\n'* ]] && printf '%s\n' "${1%$'\n'*}"
+}
+
 # run_guest_phase <phase name> <served script> <deadline seconds>. Leaves the
 # phase's report in PHASE_BODY, its REGRESS-NOTE lines in PHASE_NOTE and its
 # REGRESS-WARN lines in PHASE_WARN. While a UAC prompt the phase reported is
@@ -335,7 +340,7 @@ phase_body() {
 PHASE_BODY=""
 run_guest_phase() {
     local name="$1" script="$2" deadline="$3"
-    local offset start body result
+    local offset start raw body result
     local uac_open=0 last_shot=0 stalled=0 uac_handled=0 uac_seen line label
     offset="$(stat -c %s "$REPORT")"
     PHASE_NOTE=""
@@ -348,11 +353,15 @@ run_guest_phase() {
     start=$SECONDS
     last_shot=$SECONDS
     while :; do
-        body="$(phase_body "$offset")"
+        raw="$(phase_body "$offset"; echo .)"
+        raw="${raw%.}"
+        body="${raw%$'\n'}"
         grep -qF "REGRESS-PHASE ${name} END" <<<"$body" && break
         # The report only grows, and two prompts can post the same text (two
         # products of one version each give "uninstall-<v> prompt-up 1"), so a
-        # line is new by its position, not its words.
+        # line is new by its position, not its words. A line the guest is still
+        # writing waits for the next pass: counted now, it would be handled
+        # before its words were all there.
         uac_seen=0
         while IFS= read -r line; do
             [[ -n "$line" ]] || continue
@@ -389,7 +398,7 @@ run_guest_phase() {
                     echo "error: nobody answered the UAC prompt for the ${label} within $((UAC_WAIT / 60)) min" >&2
                     ;;
             esac
-        done < <(grep '^REGRESS-UAC ' <<<"$body" || true)
+        done < <(whole_lines "$raw" | grep '^REGRESS-UAC ' || true)
         if ((!stalled)) && grep -q '^REGRESS-TIMEOUT ' <<<"$body"; then
             stalled=1
             grep -m1 '^REGRESS-TIMEOUT ' <<<"$body"

@@ -64,7 +64,11 @@ Takes live on the track now, and the audio editor is where you comp them.
   row lights in the track's colour. Double-click renames in place, one undo
   step. Drag a name up or down to move the track to another row, with
   everything on it: regions, takes, strip settings, insert and automation.
-  Clicking a name used to do nothing.
+  A track you haven't named shows the number of the row it lands in. A move is
+  one undo step, and its undo and redo wait while a menu or a dialog is open,
+  since an item picked there could act on whichever track the move put in its
+  row. An editor open on a track that moves closes instead. Clicking a name
+  used to do nothing.
 - **Select several tracks by name.** Shift+click takes in every row shown
   between two names and Cmd/Ctrl+click adds or removes one. **A / S / X** then
   act on all of them: off everywhere when any selected track has the state on,
@@ -173,19 +177,15 @@ Takes live on the track now, and the audio editor is where you comp them.
 - **A join in the audio editor leaves the joined region in focus.** When an
   unselected region sat between the joined ones in the track's stored order,
   the focus landed on that region instead, and Delete then removed it.
-- **Undoing a track move waits for an open menu or dialog.** With the track
-  name menu or the import target picker open, **Cmd+Z** could undo a move
-  under it, and the item you then picked acted on whichever track now sat in
-  that row. The undo and redo of a move now say to close the menu or dialog
-  first.
-- **A track you haven't named shows its row's number after a move.** It used
-  to keep the number of the row it came from, so the rows read 2, 3, 1, and an
-  import onto it no longer named it after the file.
 - **The drop line follows Alt.** Pressing or letting go of Alt with files held
   still over the timeline left the line where it was, while the drop landed by
   the key.
 - **A locked MIDI region no longer moves on the timeline.** It takes the click
   but not the drag, as a locked audio region does.
+- **A multi-file import switches a track's mode as its row says.** A
+  destination marked "mode will flip" kept its mode, so a stereo file landed on
+  a mono track as mono and a MIDI file landed on an audio track. The import now
+  switches the track to the file's mode, and that file's undo switches it back.
 - **Undo no longer drops an imported region.** An import had no undo step of
   its own, so undoing a recording or a take-lane edit made on the track before
   it took the imported region away for good. Each imported file is now its own

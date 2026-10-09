@@ -30,6 +30,13 @@ public:
         int          numMidiNotes  = 0;     // MIDI only
         std::int64_t  lengthTicks   = 0;     // MIDI only
         bool         isMidi        = false;
+
+        // The mode a track has to be in to take the file; any other is switched.
+        Track::Mode trackMode() const noexcept
+        {
+            if (isMidi) return Track::Mode::Midi;
+            return numChannels == 2 ? Track::Mode::Stereo : Track::Mode::Mono;
+        }
     };
 
     // onCommit fires with the resolved (0-based) target track index and, once

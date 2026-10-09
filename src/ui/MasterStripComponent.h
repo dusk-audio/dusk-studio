@@ -149,8 +149,8 @@ private:
     juce::Rectangle<int> tapeArea;   // framed band behind the TAPE header (regular mode)
     SplitModuleButton eqCompactButton  { "EQ"   };
     SplitModuleButton compCompactButton { "COMP" };
-    EmbeddedModal eqEditorModal;
-    EmbeddedModal compEditorModal;
+    EmbeddedModal eqEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
+    EmbeddedModal compEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
     void openEqEditorPopup();
     void openCompEditorPopup();
     // Unified section context menus (right-click on a header or compact pill):

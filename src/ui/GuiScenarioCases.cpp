@@ -21993,7 +21993,8 @@ const ScenarioRegistrar quickstartEntry { Scenario {
 
 // A track move's undo and redo wait while a menu or a dialog is open over the
 // window: the track name menu and the import target picker hold a track by its
-// row, and the move would put another track under them.
+// row, and the move would put another track under them. An EQ or plug-in editor
+// does not hold them up; the move closes it with its strip.
 std::optional<ScenarioResult> runTrackMoveUndoUnderMenu (GuiHost& host, ScenarioContext& ctx)
 {
     AudioRegion region;
@@ -22011,6 +22012,13 @@ std::optional<ScenarioResult> runTrackMoveUndoUnderMenu (GuiHost& host, Scenario
     ctx.cleanup ([&host, &engine, launched]
     {
         drainModals (host);
+        for (int t = 0; t < 3; ++t)
+            if (auto* strip = host.strip (t))
+            {
+                strip->closeEditor();
+                strip->unloadNativePlugins();
+                strip->refreshInsertButton();
+            }
         std::array<int, Session::kNumTracks> newToOld {};
         for (int t = 0; t < Session::kNumTracks; ++t)
         {
@@ -22076,6 +22084,52 @@ std::optional<ScenarioResult> runTrackMoveUndoUnderMenu (GuiHost& host, Scenario
             if (! redo) ctx.expect (host.clickTapeTrackName (2, 1, 4), "track 3's name did not take a right-click");
         } });
     }
+
+    // An editor holds its strip, not a row, and the move closes it with the strip.
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickStripModule (0, 0, true, false), "the moved track's EQ label is not on screen"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.stripModuleEditorOpen (0, 0), "the EQ label did not open its editor");
+        ctx.expect (host.pressPeerKey ("command + Z"), "the window did not take the undo key over the EQ editor");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, inPlace]
+    {
+        ctx.expect (inPlace(), "the undo over the EQ editor did not run ('" + host.modalText() + "')");
+        ctx.expect (host.modalStackEmpty(), "the undo left '" + host.modalText() + "' up over the moved strip");
+        ctx.expect (host.pressPeerKey ("command + shift + Z"), "the window did not take the redo key");
+    } });
+    const auto pluginEditor = std::make_shared<bool> (false);
+    steps->push_back ({ 300, [&host, &ctx, movedUp, pluginEditor]
+    {
+        ctx.expect (movedUp(), "the redo after the EQ editor closed did not run");
+        const auto fixture = ctx.fixture ("no_window.clap");
+        auto* strip = host.strip (0);
+        std::string error;
+        if (! fixture || strip == nullptr || ! strip->loadNativeClap (*fixture, "studio.dusk.test.no-window", error))
+        {
+            ctx.note ("no CLAP fixture to open a plug-in editor with, so that leg was skipped " + error);
+            return;
+        }
+        strip->refreshInsertButton();
+        if (! strip->openEditor())
+        {
+            ctx.note ("the CLAP fixture's editor could not be embedded on this display, so that leg was skipped");
+            dismissAlert (host);
+            return;
+        }
+        *pluginEditor = true;
+        ctx.expect (host.pressPeerKey ("command + Z"), "the window did not take the undo key over the plug-in editor");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, inPlace, pluginEditor]
+    {
+        if (! *pluginEditor) return;
+        ctx.expect (inPlace(), "the undo over the plug-in editor did not run ('" + host.modalText() + "')");
+        ctx.expect (host.modalStackEmpty(), "the undo left '" + host.modalText() + "' up over the moved strip");
+        for (int t = 0; t < 3; ++t)
+            if (auto* strip = host.strip (t))
+                ctx.expect (! strip->hasOpenEditor(), "the plug-in editor stayed open on row " + std::to_string (t + 1));
+    } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -22468,6 +22522,111 @@ const ScenarioRegistrar importSwitchStripMode { Scenario {
     "gui.import_switch_strip_mode", { "gui", "import", "undo", "strip" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runImportSwitchStripMode (host, ctx); }
+} };
+
+// A row of the multi-file picker whose track is in the wrong mode for its file
+// says the mode will flip, and the import flips it as part of that file's undo
+// step: a stereo file onto a mono track, a MIDI file onto another.
+std::optional<ScenarioResult> runMultiImportSwitchesMode (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
+    for (const int t : { 0, 1 })
+        if (! session.track (t).regions.empty() || ! session.track (t).midiRegions.current().empty())
+            return ScenarioResult::skip ("requires the first two tracks empty");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
+    const bool shown = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore, shown]
+    {
+        drainModals (host);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        engine.getUndoManager().clearUndoHistory();
+        host.setTimelineShown (shown);
+    });
+    const auto importDir = ctx.tempDir() / "session";
+    std::filesystem::create_directories (importDir / "audio");
+    applySessionDirectory (session, importDir);
+    const auto wav = ctx.tempDir() / "Wide.wav";
+    const auto mid = ctx.tempDir() / "Notes.mid";
+    {
+        auto writer = dusk::audio::FileWriter::create (wav, { engine.getTimelineSampleRate(), 2, 24 });
+        std::vector<float> silence (4800);
+        const float* data[] = { silence.data(), silence.data() };
+        if (writer == nullptr || ! writer->write (data, 2, (std::int64_t) silence.size()) || ! writer->flush()
+            || ! writeMidiImportFixture (mid))
+            return ScenarioResult::fail ("could not write the import fixtures");
+    }
+    for (const int t : { 0, 1 })
+    {
+        ctx.keep (session.track (t).frozen);
+        session.track (t).frozen.store (false);
+        session.track (t).mode.store ((int) Track::Mode::Mono);
+    }
+    engine.getUndoManager().clearUndoHistory();
+
+    const auto modes = [&session] (Track::Mode first, Track::Mode second)
+    {
+        return session.track (0).mode.load() == (int) first && session.track (1).mode.load() == (int) second;
+    };
+    const auto regions = [&session] (int audio, int midi)
+    {
+        return (int) session.track (0).regions.size() == audio
+            && (int) session.track (1).midiRegions.current().size() == midi;
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx, wav, mid]
+    { ctx.expect (host.dropFilesOnTrack (0, { wav, mid }), "the two-file drop was rejected"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Auto-assign"), "the multi-file picker has no Auto-assign"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.multiImportRows() == std::vector<std::string> { "Wide.wav\t0", "Notes.mid\t1" },
+                    "Auto-assign did not put the files on the first two tracks");
+        ctx.expect (host.clickModalButton ("Import"), "the assigned files could not be imported");
+    } });
+    steps->push_back ({ 700, [&host, &ctx, &session, &engine, modes, regions]
+    {
+        ctx.expect (host.modalStackEmpty(), "the import left '" + host.modalText() + "' up");
+        ctx.expect (modes (Track::Mode::Stereo, Track::Mode::Midi),
+                    "the import did not flip the tracks to Stereo and MIDI as the picker said it would");
+        ctx.expect (regions (1, 1), "each track did not take its file's region");
+        if (! session.track (0).regions.empty())
+            ctx.expect (session.track (0).regions.front().numChannels == 2, "the stereo file landed as mono");
+        ctx.expect (engine.getUndoManager().getUndoDescription() == "Import file", "the last file is not its own undo step");
+        ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, modes, regions]
+    {
+        ctx.expect (modes (Track::Mode::Stereo, Track::Mode::Mono) && regions (1, 0),
+                    "undoing the MIDI file did not take its region off and put its track back to Mono");
+        ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, modes, regions]
+    {
+        ctx.expect (modes (Track::Mode::Mono, Track::Mode::Mono) && regions (0, 0),
+                    "undoing the stereo file did not take its region off and put its track back to Mono");
+        ctx.expect (host.pressKey ("command + shift + Z") && host.pressKey ("command + shift + Z"), "Redo was not handled");
+    } });
+    steps->push_back ({ 300, [&ctx, modes, regions]
+    {
+        ctx.expect (modes (Track::Mode::Stereo, Track::Mode::Midi) && regions (1, 1),
+                    "redo did not flip both tracks again and bring their regions back");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar multiImportSwitchesMode { Scenario {
+    "gui.multi_import_switches_mode", { "gui", "import", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMultiImportSwitchesMode (host, ctx); }
 } };
 
 // With no audio device running a file is imported at the rate the timeline

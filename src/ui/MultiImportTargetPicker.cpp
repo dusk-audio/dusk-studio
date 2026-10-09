@@ -74,14 +74,6 @@ juce::String summaryText (const ImportTargetPicker::FileSummary& s)
     return juce::String (s.sampleRate / 1000.0, 1) + " kHz - "
             + channels + " - " + formatDuration (secs);
 }
-
-bool modeMatches (Track::Mode m, const ImportTargetPicker::FileSummary& s)
-{
-    if (s.isMidi)             return m == Track::Mode::Midi;
-    if (s.numChannels == 2)   return m == Track::Mode::Stereo;
-    if (s.numChannels == 1)   return m == Track::Mode::Mono;
-    return false;   // 0 or >2 - no clean audio match, force "will flip" badge
-}
 } // namespace
 
 struct MultiImportTargetPicker::Row : public juce::Component
@@ -127,9 +119,8 @@ struct MultiImportTargetPicker::Row : public juce::Component
 
             const auto& t = session.track (i);
             const auto mode = (Track::Mode) t.mode.load (std::memory_order_relaxed);
-            const bool match = modeMatches (mode, fileSummary);
             juce::String label = trackDisplayName (t, i) + "  (" + modeBadge (mode) + ")";
-            if (! match) label += "  - mode will flip";
+            if (mode != fileSummary.trackMode()) label += "  - mode will flip";
             trackPicker.addItem (label, i + 2);
         }
         // Re-apply previous selection (or fall back to the placeholder).
@@ -387,7 +378,7 @@ MultiImportTargetPicker::collectAssignments() const
         Assignment a;
         a.file       = summaries[i].file;
         a.trackIndex = rows[i]->chosenTrack();
-        a.isMidi     = summaries[i].isMidi;
+        a.mode       = summaries[i].trackMode();
         out.push_back (std::move (a));
     }
     return out;
