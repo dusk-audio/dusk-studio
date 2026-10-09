@@ -1824,6 +1824,7 @@ void AudioEngine::drainCallbackDiagnostics()
     }
 }
 
+#if defined(__linux__)
 void AudioEngine::restoreRealtimeLanes()
 {
     // The lanes go back on realtime parked behind the gate, which is safe for
@@ -1863,6 +1864,7 @@ void AudioEngine::restoreRealtimeLanes()
     realtimeRestoreTriedAt = demoted;
     std::fprintf (stderr, "[Dusk Studio/AudioEngine] %d DSP lane(s) back at realtime priority\n", restored);
 }
+#endif
 
 void AudioEngine::setTakeAudition (int trackIndex, TakeId takeId)
 {

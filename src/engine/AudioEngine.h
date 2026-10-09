@@ -1186,10 +1186,12 @@ private:
         AudioEngine& owner;
     };
     CallbackDiagnosticTimer diagTimer { *this };
+   #if defined(__linux__)
     // diagTimer: the DSP lanes a stalled block moved off realtime go back on
-    // it (AudioWorkerPool::restoreRealtime). Linux.
+    // it (AudioWorkerPool::restoreRealtime).
     void restoreRealtimeLanes();
     int  realtimeRestoreTriedAt = 0;   // rt::realtimeDemotions().count then
+   #endif
     std::int64_t lastReportedGated  = 0;   // diagTimer (message thread) only
     std::int64_t lastReportedSilent = 0;
     int          lastReportedRealtimeDemotions = 0;
