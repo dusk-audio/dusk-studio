@@ -57,6 +57,7 @@ add_executable(dusk-studio-tests
     session_tick_conversion.cpp
     tempo_map_conversion.cpp
     midi_timeline_schedule.cpp
+    hosting_midi_fit.cpp
     output_pair_routing.cpp
     multiband_comp_presets.cpp
     atomic_park.cpp

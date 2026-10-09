@@ -280,6 +280,10 @@ struct AudioWorkerPool::Worker
 
     std::uint32_t             deadlineSeen = 0;   // worker thread only
     std::atomic<std::uint32_t> deadlineTaken { 0 };
+   #if defined(__linux__)
+    // What the thread was granted once start() had raised it. Message thread.
+    rt::ThreadScheduling      granted;
+   #endif
    #if defined(__APPLE__)
     os_workgroup_t            joinedWorkgroup = nullptr;
     os_workgroup_join_token_s joinToken {};
@@ -335,7 +339,43 @@ void AudioWorkerPool::start (int workers, std::function<void (int)> job, int rtJ
     if (! denied.empty())
         std::fprintf (stderr, "[DuskStudio] DSP workers without RLIMIT_RTPRIO: %s\n",
                       rt::raiseThreadsWithoutRtPrio (denied).c_str());
+    for (auto lane = held; lane < workers_.size(); ++lane)
+        workers_[lane]->granted = rt::threadScheduling (workers_[lane]->threadId.load (std::memory_order_relaxed));
    #endif
+}
+
+bool AudioWorkerPool::anyLaneLostRealtime() const
+{
+   #if defined(__linux__)
+    for (const auto& w : workers_)
+        if (w->granted.isRealtime()
+            && ! rt::threadScheduling (w->threadId.load (std::memory_order_relaxed)).isRealtime())
+            return true;
+   #endif
+    return false;
+}
+
+int AudioWorkerPool::restoreRealtime()
+{
+    int restored = 0;
+   #if defined(__linux__)
+    quiesce();
+    for (auto& w : workers_)
+    {
+        const auto threadId = w->threadId.load (std::memory_order_relaxed);
+        if (! w->granted.isRealtime() || rt::threadScheduling (threadId).isRealtime())
+            continue;
+        // Quiesced, the worker has acknowledged and nothing will wake it, but
+        // it may not have reached its wait yet: moments, as it has nothing
+        // left to run. One still not blocked after this many stays as it is,
+        // and anyLaneLostRealtime() goes on saying so.
+        for (int look = 0; look < 100 && ! rt::threadIsBlocked (threadId); ++look)
+            std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        if (rt::threadIsBlocked (threadId) && rt::restoreRealtime (threadId, w->granted))
+            ++restored;
+    }
+   #endif
+    return restored;
 }
 
 void AudioWorkerPool::setDeviceDeadline (double sampleRate, int blockSize,

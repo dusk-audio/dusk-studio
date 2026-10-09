@@ -80,6 +80,18 @@ public:
     // force-killed dispatcher. Cheap no-op when the pool is idle.
     void quiesce();
 
+    // Message thread, with no runBlock able to begin (the engine's gate held, or
+    // the callback detached). A lane that computed past the realtime CPU-time
+    // warning was moved to normal priority on the spot (RealtimeKit.h) and,
+    // as threads outlive start(), would stay there, slowing every block that
+    // joins it. This parks every lane and puts each one that had realtime when
+    // it started back on it. Linux; returns how many it put back.
+    int restoreRealtime();
+
+    // Message thread. True when a lane that started with realtime runs
+    // without it now, which restoreRealtime() is for. Linux.
+    bool anyLaneLostRealtime() const;
+
     // Test-only: the dispatch half of runBlock without the join, simulating a
     // dispatcher force-killed mid-block. Signals the first `signalOnlyFirst`
     // workers (all if negative).

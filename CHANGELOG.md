@@ -217,13 +217,13 @@ Takes live on the track now, and the audio editor is where you comp them.
   input on top of a dense timeline, the whole block was dropped, note-offs
   included. The instrument now gets an all-notes-off in its place, and the
   next block plays the timeline's held notes again.
-- **The Multicore DSP threads ask for the audio thread's priority.** Where
-  they ran at normal priority under the realtime audio thread that waits for
-  them, anything else busy on the machine, a plug-in editor drawn without a
-  graphics card among them, slowed them down and the audio overran waiting.
-  They now ask the operating system for the audio thread's priority. On Linux
-  without realtime permissions they ask RTKit, as PipeWire does for its own
-  audio thread, and take a raised priority where RTKit refuses.
+- **The Multicore DSP threads get the audio thread's priority on Linux.**
+  Where they ran at normal priority under the realtime audio thread that waits
+  for them, anything else busy on the machine, a plug-in editor drawn without
+  a graphics card among them, slowed them down and the audio overran waiting.
+  On Linux they now run at the audio thread's realtime priority. Without
+  realtime permissions they ask RTKit, as PipeWire does for its own audio
+  thread, and take a raised priority where RTKit refuses.
 - **Changing Multicore DSP keeps every thread at that priority.** RTKit grants
   a user about 25 requests in 20 seconds. Every change to the setting started
   the threads afresh and asked again for each one, so on a machine with many
@@ -239,7 +239,11 @@ Takes live on the track now, and the audio editor is where you comp them.
   without a break is killed with the whole process, with no crash report and
   no autosave. Dusk Studio now takes the kernel's warning that comes first and
   moves that thread to normal priority: the stall costs dropouts, and the
-  session stays open. The log names the thread.
+  session stays open. A Multicore DSP thread goes back to realtime priority
+  the next time the transport is stopped. The audio device's own thread stays
+  at normal priority until the device is opened again in Settings > Audio. The
+  DSP readout counts each thread moved, as `RT 1` and up, and the log names
+  it.
 - **Large sessions no longer hold gigabytes of memory on Linux.** With
   unlimited locked memory, as the audio group usually has, every thread's
   whole stack was locked in RAM, and playback runs one per region: a
@@ -249,18 +253,27 @@ Takes live on the track now, and the audio editor is where you comp them.
   more than about 32,000 controller events, breath or expression held through
   a long take, played nothing at all: each block read the region's controllers
   from the start and ran out of time before it reached a note. Each block now
-  reads only the events that fall in it.
+  reads only the events that fall in it, and on a track of thousands of
+  regions only the regions around it.
+- **Tempo changes and track moves stay quick with a lot of MIDI.** A tempo
+  change copied and re-sorted the events of every MIDI region in the session,
+  though only where the regions sit changes, and dragging the tempo did that
+  at each step. A track move did the same work with the audio held off. Both
+  now keep the events they already have.
 - **A sampler instrument lets go of its notes after a mode switch.** A
   multisample (SFZ or SF2) instrument on a track switched to Mono or Stereo
   with a key down, an import's switch undone while playing for one, held that
   note when the track came back to MIDI. It now gets an all-notes-off then, as
   plug-ins already did.
-- **Plug-ins keep their note-offs in a dense block of MIDI.** CLAP, LV2 and
-  out-of-process plug-ins each had a fixed room for a block's MIDI, and what
+- **Plug-ins keep their note-offs in a dense block of MIDI.** CLAP, VST3, LV2
+  and out-of-process plug-ins each had a fixed room for a block's MIDI, and what
   did not fit was dropped from the end, note-offs included, leaving notes
-  held. Each has more room now, and a block that still does not fit keeps
-  every note-off and drops other events first. Out of process, the room is the
-  most a track can send in one block.
+  held. A block that does not fit now keeps every note-off, and every sustain,
+  sostenuto or hold pedal coming up, and drops other events first. CLAP, LV2
+  and out-of-process plug-ins have more room too; out of process, the room is
+  the most a track can send in one block. An out-of-process plug-in also lost
+  everything after a sysex message longer than 256 bytes in its block, and now
+  gets it all.
 - **A MIDI note no longer hangs when the timeline stops playing it.** A note
   that ran past the end of its region never got its note-off, and neither did
   a note sounding when its region was muted, moved, deleted or cut short, its
@@ -275,6 +288,10 @@ Takes live on the track now, and the audio editor is where you comp them.
   single audio block, as holding Undo with a large buffer size can make, freed
   what the audio thread was still reading. What a block reads now stays until
   the block ends, however quickly edits arrive.
+- **Editing as a stem bounce starts is safe.** The bounce worked out which
+  stems to write a second time on its own thread, reading MIDI regions and
+  automation an edit could free under it. It now writes the stems it named
+  when it started.
 - **Dragging a MIDI region while it plays is safe.** The drag wrote the
   region's position while the audio thread read it. The audio thread now gets
   the new position on its own, and the region still plays from where you drag

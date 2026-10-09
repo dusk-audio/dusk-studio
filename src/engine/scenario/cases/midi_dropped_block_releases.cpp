@@ -199,9 +199,9 @@ ScenarioResult runDenseControllerTake (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
-// More regions than the scheduler may look at in a block. Whatever it could
-// not get through may hold a note-off, so the block is the hanging reset, not
-// a silent gap that leaves the instrument as it was.
+// More regions under the playhead than the scheduler may look at in a block.
+// What it could not get through may hold a note-off, so the block is the
+// hanging reset, not a silent gap that leaves the instrument as it was.
 constexpr int kOverfullRegions = 33000;
 
 ScenarioResult runOverfullTimeline (ScenarioContext& ctx)
@@ -220,15 +220,16 @@ ScenarioResult runOverfullTimeline (ScenarioContext& ctx)
         track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
     });
 
-    // Far past where the transport plays, so none of them sounds.
+    // Each block reads only the regions around it, so these all lie under the
+    // playhead: empty, so none sounds, and more than a block may read.
     auto regions = std::make_unique<std::vector<MidiRegion>>();
     regions->reserve ((std::size_t) kOverfullRegions);
     for (int i = 0; i < kOverfullRegions; ++i)
     {
         MidiRegion region;
-        region.timelineStart = 100000000 + (std::int64_t) i * 100;
-        region.lengthInTicks = 1;
-        region.lengthInSamples = ticksToSamples (1, ScenarioContext::kSampleRate, 120.0f);
+        region.timelineStart = (std::int64_t) i % 64;
+        region.lengthInTicks = 480 * 64;
+        region.lengthInSamples = ticksToSamples (region.lengthInTicks, ScenarioContext::kSampleRate, 120.0f);
         regions->push_back (std::move (region));
     }
     track.midiRegions.publish (std::move (regions));

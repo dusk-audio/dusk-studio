@@ -26,9 +26,9 @@ public:
     // hit test so the reset zone always matches what's drawn.
     juce::Rectangle<int> dspSegmentBounds() const noexcept
     {
-        // Wide enough for the worst case incl. the oversampling badge:
-        // "DSP: 100% (99/99) @4x".
-        return getLocalBounds().reduced (8, 0).removeFromRight (175);
+        // Wide enough for the worst case incl. the oversampling badge and
+        // the realtime count: "DSP: 100% (99/99) @4x RT 9".
+        return getLocalBounds().reduced (8, 0).removeFromRight (195);
     }
 
     // The DSP segment exactly as the last tick built it.
@@ -56,6 +56,7 @@ private:
     double lastCpuUsage      = 0.0;
     int    lastEngineXruns   = 0;
     int    lastBackendXruns  = 0;
+    int    lastRealtimeDemotions = 0;
     bool   lastAudioWarn     = false;
 
     // Last-painted snapshot. The tick fires at 10 Hz but the readout is

@@ -161,10 +161,11 @@ public:
     // return, the caller can read from `audioOutChannel(...)` for
     // `numOut` channels.
     //
-    // MIDI is serialised in the same wire format the dusk-studio-plugin-host
-    // child uses: each event is `[int sample][uint16 len][bytes]`, total
-    // capped at PluginIpc::kMidiBytes (16 KB). Events that don't fit are
-    // dropped - same behaviour as the child's serialiser.
+    // MIDI crosses in the wire format both ends share (MidiWire.h): each
+    // event is `[int sample][uint16 len][bytes]`, the block capped at
+    // PluginIpc::kMidiBytes, which is at least a track's routing ceiling. An
+    // event longer than a uint16 can say, or one past the cap, is left out and
+    // the rest still go - the child's serialiser does the same.
     //
     // RT-safe: only memcpy + bounded signal syscalls, no allocation. The output
     // MIDI buffer is rebuilt via clear() + addEvent() into the caller's

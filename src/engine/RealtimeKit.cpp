@@ -4,6 +4,8 @@
 #include <atomic>
 #include <cerrno>
 #include <csignal>
+#include <cstdio>
+#include <cstring>
 #include <sched.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
@@ -36,11 +38,15 @@ constexpr const char* kInterface = "org.freedesktop.RealtimeKit1";
 // The bus starts RTKit on first use, which can take a moment. One that has not
 // answered in this long is treated as having no RTKit.
 constexpr int kCallTimeoutMs = 2000;
+// Asked again for a thread it granted, RTKit is already running, and the
+// caller holds the audio back meanwhile.
+constexpr int kRestoreTimeoutMs = 250;
 
 class RtKit
 {
 public:
-    RtKit()
+    explicit RtKit (int timeoutMs = kCallTimeoutMs)
+        : callTimeoutMs (timeoutMs)
     {
         DBusError failure;
         dbus_error_init (&failure);
@@ -157,7 +163,7 @@ private:
     {
         DBusError failure;
         dbus_error_init (&failure);
-        auto* reply = dbus_connection_send_with_reply_and_block (bus, call, kCallTimeoutMs, &failure);
+        auto* reply = dbus_connection_send_with_reply_and_block (bus, call, callTimeoutMs, &failure);
         dbus_message_unref (call);
         if (reply == nullptr)
             noteError (failure);
@@ -171,6 +177,7 @@ private:
     }
 
     DBusConnection* bus = nullptr;
+    int callTimeoutMs = kCallTimeoutMs;
     std::string error;
 };
 
@@ -353,5 +360,60 @@ RealtimeDemotions realtimeDemotions() noexcept
     demotions.lastThreadId = lastDemotedThread.load (std::memory_order_relaxed);
     demotions.unattributed = unattributedOverruns.load (std::memory_order_relaxed);
     return demotions;
+}
+
+bool ThreadScheduling::isRealtime() const noexcept
+{
+    return policy == SCHED_RR || policy == SCHED_FIFO;
+}
+
+ThreadScheduling threadScheduling (std::int64_t threadId) noexcept
+{
+    ThreadScheduling scheduling;
+    const int policy = sched_getscheduler ((pid_t) threadId);
+    sched_param param {};
+    if (policy < 0 || sched_getparam ((pid_t) threadId, &param) != 0)
+        return scheduling;
+    scheduling.policy   = policy & ~SCHED_RESET_ON_FORK;
+    scheduling.priority = param.sched_priority;
+    return scheduling;
+}
+
+bool threadIsBlocked (std::int64_t threadId) noexcept
+{
+    // /proc/self/task/<tid>/stat reads "tid (name) state ...". A name may hold
+    // spaces and parentheses of its own, so the state follows the last ')'.
+    char path[64];
+    std::snprintf (path, sizeof path, "/proc/self/task/%lld/stat", (long long) threadId);
+    std::FILE* file = std::fopen (path, "r");
+    if (file == nullptr) return false;
+    char stat[512];
+    const auto length = std::fread (stat, 1, sizeof stat - 1, file);
+    std::fclose (file);
+    stat[length] = '\0';
+    const char* nameEnd = std::strrchr (stat, ')');
+    if (nameEnd == nullptr || nameEnd[1] != ' ') return false;
+    return nameEnd[2] == 'S' || nameEnd[2] == 'D';
+}
+
+bool restoreRealtime (std::int64_t threadId, const ThreadScheduling& was)
+{
+    if (! was.isRealtime()) return false;
+    const int current = sched_getscheduler ((pid_t) threadId);
+    if (current < 0) return false;
+    if (threadScheduling (threadId).isRealtime()) return true;
+
+    // Reset-on-fork stays as the thread has it: the move off realtime kept it
+    // (onRealtimeOverrun), and an unprivileged thread may not clear it.
+    sched_param param {};
+    param.sched_priority = was.priority;
+    if (sched_setscheduler ((pid_t) threadId, was.policy | (current & SCHED_RESET_ON_FORK), &param) == 0)
+        return true;
+   #if DUSKSTUDIO_HAS_RTKIT
+    RtKit rtkit (kRestoreTimeoutMs);
+    if (rtkit.connected() && rtkit.makeRealtime (threadId, was.priority))
+        return threadScheduling (threadId).isRealtime();
+   #endif
+    return false;
 }
 } // namespace duskstudio::rt

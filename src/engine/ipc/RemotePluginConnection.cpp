@@ -1,4 +1,5 @@
 #include "RemotePluginConnection.h"
+#include "MidiWire.h"
 
 #include "platform/IpcSync.h"
 
@@ -248,19 +249,7 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
         std::uint8_t* out = midiIn (shm.data());
         std::uint32_t written = 0;
         for (const auto meta : midi)
-        {
-            const int len = meta.numBytes;
-            if (len <= 0) continue;
-            // The kMidiBytes bound (16 KB) caps len far below the uint16 wire
-            // limit, so the l16 cast below never truncates.
-            if (written + 4 + 2 + (std::uint32_t) len > kMidiBytes) break;
-            const int sample = meta.samplePosition;
-            std::memcpy (out + written, &sample, 4);             written += 4;
-            const std::uint16_t l16 = (std::uint16_t) len;
-            std::memcpy (out + written, &l16, 2);                written += 2;
-            std::memcpy (out + written, meta.data,
-                         (std::size_t) len);                      written += (std::uint32_t) len;
-        }
+            midiwire::append (out, written, kMidiBytes, meta.data, meta.numBytes, meta.samplePosition);
         hdr->midiInBytes = written;
     }
 
@@ -277,24 +266,12 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
     {
         midi.clear();
         const std::uint32_t midiOutBytes = hdr->midiOutBytes;
-        if (midiOutBytes == 0 || midiOutBytes > kMidiBytes) return;
-        const std::uint8_t* base = midiOut (shm.data());
-        std::uint32_t off = 0;
-        while (off + 6 <= midiOutBytes)
-        {
-            int sample = 0;
-            std::memcpy (&sample, base + off, 4); off += 4;
-            std::uint16_t l16 = 0;
-            std::memcpy (&l16, base + off, 2); off += 2;
-            const int eventLen = (int) l16;
-            if (eventLen <= 0) break;
-            if (off + (std::uint32_t) eventLen > midiOutBytes) break;
-            // base + off points into the SHM midiOut region, bounded above by
-            // midiOutBytes; addEvent copies the bytes, so no local buffer and
-            // no size ceiling - larger SysEx events pass through intact.
-            midi.addEvent (base + off, eventLen, sample);
-            off += (std::uint32_t) eventLen;
-        }
+        if (midiOutBytes > kMidiBytes) return;
+        // addEvent copies straight out of the shared region, so an event of
+        // any length the wire carries comes back whole.
+        midiwire::forEachEvent (midiOut (shm.data()), midiOutBytes,
+                                [&midi] (const std::uint8_t* data, int numBytes, int sample)
+                                { midi.addEvent (data, numBytes, sample); });
     };
 
     constexpr int kSpinIters = 2000;

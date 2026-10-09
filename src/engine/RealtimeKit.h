@@ -44,4 +44,31 @@ struct RealtimeDemotions
 
 // What the guard has done so far. Any thread.
 RealtimeDemotions realtimeDemotions() noexcept;
+
+// A thread's scheduling class as the kernel holds it: the policy without the
+// reset-on-fork flag, and the priority. SCHED_OTHER for a thread that is gone.
+struct ThreadScheduling
+{
+    int policy   = 0;
+    int priority = 0;
+
+    bool isRealtime() const noexcept;
+};
+
+// Linux, any thread of this process, by its kernel thread id.
+ThreadScheduling threadScheduling (std::int64_t threadId) noexcept;
+
+// True while the thread is blocked, not running or waiting for a core.
+bool threadIsBlocked (std::int64_t threadId) noexcept;
+
+// Puts a thread the guard moved off realtime back on the realtime class it
+// had, `was`: itself where RLIMIT_RTPRIO allows that, else through RTKit.
+// True when the thread runs realtime again.
+//
+// Only for a thread that is blocked (threadIsBlocked) and will stay so until
+// this returns. The kernel restarts a realtime thread's CPU-time count when it
+// wakes as one, and at no other time: put back while it runs, a thread keeps
+// the count its overrun reached and is warned, and moved off again, at the next
+// tick. Message thread; may make a D-Bus round trip.
+bool restoreRealtime (std::int64_t threadId, const ThreadScheduling& was);
 } // namespace duskstudio::rt

@@ -34,6 +34,13 @@ void addMidi (dusk::MidiBuffer& buffer, std::uint8_t status, std::uint8_t d1,
     const std::array<std::uint8_t, 3> bytes { status, d1, d2 };
     buffer.addEvent (bytes.data(), (int) bytes.size(), 0);
 }
+
+void addMidiAt (dusk::MidiBuffer& buffer, std::uint8_t status, std::uint8_t d1,
+                std::uint8_t d2, int samplePosition)
+{
+    const std::array<std::uint8_t, 3> bytes { status, d1, d2 };
+    buffer.addEvent (bytes.data(), (int) bytes.size(), samplePosition);
+}
 } // namespace
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -328,16 +335,6 @@ TEST_CASE ("the host turns a hosted panic into a choke on every CLAP note port",
     REQUIRE_THAT (probe.counter ("noteOffsSeen"), WithinAbs (0.0, 1.0e-9));
 }
 
-namespace
-{
-void addMidiAt (dusk::MidiBuffer& buffer, std::uint8_t status, std::uint8_t d1,
-                std::uint8_t d2, int samplePosition)
-{
-    const std::array<std::uint8_t, 3> bytes { status, d1, d2 };
-    buffer.addEvent (bytes.data(), (int) bytes.size(), samplePosition);
-}
-} // namespace
-
 TEST_CASE ("a hosted CLAP block bigger than the host's event list still ends its notes",
            "[clap][fixture][panic][midi]")
 {
@@ -545,5 +542,41 @@ TEST_CASE ("the host's note-off fallback silences a VST3 synth with no CC mappin
     addMidi (panic, 0xB0, 123, 0);
     REQUIRE_THAT (probe.run (&panic), WithinAbs (0.0, 1.0e-6));
     REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+}
+
+TEST_CASE ("a hosted VST3 block bigger than the host's event list still ends its notes",
+           "[vst3][fixture][panic][midi]")
+{
+    Vst3Probe probe;
+    REQUIRE (probe.load());
+    // Past the host's 1024-event list either way.
+    constexpr int kFlood = 2000;
+
+    SECTION ("a flood of other notes between a note's start and its end")
+    {
+        dusk::MidiBuffer block;
+        addMidiAt (block, 0x90, 60, 100, 0);
+        for (int i = 0; i < kFlood; ++i)
+            addMidiAt (block, 0x90, 61, 100, 1 + i * (kBlock - 2) / kFlood);
+        addMidiAt (block, 0x80, 60, 0, kBlock - 1);
+        probe.run (&block);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));   // 61 alone
+    }
+
+    SECTION ("more note-offs than the host can carry")
+    {
+        dusk::MidiBuffer start;
+        addMidiAt (start, 0x90, 60, 100, 0);
+        probe.run (&start);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));
+
+        // Keys other than the held one, then its own note-off last.
+        dusk::MidiBuffer block;
+        for (int i = 0; i < kFlood; ++i)
+            addMidiAt (block, 0x80, (std::uint8_t) (61 + i % 60), 0, i * (kBlock - 1) / kFlood);
+        addMidiAt (block, 0x80, 60, 0, kBlock - 1);
+        probe.run (&block);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+    }
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_VST3

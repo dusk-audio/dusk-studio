@@ -60,6 +60,12 @@
  #include <csignal>
 #endif
 
+#if defined (__linux__)
+ #include "../engine/RealtimeKit.h"
+ #include <csignal>
+ #include <sys/resource.h>
+#endif
+
 // The scenario suite's window-driven cases: what the release checklist used to
 // check by opening editors by hand. Each drives the live window through GuiHost
 // and puts back what it changed, so the next case starts on a clean strip.
@@ -19479,6 +19485,66 @@ const ScenarioRegistrar dspReadout { Scenario {
     "gui.dsp_readout_counters", { "gui", "transport" }, Needs::Engine | Needs::Gui,
     {}, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runDspReadout (host, ctx); }
+} };
+
+// A realtime thread that computes past the kernel's CPU-time warning is moved
+// to normal priority, and the DSP readout counts it until the double-click. The
+// warning here is a real SIGXCPU through the real handler, raised on the
+// message thread, which is not realtime: the handler counts it as a warning
+// it found no realtime thread for, which the readout counts too.
+std::optional<ScenarioResult> runDspReadoutRealtime (GuiHost& host, ScenarioContext& ctx)
+{
+   #if defined (__linux__)
+    auto& engine = ctx.engine();
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
+    if (host.dspReadout().empty()) return ScenarioResult::skip ("the window has no status bar");
+
+    // The guard catches SIGXCPU only under a finite limit. A soft one can be
+    // put back up to the hard one afterwards, which leaves the hard one alone.
+    rlimit was {};
+    if (getrlimit (RLIMIT_RTTIME, &was) != 0) return ScenarioResult::skip ("no RLIMIT_RTTIME");
+    if (was.rlim_cur == RLIM_INFINITY)
+    {
+        rlimit finite = was;
+        finite.rlim_cur = 60'000'000;
+        if (finite.rlim_max != RLIM_INFINITY) finite.rlim_cur = std::min (finite.rlim_cur, finite.rlim_max);
+        if (setrlimit (RLIMIT_RTTIME, &finite) != 0) return ScenarioResult::skip ("RLIMIT_RTTIME would not take a soft limit");
+    }
+    ctx.cleanup ([was] { setrlimit (RLIMIT_RTTIME, &was); });
+    if (! rt::guardRealtimeCpuTime())
+        return ScenarioResult::skip ("SIGXCPU has a handler that is not Dusk Studio's");
+
+    engine.suspendProcessing();
+    ctx.cleanup ([&engine] { engine.resetXRunCounts(); engine.resumeProcessing(); });
+    engine.resetXRunCounts();
+    std::raise (SIGXCPU);
+    ctx.expect (engine.getRealtimeDemotionCount() == 1, "the warning was not counted");
+
+    ctx.waitUntil ([&host] { return host.dspReadout().find (" RT 1") != std::string::npos; }, 3000,
+        [&host, &ctx, &engine]
+        {
+            const auto text = host.dspReadout();
+            ctx.expect (std::regex_match (text, std::regex (R"(DSP: \d+% \(0/\d+\)( @\dx)? RT 1)")),
+                        "the DSP readout does not end in the realtime count: " + text);
+            if (! ctx.expect (host.doubleClickDspReadout(), "the DSP readout did not take a double-click"))
+            { ctx.complete (ctx.verdict()); return; }
+            ctx.expect (engine.getRealtimeDemotionCount() == 0, "the double-click did not zero the realtime count");
+            ctx.expect (host.dspReadout().find ("RT") == std::string::npos,
+                        "the readout still showed the realtime count after the reset: " + host.dspReadout());
+            ctx.complete (ctx.verdict());
+        }, "the DSP readout never showed the realtime count");
+    return std::nullopt;
+   #else
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("the realtime CPU-time guard is Linux-only");
+   #endif
+}
+
+const ScenarioRegistrar dspReadoutRealtime { Scenario {
+    "gui.dsp_readout_realtime_count", { "gui", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runDspReadoutRealtime (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runVirtualKeyboardKeys (GuiHost& host, ScenarioContext& ctx)

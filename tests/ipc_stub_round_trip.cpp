@@ -629,6 +629,44 @@ TEST_CASE ("ipc-stub: the densest block the engine routes crosses whole", "[ipc]
     REQUIRE (lastIsNoteOff);
 }
 
+TEST_CASE ("ipc-stub: a long sysex does not cut off the events after it", "[ipc][midi]")
+{
+    // The child reads each event of the wire block into what the plug-in gets.
+    // An event longer than its old 256-byte copy stopped that read, and every
+    // note-off after a long sysex was lost.
+    duskstudio::ipc::RemotePluginConnection conn;
+    std::string err;
+    REQUIRE (conn.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-stub", err));
+
+    std::vector<float> silence ((std::size_t) kBlockSize, 0.0f);
+    const float* in[kNumChans] { silence.data(), silence.data() };
+
+    std::vector<std::uint8_t> sysex (300, 0x11);
+    sysex.front() = 0xF0;
+    sysex.back() = 0xF7;
+    const std::uint8_t noteOn[3] { 0x90, 60, 100 };
+    const std::uint8_t noteOff[3] { 0x80, 60, 0 };
+
+    dusk::MidiBuffer block;
+    block.reserveBytes (dusk::kMidiRoutingBlockBytes);
+    REQUIRE (block.addEvent (noteOn, 3, 0));
+    REQUIRE (block.addEvent (sysex.data(), (int) sysex.size(), 1));
+    REQUIRE (block.addEvent (noteOff, 3, kBlockSize - 1));
+
+    REQUIRE (conn.processBlockSync (in, kNumChans, kNumChans, kBlockSize, block, kTimeoutNs));
+
+    std::vector<int> lengths;
+    bool lastIsNoteOff = false;
+    for (const auto meta : block)
+    {
+        lengths.push_back (meta.numBytes);
+        lastIsNoteOff = meta.numBytes == 3 && meta.data[0] == noteOff[0] && meta.data[1] == noteOff[1]
+                     && meta.samplePosition == kBlockSize - 1;
+    }
+    REQUIRE (lengths == std::vector<int> { 3, 300, 3 });
+    REQUIRE (lastIsNoteOff);
+}
+
 TEST_CASE ("ipc-stub: timeout is bounded and marks the connection crashed", "[ipc]")
 {
     duskstudio::ipc::RemotePluginConnection conn;

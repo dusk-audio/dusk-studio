@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "engine/AudioWorkerPool.h"
 #include "engine/RealtimeKit.h"
 
+#include <atomic>
 #include <csignal>
 #include <cstdint>
 #include <ctime>
@@ -89,6 +91,76 @@ TEST_CASE ("a realtime thread that stops blocking is moved off realtime, not kil
         if (! takeRoundRobin()) return 5;
         spinFor (2.0 * (double) kHardMicros * 1.0e-6);
         if (isRealtime() || duskstudio::rt::realtimeDemotions().count != 2) return 6;
+        return 0;
+    });
+
+    if (WIFEXITED (status) && WEXITSTATUS (status) == kNoRealtime)
+        SKIP ("RLIMIT_RTPRIO allows no SCHED_RR here, and the test build has no RTKit");
+    INFO ("child status " << status << (WIFSIGNALED (status) ? " (killed by signal " : " (exit ")
+          << (WIFSIGNALED (status) ? WTERMSIG (status) : WEXITSTATUS (status)) << ")");
+    REQUIRE_FALSE (WIFSIGNALED (status));
+    REQUIRE (WIFEXITED (status));
+    REQUIRE (WEXITSTATUS (status) == 0);
+}
+
+TEST_CASE ("a DSP lane moved off realtime is put back on it while it is parked",
+           "[rt-priority][rttime]")
+{
+    const int status = statusOfChild ([]
+    {
+        using duskstudio::rt::threadScheduling;
+        const rlimit limit { kHardMicros, kHardMicros };
+        if (setrlimit (RLIMIT_RTTIME, &limit) != 0) return 2;
+        if (! duskstudio::rt::guardRealtimeCpuTime()) return 3;
+        rlimit guarded {};
+        getrlimit (RLIMIT_RTTIME, &guarded);
+        const double softSeconds = (double) guarded.rlim_cur * 1.0e-6;
+
+        // Lane 0 runs on the pool's one worker; the caller runs lane 1.
+        std::atomic<double> spinSeconds { 0.0 };
+        std::atomic<bool> putSelfBack { false };
+        duskstudio::AudioWorkerPool pool;
+        pool.start (1, [&] (int lane)
+        {
+            if (lane != 0) return;
+            if (putSelfBack.load()) takeRoundRobin();
+            spinFor (spinSeconds.load());
+        });
+        const auto workers = pool.workerThreadIdsForTest();
+        if (workers.size() != 1) return 4;
+        const auto worker = workers.front();
+        if (! threadScheduling (worker).isRealtime()) return kNoRealtime;
+
+        // A block that computes twice past the hard limit: a plug-in stuck in
+        // process(). The lane is moved off realtime and the pool keeps it.
+        spinSeconds = 2.0 * (double) kHardMicros * 1.0e-6;
+        pool.runBlock();
+        if (threadScheduling (worker).isRealtime() || ! pool.anyLaneLostRealtime()) return 5;
+
+        if (pool.restoreRealtime() != 1) return 6;
+        if (! threadScheduling (worker).isRealtime() || pool.anyLaneLostRealtime()) return 7;
+
+        // Put back while it waited, the lane woke into a fresh CPU-time count:
+        // a block that runs for half the warning passes without one.
+        const int demoted = duskstudio::rt::realtimeDemotions().count;
+        spinSeconds = 0.5 * softSeconds;
+        pool.runBlock();
+        if (! threadScheduling (worker).isRealtime()
+            || duskstudio::rt::realtimeDemotions().count != demoted) return 8;
+
+        // Why the pool parks it first: overrun again, then the lane puts itself
+        // back while it runs and spins the same half. It still holds the count
+        // the overrun reached, and is warned and moved off again at once.
+        spinSeconds = 2.0 * (double) kHardMicros * 1.0e-6;
+        pool.runBlock();
+        if (threadScheduling (worker).isRealtime()) return 9;
+        putSelfBack = true;
+        spinSeconds = 0.5 * softSeconds;
+        const int before = duskstudio::rt::realtimeDemotions().count;
+        pool.runBlock();
+        if (threadScheduling (worker).isRealtime()
+            || duskstudio::rt::realtimeDemotions().count != before + 1) return 10;
+        pool.stop();
         return 0;
     });
 

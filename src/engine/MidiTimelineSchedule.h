@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 // The timeline MIDI one block plays, read from the time-sorted copy each region
@@ -90,11 +91,18 @@ enum class Outcome
 // One stretch of the timeline the block plays, [start, end) in timeline
 // samples. A chased span follows a reset: it sends every controller's value
 // and every note held across its start again.
+//
+// After the instrument's latency rises the span can start before the sample
+// the block's first one plays, collapseUntil, and everything it holds up to
+// there lands on that first sample together. A note that starts and ends
+// inside that stretch would go out off first, then on, and hang, so it is
+// dropped; its note-off still goes, which ends nothing the timeline started.
 struct Span
 {
     std::int64_t start = 0;
     std::int64_t end   = 0;
     bool         chase = false;
+    std::int64_t collapseUntil = std::numeric_limits<std::int64_t>::min();
 };
 
 // Tick to timeline sample for one region: through the tempo map when there is
@@ -145,6 +153,61 @@ inline bool takeScans (int& scans, int n) noexcept
     return true;
 }
 
+// The latest a region can end that starts at or before `start` and is at most
+// `lengthSamples` (without a tempo map) or `lengthTicks` (with one) long. The
+// conversions only ever round, so one sample covers them.
+inline std::int64_t latestEnd (const TempoMap* map, double sampleRate, std::int64_t start,
+                               std::int64_t lengthSamples, std::int64_t lengthTicks) noexcept
+{
+    return map != nullptr
+        ? map->ticksToSamples (map->samplesToTicks (start, sampleRate) + lengthTicks, sampleRate) + 1
+        : start + lengthSamples;
+}
+
+// Calls visit (region) for each unmuted region of the timeline that starts
+// before `to` and can end at or after `from`, in order of their start, through
+// the timeline's index: what it skips costs a chunk at a time, the regions it
+// hands over one each. False when scans ran out or visit returned false.
+template <typename Visit>
+bool forEachRegionAround (const MidiTimeline& timeline, const TempoMap* map, double sampleRate,
+                          std::int64_t from, std::int64_t to, int& scans, Visit&& visit) noexcept
+{
+    const auto& starts = timeline.startOf;
+    if (! takeScans (scans, searchCost (starts.size()))) return false;
+    const auto before = (std::size_t) (std::lower_bound (starts.begin(), starts.end(), to) - starts.begin());
+    constexpr auto chunk = MidiTimeline::kRegionChunk;
+    const auto chunks = (before + chunk - 1) / chunk;
+    const auto reach = [&] (std::size_t c, const std::vector<std::int64_t>& samples,
+                            const std::vector<std::int64_t>& ticks) noexcept
+    {
+        const auto latestStart = starts[std::min ((c + 1) * chunk, starts.size()) - 1];
+        return latestEnd (map, sampleRate, latestStart, samples[c], ticks[c]);
+    };
+
+    // Reach over a chunk and every one before it only grows, so the chunks that
+    // all end before `from` are a run from the first.
+    if (! takeScans (scans, searchCost (chunks))) return false;
+    std::size_t first = 0, past = chunks;
+    while (first < past)
+    {
+        const auto mid = first + (past - first) / 2;
+        if (reach (mid, timeline.upToLongestSamples, timeline.upToLongestTicks) < from)
+            first = mid + 1;
+        else
+            past = mid;
+    }
+    for (auto c = first; c < chunks; ++c)
+    {
+        if (! takeScans (scans, 1)) return false;
+        if (reach (c, timeline.chunkLongestSamples, timeline.chunkLongestTicks) < from) continue;
+        const auto last = std::min (before, (c + 1) * chunk);
+        for (auto p = c * chunk; p < last; ++p)
+            if (! takeScans (scans, 1) || ! visit ((std::size_t) timeline.byStart[p]))
+                return false;
+    }
+    return true;
+}
+
 // Calls held (note) for every note of one region that sounds at `at` and ends at
 // or after it, its end taken no later than the region's: a note the region
 // itself still has to end. Reads only the notes started before `at`, skipping
@@ -179,10 +242,16 @@ bool forEachNoteSoundingAt (const MidiPlaybackRegion& events, const RegionClock&
 // end on, and a note still sounding there ends there. At one sample,
 // controllers go before notes, so a value is in place before the note it
 // shapes, and note-offs before note-ons, so a note that ends where the next on
-// its key begins does not cut that one off. Only what falls in the span is
-// read, plus, for a chase, what decides each controller's value and which
-// notes are held at its start; scans bounds that work, and running out of it
-// is reported.
+// its key begins does not cut that one off. Only the regions around the span
+// are read, and of them only what falls in it, plus, for a chase, what decides
+// each controller's value and which notes are held at its start; scans bounds
+// that work, and running out of it is reported.
+//
+// A chase reads each controller's value through the timeline's index of the
+// regions that set it, newest first, on at most half the scans left, and sends
+// what it found by then. A track that outruns that (more controllers than half
+// the budget reads, or one region long enough to reach every later one) loses
+// the values only its oldest regions set, not the whole span.
 template <typename Emit>
 Outcome scheduleSpan (const MidiTimeline& timeline,
                       const TempoMap* map, double sampleRate, float bpm,
@@ -208,48 +277,94 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
     {
         return (std::uint8_t) (kind | channel);
     };
-    const std::size_t count = timeline.size();
+    // Runs one pass over the regions around the span. pass (region) returns
+    // complete to go on; anything else ends the span with that outcome.
+    const auto eachRegion = [&] (auto&& pass) noexcept
+    {
+        auto outcome = Outcome::complete;
+        const bool done = forEachRegionAround (timeline, tempoMap, sampleRate, span.start, span.end, scans,
+                                               [&] (std::size_t region) noexcept
+                                               {
+                                                   outcome = pass (region);
+                                                   return outcome == Outcome::complete;
+                                               });
+        return done || outcome != Outcome::complete ? outcome : Outcome::scanBudgetSpent;
+    };
 
     if (span.chase)
-        chase.clear();
-    for (std::size_t i = 0; i < count; ++i)
     {
-        if (! take (1)) return Outcome::scanBudgetSpent;
-        const auto& events = timeline.playback[i];
-        if (events.controllers.empty()) continue;
-        const auto place = timeline.placement[i].load();
-        if (place.muted) continue;
-        const auto clock = clockOf (place);
-        const auto end = regionEnd (place, clock);
-        if (span.chase)
+        // Each controller's value is the latest it was set to before the span,
+        // by any region: the newest of the regions that set it first, and older
+        // ones only while one of them could still end, and so set it, later.
+        chase.clear();
+        const auto& starts = timeline.startOf;
+        int chaseScans = scans / 2;
+        scans -= chaseScans;
+        const auto upToStart = (std::uint32_t) (std::upper_bound (starts.begin(), starts.end(), span.start)
+                                                - starts.begin());
+        bool spent = ! takeScans (chaseScans, searchCost (starts.size()));
+        for (std::size_t k = 0; k < timeline.controllerKeys.size() && ! spent; ++k)
         {
-            const auto upTo = std::min (span.start, end);
-            for (const auto& lane : events.lanes)
+            const auto key = (std::size_t) timeline.controllerKeys[k];
+            const auto first = timeline.holders.begin() + timeline.holdersFrom[k];
+            auto h = std::lower_bound (first, timeline.holders.begin() + timeline.holdersFrom[k + 1], upToStart);
+            if (! takeScans (chaseScans, searchCost ((std::size_t) (h - first))))
+                break;
+            while (h != first)
             {
-                if (! take (searchCost (lane.end - lane.begin))) return Outcome::scanBudgetSpent;
-                const auto first = events.byController.begin() + lane.begin;
-                const auto last  = events.byController.begin() + lane.end;
-                const auto next = std::partition_point (first, last, [&] (const auto& c)
-                                                        { return clock.at (c.tick) < upTo; });
-                const auto key = (std::size_t) lane.key;
-                if (next != first)
+                const auto p = *--h;
+                if (chase.seen[key])
                 {
-                    const auto& latest = *(next - 1);
-                    const auto at = clock.at (latest.tick);
-                    if (! chase.seen[key] || at >= chase.at[key])
+                    const auto c = p / MidiTimeline::kRegionChunk;
+                    if (latestEnd (tempoMap, sampleRate, starts[p], timeline.upToLongestSamples[c],
+                                   timeline.upToLongestTicks[c]) <= chase.at[key])
+                        break;
+                }
+                const auto region = timeline.byStart[p];
+                const auto& events = timeline.events (region);
+                const auto lane = std::lower_bound (events.lanes.begin(), events.lanes.end(), (int) key,
+                                                    [] (const auto& l, int wanted) { return l.key < wanted; });
+                if (! takeScans (chaseScans, 1 + searchCost (events.lanes.size())
+                                                + searchCost (lane->end - lane->begin)))
+                {
+                    spent = true;
+                    break;
+                }
+                const auto& place = timeline.placement[region];
+                const auto clock = clockOf (place);
+                const auto end = regionEnd (place, clock);
+                const auto upTo = std::min (span.start, end);
+                const auto from = events.byController.begin() + lane->begin;
+                const auto to   = events.byController.begin() + lane->end;
+                const auto next = std::partition_point (from, to, [&] (const auto& c)
+                                                        { return clock.at (c.tick) < upTo; });
+                if (next != from)
+                {
+                    const auto at = clock.at ((next - 1)->tick);
+                    if (! chase.seen[key] || at > chase.at[key])
                     {
                         if (! chase.seen[key])
-                            chase.keys[(std::size_t) chase.keyCount++] = lane.key;
+                            chase.keys[(std::size_t) chase.keyCount++] = (int) key;
                         chase.seen[key] = true;
                         chase.at[key] = at;
-                        chase.value[key] = latest.value;
+                        chase.value[key] = (next - 1)->value;
                     }
                 }
-                if (end > span.start && next != last && clock.at (next->tick) == span.start)
+                if (end > span.start && next != to && clock.at (next->tick) == span.start)
                     chase.explicitAtStart[key] = true;
             }
         }
-        if (! overlapsSpan (place, end)) continue;
+        scans += chaseScans;
+    }
+
+    const auto controllers = eachRegion ([&] (std::size_t region) noexcept
+    {
+        const auto& events = timeline.events (region);
+        if (events.controllers.empty()) return Outcome::complete;
+        const auto& place = timeline.placement[region];
+        const auto clock = clockOf (place);
+        const auto end = regionEnd (place, clock);
+        if (! overlapsSpan (place, end)) return Outcome::complete;
         if (! take (searchCost (events.controllers.size()))) return Outcome::scanBudgetSpent;
         for (auto c = firstFrom (events.controllers, clock, [] (const auto& e) { return e.tick; });
              c != events.controllers.end(); ++c)
@@ -260,7 +375,9 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
             if (! emit (status (0xB0, c->channel), c->controller, c->value, at - span.start))
                 return Outcome::eventRefused;
         }
-    }
+        return Outcome::complete;
+    });
+    if (controllers != Outcome::complete) return controllers;
     if (span.chase)
         for (int k = 0; k < chase.keyCount; ++k)
         {
@@ -271,13 +388,11 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
                 return Outcome::eventRefused;
         }
 
-    for (std::size_t i = 0; i < count; ++i)
+    const auto releases = eachRegion ([&] (std::size_t region) noexcept
     {
-        if (! take (1)) return Outcome::scanBudgetSpent;
-        const auto& events = timeline.playback[i];
-        if (events.releases.empty()) continue;
-        const auto place = timeline.placement[i].load();
-        if (place.muted) continue;
+        const auto& events = timeline.events (region);
+        if (events.releases.empty()) return Outcome::complete;
+        const auto& place = timeline.placement[region];
         const auto clock = clockOf (place);
         const auto end = regionEnd (place, clock);
         if (overlapsSpan (place, end))
@@ -306,18 +421,20 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
                 }))
                 return refused ? Outcome::eventRefused : Outcome::scanBudgetSpent;
         }
-    }
+        return Outcome::complete;
+    });
+    if (releases != Outcome::complete) return releases;
 
     if (span.chase)
-        for (std::size_t i = 0; i < count; ++i)
+    {
+        const auto held = eachRegion ([&] (std::size_t region) noexcept
         {
-            if (! take (1)) return Outcome::scanBudgetSpent;
-            const auto& events = timeline.playback[i];
-            if (events.notes.empty()) continue;
-            const auto place = timeline.placement[i].load();
-            if (place.muted) continue;
+            const auto& events = timeline.events (region);
+            if (events.notes.empty()) return Outcome::complete;
+            const auto& place = timeline.placement[region];
             const auto clock = clockOf (place);
-            if (! overlapsSpan (place, regionEnd (place, clock))) continue;
+            const auto end = regionEnd (place, clock);
+            if (! overlapsSpan (place, end)) return Outcome::complete;
             if (! take (searchCost (events.notes.size()))) return Outcome::scanBudgetSpent;
             const auto started = (std::size_t) (firstFrom (events.notes, clock,
                                                            [] (const auto& e) { return e.startTick; })
@@ -332,23 +449,26 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
                 {
                     if (! take (1)) return Outcome::scanBudgetSpent;
                     const auto& note = events.notes[n];
-                    if (clock.at (note.endTick) <= span.start) continue;
+                    const auto noteEnd = clock.at (note.endTick);
+                    if (noteEnd <= span.start || std::min (noteEnd, end) <= span.collapseUntil)
+                        continue;
                     if (! emit (status (0x90, note.channel), note.key, note.velocity, 0))
                         return Outcome::eventRefused;
                 }
             }
-        }
+            return Outcome::complete;
+        });
+        if (held != Outcome::complete) return held;
+    }
 
-    for (std::size_t i = 0; i < count; ++i)
+    return eachRegion ([&] (std::size_t region) noexcept
     {
-        if (! take (1)) return Outcome::scanBudgetSpent;
-        const auto& events = timeline.playback[i];
-        if (events.notes.empty()) continue;
-        const auto place = timeline.placement[i].load();
-        if (place.muted) continue;
+        const auto& events = timeline.events (region);
+        if (events.notes.empty()) return Outcome::complete;
+        const auto& place = timeline.placement[region];
         const auto clock = clockOf (place);
         const auto end = regionEnd (place, clock);
-        if (! overlapsSpan (place, end)) continue;
+        if (! overlapsSpan (place, end)) return Outcome::complete;
         if (! take (searchCost (events.notes.size()))) return Outcome::scanBudgetSpent;
         for (auto n = firstFrom (events.notes, clock, [] (const auto& e) { return e.startTick; });
              n != events.notes.end(); ++n)
@@ -356,6 +476,9 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
             if (! take (1)) return Outcome::scanBudgetSpent;
             const auto at = clock.at (n->startTick);
             if (at >= span.end || at >= end) break;
+            if (at < span.collapseUntil
+                && (n->endTick <= n->startTick || std::min (clock.at (n->endTick), end) <= span.collapseUntil))
+                continue;
             if (! emit (status (0x90, n->channel), n->key, n->velocity, at - span.start))
                 return Outcome::eventRefused;
             // A note with no length ends where it starts, right behind its on.
@@ -363,8 +486,8 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
                 && ! emit (status (0x80, n->channel), n->key, 0, at - span.start))
                 return Outcome::eventRefused;
         }
-    }
-    return Outcome::complete;
+        return Outcome::complete;
+    });
 }
 
 // A note-off through emit (status, data1, data2, 0) for each note `sounding`
@@ -397,23 +520,22 @@ Outcome releaseStranded (const MidiTimeline& timeline,
     if (sounding.total == 0) return Outcome::complete;
     const TempoMap* tempoMap = (map != nullptr && ! map->empty()) ? map : nullptr;
     held.clear();
-    for (std::size_t i = 0; i < timeline.size(); ++i)
+    const bool read = forEachRegionAround (timeline, tempoMap, sampleRate, at, at, scans,
+                                           [&] (std::size_t region) noexcept
     {
-        if (! takeScans (scans, 1)) return Outcome::scanBudgetSpent;
-        const auto& events = timeline.playback[i];
-        if (events.releases.empty()) continue;
-        const auto place = timeline.placement[i].load();
-        if (place.muted) continue;
+        const auto& events = timeline.events (region);
+        if (events.releases.empty()) return true;
+        const auto& place = timeline.placement[region];
         const RegionClock clock (tempoMap, sampleRate, bpm, place.timelineStart);
         const auto end = regionEnd (place, clock);
-        if (end < at) continue;
-        if (! forEachNoteSoundingAt (events, clock, end, at, scans, [&held] (const auto& note) noexcept
-            {
-                held.add (NoteCount::keyOf (note.channel, note.key));
-                return true;
-            }))
-            return Outcome::scanBudgetSpent;
-    }
+        if (end < at) return true;
+        return forEachNoteSoundingAt (events, clock, end, at, scans, [&held] (const auto& note) noexcept
+        {
+            held.add (NoteCount::keyOf (note.channel, note.key));
+            return true;
+        });
+    });
+    if (! read) return Outcome::scanBudgetSpent;
     return releaseBeyond (sounding, held, emit);
 }
 } // namespace duskstudio::midischedule

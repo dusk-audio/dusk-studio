@@ -540,6 +540,8 @@ Modal dialogs (audio settings, plugin picker, region editor, piano roll, import 
 
 The readout in the menu bar's right corner shows the device state (`Audio: 48 kHz 5.3 ms`) and the engine load (`DSP: 12% (0/0)`). The parenthesised pair counts audio dropouts: engine-side overruns / backend (driver) xruns. The segment turns red when load passes ~85% or either counter is non-zero. **Double-click the DSP readout to reset the counters** — useful after fixing whatever caused a dropout so you can watch for fresh ones.
 
+On Linux the readout can also end in `RT 1` (or a higher count). Under the limit RTKit and PipeWire set, a plug-in that holds a realtime audio thread for about 200 ms without a break has the system end Dusk Studio. Instead, the thread is moved to normal priority on the kernel's warning shortly before that, and the count says how many times that happened. A Multicore DSP thread goes back to realtime priority by itself the next time the transport is stopped. The audio device's own thread stays at normal priority, so dropouts are more likely, until you open the device again in **Settings > Audio**. The double-click resets this count too.
+
 ## The four stages
 
 Only one stage is visible at a time. RECORDING, MIXING and AUX share the mix engine, so audio keeps flowing when switching among them. MASTERING has a separate playback path; entering or leaving it stops playback.

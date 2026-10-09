@@ -658,8 +658,15 @@ public:
 
     // Zero both xrun readouts (status-bar double-click). The backend
     // counter is device-owned and can't be cleared, so it's offset
-    // against a baseline instead. Message thread.
+    // against a baseline instead. The realtime count below goes with them.
+    // Message thread.
     void   resetXRunCounts() noexcept;
+
+    // Linux: how often since resetXRunCounts() a thread computed past the
+    // realtime CPU-time warning without blocking and was moved to normal
+    // priority (RealtimeKit.h), warnings that found no realtime thread to move
+    // included. 0 elsewhere. Any thread; one atomic load per counter.
+    int    getRealtimeDemotionCount() const noexcept;
 
     // Per-section callback timing (see PerfSections below). Capture is
     // normally enabled by DUSKSTUDIO_PERF=1 + a 2 s reporter timer; the
@@ -1179,9 +1186,16 @@ private:
         AudioEngine& owner;
     };
     CallbackDiagnosticTimer diagTimer { *this };
+    // diagTimer: the DSP lanes a stalled block moved off realtime go back on
+    // it (AudioWorkerPool::restoreRealtime). Linux.
+    void restoreRealtimeLanes();
+    int  realtimeRestoreTriedAt = 0;   // rt::realtimeDemotions().count then
     std::int64_t lastReportedGated  = 0;   // diagTimer (message thread) only
     std::int64_t lastReportedSilent = 0;
     int          lastReportedRealtimeDemotions = 0;
+    int          lastReportedUnattributedOverruns = 0;
+    // rt::realtimeDemotions() count plus unattributed at the last reset.
+    std::atomic<int>    realtimeDemotionBaseline { 0 };
 
     std::atomic<int>    xrunCount         { 0 };
     // Device xrun count at the last resetXRunCounts(); subtracted in

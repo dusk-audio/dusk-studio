@@ -822,16 +822,24 @@ inline MidiRegionPlacement placementOf (const MidiRegion& region) noexcept
     return { region.timelineStart, region.lengthInSamples, region.lengthInTicks, region.muted };
 }
 
-inline std::unique_ptr<MidiTimeline> buildMidiTimeline (const std::vector<MidiRegion>& regions)
+// A timeline for `regions`: each region's events copied out and sorted, unless
+// `sameEvents` hands it the ones it already has. Message thread.
+inline std::unique_ptr<MidiTimeline> buildMidiTimeline (const std::vector<MidiRegion>& regions,
+                                                        const MidiTimeline* sameEvents = nullptr)
 {
     auto timeline = std::make_unique<MidiTimeline>();
     timeline->playback.reserve (regions.size());
-    timeline->placement = std::make_unique<LiveMidiPlacement[]> (regions.size());
+    timeline->placement.reserve (regions.size());
     for (std::size_t i = 0; i < regions.size(); ++i)
     {
-        timeline->playback.push_back (buildMidiPlayback (regions[i].notes, regions[i].ccs));
-        timeline->placement[i].store (placementOf (regions[i]));
+        if (sameEvents != nullptr)
+            timeline->playback.push_back (sameEvents->playback[i]);
+        else
+            timeline->playback.push_back (std::make_shared<const MidiPlaybackRegion> (
+                buildMidiPlayback (regions[i].notes, regions[i].ccs)));
+        timeline->placement.push_back (placementOf (regions[i]));
     }
+    indexMidiTimeline (*timeline);
     return timeline;
 }
 
@@ -866,20 +874,20 @@ public:
 
     std::uint64_t generation() const noexcept { return timeline.generation(); }
 
-    void editedInPlace() noexcept
+    // Publishes where the regions sit now, with the events they were published
+    // with: no event is copied or sorted.
+    void editedInPlace()
     {
-        const auto& live = timeline.current();
-        assert (live.size() == regions->size() && "an edit in place cannot add or remove a region");
-        const auto count = std::min (live.size(), regions->size());
-        for (std::size_t i = 0; i < count; ++i)
-            live.placement[i].store (placementOf ((*regions)[i]));
+        assert (timeline.current().size() == regions->size() && "an edit in place cannot add or remove a region");
+        if (timeline.current().size() != regions->size()) return;
+        timeline.publish (buildMidiTimeline (*regions, &timeline.current()));
         editCount.fetch_add (1, std::memory_order_release);
     }
 
-    // Counts every change the audio thread can hear, a publish or an in-place
-    // edit, after the change. The engine compares it from block to block: a
-    // changed timeline may no longer end notes it started. Load it before
-    // read(), so what read() returns is at least as new.
+    // Counts every change the audio thread can hear, after the change. The
+    // engine compares it from block to block: a changed timeline may no longer
+    // end notes it started. Load it before read(), so what read() returns is
+    // at least as new.
     std::uint32_t edits() const noexcept { return editCount.load (std::memory_order_acquire); }
 
     template <typename Fn>
@@ -889,6 +897,43 @@ public:
         fn (*fresh);
         publish (std::move (fresh));
     }
+
+    // mutate() for an edit that moves, resizes or mutes regions and leaves
+    // every region's notes and controllers as they are, as a tempo change does.
+    template <typename Fn>
+    void mutatePlacements (Fn&& fn)
+    {
+        fn (*regions);
+        editedInPlace();
+    }
+
+    // A copy of `from` to land on another snapshot, made ahead of the landing:
+    // the regions, and a timeline that shares from's events.
+    struct Staged
+    {
+        std::unique_ptr<std::vector<MidiRegion>> regions;
+        std::unique_ptr<MidiTimeline>            timeline;
+    };
+
+    static Staged stage (const MidiRegionSnapshot& from)
+    {
+        Staged staged;
+        staged.regions = std::make_unique<std::vector<MidiRegion>> (from.current());
+        staged.timeline = buildMidiTimeline (*staged.regions, &from.timeline.current());
+        return staged;
+    }
+
+    // Publishes a staged copy, copying and freeing nothing, for a caller
+    // holding the audio off: the regions it replaces go back into `staged`,
+    // and the timeline waits for reclaim().
+    void land (Staged& staged)
+    {
+        timeline.publishDeferred (std::move (staged.timeline));
+        std::swap (regions, staged.regions);
+        editCount.fetch_add (1, std::memory_order_release);
+    }
+
+    void reclaim() noexcept { timeline.reclaim(); }
 
 private:
     std::unique_ptr<std::vector<MidiRegion>> regions;
@@ -1211,7 +1256,7 @@ struct Track
 struct StagedTrack
 {
     Track fields;
-    std::unique_ptr<std::vector<MidiRegion>> midiRegions;
+    MidiRegionSnapshot::Staged midiRegions;
     std::unique_ptr<HardwareInsertRouting> routing;
     std::array<std::unique_ptr<std::vector<AutomationPoint>>, kNumAutomationParams> lanes;
 };
@@ -1888,10 +1933,13 @@ public:
     // not moved: they belong to the controls. Each snapshot of a moved track
     // publishes once. The solo and arm counters are the caller's to recompute.
     //
-    // stageTrackMove copies the contents out, and allocates; landTrackMove then
-    // refreshes the atomics from the tracks, swaps values and publishes, and
-    // copies nothing big, so AudioEngine::moveTracks runs it with the audio
-    // callback held off. A stage lands once. permuteTracks does both. Message
+    // stageTrackMove copies the contents out and builds what each snapshot
+    // will publish, and allocates; landTrackMove then refreshes the atomics
+    // from the tracks, swaps values and publishes, copying nothing big and
+    // freeing nothing, so AudioEngine::moveTracks runs it with the audio
+    // callback held off. What it replaces goes with the stage, and what the
+    // snapshots retire with reclaimTrackSnapshots(), both once the callback
+    // runs again. A stage lands once. permuteTracks does all of it. Message
     // thread.
     struct StagedTrackMove
     {
@@ -1902,6 +1950,7 @@ public:
     std::optional<StagedTrackMove> stageTrackMove (const TrackMovePlan& plan,
                                                    const TrackSlotMask& refollow = {}) const;
     void landTrackMove (StagedTrackMove& staged);
+    void reclaimTrackSnapshots() noexcept;
     bool permuteTracks (const TrackMovePlan& plan, const TrackSlotMask& refollow = {});
 
     // The directory name under state/lv2 for track trackIndex's LV2 file state.

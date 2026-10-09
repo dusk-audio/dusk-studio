@@ -1999,7 +1999,7 @@ void MainComponent::resized()
     const int kMenuBarW = menuBar.getRequiredWidth();
     menuBar.setBounds (menuRow.withWidth (kMenuBarW));
     if (systemStatusBar != nullptr)
-        systemStatusBar->setBounds (menuRow.withTrimmedLeft (menuRow.getWidth() - 300));
+        systemStatusBar->setBounds (menuRow.withTrimmedLeft (menuRow.getWidth() - 320));
     area.removeFromTop (4);
 
     const auto curStage = engine.getStage();

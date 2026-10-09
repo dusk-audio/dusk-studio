@@ -12,16 +12,18 @@
 namespace duskstudio::hosting
 {
 // A message without which a sounding note may never end: a note-off (or the
-// note-on at velocity 0 that is one), the sustain pedal coming up, and the
-// channel-mode messages, which all silence or reset a channel.
+// note-on at velocity 0 that is one), a pedal that holds notes coming up
+// (sustain, sostenuto, hold 2), and the channel-mode messages, which all
+// silence or reset a channel.
 inline bool releasesNotes (const std::uint8_t* data, int numBytes) noexcept
 {
     if (data == nullptr || numBytes < 3) return false;
     const int status = data[0] & 0xF0;
     if (status == 0x80) return true;
     if (status == 0x90) return data[2] == 0;
-    if (status == 0xB0) return (data[1] == 64 && data[2] < 64) || data[1] >= 120;
-    return false;
+    if (status != 0xB0) return false;
+    const bool holdingPedal = data[1] == 64 || data[1] == 66 || data[1] == 69;
+    return (holdingPedal && data[2] < 64) || data[1] >= 120;
 }
 
 // Hands `midi` to a host with `room` left for it, in the host's own unit; a

@@ -41,6 +41,7 @@
 #include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
@@ -1505,11 +1506,13 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
 
     if (onBeforeTracksMove) onBeforeTracksMove (plan);
 
-    // The copies are made here, with the audio running. What is left for the
-    // window below is swapping them in, publishing snapshots, storing atomics
-    // and repointing the strips: everything the callback reads that a move
-    // changes, changed with no callback in flight. Nothing in the window loads
-    // or frees a plug-in, and nothing suspends again.
+    // The copies are made here, with the audio running, MIDI timelines and
+    // their index included. What is left for the window below is swapping
+    // them in, publishing snapshots, storing atomics and repointing the
+    // strips: everything the callback reads that a move changes, changed with
+    // no callback in flight. Nothing in the window loads or frees a plug-in,
+    // or frees anything else: what the move replaces goes once the callback
+    // runs again. Nothing suspends again.
     auto staged = session.stageTrackMove (plan, refollow);
     if (! staged) return false;
 
@@ -1552,6 +1555,7 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
     session.recomputeRtCounters();
     resumeProcessing();
     staged.reset();
+    session.reclaimTrackSnapshots();
 
     if (regionClipboard.sourceTrack >= 0 && regionClipboard.sourceTrack < Session::kNumTracks)
         regionClipboard.sourceTrack = plan.oldToNew[(size_t) regionClipboard.sourceTrack];
@@ -1698,9 +1702,24 @@ int AudioEngine::getBackendXRunCount() const noexcept
     return 0;
 }
 
+int AudioEngine::getRealtimeDemotionCount() const noexcept
+{
+   #if defined(__linux__)
+    const auto demotions = rt::realtimeDemotions();
+    return std::max (0, demotions.count + demotions.unattributed
+                            - realtimeDemotionBaseline.load (std::memory_order_relaxed));
+   #else
+    return 0;
+   #endif
+}
+
 void AudioEngine::resetXRunCounts() noexcept
 {
     xrunCount.store (0, std::memory_order_relaxed);
+   #if defined(__linux__)
+    const auto demotions = rt::realtimeDemotions();
+    realtimeDemotionBaseline.store (demotions.count + demotions.unattributed, std::memory_order_relaxed);
+   #endif
     int devCount = 0;
     if (auto* dev = deviceManager.getCurrentDevice())
         devCount = dev->getXRunCount();
@@ -1773,6 +1792,14 @@ void AudioEngine::drainCallbackDiagnostics()
                       (long long) demotions.lastThreadId, demotions.count);
         lastReportedRealtimeDemotions = demotions.count;
     }
+    if (demotions.unattributed != lastReportedUnattributedOverruns)
+    {
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] the RLIMIT_RTTIME warning reached a thread "
+                              "that was not realtime, so nothing was moved (%d so far)\n",
+                      demotions.unattributed);
+        lastReportedUnattributedOverruns = demotions.unattributed;
+    }
+    restoreRealtimeLanes();
    #endif
 
     const auto gated = earlyOutBlocks.load (std::memory_order_relaxed);
@@ -1795,6 +1822,46 @@ void AudioEngine::drainCallbackDiagnostics()
                       (long long) (silent - lastReportedSilent));
         lastReportedSilent = silent;
     }
+}
+
+void AudioEngine::restoreRealtimeLanes()
+{
+    // The lanes go back on realtime parked behind the gate, which is safe for
+    // a thread only while it is blocked (RealtimeKit.h). The gate silences a
+    // few blocks, so it waits for the transport to stop: a take, playback or a
+    // render loses nothing to it. One try per new move off realtime, so a
+    // lane that cannot be put back costs no gap a second. The device's own
+    // thread is not put back: it is the backend's, PipeWire's data thread for
+    // one, and nothing here can hold it blocked, so it waits for the device to
+    // be opened again, which gives it a new thread.
+    const int demoted = rt::realtimeDemotions().count;
+    if (demoted == realtimeRestoreTriedAt) return;
+    if (! workerPool.anyLaneLostRealtime())
+    {
+        realtimeRestoreTriedAt = demoted;
+        return;
+    }
+    if (! transport.isStopped() || recordManager.isActive() || masteringPlayer.isPlaying()
+        || offlineRenderActive.load (std::memory_order_acquire) || isProcessingSuspended())
+        return;
+
+    // A block still stuck in a plug-in would hold the gate shut; it is left
+    // for the next tick.
+    processingSuspended.store (true, std::memory_order_seq_cst);
+    constexpr int kDrainWaitMs = 50;
+    for (int waited = 0; callbacksInFlight.load (std::memory_order_seq_cst) > 0; ++waited)
+    {
+        if (waited == kDrainWaitMs)
+        {
+            resumeProcessing();
+            return;
+        }
+        std::this_thread::sleep_for (std::chrono::milliseconds (1));
+    }
+    const int restored = workerPool.restoreRealtime();
+    resumeProcessing();
+    realtimeRestoreTriedAt = demoted;
+    std::fprintf (stderr, "[Dusk Studio/AudioEngine] %d DSP lane(s) back at realtime priority\n", restored);
 }
 
 void AudioEngine::setTakeAudition (int trackIndex, TakeId takeId)
@@ -3931,8 +3998,9 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& v : playbackScratch)  v.assign ((size_t) bs, 0.0f);
     for (auto& v : playbackScratchR) v.assign ((size_t) bs, 0.0f);
     // Live input, scheduled events, and loop-seam reset/chase messages share
-    // this routing buffer. Four input-block ceilings cover two live sources
-    // plus the worst 8192-frame/128-sample seam-reset burst off the RT path.
+    // this routing buffer: one input-block ceiling for each of the two live
+    // sources, and three for what the engine generates, the worst
+    // 8192-frame/128-sample seam-reset burst included (kMidiRoutingBlockBytes).
     for (auto& m : perTrackMidi)        m.reserveBytes (dusk::kMidiRoutingBlockBytes);
     for (auto& m : perTrackMidiScratch) m.ensureSize ((int) dusk::kMidiRoutingBlockBytes);
     liveRecordMidiScratch.reserveBytes (2 * dusk::kMidiBlockBytes);
@@ -6172,7 +6240,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // instrument's latency past this block's end (see
             // midiScheduledAhead). Usually exactly the block shifted by that
             // latency. After a rise it is longer, and what falls before the
-            // block lands on its first sample; after a fall it is shorter, or
+            // block lands on its first sample, but for a note wholly inside
+            // that stretch (midischedule::Span); after a fall it is shorter, or
             // empty while the block is still inside what was already sent.
             const auto windowStart = blockStartSamples + midiWindowAhead;
             const int windowLength = numSamples + instrumentLatency - midiWindowAhead;
@@ -6183,9 +6252,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             };
 
             // The track's MIDI timeline, loaded once for the block and kept
-            // alive by the callback's snapshot scope. Its regions' placements
-            // can still move under a drag; the edit count, loaded first, is at
-            // least as old as any of them.
+            // alive by the callback's snapshot scope. The edit count, loaded
+            // first, is at least as old as it.
             MidiTimelineStamp timelineStamp { session.track (t).midiRegions.edits(), 0, tm };
             std::memcpy (&timelineStamp.bpmBits, &bpm, sizeof (timelineStamp.bpmBits));
             const auto& midiTimeline = *session.track (t).midiRegions.read();
@@ -6306,7 +6374,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
                     const auto outcome = midischedule::scheduleSpan (
                         midiTimeline, useMap ? tm : nullptr, sr, bpm,
-                        { span.timelineStart, span.timelineStart + span.length, chase },
+                        { span.timelineStart, span.timelineStart + span.length, chase,
+                          span.timelineStart - windowToBuffer - span.bufferOffset },
                         midiScheduleScansRemaining, midiControllerChase,
                         [&] (std::uint8_t status, std::uint8_t data1, std::uint8_t data2,
                              std::int64_t sampleInSpan) noexcept

@@ -3,7 +3,6 @@
 #include "MidiEvents.h"
 
 #include <algorithm>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -128,46 +127,90 @@ struct MidiRegionPlacement
     bool         muted           = false;
 };
 
-// A placement the message thread changes while the audio thread plays it, so a
-// region dragged along the timeline plays from where it is without a publish.
-// Each field is atomic on its own: a block that reads across a change can pair
-// one field's old value with another's new one, which the next block's edit
-// count catches.
-class LiveMidiPlacement
-{
-public:
-    void store (const MidiRegionPlacement& p) noexcept
-    {
-        timelineStart.store (p.timelineStart, std::memory_order_relaxed);
-        lengthInSamples.store (p.lengthInSamples, std::memory_order_relaxed);
-        lengthInTicks.store (p.lengthInTicks, std::memory_order_relaxed);
-        muted.store (p.muted, std::memory_order_relaxed);
-    }
-
-    MidiRegionPlacement load() const noexcept
-    {
-        return { timelineStart.load (std::memory_order_relaxed),
-                 lengthInSamples.load (std::memory_order_relaxed),
-                 lengthInTicks.load (std::memory_order_relaxed),
-                 muted.load (std::memory_order_relaxed) };
-    }
-
-private:
-    std::atomic<std::int64_t> timelineStart { 0 };
-    std::atomic<std::int64_t> lengthInSamples { 0 };
-    std::atomic<std::int64_t> lengthInTicks { 0 };
-    std::atomic<bool>         muted { false };
-};
-
 // A track's MIDI timeline the way the audio thread plays it, one entry per
-// region: its events, fixed when the regions are published, and its placement,
-// which an edit in place changes. The audio thread reads nothing else of a
-// region.
+// region: its events and its placement. Immutable once published; every
+// change, a drag included, publishes a new one. A region's events are shared
+// with the timelines before it for as long as they stay the same, so a change
+// that only moves regions, or a tempo change, copies and sorts no events.
+//
+// The index puts the regions that play (unmuted) in order of their start, so a
+// block finds the few it overlaps without reading the rest: by start, a binary
+// search; by end, kRegionChunk at a time, from the latest start and the longest
+// length each chunk holds, which bound how late any of its regions ends.
 struct MidiTimeline
 {
-    std::vector<MidiPlaybackRegion>      playback;
-    std::unique_ptr<LiveMidiPlacement[]> placement;   // playback.size() of them
+    static constexpr std::size_t kRegionChunk = 64;
+
+    std::vector<std::shared_ptr<const MidiPlaybackRegion>> playback;
+    std::vector<MidiRegionPlacement>                       placement;   // playback.size() of them
+
+    std::vector<std::uint32_t> byStart;               // unmuted regions, by timelineStart
+    std::vector<std::int64_t>  startOf;               // their starts, ascending
+    // Per kRegionChunk of byStart: the longest region in it, in samples and in
+    // ticks, and over it and every chunk before it.
+    std::vector<std::int64_t>  chunkLongestSamples, chunkLongestTicks;
+    std::vector<std::int64_t>  upToLongestSamples, upToLongestTicks;
+    // Each controller (channel * 128 + controller) an unmuted region sets, and
+    // for each, holders[holdersFrom[k], holdersFrom[k + 1]): the positions in
+    // byStart of the regions that set it, ascending.
+    std::vector<int>           controllerKeys;
+    std::vector<std::uint32_t> holdersFrom;
+    std::vector<std::uint32_t> holders;
 
     std::size_t size() const noexcept { return playback.size(); }
+    const MidiPlaybackRegion& events (std::size_t region) const noexcept { return *playback[region]; }
 };
+
+// Builds a timeline's index from its playback and placements. Message thread.
+inline void indexMidiTimeline (MidiTimeline& timeline)
+{
+    timeline.byStart.clear();
+    for (std::uint32_t i = 0; i < (std::uint32_t) timeline.size(); ++i)
+        if (! timeline.placement[i].muted)
+            timeline.byStart.push_back (i);
+    std::stable_sort (timeline.byStart.begin(), timeline.byStart.end(), [&timeline] (std::uint32_t a, std::uint32_t b)
+                      { return timeline.placement[a].timelineStart < timeline.placement[b].timelineStart; });
+
+    const auto chunk = MidiTimeline::kRegionChunk;
+    const auto count = timeline.byStart.size();
+    timeline.startOf.resize (count);
+    timeline.chunkLongestSamples.assign ((count + chunk - 1) / chunk, 0);
+    timeline.chunkLongestTicks.assign ((count + chunk - 1) / chunk, 0);
+    constexpr int kKeys = 16 * 128;
+    std::vector<std::uint32_t> perKey (kKeys + 1, 0);
+    for (std::size_t p = 0; p < count; ++p)
+    {
+        const auto region = timeline.byStart[p];
+        const auto& place = timeline.placement[region];
+        timeline.startOf[p] = place.timelineStart;
+        auto& samples = timeline.chunkLongestSamples[p / chunk];
+        auto& ticks = timeline.chunkLongestTicks[p / chunk];
+        samples = std::max (samples, place.lengthInSamples);
+        ticks = std::max (ticks, place.lengthInTicks);
+        for (const auto& lane : timeline.events (region).lanes)
+            ++perKey[(std::size_t) lane.key + 1];
+    }
+
+    timeline.controllerKeys.clear();
+    timeline.holdersFrom.assign (1, 0);
+    std::vector<std::uint32_t> slotOf (kKeys, 0);
+    for (int key = 0; key < kKeys; ++key)
+        if (perKey[(std::size_t) key + 1] > 0)
+        {
+            slotOf[(std::size_t) key] = timeline.holdersFrom.back();
+            timeline.controllerKeys.push_back (key);
+            timeline.holdersFrom.push_back (timeline.holdersFrom.back() + perKey[(std::size_t) key + 1]);
+        }
+    timeline.holders.resize (timeline.holdersFrom.back());
+    for (std::size_t p = 0; p < count; ++p)
+        for (const auto& lane : timeline.events (timeline.byStart[p]).lanes)
+            timeline.holders[slotOf[(std::size_t) lane.key]++] = (std::uint32_t) p;
+    timeline.upToLongestSamples = timeline.chunkLongestSamples;
+    timeline.upToLongestTicks = timeline.chunkLongestTicks;
+    for (std::size_t c = 1; c < timeline.upToLongestSamples.size(); ++c)
+    {
+        timeline.upToLongestSamples[c] = std::max (timeline.upToLongestSamples[c], timeline.upToLongestSamples[c - 1]);
+        timeline.upToLongestTicks[c] = std::max (timeline.upToLongestTicks[c], timeline.upToLongestTicks[c - 1]);
+    }
+}
 } // namespace duskstudio

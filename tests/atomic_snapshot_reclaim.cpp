@@ -33,6 +33,15 @@ TEST_CASE ("AtomicSnapshot frees a retired value at once when no reader is open"
         REQUIRE (snapshot.retiredCount() == 0);
     }
     CHECK (snapshot.read()->front() == 99);
+
+    // A deferred publish frees nothing, even with no reader open, until the
+    // publisher asks.
+    snapshot.publishDeferred (std::make_unique<std::vector<int>> (std::vector<int> (64, 100)));
+    snapshot.publishDeferred (std::make_unique<std::vector<int>> (std::vector<int> (64, 101)));
+    CHECK (snapshot.retiredCount() == 2);
+    CHECK (snapshot.read()->front() == 101);
+    snapshot.reclaim();
+    CHECK (snapshot.retiredCount() == 0);
 }
 
 TEST_CASE ("AtomicSnapshot keeps what an open reader read, however fast it publishes", "[snapshot][reclaim]")
@@ -142,32 +151,68 @@ TEST_CASE ("MidiRegionSnapshot: the audio side never reads the regions the messa
     region.lengthInTicks = 48;
     region.notes.push_back ({ 1, 60, 100, 0, 10 });
     snapshot.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region, region }));
+    // Holds what it reads the way the audio callback does.
+    const SnapshotReadScope reading;
     const auto* timeline = snapshot.read();
     REQUIRE (timeline->size() == 2);
-    CHECK (timeline->placement[1].load().timelineStart == 1000);
+    CHECK (timeline->placement[1].timelineStart == 1000);
 
-    // Edits to the message thread's regions reach the timeline only when
-    // handed over: placements through editedInPlace(), the rest by a publish.
+    // Edits to the message thread's regions reach the audio side only when
+    // handed over: placements through editedInPlace(), which keeps the events
+    // the timeline has, the rest by a publish.
     auto& regions = snapshot.currentMutable();
     regions[1].timelineStart = 9000;
     regions[1].lengthInSamples = 2400;
     regions[1].muted = true;
     regions[1].notes.clear();
-    CHECK (timeline->placement[1].load().timelineStart == 1000);
-    CHECK (timeline->playback[1].notes.size() == 1);
+    CHECK (snapshot.read() == timeline);
+    CHECK (timeline->placement[1].timelineStart == 1000);
+    CHECK (timeline->events (1).notes.size() == 1);
 
     snapshot.editedInPlace();
-    const auto moved = timeline->placement[1].load();
-    CHECK (moved.timelineStart == 9000);
-    CHECK (moved.lengthInSamples == 2400);
-    CHECK (moved.muted);
-    CHECK (timeline->placement[0].load().timelineStart == 1000);
-    CHECK (timeline->playback[1].notes.size() == 1);
-    CHECK (snapshot.read() == timeline);
+    const auto* moved = snapshot.read();
+    REQUIRE (moved != timeline);
+    CHECK (moved->placement[1].timelineStart == 9000);
+    CHECK (moved->placement[1].lengthInSamples == 2400);
+    CHECK (moved->placement[1].muted);
+    CHECK (moved->placement[0].timelineStart == 1000);
+    CHECK (moved->playback[1] == timeline->playback[1]);
+    CHECK (moved->byStart == std::vector<std::uint32_t> { 0 });   // the muted one does not play
 
     snapshot.mutate ([] (std::vector<MidiRegion>&) {});
-    REQUIRE (snapshot.read() != timeline);
-    CHECK (snapshot.read()->playback[1].notes.empty());
-    CHECK (snapshot.read()->placement[1].load().timelineStart == 9000);
-    CHECK (snapshot.generation() == 2);
+    REQUIRE (snapshot.read() != moved);
+    CHECK (snapshot.read()->events (1).notes.empty());
+    CHECK (snapshot.read()->placement[1].timelineStart == 9000);
+    CHECK (snapshot.generation() == 3);
+}
+
+TEST_CASE ("MidiRegionSnapshot: a staged copy lands without freeing until reclaimed", "[snapshot][midi]")
+{
+    MidiRegion region;
+    region.lengthInSamples = 4800;
+    region.lengthInTicks = 48;
+    region.notes.push_back ({ 1, 60, 100, 0, 10 });
+    MidiRegionSnapshot from, to;
+    from.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    region.notes.front().noteNumber = 62;
+    to.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region, region }));
+    // No read scope is open, so only the landing itself keeps this alive.
+    const auto* landedOn = to.read();
+
+    auto staged = MidiRegionSnapshot::stage (from);
+    REQUIRE (staged.timeline != nullptr);
+    CHECK (staged.timeline->playback[0] == from.read()->playback[0]);
+
+    to.land (staged);
+    CHECK (to.read()->size() == 1);
+    CHECK (to.read()->events (0).notes.front().key == 60);
+    CHECK (to.current().size() == 1);
+    // What the landing replaced is still there: the regions in the stage, the
+    // timeline among the retired values.
+    REQUIRE (staged.regions != nullptr);
+    CHECK (staged.regions->size() == 2);
+    CHECK (landedOn->size() == 2);
+
+    CHECK (to.generation() == 2);
+    to.reclaim();
 }

@@ -2000,8 +2000,8 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
 
     // MIDI region move-drag. Moves the region in place and hands the audio
     // thread its new position through editedInPlace(), so it plays from where
-    // it is as the pointer goes, without a publish. mouseUp finalises through
-    // MidiRegionEditAction.
+    // it is as the pointer goes; the events it plays are the ones it was last
+    // published with. mouseUp finalises through MidiRegionEditAction.
     if (midiDrag.active())
     {
         auto& snapshot = session.track (midiDrag.track).midiRegions;

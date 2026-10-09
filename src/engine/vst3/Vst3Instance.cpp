@@ -12,6 +12,7 @@
 #include <public.sdk/source/vst/utility/stringconvert.h>
 #include <public.sdk/source/common/memorystream.h>
 
+#include "../hosting/MidiFit.h"
 #include "../hosting/SpscRing.h"
 #include <pluginterfaces/gui/iplugview.h>
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
@@ -79,8 +80,8 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     Vst::ProcessContext      processContext {};
     Vst::ParameterChanges    inParams, outParams;
     // The SDK's EventList defaults to 50 and addEvent() silently drops past
-    // that - dense MIDI would strand note-offs. Sized like the CLAP path's
-    // per-block event scratch.
+    // that. A block denser than this keeps its note-offs and drops other
+    // events first (MidiFit.h).
     static constexpr int32 kMaxEventsPerBlock = 1024;
     Vst::EventList           inEvents  { kMaxEventsPerBlock },
                              outEvents { kMaxEventsPerBlock };
@@ -751,61 +752,33 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
             return true;
         };
 
+        const auto ccMapped = [&] (int channel, int ctrl) noexcept
+        {
+            return impl->ccParamId[(size_t) (channel * Vst::kCountCtrlNumber + ctrl)]
+                       .load (std::memory_order_relaxed) != Impl::kNoCcParam;
+        };
+        const auto isPanic = [] (const uint8_t* d) noexcept
+        {
+            return (d[0] & 0xF0u) == 0xB0
+                && (d[1] == Vst::kCtrlAllSoundsOff || d[1] == Vst::kCtrlAllNotesOff);
+        };
+
+        // Controllers, bend and pressure become parameter points, which take
+        // nothing from the event list.
+        std::size_t notesOnPerChannel[16] {};
+        bool anyPanic = false;
         for (const auto meta : *io.midiIn)
         {
             const auto* d = meta.data;
             if (meta.numBytes < 2) continue;
             const auto status  = (uint8_t) (d[0] & 0xF0u);
             const auto channel = (int16_t) (d[0] & 0x0Fu);
-
-            if (impl->hasEventIn && meta.numBytes >= 3
-                && (status == 0x90 || status == 0x80))
-            {
-                Vst::Event ev {};
-                ev.busIndex     = 0;
-                ev.sampleOffset = meta.samplePosition;
-                ev.flags        = Vst::Event::kIsLive;
-                if (status == 0x90 && d[2] > 0)
-                {
-                    ev.type   = Vst::Event::kNoteOnEvent;
-                    ev.noteOn = { channel, (int16_t) d[1], 0.0f,
-                                  (float) d[2] / 127.0f, 0, -1 };
-                }
-                else
-                {
-                    ev.type    = Vst::Event::kNoteOffEvent;
-                    ev.noteOff = { channel, (int16_t) d[1],
-                                   (float) d[2] / 127.0f, -1, 0.0f };
-                }
-                if (impl->inEvents.addEvent (ev) == kResultTrue)
-                {
-                    if (ev.type == Vst::Event::kNoteOnEvent)
-                        impl->midiNotes.noteOn (channel, (int) d[1]);
-                    else
-                        impl->midiNotes.noteOff (channel, (int) d[1]);
-                }
-            }
+            if (status == 0x90 && meta.numBytes >= 3 && d[2] > 0)
+                ++notesOnPerChannel[channel];
             else if (status == 0xB0 && meta.numBytes >= 3 && d[1] < 128)
             {
-                const auto controller = (int16_t) d[1];
-                const bool mapped = queueCcParam (channel, controller,
-                                                  (double) d[2] / 127.0,
-                                                  meta.samplePosition);
-                if (! mapped && impl->hasEventIn
-                    && (controller == Vst::kCtrlAllSoundsOff
-                        || controller == Vst::kCtrlAllNotesOff))
-                {
-                    impl->midiNotes.releaseChannel (channel, [&] (int key)
-                    {
-                        Vst::Event ev {};
-                        ev.busIndex     = 0;
-                        ev.sampleOffset = meta.samplePosition;
-                        ev.flags        = Vst::Event::kIsLive;
-                        ev.type         = Vst::Event::kNoteOffEvent;
-                        ev.noteOff      = { channel, (int16_t) key, 0.0f, -1, 0.0f };
-                        return impl->inEvents.addEvent (ev) == kResultTrue;
-                    });
-                }
+                queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0, meta.samplePosition);
+                anyPanic = anyPanic || (isPanic (d) && ! ccMapped (channel, d[1]));
             }
             else if (status == 0xE0 && meta.numBytes >= 3)
             {
@@ -818,6 +791,75 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
                 queueCcParam (channel, Vst::kAfterTouch,
                               (double) d[1] / 127.0, meta.samplePosition);
             }
+        }
+
+        // Notes go on the event list, which holds kMaxEventsPerBlock, and a
+        // block too dense for it keeps its note-offs (MidiFit.h). A panic no
+        // parameter takes becomes a note-off for each note the host saw start
+        // on its channel, so it is charged the most that can be: the notes
+        // sounding as the block starts and every one the block starts.
+        std::size_t releasable[16] {};
+        if (anyPanic)
+            for (int channel = 0; channel < 16; ++channel)
+                releasable[channel] = impl->midiNotes.soundingOnChannel (channel)
+                                    + notesOnPerChannel[channel];
+
+        if (impl->hasEventIn)
+        {
+            const auto eventsFor = [&] (const uint8_t* d, int numBytes) noexcept -> std::size_t
+            {
+                if (numBytes < 3) return 0;
+                const auto status = (uint8_t) (d[0] & 0xF0u);
+                if (status == 0x90 || status == 0x80) return 1;
+                if (isPanic (d) && ! ccMapped (d[0] & 0x0F, d[1])) return releasable[d[0] & 0x0F];
+                return 0;
+            };
+            const auto addEvent = [&] (const uint8_t* d, int, int samplePosition) noexcept
+            {
+                const auto status  = (uint8_t) (d[0] & 0xF0u);
+                const auto channel = (int16_t) (d[0] & 0x0Fu);
+                Vst::Event ev {};
+                ev.busIndex     = 0;
+                ev.sampleOffset = samplePosition;
+                ev.flags        = Vst::Event::kIsLive;
+                if (status == 0xB0)
+                {
+                    // The block's own controllers went to their parameters
+                    // above; what comes here is a panic or, when the block
+                    // gave way to the hanging reset, that reset.
+                    if (queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0, samplePosition)
+                        || ! isPanic (d))
+                        return;
+                    impl->midiNotes.releaseChannel (channel, [&] (int key)
+                    {
+                        ev.type    = Vst::Event::kNoteOffEvent;
+                        ev.noteOff = { channel, (int16_t) key, 0.0f, -1, 0.0f };
+                        return impl->inEvents.addEvent (ev) == kResultTrue;
+                    });
+                    return;
+                }
+                if (status == 0x90 && d[2] > 0)
+                {
+                    ev.type   = Vst::Event::kNoteOnEvent;
+                    ev.noteOn = { channel, (int16_t) d[1], 0.0f,
+                                  (float) d[2] / 127.0f, 0, -1 };
+                }
+                else
+                {
+                    ev.type    = Vst::Event::kNoteOffEvent;
+                    ev.noteOff = { channel, (int16_t) d[1],
+                                   (float) d[2] / 127.0f, -1, 0.0f };
+                }
+                if (impl->inEvents.addEvent (ev) != kResultTrue) return;
+                if (ev.type == Vst::Event::kNoteOnEvent)
+                    impl->midiNotes.noteOn (channel, (int) d[1]);
+                else
+                    impl->midiNotes.noteOff (channel, (int) d[1]);
+            };
+            hosting::deliverWithinRoom (*io.midiIn,
+                                        (std::size_t) (Impl::kMaxEventsPerBlock
+                                                       - impl->inEvents.getEventCount()),
+                                        eventsFor, addEvent);
         }
     }
 

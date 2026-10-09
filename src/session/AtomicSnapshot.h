@@ -118,6 +118,7 @@ private:
 //               valid until the scope closes. Never null.
 // current()   : publishing thread.
 // publish()   : publishing thread (the message thread). Any number per block.
+//               publishDeferred() leaves what it retires for reclaim().
 // mutate()    : publishing thread; copy current, apply lambda, publish.
 // reclaim()   : publishing thread; frees what no open scope can still hold,
 //               as every publish also does.
@@ -143,13 +144,21 @@ public:
 
     void publish (std::unique_ptr<T> fresh)
     {
+        publishDeferred (std::move (fresh));
+        reclaim();
+    }
+
+    // publish(), but the value it retires is not freed here, even with no
+    // scope open: it waits for the next publish or reclaim(). For a caller
+    // holding the audio off, which frees once it lets it back.
+    void publishDeferred (std::unique_ptr<T> fresh)
+    {
         assert (fresh != nullptr && "AtomicSnapshot::publish requires a non-null value");
         if (fresh == nullptr) return;
         currentPtr.store (fresh.get(), std::memory_order_seq_cst);
         retired.push_back ({ std::move (owned), snapshot_epoch::advance() });
         owned = std::move (fresh);
         ++publishes;
-        reclaim();
     }
 
     void reclaim() noexcept
