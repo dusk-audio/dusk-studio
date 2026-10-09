@@ -355,7 +355,7 @@ bool AudioWorkerPool::anyLaneLostRealtime() const
     return false;
 }
 
-int AudioWorkerPool::restoreRealtime()
+int AudioWorkerPool::restoreRealtime (rt::RealtimeRestorer& restorer)
 {
     int restored = 0;
    #if defined(__linux__)
@@ -371,9 +371,11 @@ int AudioWorkerPool::restoreRealtime()
         // and anyLaneLostRealtime() goes on saying so.
         for (int look = 0; look < 100 && ! rt::threadIsBlocked (threadId); ++look)
             std::this_thread::sleep_for (std::chrono::milliseconds (1));
-        if (rt::threadIsBlocked (threadId) && rt::restoreRealtime (threadId, w->granted))
+        if (rt::threadIsBlocked (threadId) && restorer.restore (threadId, w->granted))
             ++restored;
     }
+   #else
+    (void) restorer;
    #endif
     return restored;
 }

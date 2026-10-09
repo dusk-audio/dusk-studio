@@ -919,15 +919,20 @@ public:
     {
         Staged staged;
         staged.regions = std::make_unique<std::vector<MidiRegion>> (from.current());
-        staged.timeline = buildMidiTimeline (*staged.regions, &from.timeline.current());
+        const auto& published = from.timeline.current();
+        assert (published.size() == staged.regions->size() && "stage() needs the regions as last published");
+        staged.timeline = buildMidiTimeline (*staged.regions,
+                                             published.size() == staged.regions->size() ? &published : nullptr);
         return staged;
     }
 
     // Publishes a staged copy, copying and freeing nothing, for a caller
     // holding the audio off: the regions it replaces go back into `staged`,
-    // and the timeline waits for reclaim().
+    // and the timeline waits for reclaim(). A Staged lands once.
     void land (Staged& staged)
     {
+        assert (staged.timeline != nullptr && staged.regions != nullptr && "a Staged lands once");
+        if (staged.timeline == nullptr || staged.regions == nullptr) return;
         timeline.publishDeferred (std::move (staged.timeline));
         std::swap (regions, staged.regions);
         editCount.fetch_add (1, std::memory_order_release);

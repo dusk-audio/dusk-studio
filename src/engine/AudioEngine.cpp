@@ -1842,9 +1842,18 @@ void AudioEngine::restoreRealtimeLanes()
         realtimeRestoreTriedAt = demoted;
         return;
     }
-    if (! transport.isStopped() || recordManager.isActive() || masteringPlayer.isPlaying()
-        || offlineRenderActive.load (std::memory_order_acquire) || isProcessingSuspended())
-        return;
+    const auto busy = [this]
+    {
+        return ! transport.isStopped() || recordManager.isActive() || masteringPlayer.isPlaying()
+            || offlineRenderActive.load (std::memory_order_acquire) || isProcessingSuspended();
+    };
+    if (busy()) return;
+
+    // Connecting to RTKit waits on the system bus for as long as the bus
+    // takes, so it is done with the audio still running, and a render the
+    // bounce worker started meanwhile is looked for again.
+    rt::RealtimeRestorer restorer;
+    if (busy()) return;
 
     // A block still stuck in a plug-in would hold the gate shut; it is left
     // for the next tick.
@@ -1859,7 +1868,7 @@ void AudioEngine::restoreRealtimeLanes()
         }
         std::this_thread::sleep_for (std::chrono::milliseconds (1));
     }
-    const int restored = workerPool.restoreRealtime();
+    const int restored = workerPool.restoreRealtime (restorer);
     resumeProcessing();
     realtimeRestoreTriedAt = demoted;
     std::fprintf (stderr, "[Dusk Studio/AudioEngine] %d DSP lane(s) back at realtime priority\n", restored);

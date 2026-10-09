@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+namespace duskstudio::rt { class RealtimeRestorer; }
+
 namespace duskstudio
 {
 // Fixed pool of real-time worker threads for the per-block strip-DSP fan-out
@@ -85,8 +87,9 @@ public:
     // warning was moved to normal priority on the spot (RealtimeKit.h) and,
     // as threads outlive start(), would stay there, slowing every block that
     // joins it. This parks every lane and puts each one that had realtime when
-    // it started back on it. Linux; returns how many it put back.
-    int restoreRealtime();
+    // it started back on it, through `restorer`, which the caller makes before
+    // holding the audio back. Linux; returns how many it put back.
+    int restoreRealtime (rt::RealtimeRestorer& restorer);
 
     // Message thread. True when a lane that started with realtime runs
     // without it now, which restoreRealtime() is for. Linux.

@@ -32,25 +32,28 @@ inline bool releasesNotes (const std::uint8_t* data, int numBytes) noexcept
 // and, in block order, as many of the other messages as the room left over
 // allows. When the releases alone do not fit, the host gets the hanging reset
 // instead, which needs `room` to hold it. emit (data, numBytes, samplePosition)
-// receives what goes, in order. Audio thread: two passes over the block, no
-// allocation.
+// receives what goes, in order. Each pass over the block asks its own copy of
+// `cost`, once per message in block order, so a cost may depend on what came
+// before. Audio thread: two passes over the block, no allocation.
 template <typename Cost, typename Emit>
-void deliverWithinRoom (const dusk::MidiBuffer& midi, std::size_t room, Cost&& cost,
+void deliverWithinRoom (const dusk::MidiBuffer& midi, std::size_t room, const Cost& cost,
                         Emit&& emit) noexcept
 {
     std::size_t total = 0, releases = 0;
+    auto counting = cost;
     for (const auto meta : midi)
     {
-        const std::size_t c = cost (meta.data, meta.numBytes);
+        const std::size_t c = counting (meta.data, meta.numBytes);
         total += c;
         if (releasesNotes (meta.data, meta.numBytes))
             releases += c;
     }
 
+    auto delivering = cost;
     if (total <= room)
     {
         for (const auto meta : midi)
-            if (cost (meta.data, meta.numBytes) > 0)
+            if (delivering (meta.data, meta.numBytes) > 0)
                 emit (meta.data, meta.numBytes, meta.samplePosition);
         return;
     }
@@ -60,7 +63,7 @@ void deliverWithinRoom (const dusk::MidiBuffer& midi, std::size_t room, Cost&& c
         std::size_t spare = room - releases;
         for (const auto meta : midi)
         {
-            const std::size_t c = cost (meta.data, meta.numBytes);
+            const std::size_t c = delivering (meta.data, meta.numBytes);
             if (c == 0) continue;
             if (releasesNotes (meta.data, meta.numBytes))
                 emit (meta.data, meta.numBytes, meta.samplePosition);

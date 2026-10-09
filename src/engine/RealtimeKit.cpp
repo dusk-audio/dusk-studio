@@ -396,7 +396,24 @@ bool threadIsBlocked (std::int64_t threadId) noexcept
     return nameEnd[2] == 'S' || nameEnd[2] == 'D';
 }
 
-bool restoreRealtime (std::int64_t threadId, const ThreadScheduling& was)
+struct RealtimeRestorer::Bus
+{
+   #if DUSKSTUDIO_HAS_RTKIT
+    RtKit rtkit { kRestoreTimeoutMs };
+    bool  answers = true;
+   #endif
+};
+
+RealtimeRestorer::RealtimeRestorer()
+   #if DUSKSTUDIO_HAS_RTKIT
+    : bus (std::make_unique<Bus>())
+   #endif
+{
+}
+
+RealtimeRestorer::~RealtimeRestorer() = default;
+
+bool RealtimeRestorer::restore (std::int64_t threadId, const ThreadScheduling& was)
 {
     if (! was.isRealtime()) return false;
     const int current = sched_getscheduler ((pid_t) threadId);
@@ -410,9 +427,9 @@ bool restoreRealtime (std::int64_t threadId, const ThreadScheduling& was)
     if (sched_setscheduler ((pid_t) threadId, was.policy | (current & SCHED_RESET_ON_FORK), &param) == 0)
         return true;
    #if DUSKSTUDIO_HAS_RTKIT
-    RtKit rtkit (kRestoreTimeoutMs);
-    if (rtkit.connected() && rtkit.makeRealtime (threadId, was.priority))
+    if (bus->answers && bus->rtkit.connected() && bus->rtkit.makeRealtime (threadId, was.priority))
         return threadScheduling (threadId).isRealtime();
+    bus->answers = false;
    #endif
     return false;
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -61,14 +62,32 @@ ThreadScheduling threadScheduling (std::int64_t threadId) noexcept;
 // True while the thread is blocked, not running or waiting for a core.
 bool threadIsBlocked (std::int64_t threadId) noexcept;
 
-// Puts a thread the guard moved off realtime back on the realtime class it
-// had, `was`: itself where RLIMIT_RTPRIO allows that, else through RTKit.
-// True when the thread runs realtime again.
+// Puts threads the guard moved off realtime back on the realtime class each
+// had: itself where RLIMIT_RTPRIO allows that, else through RTKit.
 //
-// Only for a thread that is blocked (threadIsBlocked) and will stay so until
-// this returns. The kernel restarts a realtime thread's CPU-time count when it
-// wakes as one, and at no other time: put back while it runs, a thread keeps
-// the count its overrun reached and is warned, and moved off again, at the next
-// tick. Message thread; may make a D-Bus round trip.
-bool restoreRealtime (std::int64_t threadId, const ThreadScheduling& was);
+// Make one before holding anything up for it. Connecting to the system bus
+// waits for as long as the bus takes; after that a restore() waits a quarter
+// second at most for RTKit, and once RTKit has not put a thread back it is not
+// asked again. Linux, message thread.
+class RealtimeRestorer
+{
+public:
+    RealtimeRestorer();
+    ~RealtimeRestorer();
+    RealtimeRestorer (const RealtimeRestorer&) = delete;
+    RealtimeRestorer& operator= (const RealtimeRestorer&) = delete;
+
+    // Puts `threadId` back on `was`. True when it runs realtime again.
+    //
+    // Only for a thread that is blocked (threadIsBlocked) and will stay so
+    // until this returns. The kernel restarts a realtime thread's CPU-time
+    // count when it wakes as one, and at no other time: put back while it
+    // runs, a thread keeps the count its overrun reached and is warned, and
+    // moved off again, at the next tick.
+    bool restore (std::int64_t threadId, const ThreadScheduling& was);
+
+private:
+    struct Bus;
+    std::unique_ptr<Bus> bus;
+};
 } // namespace duskstudio::rt

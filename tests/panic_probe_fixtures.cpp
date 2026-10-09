@@ -12,6 +12,7 @@
 #endif
 
 #if DUSKSTUDIO_HAS_NATIVE_VST3
+ #include "engine/MidiPanic.h"
  #include "engine/vst3/NativeVst3Slot.h"
  #include "engine/vst3/Vst3Bundle.h"
 #endif
@@ -578,5 +579,41 @@ TEST_CASE ("a hosted VST3 block bigger than the host's event list still ends its
         probe.run (&block);
         REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
     }
+}
+
+TEST_CASE ("a hosted VST3 block that resets and then plays a dense run keeps its notes",
+           "[vst3][fixture][panic][midi][regression]")
+{
+    Vst3Probe probe;
+    REQUIRE (probe.load());
+
+    dusk::MidiBuffer before;
+    addMidi (before, 0x90, 50, 100);
+    addMidi (before, 0x90, 52, 100);
+    probe.run (&before);
+    REQUIRE_THAT (probe.heldNotes(), WithinAbs (2.0 / 16.0, 1.0e-6));
+
+    // A seam: the engine's hanging reset, all notes off and all sound off on
+    // every channel, then more short notes on one channel than half the
+    // host's 1024-event list, and a note held on past the block. The whole
+    // block fits the list.
+    constexpr int kShortNotes = 400;
+    dusk::MidiBuffer block;
+    REQUIRE (duskstudio::midi::emitHangingReset (block, 0));
+    for (int i = 0; i < kShortNotes; ++i)
+    {
+        const int at = 1 + i * (kBlock - 3) / kShortNotes;
+        addMidiAt (block, 0x90, 61, 100, at);
+        addMidiAt (block, 0x80, 61, 0, at);
+    }
+    addMidiAt (block, 0x90, 60, 100, kBlock - 1);
+    probe.run (&block);
+    REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));
+
+    // The one held is 60: the reset ended 50 and 52.
+    dusk::MidiBuffer off;
+    addMidi (off, 0x80, 60, 0);
+    probe.run (&off);
+    REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_VST3

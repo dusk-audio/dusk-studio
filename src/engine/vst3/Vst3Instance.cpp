@@ -23,7 +23,9 @@
 #include <pluginterfaces/vst/vstspeaker.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
+#include <utility>
 
 namespace duskstudio::vst3
 {
@@ -765,7 +767,6 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
 
         // Controllers, bend and pressure become parameter points, which take
         // nothing from the event list.
-        std::size_t notesOnPerChannel[16] {};
         bool anyPanic = false;
         for (const auto meta : *io.midiIn)
         {
@@ -773,9 +774,7 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
             if (meta.numBytes < 2) continue;
             const auto status  = (uint8_t) (d[0] & 0xF0u);
             const auto channel = (int16_t) (d[0] & 0x0Fu);
-            if (status == 0x90 && meta.numBytes >= 3 && d[2] > 0)
-                ++notesOnPerChannel[channel];
-            else if (status == 0xB0 && meta.numBytes >= 3 && d[1] < 128)
+            if (status == 0xB0 && meta.numBytes >= 3 && d[1] < 128)
             {
                 queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0, meta.samplePosition);
                 anyPanic = anyPanic || (isPanic (d) && ! ccMapped (channel, d[1]));
@@ -796,22 +795,26 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
         // Notes go on the event list, which holds kMaxEventsPerBlock, and a
         // block too dense for it keeps its note-offs (MidiFit.h). A panic no
         // parameter takes becomes a note-off for each note the host saw start
-        // on its channel, so it is charged the most that can be: the notes
-        // sounding as the block starts and every one the block starts.
-        std::size_t releasable[16] {};
+        // on its channel and not yet end, so it is charged the most that can
+        // be: the notes sounding there as the block starts, or started since
+        // the channel's last such panic. A second panic straight after the
+        // first, as in the hanging reset, costs nothing.
+        std::array<std::size_t, 16> releasable {};
         if (anyPanic)
             for (int channel = 0; channel < 16; ++channel)
-                releasable[channel] = impl->midiNotes.soundingOnChannel (channel)
-                                    + notesOnPerChannel[channel];
+                releasable[(std::size_t) channel] = impl->midiNotes.soundingOnChannel (channel);
 
         if (impl->hasEventIn)
         {
-            const auto eventsFor = [&] (const uint8_t* d, int numBytes) noexcept -> std::size_t
+            const auto eventsFor = [&isPanic, &ccMapped, releasable]
+                                   (const uint8_t* d, int numBytes) mutable noexcept -> std::size_t
             {
                 if (numBytes < 3) return 0;
                 const auto status = (uint8_t) (d[0] & 0xF0u);
+                auto& onChannel = releasable[d[0] & 0x0Fu];
+                if (status == 0x90 && d[2] > 0) ++onChannel;
                 if (status == 0x90 || status == 0x80) return 1;
-                if (isPanic (d) && ! ccMapped (d[0] & 0x0F, d[1])) return releasable[d[0] & 0x0F];
+                if (isPanic (d) && ! ccMapped (d[0] & 0x0F, d[1])) return std::exchange (onChannel, 0);
                 return 0;
             };
             const auto addEvent = [&] (const uint8_t* d, int, int samplePosition) noexcept

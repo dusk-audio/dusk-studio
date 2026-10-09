@@ -137,7 +137,8 @@ TEST_CASE ("a DSP lane moved off realtime is put back on it while it is parked",
         pool.runBlock();
         if (threadScheduling (worker).isRealtime() || ! pool.anyLaneLostRealtime()) return 5;
 
-        if (pool.restoreRealtime() != 1) return 6;
+        duskstudio::rt::RealtimeRestorer restorer;
+        if (pool.restoreRealtime (restorer) != 1) return 6;
         if (! threadScheduling (worker).isRealtime() || pool.anyLaneLostRealtime()) return 7;
 
         // Put back while it waited, the lane woke into a fresh CPU-time count:
