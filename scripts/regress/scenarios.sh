@@ -27,6 +27,8 @@
 # Set DUSK_REGRESS_SCENARIO_KEEP=1 to keep a leg's directory for inspection.
 
 SCENARIOS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/regress/null-audio.sh
+source "${SCENARIOS_DIR}/null-audio.sh"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCENARIOS_DIR}/../.." && pwd)}"
 MINIMAL_SESSION="${SCENARIOS_DIR}/sessions/minimal/session.json"
 SCENARIO_FIXTURE_ROOTS="${REPO_ROOT}/build-tests:${REPO_ROOT}/tests/fixtures"
@@ -59,11 +61,12 @@ SANDBOX_ENV=()
 #
 # PipeWire finds its socket through the runtime dir, and without it the engine
 # falls back to ALSA and opens the first sound card directly. So PipeWire keeps
-# the real one: the app joins the graph as an ordinary client instead of
+# a real one: the private null graph when null_audio_start brought it up,
+# otherwise the machine's, which the app joins as an ordinary client instead of
 # grabbing the maintainer's interface.
 sandbox_env() {
     local dir="$1"
-    local pipewire_dir="${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}"
+    local pipewire_dir="${NULL_AUDIO_DIR:-${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}}"
     mkdir -p "$dir/home" "$dir/config" && mkdir -p -m 700 "$dir/runtime" || return 1
     SANDBOX_ENV=(
         "HOME=$dir/home"
@@ -916,6 +919,8 @@ regress_scenarios_run() {
     done
 
     trap 'bb_end 0 >/dev/null 2>&1 || true; xvfb_session_stop || true; regress_run_exit_hooks' EXIT
+    regress_at_exit null_audio_stop
+    null_audio_start || true
     if [[ "$(uname -s)" == Linux ]]; then
         regress_leg "bb-no-display" leg_bb_no_display
     else
@@ -943,6 +948,7 @@ regress_scenarios_run() {
         if ((want_gui)); then
             regress_skip "scenarios-gui" "no Xvfb display"
         fi
+        null_audio_stop
         trap regress_run_exit_hooks EXIT
         return 0
     fi
@@ -1013,6 +1019,7 @@ regress_scenarios_run() {
             regress_skip "scenarios-gui" "gui scenarios not in this binary"
         fi
     fi
+    null_audio_stop
     return 0
 }
 

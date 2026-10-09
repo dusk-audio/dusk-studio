@@ -81,6 +81,15 @@ public:
             && midiInputSelector.getSelectedId() == input + 2
             && monitorButton.getToggleState() == monitor;
     }
+    bool modeControlsMatchForScenario (int mode) const
+    {
+        const bool tracking = ! mixingMode;
+        const bool midi = mode == (int) Track::Mode::Midi;
+        return modeSelector.getSelectedId() == mode + 1
+            && inputSelector.isVisible() == (tracking && ! midi)
+            && inputSelectorR.isVisible() == (tracking && mode == (int) Track::Mode::Stereo)
+            && midiInputSelector.isVisible() == (tracking && midi);
+    }
     // Scenario-harness only: the mode label and whether the fader takes input.
     std::string autoModeLabelForScenario() const { return autoModeButton.getButtonText().toStdString(); }
     auto faderPointForScenario (bool readout) const { return (readout ? faderValueLabel.getBounds() : faderSlider.getBounds()).getCentre(); }
@@ -378,6 +387,9 @@ private:
     void onLpfKnobChanged();
     void onInputSelectorChanged();
     void onTrackModeChanged();
+    // The selector, the input rows and everything else that reads the mode, set to
+    // mode without storing it.
+    void showTrackMode (int mode);
     void refreshInputSelectorVisibility();
     void showColourMenu();
     void applyTrackColour (juce::Colour c);
@@ -395,6 +407,7 @@ private:
     // session-load mode change leaves every mode's knobs overlapping in
     // the comp section.
     int lastAppliedCompMode = -1;
+    int shownTrackMode = 0;
     // Unified section context menus (right-click anywhere on the EQ / COMP / AUX
     // split button): character items + whole-section reset + open editor.
     void showEqSectionMenu();

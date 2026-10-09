@@ -336,7 +336,7 @@ PHASE_BODY=""
 run_guest_phase() {
     local name="$1" script="$2" deadline="$3"
     local offset start body result
-    local uac_open=0 last_shot=0 stalled=0 seen_uac="" line label
+    local uac_open=0 last_shot=0 stalled=0 uac_handled=0 uac_seen line label
     offset="$(stat -c %s "$REPORT")"
     PHASE_NOTE=""
     PHASE_WARN=""
@@ -350,10 +350,14 @@ run_guest_phase() {
     while :; do
         body="$(phase_body "$offset")"
         grep -qF "REGRESS-PHASE ${name} END" <<<"$body" && break
+        # The report only grows, and two prompts can post the same text (two
+        # products of one version each give "uninstall-<v> prompt-up 1"), so a
+        # line is new by its position, not its words.
+        uac_seen=0
         while IFS= read -r line; do
             [[ -n "$line" ]] || continue
-            grep -qxF -- "$line" <<<"$seen_uac" && continue
-            seen_uac+="${line}"$'\n'
+            ((++uac_seen > uac_handled)) || continue
+            uac_handled=$uac_seen
             label="$(awk '{print $2}' <<<"$line")"
             case "$line" in
                 *prompt-up*)

@@ -77,6 +77,9 @@ public:
     virtual void clickAutomationMode() = 0;
     virtual void restoreTrackMode (int mode) = 0;
     virtual bool instrumentControlsMatch (int input, bool monitor) const = 0;
+    // The mode selector shows mode, a Track::Mode, and the input rows are the ones
+    // that mode uses.
+    virtual bool modeControlsMatch (int mode) const = 0;
 };
 
 // One aux lane's plug-in slots.
@@ -422,6 +425,10 @@ public:
     virtual bool clickModalButton (const std::string& label) = 0;
     virtual void openAbout() = 0;
     virtual bool shortcutsOpen() const = 0;
+    // The open Keyboard Shortcuts panel's width and height, the row height it drew
+    // at, its full and its smallest row height, then x, y, width and height of each
+    // row in the panel. Empty when closed.
+    virtual std::vector<int> shortcutsLayout() const = 0;
     virtual void startMixdown() = 0;
     virtual bool fullScreen() const = 0;
     virtual int activeAuxLane() const = 0;

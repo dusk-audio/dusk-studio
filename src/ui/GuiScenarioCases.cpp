@@ -6197,9 +6197,9 @@ const ScenarioRegistrar audioEditorFields { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorFields (host, ctx); }
 } };
 
-// The waveform's right-click menu and the Properties menu, clicked through the editor:
-// split, cut range and join, gain and fades, mute, lock and what it disables, Reverse
-// from the menu and from the toolbar, a label, a colour and Delete region.
+// The waveform's right-click menu, clicked through the editor: split, cut range and
+// join, gain and fades, mute, lock and what it disables, and Reverse from the menu
+// and from the toolbar.
 std::optional<ScenarioResult> runAudioEditorMenus (GuiHost& host, ScenarioContext& ctx)
 {
     if (auto early = beginEditorRegionCase (host, ctx)) return early;
@@ -6232,11 +6232,6 @@ std::optional<ScenarioResult> runAudioEditorMenus (GuiHost& host, ScenarioContex
     const auto menuItem = [&steps, rightClick, pick] (std::int64_t sample, const char* item)
     {
         steps->push_back ({ 150, rightClick (sample) });
-        steps->push_back ({ 150, pick (item) });
-    };
-    const auto properties = [&steps, &host, &ctx, pick] (const char* item)
-    {
-        steps->push_back ({ 150, [&host, &ctx] { ctx.expect (host.clickAudioEditorButton ("Properties"), "no Properties button"); } });
         steps->push_back ({ 150, pick (item) });
     };
 
@@ -6304,6 +6299,34 @@ std::optional<ScenarioResult> runAudioEditorMenus (GuiHost& host, ScenarioContex
     menuItem (12000, "Join selected regions");
     steps->push_back ({ 150, [] {}, [&track] { return track.regions.size() == 1 && track.regions[0].lengthInSamples == kTakeCaseLength; },
                         "Join selected regions did not join the two halves" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorMenus { Scenario {
+    "gui.audio_editor_menus", { "gui", "editor", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorMenus (host, ctx); }
+} };
+
+// The Properties menu, clicked through the editor: a label, lock and unlock, a colour
+// and Delete region.
+std::optional<ScenarioResult> runAudioEditorPropertiesMenu (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginEditorRegionCase (host, ctx)) return early;
+    auto& track = ctx.session().track (0);
+    const auto region = [&track] { return track.regions.empty() ? AudioRegion() : track.regions[0]; };
+    const auto pick = [&host, &ctx] (std::string item)
+    { return [&host, &ctx, item] { ctx.expect (host.clickContextMenuItem (item), "the menu has no " + item); }; };
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto properties = [&steps, &host, &ctx, pick] (const char* item)
+    {
+        steps->push_back ({ 150, [&host, &ctx] { ctx.expect (host.clickAudioEditorButton ("Properties"), "no Properties button"); } });
+        steps->push_back ({ 150, pick (item) });
+    };
+
+    steps->push_back ({ 100, [] {}, [&host] { return host.audioEditorPoint ("wave", 48000).size() == 2; },
+                        "the editor never laid out" });
     properties ("Add label...");
     steps->push_back ({ 150, [&host, &ctx] { ctx.expect (host.typeInAudioEditor ("Hook"), "typing into the label field failed"); } });
     steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.pressAudioEditorKey ("return"), "Enter was not delivered"); } });
@@ -6322,10 +6345,10 @@ std::optional<ScenarioResult> runAudioEditorMenus (GuiHost& host, ScenarioContex
     return std::nullopt;
 }
 
-const ScenarioRegistrar audioEditorMenus { Scenario {
-    "gui.audio_editor_menus", { "gui", "editor", "undo" }, Needs::Engine | Needs::Gui,
-    {}, {}, 30000,
-    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorMenus (host, ctx); }
+const ScenarioRegistrar audioEditorPropertiesMenu { Scenario {
+    "gui.audio_editor_properties_menu", { "gui", "editor" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorPropertiesMenu (host, ctx); }
 } };
 
 // The waveform's right-click menu loops what is selected: the focused region alone
@@ -6337,11 +6360,13 @@ std::optional<ScenarioResult> runAudioEditorLoopSelection (GuiHost& host, Scenar
     auto& session = ctx.session();
     auto& transport = ctx.engine().getTransport();
     ctx.cleanup ([&session, &transport, mode = session.editMode, enabled = transport.isLoopEnabled(),
-                  loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd()]
+                  loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd(),
+                  playhead = transport.getPlayhead()]
     {
         session.editMode = mode;
         transport.setLoopRange (loopStart, loopEnd);
         transport.setLoopEnabled (enabled);
+        transport.setPlayhead (playhead);
     });
     transport.setLoopEnabled (false);
     transport.setPlayhead (60000);
@@ -10909,9 +10934,12 @@ std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContex
    #endif
 }
 
+// Two 16 s waits on the real autosave timer take most of the budget; the rest is
+// a dozen panel steps that each wait for the panel to draw, which a slow renderer
+// stretches.
 const ScenarioRegistrar settingsAutosave { Scenario {
     "gui.settings_autosave_cadence", { "gui", "settings", "autosave" }, Needs::Engine | Needs::Gui,
-    {}, {}, 45000,
+    {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsAutosave (host, ctx); }
 } };
 
@@ -10958,7 +10986,7 @@ std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext&
             SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
         ctx.expect (*port >= 0, "could not create the private MIDI destination");
     } });
-    steps->push_back ({ 700, [&host, &ctx, &engine, listed]
+    steps->push_back ({ 700, [&ctx, &engine, listed]
     {
         ctx.expect (engine.getTransport().isPlaying(), "fixture was not playing");
         ctx.expect (! listed(), "automatic hot-plug refreshed the port before Rescan");
@@ -11231,7 +11259,7 @@ std::optional<ScenarioResult> runFaderEntry (GuiHost& host, ScenarioContext& ctx
         ctx.expect (host.faderEditing (0), "clicking the fader readout did not open an editor");
         if (host.faderEditing (0)) type ("-3.5");
     } });
-    steps->push_back ({ 150, [&host, &ctx, &session]
+    steps->push_back ({ 150, [&ctx, &session]
     {
         ctx.expect (std::abs (session.track (0).strip.faderDb.load() + 3.5f) < 0.01f, "typed fader value was not applied");
         ctx.expect (std::abs (session.track (1).strip.faderDb.load() + 6.5f) < 0.01f, "typed fader value lost the group offset");
@@ -15944,6 +15972,82 @@ const ScenarioRegistrar modalDismissal { Scenario {
     "gui.modal_escape_and_backdrop", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runModalDismissal (host, ctx); }
+} };
+
+// With the UI scale above 1 the window can be shorter than the shortcut list,
+// which its minimum at scale 1 rules out. The rows squeeze to fit: each keeps the
+// height the panel chose, inside the panel, clear of every other.
+std::optional<ScenarioResult> runShortcutsShortWindow (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("the UI scale needs the native UI");
+   #else
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
+    const auto launch = host.mainWindowSize();
+    if (launch.size() < 4) return ScenarioResult::fail ("the main window reported no size");
+    const auto originalScale = static_cast<float> (host.uiScale());
+    ctx.cleanup ([&host, originalScale, launch]
+    {
+        drainModals (host);
+        host.restoreUiScale (originalScale);
+        host.resizeMainWindow (launch[0], launch[1]);
+    });
+    // Short enough to squeeze the rows, tall enough for the smallest of them.
+    static constexpr float kScale = 1.25f;
+    static constexpr int kShortHeight = 680;
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host] { host.restoreUiScale (kScale); } });
+    // A window manager that holds the window to its minimum leaves nothing to
+    // check: the list then always fits.
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        const auto size = host.mainWindowSize();
+        if (size.size() < 4 || ! host.resizeMainWindow (size[0], kShortHeight))
+            ctx.complete (ScenarioResult::skip ("the window cannot be made shorter than the shortcut list here"));
+    }, [&host] { return std::abs (host.uiScale() - kScale) < 0.001; }, "the UI scale did not change" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressKey ("shift + /", '?'), "the shortcuts key was not handled"); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        const auto layout = host.shortcutsLayout();
+        if (! ctx.expect (layout.size() > 5 && (layout.size() - 5) % 4 == 0, "the shortcut panel reported no rows"))
+            return;
+        const int width = layout[0], height = layout[1], rowH = layout[2], fullRowH = layout[3], minRowH = layout[4];
+        ctx.expect (rowH < fullRowH, "the rows kept their full height in a " + std::to_string (height)
+                    + "-unit panel");
+        ctx.expect (rowH >= minRowH, "the rows squeezed below " + std::to_string (minRowH) + " units");
+        struct Row { int x, y, w, h; };
+        std::vector<Row> rows;
+        for (std::size_t at = 5; at + 3 < layout.size(); at += 4)
+            rows.push_back ({ layout[at], layout[at + 1], layout[at + 2], layout[at + 3] });
+        for (std::size_t i = 0; i < rows.size(); ++i)
+        {
+            const auto& r = rows[i];
+            if (! ctx.expect (r.h == rowH && r.x >= 0 && r.y >= 0 && r.x + r.w <= width && r.y + r.h <= height,
+                              "shortcut row " + std::to_string (i) + " at y " + std::to_string (r.y) + ", "
+                                  + std::to_string (r.h) + " high, is not a whole row inside the "
+                                  + std::to_string (height) + "-unit panel"))
+                return;
+            for (std::size_t j = i + 1; j < rows.size(); ++j)
+            {
+                const auto& o = rows[j];
+                if (! ctx.expect (r.x + r.w <= o.x || o.x + o.w <= r.x || r.y + r.h <= o.y || o.y + o.h <= r.y,
+                                  "shortcut rows " + std::to_string (i) + " and " + std::to_string (j) + " overlap"))
+                    return;
+            }
+        }
+    }, [&host] { return host.shortcutsOpen(); }, "? did not open Keyboard Shortcuts" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar shortcutsShortWindow { Scenario {
+    "gui.shortcuts_short_window", { "gui", "keyboard", "settings" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runShortcutsShortWindow (host, ctx); }
 } };
 
 // An alert that is up when a session loads stays above the console the load
@@ -22292,6 +22396,78 @@ const ScenarioRegistrar importUndoStep { Scenario {
     "gui.import_undo_step", { "gui", "import", "undo" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runImportUndoStep (host, ctx); }
+} };
+
+// The channel strip shows the mode its track is in however the mode changed: an
+// import that switched the track, the undo of that import and its redo.
+std::optional<ScenarioResult> runImportSwitchStripMode (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& track = session.track (kStripIndex);
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (! track.regions.empty() || ! track.midiRegions.current().empty())
+        return ScenarioResult::skip ("requires an empty first track");
+    auto* strip = host.strip (kStripIndex);
+    if (strip == nullptr) return ScenarioResult::fail ("the first channel strip is unavailable");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Recording);
+    const bool shown = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore, shown]
+    {
+        drainModals (host);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        engine.getUndoManager().clearUndoHistory();
+        host.setTimelineShown (shown);
+    });
+    const auto mid = ctx.tempDir() / "Notes.mid";
+    if (! writeMidiImportFixture (mid)) return ScenarioResult::fail ("could not write the MIDI import fixture");
+    const auto importDir = ctx.tempDir() / "session";
+    std::filesystem::create_directories (importDir / "audio");
+    applySessionDirectory (session, importDir);
+    ctx.keep (track.frozen);
+    track.frozen.store (false);
+    track.mode.store ((int) Track::Mode::Mono);
+    engine.getUndoManager().clearUndoHistory();
+
+    const auto shows = [strip] (Track::Mode mode) { return [strip, mode] { return strip->modeControlsMatch ((int) mode); }; };
+    constexpr int kFollowBoundMs = 3000;
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx, mid]
+    { ctx.expect (host.dropFilesOnTrack (kStripIndex, { mid }), "the drop on the first track was rejected"); },
+      shows (Track::Mode::Mono), "the strip did not show the Mono track the case set up", {}, kFollowBoundMs });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Import"), "the import target picker did not open"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Switch"), "the import did not ask to switch the track to MIDI"); } });
+    steps->push_back ({ 300, [&host, &ctx, &track]
+    {
+        ctx.expect (track.mode.load() == (int) Track::Mode::Midi, "the import did not switch the track to MIDI");
+        ctx.expect (host.pressKey ("command + Z"), "Undo was not handled");
+    }, shows (Track::Mode::Midi), "the strip's mode selector did not follow the import's switch to MIDI", {},
+       kFollowBoundMs });
+    steps->push_back ({ 0, [&host, &ctx, &track]
+    {
+        ctx.expect (track.mode.load() == (int) Track::Mode::Mono, "undoing the import left the track in MIDI mode");
+        ctx.expect (host.pressKey ("command + shift + Z"), "Redo was not handled");
+    }, shows (Track::Mode::Mono), "the strip's mode selector did not follow the undo back to Mono", {},
+       kFollowBoundMs });
+    steps->push_back ({ 0, [&ctx, &track]
+    { ctx.expect (track.mode.load() == (int) Track::Mode::Midi, "redoing the import did not switch the track again"); },
+      shows (Track::Mode::Midi), "the strip's mode selector did not follow the redo to MIDI", {}, kFollowBoundMs });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar importSwitchStripMode { Scenario {
+    "gui.import_switch_strip_mode", { "gui", "import", "undo", "strip" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runImportSwitchStripMode (host, ctx); }
 } };
 
 // With no audio device running a file is imported at the rate the timeline

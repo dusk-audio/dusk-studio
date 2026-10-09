@@ -1105,8 +1105,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     modeSelector.addItem ("Mono",   1);   // ID 1 = Mode::Mono
     modeSelector.addItem ("Stereo", 2);   // ID 2 = Mode::Stereo
     modeSelector.addItem ("MIDI",   3);   // ID 3 = Mode::Midi
-    modeSelector.setSelectedId (track.mode.load (std::memory_order_relaxed) + 1,
-                                  juce::dontSendNotification);
+    shownTrackMode = jlimit (0, 2, track.mode.load (std::memory_order_relaxed));
+    modeSelector.setSelectedId (shownTrackMode + 1, juce::dontSendNotification);
     modeSelector.setTooltip ("Track signal mode. Mono = 1 audio input. "
                               "Stereo = 2 audio inputs (L + R) recorded as a "
                               "stereo WAV. MIDI = capture from a MIDI port "
@@ -4888,6 +4888,14 @@ void ChannelStripComponent::timerCallback()
         openPluginEditor();
     }
 
+    // An import that switches the track, its undo and redo, and a session load
+    // all store the mode without going through the selector. Measured against
+    // the mode last shown, not the selector, which holds a pick of the user's
+    // until its asynchronous change notice stores it.
+    if (const int liveMode = jlimit (0, 2, track.mode.load (std::memory_order_relaxed));
+        liveMode != shownTrackMode)
+        showTrackMode (liveMode);
+
     // PRINT<->FREEZE flips on an audio track the moment a recording lands (or its
     // last region is deleted). Idempotent + cheap (setButtonText/Colour are
     // no-ops when unchanged), so polling here avoids a cross-component signal.
@@ -5750,13 +5758,9 @@ void ChannelStripComponent::onTrackModeChanged()
     const int mode = jlimit (0, 2, id - 1);  // 0..2 = Track::Mode
 
     const int currentMode = track.mode.load (std::memory_order_relaxed);
-    auto restoreModeSelector = [&]
-    {
-        modeSelector.setSelectedId (currentMode + 1, juce::dontSendNotification);
-    };
     if (engine.getTransport().isRecording() && mode != currentMode)
     {
-        restoreModeSelector();
+        showTrackMode (currentMode);
         showDuskAlert (*this, "Recording in progress",
                         "Stop recording before changing this track's mode.");
         return;
@@ -5768,7 +5772,7 @@ void ChannelStripComponent::onTrackModeChanged()
     // must restore Mono/Stereo, not hardcode MIDI.
     if (track.frozen.load (std::memory_order_relaxed) && mode != currentMode)
     {
-        restoreModeSelector();
+        showTrackMode (currentMode);
         showDuskAlert (*this, "Track is frozen",
                         "Unfreeze this track before changing its mode.");
         return;
@@ -5805,6 +5809,13 @@ void ChannelStripComponent::onTrackModeChanged()
     }
 
     track.mode.store (mode, std::memory_order_relaxed);
+    showTrackMode (mode);
+}
+
+void ChannelStripComponent::showTrackMode (int mode)
+{
+    shownTrackMode = mode;
+    modeSelector.setSelectedId (mode + 1, juce::dontSendNotification);
     refreshInputSelectorVisibility();
     refreshPluginSlotButton();
     refreshIoConfigButton();

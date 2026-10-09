@@ -698,6 +698,18 @@ variables as absolute paths into the real home, so they move with it.
 without it the engine cannot find the PipeWire socket, falls back to ALSA and
 opens your sound card directly.
 
+The regression runner's scenario legs keep the sound card out of it. They
+start a private PipeWire daemon from `scripts/regress/pipewire-null.conf`
+(`scripts/regress/null-audio.sh`): a stereo output that discards what it is
+sent and a stereo input that delivers silence, both on the system clock, with
+the app pointed at it through `PIPEWIRE_RUNTIME_DIR`. A resync on the card can
+then no longer fail a run of audio cases, and the cases that record have an
+input to record from. When the daemon does not come up (no `pipewire` binary,
+say) the legs say so and play through your own graph as before;
+`DUSK_REGRESS_REAL_AUDIO=1` asks for that outright. To do the same by hand,
+`source scripts/regress/null-audio.sh`, call `null_audio_start` and export
+`PIPEWIRE_RUNTIME_DIR=$NULL_AUDIO_DIR` in place of the line above.
+
 A headless case gets a `ScenarioContext`: `session()` and `engine()` prepared
 offline (no device; `pump(n)` drives the audio callback itself and returns the
 peak, `pumpWithMidi(input, buffer)` stages events first), `fixture("name")`

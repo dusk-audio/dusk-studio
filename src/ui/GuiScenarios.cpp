@@ -31,6 +31,7 @@
 #include "SystemStatusBar.h"
 #include "TransportBar.h"
 #include "SaveTargetChecks.h"
+#include "ShortcutsPanel.h"
 #include "../engine/scenario/ScenarioContext.h"
 #include "../engine/scenario/SuiteRunner.h"
 #include "../session/TrackMove.h"
@@ -358,6 +359,12 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         return component != nullptr && component->instrumentControlsMatchForScenario (input, monitor);
     }
 
+    bool modeControlsMatch (int mode) const override
+    {
+        auto* component = strip();
+        return component != nullptr && component->modeControlsMatchForScenario (mode);
+    }
+
     ChannelStripComponent* strip() const
     {
         return owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index)
@@ -496,6 +503,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             launch.tapeChase = owner.tapeStrip->isChaseEnabled();
             launch.tapeShowAll = owner.tapeStrip->showsAllTracksForScenario();
             launch.tapeSelectedTrack = owner.tapeStrip->getSelectedTrack();
+            const auto view = owner.tapeStrip->viewForScenario();
+            launch.tapeZoom = view[0];
+            launch.tapeScroll = view[1];
+            launch.tapeRowScroll = view[2];
         }
         if (owner.consoleView != nullptr)
         {
@@ -1377,7 +1388,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool canvasHasKeyboardFocus() const override { return owner.hasKeyboardFocus (false); }
 
-    bool openAudioSettings() override { owner.openAudioSettings(); return audioSettingsOpen(); }
+    bool openAudioSettings() override
+    {
+        const bool wasOpen = audioSettingsOpen();
+        owner.openAudioSettings();
+        if (! audioSettingsOpen()) return false;
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        // Counted as input to draw, so the next step waits for the panel's first
+        // frames rather than a delay a slow renderer can outlast.
+        if (! wasOpen) owner.audioSettingsWindow->expectInputForScenario();
+       #endif
+        return true;
+    }
     void closeAudioSettings() override { owner.closeAudioSettings(); }
     bool audioSettingsOpen() const override
     {
@@ -1909,6 +1931,17 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     void openAbout() override { owner.menuItemSelected (2002, 2); }
     bool shortcutsOpen() const override { return owner.shortcutsModal.isOpen(); }
+    std::vector<int> shortcutsLayout() const override
+    {
+        const auto* panel = dynamic_cast<const ShortcutsPanel*> (owner.shortcutsModal.getBody());
+        if (panel == nullptr) return {};
+        const auto placed = panel->layout();
+        std::vector<int> out { panel->getWidth(), panel->getHeight(), placed.rowH,
+                               ShortcutsPanel::kRowH, ShortcutsPanel::kMinRowH };
+        for (const auto& row : placed.rows)
+            out.insert (out.end(), { row.getX(), row.getY(), row.getWidth(), row.getHeight() });
+        return out;
+    }
     void startMixdown() override { owner.menuItemSelected (1010, 0); }
 
     bool fullScreen() const override
@@ -2643,6 +2676,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             owner.tapeStrip->setShowAllTracksForScenario (launch.tapeShowAll);
             owner.tapeStrip->setSelectedTrack (launch.tapeSelectedTrack);
             owner.tapeStrip->clearSelectionsForScenario();
+            // A case that puts its session back refits the zoom to whatever the
+            // transport holds then, and a playhead left near zero zooms the next
+            // case's regions off screen.
+            auto view = tapeView();
+            view[0] = launch.tapeZoom;
+            view[1] = launch.tapeScroll;
+            view[2] = launch.tapeRowScroll;
+            owner.tapeStrip->restoreViewForScenario (view);
         }
 
         owner.engine.getUndoManager().clearUndoHistory();
@@ -2693,6 +2734,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         bool tapeExpanded = false;
         bool tapeChase = false;
         bool tapeShowAll = false;
+        double tapeZoom = 1.0;
+        double tapeScroll = 0.0;
+        double tapeRowScroll = 0.0;
         bool masterMute = false;
         int tapeSelectedTrack = -1;
         int consoleBank = 0;
