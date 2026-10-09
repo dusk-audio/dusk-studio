@@ -13,10 +13,10 @@ constexpr int kRowGap      = 2;
 constexpr int kListPad     = 8;
 constexpr int kFooterH     = 44;
 constexpr int kHeaderH     = 76;
-constexpr int kPanelW      = 540;
+constexpr int kPanelW      = 640;
 constexpr int kPanelH      = 560;
 
-enum class Bucket : int { MatchEmpty = 0, MatchOccupied = 1, Mismatch = 2 };
+enum class Bucket : int { MatchEmpty = 0, MatchOccupied = 1, SwitchEmpty = 2, SwitchOccupied = 3 };
 
 struct SortRecord
 {
@@ -28,7 +28,20 @@ Bucket bucketFor (const Track::Mode trackMode, int numRegions, const Track::Mode
 {
     if (trackMode == wanted)
         return numRegions == 0 ? Bucket::MatchEmpty : Bucket::MatchOccupied;
-    return Bucket::Mismatch;
+    return numRegions == 0 ? Bucket::SwitchEmpty : Bucket::SwitchOccupied;
+}
+
+bool switchesMode (Bucket b) { return b == Bucket::SwitchEmpty || b == Bucket::SwitchOccupied; }
+
+// Switching a track that already holds regions changes what that track is, so
+// that choice is left to the user.
+bool recommendable (Bucket b) { return b != Bucket::SwitchOccupied; }
+
+// Every region the track holds, whatever the file is: a switched track keeps
+// both kinds.
+int regionsOn (const Track& t)
+{
+    return (int) t.regions.size() + (int) t.midiRegions.current().size();
 }
 
 juce::String trackDisplayName (const Track& t, int idx)
@@ -87,7 +100,7 @@ struct ImportTargetPicker::Row final : public juce::Component
     {
         auto bounds = getLocalBounds().toFloat();
         const bool selected   = (owner.selectedRowIdx == listIndex);
-        const bool muted      = (bucket == Bucket::Mismatch);
+        const bool muted      = switchesMode (bucket);
 
         // Selection background.
         if (selected)
@@ -119,23 +132,25 @@ struct ImportTargetPicker::Row final : public juce::Component
         const auto occArea = body.removeFromLeft (90.0f);
         g.drawText (occupancy, occArea, juce::Justification::centredLeft, false);
 
-        // Recommended pill OR mismatch hint.
         if (recommended)
         {
-            const auto pill = body.removeFromLeft (110.0f).reduced (2.0f, 6.0f);
+            const auto pill = body.removeFromLeft (104.0f).reduced (2.0f, 6.0f);
             g.setColour (juce::Colour (0xff2a5a3a));
             g.fillRoundedRectangle (pill, 3.0f);
             g.setColour (juce::Colours::white);
             g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
             g.drawText ("RECOMMENDED", pill, juce::Justification::centred, false);
+            body.removeFromLeft (6.0f);
         }
-        else if (! mismatchHint.isEmpty())
+        if (showsHint())
         {
             g.setColour (juce::Colour (0xffd0a060));
             g.setFont (juce::Font (juce::FontOptions (11.0f)));
             g.drawText (mismatchHint, body, juce::Justification::centredLeft, true);
         }
     }
+
+    bool showsHint() const { return mismatchHint.isNotEmpty(); }
 
     void mouseDown (const juce::MouseEvent&) override
     {
@@ -151,7 +166,7 @@ struct ImportTargetPicker::Row final : public juce::Component
     ImportTargetPicker& owner;
     int listIndex = -1;
     int trackIndex = 0;
-    Bucket bucket = Bucket::Mismatch;
+    Bucket bucket = Bucket::SwitchOccupied;
     bool recommended = false;
     juce::Colour colour;
     juce::String displayName;
@@ -207,10 +222,7 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
     {
         const auto& t = session.track (i);
         const auto mode = (Track::Mode) t.mode.load (std::memory_order_relaxed);
-        const int regionCount = summary.isMidi
-                                   ? (int) t.midiRegions.current().size()
-                                   : (int) t.regions.size();
-        records.push_back ({ i, bucketFor (mode, regionCount, summary.trackMode()) });
+        records.push_back ({ i, bucketFor (mode, regionsOn (t), summary.trackMode()) });
     }
     std::stable_sort (records.begin(), records.end(),
         [] (const SortRecord& a, const SortRecord& b)
@@ -225,9 +237,7 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
         const auto rec = records[r];
         const auto& t = session.track (rec.trackIndex);
         const auto mode = (Track::Mode) t.mode.load (std::memory_order_relaxed);
-        const int regionCount = summary.isMidi
-                                   ? (int) t.midiRegions.current().size()
-                                   : (int) t.regions.size();
+        const int regionCount = regionsOn (t);
 
         auto row = std::make_unique<Row> (*this, (int) r);
         row->trackIndex  = rec.trackIndex;
@@ -240,7 +250,7 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
                               : juce::String (regionCount)
                                   + (regionCount == 1 ? juce::String (" region")
                                                        : juce::String (" regions"));
-        if (rec.bucket == Bucket::Mismatch)
+        if (switchesMode (rec.bucket))
         {
             const auto target = summary.isMidi
                                   ? juce::String ("MIDI")
@@ -256,24 +266,23 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
 
     if (! rows.empty())
     {
-        // Default recommendation: top of the best bucket. If the caller
-        // supplied a preferred track index (e.g. user drop-on-track),
-        // override the recommendation to that row when it's present in
-        // the list so the visual cue + Import button match user intent.
-        recommendedRowIdx = 0;
-        if (preferredTrackIndex >= 0 && preferredTrackIndex < Session::kNumTracks)
-        {
-            for (size_t i = 0; i < rows.size(); ++i)
-            {
-                if (rows[i]->trackIndex == preferredTrackIndex)
-                {
-                    recommendedRowIdx = (int) i;
-                    break;
-                }
-            }
-        }
-        rows[(size_t) recommendedRowIdx]->recommended = true;
-        selectedRowIdx = recommendedRowIdx;
+        // The track the file was dropped on stays selected so Import goes
+        // where the user aimed, but it takes the recommendation only when the
+        // picker would recommend such a track at all.
+        int preferredRowIdx = -1;
+        for (size_t i = 0; i < rows.size(); ++i)
+            if (rows[i]->trackIndex == preferredTrackIndex)
+                preferredRowIdx = (int) i;
+
+        int recommendedRowIdx = -1;
+        if (preferredRowIdx >= 0 && recommendable (rows[(size_t) preferredRowIdx]->bucket))
+            recommendedRowIdx = preferredRowIdx;
+        else if (recommendable (rows.front()->bucket))
+            recommendedRowIdx = 0;
+        if (recommendedRowIdx >= 0)
+            rows[(size_t) recommendedRowIdx]->recommended = true;
+
+        selectedRowIdx = preferredRowIdx >= 0 ? preferredRowIdx : std::max (recommendedRowIdx, 0);
     }
 
     listViewport.setViewedComponent (&listContainer, false);
@@ -294,6 +303,12 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
     // change doesn't trigger resized() - meaning rows would never be
     // positioned if setSize ran at the top of the ctor.
     setSize (kPanelW, kPanelH);
+
+    // A dropped-on track the picker does not recommend sorts near the bottom,
+    // out of view, yet Import goes to it.
+    if (selectedRowIdx >= 0)
+        listViewport.setViewPosition (0, std::max (0, rows[(size_t) selectedRowIdx]->getBottom() + kListPad
+                                                          - listViewport.getMaximumVisibleHeight()));
 }
 
 ImportTargetPicker::~ImportTargetPicker() = default;
@@ -310,7 +325,7 @@ void ImportTargetPicker::commitSelection()
     if (selectedRowIdx < 0 || selectedRowIdx >= (int) rows.size()) return;
     const auto& r = *rows[(size_t) selectedRowIdx];
     const int trackIndex = r.trackIndex;
-    const bool needsModeFlip = (r.bucket == Bucket::Mismatch);
+    const bool needsModeFlip = switchesMode (r.bucket);
 
     if (! needsModeFlip)
     {
@@ -356,6 +371,18 @@ void ImportTargetPicker::commitSelection()
                        },
                        /*secondary*/   "Cancel",
                        /*onSecondary*/ {});
+}
+
+std::vector<std::string> ImportTargetPicker::rowsForScenario() const
+{
+    std::vector<std::string> result;
+    for (const auto& row : rows)
+        result.push_back (std::to_string (row->trackIndex + 1) + "\t" + row->occupancy.toStdString()
+                          + "\t" + (row->recommended ? "RECOMMENDED" : "-")
+                          + "\t" + (row->showsHint() ? row->mismatchHint.toStdString() : std::string ("-"))
+                          + "\t" + (row->listIndex == selectedRowIdx ? "selected" : "-")
+                          + "\t" + (listViewport.getViewArea().contains (row->getBounds()) ? "in view" : "-"));
+    return result;
 }
 
 void ImportTargetPicker::paint (juce::Graphics& g)

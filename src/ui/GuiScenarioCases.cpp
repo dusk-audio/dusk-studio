@@ -7726,6 +7726,136 @@ const ScenarioRegistrar importModeConfirmation { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runImportModeConfirmation (host, ctx); }
 } };
 
+// The single-file picker says what each track holds, whichever kind of file is
+// coming, marks every track the import would switch, recommended or not, and
+// recommends no track whose content a switch would leave behind. A stereo file
+// dropped on a MIDI track with a region keeps that track selected, still asks
+// before switching it, and recommends the empty stereo track instead.
+std::optional<ScenarioResult> runImportTargetRows (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (session.track (t).frozen.load())
+            return ScenarioResult::skip ("requires no frozen track");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
+    const bool shown = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &session, originalDir, restore, shown]
+    {
+        drainModals (host);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.setTimelineShown (shown);
+    });
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& track = session.track (t);
+        track.mode.store ((int) Track::Mode::Mono);
+        track.regions.clear();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+    }
+    MidiRegion region;
+    region.lengthInTicks = 3840;
+    region.lengthInSamples = session.ticksToSamples (region.lengthInTicks, engine.getCurrentSampleRate());
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::initializer_list<MidiRegion> { region }));
+    session.track (2).mode.store ((int) Track::Mode::Stereo);
+
+    const auto file = ctx.tempDir() / "Stereo.wav";
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = 48000;
+        spec.numChannels = 2;
+        auto writer = dusk::audio::FileWriter::create (file, spec);
+        std::array<float, 4800> silence {};
+        const float* data[] = { silence.data(), silence.data() };
+        if (! writer || ! writer->write (data, 2, 4800) || ! writer->flush())
+            return ScenarioResult::fail ("could not write the audio import fixture");
+    }
+    const auto rowFor = [&host] (int trackNumber)
+    {
+        const auto prefix = std::to_string (trackNumber) + "\t";
+        for (const auto& row : host.importTargetRows())
+            if (row.rfind (prefix, 0) == 0) return row;
+        return std::string {};
+    };
+    const auto fields = [] (const std::string& row)
+    {
+        std::vector<std::string> parts;
+        std::size_t start = 0;
+        for (auto tab = row.find ('\t'); tab != std::string::npos; tab = row.find ('\t', start))
+        {
+            parts.push_back (row.substr (start, tab - start));
+            start = tab + 1;
+        }
+        parts.push_back (row.substr (start));
+        return parts;
+    };
+    const auto switches = [] (const std::string& hint) { return hint.find ("will switch to Stereo") != std::string::npos; };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 250, [&host, &ctx, file]
+    { ctx.expect (host.dropFilesOnTrack (0, { file }), "the drop on the MIDI track was rejected"); } });
+    steps->push_back ({ 300, [&host, &ctx, rowFor, fields, switches]
+    {
+        const auto midi = fields (rowFor (1));
+        if (! ctx.expect (midi.size() == 6, "the picker has no row for the MIDI track")) return;
+        ctx.expect (midi[1] == "1 region", "the MIDI track holding a region reads '" + midi[1] + "'");
+        ctx.expect (midi[2] == "-", "the MIDI track an audio import would switch, region and all, is recommended");
+        ctx.expect (switches (midi[3]), "the MIDI track an audio import would switch shows no switch hint");
+        ctx.expect (midi[4] == "selected", "the track the file was dropped on is not the one selected");
+        ctx.expect (midi[5] == "in view", "the selected MIDI track is scrolled out of view");
+        const auto stereo = fields (rowFor (3));
+        ctx.expect (stereo.size() == 6 && stereo[1] == "empty" && stereo[2] == "RECOMMENDED" && stereo[3] == "-",
+                    "the empty stereo track is not the recommended one: '" + rowFor (3) + "'");
+        const auto rows = host.importTargetRows();
+        ctx.expect (! rows.empty() && rows.front().rfind ("3\t", 0) == 0 && rows.back().rfind ("1\t", 0) == 0,
+                    "the empty stereo track is not first and the MIDI track holding a region not last");
+        ctx.expect (host.clickModalButton ("Import"), "the picker's Import button is unavailable");
+    } });
+    steps->push_back ({ 250, [&host, &ctx]
+    {
+        ctx.expect (host.confirmationText() == std::vector<std::string> {
+                        "Switch track to Stereo?",
+                        "Track 1 is currently in MIDI mode. Importing this audio file will switch the track to Stereo mode. Proceed?" },
+                    "importing onto the MIDI track did not ask before switching it");
+        ctx.expect (host.clickModalButton ("Cancel"), "the switch prompt has no Cancel");
+    } });
+    steps->push_back ({ 250, [&host, &ctx, &session]
+    {
+        const auto& track = session.track (0);
+        ctx.expect (track.mode.load() == (int) Track::Mode::Midi && track.regions.empty()
+                        && track.midiRegions.current().size() == 1, "Cancel on the switch prompt changed the MIDI track");
+        drainModals (host);
+    } });
+    steps->push_back ({ 250, [&host, &ctx, file]
+    { ctx.expect (host.dropFilesOnTrack (1, { file }), "the drop on the empty mono track was rejected"); },
+                       [&host] { return host.modalStackEmpty(); }, "the first picker did not close" });
+    steps->push_back ({ 300, [&host, &ctx, rowFor, fields, switches]
+    {
+        const auto mono = fields (rowFor (2));
+        if (! ctx.expect (mono.size() == 6, "the picker has no row for the mono track")) return;
+        ctx.expect (mono[1] == "empty" && mono[2] == "RECOMMENDED" && mono[4] == "selected",
+                    "the empty mono track the file was dropped on is not recommended and selected: '" + rowFor (2) + "'");
+        ctx.expect (switches (mono[3]), "the recommended mono track a stereo import would switch shows no switch hint");
+        drainModals (host);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar importTargetRows { Scenario {
+    "gui.import_target_rows", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runImportTargetRows (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();

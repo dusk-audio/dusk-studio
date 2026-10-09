@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 #include "../session/Session.h"
 
@@ -16,8 +17,8 @@ namespace duskstudio
 //
 // Smart sort: tracks whose mode matches the file's channel layout
 // bubble to the top (empty ones first, occupied next); mismatched-mode
-// tracks render greyed at the bottom and tag their row with a hint
-// that picking them switches the track's mode with the import.
+// tracks render greyed below them, empty ones first, and tag their row
+// with a hint that picking them switches the track's mode with the import.
 class ImportTargetPicker final : public juce::Component
 {
 public:
@@ -59,6 +60,11 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    // One line per row, top first: the track's number, what the row says it
+    // holds, then "RECOMMENDED", the mode-switch hint, "selected" and "in view"
+    // where they apply, "-" where they do not, tab-separated.
+    std::vector<std::string> rowsForScenario() const;
+
 private:
     struct Row;
     void selectRow (int index);
@@ -83,7 +89,6 @@ private:
     juce::Component listContainer;
     std::vector<std::unique_ptr<Row>> rows;
     int selectedRowIdx = -1;
-    int recommendedRowIdx = -1;
 
     juce::TextButton cancelButton { "Cancel" };
     juce::TextButton importButton { "Import" };

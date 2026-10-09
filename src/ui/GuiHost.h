@@ -243,6 +243,8 @@ public:
     virtual void forceDropAtMouse (std::optional<bool> atMouse) = 0;
     virtual std::vector<std::string> confirmationText() const = 0;
     virtual std::vector<std::string> multiImportRows() const = 0;
+    // The single-file import target picker's rows; see ImportTargetPicker::rowsForScenario.
+    virtual std::vector<std::string> importTargetRows() const = 0;
     virtual bool clickMultiImportTarget (int row) = 0;
     virtual bool captureMiniMarkers (bool enabled) = 0;
     virtual std::vector<MiniMarkerPaint> miniMarkerPaint() const = 0;

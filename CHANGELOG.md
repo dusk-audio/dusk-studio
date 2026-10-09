@@ -139,6 +139,12 @@ Takes live on the track now, and the audio editor is where you comp them.
   Its take used to cover only the part under the punch, and the pieces of the
   recording either side of the punch named no take. The take now spans the
   whole recording and both pieces name it.
+- **The import target picker describes each track truthfully** (#858). An
+  audio import called a MIDI track holding regions empty, and a MIDI import
+  did the same to an audio track. A track the import would switch to another
+  mode now shows that it will switch even when it is recommended, and a track
+  that would be switched while it holds regions is never recommended; the
+  track you drop on stays selected, and the Switch prompt still asks first.
 - **A locked region takes no edit** (#816, #827). In the audio editor Delete,
   Split, Normalize, Reset gain, Reset fades, a typed gain or fade and
   Properties > Delete region all edited a locked region, and so did the

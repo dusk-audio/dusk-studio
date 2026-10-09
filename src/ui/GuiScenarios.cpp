@@ -20,6 +20,7 @@
 #include "DuskContextMenu.h"
 #include "DuskFileBrowser.h"
 #include "DpImportDialog.h"
+#include "ImportTargetPicker.h"
 #include "MultiImportTargetPicker.h"
 #include "DuskAlerts.h"
 #include "MiniTimelineStrip.h"
@@ -1032,6 +1033,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto& stack = EmbeddedModal::activeModalStack();
         if (stack.empty()) return {};
         const auto* picker = dynamic_cast<const MultiImportTargetPicker*> (stack.back()->getBody());
+        return picker != nullptr ? picker->rowsForScenario() : std::vector<std::string> {};
+    }
+    std::vector<std::string> importTargetRows() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* picker = dynamic_cast<const ImportTargetPicker*> (stack.back()->getBody());
         return picker != nullptr ? picker->rowsForScenario() : std::vector<std::string> {};
     }
     bool clickMultiImportTarget (int row) override
