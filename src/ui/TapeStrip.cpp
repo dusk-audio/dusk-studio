@@ -2005,7 +2005,8 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
     // contract). mouseUp finalises through MidiRegionEditAction.
     if (midiDrag.active())
     {
-        auto& v = session.track (midiDrag.track).midiRegions.currentMutable();
+        auto& snapshot = session.track (midiDrag.track).midiRegions;
+        auto& v = snapshot.currentMutable();
         if (midiDrag.regionIdx < 0 || midiDrag.regionIdx >= (int) v.size()) return;
 
         std::int64_t deltaSamples = sampleAtX (e.x) - midiDrag.mouseDownSample;
@@ -2014,6 +2015,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         const auto newStart = std::max<std::int64_t> (
             0, midiDrag.origTimelineStart + deltaSamples);
         v[(size_t) midiDrag.regionIdx].timelineStart = newStart;
+        snapshot.editedInPlace();
         repaint();
         return;
     }

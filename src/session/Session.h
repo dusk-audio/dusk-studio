@@ -854,7 +854,8 @@ public:
     // In-place value edits, as AtomicSnapshot::currentMutable: the audio thread
     // reads a region's position, length and mute through its pointer. The notes
     // and controllers it plays are the copies the last publish took, so an
-    // edit to those sounds once it is published.
+    // edit to those sounds once it is published. Call editedInPlace() after
+    // one.
     std::vector<MidiRegion>& currentMutable() noexcept { return *owned->regions; }
 
     void publish (std::unique_ptr<std::vector<MidiRegion>> fresh)
@@ -866,9 +867,17 @@ public:
         previous = std::move (owned);
         owned    = std::move (next);
         ++publishes;
+        editedInPlace();
     }
 
     std::uint64_t generation() const noexcept { return publishes; }
+
+    // Counts every change the audio thread can hear, a publish or an in-place
+    // edit, after the change. The engine compares it from block to block: a
+    // changed timeline may no longer end notes it started. Load it before
+    // read(), so what read() returns is at least as new.
+    void editedInPlace() noexcept { editCount.fetch_add (1, std::memory_order_release); }
+    std::uint32_t edits() const noexcept { return editCount.load (std::memory_order_acquire); }
 
     template <typename Fn>
     void mutate (Fn&& fn)
@@ -893,6 +902,7 @@ private:
     std::unique_ptr<Published>    owned;
     std::unique_ptr<Published>    previous;   // kept alive for one publish
     std::uint64_t                 publishes = 0;
+    std::atomic<std::uint32_t>    editCount { 0 };
 };
 
 inline MidiTakeRef makeMidiTakeRef (const MidiRegion& region)

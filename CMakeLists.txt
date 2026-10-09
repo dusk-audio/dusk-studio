@@ -760,6 +760,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/midi_out_dense_block.cpp
     src/engine/scenario/cases/midi_panic_all_paths.cpp
     src/engine/scenario/cases/midi_route_change_releases.cpp
+    src/engine/scenario/cases/midi_timeline_edit_releases.cpp
     src/engine/scenario/cases/mint_oop_fixture.cpp
     src/engine/scenario/cases/move_tracks.cpp
     src/engine/scenario/cases/offline_insert_no_pdc.cpp

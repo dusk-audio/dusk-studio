@@ -205,3 +205,117 @@ TEST_CASE ("an event the block cannot take stops the span", "[midi][schedule]")
     CHECK (outcome == midischedule::Outcome::eventRefused);
     CHECK (taken == 2);
 }
+
+TEST_CASE ("a region plays nothing past its end, and the notes sounding there end there",
+           "[midi][schedule][regression]")
+{
+    // 400 ticks long. One note runs past the end, one ends on it, and a note
+    // and a controller come after it, in the block the end falls in.
+    Timeline timeline;
+    auto region = regionOfTicks (400);
+    region.notes.push_back ({ 1, 60, 100, 0, 1000 });
+    region.notes.push_back ({ 1, 62, 100, 100, 300 });
+    region.notes.push_back ({ 1, 64, 100, 402, 100 });
+    region.ccs.push_back ({ 1, 1, 64, 403 });
+    timeline.add (std::move (region));
+    const auto end = ticksToSamples (400, kRate, kBpm);
+
+    const auto playThrough = [&timeline] (std::int64_t to, std::int64_t block)
+    {
+        std::vector<Event> all;
+        for (std::int64_t at = 0; at < to; at += block)
+        {
+            int scans = 32768;
+            REQUIRE (timeline.play (at, std::min (at + block, to), false, all, scans)
+                     == midischedule::Outcome::complete);
+        }
+        return all;
+    };
+    const auto check = [end] (const std::vector<Event>& events)
+    {
+        int offs60 = 0, offs62 = 0;
+        for (const auto& e : events)
+        {
+            CHECK (e.data1 != 64);
+            CHECK (e.status != 0xB0);
+            if (e.status == 0x80 && e.data1 == 60) { ++offs60; CHECK (e.at == end); }
+            if (e.status == 0x80 && e.data1 == 62) { ++offs62; CHECK (e.at == end); }
+        }
+        CHECK (offs60 == 1);
+        CHECK (offs62 == 1);
+    };
+
+    SECTION ("the end inside a block")  { check (playThrough (end + 5000, 256)); }
+    SECTION ("the end on a block boundary") { check (playThrough (end + 5000, end / 8)); }
+
+    SECTION ("a chase after the end sends nothing of the region")
+    {
+        std::vector<Event> events;
+        int scans = 32768;
+        REQUIRE (timeline.play (end + 1000, end + 1256, true, events, scans) == midischedule::Outcome::complete);
+        CHECK (events.empty());
+    }
+}
+
+TEST_CASE ("a changed timeline ends only the notes it no longer ends itself",
+           "[midi][schedule]")
+{
+    using midischedule::NoteCount;
+    Timeline timeline;
+    auto region = regionOfTicks (2000);
+    region.notes.push_back ({ 1, 60, 100, 0, 1500 });   // still sounds at tick 1000
+    region.notes.push_back ({ 1, 62, 100, 0, 1000 });   // ends right at tick 1000
+    timeline.add (std::move (region));
+    auto muted = regionOfTicks (2000);
+    muted.muted = true;
+    muted.notes.push_back ({ 1, 65, 100, 0, 1500 });
+    timeline.add (std::move (muted));
+    auto over = regionOfTicks (500);                     // ended before tick 1000
+    over.notes.push_back ({ 2, 67, 100, 0, 1500 });
+    timeline.add (std::move (over));
+
+    // What the instrument was sent: key 60 twice, 62 once, 64, 65 and 67 on
+    // channel 2 once each.
+    NoteCount sounding, held;
+    for (const int key : { 60, 60, 62, 64, 65 })
+        sounding.hear (0x90, (std::uint8_t) key, 100);
+    sounding.hear (0x91, 67, 100);
+    sounding.hear (0x90, 70, 0);   // a velocity-0 on is an off, of nothing held
+    REQUIRE (sounding.total == 6);
+
+    std::vector<Event> offs;
+    int scans = 32768;
+    const auto at = ticksToSamples (1000, kRate, kBpm);
+    REQUIRE (midischedule::releaseStranded (timeline.regions, timeline.playback, nullptr, kRate, kBpm, at,
+                                            scans, sounding, held,
+                                            [&offs] (std::uint8_t s, std::uint8_t d1, std::uint8_t d2, std::int64_t)
+                                            {
+                                                offs.push_back ({ s, d1, d2, 0 });
+                                                return true;
+                                            })
+             == midischedule::Outcome::complete);
+
+    std::vector<int> released;
+    for (const auto& e : offs)
+    {
+        CHECK ((e.status & 0xF0) == 0x80);
+        released.push_back ((e.status & 0x0F) * 128 + e.data1);
+    }
+    std::sort (released.begin(), released.end());
+    CHECK (released == std::vector<int> { 60, 64, 65, 128 + 67 });
+    CHECK (sounding.total == 2);
+    CHECK (sounding.count[NoteCount::keyOf (0, 60)] == 1);
+    CHECK (sounding.count[NoteCount::keyOf (0, 62)] == 1);
+
+    SECTION ("nothing sounding reads nothing")
+    {
+        sounding.clear();
+        int untouched = 7;
+        CHECK (midischedule::releaseStranded (timeline.regions, timeline.playback, nullptr, kRate, kBpm, at,
+                                              untouched, sounding, held,
+                                              [] (std::uint8_t, std::uint8_t, std::uint8_t, std::int64_t)
+                                              { return true; })
+               == midischedule::Outcome::complete);
+        CHECK (untouched == 7);
+    }
+}

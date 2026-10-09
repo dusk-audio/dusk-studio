@@ -261,6 +261,15 @@ Takes live on the track now, and the audio editor is where you comp them.
   held. Each has more room now, and a block that still does not fit keeps
   every note-off and drops other events first. Out of process, the room is the
   most a track can send in one block.
+- **A MIDI note no longer hangs when the timeline stops playing it.** A note
+  that ran past the end of its region never got its note-off, and neither did
+  a note sounding when its region was muted, moved, deleted or cut short, its
+  take switched, the note edited in the piano roll, the tempo changed, or one
+  of those undone or redone. Pressing Record during playback did the same to
+  the notes an armed MIDI track was playing. The instrument held them until
+  Stop. Each now ends at its region's end or at once, without a reset, so the
+  track's other notes play on. A region also no longer plays a note or
+  controller that starts past its end.
 
 ## [0.14.0] - 2026-09-29
 

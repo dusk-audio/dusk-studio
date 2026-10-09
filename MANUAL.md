@@ -1299,6 +1299,10 @@ Click the ruler to seek the playhead. Drag across the ruler, then choose **Set l
 
 Each region is drawn as a rounded coloured rectangle. Audio regions show a waveform thumbnail; MIDI regions show a piano-keyboard glyph and the first few notes. The region's left edge is its start position; the right edge is start + length.
 
+A MIDI region plays only what lies inside it. A note that runs past the right edge stops at the edge, and a note that starts after it does not play. A note still sounding at a loop end stops there.
+
+An edit made while a MIDI track plays never leaves a note hanging. Mute, move or delete a region, switch its take, edit its notes in the piano roll, change the tempo, or undo or redo any of these, and each sounding note the timeline no longer plays where the transport is stops at once. The track's other notes play on, and a note the edit leaves under the transport ends where it now ends. Pressing **Record** during playback stops the notes an armed MIDI track was playing.
+
 ### Selecting and moving
 
 - Click a region to select it. Other regions deselect.

@@ -1027,6 +1027,26 @@ private:
     // not -1; same threading.
     std::array<std::int64_t, Session::kNumTracks> midiScheduledUpTo {};
 
+    // The notes each track's timeline started on its instrument and has not
+    // ended, and the timeline they were scheduled from: the regions' edit
+    // count, the tempo and the tempo map. A block that finds the timeline
+    // changed sends the note-offs the change took away, and one that no longer
+    // plays the timeline sends them all. Same threading as midiScheduledAhead.
+    struct MidiTimelineStamp
+    {
+        std::uint32_t   edits = 0;
+        std::uint32_t   bpmBits = 0;
+        const TempoMap* tempoMap = nullptr;
+
+        bool operator!= (const MidiTimelineStamp& o) const noexcept
+        {
+            return edits != o.edits || bpmBits != o.bpmBits || tempoMap != o.tempoMap;
+        }
+    };
+    std::array<midischedule::NoteCount, Session::kNumTracks> midiTimelineSounding {};
+    std::array<MidiTimelineStamp, Session::kNumTracks> midiTimelineSeen {};
+    midischedule::NoteCount midiTimelineHeldScratch;
+
     // MIDI hot-plug. The backend's MIDI thread reports that the OS port set
     // moved; noteMidiDeviceChange arms a single delayed pass so one plug (a
     // client arrival plus a port arrival per port) costs one rebuild, and
