@@ -70,7 +70,7 @@ TEST_CASE ("rt priority: lowest-but-valid ceiling maps to priority 0", "[rt-prio
 }
 
 #if defined(__linux__)
-TEST_CASE ("rt memory lock leaves a new mapping unfaulted until it is touched", "[rt-priority]")
+TEST_CASE ("rt memory lock leaves a new mapping unfaulted until it is touched", "[rt-priority][host-limits]")
 {
     if (! duskstudio::rt::lockProcessMemory())
         SKIP ("the memlock limit refuses mlockall");

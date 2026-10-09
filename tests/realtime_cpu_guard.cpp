@@ -68,7 +68,7 @@ void spinFor (double seconds) noexcept
 } // namespace
 
 TEST_CASE ("a realtime thread that stops blocking is moved off realtime, not killed",
-           "[rt-priority][rttime]")
+           "[rt-priority][rttime][host-limits]")
 {
     const int status = statusOfChild ([]
     {
@@ -104,7 +104,7 @@ TEST_CASE ("a realtime thread that stops blocking is moved off realtime, not kil
 }
 
 TEST_CASE ("a DSP lane moved off realtime is put back on it while it is parked",
-           "[rt-priority][rttime]")
+           "[rt-priority][rttime][host-limits]")
 {
     const int status = statusOfChild ([]
     {

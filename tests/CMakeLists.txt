@@ -940,11 +940,16 @@ catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[alsa]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES RUN_SERIAL TRUE)
+# [host-limits] cases need realtime scheduling or mlockall, which a CI runner's
+# rlimits may refuse; they SKIP() there, so the same flag keeps that a pass.
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[host-limits]"
+    EXTRA_ARGS --allow-running-no-tests)
 # [ipc] cases start the plug-in host process and several assert on timing windows
 # (the park-timeout stub parks against a 250 ms block). Under ctest --parallel the
 # runner's cores are shared, so those windows close; run them serially.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]~[ipc]")
+    TEST_SPEC "~[alsa]~[ipc]~[host-limits]")
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[ipc]"
     PROPERTIES RUN_SERIAL TRUE)
