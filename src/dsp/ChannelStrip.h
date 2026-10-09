@@ -355,8 +355,20 @@ public:
         stemCapL.store (l, std::memory_order_release);
     }
 
+    // Whether the insert stopped being fed MIDI (the track left MIDI mode or
+    // froze) and has not run since, so it may still hold notes whose note-offs
+    // went nowhere. Run without MIDI, the strip hands it the hanging reset
+    // itself; fed MIDI again, it relies on the engine sending the reset in the
+    // block's MIDI. Audio thread, read between blocks.
+    bool owesMidiReset() const noexcept { return insertOwesMidiReset; }
+
 private:
     bool hasLoadedMidiConsumer() const noexcept;
+    // The owed reset as the MIDI for an insert run without the track's MIDI,
+    // or null when none is owed. Settles the debt; call only where a slot runs.
+    const dusk::MidiBuffer* takeOwedMidiReset() noexcept;
+    // pluginMidiScratch holding `events`, or nothing when null.
+    void fillPluginMidiScratch (const dusk::MidiBuffer* events) noexcept;
 
     const ChannelStripParams* paramsRef = nullptr;
     dusk::audio::SmoothedValue<float> faderGain  { 0.0f };
@@ -493,6 +505,12 @@ private:
     // path keeps juce::MidiBuffer. This bridges the instrument block's MIDI into
     // dusk once per block. Pre-sized in prepare() so the refill never allocates.
     dusk::MidiBuffer nativeMidiScratch;
+
+    // Whether last block fed the insert MIDI, and the reset that is owed since
+    // it stopped (owesMidiReset). Audio thread; they travel with the strip
+    // when its track moves.
+    bool insertFedMidi = false;
+    bool insertOwesMidiReset = false;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     duskaudio::FourKEQDSP eq;

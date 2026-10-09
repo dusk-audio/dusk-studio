@@ -213,6 +213,30 @@ Takes live on the track now, and the audio editor is where you comp them.
   machine, such as a plug-in editor drawn without a graphics card, slowed them
   down and the audio overran waiting for them. They now run at the audio
   thread's priority, as they already did on Linux.
+- **A plug-in that stops getting a track's MIDI lets go of its notes.** A
+  MIDI-playing plug-in left loaded when its track switched to Mono or Stereo,
+  or a frozen track's plug-in, never heard the note-offs for keys released in
+  the meantime and held those notes. It now gets an all-notes-off.
+- **A block of MIDI too dense to deliver no longer leaves notes hanging.**
+  When a track's MIDI for one block overflowed what the engine can carry, live
+  input on top of a dense timeline, the whole block was dropped, note-offs
+  included. The instrument now gets an all-notes-off in its place, and the
+  next block plays the timeline's held notes again.
+- **Fewer dropouts on Linux without realtime permissions.** Where the system
+  does not let Dusk Studio set realtime priority itself, PipeWire still gets it
+  for the audio thread through RTKit, but the Multicore DSP threads ran at
+  normal priority and the audio overran waiting for them while an editor
+  drew. They now ask RTKit for the same priority, or failing that for a raised
+  one.
+- **Large sessions no longer hold gigabytes of memory on Linux.** With
+  unlimited locked memory, as the audio group usually has, every thread's
+  whole stack was locked in RAM, and playback runs one per region: a
+  1,440-region session held over 12 GB while playing. It now holds about
+  480 MB, and a 40-region one 120 MB instead of 570 MB.
+- **On macOS the Multicore DSP threads keep the audio deadline.** They ran at
+  normal priority under the realtime CoreAudio thread that waits on them. They
+  now join the device's audio workgroup and take realtime scheduling for its
+  buffer period.
 
 ## [0.14.0] - 2026-09-29
 

@@ -5,6 +5,7 @@
 #if defined(__linux__)
  #include <pthread.h>
  #include <sched.h>
+ #include <sys/mman.h>
  #include <sys/resource.h>
 #endif
 
@@ -86,6 +87,27 @@ inline RtPriorityInfo queryRealtimePriority() noexcept
     // macOS / Windows: JUCE's realtime path doesn't go through SCHED_RR
     // rlimits; the default RealtimeOptions priority is appropriate.
     return { 5, false, -1 };
+   #endif
+}
+
+// Pins the process in RAM so the audio thread never waits on a page fault.
+// What is mapped now is faulted in and locked at once; what is mapped later
+// is locked page by page as it is first touched. Locking later mappings whole
+// faults in all of every new thread's stack, 8 MB by default, and playback
+// runs a reader thread per region, so a large session held gigabytes of stack
+// no thread ever used. False when the memlock limit refuses, which leaves
+// nothing locked.
+inline bool lockProcessMemory() noexcept
+{
+   #if defined(__linux__) && defined(MCL_ONFAULT)
+    if (mlockall (MCL_CURRENT) != 0)
+        return false;
+    if (mlockall (MCL_FUTURE | MCL_ONFAULT) == 0)
+        return true;
+    munlockall();
+    return false;
+   #else
+    return false;
    #endif
 }
 } // namespace duskstudio::rt

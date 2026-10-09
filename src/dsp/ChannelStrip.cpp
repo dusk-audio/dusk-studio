@@ -1,4 +1,5 @@
 #include "ChannelStrip.h"
+#include "../engine/MidiPanic.h"
 #include "../foundation/Decibels.h"
 #include "../foundation/VectorOps.h"
 #include "../foundation/ScopedNoDenormals.h"
@@ -1022,6 +1023,23 @@ bool ChannelStrip::hasLoadedMidiConsumer() const noexcept
     return pluginSlot.isLoaded();
 }
 
+const dusk::MidiBuffer* ChannelStrip::takeOwedMidiReset() noexcept
+{
+    if (! insertOwesMidiReset) return nullptr;
+    insertOwesMidiReset = false;
+    nativeMidiScratch.clear();
+    midi::emitHangingReset (nativeMidiScratch, 0);
+    return &nativeMidiScratch;
+}
+
+void ChannelStrip::fillPluginMidiScratch (const dusk::MidiBuffer* events) noexcept
+{
+    pluginMidiScratch.clear();
+    if (events == nullptr) return;
+    for (const auto meta : *events)
+        pluginMidiScratch.addEvent (meta.data, meta.numBytes, meta.samplePosition);
+}
+
 void ChannelStrip::processAndAccumulate (const float* inL,
                                          const float* inR,
                                          juce::MidiBuffer& trackMidi,
@@ -1088,6 +1106,13 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     currentOutRDb.store (-100.0f, std::memory_order_relaxed);
 
     if (numSamples == 0) return;
+
+    if (insertFedMidi && ! isMidi)
+        insertOwesMidiReset = true;
+    insertFedMidi = isMidi;
+    // Whatever an unloaded insert held went with it.
+    if (insertOwesMidiReset && ! hasLoadedMidiConsumer())
+        insertOwesMidiReset = false;
 
     // MIDI tracks always run a stereo audio path: the instrument plugin fills
     // L+R from MIDI events and the rest of the strip processes that as a
@@ -1275,6 +1300,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                       sizeof (float) * (size_t) numSamples);
         if (activeInsertMode == kInsertPlugin)
         {
+            const auto* owedReset = takeOwedMidiReset();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlot.isLoaded())
             {
@@ -1283,7 +1309,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 // here (only the hardware branch uses it).
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
                 nativeClapSlot.processStereo (tempMono.data(), insertScratchR.data(),
-                                              tempMono.data(), insertScratchR.data(), numSamples);
+                                              tempMono.data(), insertScratchR.data(), numSamples,
+                                              owedReset);
                 for (int i = 0; i < numSamples; ++i)
                     tempMono[(size_t) i] = 0.5f
                         * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
@@ -1296,7 +1323,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 // Same stereo-only mono fold as the CLAP branch above.
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
                 nativeLv2Slot.processStereo (tempMono.data(), insertScratchR.data(),
-                                             tempMono.data(), insertScratchR.data(), numSamples);
+                                             tempMono.data(), insertScratchR.data(), numSamples,
+                                             owedReset);
                 for (int i = 0; i < numSamples; ++i)
                     tempMono[(size_t) i] = 0.5f
                         * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
@@ -1309,7 +1337,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 // Same stereo-only mono fold as the CLAP branch above.
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
                 nativeVst3Slot.processStereo (tempMono.data(), insertScratchR.data(),
-                                              tempMono.data(), insertScratchR.data(), numSamples);
+                                              tempMono.data(), insertScratchR.data(), numSamples,
+                                              owedReset);
                 for (int i = 0; i < numSamples; ++i)
                     tempMono[(size_t) i] = 0.5f
                         * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
@@ -1322,7 +1351,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 std::memcpy (insertScratchR.data(), tempMono.data(),
                              sizeof (float) * (size_t) numSamples);
                 nativeAuSlot.processStereo (tempMono.data(), insertScratchR.data(),
-                                            tempMono.data(), insertScratchR.data(), numSamples);
+                                            tempMono.data(), insertScratchR.data(), numSamples,
+                                            owedReset);
                 for (int i = 0; i < numSamples; ++i)
                     tempMono[(size_t) i] = 0.5f
                         * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
@@ -1335,14 +1365,14 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
                 builtinSlot.processStereo (tempMono.data(), insertScratchR.data(),
                                            tempMono.data(), insertScratchR.data(), numSamples,
-                                           nullptr, transport);
+                                           owedReset, transport);
                 for (int i = 0; i < numSamples; ++i)
                     tempMono[(size_t) i] = 0.5f
                         * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
             }
             else
             {
-                pluginMidiScratch.clear();
+                fillPluginMidiScratch (owedReset);
                 pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
             }
         }
@@ -1552,6 +1582,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 builtinSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch, transport);
             else
             pluginSlot.processStereoBlock (L, R, numSamples, trackMidi);
+            insertOwesMidiReset = false;
             for (int i = 0; i < numSamples; ++i)
                 activeInsertGain.getNextValue();
         }
@@ -1577,31 +1608,32 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
             if (activeInsertMode == kInsertPlugin)
             {
+                const auto* owedReset = takeOwedMidiReset();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
                 if (nativeClapSlot.isLoaded())
-                    nativeClapSlot.processStereo (L, R, L, R, numSamples);
+                    nativeClapSlot.processStereo (L, R, L, R, numSamples, owedReset);
                 else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
                 if (nativeLv2Slot.isLoaded())
-                    nativeLv2Slot.processStereo (L, R, L, R, numSamples);
+                    nativeLv2Slot.processStereo (L, R, L, R, numSamples, owedReset);
                 else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
                 if (nativeVst3Slot.isLoaded())
-                    nativeVst3Slot.processStereo (L, R, L, R, numSamples);
+                    nativeVst3Slot.processStereo (L, R, L, R, numSamples, owedReset);
                 else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
                 if (nativeAuSlot.isLoaded())
-                    nativeAuSlot.processStereo (L, R, L, R, numSamples);
+                    nativeAuSlot.processStereo (L, R, L, R, numSamples, owedReset);
                 else
 #endif
                 if (builtinSlot.isLoaded())
-                    builtinSlot.processStereo (L, R, L, R, numSamples, nullptr, transport);
+                    builtinSlot.processStereo (L, R, L, R, numSamples, owedReset, transport);
                 else
                 {
-                    pluginMidiScratch.clear();
+                    fillPluginMidiScratch (owedReset);
                     pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch);
                 }
             }

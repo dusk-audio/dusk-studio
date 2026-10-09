@@ -569,6 +569,12 @@ public:
     // AFTER collector drain. Cleared after one block.
     void stageTestMidiInjection (int inputIdx, dusk::MidiBuffer events);
 
+    // Test-only, message thread; holds the callback out while it runs. Caps
+    // the track's routing buffer at `bytes` so a block can overflow it, which
+    // the real ceiling only allows with two busy inputs and a dense timeline
+    // at once. dusk::kMidiRoutingBlockBytes puts it back.
+    void setTrackMidiCapacityForTest (int trackIndex, std::size_t bytes);
+
     // Bookends around SessionSerializer save/load. publish copies each
     // PluginSlot's description + state into the Track fields; consume
     // restores in reverse.
@@ -998,6 +1004,11 @@ private:
     // note-off for a key held through the change never reaches it. Audio
     // thread, except that a track move remaps it with the callback suspended.
     std::array<midi::LiveMidiRoute, Session::kNumTracks> lastLiveMidiRoute {};
+
+    // Set when a track's MIDI block lost events and went out as a bare reset
+    // instead: the next block resets again and chases the timeline's held
+    // notes back in. Same threading as lastLiveMidiRoute.
+    std::array<bool, Session::kNumTracks> midiChaseAfterDrop {};
 
     // Where each MIDI track's last timeline window ended, in samples past the
     // next block's start, so the next window carries on from there when the

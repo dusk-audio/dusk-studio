@@ -302,7 +302,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         # ALSA audio backend: the wedged-I/O-thread abandon/park path needs no
         # hardware (test-injected thread body, PCMs never opened).
         alsa_thread_teardown.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/alsa/AlsaAudioIODevice.cpp)
+        ${CMAKE_SOURCE_DIR}/src/engine/alsa/AlsaAudioIODevice.cpp
+        # AudioWorkerPool raises RT-denied workers through it; built without
+        # RTKit here, so a test never reaches for the system bus.
+        ${CMAKE_SOURCE_DIR}/src/engine/RealtimeKit.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
 elseif(APPLE AND DUSKSTUDIO_NATIVE_COREMIDI)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_COREMIDI=1)
@@ -922,7 +925,7 @@ catch_discover_tests(dusk-studio-tests
     PROPERTIES RUN_SERIAL TRUE)
 
 if(APPLE)
-    target_link_libraries(dusk-studio-tests PRIVATE dusk-coremidi)
+    target_link_libraries(dusk-studio-tests PRIVATE dusk-coremidi "-framework CoreAudio")
     add_executable(dusk-coremidi-tests core_midi_backend.mm)
     set_target_properties(dusk-coremidi-tests PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED ON)
     target_compile_options(dusk-coremidi-tests PRIVATE -Wall -Wextra -Wpedantic -fblocks)

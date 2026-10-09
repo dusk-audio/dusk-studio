@@ -742,7 +742,7 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 - **MIDI out** (MIDI mode): optional external MIDI output to drive a hardware synth as you play, or **None**.
 - **Activity LED**: blinks green when MIDI arrives on the chosen channel.
 
-A note you are holding ends when the track stops listening to it: choosing another **MIDI port**, setting **Channel** to one the note is not on, turning **IN** off while the transport rolls, or disarming a track that plays the on-screen keyboard sends the track's instrument all notes off. Notes the timeline is holding sound again at once. Opening the channel up to **Omni** leaves held notes alone.
+A note you are holding ends when the track stops listening to it: choosing another **MIDI port**, setting **Channel** to one the note is not on, turning **IN** off while the transport rolls, or disarming a track that plays the on-screen keyboard sends the track's instrument all notes off. Notes the timeline is holding sound again at once. Opening the channel up to **Omni** leaves held notes alone. The same goes for a plug-in that stops getting the track's MIDI at all: switched to **Mono** or **Stereo** with the plug-in still loaded, it gets all notes off the first time it runs as an effect, or when the track goes back to MIDI if it never ran, and a frozen track's plug-in gets it when you unfreeze.
 
 ## ARM, IN, PRINT/FREEZE (RECORDING stage)
 

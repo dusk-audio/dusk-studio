@@ -1524,6 +1524,7 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
 
     const auto stripsWere = strips;
     const auto liveMidiWas = lastLiveMidiRoute;
+    const auto chaseAfterDropWas = midiChaseAfterDrop;
     const auto midiAheadWas = midiScheduledAhead;
     const auto midiUpToWas = midiScheduledUpTo;
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -1532,6 +1533,7 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
         auto* strip = stripsWere[from];
         strips[(size_t) t] = strip;
         lastLiveMidiRoute[(size_t) t] = liveMidiWas[from];
+        midiChaseAfterDrop[(size_t) t] = chaseAfterDropWas[from];
         midiScheduledAhead[(size_t) t] = midiAheadWas[from];
         midiScheduledUpTo[(size_t) t] = midiUpToWas[from];
         strip->bind (session.track (t).strip);
@@ -3701,6 +3703,14 @@ void AudioEngine::audioDeviceAboutToStart (device::IODevice* device)
     lastDeviceSampleRate.store (device->getCurrentSampleRate(), std::memory_order_relaxed);
     prepareForSelfTest (device->getCurrentSampleRate(),
                          device->getCurrentBufferSizeSamples());
+
+    // The callback waits on the strip-DSP workers every block, so they keep
+    // the device thread's deadline too (on macOS its audio workgroup).
+    suspendProcessing();
+    workerPool.quiesce();
+    workerPool.setDeviceDeadline (device->getCurrentSampleRate(),
+                                  device->getCurrentBufferSizeSamples(), device->getName());
+    resumeProcessing();
 }
 
 void AudioEngine::stageTestMidiInjection (int inputIdx, dusk::MidiBuffer events)
@@ -3731,6 +3741,16 @@ void AudioEngine::stageTestMidiInjection (int inputIdx, dusk::MidiBuffer events)
     testInjectMidi = std::move (events);
     testInjectInputIdx.store (inputIdx, std::memory_order_relaxed);
     testInjectReady.store (true, std::memory_order_release);
+}
+
+void AudioEngine::setTrackMidiCapacityForTest (int trackIndex, std::size_t bytes)
+{
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks)
+        return;
+    suspendProcessing();
+    perTrackMidi[(size_t) trackIndex].clear();
+    perTrackMidi[(size_t) trackIndex].reserveBytes (bytes);
+    resumeProcessing();
 }
 
 void AudioEngine::prepareForSelfTest (double sr, int bs)
@@ -5907,6 +5927,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         //     track no longer listens, and the synth would hold it forever.
         //   - the instrument's latency rose further than a window can bridge
         //     (below), which is handled as a locate.
+        //   - the last block lost events and went out as a bare reset (see
+        //     midiEventsDropped below), so this one chases what it silenced.
+        //   - the strip's insert is fed MIDI again after a stretch it was not
+        //     (the track was frozen, or in an audio mode where the insert never
+        //     ran): the note-offs of that stretch never reached it.
         //
         // The route is exactly what pullLiveMidi reads below. A MIDI track
         // takes live input except in an offline render, which must stay
@@ -5972,13 +5997,22 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         {
             midiScheduledAhead[(size_t) t] = -1;
         }
-        const bool perTrackFlush = flushHangingMidi || liveRouteNarrowed || latencyLocate;
+        const bool insertFedAgain = midiTrack && ! isFrozen
+                                 && strips[(size_t) t]->owesMidiReset();
+        const bool perTrackFlush = flushHangingMidi || liveRouteNarrowed || latencyLocate
+                                || midiChaseAfterDrop[(size_t) t] || insertFedAgain;
+        midiChaseAfterDrop[(size_t) t] = false;
         const bool midiWindowContinues = schedulesTimelineMidi && scheduledAhead >= 0
                                       && ! perTrackFlush;
 
         perTrackMidi[(size_t) t].clear();
         liveRecordMidiScratch.clear();
-        bool midiBufferOverflow = false;
+        // Any event this block cannot carry - the routing buffer full, or the
+        // generated-event budget spent - may be a note-off, so the whole block
+        // then gives way to a reset (below). The recorder keeps its own buffer
+        // and its own overflow.
+        bool midiEventsDropped = false;
+        bool liveRecordOverflow = false;
         constexpr int kGeneratedEventBytes = 6 + 3;
         constexpr int kGeneratedMidiBudget = 2 * (int) dusk::kMidiBlockBytes;
         constexpr int kMidiScheduleScanBudget = 32768;
@@ -6003,28 +6037,19 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         auto addGeneratedMidi = [&] (std::uint8_t status, std::uint8_t data1,
                                      std::uint8_t data2, int sampleOffset) noexcept
         {
-            if (! generatedMidiBudget.spendDiscretionary (kGeneratedEventBytes))
-                return false;
             const std::array<std::uint8_t, 3> bytes { status, data1, data2 };
-            const bool added = perTrackMidi[(size_t) t].addEvent (
-                bytes.data(), (int) bytes.size(), sampleOffset);
-            if (! added) midiBufferOverflow = true;
+            const bool added = generatedMidiBudget.spendDiscretionary (kGeneratedEventBytes)
+                && perTrackMidi[(size_t) t].addEvent (bytes.data(), (int) bytes.size(),
+                                                      sampleOffset);
+            if (! added) midiEventsDropped = true;
             return added;
         };
         auto addGeneratedController = [&] (int channel, int controller,
                                            int value, int sampleOffset) noexcept
         {
-            if (! generatedMidiBudget.spendDiscretionary (kGeneratedEventBytes))
-                return false;
-            const std::array<std::uint8_t, 3> bytes {
-                (std::uint8_t) (0xB0 | (channel - 1)),
-                (std::uint8_t) controller,
-                (std::uint8_t) value
-            };
-            const bool added = perTrackMidi[(size_t) t].addEvent (
-                bytes.data(), (int) bytes.size(), sampleOffset);
-            if (! added) midiBufferOverflow = true;
-            return added;
+            return addGeneratedMidi ((std::uint8_t) (0xB0 | (channel - 1)),
+                                     (std::uint8_t) controller, (std::uint8_t) value,
+                                     sampleOffset);
         };
         auto emitHangingMidiReset = [&] (int sampleOffset) noexcept
         {
@@ -6036,7 +6061,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             return midi::emitHangingReset (perTrackMidi[(size_t) t], sampleOffset);
         };
         if (midiTrack && perTrackFlush && ! emitHangingMidiReset (0))
-            midiBufferOverflow = true;
+            midiEventsDropped = true;
 
         // Build this block's per-track MIDI buffer. Two source paths,
         // mutually exclusive (matches the audio source decision above):
@@ -6071,21 +6096,16 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     const int ch = (status & 0xF0) != 0xF0 ? (int) (status & 0x0F) + 1 : 0;
                     if (ch != chFilter) continue;
                 }
-                if (! perTrackMidi[(size_t) t].addEvent (v.getRawData(),
-                                                         v.getRawDataSize(),
-                                                         meta.samplePosition))
-                {
-                    midiBufferOverflow = true;
-                    return;
-                }
-                if (isRecording && armed && midiTrack
+                if (! midiEventsDropped
+                    && ! perTrackMidi[(size_t) t].addEvent (v.getRawData(),
+                                                            v.getRawDataSize(),
+                                                            meta.samplePosition))
+                    midiEventsDropped = true;
+                if (isRecording && armed && midiTrack && ! liveRecordOverflow
                     && ! liveRecordMidiScratch.addEvent (v.getRawData(),
                                                          v.getRawDataSize(),
                                                          meta.samplePosition))
-                {
-                    midiBufferOverflow = true;
-                    return;
-                }
+                    liveRecordOverflow = true;
             }
         };
         // Reads the route the flush above judged, not the session again: a
@@ -6218,13 +6238,17 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     if (midiTrack && seam
                         && ! emitHangingMidiReset (bufferOffsetOf (span.bufferOffset)))
                     {
-                        midiBufferOverflow = true;
+                        midiEventsDropped = true;
                         return;
                     }
 
                     if (generatedMidiBudget.discretionaryBytesAvailable()
-                            < kGeneratedEventBytes
-                        || midiScheduleScansRemaining <= 0)
+                            < kGeneratedEventBytes)
+                    {
+                        midiEventsDropped = true;
+                        return;
+                    }
+                    if (midiScheduleScansRemaining <= 0)
                         return;
 
                     // Every reset at the head silences the timeline's notes as
@@ -6432,11 +6456,21 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             pullLiveMidi();
         }
 
-        if (midiBufferOverflow)
+        // A torn block can deliver a note-on without its note-off, and a
+        // dropped one loses note-offs for notes it never started, so neither
+        // goes out: the instrument gets the hanging reset in the block's place,
+        // which an emptied buffer always holds, and the next block resets
+        // again and chases the timeline's held notes back in.
+        if (midiEventsDropped)
         {
             perTrackMidi[(size_t) t].clear();
-            liveRecordMidiScratch.clear();
+            const bool reset = midi::emitHangingReset (perTrackMidi[(size_t) t], 0);
+            jassert (reset);
+            (void) reset;
+            midiChaseAfterDrop[(size_t) t] = true;
         }
+        if (liveRecordOverflow)
+            liveRecordMidiScratch.clear();
 
         if (midiTrack && ! perTrackMidi[(size_t) t].isEmpty())
             session.track (t).midiActivity.store (true, std::memory_order_relaxed);

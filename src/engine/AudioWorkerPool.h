@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace duskstudio
@@ -43,13 +44,23 @@ public:
     ~AudioWorkerPool();
 
     // Message thread only. Spawns `workers` real-time threads at the given
-    // realtime priority on JUCE's 0..10 scale (see RtPriority.h; < 0 or an
-    // RT-denied thread runs at the OS default scheduling class; on Windows
-    // each joins the MMCSS "Pro Audio" task instead); `job` is stored
-    // once (never reallocated per block) and invoked as job(lane). A count <= 0
-    // leaves the pool inactive (runBlock then runs job(0) inline on the caller).
+    // realtime priority on JUCE's 0..10 scale (see RtPriority.h), and returns
+    // once every one has its scheduling. On Linux a thread RLIMIT_RTPRIO
+    // refuses is raised through RTKit, or failing that to a better nice level
+    // (RealtimeKit.h); on Windows each joins the MMCSS "Pro Audio" task. `job`
+    // is stored once (never reallocated per block) and invoked as job(lane). A
+    // count <= 0 leaves the pool inactive (runBlock then runs job(0) inline on
+    // the caller).
     void start (int workers, std::function<void (int lane)> job, int rtJucePriority = 5);
     void stop();   // message thread only; quiesces, then joins every worker.
+
+    // Message thread, with no runBlock in flight (the engine's gate held, the
+    // pool quiesced). The deadline the workers share with the device's IO
+    // thread. On macOS each worker takes a realtime time-constraint policy for
+    // the block period and joins the IO thread's audio workgroup, found by the
+    // device's name; elsewhere it changes nothing. Returns once every worker
+    // has taken it; workers started later take it as they start.
+    void setDeviceDeadline (double sampleRate, int blockSize, const std::string& deviceName);
 
     bool isActive()  const noexcept { return numWorkers > 0; }
     int  laneCount() const noexcept { return numWorkers + 1; }
@@ -84,6 +95,13 @@ private:
     std::atomic<bool>     quit { false };
     std::atomic<int>      joinStalls { 0 };    // count of >2 s join stalls (diagnostic)
     dusk::AutoResetEvent  completion;          // auto-reset; signalled by the last worker
+
+    // The last setDeviceDeadline. Written by the message thread only while
+    // the workers are parked, and published to them by the generation.
+    double deadlineSampleRate = 0.0;
+    int    deadlineBlockSize  = 0;
+    void*  deadlineWorkgroup  = nullptr;       // macOS: a retained os_workgroup_t
+    std::atomic<std::uint32_t> deadlineGeneration { 0 };
 
     AudioWorkerPool (const AudioWorkerPool&) = delete;
     AudioWorkerPool& operator= (const AudioWorkerPool&) = delete;
