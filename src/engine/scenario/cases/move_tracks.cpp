@@ -91,6 +91,9 @@ nlohmann::json savedTrackBody (const nlohmann::json& root, int t)
     auto track = dusk::json::array (root, "tracks")[(size_t) t];
     track.erase ("input_source");
     track.erase ("lv2_state_tag");
+    // A named track keeps its name and one never named takes its new row's
+    // number, so the name is checked on its own.
+    track.erase ("name");
     return track;
 }
 
@@ -195,6 +198,14 @@ ScenarioResult runMoveCarriesTheStrip (ScenarioContext& ctx)
     session.track (0).inputSource.store (5);
     session.track (0).regions = { regionAt (9600, "one") };
     session.recomputeRtCounters();
+    // Registered before the order is put back, so it runs after.
+    session.track (0).name = "One";
+    moving.name = "Eighteen";
+    ctx.cleanup ([&session]
+    {
+        session.track (0).name = Track::defaultName (0);
+        session.track (kMoved).name = Track::defaultName (kMoved);
+    });
 
     session.mcu.selectedChannel.store (kMoved);
     session.tuneTrackIndex.store (kMoved - 1);
@@ -244,9 +255,9 @@ ScenarioResult runMoveCarriesTheStrip (ScenarioContext& ctx)
                     "track " + std::to_string (t + 1) + " does not save as track "
                         + std::to_string (from + 1) + " did");
     }
-    ctx.expect (session.track (0).name == "18" && session.track (1).name == "1"
-                    && session.track (17).name == "17" && session.track (18).name == "19",
-                "the names did not shift with their tracks");
+    ctx.expect (session.track (0).name == "Eighteen" && session.track (1).name == "One"
+                    && session.track (17).name == "18" && session.track (18).name == "19",
+                "a named track did not keep its name, or an unnamed one did not take its row's number");
     ctx.expect (session.track (0).regions.size() == 1 && session.track (0).regions[0].timelineStart == 4800
                     && session.track (1).regions.size() == 1
                     && session.track (1).regions[0].timelineStart == 9600,
