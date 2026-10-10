@@ -327,10 +327,16 @@ Takes live on the track now, and the audio editor is where you comp them.
   them, so **M** dropped a marker behind the compressor editor, and on Linux
   Undo, Redo, Save, Save As and Quit did nothing from inside them. The tuner
   keeps keys the same way, where **Delete** removed the selected region it
-  hid and **M** dropped a marker; **U** or **Esc** closes it. The virtual
-  keyboard keeps every key in its layout wherever the key arrives, with or
-  without Cmd: on macOS a command chord reaches the window first, so **Cmd+Z**
-  behind it undid an edit and **Cmd+B** opened Bounce. The Startup dialog lets
+  hid and **M** dropped a marker; **U** or **Esc** closes it, and it closes
+  the DuskVerb 2, Tape Echo 2, Sunset and Tape Machine 2 editors as it opens
+  rather than coming up hidden behind them. The virtual keyboard keeps the
+  same keys outside its layout, where **Delete** removed the selected region
+  it hid, **A** armed a track and the digits switched banks; **K** or **Esc**
+  closes it. It keeps every key in its layout, with or without Cmd: on macOS a
+  command chord reaches the window first, so **Cmd+Z** behind it undid an edit
+  and **Cmd+B** opened Bounce. Opened over the piano roll, on Linux and macOS
+  it still keeps its layout's keys, and the piano roll keeps its own editing
+  keys while it has the focus. The Startup dialog lets
   no shortcut through. Letters typed into the Import browser's read-only file
   box no longer start a take or toggle the loop, and **Tab** from its path box
   goes on to the next control.

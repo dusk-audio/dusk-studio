@@ -1359,13 +1359,22 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     const auto panelKeys = imgui::PanelShellKeys::all;
    #endif
     const bool modalUp = ! EmbeddedModal::activeModalStack().empty();
-    // The tuner covers the window as a dialog does and keeps the same keys, closing
-    // on U, which opened it, or Escape.
-    if (tuner != nullptr && ! modalUp && ! cmd && ! shift && ! mods.isAltDown() && (escape || code == 'U'))
+    // The tuner and the virtual keyboard cover the window as a dialog does and keep
+    // the same keys, each closing on the key that opened it, U or K, or Escape.
+    const bool noMods  = ! cmd && ! shift && ! mods.isAltDown();
+    if (tuner != nullptr && ! modalUp && noMods && (escape || code == 'U'))
     {
         closeTuner();
         return true;
     }
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (virtualKeyboardWindow != nullptr && virtualKeyboardWindow->isOpen() && ! modalUp && noMods
+        && (escape || code == 'K'))
+    {
+        closeVirtualKeyboard();
+        return true;
+    }
+   #endif
     if (modalUp || panelKeys != imgui::PanelShellKeys::all || tuner != nullptr)
     {
         if (code == juce::KeyPress::tabKey && ! cmd && ! mods.isAltDown())
@@ -1455,7 +1464,6 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
    #endif
-    const bool noMods  = ! cmd && ! shift && ! mods.isAltDown();
 
     // Edit-mode shortcuts (Ardour-style). 'G' picks Grab Mode so the
     // user can flip back to move/select after a Range or Cut detour. No
@@ -6719,6 +6727,9 @@ void MainComponent::toggleTuner()
     session.tuneLatestHz   .store (0.0f,    std::memory_order_relaxed);
     session.tuneLatestLevel.store (0.0f,    std::memory_order_relaxed);
 
+    if (auto hook = EmbeddedModal::beforeModalShown())
+        hook();
+
     tuner = std::make_unique<TunerOverlay>();
     tuner->onDismiss = [this] { closeTuner(); };
     tunerDim = std::make_unique<DimOverlay>();
@@ -6728,6 +6739,8 @@ void MainComponent::toggleTuner()
 
     tuner->setBounds (getLocalBounds());
     addAndMakeVisible (tuner.get());
+    auto* const topLevel = getTopLevelComponent();
+    tunerHider.hideUnder (topLevel != nullptr ? *topLevel : *this, { tunerDim.get(), tuner.get() });
 
     tunerPoller = std::make_unique<TunerPoller> (session, *tuner);
 }
@@ -6735,6 +6748,7 @@ void MainComponent::toggleTuner()
 void MainComponent::closeTuner()
 {
     tunerPoller.reset();
+    tunerHider.restore();
     if (tuner    != nullptr) removeChildComponent (tuner.get());
     if (tunerDim != nullptr) removeChildComponent (tunerDim.get());
     // Deferred destruction - closeTuner is reached from tunerDim's own
@@ -6889,6 +6903,7 @@ void MainComponent::toggleVirtualKeyboard()
     {
         virtualKeyboardWindow = std::make_unique<imgui::DuskPanelWindow> (
             "dusk-studio-virtual-keyboard", "virtual-keyboard", "Virtual keyboard");
+        virtualKeyboardWindow->setShellKeys (imgui::PanelShellKeys::dialog);
 
         imgui::DuskPanelWindow::Callbacks callbacks;
         callbacks.dismissed = [this] { closeVirtualKeyboard(); };

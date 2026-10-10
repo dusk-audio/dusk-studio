@@ -427,6 +427,8 @@ public:
         close();
         showGeneration_ = ++modalGeneration();
         host = &parent;
+        requestedOffsetX_ = 0;
+        requestedOffsetY_ = 0;
         borrowedBody_ = &body;
         // Borrowed modals are plugin editors: always forward transport shortcuts
         // so the engineer can play / loop / audition while the editor is open.

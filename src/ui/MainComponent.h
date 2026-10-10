@@ -622,6 +622,7 @@ private:
     std::unique_ptr<class DimOverlay>    tunerDim;
     std::unique_ptr<class TunerOverlay>  tuner;
     std::unique_ptr<dusk::Timer>         tunerPoller;
+    PluginEditorHider                    tunerHider;
     void toggleTuner();
     void closeTuner();
 

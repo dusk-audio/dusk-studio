@@ -16943,11 +16943,11 @@ std::optional<ScenarioResult> runModalDismissal (GuiHost& host, ScenarioContext&
     steps->push_back ({ 600, [&host, &ctx]
     {
         if (! ctx.expect (host.virtualKeyboardOpen(), "K did not open the virtual keyboard")) return;
-        ctx.expect (host.pressKey ("shift + /", '?'), "the shortcuts key was not handled over the keyboard");
+        host.raiseAlert ("Audio device lost", "The audio device went away.");
     } });
     steps->push_back ({ 600, [&host, &ctx]
     {
-        if (! ctx.expect (host.shortcutsOpen() && ! host.virtualKeyboardOpen(),
+        if (! ctx.expect (! host.modalStackEmpty() && ! host.virtualKeyboardOpen(),
                           "the modal did not push the virtual keyboard aside")) return;
         ctx.expect (host.modalHasKeyboardFocus(), "the closing virtual keyboard took the keyboard from the modal");
         ctx.expect (host.pressPeerKey ("escape"), "Escape was not handled");
@@ -19716,10 +19716,10 @@ std::optional<ScenarioResult> runSaveFromQuitBrowser (GuiHost& host, ScenarioCon
     const auto originalDir = currentSessionDirectory (session);
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
-    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    ctx.cleanup ([&host, &session, originalDir, restore]
     {
         drainModals (host);
-        engine.reattachAudioCallback();
+        host.abandonPendingFlows();
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
     });
@@ -19830,6 +19830,7 @@ std::optional<ScenarioResult> runStartupSaveReplaced (GuiHost& host, ScenarioCon
     {
         host.closeStartupDialog();
         drainModals (host);
+        host.abandonPendingFlows();
         reopenSavedSession (host, restore);
         applySessionDirectory (session, originalDir);
     });
@@ -20507,6 +20508,124 @@ const ScenarioRegistrar tunerKeys { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runTunerKeys (host, ctx); }
 } };
 
+// A unit's editor is a native child that paints over the tuner, so the tuner
+// opening takes it down first: DuskVerb 2 drawn in the aux lane steps aside and
+// comes back after, and Sunset's editor closes. The tuner is then the one taking
+// the keys, a dialog's set, and Escape closes it rather than the editor.
+std::optional<ScenarioResult> runTunerOverEditors (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    static constexpr const char* kStripUnit = "dusk.builtin.synth";
+    static constexpr const char* kAuxUnit = "dusk.builtin.reverb";
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("requires a window the unit's editor can embed into");
+    if (builtin::findUnit (kStripUnit) == nullptr || builtin::findUnit (kAuxUnit) == nullptr)
+        return ScenarioResult::skip ("built without Sunset or DuskVerb 2");
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& strip = engine.getChannelStrip (0);
+    auto& aux = engine.getAuxLaneStrip (kAuxLane);
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty() || host.tunerOpen())
+        return ScenarioResult::skip ("requires a stopped transport, no modal and no tuner");
+    if (strip.getPluginSlot().isLoaded() || strip.isBuiltinLoaded() || strip.isNativeClapLoaded()
+        || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded() || strip.isNativeAuLoaded()
+        || strip.isNativeMultisampleLoaded() || strip.builtinReloadFailed())
+        return ScenarioResult::skip ("requires an empty first insert");
+    if (aux.isBuiltinLoaded (kAuxSlot) || aux.getPluginSlot (kAuxSlot).isLoaded()
+        || aux.nativeInsertRestoreFailed (kAuxSlot))
+        return ScenarioResult::skip ("requires an empty first aux insert");
+
+    keepStage (host, ctx);
+    ctx.keep (session.metronomeEnabled);
+    ctx.keep (aux.insertMode[(std::size_t) kAuxSlot]);
+    auto& laneParams = session.auxLane (kAuxLane);
+    ctx.cleanup ([&host, &engine, &session, &strip, &aux, &laneParams,
+                  mode = strip.insertMode.load(), markers = session.getMarkers()]
+    {
+        if (host.tunerOpen()) host.pressPeerKey ("escape");
+        drainModals (host);
+        host.closeBuiltin (0);
+        engine.suspendProcessing();
+        strip.unloadBuiltin();
+        strip.insertMode.store (mode);
+        aux.unloadBuiltin (kAuxSlot);
+        engine.resumeProcessing();
+        if (auto* handle = host.strip (0)) handle->refreshInsertButton();
+        laneParams.builtinUnitId[(std::size_t) kAuxSlot].clear();
+        laneParams.builtinStateBase64[(std::size_t) kAuxSlot].clear();
+        if (auto* lane = host.auxLane (kAuxLane))
+        {
+            lane->refreshSlot (kAuxSlot);
+            lane->rebuildSlots();
+        }
+        session.getMarkers() = markers;
+    });
+
+    host.switchToStage (GuiHost::Stage::Aux);
+    auto* lane = host.auxLane (kAuxLane);
+    if (lane == nullptr)
+        return ScenarioResult::skip ("the aux stage realised no lane to drive");
+    std::string error;
+    engine.suspendProcessing();
+    const bool loaded = strip.loadBuiltin (kStripUnit, error);
+    if (loaded) strip.insertMode.store (ChannelStrip::kInsertPlugin);
+    engine.resumeProcessing();
+    if (! loaded) return ScenarioResult::fail ("could not load Sunset: " + error);
+    if (auto* handle = host.strip (0)) handle->refreshInsertButton();
+
+    const auto plain = [&host] (char letter) { return host.pressPeerKey (keyCodeDescription (letter), letter); };
+    const auto auxEditorUp = [lane] { return lane->builtinEditorUnit (kAuxSlot) == kAuxUnit; };
+    const auto stripEditorUp = [&host] { auto* s = host.strip (0); return s != nullptr && s->hasOpenBuiltinEditor(); };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&ctx, lane]
+    { ctx.expect (lane->loadBuiltin (kAuxSlot, kAuxUnit), "DuskVerb 2 did not load on the aux lane"); } });
+    steps->push_back ({ 0, [&host, &ctx, plain]
+    {
+        plain ('u');
+        ctx.expect (host.tunerOpen(), "U did not open the tuner over the aux lane");
+    }, auxEditorUp, "DuskVerb 2's editor never came up in the aux lane", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("escape"), "Escape over the tuner was not handled"); },
+                       [auxEditorUp] { return ! auxEditorUp(); }, "DuskVerb 2's editor stayed up over the tuner",
+                       {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (! host.tunerOpen(), "Escape did not close the tuner over the aux lane");
+        host.switchToStage (GuiHost::Stage::Mixing);
+    }, auxEditorUp, "DuskVerb 2's editor did not come back after the tuner closed", {}, kSettleBoundMs });
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickInsert (0, false), "insert button unavailable"); } });
+    steps->push_back ({ 800, [&host, &ctx, plain]
+    {
+        plain ('u');
+        ctx.expect (host.tunerOpen(), "U did not open the tuner over Sunset's editor");
+    }, stripEditorUp, "Sunset's editor did not open", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&host, &ctx, &session, plain]
+    {
+        const bool clickWas = session.metronomeEnabled.load();
+        const auto markers = session.getMarkers().size();
+        plain ('c');
+        plain ('m');
+        ctx.expect (session.metronomeEnabled.load() == clickWas, "C behind the tuner toggled the click");
+        ctx.expect (session.getMarkers().size() == markers && host.modalStackEmpty(), "M behind the tuner dropped a marker");
+        ctx.expect (host.tunerOpen(), "the keys behind the tuner closed it");
+        ctx.expect (host.pressPeerKey ("escape"), "Escape over the tuner was not handled");
+        ctx.expect (! host.tunerOpen(), "Escape did not close the tuner over Sunset's editor");
+    }, [stripEditorUp] { return ! stripEditorUp(); }, "U left Sunset's editor up over the tuner", {}, kSettleBoundMs });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar tunerOverEditors { Scenario {
+    "gui.tuner_over_editors", { "gui", "keyboard", "plugin" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTunerOverEditors (host, ctx); }
+} };
+
 const ScenarioRegistrar transportKeys { Scenario {
     "gui.transport_keys", { "gui", "keyboard", "transport" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
@@ -20963,6 +21082,67 @@ const ScenarioRegistrar virtualKeyboardCloseFocus { Scenario {
     "gui.virtual_keyboard_close_focus", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runVirtualKeyboardCloseFocus (host, ctx); }
+} };
+
+// The virtual keyboard covers the window as a dialog does, so of the keys outside
+// its layout only a dialog's set acts behind it, wherever the key arrives: Delete
+// leaves the selected region it hides, A arms nothing and 1 pages no bank, while
+// L still reaches the loop. K and Escape at the window close it.
+std::optional<ScenarioResult> runVirtualKeyboardHoldsKeys (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("built without the native keyboard");
+   #else
+    if (host.virtualKeyboardOpen()) return ScenarioResult::skip ("requires a closed virtual keyboard");
+    AudioRegion region;
+    if (auto early = seedTapeRegion (host, ctx, region)) return early;
+    auto& session = ctx.session();
+    auto& transport = ctx.engine().getTransport();
+    ctx.cleanup ([&host, &session, armed = session.track (0).recordArmed.load()]
+    {
+        host.closeVirtualKeyboard();
+        session.setTrackArmed (0, armed);
+    });
+    const auto plain = [&host] (char letter) { return host.pressPeerKey (keyCodeDescription (letter), letter); };
+    const auto open = [&host] { return host.virtualKeyboardOpen(); };
+    const auto closed = [&host] { return ! host.virtualKeyboardOpen(); };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region with a timeline click"); } });
+    steps->push_back ({ 200, [plain] { plain ('k'); } });
+    steps->push_back ({ 0, [&host, &ctx, &session, &transport, plain]
+    {
+        host.pressPeerKey ("delete", 0);
+        plain ('a');
+        const bool paged = plain ('1');
+        ctx.expect (session.track (0).regions.size() == 1, "Delete behind the virtual keyboard removed the region it hides");
+        ctx.expect (! session.anyTrackArmed(), "A behind the virtual keyboard armed a track");
+        ctx.expect (! paged, "1 behind the virtual keyboard paged the console");
+        ctx.expect (host.virtualKeyboardOpen() && host.modalStackEmpty(), "the keys behind the virtual keyboard closed it");
+        const bool loopWas = transport.isLoopEnabled();
+        plain ('l');
+        ctx.expect (transport.isLoopEnabled() != loopWas, "L behind the virtual keyboard did not reach the loop");
+        transport.setLoopEnabled (loopWas);
+        plain ('k');
+    }, open, "K did not open the virtual keyboard" });
+    steps->push_back ({ 0, [plain] { plain ('k'); }, closed, "K at the window did not close the virtual keyboard" });
+    steps->push_back ({ 0, [&host] { host.pressPeerKey ("escape"); }, open, "K did not open the virtual keyboard again" });
+    steps->push_back ({ 0, [&host] { host.pressPeerKey ("delete", 0); }, closed,
+                       "Escape at the window did not close the virtual keyboard" });
+    steps->push_back ({ 200, [&ctx, &session]
+    { ctx.expect (session.track (0).regions.empty(), "Delete with the virtual keyboard closed did not remove the selected region"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar virtualKeyboardHoldsKeys { Scenario {
+    "gui.virtual_keyboard_holds_keys", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runVirtualKeyboardHoldsKeys (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runPluginKindMismatch (GuiHost& host, ScenarioContext& ctx)

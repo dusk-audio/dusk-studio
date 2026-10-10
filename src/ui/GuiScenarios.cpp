@@ -1940,6 +1940,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     void autosaveTick() override { owner.writeAutosave(); }
     bool autosaveRunning() const override { return owner.isTimerRunning(); }
     bool engineDetached() const override { return owner.engineDetached; }
+    void abandonPendingFlows() override
+    {
+        ++owner.quitSaveSerial;
+        owner.startupPickInFlight = 0;
+        if (owner.engineDetached)
+        {
+            owner.engine.reattachAudioCallback();
+            owner.engineDetached = false;
+        }
+        if (! owner.isTimerRunning())
+            owner.startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
+    }
     bool sessionOnDisk() const override { return owner.sessionOnDisk; }
     bool closeNotepadAfterTyping (const std::string& text) override
     {
@@ -2644,6 +2656,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (virtualKeyboardOpen()) lines.push_back ("virtual keyboard open");
         if (tunerOpen())          lines.push_back ("tuner open");
         if (masterTapeEditorOpen()) lines.push_back ("master tape editor open");
+        if (owner.engineDetached) lines.push_back ("a quit holds the audio off");
+        if (! owner.isTimerRunning()) lines.push_back ("autosave stopped");
+        if (owner.startupPickInFlight != 0) lines.push_back ("a startup pick still waits");
         if (owner.session.master().mute.load() != launch.masterMute)
             lines.push_back (owner.session.master().mute.load() ? "master muted" : "master unmuted");
 
@@ -2688,6 +2703,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         auto& stack = EmbeddedModal::activeModalStack();
         for (int guard = 0; guard < 32 && ! stack.empty(); ++guard)
             stack.back()->close();
+        abandonPendingFlows();
 
         owner.closePianoRoll();
         owner.destroyAudioEditor();

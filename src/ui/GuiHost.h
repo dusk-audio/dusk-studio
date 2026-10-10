@@ -532,6 +532,11 @@ public:
     virtual bool autosaveRunning() const = 0;
     // The latch a quit's Save sets while it holds the audio callback off.
     virtual bool engineDetached() const = 0;
+    // Drops a quit or a startup pick still waiting on a dialog that was closed
+    // without an answer, which then never hears back: the audio and the autosave
+    // the quit held come back, and the pick stops waiting to bring the startup
+    // dialog back.
+    virtual void abandonPendingFlows() = 0;
     // Whether the session was opened from or saved to its folder, which is
     // what lets Save write in place rather than ask where.
     virtual bool sessionOnDisk() const = 0;
