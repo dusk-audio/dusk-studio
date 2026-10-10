@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.15.0] - Unreleased
+## [0.15.0] - 2026-10-10
 
 Takes live on the track now, and the audio editor is where you comp them.
 
