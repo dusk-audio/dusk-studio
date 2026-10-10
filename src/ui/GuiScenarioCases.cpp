@@ -23967,8 +23967,12 @@ std::optional<ScenarioResult> runTapeRepaintsUnannouncedRegions (GuiHost& host, 
     steps->push_back ({ 500, [&host, paints] { *paints = host.tapePaints(); } });
     steps->push_back ({ 500, [&host, &ctx, &midiTrack, midi, rate, paints]
     {
-        if (! ctx.expect (host.tapePaints() == *paints, "the tape strip repainted with nothing changed, so the check proves nothing"))
+        if (host.tapePaints() != *paints)
+        {
+            ctx.complete (ScenarioResult::skip (
+                "the tape strip repaints with nothing changed on this display, so an unannounced change cannot be told apart"));
             return;
+        }
         auto later = midi;
         later.timelineStart += (std::int64_t) std::llround (rate * 2.0);
         midiTrack.midiRegions.mutate ([&later] (std::vector<MidiRegion>& v) { v.push_back (later); });

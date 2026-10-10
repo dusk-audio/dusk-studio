@@ -818,7 +818,13 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         {
             if (! ImGui::IsKeyPressed (key, false))
                 return;
+            // Dear ImGui reports Cmd as Ctrl on macOS (ConfigMacOSXBehaviors), and
+            // the chord keeps the platform's own names.
+           #if defined (__APPLE__)
+            const auto shortcut = shellShortcutFor ({ key, io.KeySuper, io.KeyCtrl, io.KeyShift, io.KeyAlt });
+           #else
             const auto shortcut = shellShortcutFor ({ key, io.KeyCtrl, io.KeySuper, io.KeyShift, io.KeyAlt });
+           #endif
             if (shortcut && (view == nullptr || ! view->claimsShortcut (*shortcut)))
                 callbacks.shortcut (*shortcut);
         };
