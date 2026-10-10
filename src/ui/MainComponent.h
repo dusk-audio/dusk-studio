@@ -160,8 +160,9 @@ private:
     void reloadMasteringMixAfterRender (const std::filesystem::path& target);
 
     bool saveSessionTo (const juce::File& sessionDir);
-    // True, with a status line, while a render from any modal is unfinished.
-    bool saveRefusedForRender();
+    // True, with a status line, while a render from any modal or a DP import is
+    // unfinished.
+    bool saveRefusedWhileBusy();
     void saveAsPrompt();
     // Whether this session has been opened from or saved to its folder. The
     // launch session's folder can hold a session someone saved under that
@@ -469,6 +470,9 @@ private:
     bool shutdownInProgress = false;
     // Set while a quit waits for the render it cancelled to stop.
     bool quitWaitsForRender = false;
+    // The latest quit whose Save is waiting on its browser. A second quit's Save
+    // cancels the first one's browser, and the first then has nothing to give back.
+    int quitSaveSerial = 0;
 
     // One-shot latch so the session-vs-device sample-rate warning fires once
     // per mismatch, not on every autosave tick. Reset on load and when the
@@ -520,6 +524,9 @@ private:
     void runStartupChoice();
    #if DUSKSTUDIO_HAS_NATIVE_UI
     bool openStartupPanel (std::vector<imgui::RecentSession> recents);
+    // Brings the startup dialog back after a pick backs out or fails, once no
+    // dialog is left for it to hide.
+    void returnToStartupDialog (int pick);
    #endif
     // A GUI scenario's one-shot hold on the startup choice: returning true takes the
     // choice instead of running it, so a scenario can press Quit without ending the run.
@@ -615,6 +622,7 @@ private:
     std::unique_ptr<class DimOverlay>    tunerDim;
     std::unique_ptr<class TunerOverlay>  tuner;
     std::unique_ptr<dusk::Timer>         tunerPoller;
+    PluginEditorHider                    tunerHider;
     void toggleTuner();
     void closeTuner();
 
@@ -629,6 +637,9 @@ private:
     // undo buttons and keys. A track move's undo is refused, with the reason,
     // while a render's dialog is open or the engine refuses it.
     void undoOrRedo (bool redo);
+    // The import pickers count what each track holds and say which tracks an import
+    // would switch, so they follow an undo, a redo or a take landing under them.
+    void refreshImportPickers();
     // What the render dialog on screen is called; empty when none is up.
     std::string openRenderDialog() const;
 

@@ -274,7 +274,9 @@ public:
     // With nothing focused, which is where macOS leaves JUCE once an embedded
     // editor's view has been first responder, a key arrives at the window
     // rather than at any component inside it. A key the focused content passed
-    // up has already been offered to it.
+    // up has already been offered to it. An open modal sits beside the content,
+    // so a key its body passed up comes here too; the content keeps from it
+    // whatever a modal holds back.
     bool keyPressed (const juce::KeyPress& key) override
     {
         auto* content = getContentComponent();

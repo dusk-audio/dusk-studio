@@ -15,9 +15,10 @@ namespace duskstudio
 // Global shortcuts that stay live while a modal / popup holds keyboard
 // focus, forwarded to the registered MainComponent. Deliberately limited to
 // transport + loop/punch + playhead navigation + window fullscreen: edit /
-// clipboard / destructive keys (Delete, split, nudge, undo, save, marker, ...)
-// are NOT forwarded because they would act on the arrangement hidden behind
-// the modal - e.g. Delete silently removing a region the user can't even see.
+// clipboard / destructive keys (Delete, split, nudge, marker, ...) never reach
+// the app while a modal is up, because they would act on the arrangement hidden
+// behind it - e.g. Delete silently removing a region the user can't even see.
+// The only other keys the app takes then are isModalSessionShortcut's.
 // The loop/punch keys ARE forwarded so the engineer can set a loop and audition
 // it while a comp / EQ / plugin editor is open (none of L / P / [ / ] has a
 // Cmd-binding, so forwarding can't trip a destructive op). A focused child
@@ -43,6 +44,16 @@ inline bool isModalForwardableShortcut (const juce::KeyPress& k) noexcept
         || kc == '[' || kc == ']'                         // set loop in/out at playhead
         || kc == '{' || kc == '}'                         // Shift+bracket (X11 shifted glyph) = punch in/out
         || k == juce::KeyPress::F11Key;
+}
+
+// Undo, Redo, Save, Save As and Quit act on the session as a whole, so they
+// still work from behind any modal that forwards shortcuts. keyCode is
+// upper-cased; command is Cmd on macOS and Ctrl elsewhere.
+inline bool isModalSessionShortcut (int keyCode, bool command, bool shift, bool alt) noexcept
+{
+    if (! command || alt)
+        return false;
+    return keyCode == 'Z' || keyCode == 'S' || (! shift && (keyCode == 'Y' || keyCode == 'Q'));
 }
 
 // Implemented by a modal body that binds bare typing keys to its own input -
@@ -304,7 +315,7 @@ public:
     //   WITHOUT restoring focus so a control clicked outside keeps it (see
     //   close(bool)); Esc keeps using onDismiss.
     // Defaults preserve "Esc + click-outside both dismiss".
-    void show (juce::Component& parent,
+    void show (juce::Component& requestedParent,
                std::unique_ptr<juce::Component> body,
                std::function<void()> onDismiss = {},
                bool dismissOnClickOutside = true,
@@ -317,6 +328,19 @@ public:
     {
         if (auto hook = beforeModalShown()) hook();
         close();
+
+        // Stacked above every modal already up. One of those may live in a component
+        // above the one asked for - a file browser covers the whole window - and a
+        // body added beneath it would be hidden and unclickable.
+        auto* stacked = &requestedParent;
+        for (auto* open : activeModalStack())
+            if (auto* below = open->host.getComponent(); below != nullptr && below->isParentOf (stacked))
+                stacked = below;
+        auto& parent = *stacked;
+        const auto origin = parent.getLocalPoint (&requestedParent, requestedParent.getLocalBounds().getTopLeft());
+        requestedOffsetX_ = origin.x;
+        requestedOffsetY_ = origin.y;
+
         showGeneration_ = ++modalGeneration();
         host = &parent;
         body_ = std::move (body);
@@ -403,6 +427,8 @@ public:
         close();
         showGeneration_ = ++modalGeneration();
         host = &parent;
+        requestedOffsetX_ = 0;
+        requestedOffsetY_ = 0;
         borrowedBody_ = &body;
         // Borrowed modals are plugin editors: always forward transport shortcuts
         // so the engineer can play / loop / audition while the editor is open.
@@ -696,6 +722,42 @@ public:
         return false;
     }
 
+    // For a Tab or Shift+Tab nothing inside the modals took. JUCE would carry the
+    // keyboard on through the whole window, out of the modal to whatever control
+    // sits behind it, so the keyboard goes round the top modal's body instead.
+    //
+    // A borrowed body is a plug-in's editor. With nothing in the window holding the
+    // keyboard, its own view has it - macOS makes a plug-in's view first responder -
+    // and a Tab that view passed up is left alone rather than taken from it.
+    static bool moveFocusWithinTopModal (bool forward)
+    {
+        const auto& stack = activeModalStack();
+        auto* top = stack.empty() ? nullptr : stack.back();
+        auto* body = top != nullptr ? top->getBody() : nullptr;
+        if (body == nullptr) return false;
+        if (top->borrowedBody_ != nullptr && ! body->getTopLevelComponent()->hasKeyboardFocus (true))
+            return false;
+        if (const auto traverser = body->createKeyboardFocusTraverser())
+        {
+            const auto order = traverser->getAllComponents (body);
+            if (! order.empty())
+            {
+                // The deepest entry holding the keyboard: a text box inside a combo
+                // box or a label is not in the order itself.
+                const auto held = std::find_if (order.rbegin(), order.rend(),
+                                                [] (auto* c) { return c->hasKeyboardFocus (true); });
+                const auto at = held == order.rend() ? order.end() : std::prev (held.base());
+                auto* next = at == order.end() ? (forward ? order.front() : order.back())
+                           : forward           ? (std::next (at) == order.end() ? order.front() : *std::next (at))
+                                               : (at == order.begin() ? order.back() : *std::prev (at));
+                next->grabKeyboardFocus();
+                return true;
+            }
+        }
+        body->grabKeyboardFocus();
+        return true;
+    }
+
     unsigned long long showGeneration() const noexcept { return showGeneration_; }
 
     juce::Component* getBody() const noexcept
@@ -729,10 +791,11 @@ public:
     {
         auto* body = getBody();
         if (body == nullptr) return;
-        body->setTopLeftPosition (topLeftInParent);
+        const auto topLeft = topLeftInParent.translated (requestedOffsetX_, requestedOffsetY_);
+        body->setTopLeftPosition (topLeft);
         if (backdrop_ != nullptr)
-            backdrop_->setTopLeftPosition (topLeftInParent.x - kBackdropMargin,
-                                              topLeftInParent.y - kBackdropMargin);
+            backdrop_->setTopLeftPosition (topLeft.x - kBackdropMargin,
+                                              topLeft.y - kBackdropMargin);
     }
 
     // Re-centre the body (and its backdrop) on the host after the caller has
@@ -906,6 +969,10 @@ private:
     std::function<void()> userOnDismissOutside;
     std::function<void (unsigned long long, bool)> borrowedHostResized;
     unsigned long long showGeneration_ = 0;
+    // Where the parent show() was asked for sits in the host the modal stacked into:
+    // repositionBody takes the caller's position in that parent's coordinates.
+    int requestedOffsetX_ = 0;
+    int requestedOffsetY_ = 0;
     bool escapeDismisses = true;
     bool forwardShortcuts_ = true;
     bool listeningForOutsideClicks = false;
@@ -917,17 +984,17 @@ private:
     PluginEditorHider editorHider_;
 };
 
-// A native panel window holds keyboard focus at the platform level, so the transport
-// keys die inside it exactly as they would at a JUCE modal body. The panel reports
-// which shortcut the user asked for and this turns it back into the key press
-// MainComponent binds - the same hop keyPressed above makes, from the other side of
-// the framework boundary.
-inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
+// A native panel window holds keyboard focus at the platform level, so the keys a
+// dialog lets through die inside it exactly as they would at a JUCE modal body. The
+// panel reports which shortcut the user asked for and this turns it back into the key
+// press MainComponent binds - the same hop keyPressed above makes, from the other side
+// of the framework boundary.
+//
+// The press is posted, never made in place: the panel reports from inside its own
+// frame, and what the shortcut does can destroy that panel - an undo of a track move
+// rebuilds the strip a compressor editor belongs to.
+inline void dispatchShellShortcut (imgui::ShellShortcut shortcut)
 {
-    auto* const target = EmbeddedModal::focusRestoreTarget().getComponent();
-    if (target == nullptr)
-        return false;
-
     // Key codes, not KeyPress objects: isModalForwardableShortcut reads these same
     // codes, so the two forwarders cannot drift on what counts as a shortcut.
     //
@@ -936,6 +1003,8 @@ inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
     // modifier, not the glyph - so a shifted binding sent bare would quietly set the
     // loop boundary the user was not asking for.
     struct Binding { int code; int character; int mods; };
+    constexpr int shift = juce::ModifierKeys::shiftModifier;
+    constexpr int command = juce::ModifierKeys::commandModifier;
     static const Binding bindings[] = {
         { juce::KeyPress::spaceKey, ' ', 0 },
         { 'R', 'r', 0 },
@@ -945,9 +1014,14 @@ inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
         { 'P', 'p', 0 },
         { '[', '[', 0 },
         { ']', ']', 0 },
-        { '{', '{', juce::ModifierKeys::shiftModifier },
-        { '}', '}', juce::ModifierKeys::shiftModifier },
-        { juce::KeyPress::F11Key, 0, 0 }
+        { '{', '{', shift },
+        { '}', '}', shift },
+        { juce::KeyPress::F11Key, 0, 0 },
+        { 'Z', 'z', command },
+        { 'Z', 'z', command | shift },
+        { 'S', 's', command },
+        { 'S', 's', command | shift },
+        { 'Q', 'q', command }
     };
     static_assert (std::size (bindings)
                        == static_cast<std::size_t> (imgui::ShellShortcut::count),
@@ -955,9 +1029,12 @@ inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
 
     const auto index = static_cast<std::size_t> (shortcut);
     if (index >= std::size (bindings))
-        return false;
-    return target->keyPressed (juce::KeyPress (bindings[index].code, bindings[index].mods,
-                                               bindings[index].character));
+        return;
+    dusk::callAsync ([target = EmbeddedModal::focusRestoreTarget(), binding = bindings[index]]
+    {
+        if (auto* const component = target.getComponent())
+            component->keyPressed (juce::KeyPress (binding.code, binding.mods, binding.character));
+    });
 }
 
 // Global KeyListener that forwards transport / navigation hotkeys (Space, R,

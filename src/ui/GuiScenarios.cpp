@@ -20,6 +20,7 @@
 #include "DuskContextMenu.h"
 #include "DuskFileBrowser.h"
 #include "DpImportDialog.h"
+#include "ImportTargetPicker.h"
 #include "MultiImportTargetPicker.h"
 #include "DuskAlerts.h"
 #include "MiniTimelineStrip.h"
@@ -990,6 +991,36 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return clickFileBrowserChild ([] (const auto& child) { return child.getName() == "up"; }, false);
     }
+    bool clickFileBrowserFileField() override
+    {
+        using Editor = std::remove_pointer_t<decltype (owner.statusLabel.getCurrentTextEditor())>;
+        return clickFileBrowserChild ([] (const auto& child) { return dynamic_cast<const Editor*> (&child) != nullptr; },
+                                      false);
+    }
+    std::string fileBrowserFocus() const override
+    {
+        using Editor = std::remove_pointer_t<decltype (owner.statusLabel.getCurrentTextEditor())>;
+        using Button = std::remove_pointer_t<decltype (&owner.recordingStageBtn)>;
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return {};
+        for (auto* child : stack.back()->getBody()->getChildren())
+        {
+            if (! child->hasKeyboardFocus (true)) continue;
+            for (auto* inner : child->getChildren())
+            {
+                if (! inner->hasKeyboardFocus (true)) continue;
+                if (inner->getName() == "path") return "path";
+                if (inner->getName() == "up") return "up";
+                if (inner->getTitle() == "Files") return "Files";
+                if (dynamic_cast<const Editor*> (inner) != nullptr) return "file";
+                return "other";
+            }
+            if (const auto* button = dynamic_cast<const Button*> (child))
+                return button->getButtonText().toStdString();
+            return "other";
+        }
+        return {};
+    }
     template <typename Matches>
     bool clickFileBrowserChild (Matches matches, bool nearLeftEdge)
     {
@@ -1026,6 +1057,20 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto& stack = EmbeddedModal::activeModalStack();
         if (stack.empty()) return {};
         const auto* picker = dynamic_cast<const MultiImportTargetPicker*> (stack.back()->getBody());
+        return picker != nullptr ? picker->rowsForScenario() : std::vector<std::string> {};
+    }
+    std::vector<std::string> multiImportTargetText() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* picker = dynamic_cast<const MultiImportTargetPicker*> (stack.back()->getBody());
+        return picker != nullptr ? picker->targetTextForScenario() : std::vector<std::string> {};
+    }
+    std::vector<std::string> importTargetRows() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* picker = dynamic_cast<const ImportTargetPicker*> (stack.back()->getBody());
         return picker != nullptr ? picker->rowsForScenario() : std::vector<std::string> {};
     }
     bool clickMultiImportTarget (int row) override
@@ -1629,6 +1674,19 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (auto* strip = owner.consoleView->getStripComponent (track))
             strip->closeModuleEditorsForScenario();
     }
+    bool inputStripPanel (int track, const std::string& input) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip != nullptr && strip->inputPanelForScenario (input);
+    }
+    bool panelFrameDrawing() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return imgui::DuskPanelWindow::drawingForScenario();
+       #else
+        return false;
+       #endif
+    }
     bool clickMasterTape (bool label) override
     {
         auto* master = owner.consoleView->getMasterStripComponent();
@@ -1882,6 +1940,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     void autosaveTick() override { owner.writeAutosave(); }
     bool autosaveRunning() const override { return owner.isTimerRunning(); }
     bool engineDetached() const override { return owner.engineDetached; }
+    void abandonPendingFlows() override
+    {
+        ++owner.quitSaveSerial;
+        owner.startupPickInFlight = 0;
+        if (owner.engineDetached)
+        {
+            owner.engine.reattachAudioCallback();
+            owner.engineDetached = false;
+        }
+        if (! owner.isTimerRunning())
+            owner.startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
+    }
     bool sessionOnDisk() const override { return owner.sessionOnDisk; }
     bool closeNotepadAfterTyping (const std::string& text) override
     {
@@ -2586,6 +2656,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (virtualKeyboardOpen()) lines.push_back ("virtual keyboard open");
         if (tunerOpen())          lines.push_back ("tuner open");
         if (masterTapeEditorOpen()) lines.push_back ("master tape editor open");
+        if (owner.engineDetached) lines.push_back ("a quit holds the audio off");
+        if (! owner.isTimerRunning()) lines.push_back ("autosave stopped");
+        if (owner.startupPickInFlight != 0) lines.push_back ("a startup pick still waits");
         if (owner.session.master().mute.load() != launch.masterMute)
             lines.push_back (owner.session.master().mute.load() ? "master muted" : "master unmuted");
 
@@ -2630,6 +2703,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         auto& stack = EmbeddedModal::activeModalStack();
         for (int guard = 0; guard < 32 && ! stack.empty(); ++guard)
             stack.back()->close();
+        abandonPendingFlows();
 
         owner.closePianoRoll();
         owner.destroyAudioEditor();

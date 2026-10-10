@@ -40,7 +40,12 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    // Rebuilds each row's track list from the tracks as they are now.
+    void refresh();
+
     std::vector<std::string> rowsForScenario() const;
+    // Each row's destination as its dropdown shows it.
+    std::vector<std::string> targetTextForScenario() const;
     bool targetPointForScenario (int index, int& x, int& y) const;
 
 private:

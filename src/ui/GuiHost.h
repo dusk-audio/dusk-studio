@@ -219,6 +219,11 @@ public:
     virtual void holdFileBrowserFolderChecks (bool held) = 0;
     virtual bool clickFileBrowserControl (bool path) = 0;
     virtual bool clickFileBrowserUp() = 0;
+    // The "file:" field, editable or not.
+    virtual bool clickFileBrowserFileField() = 0;
+    // The top browser's control holding the keyboard: "path", "Files", "file",
+    // "up", a button's text, "other", or empty when none does.
+    virtual std::string fileBrowserFocus() const = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
     virtual bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) = 0;
     // Files held over the point dropFilesOnTrack drops on, then taken away:
@@ -241,6 +246,10 @@ public:
     virtual void forceDropAtMouse (std::optional<bool> atMouse) = 0;
     virtual std::vector<std::string> confirmationText() const = 0;
     virtual std::vector<std::string> multiImportRows() const = 0;
+    // Each multi-import row's destination as its dropdown shows it.
+    virtual std::vector<std::string> multiImportTargetText() const = 0;
+    // The single-file import target picker's rows; see ImportTargetPicker::rowsForScenario.
+    virtual std::vector<std::string> importTargetRows() const = 0;
     virtual bool clickMultiImportTarget (int row) = 0;
     virtual bool captureMiniMarkers (bool enabled) = 0;
     virtual std::vector<MiniMarkerPaint> miniMarkerPaint() const = 0;
@@ -358,6 +367,10 @@ public:
     // The strip name the open EQ editor is titled with.
     virtual std::string stripModuleEditorTitle (int track, int module) const = 0;
     virtual void closeStripModuleEditors (int track) = 0;
+    // A key into the compressor editor or built-in unit editor the strip has open.
+    virtual bool inputStripPanel (int track, const std::string& input) = 0;
+    // Whether a native panel is inside its own frame now.
+    virtual bool panelFrameDrawing() const = 0;
     // The master strip's TAPE split button: its label opens Tape Machine 2's own
     // editor, its status light engages the stage.
     virtual bool clickMasterTape (bool label) = 0;
@@ -519,6 +532,11 @@ public:
     virtual bool autosaveRunning() const = 0;
     // The latch a quit's Save sets while it holds the audio callback off.
     virtual bool engineDetached() const = 0;
+    // Drops a quit or a startup pick still waiting on a dialog that was closed
+    // without an answer, which then never hears back: the audio and the autosave
+    // the quit held come back, and the pick stops waiting to bring the startup
+    // dialog back.
+    virtual void abandonPendingFlows() = 0;
     // Whether the session was opened from or saved to its folder, which is
     // what lets Save write in place rather than ask where.
     virtual bool sessionOnDisk() const = 0;
