@@ -7998,6 +7998,79 @@ const ScenarioRegistrar importTargetFollowsUndo { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runImportTargetFollowsUndo (host, ctx); }
 } };
 
+// The multi-import picker marks a destination whose mode the import would switch,
+// and the mark follows an undo and a redo under the picker that change that
+// track's mode. The single-file picker's rows follow a take landing under it.
+std::optional<ScenarioResult> runImportPickersFollowHistory (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginImportPickerCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    auto& um = ctx.engine().getUndoManager();
+    const auto first = ctx.tempDir() / "First.wav";
+    const auto second = ctx.tempDir() / "Second.wav";
+    if (! writeStereoSilence (first) || ! writeStereoSilence (second))
+        return ScenarioResult::fail ("could not write the audio import fixtures");
+    auto& mode = session.track (0).mode;
+    um.beginNewTransaction ("Track 1 to Stereo");
+    um.perform (new ParamEditAction ([&mode] { mode.store ((int) Track::Mode::Stereo); },
+                                     [&mode] { mode.store ((int) Track::Mode::Mono); }));
+    const auto flips = [&host] (std::size_t row)
+    {
+        const auto text = host.multiImportTargetText();
+        return row < text.size() && text[row].find ("mode will flip") != std::string::npos;
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 250, [&host, &ctx, first, second]
+    { ctx.expect (host.dropFilesOnTrack (0, { first, second }), "the two-file drop was rejected"); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Auto-assign"), "the multi-file picker has no Auto-assign"); } });
+    steps->push_back ({ 300, [&host, &ctx, flips]
+    {
+        ctx.expect (host.multiImportRows() == std::vector<std::string> { "First.wav\t0", "Second.wav\t1" },
+                    "Auto-assign did not put the files on the first two tracks");
+        ctx.expect (! flips (0) && flips (1), "before the undo the rows read '" + joinedRow (host.multiImportTargetText()) + "'");
+        ctx.expect (host.pressPeerKey ("command + Z"), "Undo under the multi-import picker was not handled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &mode, flips]
+    {
+        ctx.expect (mode.load() == (int) Track::Mode::Mono, "Undo under the multi-import picker did not put track 1 back to Mono");
+        ctx.expect (flips (0), "after the undo track 1's row reads '" + joinedRow (host.multiImportTargetText()) + "'");
+        ctx.expect (host.pressPeerKey ("command + shift + Z"), "Redo under the multi-import picker was not handled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &mode, flips]
+    {
+        ctx.expect (mode.load() == (int) Track::Mode::Stereo, "Redo under the multi-import picker did not switch track 1 back");
+        ctx.expect (! flips (0), "after the redo track 1's row reads '" + joinedRow (host.multiImportTargetText()) + "'");
+        drainModals (host);
+    } });
+    steps->push_back ({ 250, [&host, &ctx, first]
+    { ctx.expect (host.dropFilesOnTrack (0, { first }), "the single-file drop was rejected"); },
+                        [&host] { return host.modalStackEmpty(); }, "the multi-import picker did not close" });
+    steps->push_back ({ 300, [&host, &ctx, &session]
+    {
+        const auto row = importTargetRow (host, 2);
+        if (! ctx.expect (row.size() == 6 && row[1] == "empty", "track 2 reads '" + joinedRow (row) + "' before the take"))
+            return;
+        ctx.expect (landTake (ctx, session.track (1), 0, 24000, true).has_value(), "the take did not land on track 2");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        const auto row = importTargetRow (host, 2);
+        ctx.expect (row.size() == 6 && row[1] == "1 region",
+                    "after a take landed under the picker track 2 reads '" + joinedRow (row) + "'");
+        drainModals (host);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar importPickersFollowHistory { Scenario {
+    "gui.import_pickers_follow_history", { "gui", "import", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runImportPickersFollowHistory (host, ctx); }
+} };
+
 // A window too short for the whole single-file picker shrinks its list, and the
 // track the file was dropped on stays in view even when it sorts last.
 std::optional<ScenarioResult> runImportTargetShortWindow (GuiHost& host, ScenarioContext& ctx)
@@ -8152,8 +8225,20 @@ std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioCo
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickContextMenuItem ("Import DP-24/32 Session (experimental)..."), "DP import menu item is unavailable"); } });
     steps->push_back ({ 250, chooseFile });
+    // The job writes into the audio folder the session had when it started, so
+    // Save and Save As wait for it the way they wait for a render.
     steps->push_back ({ 500, [&host, &ctx]
-    { ctx.expect (host.clickModalButton ("Import"), "DP confirmation Import is unavailable"); } });
+    {
+        if (! ctx.expect (host.clickModalButton ("Import"), "DP confirmation Import is unavailable")) return;
+        for (const auto* chord : { "command + S", "command + shift + S" })
+        {
+            host.pressPeerKey (chord);
+            ctx.expect (host.statusMessage() == "Session not saved: finish or cancel the DP import first",
+                        std::string (chord) + " during the DP import left the status '" + host.statusMessage() + "'");
+            ctx.expect (host.modalText().rfind ("Save session as...", 0) != 0,
+                        std::string (chord) + " during the DP import opened Save As");
+        }
+    } });
     Step imported { 300, [&host, &ctx, &engine]
     {
         ctx.expect (host.modalText().rfind ("Import DP-24/32 Session\nImported ", 0) == 0,
@@ -14011,10 +14096,12 @@ const ScenarioRegistrar fileBrowserHeldUp { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserHeldUp (host, ctx); }
 } };
 
-// Keys a file browser does not take stay in it: the Import browser's "file:"
-// field, read-only there, and a Save As file list pass on only the transport
-// keys. M, C, Shift+C, T and ? leave the session and the window alone, and L
-// still toggles the loop.
+// Keys a file browser does not take stay in it. Typed into the Import
+// browser's "file:" field, read-only there, no key does anything, the transport
+// keys included: R, P, L, ., Space and [ leave the transport, the loop and punch
+// alone. From the Import browser's file list and the Save As file list, M, C,
+// Shift+C, T and ? leave the session and the window alone, and L still toggles
+// the loop.
 std::optional<ScenarioResult> runFileBrowserKeysStayInside (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
@@ -14025,21 +14112,24 @@ std::optional<ScenarioResult> runFileBrowserKeysStayInside (GuiHost& host, Scena
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
     const bool loop = transport.isLoopEnabled();
+    const bool punch = transport.isPunchEnabled();
     const bool shown = host.setTimelineShown (true);
     ctx.keep (session.metronomeEnabled);
     ctx.keep (session.countInEnabled);
-    ctx.cleanup ([&host, &session, &transport, originalDir, restore, loop, shown]
+    ctx.cleanup ([&host, &session, &transport, originalDir, restore, loop, punch, shown]
     {
         drainModals (host);
+        if (! transport.isStopped()) transport.setState (Transport::State::Stopped);
         reopenSavedSession (host, restore);
         applySessionDirectory (session, originalDir);
         transport.setLoopEnabled (loop);
+        transport.setPunchEnabled (punch);
         host.setTimelineShown (shown);
     });
 
     struct Browser { const char* menuItem; const char* where; bool fileField; };
     const std::array<Browser, 2> browsers {{
-        { "Import Audio or MIDI...", "the Import browser's file field", true },
+        { "Import Audio or MIDI...", "the Import file list", true },
         { "Save as...", "the Save As file list", false },
     }};
     auto steps = std::make_shared<std::vector<Step>>();
@@ -14047,17 +14137,46 @@ std::optional<ScenarioResult> runFileBrowserKeysStayInside (GuiHost& host, Scena
     {
         const std::string where = browser.where;
         pushFileMenuSteps (host, ctx, *steps, browser.menuItem);
-        steps->push_back ({ 400, [&host, &ctx, browser, where]
+        if (browser.fileField)
         {
-            if (browser.fileField)
+            auto loopRange = std::make_shared<std::pair<std::int64_t, std::int64_t>>();
+            steps->push_back ({ 400, [&host, &ctx]
+            {
                 ctx.expect (! host.focusFileName(), "the Import browser's file field takes typing");
-            ctx.expect (browser.fileField ? host.clickFileBrowserFileField() : host.clickFileBrowserControl (false),
-                        where + " is not there to click");
-        } });
+                ctx.expect (host.clickFileBrowserFileField(), "the Import browser's file field is not there to click");
+            } });
+            steps->push_back ({ 100, [&host, &ctx, &session, &transport, loopRange]
+            {
+                ctx.expect (host.fileBrowserFocus() == "file",
+                            "the click left the keyboard on '" + host.fileBrowserFocus() + "', not the file field");
+                *loopRange = { transport.getLoopStart(), transport.getLoopEnd() };
+                const auto markers = session.getMarkers().size();
+                const bool click = session.metronomeEnabled.load();
+                for (const char key : std::string ("mcrpl.[ "))
+                    host.pressPeerKey (key == ' ' ? std::string ("spacebar") : keyCodeDescription (key), key);
+                ctx.expect (session.getMarkers().size() == markers, "M typed into the file field dropped a marker");
+                ctx.expect (session.metronomeEnabled.load() == click, "C typed into the file field toggled the click");
+            } });
+            steps->push_back ({ 300, [&host, &ctx, &transport, loop, punch, loopRange]
+            {
+                ctx.expect (transport.isStopped(), "R or Space typed into the file field started the transport");
+                ctx.expect (transport.isLoopEnabled() == loop, "L typed into the file field toggled the loop");
+                ctx.expect (transport.isPunchEnabled() == punch, "P typed into the file field toggled punch");
+                ctx.expect (transport.getLoopStart() == loopRange->first && transport.getLoopEnd() == loopRange->second,
+                            "[ typed into the file field moved the loop");
+                ctx.expect (! host.shortcutsOpen() && ! host.fileBrowserFolder().empty(),
+                            "the Import browser is no longer on top after typing into its file field: '"
+                                + host.modalText() + "'");
+            } });
+        }
+        steps->push_back ({ 200, [&host, &ctx, where]
+        { ctx.expect (host.clickFileBrowserControl (false), where + " is not there to click"); } });
         auto before = std::make_shared<std::array<bool, 3>>();
         auto markers = std::make_shared<std::size_t>();
-        steps->push_back ({ 100, [&host, &session, before, markers]
+        steps->push_back ({ 100, [&host, &ctx, &session, before, markers, where]
         {
+            ctx.expect (host.fileBrowserFocus() == "Files",
+                        "the click left the keyboard on '" + host.fileBrowserFocus() + "', not " + where);
             *markers = session.getMarkers().size();
             *before = { session.metronomeEnabled.load(), session.countInEnabled.load(), host.timelineViewMatches (true) };
             host.pressPeerKey (keyCodeDescription ('m'), 'm');
@@ -14092,6 +14211,40 @@ const ScenarioRegistrar fileBrowserKeysStayInside { Scenario {
     "gui.file_browser_keys_stay_inside", { "gui", "import", "keyboard" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserKeysStayInside (host, ctx); }
+} };
+
+// Tab from the path box, which takes typing in a text box of its own, goes on to
+// the browser's next control rather than back to its first, and Shift+Tab from
+// there comes back to the path box.
+std::optional<ScenarioResult> runFileBrowserTabFromPath (GuiHost& host, ScenarioContext& ctx)
+{
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
+    ctx.cleanup ([&host] { drainModals (host); });
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushFileMenuSteps (host, ctx, *steps, "Import Audio or MIDI...");
+    steps->push_back ({ 400, [&host, &ctx]
+    { ctx.expect (host.clickFileBrowserControl (true), "the Import browser's path box is not there to click"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        if (! ctx.expect (host.fileBrowserFocus() == "path",
+                          "the click left the keyboard on '" + host.fileBrowserFocus() + "', not the path box"))
+            return;
+        host.pressPeerKey ("tab");
+        const auto next = host.fileBrowserFocus();
+        ctx.expect (! next.empty() && next != "path", "Tab from the path box left the keyboard on '" + next + "'");
+        host.pressPeerKey ("shift + tab");
+        ctx.expect (host.fileBrowserFocus() == "path", "Shift+Tab from '" + next + "' went to '"
+                                                           + host.fileBrowserFocus() + "', not back to the path box");
+        drainModals (host);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar fileBrowserTabFromPath { Scenario {
+    "gui.file_browser_tab_from_path", { "gui", "import", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserTabFromPath (host, ctx); }
 } };
 
 // The import pickers sit inside the main window's content, so a key they decline
@@ -14256,6 +14409,239 @@ const ScenarioRegistrar dialogKeysStayInside { Scenario {
     "gui.dialog_keys_stay_inside", { "gui", "import", "keyboard" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runDialogKeysStayInside (host, ctx); }
+} };
+
+// The compressor editor, Utility's knob panel and Audio settings are native
+// windows over the main one, and they keep keys the way any dialog does. A key
+// that reaches the window, as every key does on Windows: M, C, T and ? do
+// nothing behind the panel, L toggles the loop, Cmd+Z and Cmd+Shift+Z reach the
+// history, and Escape closes the panel. A key the panel itself holds, as on
+// Linux and macOS: Cmd+Z, Cmd+Shift+Z, Cmd+Y and Cmd+S reach the history and
+// save the session, and Cmd+Shift+S opens Save As with the panel out of its
+// way. Utility's panel steps aside for Save As the same way. The startup
+// dialog lets nothing through: M, Space and Cmd+Z do nothing behind it. The
+// virtual keyboard keeps Cmd+Z, whose letter is in its layout.
+std::optional<ScenarioResult> runNativeDialogKeys (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    auto& um = engine.getUndoManager();
+    auto& dsp = engine.getChannelStrip (0);
+    if (! transport.isStopped() || ! host.modalStackEmpty() || host.startupDialogOpen() || host.audioSettingsOpen())
+        return ScenarioResult::skip ("requires a stopped transport and no dialog");
+    if (dsp.getPluginSlot().isLoaded() || dsp.isBuiltinLoaded() || dsp.isNativeClapLoaded()
+        || dsp.isNativeLv2Loaded() || dsp.isNativeVst3Loaded() || dsp.isNativeAuLoaded()
+        || dsp.isNativeMultisampleLoaded() || dsp.builtinReloadFailed())
+        return ScenarioResult::skip ("requires an empty first insert");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
+    const bool loop = transport.isLoopEnabled();
+    const bool shown = host.setTimelineShown (true);
+    ctx.keep (session.metronomeEnabled);
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &engine, &session, &transport, &dsp, originalDir, restore, loop, shown, mode = dsp.insertMode.load()]
+    {
+        host.closeVirtualKeyboard();
+        host.closeStartupDialog();
+        host.closeAudioSettings();
+        host.closeBuiltin (0);
+        if (auto* strip = host.strip (0)) strip->closeEditor();
+        host.closeStripModuleEditors (0);
+        drainModals (host);
+        engine.suspendProcessing();
+        dsp.unloadBuiltin();
+        dsp.insertMode.store (mode);
+        engine.resumeProcessing();
+        if (auto* strip = host.strip (0)) strip->refreshInsertButton();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        transport.setLoopEnabled (loop);
+        host.setTimelineShown (shown);
+        engine.getUndoManager().clearUndoHistory();
+    });
+    const auto sessionJson = ctx.tempDir() / "Keys" / "session.json";
+    std::error_code madeDir;
+    std::filesystem::create_directories (sessionJson.parent_path(), madeDir);
+    if (! SessionSerializer::save (session, sessionJson) || ! host.openSession (sessionJson))
+        return ScenarioResult::fail ("could not open a saved session");
+    host.switchToStage (GuiHost::Stage::Mixing);
+
+    auto edits = std::make_shared<int> (0);
+    const auto newEdit = [&um, edits]
+    {
+        um.beginNewTransaction ("Panel key probe");
+        um.perform (new ParamEditAction ([edits] { ++*edits; }, [edits] { --*edits; }));
+        return *edits;
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    // Keys at the window while `up` holds; `close` is what Escape there should do.
+    const auto atWindow = [&host, &ctx, &session, &transport, steps, newEdit, edits]
+                          (const std::string& where, std::function<bool()> up)
+    {
+        auto markers = std::make_shared<std::size_t>();
+        auto before = std::make_shared<std::array<bool, 3>>();
+        steps->push_back ({ 300, [&host, &ctx, &session, where, up, markers, before]
+        {
+            if (! ctx.expect (up(), where + " did not open")) return;
+            *markers = session.getMarkers().size();
+            *before = { session.metronomeEnabled.load(), host.timelineViewMatches (true), false };
+            host.pressPeerKey (keyCodeDescription ('m'), 'm');
+            host.pressPeerKey (keyCodeDescription ('c'), 'c');
+            host.pressPeerKey ("T", 't');
+            host.pressPeerKey ("shift + /", '?');
+        } });
+        steps->push_back ({ 300, [&host, &ctx, &session, &transport, where, up, markers, before, newEdit, edits]
+        {
+            ctx.expect (session.getMarkers().size() == *markers, "M at the window behind " + where + " dropped a marker");
+            ctx.expect (session.metronomeEnabled.load() == (*before)[0], "C at the window behind " + where + " toggled the click");
+            ctx.expect (host.timelineViewMatches (true) == (*before)[1], "T at the window behind " + where + " toggled the timeline");
+            ctx.expect (! host.shortcutsOpen() && host.modalStackEmpty(),
+                        "a key at the window behind " + where + " opened '" + host.modalText() + "'");
+            if (! ctx.expect (up(), "the keys at the window closed " + where)) return;
+            const bool loopWas = transport.isLoopEnabled();
+            host.pressPeerKey (keyCodeDescription ('l'), 'l');
+            ctx.expect (transport.isLoopEnabled() != loopWas, "L at the window behind " + where + " did not reach the loop");
+            transport.setLoopEnabled (loopWas);
+            const int start = newEdit();
+            host.pressPeerKey ("command + Z");
+            ctx.expect (*edits == start - 1, "Cmd+Z at the window behind " + where + " did not undo");
+            host.pressPeerKey ("command + shift + Z");
+            ctx.expect (*edits == start, "Cmd+Shift+Z at the window behind " + where + " did not redo");
+        } });
+    };
+
+    // The compressor editor, with every key at the window.
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickStripModule (0, 1, true, false), "the first strip's compressor label is not on screen"); } });
+    atWindow ("the compressor editor", [&host] { return host.stripModuleEditorOpen (0, 1); });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("escape"), "Escape at the window was not handled over the compressor editor"); } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, &dsp]
+    {
+        ctx.expect (! host.stripModuleEditorOpen (0, 1), "Escape at the window left the compressor editor open");
+        std::string error;
+        engine.suspendProcessing();
+        const bool loaded = dsp.loadBuiltin ("dusk.builtin.utility", error);
+        if (loaded) dsp.insertMode.store (ChannelStrip::kInsertPlugin);
+        engine.resumeProcessing();
+        if (! ctx.expect (loaded, "could not load Utility: " + error)) return;
+        if (auto* strip = host.strip (0)) strip->refreshInsertButton();
+        ctx.expect (host.clickInsert (0, false), "the first strip's insert is not on screen");
+    } });
+
+    // Utility's knob panel: every key at the window, then Save As.
+    const auto utilityUp = [&host]
+    {
+        auto* strip = host.strip (0);
+        return strip != nullptr && strip->hasOpenBuiltinEditor();
+    };
+    atWindow ("Utility's knob panel", utilityUp);
+    steps->push_back ({ 100, [&host] { host.pressPeerKey ("command + shift + S"); } });
+    steps->push_back ({ 400, [&host, &ctx, utilityUp]
+    {
+        ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                    "Cmd+Shift+S over Utility's knob panel showed '" + host.modalText() + "' rather than Save As");
+        ctx.expect (! utilityUp(), "Utility's knob panel stayed up over the Save As browser");
+        drainModals (host);
+        ctx.expect (host.openAudioSettings(), "Audio settings did not open");
+    } });
+
+    // Audio settings: every key at the window, then the panel's own.
+    atWindow ("Audio settings", [&host] { return host.audioSettingsOpen(); });
+    auto start = std::make_shared<int> (0);
+    steps->push_back ({ 100, [start, newEdit] { *start = newEdit(); } });
+    struct Chord { const char* description; const char* name; int delta; };
+    for (const auto chord : { Chord { "command + Z", "Cmd+Z", -1 }, Chord { "command + shift + Z", "Cmd+Shift+Z", 0 },
+                              Chord { "command + Z", "Cmd+Z", -1 }, Chord { "command + Y", "Cmd+Y", 0 } })
+    {
+        steps->push_back ({ 100, [&host, &ctx, chord]
+        { ctx.expect (host.inputAudioSettings (chord.description), "Audio settings did not take " + std::string (chord.name)); } });
+        steps->push_back ({ 100, [&ctx, start, chord, edits]
+        {
+            ctx.expect (*edits == *start + chord.delta,
+                        std::string (chord.name) + " in Audio settings did not reach the history");
+        } });
+    }
+    auto saved = std::make_shared<std::filesystem::file_time_type>();
+    steps->push_back ({ 100, [&host, &ctx, sessionJson, saved]
+    {
+        std::error_code error;
+        *saved = std::filesystem::file_time_type::clock::now() - std::chrono::hours (1);
+        std::filesystem::last_write_time (sessionJson, *saved, error);
+        if (! ctx.expect (! error, "could not backdate the saved session")) return;
+        ctx.expect (host.inputAudioSettings ("command + S"), "Audio settings did not take Cmd+S");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, sessionJson, saved]
+    {
+        std::error_code error;
+        ctx.expect (std::filesystem::last_write_time (sessionJson, error) > *saved && ! error,
+                    "Cmd+S in Audio settings did not save the session in place");
+        ctx.expect (host.inputAudioSettings ("command + shift + S"), "Audio settings did not take Cmd+Shift+S");
+    } });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                    "Cmd+Shift+S in Audio settings showed '" + host.modalText() + "' rather than Save As");
+        ctx.expect (! host.audioSettingsOpen(), "Audio settings stayed up over the Save As browser");
+        drainModals (host);
+        ctx.expect (host.openAudioSettings(), "Audio settings did not open again");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("escape"), "Escape at the window was not handled over Audio settings"); } });
+
+    // The startup dialog: nothing.
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (! host.audioSettingsOpen(), "Escape at the window left Audio settings open");
+        ctx.expect (host.openStartupDialog ({}, false), "the startup dialog did not open");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &session, &transport, newEdit, edits]
+    {
+        if (! ctx.expect (host.startupDialogOpen(), "the startup dialog is not up")) return;
+        const auto markers = session.getMarkers().size();
+        const int latest = newEdit();
+        host.pressPeerKey (keyCodeDescription ('m'), 'm');
+        host.pressPeerKey ("spacebar", ' ');
+        host.pressPeerKey ("command + Z");
+        ctx.expect (session.getMarkers().size() == markers && host.modalStackEmpty(),
+                    "M behind the startup dialog dropped a marker or opened '" + host.modalText() + "'");
+        ctx.expect (transport.isStopped(), "Space behind the startup dialog started the transport");
+        ctx.expect (*edits == latest, "Cmd+Z behind the startup dialog undid an edit");
+        ctx.expect (host.startupDialogOpen(), "the keys closed the startup dialog");
+        host.closeStartupDialog();
+    } });
+
+    // The virtual keyboard plays its layout's letters with the command key held too.
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("K", 'k'), "K was not handled"); } });
+    steps->push_back ({ 600, [&host, &ctx, start, newEdit]
+    {
+        if (! ctx.expect (host.virtualKeyboardOpen(), "K did not open the virtual keyboard")) return;
+        *start = newEdit();
+        ctx.expect (host.inputVirtualKeyboard ("command + Z"), "the virtual keyboard did not take Cmd+Z");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, start, edits]
+    {
+        ctx.expect (*edits == *start, "Cmd+Z on the virtual keyboard reached the history");
+        host.closeVirtualKeyboard();
+    } });
+    steps->push_back ({ 0, [] {}, [&host] { return ! host.virtualKeyboardOpen(); }, "the virtual keyboard did not close" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar nativeDialogKeys { Scenario {
+    "gui.native_dialog_keys", { "gui", "keyboard", "plugin" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runNativeDialogKeys (host, ctx); }
 } };
 
 const ScenarioRegistrar timelineDrawer { Scenario {
@@ -19301,6 +19687,173 @@ const ScenarioRegistrar quitSaveCancel { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runQuitSaveCancel (host, ctx); }
 } };
 
+// The Save As browser a quit's Save opens holds the quit's audio and autosave
+// until it answers. Cmd+S and Cmd+Shift+S typed into it do nothing, so the quit
+// still waits on it, and a Save As from the menu bar that opens another browser
+// in its place cancels it first, which gives the audio and the autosave back.
+std::optional<ScenarioResult> runSaveFromQuitBrowser (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered() || ! host.autosaveRunning() || host.engineDetached())
+        return ScenarioResult::skip ("requires a stopped transport, no modal, and live audio and autosave");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        drainModals (host);
+        engine.reattachAudioCallback();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto untitled = ctx.tempDir() / "Untitled";
+    std::filesystem::create_directories (untitled);
+    const auto sessionJson = untitled / "session.json";
+    applySessionDirectory (session, untitled);
+    auto& fader = session.track (0).strip.faderDb;
+    fader.store (fader.load() - 3.0f);
+
+    const auto quitToSaveAs = [&host, &ctx, sessionJson] (const std::string& how)
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save changes before quitting?", 0) == 0,
+                          how + ": Quit showed '" + host.modalText() + "' rather than its prompt")
+            || ! ctx.expect (! std::filesystem::exists (sessionJson), how + ": the session gained a session.json"))
+            return;
+        ctx.expect (host.clickModalButton ("Save"), how + ": the quit prompt did not offer Save");
+    };
+    const auto running = [&host, &ctx, &engine, sessionJson] (const std::string& what)
+    {
+        ctx.expect (engine.isAudioCallbackRegistered() && ! host.engineDetached(), what + " left the audio detached");
+        ctx.expect (host.autosaveRunning(), what + " left the autosave timer stopped");
+        ctx.expect (! std::filesystem::exists (sessionJson), what + " saved the session");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.requestQuit(), "the unsaved session did not ask before quitting"); } });
+    steps->push_back ({ 400, [quitToSaveAs] { quitToSaveAs ("the first quit"); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                          "Save in the quit prompt showed '" + host.modalText() + "' rather than Save As"))
+            return;
+        host.pressPeerKey ("command + S");
+        host.pressPeerKey ("command + shift + S");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, sessionJson]
+    {
+        ctx.expect (host.fileBrowserPanels() == 1, "Cmd+S or Cmd+Shift+S in the quit's Save As opened another browser");
+        ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                    "Cmd+S in the quit's Save As left '" + host.modalText() + "' up");
+        ctx.expect (host.engineDetached() && ! engine.isAudioCallbackRegistered(),
+                    "Cmd+S in the quit's Save As let go of the quit");
+        ctx.expect (! std::filesystem::exists (sessionJson), "Cmd+S in the quit's Save As saved the session");
+        ctx.expect (host.clickModalButton ("Cancel"), "the quit's Save As has no Cancel");
+    } });
+    steps->push_back ({ 600, [&host, &ctx, running]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel in the quit's Save As left '" + host.modalText() + "' up");
+        running ("Cancel in the quit's Save As after Cmd+S");
+        ctx.expect (host.requestQuit(), "the unsaved session did not ask before quitting again");
+    } });
+    steps->push_back ({ 400, [quitToSaveAs] { quitToSaveAs ("the second quit"); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                          "the second quit's Save showed '" + host.modalText() + "' rather than Save As"))
+            return;
+        host.chooseSaveAs();
+    } });
+    steps->push_back ({ 300, [&host, &ctx, running]
+    {
+        ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                    "File > Save As over the quit's Save As showed '" + host.modalText() + "'");
+        running ("File > Save As in place of the quit's Save As");
+        ctx.expect (host.clickModalButton ("Cancel"), "the menu's Save As has no Cancel");
+    } });
+    steps->push_back ({ 600, [&host, &ctx, running]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel in the menu's Save As left '" + host.modalText() + "' up");
+        running ("Cancel in the menu's Save As");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar saveFromQuitBrowser { Scenario {
+    "gui.save_from_quit_browser", { "gui", "session", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSaveFromQuitBrowser (host, ctx); }
+} };
+
+// A pick in the startup dialog over unsaved changes waits on the Save As its
+// unsaved-changes prompt's Save opens. A Save As from the menu bar that opens in
+// that browser's place cancels it, and the startup dialog comes back as it does
+// after Cancel.
+std::optional<ScenarioResult> runStartupSaveReplaced (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.startupDialogOpen())
+        return ScenarioResult::skip ("requires a stopped transport and no dialog");
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
+    const auto originalDir = currentSessionDirectory (session);
+    ctx.cleanup ([&host, &session, restore, originalDir]
+    {
+        host.closeStartupDialog();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto untitled = ctx.tempDir() / "Untitled";
+    std::filesystem::create_directories (untitled);
+    applySessionDirectory (session, untitled);
+    session.track (0).strip.faderDb.store (-7.0f);
+
+    host.closeStartupDialog();
+    ctx.expect (host.openStartupDialog ({}, true), "the startup dialog did not open");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&host, &ctx]
+    { ctx.expect (host.clickStartupControl ("tab-open"), "the startup dialog did not show its Open tab"); } });
+    steps->push_back ({ 600, [&host, &ctx]
+    {
+        ctx.expect (host.modalText().rfind ("Save changes before opening another session?", 0) == 0,
+                    "OPEN over unsaved changes showed '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton ("Save"), "the unsaved-changes prompt did not offer Save");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                          "Save in the unsaved-changes prompt showed '" + host.modalText() + "' rather than Save As"))
+            return;
+        host.chooseSaveAs();
+    } });
+    steps->push_back ({ 700, [&host, &ctx, &session, untitled]
+    {
+        ctx.expect (host.startupDialogOpen(), "File > Save As in place of the prompt's Save As did not bring the startup dialog back");
+        ctx.expect (currentSessionDirectory (session) == untitled, "File > Save As in place of the prompt's Save As switched the session");
+        host.closeStartupDialog();
+        drainModals (host);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar startupSaveReplaced { Scenario {
+    "gui.startup_save_replaced", { "gui", "startup", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStartupSaveReplaced (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPianoCc (GuiHost& host, ScenarioContext& ctx)
 {
     auto& track = ctx.session().track (0);
@@ -22747,24 +23300,41 @@ std::optional<ScenarioResult> runTrackMoveUndoUnderMenu (GuiHost& host, Scenario
     {
         ctx.expect (inPlace(), "the undo over the EQ editor did not run ('" + host.modalText() + "')");
         ctx.expect (host.modalStackEmpty(), "the undo left '" + host.modalText() + "' up over the moved strip");
-        ctx.expect (host.pressPeerKey ("command + shift + Z"), "the window did not take the redo key");
+        ctx.expect (host.clickStripModule (2, 0, true, false), "track 3's EQ label is not on screen after the undo");
     } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.stripModuleEditorOpen (2, 0), "the EQ label did not open its editor for the redo");
+        ctx.expect (host.pressPeerKey ("command + shift + Z"), "the window did not take the redo key over the EQ editor");
+    } });
+    // Linux builds the CLAP fixture beside the suite; elsewhere this leg is noted.
     const auto pluginEditor = std::make_shared<bool> (false);
     steps->push_back ({ 300, [&host, &ctx, movedUp, pluginEditor]
     {
-        ctx.expect (movedUp(), "the redo after the EQ editor closed did not run");
+        ctx.expect (movedUp(), "the redo over the EQ editor did not run ('" + host.modalText() + "')");
+        ctx.expect (host.modalStackEmpty(), "the redo left '" + host.modalText() + "' up over the moved strip");
         const auto fixture = ctx.fixture ("no_window.clap");
         auto* strip = host.strip (0);
         std::string error;
-        if (! fixture || strip == nullptr || ! strip->loadNativeClap (*fixture, "studio.dusk.test.no-window", error))
+        const bool loaded = fixture && strip != nullptr
+                         && strip->loadNativeClap (*fixture, "studio.dusk.test.no-window", error);
+       #if DUSKSTUDIO_HAS_NATIVE_CLAP && defined (__linux__)
+        if (! ctx.expect (loaded, "the CLAP fixture did not load for the plug-in editor leg " + error)) return;
+       #else
+        if (! loaded)
         {
             ctx.note ("no CLAP fixture to open a plug-in editor with, so that leg was skipped " + error);
             return;
         }
+       #endif
         strip->refreshInsertButton();
         if (! strip->openEditor())
         {
+           #if DUSKSTUDIO_HAS_NATIVE_CLAP && defined (__linux__)
+            ctx.expect (false, "the CLAP fixture's editor could not be embedded for the plug-in editor leg");
+           #else
             ctx.note ("the CLAP fixture's editor could not be embedded on this display, so that leg was skipped");
+           #endif
             dismissAlert (host);
             return;
         }
@@ -22788,6 +23358,59 @@ const ScenarioRegistrar trackMoveUndoUnderMenu { Scenario {
     "gui.track_move_undo_under_menu", { "gui", "region", "undo" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runTrackMoveUndoUnderMenu (host, ctx); }
+} };
+
+// With a plug-in's editor up and nothing in the window holding the keyboard, as
+// macOS leaves it while the plug-in's own view is first responder, a Tab that
+// reaches the window is left alone: the editor's body does not take the
+// keyboard from the plug-in. With the body holding it, Tab stays in the editor.
+std::optional<ScenarioResult> runPluginEditorTabLeftAlone (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_CLAP || ! defined (__linux__)
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("needs the Linux CLAP fixture");
+   #else
+    const auto fixture = ctx.fixture ("no_window.clap");
+    if (! fixture) return ScenarioResult::fail ("missing fixture: no_window.clap");
+    auto* strip = readyStrip (host, ctx);
+    if (strip == nullptr) return ScenarioResult::skip ("the console has no strip to drive");
+    std::string error;
+    if (! strip->loadNativeClap (*fixture, "studio.dusk.test.no-window", error))
+        return ScenarioResult::fail ("the fixture did not load: " + error);
+    strip->refreshInsertButton();
+    auto giveBack = std::make_shared<std::function<void()>>();
+    ctx.cleanup ([&host, strip, giveBack]
+    {
+        if (*giveBack) (*giveBack)();
+        strip->closeEditor();
+        dismissAlert (host);
+        strip->unloadNativePlugins();
+        strip->refreshInsertButton();
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx, strip, giveBack]
+    {
+        if (! ctx.expect (strip->openEditor(), "the CLAP fixture's editor did not open")) return;
+        ctx.expect (host.modalHasKeyboardFocus(), "the plug-in editor's body did not take the keyboard");
+        host.pressPeerKey ("tab");
+        ctx.expect (host.modalHasKeyboardFocus() && strip->hasOpenEditor(), "Tab took the keyboard out of the plug-in editor");
+        *giveBack = host.unfocusWindow();
+        ctx.expect (! host.modalHasKeyboardFocus(), "the plug-in editor's body kept the keyboard");
+        host.pressPeerKey ("tab");
+        host.pressPeerKey ("shift + tab");
+        ctx.expect (! host.modalHasKeyboardFocus(), "Tab with nothing focused took the keyboard for the plug-in editor's body");
+        ctx.expect (strip->hasOpenEditor(), "Tab with nothing focused closed the plug-in editor");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar pluginEditorTabLeftAlone { Scenario {
+    "gui.plugin_editor_tab_left_alone", { "gui", "plugin", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPluginEditorTabLeftAlone (host, ctx); }
 } };
 
 // A locked region, audio or MIDI, takes a click on the tape strip but not a

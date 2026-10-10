@@ -221,6 +221,9 @@ public:
     virtual bool clickFileBrowserUp() = 0;
     // The "file:" field, editable or not.
     virtual bool clickFileBrowserFileField() = 0;
+    // The top browser's control holding the keyboard: "path", "Files", "file",
+    // "up", a button's text, "other", or empty when none does.
+    virtual std::string fileBrowserFocus() const = 0;
     virtual std::vector<std::string> dpImportSummary() const = 0;
     virtual bool dropFilesOnTrack (int track, const std::vector<std::filesystem::path>& files) = 0;
     // Files held over the point dropFilesOnTrack drops on, then taken away:
@@ -243,6 +246,8 @@ public:
     virtual void forceDropAtMouse (std::optional<bool> atMouse) = 0;
     virtual std::vector<std::string> confirmationText() const = 0;
     virtual std::vector<std::string> multiImportRows() const = 0;
+    // Each multi-import row's destination as its dropdown shows it.
+    virtual std::vector<std::string> multiImportTargetText() const = 0;
     // The single-file import target picker's rows; see ImportTargetPicker::rowsForScenario.
     virtual std::vector<std::string> importTargetRows() const = 0;
     virtual bool clickMultiImportTarget (int row) = 0;
@@ -535,6 +540,9 @@ public:
     // False, with nothing asked, when there are no unsaved changes: that quit
     // would end the run.
     virtual bool requestQuit() = 0;
+    // File > Save As as the macOS menu bar sends it, which no dialog over the
+    // window holds back.
+    virtual void chooseSaveAs() = 0;
     virtual bool mixdownRunning() const = 0;
     // Whether any modal's render is still running: bounce, mixdown, master export or freeze.
     virtual bool renderRunning() const = 0;

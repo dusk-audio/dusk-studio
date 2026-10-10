@@ -148,7 +148,9 @@ Takes live on the track now, and the audio editor is where you comp them.
   The picker also follows an undo made while it is up: Import used to put
   audio on a track the undo had put back in MIDI mode without asking, and now
   asks before switching it. In a window too short for the whole list, the
-  track you drop on stays in view.
+  track you drop on stays in view. The multi-import picker's **mode will
+  flip** marks follow an undo or a redo too, and the single-file picker's rows
+  follow a take that lands while it is up.
 - **A locked region takes no edit** (#816, #827). In the audio editor Delete,
   Split, Normalize, Reset gain, Reset fades, a typed gain or fade and
   Properties > Delete region all edited a locked region, and so did the
@@ -320,7 +322,22 @@ Takes live on the track now, and the audio editor is where you comp them.
   **Shift+[**, **Shift+]** and **F11**), Undo, Redo, Save, Save As and Quit,
   however the key reaches the window, and **Tab** goes round the dialog's own
   controls. The editors passed on every key from 0.14, and the file browsers
-  leaked them from 0.14.
+  leaked them from 0.14. The compressor editor, Utility's knob panel and Audio
+  settings follow the same rule: on Windows every key reached the window behind
+  them, so **M** dropped a marker behind the compressor editor, and on Linux and
+  macOS Undo, Redo, Save, Save As and Quit did nothing from inside them. The
+  Startup dialog lets no shortcut through. Letters typed into the Import
+  browser's read-only file box no longer start a take or toggle the loop, and
+  **Tab** from its path box goes on to the next control.
+- **Saving from a file browser no longer strands what was waiting on it**
+  (#858). Cmd+S in the Save As browser that the quit prompt's Save opens
+  replaced it with another browser, and the quit never heard back: the app
+  stayed open with no audio and no autosave. Save and Save As now do nothing
+  in a file browser, and a browser another opens in its place, as File > Save
+  As from the macOS menu bar can, is cancelled first, so the quit gives the
+  audio and the autosave back and the Startup dialog returns. Save and Save As
+  are also refused while a DP-24/32 import runs, which would have left the
+  imported regions pointing into the old session folder.
 
 ## [0.14.0] - 2026-09-29
 

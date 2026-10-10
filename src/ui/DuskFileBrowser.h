@@ -24,10 +24,10 @@ struct Options
 //
 // `host` is any Component inside the main window (typically `this` from
 // a caller's method); the modal is shown on the host's top-level.
-// `onResult` fires once with the chosen file, or a default-constructed
-// juce::File on Cancel / Esc / click-outside dismiss. Open with no existing
-// file picked (files mode) is a Cancel too. A file Save named after a folder
-// opens that folder, and one with an empty name stays open.
+// `onResult` fires once with the chosen file, or an empty file on Cancel / Esc /
+// click-outside dismiss, and when another browser opens in its place. Open with
+// no existing file picked (files mode) is a Cancel too. A file Save named after a
+// folder opens that folder, and one with an empty name stays open.
 void open (juce::Component& host,
             Options opts,
             std::function<void (juce::File)> onResult);
@@ -38,6 +38,9 @@ void open (juce::Component& host,
 void openMulti (juce::Component& host,
                   Options opts,
                   std::function<void (juce::Array<juce::File>)> onResult);
+
+// True while a browser is the topmost modal.
+bool browserOnTop();
 
 // Closes the shared browser while the message loop still exists. Call once, as
 // the app shuts down; browsers closed after it get no timers.

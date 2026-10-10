@@ -87,7 +87,7 @@ src/ui/DuskComboBox.h	5
 src/ui/DuskContextMenu.cpp	51
 src/ui/DuskContextMenu.h	8
 src/ui/DuskFileBrowser.cpp	69
-src/ui/DuskFileBrowser.h	12
+src/ui/DuskFileBrowser.h	11
 src/ui/DuskLabelEditor.h	3
 src/ui/DuskMenuBar.h	29
 src/ui/DuskStudioLookAndFeel.h	124
@@ -105,7 +105,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	422
+src/ui/MainComponent.cpp	419
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	328
 src/ui/MasterStripComponent.h	55

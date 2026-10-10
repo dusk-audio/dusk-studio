@@ -160,8 +160,9 @@ private:
     void reloadMasteringMixAfterRender (const std::filesystem::path& target);
 
     bool saveSessionTo (const juce::File& sessionDir);
-    // True, with a status line, while a render from any modal is unfinished.
-    bool saveRefusedForRender();
+    // True, with a status line, while a render from any modal or a DP import is
+    // unfinished.
+    bool saveRefusedWhileBusy();
     void saveAsPrompt();
     // Whether this session has been opened from or saved to its folder. The
     // launch session's folder can hold a session someone saved under that
@@ -629,6 +630,9 @@ private:
     // undo buttons and keys. A track move's undo is refused, with the reason,
     // while a render's dialog is open or the engine refuses it.
     void undoOrRedo (bool redo);
+    // The import pickers count what each track holds and say which tracks an import
+    // would switch, so they follow an undo, a redo or a take landing under them.
+    void refreshImportPickers();
     // What the render dialog on screen is called; empty when none is up.
     std::string openRenderDialog() const;
 

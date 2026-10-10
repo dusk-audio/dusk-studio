@@ -710,18 +710,28 @@ public:
     // For a Tab or Shift+Tab nothing inside the modals took. JUCE would carry the
     // keyboard on through the whole window, out of the modal to whatever control
     // sits behind it, so the keyboard goes round the top modal's body instead.
+    //
+    // A borrowed body is a plug-in's editor. With nothing in the window holding the
+    // keyboard, its own view has it - macOS makes a plug-in's view first responder -
+    // and a Tab that view passed up is left alone rather than taken from it.
     static bool moveFocusWithinTopModal (bool forward)
     {
         const auto& stack = activeModalStack();
-        auto* body = stack.empty() ? nullptr : stack.back()->getBody();
+        auto* top = stack.empty() ? nullptr : stack.back();
+        auto* body = top != nullptr ? top->getBody() : nullptr;
         if (body == nullptr) return false;
+        if (top->borrowedBody_ != nullptr && ! body->getTopLevelComponent()->hasKeyboardFocus (true))
+            return false;
         if (const auto traverser = body->createKeyboardFocusTraverser())
         {
             const auto order = traverser->getAllComponents (body);
             if (! order.empty())
             {
-                const auto at = std::find_if (order.begin(), order.end(),
-                                              [] (auto* c) { return c->hasKeyboardFocus (false); });
+                // The deepest entry holding the keyboard: a text box inside a combo
+                // box or a label is not in the order itself.
+                const auto held = std::find_if (order.rbegin(), order.rend(),
+                                                [] (auto* c) { return c->hasKeyboardFocus (true); });
+                const auto at = held == order.rend() ? order.end() : std::prev (held.base());
                 auto* next = at == order.end() ? (forward ? order.front() : order.back())
                            : forward           ? (std::next (at) == order.end() ? order.front() : *std::next (at))
                                                : (at == order.begin() ? order.back() : *std::prev (at));
@@ -954,11 +964,11 @@ private:
     PluginEditorHider editorHider_;
 };
 
-// A native panel window holds keyboard focus at the platform level, so the transport
-// keys die inside it exactly as they would at a JUCE modal body. The panel reports
-// which shortcut the user asked for and this turns it back into the key press
-// MainComponent binds - the same hop keyPressed above makes, from the other side of
-// the framework boundary.
+// A native panel window holds keyboard focus at the platform level, so the keys a
+// dialog lets through die inside it exactly as they would at a JUCE modal body. The
+// panel reports which shortcut the user asked for and this turns it back into the key
+// press MainComponent binds - the same hop keyPressed above makes, from the other side
+// of the framework boundary.
 inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
 {
     auto* const target = EmbeddedModal::focusRestoreTarget().getComponent();
@@ -973,6 +983,8 @@ inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
     // modifier, not the glyph - so a shifted binding sent bare would quietly set the
     // loop boundary the user was not asking for.
     struct Binding { int code; int character; int mods; };
+    constexpr int shift = juce::ModifierKeys::shiftModifier;
+    constexpr int command = juce::ModifierKeys::commandModifier;
     static const Binding bindings[] = {
         { juce::KeyPress::spaceKey, ' ', 0 },
         { 'R', 'r', 0 },
@@ -982,9 +994,14 @@ inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
         { 'P', 'p', 0 },
         { '[', '[', 0 },
         { ']', ']', 0 },
-        { '{', '{', juce::ModifierKeys::shiftModifier },
-        { '}', '}', juce::ModifierKeys::shiftModifier },
-        { juce::KeyPress::F11Key, 0, 0 }
+        { '{', '{', shift },
+        { '}', '}', shift },
+        { juce::KeyPress::F11Key, 0, 0 },
+        { 'Z', 'z', command },
+        { 'Z', 'z', command | shift },
+        { 'S', 's', command },
+        { 'S', 's', command | shift },
+        { 'Q', 'q', command }
     };
     static_assert (std::size (bindings)
                        == static_cast<std::size_t> (imgui::ShellShortcut::count),

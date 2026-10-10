@@ -368,6 +368,12 @@ void MultiImportTargetPicker::rebuildAvailableTracks()
     }
 }
 
+void MultiImportTargetPicker::refresh()
+{
+    rebuildAvailableTracks();
+    repaint();
+}
+
 std::vector<MultiImportTargetPicker::Assignment>
 MultiImportTargetPicker::collectAssignments() const
 {
@@ -388,6 +394,14 @@ std::vector<std::string> MultiImportTargetPicker::rowsForScenario() const
     std::vector<std::string> result;
     for (const auto& row : rows)
         result.push_back (row->nameLabel.getText().toStdString() + "\t" + std::to_string (row->chosenTrack()));
+    return result;
+}
+
+std::vector<std::string> MultiImportTargetPicker::targetTextForScenario() const
+{
+    std::vector<std::string> result;
+    for (const auto& row : rows)
+        result.push_back (row->trackPicker.getText().toStdString());
     return result;
 }
 

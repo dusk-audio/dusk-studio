@@ -833,14 +833,21 @@ MainComponent::MainComponent()
     tapeStrip->onTrackMoveDropped = [this] (const TrackMovePlan& plan, int dragged) { dropTrackMove (plan, dragged); };
     engine.onBeforeTracksMove = [this] (const TrackMovePlan& plan) { closeForTrackMove (plan); };
     engine.onTracksMoved = [this] (const TrackMovePlan& plan) { followTrackMove (plan); };
-   #if DUSKSTUDIO_HAS_NATIVE_UI
-    engine.onBeforeRecordCommit = [this] (std::uint32_t capturedTracks)
+    engine.onBeforeRecordCommit = [this] ([[maybe_unused]] std::uint32_t capturedTracks)
     {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
         if (audioEditorView != nullptr && audioEditorTrackIdx >= 0 && audioEditorTrackIdx < Session::kNumTracks
             && (capturedTracks & (std::uint32_t { 1 } << audioEditorTrackIdx)) != 0)
             audioEditorView->yieldDragToRecordCommit();
+       #endif
+        // The take lands once this returns, and a picker up over the window
+        // counts what each track holds.
+        dusk::callAsync ([safeThis = juce::Component::SafePointer<MainComponent> (this)]
+        {
+            if (auto* self = safeThis.getComponent())
+                self->refreshImportPickers();
+        });
     };
-   #endif
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
                                           std::int64_t timelineStart,
                                           int trackHint)
@@ -1022,7 +1029,10 @@ MainComponent::MainComponent()
         {
             for (int t = 0; t < Session::kNumTracks; ++t)
                 if (auto* strip = consoleView->getStripComponent (t))
+                {
                     strip->closeCompEditorPopup();
+                    strip->closeBuiltinEditorPopup();
+                }
             if (auto* master = consoleView->getMasterStripComponent())
                 master->closeTapeEditor();
         }
@@ -1329,16 +1339,30 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 
     // With a modal open a key gets here passed up by its body, sent on by its
     // forwarder, or straight from the window once a click on the dim or a native
-    // child has taken the keyboard from the body. Only the transport keys and the
-    // session shortcuts act behind it, and nothing does while a prompt deciding
-    // the session's fate is up.
-    if (! EmbeddedModal::activeModalStack().empty())
+    // child has taken the keyboard from the body. A native panel's keys come here
+    // the same way whenever its child does not hold the keyboard, which on Windows
+    // is always. Only the transport keys and the session shortcuts act behind a
+    // dialog, and nothing does while a prompt deciding the session's fate is up.
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const auto panelKeys = imgui::DuskPanelWindow::openShellKeys();
+   #else
+    const auto panelKeys = imgui::PanelShellKeys::all;
+   #endif
+    const bool modalUp = ! EmbeddedModal::activeModalStack().empty();
+    if (modalUp || panelKeys != imgui::PanelShellKeys::all)
     {
         if (code == juce::KeyPress::tabKey && ! cmd && ! mods.isAltDown())
-            return EmbeddedModal::moveFocusWithinTopModal (! shift);
-        if (EmbeddedModal::shortcutsWithheld()
-            || ! (isModalForwardableShortcut (key) || isModalSessionShortcut (code, cmd, shift, mods.isAltDown())))
+            return ! modalUp || EmbeddedModal::moveFocusWithinTopModal (! shift);
+        const bool sessionKey = isModalSessionShortcut (code, cmd, shift, mods.isAltDown());
+        const bool panelEscape = escape && ! modalUp && panelKeys == imgui::PanelShellKeys::dialog;
+        if (! panelEscape
+            && (EmbeddedModal::shortcutsWithheld() || panelKeys == imgui::PanelShellKeys::none
+                || ! (isModalForwardableShortcut (key) || sessionKey)))
             return false;
+        // A save from a file browser would open another over it, and the flow
+        // waiting on the first would never hear back.
+        if (sessionKey && code == 'S' && filebrowser::browserOnTop())
+            return true;
     }
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -1374,8 +1398,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // panel cannot be dismissed from the keyboard at all. Answering here works
     // wherever the key lands, and lands on the same close path as clicking
     // outside the panel.
-    // The built-in unit editors and the master tape's editor are more such
-    // children, so the same branch closes whichever one is showing.
+    // The built-in unit editors, the compressor editors and the master tape's
+    // editor are more such children, so the same branch closes whichever one is
+    // showing.
     if (escape)
     {
         if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
@@ -1402,6 +1427,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
                 if (strip != nullptr && strip->isBuiltinEditorOpen())
                 {
                     strip->closeBuiltinEditorPopup();
+                    return true;
+                }
+                if (strip != nullptr && strip->isCompEditorOpen())
+                {
+                    strip->closeCompEditorPopup();
                     return true;
                 }
             }
@@ -2425,6 +2455,7 @@ void MainComponent::openAudioSettings()
 
     audioSettingsWindow = std::make_unique<imgui::DuskPanelWindow> (
         "dusk-studio-audio-settings", "audio-settings", "Audio settings");
+    audioSettingsWindow->setShellKeys (imgui::PanelShellKeys::dialog);
 
     imgui::DuskPanelWindow::Callbacks callbacks;
     callbacks.dismissed = [this] { closeAudioSettings(); };
@@ -2937,6 +2968,7 @@ bool MainComponent::openStartupPanel (std::vector<imgui::RecentSession> recents)
 
     startupWindow = std::make_unique<imgui::DuskPanelWindow> (
         "dusk-studio-startup", "startup", "Startup dialog");
+    startupWindow->setShellKeys (imgui::PanelShellKeys::none);
 
     imgui::DuskPanelWindow::Callbacks callbacks;
     // Only the dialog's own actions dismiss it. A stray click on the DAW behind
@@ -3357,7 +3389,7 @@ void MainComponent::promptNewSessionLocation (SessionTemplate tmpl,
     filebrowser::open (*this, {
         /*title*/                  "Name your new session",
         /*initialFileOrDirectory*/ startDir.getChildFile ("MySong"),
-        /*filePatternsAllowed*/    juce::String(),
+        /*filePatternsAllowed*/    {},
         /*mode*/                   filebrowser::Mode::Save,
         /*selectDirectories*/      false,
         /*saveAnswerIsFolder*/     true,
@@ -3413,8 +3445,15 @@ bool MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate t
 // master export reads the Mastering player. A save holds the audio thread out
 // and cycles every plug-in to read its state, and Save As moves the player onto
 // the copied mix: the first cuts into the render, the second silences the rest.
-bool MainComponent::saveRefusedForRender()
+// A DP import writes into the audio folder the session had when it started, so
+// Save As would leave the regions it brings in pointing at the old folder.
+bool MainComponent::saveRefusedWhileBusy()
 {
+    if (dpImportJob != nullptr)
+    {
+        setStatusText ("Session not saved: finish or cancel the DP import first");
+        return true;
+    }
     if (runningRenders().empty()) return false;
     setStatusText ("Session not saved: finish or cancel the render first");
     return true;
@@ -3422,7 +3461,7 @@ bool MainComponent::saveRefusedForRender()
 
 bool MainComponent::saveSessionTo (const juce::File& requestedDir)
 {
-    if (requestedDir == juce::File() || saveRefusedForRender()) return false;
+    if (requestedDir == juce::File() || saveRefusedWhileBusy()) return false;
 
     const auto oldDir = session.getSessionDirectory();
     // Another spelling of the session's own folder (a link, a bind mount) is a
@@ -3721,7 +3760,7 @@ void MainComponent::writeAutosave()
     // against the 32-bit fingerprint cached at last-save / last-autosave
     // assignment. Avoids re-running a juce::String equality scan over the
     // full serialised tree (potentially hundreds of KB) on every tick.
-    // juce::DefaultHashFunctions::generateHash is the JUCE-canonical fast
+    // JUCE's DefaultHashFunctions::generateHash is the JUCE-canonical fast
     // hash used by HashMap; collision risk on a real session string is
     // statistically negligible. Worst-case missed-write recovers next tick.
     const auto stripped = stripVolatileStateForDirtyCompare (json);
@@ -4122,7 +4161,7 @@ bool MainComponent::saveGoesInPlace() const
 
 void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
 {
-    if (saveRefusedForRender())
+    if (saveRefusedWhileBusy())
     {
         if (onComplete) onComplete (false);
         return;
@@ -4152,7 +4191,7 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
     filebrowser::open (*this, {
         /*title*/                  "Save session as...",
         /*initialFileOrDirectory*/ startDir.getChildFile (defaultName),
-        /*filePatternsAllowed*/    juce::String(),
+        /*filePatternsAllowed*/    {},
         /*mode*/                   filebrowser::Mode::Save,
         /*selectDirectories*/      false,
         /*saveAnswerIsFolder*/     true,
@@ -4175,7 +4214,7 @@ void MainComponent::saveAsPrompt()
     // step. The typed name becomes the session folder; the navigated
     // directory becomes its parent. Replaces the old two-step modal-then-
     // chooser flow which only let the user browse, never type.
-    if (saveRefusedForRender()) return;
+    if (saveRefusedWhileBusy()) return;
     auto startDir = session.getSessionDirectory().getParentDirectory();
     if (! startDir.isDirectory())
         startDir = toFile (defaultSessionsFolder());
@@ -4187,7 +4226,7 @@ void MainComponent::saveAsPrompt()
     filebrowser::open (*this, {
         /*title*/                  "Save session as...",
         /*initialFileOrDirectory*/ startDir.getChildFile (defaultName),
-        /*filePatternsAllowed*/    juce::String(),
+        /*filePatternsAllowed*/    {},
         /*mode*/                   filebrowser::Mode::Save,
         /*selectDirectories*/      false,
         /*saveAnswerIsFolder*/     true,
@@ -6741,8 +6780,15 @@ void MainComponent::undoOrRedo (bool redo)
         }
     }
     undoOrExplain (engine, *this, redo);
+    refreshImportPickers();
+}
+
+void MainComponent::refreshImportPickers()
+{
     if (auto* picker = dynamic_cast<ImportTargetPicker*> (importTargetModal.getBody()))
         picker->refresh();
+    else if (auto* multi = dynamic_cast<MultiImportTargetPicker*> (importTargetModal.getBody()))
+        multi->refresh();
 }
 
 void MainComponent::closeVirtualKeyboard()

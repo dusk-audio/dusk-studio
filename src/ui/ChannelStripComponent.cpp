@@ -4135,6 +4135,11 @@ bool ChannelStripComponent::moduleEditorOpenForScenario (int module) const
 {
     if (module == 0) return eqEditorModal.isOpen();
     if (module == 2) return auxEditorModal.isOpen();
+    return isCompEditorOpen();
+}
+
+bool ChannelStripComponent::isCompEditorOpen() const noexcept
+{
    #if DUSKSTUDIO_HAS_NATIVE_UI
     return compEditorWindow != nullptr && compEditorWindow->isOpen();
    #else
@@ -4435,6 +4440,7 @@ void ChannelStripComponent::openBuiltinEditorPopup()
     {
         builtinEditorWindow = std::make_unique<imgui::DuskPanelWindow> (
             "dusk-studio-builtin-editor", "builtin-editor", "Built-in unit");
+        builtinEditorWindow->setShellKeys (imgui::PanelShellKeys::dialog);
 
         // Raw `this`: the strip owns the window, and the window's teardown drops
         // the host's callbacks before anything can fire (see the compressor
@@ -4537,6 +4543,7 @@ void ChannelStripComponent::openCompEditorPopup()
     {
         compEditorWindow = std::make_unique<imgui::DuskPanelWindow> (
             "dusk-studio-comp-editor", "comp-editor", "Compressor");
+        compEditorWindow->setShellKeys (imgui::PanelShellKeys::dialog);
 
         // Raw `this` rather than a SafePointer: the strip owns the window, and the
         // window's teardown drops the host's callbacks before anything can fire, so

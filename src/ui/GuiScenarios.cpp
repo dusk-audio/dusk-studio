@@ -997,6 +997,30 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return clickFileBrowserChild ([] (const auto& child) { return dynamic_cast<const Editor*> (&child) != nullptr; },
                                       false);
     }
+    std::string fileBrowserFocus() const override
+    {
+        using Editor = std::remove_pointer_t<decltype (owner.statusLabel.getCurrentTextEditor())>;
+        using Button = std::remove_pointer_t<decltype (&owner.recordingStageBtn)>;
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return {};
+        for (auto* child : stack.back()->getBody()->getChildren())
+        {
+            if (! child->hasKeyboardFocus (true)) continue;
+            for (auto* inner : child->getChildren())
+            {
+                if (! inner->hasKeyboardFocus (true)) continue;
+                if (inner->getName() == "path") return "path";
+                if (inner->getName() == "up") return "up";
+                if (inner->getTitle() == "Files") return "Files";
+                if (dynamic_cast<const Editor*> (inner) != nullptr) return "file";
+                return "other";
+            }
+            if (const auto* button = dynamic_cast<const Button*> (child))
+                return button->getButtonText().toStdString();
+            return "other";
+        }
+        return {};
+    }
     template <typename Matches>
     bool clickFileBrowserChild (Matches matches, bool nearLeftEdge)
     {
@@ -1034,6 +1058,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (stack.empty()) return {};
         const auto* picker = dynamic_cast<const MultiImportTargetPicker*> (stack.back()->getBody());
         return picker != nullptr ? picker->rowsForScenario() : std::vector<std::string> {};
+    }
+    std::vector<std::string> multiImportTargetText() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* picker = dynamic_cast<const MultiImportTargetPicker*> (stack.back()->getBody());
+        return picker != nullptr ? picker->targetTextForScenario() : std::vector<std::string> {};
     }
     std::vector<std::string> importTargetRows() const override
     {
@@ -1914,6 +1945,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.requestQuit();
         return true;
     }
+    void chooseSaveAs() override { owner.menuItemSelected (1004, 0); }
     bool doubleClickTempo() override
     {
         auto* bar = owner.transportBar.get();

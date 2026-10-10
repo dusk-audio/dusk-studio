@@ -536,6 +536,7 @@ public:
     // because the panel is an opaque native child and a modal opening behind it
     // can be neither seen nor clicked.
     void closeCompEditorPopup();
+    bool isCompEditorOpen() const noexcept;
 
     // Same reason again: the built-in unit editor is another native child, and
     // the shell has to be able to close it and to ask whether it is open.

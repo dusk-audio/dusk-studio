@@ -31,8 +31,9 @@ struct KeyChord
 // modifier it does not know.
 std::optional<KeyChord> parseKeyDescription (const std::string& description);
 
-// The shell shortcut a panel passes on for a key: a bare transport key, or Shift with
-// a bracket for the punch pair. Empty for every other key, which the panel keeps.
+// The shell shortcut a panel passes on for a key: a bare transport key, Shift with a
+// bracket for the punch pair, or the command key with Z, Y, S or Q for Undo, Redo,
+// Save, Save As and Quit. Empty for every other key, which the panel keeps.
 std::optional<ShellShortcut> shellShortcutFor (const KeyChord& chord);
 
 // What a native panel implements. The view owns its parameters and draws into the
@@ -65,9 +66,10 @@ public:
     // its whole rectangle, which the view fills with its own panel surface.
     virtual bool wantsPlate() const { return true; }
 
-    // A view that binds a bare transport key to its own input - the virtual
-    // keyboard's note letters - claims it here, and the window stops forwarding it.
-    // Claim implies consume: a claimed key never reaches the shell.
+    // A view that binds a shell shortcut's key to its own input - the virtual
+    // keyboard's note letters, the audio editor's own undo - claims it here, and the
+    // window stops forwarding it. Claim implies consume: a claimed key never reaches
+    // the shell.
     virtual bool claimsShortcut (ShellShortcut) const { return false; }
 
     // False keeps Escape inside the view (a text field being edited, a popup that
@@ -146,6 +148,12 @@ public:
     ~DuskPanelWindow();
 
     void setCallbacks (Callbacks callbacks);
+
+    // What the shell's own shortcuts may do while this window is open; all until set.
+    void setShellKeys (PanelShellKeys keys) noexcept;
+
+    // The strictest rule of every window open now.
+    static PanelShellKeys openShellKeys() noexcept;
 
     // The view is built before open() and released when the window closes.
     void setView (std::unique_ptr<DuskPanelView> view);

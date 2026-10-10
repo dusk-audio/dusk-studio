@@ -85,6 +85,9 @@ const std::array<ShortcutBinding, 9>& shortcutBindings()
     return bindings;
 }
 
+// Held with the command key, these are the session's own shortcuts.
+constexpr std::array<ImGuiKey, 4> kSessionKeys { ImGuiKey_Z, ImGuiKey_Y, ImGuiKey_S, ImGuiKey_Q };
+
 // A native panel renders into its own framework child, which the JUCE screenshot
 // harness cannot reach through createComponentSnapshot. The application reads its
 // own frame back instead, the way the gate spike's --capture does, so the manual's
@@ -342,7 +345,22 @@ std::optional<KeyChord> parseKeyDescription (const std::string& description)
 
 std::optional<ShellShortcut> shellShortcutFor (const KeyChord& chord)
 {
-    if (chord.ctrl || chord.super || chord.alt)
+    if (chord.alt)
+        return std::nullopt;
+    const bool command = commandIsSuper() ? chord.super : chord.ctrl;
+    const bool otherModifier = commandIsSuper() ? chord.ctrl : chord.super;
+    if (command && ! otherModifier)
+    {
+        switch (chord.key)
+        {
+            case ImGuiKey_Z: return chord.shift ? ShellShortcut::redo : ShellShortcut::undo;
+            case ImGuiKey_S: return chord.shift ? ShellShortcut::saveAs : ShellShortcut::save;
+            case ImGuiKey_Y: return chord.shift ? std::nullopt : std::optional<ShellShortcut> (ShellShortcut::redo);
+            case ImGuiKey_Q: return chord.shift ? std::nullopt : std::optional<ShellShortcut> (ShellShortcut::quit);
+            default:         return std::nullopt;
+        }
+    }
+    if (chord.ctrl || chord.super)
         return std::nullopt;
     for (const auto& binding : shortcutBindings())
     {
@@ -788,15 +806,18 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             return;
 
         const auto& io = ImGui::GetIO();
-        for (const auto& binding : shortcutBindings())
+        const auto forward = [&] (ImGuiKey key)
         {
-            if (! ImGui::IsKeyPressed (binding.key, false))
-                continue;
-            const auto shortcut = shellShortcutFor ({ binding.key, io.KeyCtrl, io.KeySuper, io.KeyShift, io.KeyAlt });
-            if (! shortcut || (view != nullptr && view->claimsShortcut (*shortcut)))
-                continue;
-            callbacks.shortcut (*shortcut);
-        }
+            if (! ImGui::IsKeyPressed (key, false))
+                return;
+            const auto shortcut = shellShortcutFor ({ key, io.KeyCtrl, io.KeySuper, io.KeyShift, io.KeyAlt });
+            if (shortcut && (view == nullptr || ! view->claimsShortcut (*shortcut)))
+                callbacks.shortcut (*shortcut);
+        };
+        for (const auto& binding : shortcutBindings())
+            forward (binding.key);
+        for (const auto key : kSessionKeys)
+            forward (key);
     }
 
     void requestDismiss()
@@ -816,15 +837,27 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     dw::KnobAtlas knobAtlas;
     dw::DragState drag;
     Geometry lastGeometry;
+    PanelShellKeys shellKeys = PanelShellKeys::all;
     std::string capturePath;
     int framesDrawn = 0;
     DuskImGuiHost host;
 };
 
+namespace
+{
+// Never freed, so a window destroyed during static teardown still finds it.
+std::vector<const DuskPanelWindow*>& liveWindows()
+{
+    static auto* windows = new std::vector<const DuskPanelWindow*>();
+    return *windows;
+}
+} // namespace
+
 DuskPanelWindow::DuskPanelWindow (std::string className, std::string logTag,
                                   std::string displayName)
     : impl (new Impl (std::move (className), std::move (logTag), std::move (displayName)))
 {
+    liveWindows().push_back (this);
     DuskImGuiHost::Callbacks callbacks;
     callbacks.createWidget = [this] (DGL::Window& window) -> std::unique_ptr<DGL::TopLevelWidget>
     {
@@ -853,11 +886,29 @@ DuskPanelWindow::DuskPanelWindow (std::string className, std::string logTag,
     impl->host.setCallbacks (std::move (callbacks));
 }
 
-DuskPanelWindow::~DuskPanelWindow() = default;
+DuskPanelWindow::~DuskPanelWindow()
+{
+    auto& windows = liveWindows();
+    windows.erase (std::remove (windows.begin(), windows.end(), this), windows.end());
+}
 
 void DuskPanelWindow::setCallbacks (Callbacks callbacks)
 {
     impl->callbacks = std::move (callbacks);
+}
+
+void DuskPanelWindow::setShellKeys (PanelShellKeys keys) noexcept
+{
+    impl->shellKeys = keys;
+}
+
+PanelShellKeys DuskPanelWindow::openShellKeys() noexcept
+{
+    auto strictest = PanelShellKeys::all;
+    for (const auto* window : liveWindows())
+        if (window->isOpen())
+            strictest = std::max (strictest, window->impl->shellKeys);
+    return strictest;
 }
 
 void DuskPanelWindow::setView (std::unique_ptr<DuskPanelView> view)

@@ -84,6 +84,7 @@ public:
                     afterOpening (folder, change);
                 };
             else if (auto* nameBox = dynamic_cast<juce::TextEditor*> (child))
+            {
                 nameBox->onReturnKey = [this, nameBox, change = nameBox->onReturnKey]
                 {
                     const auto name = nameBox->getText();
@@ -92,9 +93,15 @@ public:
                     else
                         change();
                 };
+                pickListHasKeyboard = [nameBox] { return nameBox->isReadOnly() && nameBox->hasKeyboardFocus (false); };
+            }
         }
         routeGoUp();
     }
+
+    // A browser picking several files lists them in its name box, read-only, and
+    // that box turns down every key typed into it.
+    std::function<bool()> pickListHasKeyboard = [] { return false; };
 
     // Private to this browser: the list and any folders it opens scan on it.
     auto& scanThread() { return getDisplayComponent()->directoryContentsList.getTimeSliceThread(); }
@@ -191,6 +198,7 @@ private:
 };
 
 class DuskFileBrowserPanel final : public juce::Component,
+                                       public ModalKeyClaimant,
                                        private juce::FileBrowserListener
 {
 public:
@@ -384,7 +392,16 @@ public:
     {
         if (k == juce::KeyPress::escapeKey)  { dismissCancelled(); return true; }
         if (k == juce::KeyPress::returnKey)  { commit();           return true; }
-        return false;
+        const auto mods = k.getModifiers();
+        return ! mods.isCommandDown() && ! mods.isCtrlDown() && ! mods.isAltDown()
+            && claimsKeyCode (k.getKeyCode());
+    }
+
+    // Typing a path into the list of picked files does nothing, rather than start a
+    // take or toggle the loop with its letters.
+    bool claimsKeyCode (int keyCode) const override
+    {
+        return keyCode >= ' ' && keyCode < 0x7f && browser != nullptr && browser->pickListHasKeyboard();
     }
 
     bool shownFolderScanning() const { return browser != nullptr && browser->scanning(); }
@@ -590,9 +607,27 @@ std::filesystem::path shownFolderForScenario()
     return panel != nullptr ? panel->shownFolder() : std::filesystem::path {};
 }
 
+namespace
+{
+// The shared modal shows one browser at a time, and the flow waiting on the one
+// already up hears it was cancelled rather than nothing at all.
+void cancelShownBrowser()
+{
+    if (auto* shown = dynamic_cast<DuskFileBrowserPanel*> (sharedFileBrowserModal().getBody()))
+        shown->dismissCancelled();
+}
+} // namespace
+
+bool browserOnTop()
+{
+    const auto& stack = EmbeddedModal::activeModalStack();
+    return ! stack.empty() && stack.back() == &sharedFileBrowserModal();
+}
+
 void open (juce::Component& host, Options opts,
             std::function<void (juce::File)> onResult)
 {
+    cancelShownBrowser();
     auto* parent = host.getTopLevelComponent();
     if (parent == nullptr) parent = &host;
 
@@ -607,6 +642,7 @@ void open (juce::Component& host, Options opts,
 void openMulti (juce::Component& host, Options opts,
                   std::function<void (juce::Array<juce::File>)> onResult)
 {
+    cancelShownBrowser();
     auto* parent = host.getTopLevelComponent();
     if (parent == nullptr) parent = &host;
 
