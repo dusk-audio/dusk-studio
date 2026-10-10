@@ -842,7 +842,8 @@ MainComponent::MainComponent()
        #endif
         // The take lands once this returns, and a picker up over the window
         // counts what each track holds.
-        dusk::callAsync ([safeThis = juce::Component::SafePointer<MainComponent> (this)]
+        const juce::Component::SafePointer<MainComponent> safeThis (this);
+        dusk::callAsync ([safeThis]
         {
             if (auto* self = safeThis.getComponent())
                 self->refreshImportPickers();

@@ -23603,10 +23603,11 @@ std::optional<ScenarioResult> runTrackMoveUndoUnderMenu (GuiHost& host, Scenario
         if (! strip->openEditor())
         {
            #if DUSKSTUDIO_HAS_NATIVE_CLAP && defined (__linux__)
-            ctx.expect (false, "the CLAP fixture's editor could not be embedded for the plug-in editor leg");
-           #else
-            ctx.note ("the CLAP fixture's editor could not be embedded on this display, so that leg was skipped");
+            if (host.canEmbedPluginEditors())
+                ctx.expect (false, "the CLAP fixture's editor could not be embedded for the plug-in editor leg");
+            else
            #endif
+            ctx.note ("the CLAP fixture's editor could not be embedded on this display, so that leg was skipped");
             dismissAlert (host);
             return;
         }
@@ -23792,6 +23793,8 @@ std::optional<ScenarioResult> runPluginEditorTabLeftAlone (GuiHost& host, Scenar
     (void) ctx;
     return ScenarioResult::skip ("needs the Linux CLAP fixture");
    #else
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("this display cannot embed plug-in editors");
     const auto fixture = ctx.fixture ("no_window.clap");
     if (! fixture) return ScenarioResult::fail ("missing fixture: no_window.clap");
     auto* strip = readyStrip (host, ctx);
@@ -23830,7 +23833,7 @@ std::optional<ScenarioResult> runPluginEditorTabLeftAlone (GuiHost& host, Scenar
 
 const ScenarioRegistrar pluginEditorTabLeftAlone { Scenario {
     "gui.plugin_editor_tab_left_alone", { "gui", "plugin", "keyboard" }, Needs::Engine | Needs::Gui,
-    {}, {}, 10000,
+    { "no_window.clap" }, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPluginEditorTabLeftAlone (host, ctx); }
 } };
 
