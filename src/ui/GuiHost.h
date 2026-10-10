@@ -367,6 +367,10 @@ public:
     // The strip name the open EQ editor is titled with.
     virtual std::string stripModuleEditorTitle (int track, int module) const = 0;
     virtual void closeStripModuleEditors (int track) = 0;
+    // A key into the compressor editor or built-in unit editor the strip has open.
+    virtual bool inputStripPanel (int track, const std::string& input) = 0;
+    // Whether a native panel is inside its own frame now.
+    virtual bool panelFrameDrawing() const = 0;
     // The master strip's TAPE split button: its label opens Tape Machine 2's own
     // editor, its status light engages the stage.
     virtual bool clickMasterTape (bool label) = 0;
@@ -540,9 +544,6 @@ public:
     // False, with nothing asked, when there are no unsaved changes: that quit
     // would end the run.
     virtual bool requestQuit() = 0;
-    // File > Save As as the macOS menu bar sends it, which no dialog over the
-    // window holds back.
-    virtual void chooseSaveAs() = 0;
     virtual bool mixdownRunning() const = 0;
     // Whether any modal's render is still running: bounce, mixdown, master export or freeze.
     virtual bool renderRunning() const = 0;

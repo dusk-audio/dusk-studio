@@ -324,19 +324,27 @@ Takes live on the track now, and the audio editor is where you comp them.
   controls. The editors passed on every key from 0.14, and the file browsers
   leaked them from 0.14. The compressor editor, Utility's knob panel and Audio
   settings follow the same rule: on Windows every key reached the window behind
-  them, so **M** dropped a marker behind the compressor editor, and on Linux and
-  macOS Undo, Redo, Save, Save As and Quit did nothing from inside them. The
-  Startup dialog lets no shortcut through. Letters typed into the Import
-  browser's read-only file box no longer start a take or toggle the loop, and
-  **Tab** from its path box goes on to the next control.
+  them, so **M** dropped a marker behind the compressor editor, and on Linux
+  Undo, Redo, Save, Save As and Quit did nothing from inside them. The tuner
+  keeps keys the same way, where **Delete** removed the selected region it
+  hid and **M** dropped a marker; **U** or **Esc** closes it. The virtual
+  keyboard keeps every key in its layout wherever the key arrives, with or
+  without Cmd: on macOS a command chord reaches the window first, so **Cmd+Z**
+  behind it undid an edit and **Cmd+B** opened Bounce. The Startup dialog lets
+  no shortcut through. Letters typed into the Import browser's read-only file
+  box no longer start a take or toggle the loop, and **Tab** from its path box
+  goes on to the next control.
 - **Saving from a file browser no longer strands what was waiting on it**
   (#858). Cmd+S in the Save As browser that the quit prompt's Save opens
   replaced it with another browser, and the quit never heard back: the app
   stayed open with no audio and no autosave. Save and Save As now do nothing
-  in a file browser, and a browser another opens in its place, as File > Save
-  As from the macOS menu bar can, is cancelled first, so the quit gives the
-  audio and the autosave back and the Startup dialog returns. Save and Save As
-  are also refused while a DP-24/32 import runs, which would have left the
+  in a file browser. **Cmd+Q** still works there, and its prompt opens above
+  the browser instead of hidden beneath it. Its Save then opens the quit's own
+  Save As in the first browser's place and cancels that one, so what waited
+  on it backs out: a Startup dialog pick returns to the dialog once the quit's
+  browser is gone rather than covering it, and an earlier quit leaves the
+  audio and the autosave off for the quit now waiting. Save and Save As are
+  also refused while a DP-24/32 import runs, which would have left the
   imported regions pointing into the old session folder.
 
 ## [0.14.0] - 2026-09-29

@@ -40,6 +40,7 @@ constexpr unsigned int kPlateBorder = 0x3a3a42ffu;
 constexpr int kSettledFrames = 2;
 constexpr float kScenarioFrameSeconds = 1.0f / 60.0f;
 int panelsWithUnseenScenarioInput = 0;
+int panelFramesDrawing = 0;
 
 // A scenario run can hold the panels to the frame rate of a loaded software
 // renderer, which is where a case's timing assumptions break. 0 leaves them alone.
@@ -609,7 +610,14 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 std::this_thread::sleep_until (lastFrameAt + std::chrono::milliseconds (interval));
                 lastFrameAt = std::chrono::steady_clock::now();
             }
-            DGL::ImGuiTopLevelWidget::onDisplay();
+            {
+                struct Drawing
+                {
+                    Drawing() { ++panelFramesDrawing; }
+                    ~Drawing() { --panelFramesDrawing; }
+                } drawing;
+                DGL::ImGuiTopLevelWidget::onDisplay();
+            }
             owner.captureFrameIfAsked (static_cast<int> (getWidth()),
                                        static_cast<int> (getHeight()));
         }
@@ -978,6 +986,18 @@ bool DuskPanelWindow::offerShellKey (const std::string& description, std::uint32
     return true;
 }
 
+bool DuskPanelWindow::takeKeptKey (const std::string& description, std::uint32_t character)
+{
+    if (! isOpen() || impl->view == nullptr || impl->panelWidget == nullptr)
+        return false;
+    const auto chord = parseKeyDescription (description);
+    if (! chord || ! impl->view->keepsKey (*chord))
+        return false;
+    if (chord->command() || ! impl->panelWidget->hasKeyboard())
+        impl->panelWidget->replayShellKey (description, character);
+    return true;
+}
+
 bool DuskPanelWindow::clickControlForScenario (const std::string& control)
 {
     ImVec2 point;
@@ -1040,5 +1060,9 @@ void DuskPanelWindow::expectInputForScenario()
 bool DuskPanelWindow::inputSeenForScenario() noexcept
 {
     return panelsWithUnseenScenarioInput == 0;
+}
+bool DuskPanelWindow::drawingForScenario() noexcept
+{
+    return panelFramesDrawing > 0;
 }
 } // namespace duskstudio::imgui

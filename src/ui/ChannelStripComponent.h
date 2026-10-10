@@ -111,6 +111,9 @@ public:
     // up. The comp editor is a framework panel with no JUCE text to read.
     std::string moduleEditorTitleForScenario (int module) const;
     void closeModuleEditorsForScenario();
+    // A key into the open compressor editor or built-in unit editor, as its child
+    // would take it with the keyboard.
+    bool inputPanelForScenario (const std::string& input);
     bool meterClipForScenario();
     auto* midiSelectorForScenario (int kind)
     { return kind == 0 ? &midiInputSelector : kind == 1 ? &midiChannelSelector : &midiOutputSelector; }

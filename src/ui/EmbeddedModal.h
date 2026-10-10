@@ -315,7 +315,7 @@ public:
     //   WITHOUT restoring focus so a control clicked outside keeps it (see
     //   close(bool)); Esc keeps using onDismiss.
     // Defaults preserve "Esc + click-outside both dismiss".
-    void show (juce::Component& parent,
+    void show (juce::Component& requestedParent,
                std::unique_ptr<juce::Component> body,
                std::function<void()> onDismiss = {},
                bool dismissOnClickOutside = true,
@@ -328,6 +328,19 @@ public:
     {
         if (auto hook = beforeModalShown()) hook();
         close();
+
+        // Stacked above every modal already up. One of those may live in a component
+        // above the one asked for - a file browser covers the whole window - and a
+        // body added beneath it would be hidden and unclickable.
+        auto* stacked = &requestedParent;
+        for (auto* open : activeModalStack())
+            if (auto* below = open->host.getComponent(); below != nullptr && below->isParentOf (stacked))
+                stacked = below;
+        auto& parent = *stacked;
+        const auto origin = parent.getLocalPoint (&requestedParent, requestedParent.getLocalBounds().getTopLeft());
+        requestedOffsetX_ = origin.x;
+        requestedOffsetY_ = origin.y;
+
         showGeneration_ = ++modalGeneration();
         host = &parent;
         body_ = std::move (body);
@@ -776,10 +789,11 @@ public:
     {
         auto* body = getBody();
         if (body == nullptr) return;
-        body->setTopLeftPosition (topLeftInParent);
+        const auto topLeft = topLeftInParent.translated (requestedOffsetX_, requestedOffsetY_);
+        body->setTopLeftPosition (topLeft);
         if (backdrop_ != nullptr)
-            backdrop_->setTopLeftPosition (topLeftInParent.x - kBackdropMargin,
-                                              topLeftInParent.y - kBackdropMargin);
+            backdrop_->setTopLeftPosition (topLeft.x - kBackdropMargin,
+                                              topLeft.y - kBackdropMargin);
     }
 
     // Re-centre the body (and its backdrop) on the host after the caller has
@@ -953,6 +967,10 @@ private:
     std::function<void()> userOnDismissOutside;
     std::function<void (unsigned long long, bool)> borrowedHostResized;
     unsigned long long showGeneration_ = 0;
+    // Where the parent show() was asked for sits in the host the modal stacked into:
+    // repositionBody takes the caller's position in that parent's coordinates.
+    int requestedOffsetX_ = 0;
+    int requestedOffsetY_ = 0;
     bool escapeDismisses = true;
     bool forwardShortcuts_ = true;
     bool listeningForOutsideClicks = false;
@@ -969,12 +987,12 @@ private:
 // panel reports which shortcut the user asked for and this turns it back into the key
 // press MainComponent binds - the same hop keyPressed above makes, from the other side
 // of the framework boundary.
-inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
+//
+// The press is posted, never made in place: the panel reports from inside its own
+// frame, and what the shortcut does can destroy that panel - an undo of a track move
+// rebuilds the strip a compressor editor belongs to.
+inline void dispatchShellShortcut (imgui::ShellShortcut shortcut)
 {
-    auto* const target = EmbeddedModal::focusRestoreTarget().getComponent();
-    if (target == nullptr)
-        return false;
-
     // Key codes, not KeyPress objects: isModalForwardableShortcut reads these same
     // codes, so the two forwarders cannot drift on what counts as a shortcut.
     //
@@ -1009,9 +1027,12 @@ inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
 
     const auto index = static_cast<std::size_t> (shortcut);
     if (index >= std::size (bindings))
-        return false;
-    return target->keyPressed (juce::KeyPress (bindings[index].code, bindings[index].mods,
-                                               bindings[index].character));
+        return;
+    dusk::callAsync ([target = EmbeddedModal::focusRestoreTarget(), binding = bindings[index]]
+    {
+        if (auto* const component = target.getComponent())
+            component->keyPressed (juce::KeyPress (binding.code, binding.mods, binding.character));
+    });
 }
 
 // Global KeyListener that forwards transport / navigation hotkeys (Space, R,

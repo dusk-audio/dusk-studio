@@ -72,6 +72,11 @@ public:
     // the shell.
     virtual bool claimsShortcut (ShellShortcut) const { return false; }
 
+    // A key the view keeps wherever it arrives, the shell's own bindings for it
+    // included: the virtual keyboard's layout, which plays with or without the
+    // command key.
+    virtual bool keepsKey (const KeyChord&) const { return false; }
+
     // False keeps Escape inside the view (a text field being edited, a popup that
     // should close first). The window dismisses on Escape only when this is true.
     virtual bool escapeDismisses() const { return true; }
@@ -133,8 +138,9 @@ public:
         // graphics failure forced it.
         std::function<void()> closed;
 
-        // A transport key the panel did not claim. Return true if the shell took it.
-        std::function<bool (ShellShortcut)> shortcut;
+        // A shell shortcut the view did not claim, reported from inside the panel's
+        // frame: whatever it does must not run before that frame is out.
+        std::function<void (ShellShortcut)> shortcut;
 
         // Where the child belongs now. Polled while the window is open so a host
         // resized underneath it follows without every caller having to listen for
@@ -185,6 +191,11 @@ public:
     // that does got the key itself, so replaying it would type it twice.
     bool offerShellKey (const std::string& description, std::uint32_t character);
 
+    // A key the shell received that the view keeps (keepsKey), replayed into the child.
+    // True when the shell must not act on it. A command chord is replayed even into a
+    // child holding the keyboard: macOS hands those to the shell first.
+    bool takeKeptKey (const std::string& description, std::uint32_t character);
+
     // GuiHost's pointer modifier bits.
     enum ScenarioModifier : int
     {
@@ -214,6 +225,8 @@ public:
     void expectInputForScenario();
     // Whether every open panel has drawn the input its ...ForScenario calls queued.
     static bool inputSeenForScenario() noexcept;
+    // Whether any panel is inside its own frame now.
+    static bool drawingForScenario() noexcept;
 
 private:
     struct Impl;

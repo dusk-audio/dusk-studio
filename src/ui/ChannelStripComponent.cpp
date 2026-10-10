@@ -4131,6 +4131,19 @@ void ChannelStripComponent::openCompEditorForCapture (const std::string& capture
    #endif
 }
 
+bool ChannelStripComponent::inputPanelForScenario (const std::string& input)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (compEditorWindow != nullptr && compEditorWindow->isOpen())
+        return compEditorWindow->inputForScenario (input);
+    if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
+        return builtinEditorWindow->inputForScenario (input);
+   #else
+    (void) input;
+   #endif
+    return false;
+}
+
 bool ChannelStripComponent::moduleEditorOpenForScenario (int module) const
 {
     if (module == 0) return eqEditorModal.isOpen();

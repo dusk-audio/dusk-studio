@@ -14627,9 +14627,23 @@ std::optional<ScenarioResult> runNativeDialogKeys (GuiHost& host, ScenarioContex
         *start = newEdit();
         ctx.expect (host.inputVirtualKeyboard ("command + Z"), "the virtual keyboard did not take Cmd+Z");
     } });
-    steps->push_back ({ 300, [&host, &ctx, start, edits]
+    // Its layout keys at the window too, as Windows delivers every key and macOS
+    // every command chord; L, outside the layout, still reaches the loop.
+    steps->push_back ({ 300, [&host, &ctx, &session, &transport, start, edits]
     {
         ctx.expect (*edits == *start, "Cmd+Z on the virtual keyboard reached the history");
+        const auto markers = session.getMarkers().size();
+        host.pressPeerKey ("command + Z");
+        host.pressPeerKey ("command + B");
+        host.pressPeerKey (keyCodeDescription ('m'), 'm');
+        ctx.expect (*edits == *start, "Cmd+Z at the window behind the virtual keyboard undid an edit");
+        ctx.expect (host.modalStackEmpty(), "Cmd+B at the window behind the virtual keyboard opened '" + host.modalText() + "'");
+        ctx.expect (session.getMarkers().size() == markers, "M at the window behind the virtual keyboard dropped a marker");
+        ctx.expect (host.virtualKeyboardOpen(), "the layout keys at the window closed the virtual keyboard");
+        const bool loopWas = transport.isLoopEnabled();
+        host.pressPeerKey (keyCodeDescription ('l'), 'l');
+        ctx.expect (transport.isLoopEnabled() != loopWas, "L at the window behind the virtual keyboard did not reach the loop");
+        transport.setLoopEnabled (loopWas);
         host.closeVirtualKeyboard();
     } });
     steps->push_back ({ 0, [] {}, [&host] { return ! host.virtualKeyboardOpen(); }, "the virtual keyboard did not close" });
@@ -19689,8 +19703,9 @@ const ScenarioRegistrar quitSaveCancel { Scenario {
 
 // The Save As browser a quit's Save opens holds the quit's audio and autosave
 // until it answers. Cmd+S and Cmd+Shift+S typed into it do nothing, so the quit
-// still waits on it, and a Save As from the menu bar that opens another browser
-// in its place cancels it first, which gives the audio and the autosave back.
+// still waits on it. Cmd+Q there asks again, and that quit's Save opens its own
+// browser in place of the first, which is cancelled; the audio and the autosave
+// stay off for the quit now waiting, and its Cancel gives them back.
 std::optional<ScenarioResult> runSaveFromQuitBrowser (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
@@ -19765,19 +19780,23 @@ std::optional<ScenarioResult> runSaveFromQuitBrowser (GuiHost& host, ScenarioCon
         if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
                           "the second quit's Save showed '" + host.modalText() + "' rather than Save As"))
             return;
-        host.chooseSaveAs();
+        ctx.expect (host.pressPeerKey ("command + Q"), "the quit's Save As did not pass Cmd+Q on");
     } });
-    steps->push_back ({ 300, [&host, &ctx, running]
+    steps->push_back ({ 400, [quitToSaveAs] { quitToSaveAs ("Cmd+Q in the quit's Save As"); } });
+    steps->push_back ({ 600, [&host, &ctx, &engine, sessionJson]
     {
         ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
-                    "File > Save As over the quit's Save As showed '" + host.modalText() + "'");
-        running ("File > Save As in place of the quit's Save As");
-        ctx.expect (host.clickModalButton ("Cancel"), "the menu's Save As has no Cancel");
+                    "the third quit's Save showed '" + host.modalText() + "' rather than Save As");
+        ctx.expect (host.modalCount() == 1, "the third quit's Save As left another dialog under it");
+        ctx.expect (host.engineDetached() && ! engine.isAudioCallbackRegistered() && ! host.autosaveRunning(),
+                    "the cancelled Save As gave the audio or the autosave back while the third quit waits");
+        ctx.expect (! std::filesystem::exists (sessionJson), "the third quit saved the session");
+        ctx.expect (host.clickModalButton ("Cancel"), "the third quit's Save As has no Cancel");
     } });
     steps->push_back ({ 600, [&host, &ctx, running]
     {
-        ctx.expect (host.modalStackEmpty(), "Cancel in the menu's Save As left '" + host.modalText() + "' up");
-        running ("Cancel in the menu's Save As");
+        ctx.expect (host.modalStackEmpty(), "Cancel in the third quit's Save As left '" + host.modalText() + "' up");
+        running ("Cancel in the third quit's Save As");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -19790,9 +19809,10 @@ const ScenarioRegistrar saveFromQuitBrowser { Scenario {
 } };
 
 // A pick in the startup dialog over unsaved changes waits on the Save As its
-// unsaved-changes prompt's Save opens. A Save As from the menu bar that opens in
-// that browser's place cancels it, and the startup dialog comes back as it does
-// after Cancel.
+// unsaved-changes prompt's Save opens. Cmd+Q there, then Save in the quit's
+// prompt, opens the quit's Save As in that browser's place and cancels it. The
+// startup dialog stays away while the quit's browser is up, and comes back once
+// Cancel there has given the audio back.
 std::optional<ScenarioResult> runStartupSaveReplaced (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
@@ -19834,12 +19854,30 @@ std::optional<ScenarioResult> runStartupSaveReplaced (GuiHost& host, ScenarioCon
         if (! ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
                           "Save in the unsaved-changes prompt showed '" + host.modalText() + "' rather than Save As"))
             return;
-        host.chooseSaveAs();
+        ctx.expect (host.pressPeerKey ("command + Q"), "the switch's Save As did not pass Cmd+Q on");
+    } });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        if (! ctx.expect (host.modalText().rfind ("Save changes before quitting?", 0) == 0,
+                          "Cmd+Q in the switch's Save As showed '" + host.modalText() + "' rather than the quit prompt"))
+            return;
+        ctx.expect (host.clickModalButton ("Save"), "the quit prompt did not offer Save");
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    {
+        ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0 && host.modalCount() == 1,
+                    "the quit's Save showed '" + host.modalText() + "' rather than its own Save As alone");
+        ctx.expect (! host.startupDialogOpen(), "the startup dialog came back over the quit's Save As");
+        ctx.expect (host.engineDetached(), "the quit's Save As is not holding the audio");
+        ctx.expect (host.clickModalButton ("Cancel"), "the quit's Save As has no Cancel");
     } });
     steps->push_back ({ 700, [&host, &ctx, &session, untitled]
     {
-        ctx.expect (host.startupDialogOpen(), "File > Save As in place of the prompt's Save As did not bring the startup dialog back");
-        ctx.expect (currentSessionDirectory (session) == untitled, "File > Save As in place of the prompt's Save As switched the session");
+        ctx.expect (host.modalStackEmpty(), "Cancel in the quit's Save As left '" + host.modalText() + "' up");
+        ctx.expect (! host.engineDetached() && ctx.engine().isAudioCallbackRegistered() && host.autosaveRunning(),
+                    "Cancel in the quit's Save As did not give the audio and the autosave back");
+        ctx.expect (host.startupDialogOpen(), "the startup dialog did not come back after the quit was cancelled");
+        ctx.expect (currentSessionDirectory (session) == untitled, "the cancelled switch and quit switched the session");
         host.closeStartupDialog();
         drainModals (host);
     } });
@@ -20414,6 +20452,60 @@ std::optional<ScenarioResult> runTransportKeys (GuiHost& host, ScenarioContext& 
     });
     return std::nullopt;
 }
+
+// The tuner covers the timeline, so it keeps the keys a dialog keeps: Delete
+// leaves the selected region it hides alone and M drops no marker, while L
+// still reaches the loop. Escape closes it, and so does U again.
+std::optional<ScenarioResult> runTunerKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    AudioRegion region;
+    if (auto early = seedTapeRegion (host, ctx, region)) return early;
+    auto& session = ctx.session();
+    auto& transport = ctx.engine().getTransport();
+    ctx.cleanup ([&host] { if (host.tunerOpen()) host.pressPeerKey (keyCodeDescription ('u'), 'u'); });
+    const auto plain = [&host] (char letter) { return host.pressPeerKey (keyCodeDescription (letter), letter); };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region with a timeline click"); } });
+    steps->push_back ({ 200, [&host, &ctx, plain]
+    {
+        plain ('u');
+        ctx.expect (host.tunerOpen(), "U did not open the tuner");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, &session, &transport, plain]
+    {
+        host.pressPeerKey ("delete", 0);
+        plain ('m');
+        ctx.expect (session.track (0).regions.size() == 1, "Delete behind the tuner removed the region it hides");
+        ctx.expect (session.getMarkers().empty() && host.modalStackEmpty(), "M behind the tuner dropped a marker");
+        ctx.expect (host.tunerOpen(), "the keys behind the tuner closed it");
+        const bool loopWas = transport.isLoopEnabled();
+        plain ('l');
+        ctx.expect (transport.isLoopEnabled() != loopWas, "L behind the tuner did not reach the loop");
+        transport.setLoopEnabled (loopWas);
+        ctx.expect (host.pressPeerKey ("escape"), "Escape over the tuner was not handled");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, plain]
+    {
+        ctx.expect (! host.tunerOpen(), "Escape did not close the tuner");
+        plain ('u');
+        ctx.expect (host.tunerOpen(), "U did not open the tuner again");
+        plain ('u');
+        ctx.expect (! host.tunerOpen(), "U did not close the tuner");
+        host.pressPeerKey ("delete", 0);
+    } });
+    steps->push_back ({ 200, [&ctx, &session]
+    { ctx.expect (session.track (0).regions.empty(), "Delete with the tuner closed did not remove the selected region"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar tunerKeys { Scenario {
+    "gui.tuner_keys", { "gui", "keyboard", "transport" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTunerKeys (host, ctx); }
+} };
 
 const ScenarioRegistrar transportKeys { Scenario {
     "gui.transport_keys", { "gui", "keyboard", "transport" }, Needs::Engine | Needs::Gui,
@@ -23358,6 +23450,155 @@ const ScenarioRegistrar trackMoveUndoUnderMenu { Scenario {
     "gui.track_move_undo_under_menu", { "gui", "region", "undo" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runTrackMoveUndoUnderMenu (host, ctx); }
+} };
+
+// Undo and Redo typed into the compressor editor or Utility's knob panel of a
+// moved strip run once the panel's frame is out, so the move they take back
+// closes the panel with its strip instead of destroying it mid-frame.
+std::optional<ScenarioResult> runTrackMoveUndoFromPanel (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    AudioRegion region;
+    if (auto early = seedTapeRegion (host, ctx, region)) return early;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    for (const int t : { 1, 2 })
+    {
+        if (session.track (t).frozen.load() || ! session.track (t).midiRegions.current().empty())
+            return ScenarioResult::skip ("requires tracks 2 and 3 unfrozen with no MIDI regions");
+        session.track (t).regions = { region };
+    }
+    if (engine.getChannelStrip (2).isBuiltinLoaded() || engine.getChannelStrip (2).getPluginSlot().isLoaded())
+        return ScenarioResult::skip ("requires an empty insert on track 3");
+    std::array<ChannelStrip*, Session::kNumTracks> launched {};
+    for (int t = 0; t < Session::kNumTracks; ++t) launched[(std::size_t) t] = &engine.getChannelStrip (t);
+    ctx.cleanup ([&host, &engine, launched, mode = launched[2]->insertMode.load()]
+    {
+        for (int t = 0; t < 3; ++t)
+        {
+            host.closeBuiltin (t);
+            host.closeStripModuleEditors (t);
+        }
+        drainModals (host);
+        engine.suspendProcessing();
+        launched[2]->unloadBuiltin();
+        launched[2]->insertMode.store (mode);
+        engine.resumeProcessing();
+        std::array<int, Session::kNumTracks> newToOld {};
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            int now = 0;
+            while (now < Session::kNumTracks - 1 && &engine.getChannelStrip (now) != launched[(std::size_t) t]) ++now;
+            newToOld[(std::size_t) t] = now;
+        }
+        if (const auto back = trackMoveFromNewToOld (newToOld)) engine.moveTracks (*back);
+        for (int t = 0; t < 3; ++t)
+            if (auto* strip = host.strip (t)) strip->refreshInsertButton();
+        engine.getUndoManager().clearUndoHistory();
+    });
+    const auto movedUp = [&engine, launched]
+    {
+        return &engine.getChannelStrip (0) == launched[2] && &engine.getChannelStrip (2) == launched[1];
+    };
+    const auto inPlace = [&engine, launched]
+    {
+        for (int t = 0; t < 3; ++t)
+            if (&engine.getChannelStrip (t) != launched[(std::size_t) t]) return false;
+        return true;
+    };
+    const auto panelsClosed = [&host]
+    {
+        for (int t = 0; t < 3; ++t)
+            if (host.stripModuleEditorOpen (t, 1)) return false;
+        for (int t = 0; t < 3; ++t)
+            if (auto* strip = host.strip (t); strip != nullptr && strip->hasOpenBuiltinEditor()) return false;
+        return true;
+    };
+
+    // A probe edit on top of the move: its undo reports whether a panel was
+    // drawing when the panel's Cmd+Z reached the history.
+    auto probeUndone = std::make_shared<int> (0);
+    auto undoneInFrame = std::make_shared<bool> (false);
+    const auto pushProbe = [&host, &engine, probeUndone, undoneInFrame]
+    {
+        auto& um = engine.getUndoManager();
+        um.beginNewTransaction ("Panel frame probe");
+        um.perform (new ParamEditAction ([] {},
+            [&host, probeUndone, undoneInFrame]
+            {
+                ++*probeUndone;
+                *undoneInFrame = host.panelFrameDrawing();
+            }));
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.dragTapeTrackName (2, 0), "track 3's name did not take a drag"); } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, movedUp]
+    {
+        ctx.expect (movedUp() && engine.getUndoManager().getUndoDescription() == kMoveTracksTransaction,
+                    "dragging track 3 to the top did not move it there as one undo step");
+        ctx.expect (host.clickStripModule (0, 1, true, false), "the moved track's compressor label is not on screen");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, pushProbe]
+    {
+        if (! ctx.expect (host.stripModuleEditorOpen (0, 1), "the compressor label did not open its editor")) return;
+        pushProbe();
+        ctx.expect (host.inputStripPanel (0, "command + Z"), "the compressor editor did not take Cmd+Z");
+    } });
+    auto inFrame = std::make_shared<bool> (true);
+    steps->push_back ({ 300, [&host, &ctx, probeUndone, undoneInFrame, inFrame]
+    {
+        if (! ctx.expect (*probeUndone == 1, "Cmd+Z in the compressor editor did not reach the history")) return;
+        *inFrame = *undoneInFrame;
+        if (! ctx.expect (! *inFrame, "Cmd+Z in the compressor editor ran inside the panel's frame, "
+                                      "where undoing the move would destroy the panel; that leg was not driven"))
+            return;
+        ctx.expect (host.inputStripPanel (0, "command + Z"), "the compressor editor did not take Cmd+Z for the move");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, &engine, inPlace, panelsClosed, inFrame]
+    {
+        if (*inFrame) return;
+        ctx.expect (inPlace(), "Cmd+Z in the moved strip's compressor editor did not undo the move ('" + host.modalText() + "')");
+        ctx.expect (host.modalStackEmpty(), "the undo from the compressor editor left '" + host.modalText() + "' up");
+        ctx.expect (panelsClosed(), "the undo left a compressor editor open");
+        std::string error;
+        auto& dsp = engine.getChannelStrip (2);
+        engine.suspendProcessing();
+        const bool loaded = dsp.loadBuiltin ("dusk.builtin.utility", error);
+        if (loaded) dsp.insertMode.store (ChannelStrip::kInsertPlugin);
+        engine.resumeProcessing();
+        if (! ctx.expect (loaded, "could not load Utility: " + error)) return;
+        if (auto* strip = host.strip (2)) strip->refreshInsertButton();
+        ctx.expect (host.clickInsert (2, false), "track 3's insert is not on screen");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, inFrame]
+    {
+        if (*inFrame) return;
+        auto* strip = host.strip (2);
+        if (! ctx.expect (strip != nullptr && strip->hasOpenBuiltinEditor(), "Utility's knob panel did not open")) return;
+        ctx.expect (host.inputStripPanel (2, "command + shift + Z"), "Utility's knob panel did not take Cmd+Shift+Z");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, movedUp, panelsClosed, inFrame]
+    {
+        if (*inFrame) return;
+        ctx.expect (movedUp(), "Cmd+Shift+Z in the moved strip's knob panel did not redo the move ('" + host.modalText() + "')");
+        ctx.expect (host.modalStackEmpty(), "the redo from Utility's knob panel left '" + host.modalText() + "' up");
+        ctx.expect (panelsClosed(), "the redo left Utility's knob panel open");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar trackMoveUndoFromPanel { Scenario {
+    "gui.track_move_undo_from_panel", { "gui", "region", "undo", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTrackMoveUndoFromPanel (host, ctx); }
 } };
 
 // With a plug-in's editor up and nothing in the window holding the keyboard, as

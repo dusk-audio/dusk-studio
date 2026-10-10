@@ -131,6 +131,12 @@ public:
             || shortcut == ShellShortcut::quit;
     }
 
+    bool keepsKey (const KeyChord& chord) const override
+    {
+        return std::any_of (layout().begin(), layout().end(),
+                            [&chord] (const LayoutKey& entry) { return entry.key == chord.key; });
+    }
+
     bool takeDismissRequest() override
     {
         const bool wanted = dismissRequested;

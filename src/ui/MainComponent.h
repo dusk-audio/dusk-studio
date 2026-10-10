@@ -470,6 +470,9 @@ private:
     bool shutdownInProgress = false;
     // Set while a quit waits for the render it cancelled to stop.
     bool quitWaitsForRender = false;
+    // The latest quit whose Save is waiting on its browser. A second quit's Save
+    // cancels the first one's browser, and the first then has nothing to give back.
+    int quitSaveSerial = 0;
 
     // One-shot latch so the session-vs-device sample-rate warning fires once
     // per mismatch, not on every autosave tick. Reset on load and when the
@@ -521,6 +524,9 @@ private:
     void runStartupChoice();
    #if DUSKSTUDIO_HAS_NATIVE_UI
     bool openStartupPanel (std::vector<imgui::RecentSession> recents);
+    // Brings the startup dialog back after a pick backs out or fails, once no
+    // dialog is left for it to hide.
+    void returnToStartupDialog (int pick);
    #endif
     // A GUI scenario's one-shot hold on the startup choice: returning true takes the
     // choice instead of running it, so a scenario can press Quit without ending the run.

@@ -610,11 +610,18 @@ std::filesystem::path shownFolderForScenario()
 namespace
 {
 // The shared modal shows one browser at a time, and the flow waiting on the one
-// already up hears it was cancelled rather than nothing at all.
+// already up hears it was cancelled rather than nothing at all. That flow may open
+// another browser as it hears it, which is cancelled the same way; past a few
+// rounds the browser about to open replaces whatever is left, as it always did.
 void cancelShownBrowser()
 {
-    if (auto* shown = dynamic_cast<DuskFileBrowserPanel*> (sharedFileBrowserModal().getBody()))
+    for (int round = 0; round < 4; ++round)
+    {
+        auto* shown = dynamic_cast<DuskFileBrowserPanel*> (sharedFileBrowserModal().getBody());
+        if (shown == nullptr)
+            return;
         shown->dismissCancelled();
+    }
 }
 } // namespace
 

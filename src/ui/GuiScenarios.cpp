@@ -1674,6 +1674,19 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (auto* strip = owner.consoleView->getStripComponent (track))
             strip->closeModuleEditorsForScenario();
     }
+    bool inputStripPanel (int track, const std::string& input) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip != nullptr && strip->inputPanelForScenario (input);
+    }
+    bool panelFrameDrawing() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return imgui::DuskPanelWindow::drawingForScenario();
+       #else
+        return false;
+       #endif
+    }
     bool clickMasterTape (bool label) override
     {
         auto* master = owner.consoleView->getMasterStripComponent();
@@ -1945,7 +1958,6 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.requestQuit();
         return true;
     }
-    void chooseSaveAs() override { owner.menuItemSelected (1004, 0); }
     bool doubleClickTempo() override
     {
         auto* bar = owner.transportBar.get();

@@ -1337,6 +1337,16 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (escape && ! mods.isAnyModifierKeyDown() && EmbeddedModal::escapeTopModal())
         return true;
 
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The virtual keyboard's layout plays wherever its keys arrive: here whenever
+    // its child does not have the keyboard, and on macOS for every command chord,
+    // which reaches the window before the child.
+    if (virtualKeyboardWindow != nullptr
+        && virtualKeyboardWindow->takeKeptKey (key.getTextDescription().toStdString(),
+                                               static_cast<std::uint32_t> (key.getTextCharacter())))
+        return true;
+   #endif
+
     // With a modal open a key gets here passed up by its body, sent on by its
     // forwarder, or straight from the window once a click on the dim or a native
     // child has taken the keyboard from the body. A native panel's keys come here
@@ -1349,7 +1359,14 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     const auto panelKeys = imgui::PanelShellKeys::all;
    #endif
     const bool modalUp = ! EmbeddedModal::activeModalStack().empty();
-    if (modalUp || panelKeys != imgui::PanelShellKeys::all)
+    // The tuner covers the window as a dialog does and keeps the same keys, closing
+    // on U, which opened it, or Escape.
+    if (tuner != nullptr && ! modalUp && ! cmd && ! shift && ! mods.isAltDown() && (escape || code == 'U'))
+    {
+        closeTuner();
+        return true;
+    }
+    if (modalUp || panelKeys != imgui::PanelShellKeys::all || tuner != nullptr)
     {
         if (code == juce::KeyPress::tabKey && ! cmd && ! mods.isAltDown())
             return ! modalUp || EmbeddedModal::moveFocusWithinTopModal (! shift);
@@ -3053,6 +3070,34 @@ bool MainComponent::openStartupPanel (std::vector<imgui::RecentSession> recents)
 }
 #endif
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+void MainComponent::returnToStartupDialog (int pick)
+{
+    SafePointer<MainComponent> safe (this);
+    dusk::callAsync ([safe, pick]
+    {
+        auto* const self = safe.getComponent();
+        if (self == nullptr || self->startupPickInFlight != pick || self->shutdownInProgress)
+            return;
+        // A dialog that took the place of the pick's own, such as the Save As of a
+        // quit asked for from the pick's browser, would sit hidden under this one,
+        // and so would the quit waiting on it.
+        if (! EmbeddedModal::activeModalStack().empty() || self->engineDetached)
+        {
+            dusk::Timer::callAfterDelay (50, [safe, pick]
+            {
+                if (auto* const again = safe.getComponent())
+                    again->returnToStartupDialog (pick);
+            });
+            return;
+        }
+        self->startupPickInFlight = 0;
+        if (self->startupWindow == nullptr)
+            self->launchStartupDialog();
+    });
+}
+#endif
+
 void MainComponent::runStartupChoice()
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -3094,15 +3139,7 @@ void MainComponent::runStartupChoice()
             self->maybeStartStartupPluginScan();
             return;
         }
-        dusk::callAsync ([safeThis, pick]
-        {
-            auto* const s = safeThis.getComponent();
-            if (s == nullptr || s->startupPickInFlight != pick)
-                return;
-            s->startupPickInFlight = 0;
-            if (s->startupWindow == nullptr)
-                s->launchStartupDialog();
-        });
+        self->returnToStartupDialog (pick);
     };
     dismissStartupDialog ([safeThis, action, path, tmpl, resolve]
     {
@@ -4013,7 +4050,8 @@ void MainComponent::requestQuit()
             self->engine.detachAudioCallback();
             self->engineDetached = true;
 
-            self->saveSessionAndThen ([safeThis] (bool ok)
+            const int serial = ++self->quitSaveSerial;
+            self->saveSessionAndThen ([safeThis, serial] (bool ok)
             {
                 auto* s = safeThis.getComponent();
                 if (s == nullptr) return;
@@ -4022,6 +4060,8 @@ void MainComponent::requestQuit()
                     s->beginSafeShutdown();
                     return;
                 }
+                if (s->quitSaveSerial != serial)
+                    return;
                 // The quit is abandoned, so hand back what quiescing for it
                 // took. saveSessionTo leaves the callback as it found it.
                 s->engine.reattachAudioCallback();
@@ -6452,12 +6492,16 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
         finishAudioEditorClose();
         reclaimFocusFromNotepad();
     };
-    // The child keeps the release of a key it passes on.
-    callbacks.shortcut = [this] (imgui::ShellShortcut shortcut)
+    // The child keeps the release of a key it passes on, so the hold the shell
+    // records for it is cleared once the posted press has run.
+    callbacks.shortcut = [safeThis] (imgui::ShellShortcut shortcut)
     {
-        const bool handled = dispatchShellShortcut (shortcut);
-        editorKeyHeld.clear();
-        return handled;
+        dispatchShellShortcut (shortcut);
+        dusk::callAsync ([safeThis]
+        {
+            if (auto* self = safeThis.getComponent())
+                self->editorKeyHeld.clear();
+        });
     };
     // The editor fills the window less an inset that shrinks on small windows, so
     // the dim still frames it.
