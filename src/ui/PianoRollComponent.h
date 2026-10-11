@@ -43,9 +43,17 @@ public:
 
     // The roll moved to another region of its track without reopening.
     std::function<void (int newRegionIdx)> onRegionChanged;
+    // The track has no regions left to show.
+    std::function<void()> onRegionsGone;
     // A record pass committed on this track: show the region it landed,
     // which the recorder always appends.
     void showCommittedRegion();
+    // A record commit, an undo or a take cycle replaces the track's regions
+    // without telling the roll. The timer calls this to find the roll's region
+    // again and repaint; the host calls it at once after changing them.
+    void followRegionEdits();
+    // The region the roll shows now plays another of its takes.
+    void showSwappedTake();
 
     // VKB-driven step record. Each Note On lands a MidiNote at the
     // current playhead (or the start of the in-progress chord); the
@@ -251,16 +259,24 @@ private:
     MidiRegion*       region();
     const MidiRegion* region() const;
 
-    // A record commit, an undo or a take cycle replaces the track's regions
-    // without telling the roll, so the timer finds its region again by where it
-    // sat, then repaints.
-    void followRegionEdits();
+    struct RegionAnchor
+    {
+        std::int64_t start = 0;
+        std::int64_t end = 0;
+        std::int64_t startTick = 0;
+        bool valid = false;
+    };
     void showRegion (int newRegionIdx);
     void rememberRegion();
-    std::uint32_t seenRegionEdits = 0;
-    std::int64_t  rememberedStart = 0;
-    std::int64_t  rememberedEnd   = 0;
-    std::int64_t  rememberedStartTick = 0;
+    // -1 when no region of the track overlaps the anchor's span.
+    int regionOverlapping (const RegionAnchor& anchor) const;
+    std::uint32_t         seenRegionEdits = 0;
+    int                   shownRegionCount = 0;
+    RegionAnchor          shown;
+    RegionAnchor          leftForTake;
+    std::vector<MidiNote> shownNotes;
+    std::vector<MidiCc>   shownCcs;
+    std::int64_t          shownTicks = 0;
 
     // Note-edit undo. Drag gestures: beginNoteEdit() at mouseDown,
     // commitNoteEdit() at mouseUp. Discrete edits (key / menu mutators):

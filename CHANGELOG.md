@@ -13,7 +13,9 @@ canonical source.
   kept showing the earlier take until something else redrew it. After Stop it
   now shows the take the region plays, as the timeline does, and it moves with
   the take when the take lands elsewhere on the track or the pass makes a region
-  of its own. Undo and redo of the pass, and Alt+T, update it too.
+  of its own. Undo and redo of the pass, and Alt+T, update it too: undoing a
+  pass that made its own region brings the roll back to the region it showed,
+  and the roll closes if the track has no MIDI regions left.
 - **Alt+T and Alt+Shift+T step takes with the piano roll open.** They act on
   the region the roll shows; after a recording or an undo they used to do
   nothing until the region was selected again, which the roll did not allow.

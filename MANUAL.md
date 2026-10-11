@@ -1601,11 +1601,11 @@ With the piano roll open, virtual-keyboard notes enter at the transport playhead
 
 Step record is off while the transport is recording: the keyboard's notes then go to the take only, and the region the roll shows is left as it was.
 
+The keyboard is a transport-bar tool rather than part of the piano roll: it opens from the ⌨ button (or **K**) in any stage, and it takes over the letter and digit keys in its layout for as long as it is open. See *The virtual keyboard* for the details.
+
 ## Recording with the piano roll open
 
-The roll does not draw notes while a take is recording; they appear when you stop. A pass that covers the whole region the roll shows becomes a new take of that region, and on Stop the roll shows the new take, as the timeline does. A pass that makes a region of its own takes the roll to that region. Undo and redo of the pass take the roll with them, and **Alt+T** / **Alt+Shift+T** step through the takes of the region the roll shows.
-
-The keyboard is a transport-bar tool rather than part of the piano roll: it opens from the ⌨ button (or **K**) in any stage, and it takes over the letter and digit keys in its layout for as long as it is open. See *The virtual keyboard* for the details.
+The roll does not draw notes while a take is recording; they appear when you stop. A pass that covers the whole region the roll shows becomes a new take of that region, and on Stop the roll shows the new take, as the timeline does; undo and redo of the pass switch the roll between the takes. A pass that makes a region of its own takes the roll to that region, and undoing the pass brings the roll back to the region it showed before. If an undo leaves the track with no MIDI regions, the roll closes. **Alt+T** / **Alt+Shift+T** step through the takes of the region the roll shows.
 
 ## Navigation
 
@@ -2291,8 +2291,8 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **Cmd+→**                   | Nudge selected region one beat later   |
 | **Cmd+Shift+←**             | Nudge by one bar (earlier)             |
 | **Cmd+Shift+→**             | Nudge by one bar (later)               |
-| **Alt+T**                   | Next take on the selected MIDI region  |
-| **Alt+Shift+T**             | Previous take on the selected MIDI region |
+| **Alt+T**                   | Next take on the selected MIDI region, or the one the piano roll shows |
+| **Alt+Shift+T**             | Previous take on the selected MIDI region, or the one the piano roll shows |
 
 ## Transport
 

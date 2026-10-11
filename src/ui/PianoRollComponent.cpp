@@ -484,13 +484,33 @@ const MidiRegion* PianoRollComponent::region() const
 void PianoRollComponent::rememberRegion()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return;
-    seenRegionEdits = session.track (trackIdx).midiRegions.edits();
+    const auto& regions = session.track (trackIdx).midiRegions;
+    seenRegionEdits = regions.edits();
+    shownRegionCount = (int) regions.current().size();
     if (const auto* r = region())
     {
-        rememberedStart = r->timelineStart;
-        rememberedEnd   = r->timelineStart + r->lengthInSamples;
-        rememberedStartTick = session.samplesToTicks (r->timelineStart, engine.getTimelineSampleRate());
+        shown = { r->timelineStart, r->timelineStart + r->lengthInSamples,
+                  session.samplesToTicks (r->timelineStart, engine.getTimelineSampleRate()), true };
+        shownNotes = r->notes;
+        shownCcs   = r->ccs;
+        shownTicks = r->lengthInTicks;
     }
+}
+
+int PianoRollComponent::regionOverlapping (const RegionAnchor& anchor) const
+{
+    if (! anchor.valid) return -1;
+    const auto& regions = session.track (trackIdx).midiRegions.current();
+    int best = -1;
+    std::int64_t bestOverlap = 0;
+    for (int i = 0; i < (int) regions.size(); ++i)
+    {
+        const auto& candidate = regions[(size_t) i];
+        const auto overlap = std::min (anchor.end, candidate.timelineStart + candidate.lengthInSamples)
+                           - std::max (anchor.start, candidate.timelineStart);
+        if (overlap > bestOverlap) { best = i; bestOverlap = overlap; }
+    }
+    return best;
 }
 
 void PianoRollComponent::followRegionEdits()
@@ -499,32 +519,48 @@ void PianoRollComponent::followRegionEdits()
     const auto& snapshot = session.track (trackIdx).midiRegions;
     if (snapshot.edits() == seenRegionEdits) return;
     const auto& regions = snapshot.current();
-
-    // The index holds while a region still starts there. A tempo change moves a
-    // tempo-locked region's samples but keeps its bar position.
-    const auto startsWhereShown = [this] (const MidiRegion& candidate)
+    if (regions.empty())
     {
+        seenRegionEdits = snapshot.edits();
+        if (onRegionsGone) onRegionsGone();
+        return;
+    }
+
+    // The index holds while the region there carries what the roll last showed,
+    // as after a move and its undo, or still starts where the shown one did. A
+    // tempo change moves a tempo-locked region's samples but keeps its bar
+    // position.
+    const bool inRange = regionIdx >= 0 && regionIdx < (int) regions.size();
+    bool sameRegion = false;
+    if (inRange)
+    {
+        const auto& candidate = regions[(size_t) regionIdx];
         const auto tick = session.samplesToTicks (candidate.timelineStart, engine.getTimelineSampleRate());
-        return candidate.timelineStart == rememberedStart || std::abs (tick - rememberedStartTick) <= 1;
-    };
-    const bool sameRegion = regionIdx >= 0 && regionIdx < (int) regions.size()
-                         && startsWhereShown (regions[(size_t) regionIdx]);
+        sameRegion = ((int) regions.size() == shownRegionCount && candidate.lengthInTicks == shownTicks
+                         && candidate.notes == shownNotes && candidate.ccs == shownCcs)
+                  || candidate.timelineStart == shown.start
+                  || std::abs (tick - shown.startTick) <= 1;
+    }
     if (! sameRegion)
     {
-        int best = -1;
-        std::int64_t bestOverlap = 0;
-        for (int i = 0; i < (int) regions.size(); ++i)
+        // An undone pass takes its region away; the roll goes back to the one
+        // it left for it, and never stays on an index the track no longer has.
+        int best = regionOverlapping (shown);
+        if (best < 0) best = regionOverlapping (leftForTake);
+        if (best < 0)
         {
-            const auto& candidate = regions[(size_t) i];
-            const auto overlap = std::min (rememberedEnd, candidate.timelineStart + candidate.lengthInSamples)
-                               - std::max (rememberedStart, candidate.timelineStart);
-            if (overlap > bestOverlap) { best = i; bestOverlap = overlap; }
+            best = 0;
+            for (int i = 1; i < (int) regions.size(); ++i)
+                if (std::abs (regions[(size_t) i].timelineStart - shown.start)
+                    < std::abs (regions[(size_t) best].timelineStart - shown.start))
+                    best = i;
         }
-        if (best >= 0 && best != regionIdx)
+        if (best != regionIdx)
         {
             showRegion (best);
             return;
         }
+        clearSelection();
     }
 
     const auto* r = region();
@@ -537,9 +573,17 @@ void PianoRollComponent::followRegionEdits()
     repaint();
 }
 
+void PianoRollComponent::showSwappedTake()
+{
+    followRegionEdits();
+    clearSelection();
+    repaint();
+}
+
 void PianoRollComponent::showRegion (int newRegionIdx)
 {
     regionIdx = newRegionIdx;
+    leftForTake.valid = false;
     clearSelection();
     dragMode = DragMode::None;
     dragSnapshots.clear();
@@ -556,7 +600,10 @@ void PianoRollComponent::showCommittedRegion()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return;
     const auto count = (int) session.track (trackIdx).midiRegions.current().size();
-    if (count > 0) showRegion (count - 1);
+    if (count == 0) return;
+    const auto left = shown;
+    showRegion (count - 1);
+    leftForTake = left;
 }
 
 void PianoRollComponent::beginNoteEdit()

@@ -9389,10 +9389,23 @@ std::optional<ScenarioResult> runPianoRollShowsEachTake (GuiHost& host, Scenario
         ctx.expect (host.pianoRowOnScreen (64, scratch) == 0 && host.pianoRowOnScreen (67, scratch) == 0,
                     "the empty region's roll could not be read back or showed notes");
     } });
-    const auto pass = [&ctx, &session, &engine, &transport, &host, steps, note, pitchAt, expectShown, scratch]
+    // A pass that is to become a take runs on until the playhead is past the end
+    // of the region the roll shows, whatever the wall clock did meanwhile.
+    const auto pastShownRegion = [&session, &transport, &host, rate]
+    {
+        const auto& regions = session.track (0).midiRegions.current();
+        const int shownIdx = host.pianoRollRegion();
+        if (shownIdx < 0 || shownIdx >= (int) regions.size()) return false;
+        const auto& shownRegion = regions[(std::size_t) shownIdx];
+        return transport.getPlayhead() >= shownRegion.timelineStart + shownRegion.lengthInSamples
+                                              + static_cast<std::int64_t> (rate / 4.0);
+    };
+    const auto pass = [&ctx, &session, &engine, &transport, &host, steps, note, pitchAt, expectShown, scratch,
+                       pastShownRegion]
                       (int pitch, int tailMs, std::string name, std::size_t earlierTakes,
                        std::int64_t from, int landsAt)
     {
+        const bool becomesTake = earlierTakes > 0;
         steps->push_back ({ 100, [&ctx, &session, &engine, &transport, name, from]
         {
             transport.setPlayhead (from);
@@ -9406,7 +9419,9 @@ std::optional<ScenarioResult> runPianoRollShowsEachTake (GuiHost& host, Scenario
         {
             ctx.expect (host.pianoRowOnScreen (pitch, scratch) == 0, name + ": the roll drew a note still being recorded");
             engine.pressStop();
-        } });
+        },
+        becomesTake ? std::function<bool()> (pastShownRegion) : std::function<bool()> {},
+        name + " never got past the end of the region the roll shows" });
         steps->push_back ({ 500, [&ctx, &session, &host, pitchAt, expectShown, landsAt, pitch, name, earlierTakes]
         {
             const auto& regions = session.track (0).midiRegions.current();
@@ -9417,8 +9432,8 @@ std::optional<ScenarioResult> runPianoRollShowsEachTake (GuiHost& host, Scenario
             expectShown (pitch, name + " after Stop");
         } });
     };
-    pass (64, 700, "pass 1", 1, 0, takeIdx);
-    pass (67, 1100, "pass 2", 2, 0, takeIdx);
+    pass (64, 300, "pass 1", 1, 0, takeIdx);
+    pass (67, 300, "pass 2", 2, 0, takeIdx);
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.pressPeerKey (commandChord ('z'), 'z'), "Cmd+Z did not reach the roll"); } });
     steps->push_back ({ 400, [&ctx, livePitch, expectShown]
@@ -9482,6 +9497,202 @@ const ScenarioRegistrar pianoRollFollowsTake { Scenario {
     "gui.piano_roll_follows_take", { "gui", "piano", "midi", "take", "recording" }, Needs::Engine | Needs::Gui,
     {}, {}, 30000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoRollShowsEachTake (host, ctx, true); }
+} };
+
+// The piano roll keeps to its region when the track's regions change under it:
+// a region moved and moved back stays shown, a take cycle drops the note
+// selection, undoing a pass that made its own region brings the roll back to the
+// region it showed before (or the nearest one left) before Cmd+Z or Alt+T
+// returns, and a track left with no regions closes the roll.
+std::optional<ScenarioResult> runPianoRollKeepsItsRegion (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! defined (__linux__)
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("reads the window back through the X server");
+   #else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto rate = engine.getCurrentSampleRate();
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto originalPosition = transport.getPlayhead();
+    const bool expanded = host.timelineViewMatches (true);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &engine, &transport, originalDir, originalStage, originalPosition, expanded, restore]
+    {
+        engine.stop();
+        host.closeRegionEditors();
+        session.setTrackArmed (0, false);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        engine.getUndoManager().clearUndoHistory();
+        if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+        transport.setPlayhead (originalPosition);
+        host.switchToStage (guiStage (originalStage));
+    });
+
+    // A spans bars 1-3, B sits at bar 5, and each has an earlier take.
+    MidiRegion a;
+    a.lengthInTicks = 5760;
+    a.lengthInSamples = session.ticksToSamples (5760, rate);
+    a.notes = { { 1, 60, 100, 0, 480 } };
+    MidiTakeRef earlier;
+    earlier.lengthInTicks = 5760;
+    earlier.notes = { { 1, 61, 100, 0, 480 } };
+    a.previousTakes = { earlier };
+    MidiRegion b;
+    b.timelineStart = session.ticksToSamples (7680, rate);
+    b.lengthInTicks = 1920;
+    b.lengthInSamples = session.ticksToSamples (1920, rate);
+    b.notes = { { 1, 62, 100, 0, 480 } };
+    MidiTakeRef earlierOfB;
+    earlierOfB.lengthInTicks = 1920;
+    earlierOfB.notes = { { 1, 63, 100, 0, 480 } };
+    b.previousTakes = { earlierOfB };
+    auto& track = session.track (0);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { a, b }));
+    engine.getUndoManager().clearUndoHistory();
+    host.switchToStage (GuiHost::Stage::Recording);
+    if (! expanded) host.pressKey ("T", 't');
+    host.pressKey ("0", '0');
+
+    const auto scratch = ctx.tempDir() / "window.ppm";
+    const auto expectShown = [&host, &ctx, scratch] (int pitch, std::string what)
+    {
+        for (const int row : { 60, 61, 62, 63, 64 })
+        {
+            const int shown = host.pianoRowOnScreen (row, scratch);
+            ctx.expect (shown == (row == pitch ? 1 : 0), what + ": the roll shows " + std::to_string (shown)
+                                                             + " notes at pitch " + std::to_string (row));
+        }
+    };
+    const auto livePitch = [&track] (std::size_t index)
+    {
+        const auto& regions = track.midiRegions.current();
+        return index < regions.size() && regions[index].notes.size() == 1 ? regions[index].notes.front().noteNumber : -1;
+    };
+    const auto barTen = session.ticksToSamples (17280, rate);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    // Moved the way a timeline drag moves it: one edit in place at its index.
+    steps->push_back ({ 300, [&ctx, &session, &engine, &track, b, rate]
+    {
+        MidiRegion moved = b;
+        moved.timelineStart = session.ticksToSamples (1920, rate);
+        engine.getUndoManager().beginNewTransaction ("Move region");
+        ctx.expect (engine.getUndoManager().perform (new MidiRegionEditAction (session, engine, 0, 1, b, moved)),
+                    "the region move did not apply");
+        ctx.expect (track.midiRegions.current().size() == 2, "the region move changed the region count");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 1, true), "the piano roll did not open on the moved region"); } });
+    steps->push_back ({ 400, [expectShown] { expectShown (62, "the moved region"); } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (commandChord ('z'), 'z'), "Cmd+Z did not reach the roll"); } });
+    steps->push_back ({ 400, [&ctx, &host, &track, b, expectShown]
+    {
+        const auto& regions = track.midiRegions.current();
+        ctx.expect (regions.size() == 2 && regions[1].timelineStart == b.timelineStart, "undo did not move the region back");
+        ctx.expect (host.pianoRollRegion() == 1, "undoing the move took the roll to region "
+                                                     + std::to_string (host.pianoRollRegion()));
+        expectShown (62, "after undoing the move");
+    } });
+
+    // Closed first: opening the region the roll already shows would close it.
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        host.closePianoRoll();
+        ctx.expect (host.openRegionEditor (0, 0, true), "the piano roll did not open on the first region");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.pressPeerKey (commandChord ('a'), 'a') && ! host.pianoSelection().empty(),
+                    "Cmd+A did not select the region's note");
+        ctx.expect (host.pressPeerKey ("alt + T", 't'), "Alt+T did nothing with the roll open");
+        ctx.expect (host.pianoSelection().empty(), "the selection outlived the take it was made on");
+    } });
+    steps->push_back ({ 400, [&ctx, livePitch, expectShown]
+    {
+        ctx.expect (livePitch (0) == 61, "Alt+T did not bring the earlier take live");
+        expectShown (61, "after Alt+T");
+    } });
+
+    // A pass at bar 10 overlaps nothing, so it makes a region of its own.
+    steps->push_back ({ 100, [&ctx, &session, &engine, &transport, barTen]
+    {
+        transport.setPlayhead (barTen);
+        session.setTrackArmed (0, true);
+        engine.record();
+        ctx.expect (transport.isRecording(), "the pass did not start");
+    } });
+    steps->push_back ({ 300, [&engine]
+    {
+        const std::uint8_t on[] { 0x90, 64, 100 };
+        engine.postVirtualKeyboardMidi (on, 3);
+    } });
+    steps->push_back ({ 300, [&engine]
+    {
+        const std::uint8_t off[] { 0x80, 64, 0 };
+        engine.postVirtualKeyboardMidi (off, 3);
+    } });
+    steps->push_back ({ 300, [&engine] { engine.pressStop(); } });
+    steps->push_back ({ 500, [&ctx, &host, &track, expectShown]
+    {
+        ctx.expect (track.midiRegions.current().size() == 3 && host.pianoRollRegion() == 2,
+                    "the pass did not land as a region of its own with the roll on it");
+        expectShown (64, "after the pass");
+    } });
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        ctx.expect (host.pressPeerKey (commandChord ('z'), 'z'), "Cmd+Z did not reach the roll");
+        ctx.expect (host.pianoRollRegion() == 0, "right after undoing the pass the roll is on region "
+                                                     + std::to_string (host.pianoRollRegion()));
+    } });
+    steps->push_back ({ 400, [&ctx, &host, expectShown]
+    {
+        ctx.expect (host.pianoRollRegion() == 0, "undoing the pass left the roll on region "
+                                                     + std::to_string (host.pianoRollRegion()));
+        expectShown (61, "after undoing the pass");
+    } });
+
+    // An undo the window did not run, with the roll opened on the pass's region:
+    // it goes to the nearest region left, and Alt+T at once steps that one.
+    steps->push_back ({ 100, [&engine] { engine.getUndoManager().redo(); } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        host.closePianoRoll();
+        ctx.expect (host.openRegionEditor (0, 2, true), "the piano roll did not open on the pass's region");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, livePitch]
+    {
+        engine.getUndoManager().undo();
+        ctx.expect (host.pressPeerKey ("alt + T", 't'), "Alt+T right after an undo did nothing");
+        ctx.expect (host.pianoRollRegion() == 1 && livePitch (1) == 63,
+                    "Alt+T right after an undo did not step the region the roll went to");
+    } });
+    steps->push_back ({ 400, [expectShown] { expectShown (63, "after Alt+T following an undo"); } });
+
+    steps->push_back ({ 100, [&track] { track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>()); } });
+    steps->push_back ({ 500, [&ctx, &host]
+    { ctx.expect (! host.pianoRollOpen(), "the roll stayed open on a track with no regions"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar pianoRollKeepsItsRegion { Scenario {
+    "gui.piano_roll_keeps_its_region", { "gui", "piano", "midi", "take", "recording", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoRollKeepsItsRegion (host, ctx); }
 } };
 
 // While the transport records, the virtual keyboard's notes go to the take only:

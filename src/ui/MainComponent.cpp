@@ -1568,9 +1568,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // timeline toggle, hence the Alt modifier.
     if (code == 'T' && mods.isAltDown() && ! cmd)
     {
+        if (pianoRoll != nullptr) pianoRoll->followRegionEdits();
+        const bool rollOpen = pianoRoll != nullptr;
         const bool cycled = tapeStrip != nullptr
-            && (pianoRoll != nullptr ? tapeStrip->cycleMidiTake (pianoRollTrackIdx, pianoRollRegionIdx, ! shift)
-                                     : tapeStrip->cycleSelectedMidiTake (! shift));
+            && (rollOpen ? tapeStrip->cycleMidiTake (pianoRollTrackIdx, pianoRollRegionIdx, ! shift)
+                         : tapeStrip->cycleSelectedMidiTake (! shift));
+        if (cycled && rollOpen) pianoRoll->showSwappedTake();
         if (cycled)
             return true;
     }
@@ -6324,6 +6327,8 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     pianoRoll->onCloseRequested = [this] { closePianoRollAnimated(); };
     pianoRoll->onUndoRequested = [this] (bool redo) { undoOrRedo (redo); };
     pianoRoll->onRegionChanged = [this] (int newIdx) { pianoRollRegionIdx = newIdx; };
+    // Deferred: the roll calls this from its own timer or key handling.
+    pianoRoll->onRegionsGone = [this] { closePianoRoll (true); };
     pianoRoll->onMouseMovedForCursor =
         [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
                 juce::Range<int> cutLine)
@@ -6852,6 +6857,7 @@ void MainComponent::undoOrRedo (bool redo)
         }
     }
     undoOrExplain (engine, *this, redo);
+    if (pianoRoll != nullptr) pianoRoll->followRegionEdits();
     refreshImportPickers();
 }
 
