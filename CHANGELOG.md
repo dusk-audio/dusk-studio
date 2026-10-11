@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.15.1] - Unreleased
+## [0.15.1] - 2026-10-11
 
 ### Fixed
 

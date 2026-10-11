@@ -1,5 +1,5 @@
 <!-- summary-start -->
-Every recording pass kept whole as a take, comping in the audio editor's take lanes, and the fixes from the 0.15 release review.
+The piano roll follows the takes you record over its region, and playing the virtual keyboard during a take no longer changes the earlier take.
 <!-- summary-end -->
 
 ### Downloads
@@ -40,7 +40,7 @@ key is `packaging/release-signing.pub` in the source repository; download it
 from this release's tag, compare its fingerprint with the one on the project
 site, import it, then check the signature before the hashes:
 
-    VERSION=0.15.0   # this release
+    VERSION=0.15.1   # this release
     curl -fsSLO "https://raw.githubusercontent.com/dusk-audio/dusk-studio/v$VERSION/packaging/release-signing.pub"
     gpg --show-keys --with-fingerprint release-signing.pub
     gpg --import release-signing.pub
