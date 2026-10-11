@@ -9287,6 +9287,302 @@ const ScenarioRegistrar pianoStepRecord { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoStepRecord (host, ctx); }
 } };
 
+// A pass recorded over the region the piano roll shows lands as a new take of
+// it. The roll draws nothing new while the pass records, shows each take after
+// Stop, follows undo and redo, and Alt+T steps the takes of the region it shows.
+// With a later region on the track the take lands at another index, which the
+// roll follows, and a pass that makes a region of its own takes the roll with
+// it. Read from the window's pixels:
+// a roll that never repainted still shows the earlier take.
+std::optional<ScenarioResult> runPianoRollShowsEachTake (GuiHost& host, ScenarioContext& ctx, bool laterRegion)
+{
+   #if ! defined (__linux__)
+    (void) host;
+    (void) ctx;
+    (void) laterRegion;
+    return ScenarioResult::skip ("reads the window back through the X server");
+   #else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto rate = engine.getCurrentSampleRate();
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto originalPosition = transport.getPlayhead();
+    const bool expanded = host.timelineViewMatches (true);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &engine, &transport, originalDir, originalStage, originalPosition, expanded, restore]
+    {
+        engine.stop();
+        host.closeRegionEditors();
+        session.setTrackArmed (0, false);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        engine.getUndoManager().clearUndoHistory();
+        if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+        transport.setPlayhead (originalPosition);
+        host.switchToStage (guiStage (originalStage));
+    });
+
+    std::vector<MidiRegion> seed (1);
+    seed[0].lengthInTicks = 480;
+    seed[0].lengthInSamples = session.ticksToSamples (480, rate);
+    if (laterRegion)
+    {
+        MidiRegion later;
+        later.timelineStart = session.ticksToSamples (7680, rate);
+        later.lengthInTicks = 1920;
+        later.lengthInSamples = session.ticksToSamples (1920, rate);
+        later.notes = { { 1, 72, 100, 0, 480 } };
+        seed.push_back (later);
+    }
+    auto& track = session.track (0);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (seed));
+    engine.getUndoManager().clearUndoHistory();
+    host.switchToStage (GuiHost::Stage::Recording);
+    if (! expanded) host.pressKey ("T", 't');
+    host.pressKey ("0", '0');
+    transport.setPlayhead (0);
+
+    // The recorder appends the region it commits, so a take of the first region
+    // sits after the later one.
+    const int takeIdx = laterRegion ? 1 : 0;
+    const auto scratch = ctx.tempDir() / "window.ppm";
+    const auto expectShown = [&host, &ctx, scratch] (int pitch, std::string what)
+    {
+        const int shown = host.pianoRowOnScreen (pitch, scratch);
+        ctx.expect (shown == 1, what + ": the roll shows " + std::to_string (shown) + " notes at pitch " + std::to_string (pitch));
+        for (const int other : { 64, 67, 69, 72 })
+            if (other != pitch)
+            {
+                const int stale = host.pianoRowOnScreen (other, scratch);
+                ctx.expect (stale == 0, what + ": the roll still shows " + std::to_string (stale) + " notes at pitch "
+                                            + std::to_string (other));
+            }
+    };
+    const auto pitchAt = [&track] (int index)
+    {
+        const auto& regions = track.midiRegions.current();
+        return index < (int) regions.size() && regions[(std::size_t) index].notes.size() == 1
+             ? regions[(std::size_t) index].notes.front().noteNumber : -1;
+    };
+    const auto livePitch = [pitchAt, takeIdx] { return pitchAt (takeIdx); };
+    const auto note = [&engine] (int pitch, bool on)
+    {
+        const std::uint8_t message[] { (std::uint8_t) (on ? 0x90 : 0x80), (std::uint8_t) pitch, (std::uint8_t) (on ? 100 : 0) };
+        engine.postVirtualKeyboardMidi (message, 3);
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.doubleClickMidiRegion (0, 0), "double-clicking the region did not reach it"); } });
+    steps->push_back ({ 400, [&host, &ctx, scratch]
+    {
+        ctx.expect (host.pianoRollOpen() && host.pianoRollRegion() == 0, "the piano roll did not open on the region");
+        ctx.expect (host.pianoRowOnScreen (64, scratch) == 0 && host.pianoRowOnScreen (67, scratch) == 0,
+                    "the empty region's roll could not be read back or showed notes");
+    } });
+    const auto pass = [&ctx, &session, &engine, &transport, &host, steps, note, pitchAt, expectShown, scratch]
+                      (int pitch, int tailMs, std::string name, std::size_t earlierTakes,
+                       std::int64_t from, int landsAt)
+    {
+        steps->push_back ({ 100, [&ctx, &session, &engine, &transport, name, from]
+        {
+            transport.setPlayhead (from);
+            session.setTrackArmed (0, true);
+            engine.record();
+            ctx.expect (transport.isRecording(), name + " did not start");
+        } });
+        steps->push_back ({ 300, [note, pitch] { note (pitch, true); } });
+        steps->push_back ({ 300, [note, pitch] { note (pitch, false); } });
+        steps->push_back ({ tailMs, [&ctx, &engine, &host, scratch, pitch, name]
+        {
+            ctx.expect (host.pianoRowOnScreen (pitch, scratch) == 0, name + ": the roll drew a note still being recorded");
+            engine.pressStop();
+        } });
+        steps->push_back ({ 500, [&ctx, &session, &host, pitchAt, expectShown, landsAt, pitch, name, earlierTakes]
+        {
+            const auto& regions = session.track (0).midiRegions.current();
+            ctx.expect (pitchAt (landsAt) == pitch && regions[(std::size_t) landsAt].previousTakes.size() == earlierTakes,
+                        name + " did not land where it should");
+            ctx.expect (host.pianoRollRegion() == landsAt, name + ": the roll is on region "
+                                                               + std::to_string (host.pianoRollRegion()));
+            expectShown (pitch, name + " after Stop");
+        } });
+    };
+    pass (64, 700, "pass 1", 1, 0, takeIdx);
+    pass (67, 1100, "pass 2", 2, 0, takeIdx);
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey (commandChord ('z'), 'z'), "Cmd+Z did not reach the roll"); } });
+    steps->push_back ({ 400, [&ctx, livePitch, expectShown]
+    {
+        ctx.expect (livePitch() == 64, "undo did not take pass 2 back");
+        expectShown (64, "after undo");
+    } });
+    steps->push_back ({ 100, [&engine] { engine.getUndoManager().redo(); } });
+    steps->push_back ({ 400, [&ctx, livePitch, expectShown]
+    {
+        ctx.expect (livePitch() == 67, "redo did not bring pass 2 back");
+        expectShown (67, "after redo");
+    } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("alt + T", 't'), "Alt+T did nothing with the roll open"); } });
+    steps->push_back ({ 400, [&ctx, livePitch, expectShown]
+    {
+        ctx.expect (livePitch() == 64, "Alt+T did not bring the earlier take live");
+        expectShown (64, "after Alt+T");
+    } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("alt + shift + T", 'T'), "Alt+Shift+T did nothing with the roll open"); } });
+    steps->push_back ({ 400, [&ctx, livePitch, expectShown]
+    {
+        ctx.expect (livePitch() == 67, "Alt+Shift+T did not step back to the newest take");
+        expectShown (67, "after Alt+Shift+T");
+    } });
+    // Two take steps and two passes back to the region the roll opened on.
+    steps->push_back ({ 100, [&engine]
+    {
+        for (int i = 0; i < 4; ++i)
+            engine.getUndoManager().undo();
+    } });
+    steps->push_back ({ 400, [&ctx, &host, &track, scratch]
+    {
+        const auto& regions = track.midiRegions.current();
+        ctx.expect (! regions.empty() && regions.front().notes.empty() && host.pianoRollRegion() == 0,
+                    "undoing both passes did not bring the roll back to the empty region: "
+                        + std::to_string (regions.size()) + " regions, the roll on "
+                        + std::to_string (host.pianoRollRegion()));
+        for (const int pitch : { 64, 67, 72 })
+            ctx.expect (host.pianoRowOnScreen (pitch, scratch) == 0,
+                        "after undoing both passes the roll still shows pitch " + std::to_string (pitch));
+    } });
+    // A pass inside the later region covers neither region, so it lands as a
+    // region of its own after both, and the roll moves to it.
+    if (laterRegion)
+        pass (69, 300, "a pass inside the later region", 0, seed[1].timelineStart, 2);
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar pianoRollShowsEachTake { Scenario {
+    "gui.piano_roll_shows_each_take", { "gui", "piano", "midi", "take", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoRollShowsEachTake (host, ctx, false); }
+} };
+
+const ScenarioRegistrar pianoRollFollowsTake { Scenario {
+    "gui.piano_roll_follows_take", { "gui", "piano", "midi", "take", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoRollShowsEachTake (host, ctx, true); }
+} };
+
+// While the transport records, the virtual keyboard's notes go to the take only:
+// step record stays out, so the region the roll shows is left as it was and
+// becomes the previous take unchanged.
+std::optional<ScenarioResult> runPianoStepRecordWhileRecording (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native virtual keyboard");
+   #else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    const int centre = appconfig::getVkbCentreNote();
+    if (! transport.isStopped() || host.virtualKeyboardOpen() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport, no modal and a closed virtual keyboard");
+    if (centre < 0 || centre > 115) return ScenarioResult::skip ("requires the typing notes below MIDI 128");
+    const auto rate = engine.getCurrentSampleRate();
+    if (rate <= 0.0) return ScenarioResult::skip ("requires a positive engine sample rate");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto originalPosition = transport.getPlayhead();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &engine, &transport, originalDir, originalStage, originalPosition, restore]
+    {
+        engine.stop();
+        host.closeVirtualKeyboard();
+        host.closeRegionEditors();
+        session.setTrackArmed (0, false);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        engine.getUndoManager().clearUndoHistory();
+        transport.setPlayhead (originalPosition);
+        host.switchToStage (guiStage (originalStage));
+    });
+
+    const std::vector<MidiNote> earlier { { 1, 64, 100, 0, 240 } };
+    MidiRegion region;
+    region.lengthInTicks = 480;
+    region.lengthInSamples = session.ticksToSamples (480, rate);
+    region.notes = earlier;
+    auto& track = session.track (0);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    host.switchToStage (GuiHost::Stage::Recording);
+    transport.setPlayhead (0);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll"); } });
+    steps->push_back ({ 300, [&host, &ctx, &session, &engine, &transport]
+    {
+        ctx.expect (host.virtualKeyboardOpen(), "virtual keyboard did not open above the piano roll");
+        session.setTrackArmed (0, true);
+        engine.record();
+        ctx.expect (transport.isRecording(), "the take did not start");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.inputVirtualKeyboard ("q"), "the note key did not reach the native keyboard"); } });
+    steps->push_back ({ 400, [&ctx, &track, earlier]
+    {
+        const auto& regions = track.midiRegions.current();
+        ctx.expect (regions.size() == 1 && regions.front().notes == earlier,
+                    "a virtual-keyboard note was step-entered into the region during the take");
+    } });
+    steps->push_back ({ 700, [&engine] { engine.pressStop(); } });
+    steps->push_back ({ 500, [&ctx, &track, earlier, centre]
+    {
+        const auto& regions = track.midiRegions.current();
+        const bool oneTake = regions.size() == 1 && regions.front().notes.size() == 1
+                          && regions.front().notes.front().noteNumber == centre + 12;
+        ctx.expect (oneTake, "the take does not hold just the played note");
+        ctx.expect (regions.size() == 1 && regions.front().previousTakes.size() == 1
+                        && regions.front().previousTakes.front().notes == earlier,
+                    "the previous take was changed by the notes of the take after it");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll a second time"); } });
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.virtualKeyboardOpen(); }, 3000,
+                       [&ctx] { ctx.complete (ctx.verdict()); },
+                       "K did not close the virtual keyboard");
+    });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar pianoStepRecordWhileRecording { Scenario {
+    "gui.piano_step_record_while_recording", { "gui", "piano", "midi", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoStepRecordWhileRecording (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runMasteringTargets (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

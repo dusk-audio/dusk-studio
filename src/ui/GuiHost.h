@@ -461,6 +461,11 @@ public:
     virtual bool doubleClickMidiRegion (int track, int region) = 0;
     virtual int pianoRollRegion() const = 0;
     virtual bool pianoRollOpen() const = 0;
+    // How many notes the open piano roll shows in a pitch's row, counted in the
+    // window's pixels as the display server holds them, so a roll that never
+    // repainted still shows what it last drew. `scratch` is a file it may write.
+    // -1 when the window cannot be read back (no roll, or not Linux).
+    virtual int pianoRowOnScreen (int pitch, const std::filesystem::path& scratch) = 0;
     virtual bool clickPianoGrid (std::int64_t tick, int pitch) = 0;
     virtual bool dragPianoVelocity (std::int64_t tick, float fraction) = 0;
     virtual bool resizePianoVelocity (int pixels) = 0;

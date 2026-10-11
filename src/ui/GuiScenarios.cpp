@@ -44,6 +44,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -51,6 +52,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 // The GUI half of the scenario suite: the live window, presented to the cases
 // as scenario::GuiHost. Only a MainComponent member reaches the console, the aux
@@ -2494,6 +2496,54 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     void closePianoRoll() override { owner.closePianoRoll(); }
     int pianoRollRegion() const override { return owner.pianoRollRegionIdx; }
     bool pianoRollOpen() const override { return owner.pianoRoll != nullptr; }
+    int pianoRowOnScreen (int pitch, const std::filesystem::path& scratch) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        auto* peer = owner.getPeer();
+        if (piano == nullptr || ! piano->isShowing() || peer == nullptr) return -1;
+        const auto file = scratch.string();
+        if (! platform::captureNativeWindowToPpm (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()), file))
+            return -1;
+        std::FILE* in = std::fopen (file.c_str(), "rb");
+        if (in == nullptr) return -1;
+        int width = 0, height = 0, maxValue = 0;
+        const bool header = std::fscanf (in, "P6 %d %d %d", &width, &height, &maxValue) == 3
+                         && std::fgetc (in) != EOF && width > 0 && height > 0;
+        std::vector<unsigned char> pixels (header ? (std::size_t) width * (std::size_t) height * 3 : 0);
+        const bool read = header && std::fread (pixels.data(), 1, pixels.size(), in) == pixels.size();
+        std::fclose (in);
+        if (! read) return -1;
+
+        auto* top = owner.getTopLevelComponent();
+        const double scale = (double) width / (double) std::max (1, top->getWidth());
+        const auto rowPoint = top->getLocalPoint (piano, piano->notePointForScenario (0, pitch));
+        const auto gridLeft = top->getLocalPoint (piano, piano->getLocalBounds().getTopLeft()
+                                                             .translated (PianoRollComponent::kKeyboardWidth + 2, 0));
+        const auto gridRight = top->getLocalPoint (piano, piano->getLocalBounds().getTopRight().translated (-4, 0));
+        const int y = (int) std::lround (rowPoint.y * scale);
+        const int x0 = std::max (0, (int) std::lround (gridLeft.x * scale));
+        const int x1 = std::min (width, (int) std::lround (gridRight.x * scale));
+        if (y < 0 || y >= height) return -1;
+
+        // Note fills are saturated hues; the grid, its lines and the 1 px
+        // cursors are grey or too thin to count.
+        int notes = 0, run = 0;
+        for (int x = x0; x <= x1; ++x)
+        {
+            bool fill = false;
+            if (x < x1)
+            {
+                const auto* p = &pixels[((std::size_t) y * (std::size_t) width + (std::size_t) x) * 3];
+                const int high = std::max ({ p[0], p[1], p[2] });
+                const int low = std::min ({ p[0], p[1], p[2] });
+                fill = high - low > 60 && high > 90;
+            }
+            if (fill) { ++run; continue; }
+            if (run >= 4) ++notes;
+            run = 0;
+        }
+        return notes;
+    }
     bool clickPianoGrid (std::int64_t tick, int pitch) override
     {
         auto* piano = owner.pianoRoll.get();

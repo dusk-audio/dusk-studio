@@ -41,6 +41,12 @@ public:
     // the requested (track, region). No-op at boundaries.
     std::function<void(int trackIdx, int newRegionIdx)> onNavigateToRegion;
 
+    // The roll moved to another region of its track without reopening.
+    std::function<void (int newRegionIdx)> onRegionChanged;
+    // A record pass committed on this track: show the region it landed,
+    // which the recorder always appends.
+    void showCommittedRegion();
+
     // VKB-driven step record. Each Note On lands a MidiNote at the
     // current playhead (or the start of the in-progress chord); the
     // next chord advances the playhead by one snap step before insertion.
@@ -244,6 +250,17 @@ private:
     // Defensible when regionIdx out of range so paint never branches.
     MidiRegion*       region();
     const MidiRegion* region() const;
+
+    // A record commit, an undo or a take cycle replaces the track's regions
+    // without telling the roll, so the timer finds its region again by where it
+    // sat, then repaints.
+    void followRegionEdits();
+    void showRegion (int newRegionIdx);
+    void rememberRegion();
+    std::uint32_t seenRegionEdits = 0;
+    std::int64_t  rememberedStart = 0;
+    std::int64_t  rememberedEnd   = 0;
+    std::int64_t  rememberedStartTick = 0;
 
     // Note-edit undo. Drag gestures: beginNoteEdit() at mouseDown,
     // commitNoteEdit() at mouseUp. Discrete edits (key / menu mutators):

@@ -447,6 +447,7 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     addAndMakeVisible (horizontalScrollBar);
 
     refreshStatusBarReadouts();
+    rememberRegion();
 
     // 30 Hz playhead poll - same cadence as the meters elsewhere in
     // the app. Runs unconditionally; the timer body is a no-op when
@@ -478,6 +479,84 @@ const MidiRegion* PianoRollComponent::region() const
     const auto& v = session.track (trackIdx).midiRegions.current();
     if (regionIdx < 0 || regionIdx >= (int) v.size()) return nullptr;
     return &v[(size_t) regionIdx];
+}
+
+void PianoRollComponent::rememberRegion()
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return;
+    seenRegionEdits = session.track (trackIdx).midiRegions.edits();
+    if (const auto* r = region())
+    {
+        rememberedStart = r->timelineStart;
+        rememberedEnd   = r->timelineStart + r->lengthInSamples;
+        rememberedStartTick = session.samplesToTicks (r->timelineStart, engine.getTimelineSampleRate());
+    }
+}
+
+void PianoRollComponent::followRegionEdits()
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return;
+    const auto& snapshot = session.track (trackIdx).midiRegions;
+    if (snapshot.edits() == seenRegionEdits) return;
+    const auto& regions = snapshot.current();
+
+    // The index holds while a region still starts there. A tempo change moves a
+    // tempo-locked region's samples but keeps its bar position.
+    const auto startsWhereShown = [this] (const MidiRegion& candidate)
+    {
+        const auto tick = session.samplesToTicks (candidate.timelineStart, engine.getTimelineSampleRate());
+        return candidate.timelineStart == rememberedStart || std::abs (tick - rememberedStartTick) <= 1;
+    };
+    const bool sameRegion = regionIdx >= 0 && regionIdx < (int) regions.size()
+                         && startsWhereShown (regions[(size_t) regionIdx]);
+    if (! sameRegion)
+    {
+        int best = -1;
+        std::int64_t bestOverlap = 0;
+        for (int i = 0; i < (int) regions.size(); ++i)
+        {
+            const auto& candidate = regions[(size_t) i];
+            const auto overlap = std::min (rememberedEnd, candidate.timelineStart + candidate.lengthInSamples)
+                               - std::max (rememberedStart, candidate.timelineStart);
+            if (overlap > bestOverlap) { best = i; bestOverlap = overlap; }
+        }
+        if (best >= 0 && best != regionIdx)
+        {
+            showRegion (best);
+            return;
+        }
+    }
+
+    const auto* r = region();
+    const int noteCount = r != nullptr ? (int) r->notes.size() : 0;
+    selectedNotes.erase (std::lower_bound (selectedNotes.begin(), selectedNotes.end(), noteCount),
+                         selectedNotes.end());
+    if (dragAnchor >= noteCount) dragAnchor = -1;
+    rememberRegion();
+    refreshStatusBarReadouts();
+    repaint();
+}
+
+void PianoRollComponent::showRegion (int newRegionIdx)
+{
+    regionIdx = newRegionIdx;
+    clearSelection();
+    dragMode = DragMode::None;
+    dragSnapshots.clear();
+    noteEditActive = false;
+    rangeActive = false;
+    draggedCcIdx = -1;
+    rememberRegion();
+    refreshStatusBarReadouts();
+    repaint();
+    if (onRegionChanged) onRegionChanged (regionIdx);
+}
+
+void PianoRollComponent::showCommittedRegion()
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return;
+    const auto count = (int) session.track (trackIdx).midiRegions.current().size();
+    if (count > 0) showRegion (count - 1);
 }
 
 void PianoRollComponent::beginNoteEdit()
@@ -1766,6 +1845,9 @@ void PianoRollComponent::duplicateSelectedNotes()
 
 void PianoRollComponent::stepRecordNoteOn (int noteNumber, int velocity)
 {
+    // A take records these notes already. Entering them as well would write
+    // them into the region that is about to become the previous take.
+    if (engine.getTransport().isRecording()) return;
     auto* r = region();
     if (r == nullptr) return;
     const double sr  = engine.getTimelineSampleRate();
@@ -3974,6 +4056,8 @@ void PianoRollComponent::paintTransportPlayhead (juce::Graphics& g,
 
 void PianoRollComponent::timerCallback()
 {
+    followRegionEdits();
+
     // Mirror scrollX onto the scrollbar every tick so paths that mutate
     // it (key arrows, mouse wheel, pan drag, zoom recentre) all stay
     // in visual sync.
