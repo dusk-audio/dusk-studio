@@ -1601,7 +1601,7 @@ With the piano roll open, virtual-keyboard notes enter at the transport playhead
 
 Step record is off while the transport is recording: the keyboard's notes then go to the take only, and the region the roll shows is left as it was.
 
-The keyboard is a transport-bar tool rather than part of the piano roll: it opens from the ⌨ button (or **K**) in any stage, and it takes over the letter and digit keys in its layout for as long as it is open. See *The virtual keyboard* for the details.
+The keyboard is a transport-bar tool rather than part of the piano roll. With the piano roll open, press **K** to open it over the roll; the ⌨ button sits under the piano roll's dim, and a click there closes the piano roll instead. While it is open it takes over the letter and digit keys in its layout, and **K** again closes it. See *The virtual keyboard* for the details.
 
 ## Recording with the piano roll open
 
