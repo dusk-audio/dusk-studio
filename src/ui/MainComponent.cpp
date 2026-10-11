@@ -833,20 +833,28 @@ MainComponent::MainComponent()
     tapeStrip->onTrackMoveDropped = [this] (const TrackMovePlan& plan, int dragged) { dropTrackMove (plan, dragged); };
     engine.onBeforeTracksMove = [this] (const TrackMovePlan& plan) { closeForTrackMove (plan); };
     engine.onTracksMoved = [this] (const TrackMovePlan& plan) { followTrackMove (plan); };
-    engine.onBeforeRecordCommit = [this] ([[maybe_unused]] std::uint32_t capturedTracks)
+    engine.onBeforeRecordCommit = [this] (std::uint32_t capturedTracks)
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (audioEditorView != nullptr && audioEditorTrackIdx >= 0 && audioEditorTrackIdx < Session::kNumTracks
             && (capturedTracks & (std::uint32_t { 1 } << audioEditorTrackIdx)) != 0)
             audioEditorView->yieldDragToRecordCommit();
        #endif
+        const int rollTrack = pianoRoll != nullptr ? pianoRollTrackIdx : -1;
+        const bool rollCaptured = rollTrack >= 0 && rollTrack < Session::kNumTracks
+                               && (capturedTracks & (std::uint32_t { 1 } << rollTrack)) != 0;
+        const auto rollEdits = rollCaptured ? session.track (rollTrack).midiRegions.edits() : 0u;
         // The take lands once this returns, and a picker up over the window
         // counts what each track holds.
         const juce::Component::SafePointer<MainComponent> safeThis (this);
-        dusk::callAsync ([safeThis]
+        dusk::callAsync ([safeThis, rollCaptured, rollTrack, rollEdits]
         {
-            if (auto* self = safeThis.getComponent())
-                self->refreshImportPickers();
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
+            self->refreshImportPickers();
+            if (rollCaptured && self->pianoRoll != nullptr && self->pianoRollTrackIdx == rollTrack
+                && self->session.track (rollTrack).midiRegions.edits() != rollEdits)
+                self->pianoRoll->showCommittedRegion();
         });
     };
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
@@ -1555,11 +1563,18 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     }
 
     // MIDI take cycling. Alt+T = forward (next take), Alt+Shift+T = backward,
-    // on the selected MIDI region; no-op when none is selected or it has no
-    // take history. Plain T is the timeline toggle, hence the Alt modifier.
+    // on the selected MIDI region, or the one the piano roll shows while it is
+    // open; no-op when there is none or it has no take history. Plain T is the
+    // timeline toggle, hence the Alt modifier.
     if (code == 'T' && mods.isAltDown() && ! cmd)
     {
-        if (tapeStrip != nullptr && tapeStrip->cycleSelectedMidiTake (! shift))
+        if (pianoRoll != nullptr) pianoRoll->followRegionEdits();
+        const bool rollOpen = pianoRoll != nullptr;
+        const bool cycled = tapeStrip != nullptr
+            && (rollOpen ? tapeStrip->cycleMidiTake (pianoRollTrackIdx, pianoRollRegionIdx, ! shift)
+                         : tapeStrip->cycleSelectedMidiTake (! shift));
+        if (cycled && rollOpen) pianoRoll->showSwappedTake();
+        if (cycled)
             return true;
     }
 
@@ -6311,6 +6326,9 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
 
     pianoRoll->onCloseRequested = [this] { closePianoRollAnimated(); };
     pianoRoll->onUndoRequested = [this] (bool redo) { undoOrRedo (redo); };
+    pianoRoll->onRegionChanged = [this] (int newIdx) { pianoRollRegionIdx = newIdx; };
+    // Deferred: the roll calls this from its own timer or key handling.
+    pianoRoll->onRegionsGone = [this] { closePianoRoll (true); };
     pianoRoll->onMouseMovedForCursor =
         [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
                 juce::Range<int> cutLine)
@@ -6839,6 +6857,7 @@ void MainComponent::undoOrRedo (bool redo)
         }
     }
     undoOrExplain (engine, *this, redo);
+    if (pianoRoll != nullptr) pianoRoll->followRegionEdits();
     refreshImportPickers();
 }
 

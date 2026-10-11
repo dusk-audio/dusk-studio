@@ -1365,7 +1365,7 @@ Split, reverse and delete skip locked regions. The region-only items (join, labe
 
 An audio track's takes are reached from the take count beside its name, for example **3 takes**, which opens the audio editor on the track's take lanes (see *Takes* under Recording). Audio regions have no take submenu and no take cycling.
 
-A MIDI region with more than one take shows a **T 1/N** pill in its top-left corner. Right-click it and pick from the **Takes** submenu, or select it and press **Alt+T** for the next take and **Alt+Shift+T** for the previous one.
+A MIDI region with more than one take shows a **T 1/N** pill in its top-left corner. Right-click it and pick from the **Takes** submenu, or select it and press **Alt+T** for the next take and **Alt+Shift+T** for the previous one. With the piano roll open, the keys step the region the roll shows.
 
 ## Markers
 
@@ -1599,7 +1599,13 @@ The note-creation grid is set from the toolbar dropdown; there is no keyboard sh
 
 With the piano roll open, virtual-keyboard notes enter at the transport playhead. Notes held together share that position. After all keys are released, the first note of the next chord advances the playhead by one snap step before inserting. This is the fastest way to enter a chord progression without playing in real time.
 
-The keyboard is a transport-bar tool rather than part of the piano roll: it opens from the ⌨ button (or **K**) in any stage, and it takes over the letter and digit keys in its layout for as long as it is open. See *The virtual keyboard* for the details.
+Step record is off while the transport is recording: the keyboard's notes then go to the take only, and the region the roll shows is left as it was.
+
+The keyboard is a transport-bar tool rather than part of the piano roll. With the piano roll open, press **K** to open it over the roll; the ⌨ button sits under the piano roll's dim, and a click there closes the piano roll instead. While it is open it takes over the letter and digit keys in its layout, and **K** again closes it. See *The virtual keyboard* for the details.
+
+## Recording with the piano roll open
+
+The roll does not draw notes while a take is recording; they appear when you stop. A pass that covers the whole region the roll shows becomes a new take of that region, and on Stop the roll shows the new take, as the timeline does; undo and redo of the pass switch the roll between the takes. A pass that makes a region of its own takes the roll to that region, and undoing the pass brings the roll back to the region it showed before. If an undo leaves the track with no MIDI regions, the roll closes. **Alt+T** / **Alt+Shift+T** step through the takes of the region the roll shows.
 
 ## Navigation
 
@@ -2285,8 +2291,8 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **Cmd+→**                   | Nudge selected region one beat later   |
 | **Cmd+Shift+←**             | Nudge by one bar (earlier)             |
 | **Cmd+Shift+→**             | Nudge by one bar (later)               |
-| **Alt+T**                   | Next take on the selected MIDI region  |
-| **Alt+Shift+T**             | Previous take on the selected MIDI region |
+| **Alt+T**                   | Next take on the selected MIDI region, or the one the piano roll shows |
+| **Alt+Shift+T**             | Previous take on the selected MIDI region, or the one the piano roll shows |
 
 ## Transport
 

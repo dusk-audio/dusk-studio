@@ -87,6 +87,7 @@ public:
     // Alt+T (forward) and Alt+Shift+T step the selected MIDI region round
     // its take stack; see cycleTake.
     bool cycleSelectedMidiTake (bool forward);
+    bool cycleMidiTake (int track, int region, bool forward);
 
     // Single-click is reserved for direct manipulation. Double-click
     // opens the dedicated editor - one mental model across audio + MIDI.

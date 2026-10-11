@@ -4783,12 +4783,17 @@ bool TapeStrip::nudgeSelectedRegion (std::int64_t deltaSamples)
 
 bool TapeStrip::cycleSelectedMidiTake (bool forward)
 {
-    if (selectedMidiTrack < 0 || selectedMidiTrack >= Session::kNumTracks || selectedMidiRegion < 0)
-        return false;
-    const auto& curList = session.track (selectedMidiTrack).midiRegions.current();
-    if (selectedMidiRegion >= (int) curList.size()) return false;
+    return cycleMidiTake (selectedMidiTrack, selectedMidiRegion, forward);
+}
 
-    const MidiRegion before = curList[(size_t) selectedMidiRegion];
+bool TapeStrip::cycleMidiTake (int track, int regionIdx, bool forward)
+{
+    if (track < 0 || track >= Session::kNumTracks || regionIdx < 0)
+        return false;
+    const auto& curList = session.track (track).midiRegions.current();
+    if (regionIdx >= (int) curList.size()) return false;
+
+    const MidiRegion before = curList[(size_t) regionIdx];
     MidiRegion after = before;
     if (! cycleTake (after, forward)) return false;
 
@@ -4804,7 +4809,7 @@ bool TapeStrip::cycleSelectedMidiTake (bool forward)
 
     engine.getUndoManager().beginNewTransaction ("Cycle take");
     performInPlace (new MidiRegionEditAction (session, engine,
-                                                selectedMidiTrack, selectedMidiRegion,
+                                                track, regionIdx,
                                                 before, after));
     repaint();
     return true;
