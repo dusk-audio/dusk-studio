@@ -82,9 +82,8 @@ def scenario_names(root):
     names = set()
     for f in (root / "src/engine/scenario/cases").glob("*.cpp"):
         names.update(re.findall(r'Scenario\s*\{\s*"([^"]+)"', f.read_text(errors="replace")))
-    gui = root / "src/ui/GuiScenarioCases.cpp"
-    if gui.exists():
-        names.update(re.findall(r'"(gui\.[a-z0-9_.]+)"', gui.read_text(errors="replace")))
+    for f in (root / "src/ui/scenario/cases").glob("*.cpp"):
+        names.update(re.findall(r'"(gui\.[a-z0-9_.]+)"', f.read_text(errors="replace")))
     return names
 
 

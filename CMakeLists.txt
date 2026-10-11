@@ -832,7 +832,21 @@ target_sources(DuskStudio PRIVATE
     src/ui/HardwareInsertEditor.cpp
     src/ui/ImportTargetPicker.cpp
     src/ui/GuiScenarios.cpp
-    src/ui/GuiScenarioCases.cpp
+    src/ui/scenario/GuiScenarioSupport.cpp
+    src/ui/scenario/cases/gui_audio_editor.cpp
+    src/ui/scenario/cases/gui_audio_editor_keys.cpp
+    src/ui/scenario/cases/gui_audio_takes.cpp
+    src/ui/scenario/cases/gui_import_browser.cpp
+    src/ui/scenario/cases/gui_keyboard_transport.cpp
+    src/ui/scenario/cases/gui_mastering_bounce.cpp
+    src/ui/scenario/cases/gui_midi_learn_plugins.cpp
+    src/ui/scenario/cases/gui_mixer.cpp
+    src/ui/scenario/cases/gui_piano_roll.cpp
+    src/ui/scenario/cases/gui_plugin_editors.cpp
+    src/ui/scenario/cases/gui_regions_markers.cpp
+    src/ui/scenario/cases/gui_session_file.cpp
+    src/ui/scenario/cases/gui_startup_quit.cpp
+    src/ui/scenario/cases/gui_tracks.cpp
     src/ui/MainComponent.cpp
     src/ui/ScreenshotCapture.cpp
     src/ui/MultiImportTargetPicker.cpp
