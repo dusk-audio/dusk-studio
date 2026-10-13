@@ -308,7 +308,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 | #   | Name            | Description                                                                       |
 | --- | --------------- | --------------------------------------------------------------------------------- |
-| 1   | Keyboard        | Names the pitch of each row.                                                      |
+| 1   | Keyboard        | Labels C rows with pitch names.                                                   |
 | 2   | Note grid       | Click an empty cell to create a note at the active velocity.                      |
 | 3   | Selected note   | Velocity shown next to the head. Drag to move; drag edges to trim.                |
 | 4   | Velocity strip  | Drag the per-note bars to set velocity per note.                                  |
