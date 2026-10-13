@@ -308,12 +308,12 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 | #   | Name            | Description                                                                       |
 | --- | --------------- | --------------------------------------------------------------------------------- |
-| 1   | Keyboard        | Click a key to audition the pitch. Scale-highlight non-scale keys dim.            |
+| 1   | Keyboard        | Labels C rows with pitch names.                                                   |
 | 2   | Note grid       | Click an empty cell to create a note at the active velocity.                      |
 | 3   | Selected note   | Velocity shown next to the head. Drag to move; drag edges to trim.                |
 | 4   | Velocity strip  | Drag the per-note bars to set velocity per note.                                  |
 | 5   | CC lane         | Pick a controller with **L**; draw events with the mouse.                         |
-| 6   | Scale highlight | Set root + mode with **S**. Non-scale notes are dimmed in both keyboard and grid. |
+| 6   | Scale highlight | Set root + mode with **S**. Rows outside the scale are dimmed in the grid.        |
 
 \newpage
 
