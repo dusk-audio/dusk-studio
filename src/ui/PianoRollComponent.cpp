@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <utility>
 
 namespace duskstudio
 {
@@ -596,13 +597,15 @@ void PianoRollComponent::showRegion (int newRegionIdx)
     if (onRegionChanged) onRegionChanged (regionIdx);
 }
 
-void PianoRollComponent::showCommittedRegion()
+void PianoRollComponent::showCommittedRegion (int committedIndex)
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return;
     const auto count = (int) session.track (trackIdx).midiRegions.current().size();
     if (count == 0) return;
     const auto left = shown;
-    showRegion (count - 1);
+    const double absoluteLeftTick = (double) shown.startTick + (double) scrollX / pixelsPerTick;
+    showRegion (committedIndex >= 0 && committedIndex < count ? committedIndex : count - 1);
+    scrollX = std::max (0, (int) std::round ((absoluteLeftTick - (double) shown.startTick) * pixelsPerTick));
     leftForTake = left;
 }
 
@@ -1301,23 +1304,38 @@ void PianoRollComponent::paintNotes (juce::Graphics& g, juce::Rectangle<int> are
     juce::Graphics::ScopedSaveState saved (g);
     g.reduceClipRegion (area);
 
-    for (int i = 0; i < (int) r->notes.size(); ++i)
+    auto drawNote = [&] (const MidiNote& n, int index, bool preview)
     {
-        const auto& n = r->notes[(size_t) i];
         const int x  = xForTick (n.startTick);
         const int x2 = xForTick (n.startTick + n.lengthInTicks);
         const int y  = yForNoteNumber (n.noteNumber);
-        if (x2 < dirty.getX() || x > dirty.getRight()) continue;
-        if (y + kNoteHeight < dirty.getY() || y > dirty.getBottom()) continue;
+        if (x2 < dirty.getX() || x > dirty.getRight()) return;
+        if (y + kNoteHeight < dirty.getY() || y > dirty.getBottom()) return;
 
         const auto rect = juce::Rectangle<int> (x, y + 1, std::max (2, x2 - x), kNoteHeight - 2);
-        const bool selected = isNoteSelected (i);
-        const auto fill = selected ? kNoteSelected : colourForNote (n);
+        const bool selected = ! preview && isNoteSelected (index);
+        const auto fill = preview ? kNoteSelected.withAlpha (0.65f)
+                                 : selected ? kNoteSelected : colourForNote (n);
         g.setColour (fill);
         g.fillRect (rect);
         g.setColour (kNoteEdge);
         g.drawRect (rect, 1);
-    }
+    };
+    for (int i = 0; i < (int) r->notes.size(); ++i)
+        drawNote (r->notes[(size_t) i], i, false);
+    auto& recorder = engine.getRecordManager();
+    if (recorder.isActive())
+        if (const auto* preview = recorder.midiCapturePreview (trackIdx))
+        {
+            const auto sr = engine.getTimelineSampleRate();
+            const auto offset = session.samplesToTicks (recorder.midiCaptureTimelineStart(), sr)
+                              - session.samplesToTicks (r->timelineStart, sr);
+            for (auto note : preview->notes)
+            {
+                note.startTick += offset;
+                drawNote (note, -1, true);
+            }
+        }
 }
 
 void PianoRollComponent::paintEditCursor (juce::Graphics& g, juce::Rectangle<int> gridArea)
@@ -2266,7 +2284,7 @@ void PianoRollComponent::paintCcStrip (juce::Graphics& g, juce::Rectangle<int> a
     for (int i = 0; i < (int) r->ccs.size(); ++i)
     {
         const auto& c = r->ccs[(size_t) i];
-        if (c.controller != activeCcController) continue;
+        if (c.kind != MidiCc::Kind::ControlChange || c.controller != activeCcController) continue;
         const int nx = xForTick (c.atTick);
         // Cull against dirty rect with 4 px slack (CC bar half-width).
         if (nx < dirty.getX() - 4 || nx > dirty.getRight() + 4) continue;
@@ -2309,7 +2327,7 @@ int PianoRollComponent::hitTestCcBar (int x, juce::Rectangle<int> stripArea) con
     for (int i = (int) r->ccs.size() - 1; i >= 0; --i)
     {
         const auto& c = r->ccs[(size_t) i];
-        if (c.controller != activeCcController) continue;
+        if (c.kind != MidiCc::Kind::ControlChange || c.controller != activeCcController) continue;
         const int nx = xForTick (c.atTick);
         if (std::abs (x - nx) <= kHitSlopPx
             && x >= stripArea.getX() && x <= stripArea.getRight()) return i;
@@ -4066,7 +4084,8 @@ int PianoRollComponent::transportPlayheadX (juce::Rectangle<int> gridArea) const
     // math, inlined here against a double tick.
     const double regStartTick = session.samplesToTicksFractional (r->timelineStart, sr);
     const double localTick = session.samplesToTicksFractional (playheadSample, sr) - regStartTick;
-    if (localTick < 0.0 || localTick > (double) r->lengthInTicks) return -1;
+    if (localTick < 0.0 || (localTick > (double) r->lengthInTicks
+        && ! engine.getRecordManager().isActive())) return -1;
     const int x = kKeyboardWidth - scrollX + (int) std::round (localTick * pixelsPerTick);
     if (x < gridArea.getX() || x > gridArea.getRight()) return -1;
     return x;
@@ -4104,6 +4123,19 @@ void PianoRollComponent::paintTransportPlayhead (juce::Graphics& g,
 void PianoRollComponent::timerCallback()
 {
     followRegionEdits();
+    auto& recorder = engine.getRecordManager();
+    const auto* capture = recorder.isActive() ? recorder.midiCapturePreview (trackIdx) : nullptr;
+    if (capture != nullptr)
+    {
+        if (! showedCapturePreview || seenCaptureGeneration != capture->generation)
+        {
+            seenCaptureGeneration = capture->generation;
+            repaint();
+        }
+        showedCapturePreview = true;
+    }
+    else if (std::exchange (showedCapturePreview, false))
+        repaint();
 
     // Mirror scrollX onto the scrollbar every tick so paths that mutate
     // it (key arrows, mouse wheel, pan drag, zoom recentre) all stay
@@ -4144,14 +4176,15 @@ void PianoRollComponent::timerCallback()
     // stays in view. Computes the playhead's absolute pixel position
     // (region tick × pixelsPerTick) and re-anchors scrollX so the
     // playhead lands in the left quarter of the grid after the jump.
-    if (chaseToggle.getToggleState() && engine.getTransport().isPlaying())
+    if (chaseToggle.getToggleState()
+        && (engine.getTransport().isPlaying() || engine.getTransport().isRecording()))
     {
         const auto* r = region();
         if (r != nullptr && r->lengthInTicks > 0 && pixelsPerTick > 0.0)
         {
             const auto playheadSample = engine.getTransport().getPlayhead();
             const auto localSample = playheadSample - r->timelineStart;
-            if (localSample >= 0 && localSample <= r->lengthInSamples)
+            if (localSample >= 0 && (capture != nullptr || localSample <= r->lengthInSamples))
             {
                 const double sr  = engine.getTimelineSampleRate();
                 const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
@@ -4161,7 +4194,8 @@ void PianoRollComponent::timerCallback()
                 const int xRel  = (int) std::round (playheadPx) - scrollX;
                 if (xRel < 0 || xRel > gridW)
                 {
-                    const double regionPx = (double) r->lengthInTicks * pixelsPerTick;
+                    const double regionPx = std::max ((double) r->lengthInTicks * pixelsPerTick,
+                        capture != nullptr ? playheadPx + (double) gridW * 0.75 : 0.0);
                     const double maxScroll = std::max (0.0, regionPx - (double) gridW);
                     const int target = (int) jlimit (0.0, maxScroll,
                                           playheadPx - (double) gridW * 0.25);

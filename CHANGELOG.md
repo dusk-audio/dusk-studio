@@ -7,8 +7,33 @@ canonical source.
 
 ## [0.16.0] - Unreleased
 
+### Added
+
+- **MIDI Merge.** The transport toggle adds each MIDI performance to an existing
+  region, growing it when needed and keeping its earlier notes, controls and
+  takes. Each completed loop pass is one undo step while recording continues.
+  The final partial pass is one step too, and Stop keeps an undone pass undone.
+- **Live notes in the piano roll.** Incoming notes appear while recording, and
+  held notes grow until release. The preview leaves the region and undo history
+  alone, and the roll follows the region a merge updates.
+- **Creative Commons SFZ repositories.** Browse SFZ Instruments and Musical
+  Artifacts from the instrument library, check a pack's license, and download it
+  to Installed. Downloads can pause, resume and cancel. Installed versions
+  coexist, and sessions find the same pack on another machine without its old
+  absolute path. Missing packs stay offline without downloading on session load.
+- **Complete MIDI channel controls.** Recording, import, session save and
+  playback keep pitch bend, channel and polyphonic pressure, and program changes
+  alongside notes and CCs.
+
 ### Fixed
 
+- **Shared audio reader workers.** Three workers fill immutable playback
+  windows near the playhead and release distant sample buffers. Seeking primes
+  the new position before it becomes audible; loop and offline render paths
+  keep their read-ahead coverage.
+- **Background instrument replacement.** The current instrument keeps playing
+  while its replacement loads. Failed and stale requests leave it in place,
+  and retired instruments are destroyed after the audio swap.
 - **MIDI device refresh preserves audio state.** It keeps a deliberately
   detached callback detached and no longer re-prepares the whole engine,
   changing a no-device import's timeline rate or clearing a finished master

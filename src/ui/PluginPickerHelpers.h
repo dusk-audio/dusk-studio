@@ -99,7 +99,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {},
                          std::function<void (const juce::File&)> onPickSoundfont = {},
                          std::function<void (const juce::String&)> onPickNativeAu = {},
-                         std::function<void (const std::string&)> onPickBuiltin = {});
+                         std::function<void (const std::string&)> onPickBuiltin = {},
+                         std::function<void()> onPickSfzLibrary = {});
 
 // Synchronous scan. Blocks the message thread during scanInstalledPlugins().
 // Shows a Dusk in-window completion alert in `parent` (top-level Component)

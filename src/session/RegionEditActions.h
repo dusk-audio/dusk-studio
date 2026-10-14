@@ -424,6 +424,28 @@ private:
 // change, so one added outside the undo history stays. WAV files on disk
 // are NOT deleted on undo - the user can redo to re-attach the take, and
 // orphaned files are reclaimed via the existing "Clean Out" menu action.
+class MidiMergePassAction final : public UndoableAction
+{
+public:
+    struct TrackDiff
+    {
+        int trackIndex = -1;
+        std::vector<MidiRegion> before;
+        std::vector<MidiRegion> after;
+    };
+    MidiMergePassAction (Session& s, AudioEngine& e, std::vector<TrackDiff> d)
+        : session (s), engine (e), diffs (std::move (d)) {}
+    bool perform() override { return apply (true); }
+    bool undo() override { return apply (false); }
+    int getSizeInUnits() override { return std::max (1, (int) diffs.size() * 2); }
+
+private:
+    bool apply (bool forward);
+    Session& session;
+    AudioEngine& engine;
+    std::vector<TrackDiff> diffs;
+};
+
 class RecordCommitAction final : public UndoableAction
 {
 public:

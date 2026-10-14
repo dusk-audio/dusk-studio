@@ -844,18 +844,25 @@ MainComponent::MainComponent()
         const bool rollCaptured = rollTrack >= 0 && rollTrack < Session::kNumTracks
                                && (capturedTracks & (std::uint32_t { 1 } << rollTrack)) != 0;
         const auto rollEdits = rollCaptured ? session.track (rollTrack).midiRegions.edits() : 0u;
+        const bool mergeCapture = engine.getRecordManager().isMidiMergeCapture();
         // The take lands once this returns, and a picker up over the window
         // counts what each track holds.
         const juce::Component::SafePointer<MainComponent> safeThis (this);
-        dusk::callAsync ([safeThis, rollCaptured, rollTrack, rollEdits]
+        dusk::callAsync ([safeThis, rollCaptured, rollTrack, rollEdits, mergeCapture]
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
             self->refreshImportPickers();
-            if (rollCaptured && self->pianoRoll != nullptr && self->pianoRollTrackIdx == rollTrack
+            if (! mergeCapture && rollCaptured && self->pianoRoll != nullptr && self->pianoRollTrackIdx == rollTrack
                 && self->session.track (rollTrack).midiRegions.edits() != rollEdits)
                 self->pianoRoll->showCommittedRegion();
         });
+    };
+    engine.onMidiPassCommitted = [this] (int trackIndex, int regionIndex)
+    {
+        if (pianoRoll != nullptr && pianoRollTrackIdx == trackIndex)
+            pianoRoll->showCommittedRegion (regionIndex);
+        refreshImportPickers();
     };
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
                                           std::int64_t timelineStart,
@@ -1234,6 +1241,7 @@ MainComponent::~MainComponent()
     engine.onBeforeTracksMove = nullptr;
     engine.onTracksMoved = nullptr;
     engine.onBeforeRecordCommit = nullptr;
+    engine.onMidiPassCommitted = nullptr;
 
     // Drop the modal hook before anything else: its closure holds a raw this,
     // and the teardown below can still raise an alert.

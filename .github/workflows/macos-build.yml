@@ -54,7 +54,7 @@ jobs:
         # survives across runs via the actions/cache step below, so an
         # unchanged TU isn't recompiled on the next push.
         # lame: libmp3lame for MP3 bounce/export (required by the configure).
-        run: brew install ninja ccache lame libsndfile lilv suil lv2
+        run: brew install ninja ccache lame libsndfile lilv suil lv2 curl libarchive utf8proc
 
       - name: Compiler identity
         id: compiler
@@ -124,7 +124,7 @@ jobs:
           set -euo pipefail
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix curl);$(brew --prefix libarchive);$(brew --prefix utf8proc);$(brew --prefix)" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
@@ -174,7 +174,7 @@ jobs:
           set -euo pipefail
           cmake -S . -B build-tests -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix curl);$(brew --prefix libarchive);$(brew --prefix utf8proc);$(brew --prefix)" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \

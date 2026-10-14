@@ -283,6 +283,8 @@ public:
 
 private:
     void run() override;
+    void holdAssetRenderPause() noexcept;
+    void releaseAssetRenderPause() noexcept;
 
     // Run fn on the message thread and block the worker until it completes.
     // The offline render detaches the audio device and re-prepares the engine,
@@ -333,6 +335,7 @@ private:
 
     std::atomic<bool>  rendering        { false };
     std::atomic<bool>  cancelRequested  { false };
+    std::atomic<bool>  pauseHeld        { false };
     std::atomic<float> progress         { 0.0f };
     std::atomic<std::int64_t> renderedSamples { 0 };
     std::atomic<int>   totalStemsToRender { 0 };

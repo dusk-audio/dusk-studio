@@ -300,6 +300,22 @@ CMake auto-detects three external repos at configure time, on top of three git s
 
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (a plugdata-team fork with ~5 local commits Dusk Studio depends on — XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
 - **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure stops with an error; reconfigure with network access or pass `-DDUSK_PLUGINS_PATH`. To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together.
+- **SFZ repository libraries:** [cmake/SfzDependencies.cmake](../cmake/SfzDependencies.cmake)
+  links libcurl >= 7.62.0 for HTTPS and libarchive >= 3.4.0 for ZIP extraction.
+  Unix builds use pkg-config. Install `libarchive-dev` and `libutf8proc-dev`
+  alongside the existing curl development package on Debian/Ubuntu and
+  Raspberry Pi OS. macOS uses Homebrew `curl`, `libarchive` and `utf8proc`;
+  the build must put their explicit Homebrew prefixes on its discovery paths,
+  and the app bundle must close the resulting dylib dependency set.
+  A missing Unix utf8proc >= 2.11.3 package triggers a static source fallback
+  pinned to 2.11.3, commit `e5e799221b45bbb90f5fdc5c69b6b8dfbf017e78`.
+  Windows uses the existing static vcpkg manifest: curl 8.21.0 with
+  Schannel/SSPI TLS, libarchive 3.8.7 with zlib 1.3.2 and optional features
+  disabled, and utf8proc 2.11.3. No OpenSSL is added by that manifest.
+  SHA-256 download verification and installation receipts use the existing
+  libsodium target. Keep the package notices in LICENSES.txt synchronized;
+  DEB/RPM runtime requirements come from ELF dependency discovery, while the
+  portable Linux tarball needs its linked system libraries on the host.
 - **DAF and its in-tree widgets** (the native UI): `-DDAF_PATH=…` wins, then
   `../DAF`, then `external/DAF`. Without DAF and `widgets/imgui/DearImGui.hpp`,
   `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults OFF and every native view is unavailable.
@@ -384,11 +400,20 @@ Each platform primitive has three implementations (`*_Linux.cpp`, `*_Mac.cpp`, `
 
 ### Session.h is the source of truth
 
-[src/session/Session.h](../src/session/Session.h) (~1900 lines) defines all state: 24 `Track`s (each with `ChannelStripParams`, regions, routing), 4 `BusParams`, 4 `AuxLaneParams`, `MasterBusParams`, `MasteringParams`, plus global tempo/time-sig/oversampling and solo/arm counters. Audio params are `std::atomic`. Key region structs: `AudioRegion` (WAV-on-disk: `timelineStart`, `lengthInSamples`, `sourceOffset`, fades, `takeId`) and `MidiRegion` (notes + CCs, `previousTakes`). An audio track's takes are `Track::takes`.
+[src/session/Session.h](../src/session/Session.h) (~1900 lines) defines all state: 24 `Track`s (each with `ChannelStripParams`, regions, routing), 4 `BusParams`, 4 `AuxLaneParams`, `MasterBusParams`, `MasteringParams`, plus global tempo/time-sig/oversampling and solo/arm counters. Audio params are `std::atomic`. Key region structs: `AudioRegion` (WAV-on-disk: `timelineStart`, `lengthInSamples`, `sourceOffset`, fades, `takeId`) and `MidiRegion` (notes + tagged channel controls, `previousTakes`). An audio track's takes are `Track::takes`.
 
 ### Saving is crash-safe
 
-[src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) writes JSON to a temp file, fsyncs, then atomically renames over `session.json`, so a crash mid-save never leaves a half-written session. There's a `kFormatVersion` (currently 10) and a `migrateSession()` path that walks an older file forward one version at a time; unknown keys are ignored, and a file newer than `kFormatVersion` is refused outright before anything is written into the live session. Bump the version whenever an older build could accept a newer file and then discard state it has no model for on the next save - v7 exists because v6 builds (up to the released v0.13.2) would have erased built-in insert identities and patches that way. MIDI devices are saved by stable string identifier (not index) so a USB replug still resolves. Autosave and all save/load happen on the message thread only.
+[src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) writes JSON to a temp file, fsyncs, then atomically renames over `session.json`, so a crash mid-save never leaves a half-written session. There's a `kFormatVersion` (currently 11) and a `migrateSession()` path that walks an older file forward one version at a time; unknown keys are ignored, and a file newer than `kFormatVersion` is refused outright before anything is written into the live session. Bump the version whenever an older build could accept a newer file and then discard state it has no model for on the next save - v7 exists because v6 builds (up to the released v0.13.2) would have erased built-in insert identities and patches that way. MIDI devices are saved by stable string identifier (not index) so a USB replug still resolves. Autosave and all save/load happen on the message thread only.
+
+Format 11 protects tagged MIDI channel controls and managed SFZ identities from
+older builds that would lose or misinterpret them. It retains source, pack,
+release, actual archive digest, instrument and relative SFZ entrypoint. Resolve
+that identity against installed pack receipts before applying processor state;
+an old absolute path inside the processor state cannot override the resolved
+path. Missing packs remain offline with their identity intact. Restoring a
+session never initiates a repository request or download. The saved MIDI Merge
+flag defaults off when an older transport block omits it.
 
 ### Edits are undoable actions
 

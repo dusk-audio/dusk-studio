@@ -29,7 +29,7 @@ void writeRaw (const juce::File& target, const juce::String& contents)
 } // namespace
 
 // Format-version contract:
-//   * Manual save writes "version": kFormatVersion (currently 10).
+//   * Manual save writes "version": kFormatVersion (currently 11).
 //   * Load rejects sessions whose version is HIGHER than the build's
 //     kFormatVersion — newer Dusk Studio can read older sessions (via the
 //     migrateSession switch) but older Dusk Studio must refuse newer ones
@@ -91,7 +91,7 @@ TEST_CASE ("SessionSerializer round-trip preserves version field",
     auto root = juce::JSON::parse (target);
     REQUIRE (root.isObject());
     REQUIRE (root.hasProperty ("version"));
-    REQUIRE ((int) root["version"] == 10);
+    REQUIRE ((int) root["version"] == 11);
 
     dir.deleteRecursively();
 }
@@ -122,7 +122,7 @@ TEST_CASE ("SessionSerializer stamps the current version on a session carrying b
     const auto root = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (root.is_object());
-    REQUIRE (root["version"].get<int>() == 10);
+    REQUIRE (root["version"].get<int>() == 11);
     REQUIRE (root["version"].get<int>() > kLastReleasedReaderMaxVersion);
 
     auto loadedPtr = std::make_unique<Session>();

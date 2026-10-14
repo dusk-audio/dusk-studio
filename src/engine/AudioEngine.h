@@ -43,6 +43,7 @@
 #include "DuskStudioPlayHead.h"
 
 namespace dusk::audio { class ThreadedFileWriter; }
+namespace duskstudio::sfz { class LibraryService; }
 
 namespace duskstudio
 {
@@ -175,6 +176,22 @@ public:
     // the commit stores the regions as it finds them as the take's undo state.
     // Message thread.
     std::function<void (std::uint32_t capturedTracks)> onBeforeRecordCommit;
+    std::function<void (int trackIndex, int regionIndex)> onMidiPassCommitted;
+    void serviceMidiRecording();
+    sfz::LibraryService& getSfzLibrary() noexcept { return *sfzLibrary; }
+    std::vector<sfz::ManagedSfzLocator> managedSfzInUse() const;
+    void setAssetRenderActive (bool active) noexcept;
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    bool requestNativeMultisampleLoad (
+        int trackIndex, std::filesystem::path path,
+        std::optional<sfz::ManagedSfzLocator> locator = {},
+        std::function<void (bool, std::string)> onDone = {}, int presetIndex = -1,
+        bool restoring = false, std::vector<std::uint8_t> state = {},
+        std::function<void()> beforeCommit = {});
+    void cancelNativeMultisampleLoad (int trackIndex);
+    void serviceMultisampleLoads();
+    bool hasPendingMultisampleLoads() const;
+#endif
 
     Session&          getSession()        noexcept { return session; }
     const Session&    getSession() const   noexcept { return session; }
@@ -452,8 +469,7 @@ public:
     // for the full duration of every offline render loop, false otherwise. The
     // message-thread NativeParamDrain also reads it before a VST3 reactivation,
     // so publish/consume it across threads.
-    void setOfflineRenderActive (bool active) noexcept
-        { offlineRenderActive.store (active, std::memory_order_release); }
+    void setOfflineRenderActive (bool active) noexcept;
 
     // Stem capture for bus groups and aux lanes (the per-track taps live on
     // ChannelStrip::setStemCapture). When set, the audio path accumulates the
@@ -744,6 +760,14 @@ private:
     // read it only inside that pass.
     dusk::TransportPosition blockTransport;
     RecordManager   recordManager   { session };
+    std::unique_ptr<sfz::LibraryService> sfzLibrary;
+    std::atomic<unsigned> assetRenderHolds { 0 };
+    std::mutex assetPauseMutex;
+    void updateAssetWorkPause() noexcept;
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    struct MultisampleLoadState;
+    std::unique_ptr<MultisampleLoadState> multisampleLoads;
+#endif
 
     std::vector<PluginLoadFailure> lastPluginLoadFailures;
     void collectDeferredNativeRestoreFailures();

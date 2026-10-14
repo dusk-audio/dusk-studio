@@ -41,6 +41,12 @@ public:
     // (fewer than requested at end of file).
     int64_t read (float* const* dest, int numDestCh, int64_t startFrame, int64_t numFrames);
 
+    void releaseReadScratch() { std::vector<float>().swap (interleaved); }
+    std::size_t readScratchBytes() const noexcept
+    {
+        return interleaved.capacity() * sizeof (float);
+    }
+
 private:
     FileReader (void* handle, const FileInfo& info);
 

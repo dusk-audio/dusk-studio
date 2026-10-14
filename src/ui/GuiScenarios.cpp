@@ -564,6 +564,58 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         if (auto* strip = owner.consoleView->getStripComponent (track)) strip->closeBuiltinForScenario();
     }
+    bool openSfzLibrary (int track) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        if (strip == nullptr) return false;
+        strip->openSfzLibrary();
+        return strip->isSfzLibraryOpen();
+    }
+    void closeSfzLibrary (int track) override
+    {
+        if (auto* strip = owner.consoleView->getStripComponent (track)) strip->closeSfzLibrary();
+    }
+    bool sfzLibraryOpen (int track) const override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip != nullptr && strip->isSfzLibraryOpen();
+    }
+    bool sfzLibraryPointer (int track, const std::string& control, float position, bool pressed) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip != nullptr && strip->sfzLibraryPointerForScenario (control, position, pressed);
+    }
+    bool sfzLibraryInput (int track, const std::string& input) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip != nullptr && strip->sfzLibraryInputForScenario (input);
+    }
+    void captureSfzLibrary (int track, const std::filesystem::path& path) override
+    {
+        if (auto* strip = owner.consoleView->getStripComponent (track)) strip->captureSfzLibrary (path.string());
+    }
+    void captureSfzSources (int track, bool enabled) override
+    {
+        if (track < 0 || track >= Session::kNumTracks) return;
+        auto* strip = owner.consoleView->getStripComponent (track);
+        if (strip == nullptr) return;
+        auto& requests = sfzSources[static_cast<std::size_t> (track)];
+        if (! enabled)
+        {
+            strip->setSfzSourceOpenForScenario ({});
+            requests.reset();
+            return;
+        }
+        requests = std::make_shared<std::vector<std::string>>();
+        strip->setSfzSourceOpenForScenario ([requests] (std::string url)
+        { requests->push_back (std::move (url)); });
+    }
+    std::vector<std::string> sfzSourceRequests (int track) const override
+    {
+        if (track < 0 || track >= Session::kNumTracks) return {};
+        const auto& requests = sfzSources[static_cast<std::size_t> (track)];
+        return requests ? *requests : std::vector<std::string> {};
+    }
     bool pressEscapeThroughDisplayServer() override
     {
         auto* peer = owner.getPeer();
@@ -1130,6 +1182,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool clickRecord() override
     { return owner.transportBar != nullptr && owner.transportBar->clickRecordForScenario(); }
+    bool clickMidiMerge() override
+    { return owner.transportBar != nullptr && owner.transportBar->clickMidiMergeForScenario(); }
 
     std::string dspReadout() const override
     {
@@ -2881,6 +2935,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::string startupChoiceMade;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;
     std::array<std::unique_ptr<ScenarioAuxLaneHandle>, Session::kNumAuxLanes> lanes;
+    std::array<std::shared_ptr<std::vector<std::string>>, Session::kNumTracks> sfzSources;
     EmbeddedModal scrollingPickerModal;
 };
 

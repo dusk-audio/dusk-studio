@@ -680,6 +680,7 @@ TEST_CASE ("loading a session without a transport section resets transport state
     s.metronomeOnlyDuringCountIn .store (true);
     s.metronomePolyphonic        .store (true);
     s.countInEnabled  .store (true);
+    s.midiMergeEnabled.store (true);
     s.timeDisplayMode .store (1);
     s.lastRecordPointSamples.store (123456);
     s.preRollSeconds .store (4.0f);
@@ -754,6 +755,7 @@ TEST_CASE ("loading a session without a transport section resets transport state
     REQUIRE (s.metronomeOnlyDuringCountIn  .load() == def.metronomeOnlyDuringCountIn  .load());
     REQUIRE (s.metronomePolyphonic         .load() == def.metronomePolyphonic         .load());
     REQUIRE (s.countInEnabled .load() == def.countInEnabled .load());
+    REQUIRE (s.midiMergeEnabled.load() == def.midiMergeEnabled.load());
     REQUIRE (s.timeDisplayMode.load() == def.timeDisplayMode.load());
     REQUIRE (s.lastRecordPointSamples.load() == def.lastRecordPointSamples.load());
     REQUIRE_THAT (s.preRollSeconds .load(), WithinAbs (def.preRollSeconds .load(), 1e-6f));

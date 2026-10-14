@@ -102,7 +102,7 @@ jobs:
             vcpkg-windows-2022-x64-windows-static-${{ hashFiles('vcpkg.json') }}-
             vcpkg-windows-2022-x64-windows-static-
 
-      - name: Install libmp3lame + libsndfile (vcpkg)
+      - name: Install static manifest dependencies (vcpkg)
         shell: bash
         # x64-windows-static = static libs + /MT static CRT, matching the whole
         # tree's CMAKE_MSVC_RUNTIME_LIBRARY (sfizz forces /MT). The -md triplet

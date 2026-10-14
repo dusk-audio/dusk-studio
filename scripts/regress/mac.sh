@@ -96,13 +96,6 @@ leg_preflight() {
     mac_run 180 <<REMOTE
 set -euo pipefail
 export PATH="\$HOME/bin:\$PATH"
-# The review model pins several GB of wired memory; a -j${JOBS} build on a
-# 16 GB laptop will swap with it resident.
-if curl -s -m 5 localhost:11434/api/generate -d '{"model":"qwen-review","keep_alive":0}' >/dev/null 2>&1; then
-    echo "ollama: unload requested"
-else
-    echo "ollama: not responding (nothing to unload)"
-fi
 echo "macOS \$(sw_vers -productVersion), \$(uname -m)"
 cd "\$HOME/${MAC_REPO}"
 # Submodule pointers are handled separately (they get synced to the pushed

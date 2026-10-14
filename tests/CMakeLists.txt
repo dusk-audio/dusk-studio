@@ -35,9 +35,20 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/UtilityUnit.cpp
     sfz_catalog.cpp
     sfz_library_scan.cpp
+    sfz_transfer.cpp
+    sfz_archive.cpp
+    sfz_provider.cpp
+    sfz_pack_store.cpp
+    sfz_library_service.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibrary.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalogEnvelope.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzTransfer.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzArchive.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPathPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzProvider.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPackStore.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibraryService.cpp
     # Native CLAP tests + sources are added conditionally below.
     plugin_descriptor.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginDescriptor.cpp
@@ -60,6 +71,10 @@ add_executable(dusk-studio-tests
     hosting_midi_fit.cpp
     output_pair_routing.cpp
     multiband_comp_presets.cpp
+    midi_merge.cpp
+    midi_channel_playback.cpp
+    midi_capture_stream.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/MidiCaptureStream.cpp
     atomic_park.cpp
     audio_worker_pool.cpp
     rt_priority.cpp
@@ -203,6 +218,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/DpAligner.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp
     record_loop_take_stacking.cpp
+    record_midi_merge_capture.cpp
     record_midi_overdub_diff.cpp
     record_offset_placement.cpp
     record_stop_waits_for_audio.cpp
@@ -332,15 +348,17 @@ target_sources(dusk-studio-tests PRIVATE
     waveform_details.cpp
     audiofile_ab_null.cpp
     audiofile_buffered_reader.cpp
+    reader_fill_pool.cpp
     audiofile_drain_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/BufferedFileReader.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ReaderFillPool.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileReader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WaveformPeaks.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ThreadedFileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WriterDrainPool.cpp)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sndfile)
-target_link_libraries(dusk-studio-tests PRIVATE dusk_sodium)
+target_link_libraries(dusk-studio-tests PRIVATE dusk_sfz_dependencies)
 
 if(DUSK_PLUGINS_PATH)
     # Built-in units are the app's own static libraries of the donor's DAF
@@ -760,6 +778,10 @@ target_link_libraries(dusk-studio-tests PRIVATE
 # define for the same gating the main app uses. Skip when sfizz isn't
 # vendored (the multisample sources are then a no-op too).
 if(TARGET sfizz_static)
+    target_sources(dusk-studio-tests PRIVATE
+        multisample_resolved_path.cpp
+        multisample_loader.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/multisample/MultisampleLoader.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE sfizz::static)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
 endif()

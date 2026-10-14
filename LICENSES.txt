@@ -479,15 +479,16 @@ libsndfile (all audio file I/O — required on every platform)
              https://xiph.org/flac/ , https://xiph.org/ogg/ ,
              https://xiph.org/vorbis/
 
-libsodium (signed SFZ catalog authentication — required on every platform)
+libsodium (SFZ catalog authentication and archive receipts — required on every platform)
   License  : ISC
   Path     : not vendored — resolved at configure time through vcpkg's
              unofficial-sodium::sodium config target or a direct sodium.h /
              libsodium library lookup. A missing implementation is a configure
              FATAL_ERROR, and both the app and test binary link the common
              dusk_sodium interface target.
-  Notes    : The app uses detached Ed25519 verification and canonical base64
-             helpers only; no private signing key is distributed. Linux CI,
+  Notes    : The app uses detached Ed25519 verification, canonical base64
+             helpers and SHA-256 for SFZ archives and installation receipts;
+             no private signing key is distributed. Linux CI,
              sanitizer, and Raspberry Pi builds install libsodium-dev and link
              the distro shared object. The Linux release build instead links a
              static archive built from the pinned source below, because a
@@ -508,6 +509,48 @@ libsodium (signed SFZ catalog authentication — required on every platform)
              Platform package managers may resolve a different compatible
              version; their package metadata records those bytes.
   Upstream : https://github.com/jedisct1/libsodium , https://libsodium.org/
+
+libcurl (HTTPS SFZ repository metadata and downloads)
+  License  : curl license; ISC for the inet_ntop / inet_pton helpers
+  Path     : not vendored; Unix pkg-config libcurl >= 7.62.0, Windows
+             CURL::libcurl through the pinned vcpkg manifest.
+  Notes    : Windows baseline 39344dff01c5a5a0134caf2624cdd492f05d30ea
+             resolves curl 8.21.0, default features disabled and ssl enabled.
+             The Windows TLS backend is Schannel with SSPI, not OpenSSL.
+             Unix package-manager builds use their libcurl TLS backend and
+             dependencies. macOS bundles its dylib dependency closure; Linux
+             tarballs require the linked system libraries. The curl COPYING
+             and both ISC helper notices are reproduced below. vcpkg installs
+             its combined notice under share/curl/copyright.
+  Upstream : https://curl.se/ , https://github.com/curl/curl
+
+libarchive (bounded SFZ ZIP extraction)
+  License  : BSD-2-Clause, with per-file BSD-3-Clause, public-domain and
+             CC0/OpenSSL/Apache-2.0 alternatives described in COPYING
+  Path     : not vendored; Unix pkg-config libarchive >= 3.4.0, Windows
+             LibArchive::LibArchive through the pinned vcpkg manifest.
+  Notes    : The Windows baseline resolves 3.8.7 with default features
+             disabled. The port enables zlib 1.3.2; optional compression and
+             crypto features are disabled. Unix system builds may link a
+             wider dependency set; their package metadata is authoritative.
+             The upstream COPYING is reproduced below. Per-file notices
+             remain controlling; the installed vcpkg notice is under
+             share/libarchive/copyright. zlib 1.3.2's complete license is
+             already reproduced in this inventory.
+  Upstream : https://libarchive.org/ , https://github.com/libarchive/libarchive
+
+utf8proc (portable SFZ path normalization and collision keys)
+  License  : MIT; Unicode data copyright and permission notice
+  Path     : Unix pkg-config libutf8proc >= 2.11.3 when available; otherwise
+             CMake fetches source 2.11.3 at
+             e5e799221b45bbb90f5fdc5c69b6b8dfbf017e78 and links it statically.
+             Windows uses utf8proc::utf8proc from vcpkg, version 2.11.3.
+  Notes    : The full LICENSE.md, including the original implementation and
+             Unicode data notices, is reproduced below. A static fallback
+             requires no host utf8proc runtime. Shared-library builds require
+             their package's runtime library or the macOS bundled dylib.
+             vcpkg installs the notice under share/utf8proc/copyright.
+  Upstream : https://github.com/JuliaStrings/utf8proc
 
 lilv / suil / lv2 (native LV2 host — Linux and macOS builds)
   License  : ISC (lilv, suil), ISC (lv2 headers)
@@ -4670,3 +4713,248 @@ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+--------------------------------------------------------------------------------
+libcurl 8.21.0 - curl license
+COPYING at curl/curl tag curl-8_21_0
+--------------------------------------------------------------------------------
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright (c) 1996 - 2026, Daniel Stenberg, <daniel@haxx.se>, and many
+contributors, see the THANKS file.
+
+All rights reserved.
+
+Permission to use, copy, modify, and distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright
+notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS. IN
+NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall not
+be used in advertising or otherwise to promote the sale, use or other dealings
+in this Software without prior written authorization of the copyright holder.
+
+--------------------------------------------------------------------------------
+libcurl 8.21.0 inet_ntop helper - ISC
+lib/curlx/inet_ntop.c at curl/curl tag curl-8_21_0
+--------------------------------------------------------------------------------
+
+/*
+ * Copyright (C) 1996-2022  Internet Software Consortium.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND INTERNET SOFTWARE CONSORTIUM
+ * DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL
+ * INTERNET SOFTWARE CONSORTIUM BE LIABLE FOR ANY SPECIAL, DIRECT,
+ * INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING
+ * FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+ * NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION
+ * WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *
+ * SPDX-License-Identifier: ISC
+ */
+
+--------------------------------------------------------------------------------
+libcurl 8.21.0 inet_pton helper - ISC
+lib/curlx/inet_pton.c at curl/curl tag curl-8_21_0
+--------------------------------------------------------------------------------
+
+/* Copyright (c) Internet Software Consortium.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND INTERNET SOFTWARE CONSORTIUM DISCLAIMS
+ * ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL INTERNET SOFTWARE
+ * CONSORTIUM BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL
+ * DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR
+ * PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
+ * ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS
+ * SOFTWARE.
+ *
+ * SPDX-License-Identifier: ISC
+ */
+
+--------------------------------------------------------------------------------
+libarchive 3.8.7 - upstream license inventory and BSD-2-Clause
+COPYING at libarchive/libarchive tag v3.8.7
+--------------------------------------------------------------------------------
+
+The libarchive distribution as a whole is Copyright by Tim Kientzle
+and is subject to the copyright notice reproduced at the bottom of
+this file.
+
+Each individual file in this distribution should have a clear
+copyright/licensing statement at the beginning of the file.  If any do
+not, please let me know and I will rectify it.  The following is
+intended to summarize the copyright status of the individual files;
+the actual statements in the files are controlling.
+
+* Except as listed below, all C sources (including .c and .h files)
+  and documentation files are subject to the copyright notice reproduced
+  at the bottom of this file.
+
+* The following source files are also subject in whole or in part to
+  a 3-clause UC Regents copyright; please read the individual source
+  files for details:
+   libarchive/archive_read_support_filter_compress.c
+   libarchive/archive_write_add_filter_compress.c
+   libarchive/mtree.5
+
+* The following source files are in the public domain:
+   libarchive/archive_parse_date.c
+
+* The following source files are triple-licensed with the ability to choose
+  from CC0 1.0 Universal, OpenSSL or Apache 2.0 licenses:
+   libarchive/archive_blake2.h
+   libarchive/archive_blake2_impl.h
+   libarchive/archive_blake2s_ref.c
+   libarchive/archive_blake2sp_ref.c
+
+* The build files---including Makefiles, configure scripts,
+  and auxiliary scripts used as part of the compile process---have
+  widely varying licensing terms.  Please check individual files before
+  distributing them to see if those restrictions apply to you.
+
+I intend for all new source code to use the license below and hope over
+time to replace code with other licenses with new implementations that
+do use the license below.  The varying licensing of the build scripts
+seems to be an unavoidable mess.
+
+
+Copyright (c) 2003-2018 <author(s)>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer
+   in this position and unchanged.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) ``AS IS'' AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+utf8proc 2.11.3 - MIT and Unicode data notices
+LICENSE.md at JuliaStrings/utf8proc commit e5e799221b45bbb90f5fdc5c69b6b8dfbf017e78
+--------------------------------------------------------------------------------
+
+## utf8proc license ##
+
+**utf8proc** is a software package originally developed
+by Jan Behrens and the rest of the Public Software Group, who
+deserve nearly all of the credit for this library, that is now maintained by the Julia-language developers.  Like the original utf8proc,
+whose copyright and license statements are reproduced below, all new
+work on the utf8proc library is licensed under the [MIT "expat"
+license](http://opensource.org/licenses/MIT):
+
+*Copyright &copy; 2014-2021 by Steven G. Johnson, Jiahao Chen, Tony Kelman, Jonas Fonseca, and other contributors listed in the git history.*
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+## Original utf8proc license ##
+
+*Copyright (c) 2009, 2013 Public Software Group e. V., Berlin, Germany*
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+## Unicode data license ##
+
+This software contains data (`utf8proc_data.c`) derived from processing
+the Unicode data files. The following license applies to that data:
+
+**COPYRIGHT AND PERMISSION NOTICE**
+
+*Copyright (c) 1991-2007 Unicode, Inc. All rights reserved. Distributed
+under the Terms of Use in http://www.unicode.org/copyright.html.*
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of the Unicode data files and any associated documentation (the "Data
+Files") or Unicode software and any associated documentation (the
+"Software") to deal in the Data Files or Software without restriction,
+including without limitation the rights to use, copy, modify, merge,
+publish, distribute, and/or sell copies of the Data Files or Software, and
+to permit persons to whom the Data Files or Software are furnished to do
+so, provided that (a) the above copyright notice(s) and this permission
+notice appear with all copies of the Data Files or Software, (b) both the
+above copyright notice(s) and this permission notice appear in associated
+documentation, and (c) there is clear notice in each modified Data File or
+in the Software as well as in the documentation associated with the Data
+File(s) or Software that the data or software has been modified.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS
+INCLUDED IN THIS NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR
+CONSEQUENTIAL DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF
+USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THE DATA FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in these Data Files or Software without prior written
+authorization of the copyright holder.
+
+Unicode and the Unicode logo are trademarks of Unicode, Inc., and may be
+registered in some jurisdictions. All other trademarks and registered
+trademarks mentioned herein are the property of their respective owners.

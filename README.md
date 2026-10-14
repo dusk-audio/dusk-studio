@@ -79,7 +79,7 @@ deeper accessibility.
 | Built-in insert units (Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2, Sunset) | Working |
 | Plugin hosting (per-channel CLAP / VST3 / LV2 / AU + per-aux return) | Working |
 | Native soundfonts (`.sfz` + `.sf2` via dusk-fizz, no external synth) | Working |
-| Offline instrument library (lists what is installed, never reaches the network) | Working |
+| Instrument library (installed files and Creative Commons SFZ repositories) | Working |
 | Plugin offline-state preservation (missing plugin doesn't wipe save) | Working |
 | Out-of-process plugin sandbox, audio, opt-in (Linux + macOS + Windows) | Working |
 | Out-of-process plugin sandbox, editor embed (Linux XEmbed, Windows SetParent, macOS in-process shell) | Working |
@@ -89,7 +89,8 @@ deeper accessibility.
 | Realtime bounce (hardware inserts print wet) | Working |
 | Aux sends + reverb / delay returns (built-in DuskVerb 2, Tape Echo 2) | Working |
 | External hardware inserts (per channel + per aux, with auto-latency ping) | Working |
-| MIDI tracks + instrument plugins + piano roll editor | Working |
+| MIDI tracks + instrument plugins + piano roll editor with live recording preview | Working |
+| MIDI Merge with one undo step per recording pass | Working |
 | Audio region editor (non-destructive trim / fade / gain, automation lanes), in-window | Working |
 | Takes on the track + comping from take lanes in the audio editor | Working |
 | Loop-record take stacking (up to 1,024 passes kept as takes) | Working |
@@ -108,7 +109,7 @@ deeper accessibility.
 | Signed `SHA256SUMS` per release | Working (a tag cannot publish without it) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-The C++ suite declares 1526 Catch2 test cases across 256 test source files.
+The C++ suite declares 1656 Catch2 test cases across 268 test source files.
 Linux amd64, Linux arm64 and macOS build and run it on every push; Windows runs
 it on every push and PR; ThreadSanitizer and ASan plus UBSan run it on every
 push and PR. All of those, plus the framework-coupling ratchet, are required
@@ -220,7 +221,7 @@ src/
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
     imgui/     # native surfaces: startup, audio settings, audio editor, unit editors, keyboard
   util/        # native log storage + CrashHandler signal reports
-tests/         # 1526 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 1656 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds
 docs/          # maintainer guide, the 1.0 plan, migration plans
   DuskStudio.md  # authoritative product spec

@@ -502,14 +502,12 @@ MidiImportResult importMidi (const MidiImportRequest& req)
                     notes.push_back (n);
                 }
             }
-            else if (msg.isController())
+            else if (msg.isChannelMessage())
             {
+                const std::uint8_t bytes[] { msg.status, msg.data1, msg.data2 };
                 MidiCc cc;
-                cc.channel    = msg.channel();
-                cc.controller = msg.controllerNumber();
-                cc.value      = msg.controllerValue();
-                cc.atTick     = tick;
-                ccs.push_back (cc);
+                if (MidiCc::fromMessage (bytes, 3, tick, cc))
+                    ccs.push_back (cc);
             }
             // Meta events / sysex / tempo / time-sig: skipped.
         }
@@ -534,7 +532,7 @@ MidiImportResult importMidi (const MidiImportRequest& req)
 
     if (notes.empty() && ccs.empty())
     {
-        result.errorMessage = "MIDI file contains no notes or CC events";
+        result.errorMessage = "MIDI file contains no notes or channel-control events";
         return result;
     }
 

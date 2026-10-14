@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <memory>
 #include "audiofile/BufferedFileReader.h"
+#include "audiofile/ReaderFillPool.h"
 #include "../foundation/PlanarBuffer.h"
 #include "../session/Session.h"
 
@@ -14,10 +15,8 @@ namespace duskstudio
 {
 class Transport;
 
-// Multi-region playback. One buffered reader per region, each keeping a
-// prefetch window resident. Audio thread reads from those windows; on a
-// prefetch miss (right after Play or seek) a reader returns silence rather
-// than block.
+// Shared workers keep immutable sample windows near the playhead resident.
+// The audio thread reads those windows and returns silence on a miss.
 class PlaybackEngine
 {
 public:
@@ -26,7 +25,11 @@ public:
 
     // Pre-allocate scratch for the largest block. Must run before any
     // audio-thread readForTrack so the RT path never allocates.
-    void prepare (int maxBlockSize);
+    void prepare (int maxBlockSize, double sampleRate = 48000.0);
+    void primeAt (std::int64_t playhead);
+    void beginAudioBlock (std::int64_t playhead, std::int64_t loopStart,
+                           std::int64_t loopEnd) noexcept;
+    dusk::audio::ReaderFillPool::Stats readerStats() const { return fillPool.stats(); }
 
     // Lets preparePlayback read the loop range so it can pre-cache the
     // loop-start samples. Called once at AudioEngine construction.
@@ -112,6 +115,17 @@ private:
     const Transport* transport = nullptr;
     std::uint64_t rebuilds = 0;
     std::uint64_t swaps = 0;
+    dusk::audio::ReaderFillPool fillPool { 3 };
+    struct ReaderDeleter
+    {
+        dusk::audio::ReaderFillPool* pool = nullptr;
+        void operator() (dusk::audio::BufferedFileReader* reader) const noexcept
+        {
+            if (reader == nullptr) return;
+            if (pool != nullptr) pool->remove (*reader);
+            delete reader;
+        }
+    };
 
     // A field refreshLiveRegionParams changes while the audio thread reads it.
     // Copying one, which only building a stream does, reads it relaxed too.
@@ -132,7 +146,7 @@ private:
 
     struct RegionStream
     {
-        std::unique_ptr<dusk::audio::BufferedFileReader> reader;
+        std::unique_ptr<dusk::audio::BufferedFileReader, ReaderDeleter> reader { nullptr, ReaderDeleter {} };
         std::filesystem::path sourcePath;
         std::int64_t timelineStart   = 0;
         std::int64_t lengthInSamples = 0;

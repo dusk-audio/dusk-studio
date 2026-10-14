@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <new>
 #include <string>
 #include <thread>
@@ -40,7 +41,7 @@ bool sameMidiNote (const MidiNote& a, const MidiNote& b) noexcept
 bool sameMidiCc (const MidiCc& a, const MidiCc& b) noexcept
 {
     return a.channel == b.channel && a.controller == b.controller
-        && a.value == b.value && a.atTick == b.atTick;
+        && a.value == b.value && a.atTick == b.atTick && a.kind == b.kind;
 }
 
 bool sameMidiTake (const MidiTakeRef& a, const MidiTakeRef& b) noexcept
@@ -262,9 +263,17 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
 
     recordStartSample = startSample;
     recordSampleRate  = sampleRate;
+    recordTempoBpm = session.tempoBpm.load (std::memory_order_relaxed);
+    midiMergeCapture = session.midiMergeEnabled.load (std::memory_order_relaxed);
+    capturedMidiTrackMask = 0;
+    nextMidiGroupOrdinal = 1;
+    midiCompletedOrdinals = {};
+    for (auto& pending : pendingMidiPasses) pending.clear();
+    for (auto& preview : lastMidiPreviews) preview.reset();
     recordLatencyOffsetSamples = latencyOffsetSamples;
     loopPlan = loopCapturePlan;
     currentLoopSpan = {};
+    lastCapturedLoopSpan = {};
     midiLoopPassCount = 0;
     gestureCapturedAtMs = std::chrono::duration_cast<std::chrono::milliseconds> (
         std::chrono::system_clock::now().time_since_epoch()).count();
@@ -311,8 +320,12 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
         // MidiRegion and pushes onto track.midiRegions.
         if (trackMode == (int) Track::Mode::Midi)
         {
-            auto cap = std::make_unique<PerTrackMidi>();
+            auto cap = std::make_unique<PerTrackMidi> (midiMergeCapture);
             cap->fifo.reset();
+            cap->stream.configure ([sampleRate, bpm = recordTempoBpm] (std::int64_t sample)
+            {
+                return samplesToTicks (sample, sampleRate, bpm);
+            }, loopPlan.enabled ? loopPlan.captureEndSample - loopPlan.captureStartSample : 0);
             midiCaptures[(size_t) t] = std::move (cap);
             captureTrackMask |= std::uint32_t { 1 } << t;
             midiCaptureTrackMask |= std::uint32_t { 1 } << t;
@@ -433,6 +446,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     }
 
     activeCaptureTrackMask.store (captureTrackMask, std::memory_order_relaxed);
+    capturedMidiTrackMask = midiCaptureTrackMask;
     activeMidiCaptureTrackMask.store (midiCaptureTrackMask, std::memory_order_relaxed);
     activeStereoCaptureTrackMask.store (stereoCaptureTrackMask, std::memory_order_relaxed);
     active.store (true, std::memory_order_release);
@@ -487,6 +501,7 @@ void RecordManager::beginLoopCaptureSpan (const LoopCaptureSpan& span) noexcept
     currentLoopSpan = span;
     if (span.passOrdinal < 1 || span.numSamples <= 0)
         return;
+    lastCapturedLoopSpan = span;
 
     PassDescriptor* descriptor = nullptr;
     if (midiLoopPassCount > 0
@@ -510,6 +525,72 @@ void RecordManager::beginLoopCaptureSpan (const LoopCaptureSpan& span) noexcept
     descriptor->endsPass = descriptor->endsPass || span.endsPass;
 }
 
+const MidiCapturePreview* RecordManager::midiCapturePreview (int trackIndex) const noexcept
+{
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return nullptr;
+    const auto index = (size_t) trackIndex;
+    if (midiCaptures[index] != nullptr) return &midiCaptures[index]->stream.preview();
+    return lastMidiPreviews[index] ? &*lastMidiPreviews[index] : nullptr;
+}
+
+void RecordManager::collectMidiPasses (int trackIndex)
+{
+    const auto index = (size_t) trackIndex;
+    auto& cap = midiCaptures[index];
+    if (cap == nullptr) return;
+    for (auto& pass : cap->stream.takeCompleted())
+    {
+        midiCompletedOrdinals[index] = std::max (midiCompletedOrdinals[index], pass.passOrdinal);
+        MidiCapturePreview preview;
+        static_cast<MidiCapturedPass&> (preview) = pass;
+        preview.generation = cap->stream.preview().generation;
+        lastMidiPreviews[index] = std::move (preview);
+        if (midiMergeCapture) pendingMidiPasses[index].push_back (std::move (pass));
+    }
+}
+
+void RecordManager::serviceMidiCapture()
+{
+    for (int track = 0; track < Session::kNumTracks; ++track)
+        if (auto& cap = midiCaptures[(size_t) track])
+        {
+            cap->stream.service();
+            collectMidiPasses (track);
+        }
+}
+
+std::vector<RecordManager::CapturedMidiPassGroup> RecordManager::takeMidiPassGroups()
+{
+    serviceMidiCapture();
+    std::vector<CapturedMidiPassGroup> result;
+    if (! midiMergeCapture || capturedMidiTrackMask == 0) return result;
+    int minimumCompleted = std::numeric_limits<int>::max();
+    for (int track = 0; track < Session::kNumTracks; ++track)
+        if ((capturedMidiTrackMask & (std::uint32_t { 1 } << track)) != 0)
+            minimumCompleted = std::min (minimumCompleted, midiCompletedOrdinals[(size_t) track]);
+
+    while (nextMidiGroupOrdinal <= minimumCompleted)
+    {
+        CapturedMidiPassGroup group;
+        group.passOrdinal = nextMidiGroupOrdinal++;
+        group.timelineStart = midiCaptureTimelineStart();
+        group.capturedSampleRate = recordSampleRate;
+        group.capturedBpm = recordTempoBpm;
+        for (int track = 0; track < Session::kNumTracks; ++track)
+        {
+            if ((capturedMidiTrackMask & (std::uint32_t { 1 } << track)) == 0) continue;
+            auto& pending = pendingMidiPasses[(size_t) track];
+            if (pending.empty() || pending.front().passOrdinal != group.passOrdinal) continue;
+            auto pass = std::move (pending.front());
+            pending.pop_front();
+            if (! pass.notes.empty() || ! pass.ccs.empty())
+                group.tracks.push_back ({ track, std::move (pass) });
+        }
+        result.push_back (std::move (group));
+    }
+    return result;
+}
+
 void RecordManager::stopRecording (std::int64_t endSample)
 {
     if (! active.load (std::memory_order_relaxed))
@@ -523,6 +604,29 @@ void RecordManager::stopRecording (std::int64_t endSample)
     // Every audio-thread call bumps audioInFlight before it touches a writer or
     // a MIDI capture, so once it reads zero none of them is in use.
     waitForAudioThreadToLeave();
+
+    int finalMidiOrdinal = 1;
+    auto finalMidiEnd = std::max<std::int64_t> (0, endSample - recordStartSample);
+    if (loopPlan.enabled)
+    {
+        finalMidiOrdinal = std::max (1, lastCapturedLoopSpan.passOrdinal);
+        finalMidiEnd = lastCapturedLoopSpan.passOrdinal > 0
+            ? lastCapturedLoopSpan.timelineStart - loopPlan.captureStartSample
+                + lastCapturedLoopSpan.numSamples : 0;
+        for (const auto& cap : midiCaptures)
+            if (cap != nullptr && cap->lastPassOrdinal >= finalMidiOrdinal)
+            {
+                if (cap->lastPassOrdinal > finalMidiOrdinal) finalMidiEnd = 0;
+                finalMidiOrdinal = cap->lastPassOrdinal;
+                finalMidiEnd = std::max (finalMidiEnd, cap->lastEndSample);
+            }
+    }
+    for (int track = 0; track < Session::kNumTracks; ++track)
+        if (auto& cap = midiCaptures[(size_t) track])
+        {
+            cap->stream.sealFinal (finalMidiOrdinal, finalMidiEnd);
+            collectMidiPasses (track);
+        }
 
     // Latch audio-thread error counters into lastRecordErrors before
     // teardown so TransportBar can surface them after engine.stop(). Per-
@@ -541,7 +645,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
         }
         if (auto& cap = midiCaptures[(size_t) t])
         {
-            const auto over = cap->overflowCount.load (std::memory_order_relaxed);
+            const auto over = midiMergeCapture ? cap->stream.overflowCount()
+                : cap->overflowCount.load (std::memory_order_relaxed);
             if (over > 0)
                 lastRecordErrors.push_back ({ t, RecordErrorKind::MidiOverflow, over });
         }
@@ -573,6 +678,11 @@ void RecordManager::stopRecording (std::int64_t endSample)
     {
         auto& cap = midiCaptures[(size_t) t];
         if (cap == nullptr) continue;
+        if (midiMergeCapture)
+        {
+            cap.reset();
+            continue;
+        }
 
         // Drain the lock-free FIFO into a flat vector so we can sort by
         // sample-position before pairing Note On/Off events. Per JUCE's
@@ -622,8 +732,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 std::int64_t startSample = 0;
             };
             std::array<ActiveNote, 16 * 128> activeNotes {};
-            std::array<int, 16 * 128> controllerState {};
-            controllerState.fill (-1);
+            std::array<MidiCc, MidiCc::kLaneCount> controllerState {};
+            std::array<bool, MidiCc::kLaneCount> controllerValid {};
             static_assert (kMidiLoopPassWindow == kMaxMidiTakesPerRegion + 1,
                            "the MIDI pass window holds the current take plus the capped history");
             std::vector<MidiRegion> nonemptyPasses;
@@ -649,10 +759,17 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 {
                     activeNotes[(size_t) noteKey].active = false;
                 }
-                else if (statusType == 0xB0)
+                else
                 {
-                    controllerState[(size_t) ((channel - 1) * 128 + ev.data1)]
-                        = ev.data2;
+                    const std::uint8_t bytes[] { ev.status, ev.data1, ev.data2 };
+                    MidiCc control;
+                    if (MidiCc::fromMessage (bytes, statusType == 0xc0 || statusType == 0xd0 ? 2 : 3,
+                                             0, control))
+                    {
+                        const auto lane = (size_t) control.laneKey();
+                        controllerState[lane] = control;
+                        controllerValid[lane] = true;
+                    }
                 }
             };
 
@@ -687,12 +804,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
 
                     for (int key = 0; key < (int) controllerState.size(); ++key)
                     {
-                        const int value = controllerState[(size_t) key];
-                        if (value < 0) continue;
-                        MidiCc chased;
-                        chased.channel = key / 128 + 1;
-                        chased.controller = key % 128;
-                        chased.value = value;
+                        if (! controllerValid[(size_t) key]) continue;
+                        auto chased = controllerState[(size_t) key];
                         chased.atTick = 0;
                         passRegion.ccs.push_back (chased);
                     }
@@ -735,17 +848,19 @@ void RecordManager::stopRecording (std::int64_t endSample)
                         passRegion.notes.push_back (committed);
                         note.active = false;
                     }
-                    else if (statusType == 0xB0)
+                    else
                     {
+                        const std::uint8_t bytes[] { ev.status, ev.data1, ev.data2 };
                         MidiCc committed;
-                        committed.channel = channel;
-                        committed.controller = ev.data1;
-                        committed.value = ev.data2;
-                        committed.atTick = samplesToTicks (
-                            ev.samplePos, recordSampleRate, bpm);
-                        passRegion.ccs.push_back (committed);
-                        controllerState[(size_t) ((channel - 1) * 128 + ev.data1)]
-                            = ev.data2;
+                        if (MidiCc::fromMessage (bytes,
+                            statusType == 0xc0 || statusType == 0xd0 ? 2 : 3,
+                            samplesToTicks (ev.samplePos, recordSampleRate, bpm), committed))
+                        {
+                            passRegion.ccs.push_back (committed);
+                            const auto lane = (size_t) committed.laneKey();
+                            controllerState[lane] = committed;
+                            controllerValid[lane] = true;
+                        }
                     }
                 }
 
@@ -771,10 +886,10 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 {
                     for (int key = 0; key < (int) controllerState.size(); ++key)
                     {
-                        if (controllerState[(size_t) key] <= 0) continue;
-                        MidiCc reset;
-                        reset.channel = key / 128 + 1;
-                        reset.controller = key % 128;
+                        if (! controllerValid[(size_t) key]) continue;
+                        const auto& value = controllerState[(size_t) key];
+                        if (value.kind != MidiCc::Kind::ControlChange || value.value <= 0) continue;
+                        auto reset = value;
                         reset.value = 0;
                         reset.atTick = std::max<std::int64_t> (
                             0, passRegion.lengthInTicks - 1);
@@ -894,20 +1009,14 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 region.notes.push_back (n);
                 pending.erase (it);
             }
-            else if (statusType == 0xB0)                     // CC
+            else
             {
+                const std::uint8_t bytes[] { ev.status, ev.data1, ev.data2 };
                 MidiCc c;
-                c.channel    = channel;
-                c.controller = ev.data1;
-                c.value      = ev.data2;
-                c.atTick     = samplesToTicks (ev.samplePos, recordSampleRate, bpm);
-                region.ccs.push_back (c);
+                if (MidiCc::fromMessage (bytes, statusType == 0xc0 || statusType == 0xd0 ? 2 : 3,
+                                         samplesToTicks (ev.samplePos, recordSampleRate, bpm), c))
+                    region.ccs.push_back (c);
             }
-            // Other channel-voice messages (pitch bend, aftertouch,
-            // program) are dropped for now - the model holds notes + CCs
-            // only. Phase 4c can extend MidiCc with a status discriminant
-            // or add dedicated event vectors when the piano roll surfaces
-            // them.
         }
 
         // Hanging notes - any Note On still in `pending` had no matching
@@ -1079,7 +1188,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
         // take becomes un-undoable. Event contents matter too - with
         // previousTakes at its cap, a same-length redo with the same note
         // count would otherwise compare equal.
-        const bool midiChanged  = ! (afterM.size() == beforeMidi[(size_t) t].size()
+        const bool midiChanged  = ! midiMergeCapture
+                                && ! (afterM.size() == beforeMidi[(size_t) t].size()
                                       && std::equal (afterM.begin(), afterM.end(),
                                                       beforeMidi[(size_t) t].begin(),
                                                       sameMidiRegion));
@@ -1103,17 +1213,20 @@ template <typename MidiEvents>
 void RecordManager::writeMidiBlockImpl (int trackIndex,
                                         const MidiEvents& events,
                                         std::int64_t blockStartFromRecord,
-                                        const LoopCaptureSpan* explicitLoopSpan) noexcept
+                                        const LoopCaptureSpan* explicitLoopSpan,
+                                        int numSamples) noexcept
 {
     AudioInFlightScope guard (audioInFlight);
     if (! active.load (std::memory_order_seq_cst)) return;
-    if (events.isEmpty()) return;
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return;
     auto& cap = midiCaptures[(size_t) trackIndex];
     if (cap == nullptr) return;
     writeMidiBlockCalls[(size_t) trackIndex].fetch_add (1, std::memory_order_relaxed);
     const auto& selectedLoopSpan = explicitLoopSpan != nullptr
                                  ? *explicitLoopSpan : currentLoopSpan;
+    if (loopPlan.enabled && (selectedLoopSpan.passOrdinal < 1 || selectedLoopSpan.numSamples <= 0))
+        return;
+    const int passOrdinal = loopPlan.enabled ? selectedLoopSpan.passOrdinal : 1;
 
     for (const auto meta : events)
     {
@@ -1149,6 +1262,9 @@ void RecordManager::writeMidiBlockImpl (int trackIndex,
                + meta.samplePosition - selectedLoopSpan.inputOffset)
             : (blockStartFromRecord + meta.samplePosition);
         if (samplePos < 0) continue;
+        cap->stream.pushEvent (passOrdinal, samplePos, status,
+                               (std::uint8_t) raw[1], sz == 3 ? (std::uint8_t) raw[2] : 0);
+        if (midiMergeCapture) continue;
 
         int needed = 1;
         if (cap->fifo.getFreeSpace() < needed)
@@ -1190,14 +1306,21 @@ void RecordManager::writeMidiBlockImpl (int trackIndex,
         slot.passOrdinal = loopPlan.enabled ? selectedLoopSpan.passOrdinal : 0;
         cap->fifo.finishedWrite (needed);
     }
+    const auto end = loopPlan.enabled
+        ? selectedLoopSpan.timelineStart - loopPlan.captureStartSample + selectedLoopSpan.numSamples
+        : blockStartFromRecord + std::max (0, numSamples);
+    cap->stream.publishProgress (passOrdinal, end, loopPlan.enabled && selectedLoopSpan.endsPass);
+    cap->lastPassOrdinal = passOrdinal;
+    cap->lastEndSample = std::max<std::int64_t> (0, end);
 }
 
 void RecordManager::writeMidiBlock (int trackIndex,
                                     const dusk::MidiBuffer& events,
                                     std::int64_t blockStartFromRecord,
-                                    const LoopCaptureSpan* explicitLoopSpan) noexcept
+                                    const LoopCaptureSpan* explicitLoopSpan,
+                                    int numSamples) noexcept
 {
-    writeMidiBlockImpl (trackIndex, events, blockStartFromRecord, explicitLoopSpan);
+    writeMidiBlockImpl (trackIndex, events, blockStartFromRecord, explicitLoopSpan, numSamples);
 }
 
 void RecordManager::writeInputBlock (int trackIndex,

@@ -15,15 +15,8 @@ class EditModeToolbar;
 // Piano-roll editor anchored on (track, region). Validates indices each
 // paint so a concurrent record / delete doesn't crash the UI.
 //
-// Concurrency: all mutation of session.track(t).midiRegions + inner
-// notes/ccs happens on the message thread (this component's handlers +
-// RecordManager::stopRecording). Audio thread reads lock-free during
-// playback. A user edit while transport rolling can race a concurrent
-// audio iteration; vector realloc on push_back would invalidate the
-// audio's in-flight pointers. Edits are infrequent and audio iteration
-// short, so the codebase accepts the same rare race AudioRegion edits
-// have. Future hardening = gate mutation on transport-stopped, or
-// swap-load atomic ptr.
+// Message-thread edits publish immutable playback snapshots. Recording preview
+// belongs to the recorder and never mutates the region or its undo history.
 //
 // The roll is the one visible exception to DuskStudio's "everything
 // visible" rule - modal overlay on top of TapeStrip, Esc / click-out
@@ -47,7 +40,7 @@ public:
     std::function<void()> onRegionsGone;
     // A record pass committed on this track: show the region it landed,
     // which the recorder always appends.
-    void showCommittedRegion();
+    void showCommittedRegion (int committedIndex = -1);
     // A record commit, an undo or a take cycle replaces the track's regions
     // without telling the roll. The timer calls this to find the roll's region
     // again and repaint; the host calls it at once after changing them.
@@ -277,6 +270,8 @@ private:
     std::vector<MidiNote> shownNotes;
     std::vector<MidiCc>   shownCcs;
     std::int64_t          shownTicks = 0;
+    std::uint64_t         seenCaptureGeneration = 0;
+    bool                  showedCapturePreview = false;
 
     // Note-edit undo. Drag gestures: beginNoteEdit() at mouseDown,
     // commitNoteEdit() at mouseUp. Discrete edits (key / menu mutators):

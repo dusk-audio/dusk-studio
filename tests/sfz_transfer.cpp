@@ -1,0 +1,441 @@
+#include <catch2/catch_test_macros.hpp>
+
+#include "engine/sfz/SfzTransfer.h"
+
+#include <sodium.h>
+
+#include <array>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
+
+namespace
+{
+using namespace duskstudio::sfz;
+
+std::string sha256 (const std::string& source)
+{
+    REQUIRE (sodium_init() >= 0);
+    std::array<unsigned char, crypto_hash_sha256_BYTES> bytes {};
+    crypto_hash_sha256 (bytes.data(), reinterpret_cast<const unsigned char*> (source.data()), source.size());
+    std::array<char, crypto_hash_sha256_BYTES * 2 + 1> hex {};
+    sodium_bin2hex (hex.data(), hex.size(), bytes.data(), bytes.size());
+    return hex.data();
+}
+
+struct TemporaryDownload
+{
+    TemporaryDownload()
+    {
+        REQUIRE (sodium_init() >= 0);
+        root = std::filesystem::canonical (std::filesystem::temp_directory_path())
+            / ("dusk-sfz-transfer-" + std::to_string (randombytes_random())
+               + "-" + std::to_string (randombytes_random()));
+        REQUIRE (std::filesystem::create_directories (root));
+    }
+    ~TemporaryDownload() { std::error_code error; std::filesystem::remove_all (root, error); }
+    std::filesystem::path part() const { return root / "archive.part"; }
+    std::filesystem::path root;
+};
+
+std::string readFile (const std::filesystem::path& path)
+{
+    std::ifstream stream (path, std::ios::binary);
+    return { std::istreambuf_iterator<char> (stream), std::istreambuf_iterator<char>() };
+}
+
+struct FakeReply
+{
+    int status = 200;
+    HttpHeaders headers;
+    std::string body;
+    std::size_t chunkBytes = 4;
+    OperationStatus endStatus = OperationStatus::Complete;
+};
+
+class FakeTransport final : public HttpTransport
+{
+public:
+    OperationResult perform (const HttpRequest& request, const HttpHeadersCallback& onHeaders,
+                             const HttpBodyCallback& onBody, const OperationControl& control) override
+    {
+        requests.push_back (request);
+        if (requests.size() > replies.size()) return { OperationStatus::Failed, "No scripted response" };
+        const auto& reply = replies[requests.size() - 1];
+        const auto aborted = [&]
+        {
+            const auto state = control.status();
+            return OperationResult { state == OperationStatus::Complete ? OperationStatus::Failed : state, "Aborted" };
+        };
+        if (control.status() != OperationStatus::Complete) return aborted();
+        if (! onHeaders ({ reply.status, request.url, reply.headers })) return aborted();
+        for (std::size_t offset = 0; offset < reply.body.size(); offset += reply.chunkBytes)
+        {
+            if (control.status() != OperationStatus::Complete) return aborted();
+            if (! onBody (std::string_view (reply.body).substr (offset, reply.chunkBytes))) return aborted();
+        }
+        if (control.status() != OperationStatus::Complete) return aborted();
+        return { reply.endStatus, reply.endStatus == OperationStatus::Complete ? "" : "Scripted connection failure" };
+    }
+    std::vector<FakeReply> replies;
+    std::vector<HttpRequest> requests;
+};
+
+DownloadRequest request (const TemporaryDownload& temp, const std::string& digest = {})
+{
+    return { "https://example.test/archive.zip", temp.part(), digest, 1024 };
+}
+
+void pauseAfterPrefix (FakeTransport& transport, const DownloadRequest& download)
+{
+    transport.replies.push_back ({ 200, { { "content-length", "8" }, { "etag", "\"v1\"" } }, "abcdefgh" });
+    bool paused = false;
+    OperationControl control;
+    control.paused = [&] { return paused; };
+    control.progress = [&] (const OperationProgress& progress) { paused = progress.completedBytes >= 4; };
+    const auto result = downloadFile (transport, download, control);
+    REQUIRE (result.status == OperationStatus::Paused);
+    REQUIRE (result.bytes == 4);
+    REQUIRE (readFile (download.partPath) == "abcd");
+    REQUIRE (std::filesystem::exists (download.partPath.string() + ".resume.json"));
+}
+} // namespace
+
+TEST_CASE ("SFZ transfer streams and hashes a bounded archive", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    transport.replies.push_back ({ 200, { { "content-length", "8" } }, "abcdefgh" });
+    const auto result = downloadFile (transport, request (temp));
+    REQUIRE (result);
+    CHECK (result.bytes == 8);
+    CHECK (result.sha256 == sha256 ("abcdefgh"));
+    CHECK (readFile (temp.part()) == "abcdefgh");
+    CHECK (transport.requests.front().timeoutSeconds > transport.requests.front().connectTimeoutSeconds);
+}
+
+TEST_CASE ("SFZ transfer verifies an upstream digest before completion", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    transport.replies.push_back ({ 200, {}, "abcdefgh" });
+    SECTION ("Matching digest")
+    {
+        const auto result = downloadFile (transport, request (temp, sha256 ("abcdefgh")));
+        REQUIRE (result);
+        CHECK (result.sha256 == sha256 ("abcdefgh"));
+    }
+    SECTION ("Mismatched digest preserves part and exposes actual digest")
+    {
+        const auto result = downloadFile (transport, request (temp, sha256 ("different")));
+        CHECK_FALSE (result);
+        CHECK (result.error.find ("SHA-256") != std::string::npos);
+        CHECK (result.sha256 == sha256 ("abcdefgh"));
+        CHECK (readFile (temp.part()) == "abcdefgh");
+    }
+}
+
+TEST_CASE ("SFZ transfer rejects truncated or oversized archives", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    auto download = request (temp);
+    SECTION ("Declared body is truncated")
+    {
+        transport.replies.push_back ({ 200, { { "content-length", "8" } }, "abcd" });
+    }
+    SECTION ("Declared size exceeds limit before writes")
+    {
+        download.maxBytes = 4;
+        transport.replies.push_back ({ 200, { { "content-length", "8" } }, "abcdefgh" });
+    }
+    SECTION ("Undeclared body exceeds limit while streaming")
+    {
+        download.maxBytes = 4;
+        transport.replies.push_back ({ 200, {}, "abcdefgh" });
+    }
+    SECTION ("Body exceeds its declared length")
+    {
+        transport.replies.push_back ({ 200, { { "content-length", "4" } }, "abcdefgh" });
+    }
+    SECTION ("Compressed HTTP body is rejected")
+    {
+        transport.replies.push_back ({ 200, { { "content-encoding", "gzip" } }, "abcdefgh" });
+    }
+    const auto result = downloadFile (transport, download);
+    CHECK_FALSE (result);
+    CHECK (std::filesystem::file_size (temp.part()) <= download.maxBytes);
+}
+
+TEST_CASE ("SFZ transfer resumes a paused archive using its entity validator", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    const auto download = request (temp, sha256 ("abcdefgh"));
+    pauseAfterPrefix (transport, download);
+    transport.replies.push_back ({ 206, { { "content-length", "4" }, { "content-range", "bytes 4-7/8" },
+                                          { "etag", "\"v1\"" } }, "efgh" });
+    const auto result = downloadFile (transport, download);
+    REQUIRE (result);
+    CHECK (transport.requests.back().headers.at ("range") == "bytes=4-");
+    CHECK (transport.requests.back().headers.at ("if-range") == "\"v1\"");
+    CHECK (readFile (temp.part()) == "abcdefgh");
+    CHECK (result.sha256 == sha256 ("abcdefgh"));
+}
+
+TEST_CASE ("SFZ transfer does not append a mismatched resume response", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    const auto download = request (temp);
+    pauseAfterPrefix (transport, download);
+    FakeReply reply { 206, { { "content-range", "bytes 4-7/8" }, { "etag", "\"v1\"" } }, "efgh" };
+    SECTION ("Wrong offset") { reply.headers["content-range"] = "bytes 3-7/8"; }
+    SECTION ("Changed entity") { reply.headers["etag"] = "\"v2\""; }
+    SECTION ("Missing entity") { reply.headers.erase ("etag"); }
+    SECTION ("Unsatisfiable range") { reply.status = 416; }
+    SECTION ("Partial response stops before entity end") { reply.headers["content-range"] = "bytes 4-5/8"; }
+    transport.replies.push_back (reply);
+    CHECK_FALSE (downloadFile (transport, download));
+    CHECK (readFile (temp.part()) == "abcd");
+    CHECK (transport.requests.size() == 2);
+}
+
+TEST_CASE ("SFZ transfer safely restarts when the server ignores its range", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    const auto download = request (temp);
+    pauseAfterPrefix (transport, download);
+    transport.replies.push_back ({ 200, { { "content-length", "8" }, { "etag", "\"v2\"" } }, "12345678" });
+    const auto result = downloadFile (transport, download);
+    REQUIRE (result);
+    CHECK (readFile (temp.part()) == "12345678");
+    CHECK (result.sha256 == sha256 ("12345678"));
+    CHECK (result.bytes == 8);
+}
+
+TEST_CASE ("SFZ transfer restarts unrelated parts and unvalidated entities", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    auto download = request (temp);
+    SECTION ("URL changed")
+    {
+        pauseAfterPrefix (transport, download);
+        download.url = "https://example.test/other.zip";
+    }
+    SECTION ("Expected digest changed")
+    {
+        pauseAfterPrefix (transport, download);
+        download.expectedSha256 = sha256 ("12345678");
+    }
+    SECTION ("No entity validator")
+    {
+        transport.replies.push_back ({ 200, {}, "abcd", 4, OperationStatus::Failed });
+        REQUIRE_FALSE (downloadFile (transport, download));
+    }
+    SECTION ("No sidecar")
+    {
+        std::ofstream stream (temp.part(), std::ios::binary);
+        stream << "abcd";
+    }
+    transport.replies.push_back ({ 200, {}, "12345678" });
+    REQUIRE (downloadFile (transport, download));
+    CHECK (transport.requests.back().headers.count ("range") == 0);
+    CHECK (readFile (temp.part()) == "12345678");
+}
+
+TEST_CASE ("SFZ transfer preserves cancelled parts and can later resume them", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    const auto download = request (temp);
+    transport.replies.push_back ({ 200, { { "etag", "\"v1\"" } }, "abcdefgh" });
+    bool cancelled = false;
+    OperationControl control;
+    control.cancelled = [&] { return cancelled; };
+    control.progress = [&] (const OperationProgress&) { cancelled = true; };
+    const auto result = downloadFile (transport, download, control);
+    REQUIRE (result.status == OperationStatus::Cancelled);
+    CHECK (readFile (temp.part()) == "abcd");
+    transport.replies.push_back ({ 206, { { "etag", "\"v1\"" }, { "content-range", "bytes 4-7/8" } }, "efgh" });
+    REQUIRE (downloadFile (transport, download));
+    CHECK (readFile (temp.part()) == "abcdefgh");
+}
+
+TEST_CASE ("SFZ transfer can pause while hashing an existing prefix", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    const auto download = request (temp);
+    pauseAfterPrefix (transport, download);
+    bool paused = false;
+    OperationControl control;
+    control.paused = [&] { return paused; };
+    control.progress = [&] (const OperationProgress&) { paused = true; };
+    const auto result = downloadFile (transport, download, control);
+    CHECK (result.status == OperationStatus::Paused);
+    CHECK (transport.requests.size() == 1);
+    CHECK (readFile (temp.part()) == "abcd");
+}
+
+TEST_CASE ("SFZ transfer checks control between bounded transport chunks", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    auto download = request (temp);
+    download.maxBytes = 65536;
+    transport.replies.push_back ({ 200, { { "etag", "\"v1\"" } }, std::string (65536, 'x'), 65536 });
+    bool paused = false;
+    OperationControl control;
+    control.paused = [&] { return paused; };
+    control.progress = [&] (const OperationProgress&) { paused = true; };
+    const auto result = downloadFile (transport, download, control);
+    CHECK (result.status == OperationStatus::Paused);
+    CHECK (result.bytes == 32768);
+    CHECK (std::filesystem::file_size (temp.part()) == 32768);
+}
+
+TEST_CASE ("SFZ transfer rehashes completed archives before reusing them", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    const auto download = request (temp, sha256 ("abcdefgh"));
+    transport.replies.push_back ({ 200, {}, "abcdefgh" });
+    REQUIRE (downloadFile (transport, download));
+    SECTION ("Unchanged completed part needs no network")
+    {
+        const auto result = downloadFile (transport, download);
+        REQUIRE (result);
+        CHECK (result.bytes == 8);
+        CHECK (result.sha256 == sha256 ("abcdefgh"));
+    }
+    SECTION ("Same-size tampering is rejected")
+    {
+        std::ofstream (temp.part(), std::ios::binary | std::ios::trunc) << "12345678";
+        CHECK_FALSE (downloadFile (transport, download));
+    }
+    SECTION ("Changed length is rejected")
+    {
+        std::ofstream (temp.part(), std::ios::binary | std::ios::trunc) << "1234";
+        CHECK_FALSE (downloadFile (transport, download));
+    }
+    SECTION ("Completed-part hashing remains pause-aware")
+    {
+        bool paused = false;
+        OperationControl control;
+        control.paused = [&] { return paused; };
+        control.progress = [&] (const OperationProgress&) { paused = true; };
+        CHECK (downloadFile (transport, download, control).status == OperationStatus::Paused);
+    }
+    CHECK (transport.requests.size() == 1);
+}
+
+TEST_CASE ("SFZ HTTP redirects remain bounded HTTPS requests", "[sfz][transfer]")
+{
+    FakeTransport transport;
+    SECTION ("HTTPS and relative redirects succeed")
+    {
+        transport.replies = { { 302, { { "location", "/second" } }, "ignored" },
+                              { 307, { { "location", "https://cdn.test/data" } }, "" },
+                              { 200, { { "content-length", "2" } }, "{}" } };
+        const auto result = fetchHttpText (transport, "https://example.test/first", 16);
+        REQUIRE (result);
+        CHECK (result.response.url == "https://cdn.test/data");
+        CHECK (result.body == "{}");
+        CHECK (transport.requests[1].url == "https://example.test/second");
+    }
+    SECTION ("Downgrade is rejected before a second request")
+    {
+        transport.replies = { { 302, { { "location", "http://example.test/data" } }, "" } };
+        CHECK_FALSE (fetchHttpText (transport, "https://example.test/data", 16));
+        CHECK (transport.requests.size() == 1);
+    }
+    SECTION ("Credentials in redirect are rejected")
+    {
+        transport.replies = { { 302, { { "location", "https://user:pass@example.test/data" } }, "" } };
+        CHECK_FALSE (fetchHttpText (transport, "https://example.test/data", 16));
+        CHECK (transport.requests.size() == 1);
+    }
+    SECTION ("Redirect loops stop after five redirects")
+    {
+        transport.replies.assign (6, { 302, { { "location", "/loop" } }, "" });
+        CHECK_FALSE (fetchHttpText (transport, "https://example.test/loop", 16));
+        CHECK (transport.requests.size() == 6);
+    }
+}
+
+TEST_CASE ("SFZ transfer drops range when a redirect changes the saved endpoint", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    const auto download = request (temp);
+    pauseAfterPrefix (transport, download);
+    transport.replies.push_back ({ 302, { { "location", "https://different.test/archive" } }, "" });
+    transport.replies.push_back ({ 200, {}, "12345678" });
+    REQUIRE (downloadFile (transport, download));
+    CHECK (transport.requests.back().headers.count ("range") == 0);
+    CHECK (transport.requests.back().headers.count ("if-range") == 0);
+    CHECK (readFile (temp.part()) == "12345678");
+}
+
+TEST_CASE ("SFZ HTTP metadata is bounded and retains server status headers", "[sfz][transfer]")
+{
+    FakeTransport transport;
+    SECTION ("Rate limit response is available to the caller")
+    {
+        transport.replies = { { 429, { { "Retry-After", "60" } }, "{}" } };
+        const auto result = fetchHttpText (transport, "https://example.test/catalog", 16);
+        REQUIRE (result);
+        CHECK (result.response.statusCode == 429);
+        CHECK (result.response.headers.at ("retry-after") == "60");
+    }
+    SECTION ("Unbounded JSON response is stopped")
+    {
+        transport.replies = { { 200, {}, "123456789" } };
+        CHECK_FALSE (fetchHttpText (transport, "https://example.test/catalog", 4));
+    }
+    SECTION ("Truncated JSON response is rejected")
+    {
+        transport.replies = { { 200, { { "content-length", "8" } }, "{}" } };
+        CHECK_FALSE (fetchHttpText (transport, "https://example.test/catalog", 16));
+    }
+    SECTION ("Non-HTTPS URL never reaches the transport")
+    {
+        CHECK_FALSE (fetchHttpText (transport, "http://example.test/catalog", 16));
+        CHECK (transport.requests.empty());
+    }
+}
+
+TEST_CASE ("SFZ transfer refuses unsafe existing parts", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    auto download = request (temp);
+    SECTION ("Oversized part")
+    {
+        std::ofstream stream (temp.part(), std::ios::binary);
+        stream << "12345";
+        stream.close();
+        download.maxBytes = 4;
+        CHECK_FALSE (downloadFile (transport, download));
+        CHECK (readFile (temp.part()) == "12345");
+    }
+    SECTION ("Symlink part")
+    {
+        const auto target = temp.root / "target";
+        std::ofstream (target, std::ios::binary) << "untouched";
+        std::error_code error;
+        std::filesystem::create_symlink (target, temp.part(), error);
+        if (! error)
+        {
+            CHECK_FALSE (downloadFile (transport, download));
+            CHECK (readFile (target) == "untouched");
+        }
+        else SUCCEED ("Host does not permit symlink creation");
+    }
+    CHECK (transport.requests.empty());
+}

@@ -128,7 +128,8 @@ jobs:
             libpipewire-0.3-dev
             liblilv-dev libsuil-dev lv2-dev
             ladspa-sdk
-            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev
+            libcurl4-openssl-dev libarchive-dev libutf8proc-dev
+            libfreetype-dev libfontconfig1-dev
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev
             libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev
@@ -511,7 +512,7 @@ jobs:
           fi
           echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
 
-      - name: Install libmp3lame + libsndfile (vcpkg)
+      - name: Install static manifest dependencies (vcpkg)
         shell: bash
         # mp3lame: MP3 bounce/export. libsndfile: the audio file I/O layer,
         # required on every platform. x64-windows-static = static libs + /MT
@@ -519,7 +520,7 @@ jobs:
         # (sfizz forces /MT). The -md triplet (/MD) would LNK2038 against the
         # /MT objects. These vcpkg libraries link into the binary, so they add
         # no runtime DLLs to the MSI.
-        # CMake finds both through their config packages on CMAKE_PREFIX_PATH
+        # CMake finds the installed libraries on CMAKE_PREFIX_PATH
         # (forward-slashed so cmake parses the path cleanly).
         # Manifest mode: versions come from vcpkg.json's builtin-baseline and
         # install under <manifest-root>/vcpkg_installed, not the image's vcpkg
@@ -854,7 +855,7 @@ jobs:
 
       - name: Install build dependencies
         # lame: libmp3lame for MP3 bounce/export (required by the configure).
-        run: brew install ninja ccache lame libsndfile lilv suil lv2
+        run: brew install ninja ccache lame libsndfile lilv suil lv2 curl libarchive utf8proc
 
       - name: Build static libsodium (pinned)
         # Homebrew's bottle is built for the runner OS, newer than the app's
@@ -945,7 +946,7 @@ jobs:
           # Apple Silicon. No Developer ID, no Hardened Runtime, no notary.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix curl);$(brew --prefix libarchive);$(brew --prefix utf8proc);$(brew --prefix)" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
@@ -1000,7 +1001,7 @@ jobs:
           set -euo pipefail
           cmake -S . -B build-tests -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix curl);$(brew --prefix libarchive);$(brew --prefix utf8proc);$(brew --prefix)" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \

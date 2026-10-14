@@ -5,6 +5,7 @@
 #include "../DuskComboBox.h"
 #include "../../foundation/MessageThread.h"
 
+#include <functional>
 #include <memory>
 
 namespace duskstudio
@@ -23,7 +24,10 @@ class DuskMultisampleEditor final : public juce::Component,
                                      private dusk::Timer
 {
 public:
-    explicit DuskMultisampleEditor (DuskMultisampleProcessor& proc);
+    explicit DuskMultisampleEditor (DuskMultisampleProcessor& proc,
+                                    std::function<void()> openLibrary = {},
+                                    std::function<void()> replacementFinished = {},
+                                    std::function<void()> fileCleared = {});
     ~DuskMultisampleEditor() override;
 
     void paint (juce::Graphics& g) override;
@@ -42,6 +46,7 @@ private:
     void setLoadControlsEnabled (bool enabled);
 
     DuskMultisampleProcessor& processor;
+    std::function<void()> libraryRequested, replacementCompleted, onFileCleared;
 
     juce::Label    titleLabel       { {}, "Soundfont" };
     juce::Label    filePathLabel    { {}, "(no file)" };

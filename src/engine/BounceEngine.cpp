@@ -77,6 +77,19 @@ BounceEngine::~BounceEngine()
 {
     cancel();
     stopThread (5000);
+    releaseAssetRenderPause();
+}
+
+void BounceEngine::holdAssetRenderPause() noexcept
+{
+    if (! pauseHeld.exchange (true, std::memory_order_acq_rel))
+        engine.setAssetRenderActive (true);
+}
+
+void BounceEngine::releaseAssetRenderPause() noexcept
+{
+    if (pauseHeld.exchange (false, std::memory_order_acq_rel))
+        engine.setAssetRenderActive (false);
 }
 
 bool BounceEngine::runOnMessageThread (std::function<void()> fn)
@@ -138,6 +151,7 @@ bool BounceEngine::processOfflineBlock (
     int gateRetries = 0;
     while (! cancelRequested.load (std::memory_order_relaxed))
     {
+        engine.getPlaybackEngine().primeAt (engine.getTransport().getPlayhead());
         const auto gatedBefore = engine.getGatedBlockCount();
         engine.audioDeviceIOCallback (inputChannelData,
                                       numInputChannels,
@@ -335,18 +349,33 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     cancelRequested.store (false, std::memory_order_relaxed);
     progress.store (0.0f, std::memory_order_relaxed);
     renderedSamples.store (0, std::memory_order_relaxed);
+    const auto setStartError = [this] (const char* message)
     {
         const juce::ScopedLock lock (lastErrorLock);
-        lastError.clear();
-    }
+        lastError = message;
+    };
+    setStartError ("");
     rendering.store (true, std::memory_order_relaxed);
 
-    startThread();
+    holdAssetRenderPause();
+    if (! startThread())
+    {
+        releaseAssetRenderPause();
+        rendering.store (false, std::memory_order_release);
+        setStartError ("Could not start the bounce render thread");
+        return false;
+    }
     return true;
 }
 
 void BounceEngine::run()
 {
+    struct AssetPauseGuard
+    {
+        BounceEngine& owner;
+        ~AssetPauseGuard() { owner.releaseAssetRenderPause(); }
+    } assetPauseGuard { *this };
+
     if (onStarted) onStarted();
 
     if (renderRealtime)
@@ -1099,12 +1128,14 @@ bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
     { const juce::ScopedLock lock (lastErrorLock); lastError.clear(); }
     rendering.store (true, std::memory_order_relaxed);
 
+    holdAssetRenderPause();
     // run() owns clearing `rendering`, so if the thread never starts we must
     // clear it here - otherwise isRendering() stays true forever and the dialog
     // wedges. Routes the caller into FreezeDialog's failBeforeStart path.
     if (! startThread())   // -> run() -> renderFreezeTrack on the worker thread
     {
-        rendering.store (false, std::memory_order_relaxed);
+        releaseAssetRenderPause();
+        rendering.store (false, std::memory_order_release);
         const juce::ScopedLock lock (lastErrorLock);
         lastError = "Could not start the freeze render thread";
         return false;

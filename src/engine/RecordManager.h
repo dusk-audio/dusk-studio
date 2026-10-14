@@ -3,7 +3,9 @@
 #include <juce_core/juce_core.h>
 #include <array>
 #include <atomic>
+#include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include "../foundation/MidiBuffer.h"
@@ -11,6 +13,7 @@
 #include "../session/Session.h"
 #include "audiofile/ThreadedFileWriter.h"
 #include "audiofile/WriterDrainPool.h"
+#include "MidiCaptureStream.h"
 
 namespace duskstudio
 {
@@ -100,7 +103,33 @@ public:
     void writeMidiBlock (int trackIndex,
                           const dusk::MidiBuffer& events,
                           std::int64_t blockStartFromRecord,
-                          const LoopCaptureSpan* explicitLoopSpan = nullptr) noexcept;
+                          const LoopCaptureSpan* explicitLoopSpan = nullptr,
+                          int numSamples = 0) noexcept;
+
+    // The mode is fixed for a gesture and remains available after stop.
+    bool isMidiMergeCapture() const noexcept { return midiMergeCapture; }
+    // Message-thread snapshots; serviceMidiCapture refreshes unfinished notes.
+    std::int64_t midiCaptureTimelineStart() const noexcept
+    {
+        return loopPlan.enabled ? loopPlan.captureStartSample : recordStartSample;
+    }
+    const MidiCapturePreview* midiCapturePreview (int trackIndex) const noexcept;
+    void serviceMidiCapture();
+
+    struct CapturedMidiTrackPass
+    {
+        int trackIndex = -1;
+        MidiCapturedPass pass;
+    };
+    struct CapturedMidiPassGroup
+    {
+        int passOrdinal = 1;
+        std::int64_t timelineStart = 0;
+        double capturedSampleRate = 0.0;
+        float capturedBpm = 0.0f;
+        std::vector<CapturedMidiTrackPass> tracks;
+    };
+    std::vector<CapturedMidiPassGroup> takeMidiPassGroups();
 
     // True from startRecording until stopRecording, which is also exactly how
     // long a take's WAV has no region pointing at it.
@@ -185,7 +214,9 @@ private:
     void writeMidiBlockImpl (int trackIndex,
                              const MidiEvents& events,
                              std::int64_t blockStartFromRecord,
-                             const LoopCaptureSpan* explicitLoopSpan) noexcept;
+                             const LoopCaptureSpan* explicitLoopSpan,
+                             int numSamples) noexcept;
+    void collectMidiPasses (int trackIndex);
 
     // Message thread, with active false and audioInFlight at zero. Drops
     // whatever capture is still held without committing it.
@@ -246,10 +277,19 @@ private:
         std::vector<RawEvent>  events;
         dusk::SpscIndexFifo    fifo { kCapacity };
         std::atomic<std::uint64_t> overflowCount { 0 };
-        PerTrackMidi() : events ((size_t) kCapacity) {}
+        MidiCaptureStream stream;
+        int lastPassOrdinal = 0;
+        std::int64_t lastEndSample = 0;
+        explicit PerTrackMidi (bool merge) : events (merge ? 0 : (size_t) kCapacity) {}
     };
 
     std::array<std::unique_ptr<PerTrackMidi>, Session::kNumTracks> midiCaptures;
+    std::array<std::deque<MidiCapturedPass>, Session::kNumTracks> pendingMidiPasses;
+    std::array<std::optional<MidiCapturePreview>, Session::kNumTracks> lastMidiPreviews;
+    std::array<int, Session::kNumTracks> midiCompletedOrdinals {};
+    std::uint32_t capturedMidiTrackMask = 0;
+    int nextMidiGroupOrdinal = 1;
+    bool midiMergeCapture = false;
 
     // Diagnostic - distinguishes "track wasn't armed in MIDI mode"
     // (counter 0, cap null) from "armed but no events arrived"
@@ -296,9 +336,11 @@ private:
 
     std::int64_t recordStartSample = 0;
     double      recordSampleRate  = 0.0;
+    float       recordTempoBpm = 0.0f;
 
     LoopCapturePlan loopPlan;
     LoopCaptureSpan currentLoopSpan;
+    LoopCaptureSpan lastCapturedLoopSpan;
     // MIDI regions keep at most eight previous takes, so only the newest nine
     // passes of a gesture can survive as MIDI takes. Older bounds are evicted
     // here; their events still seed held notes and controllers at the first

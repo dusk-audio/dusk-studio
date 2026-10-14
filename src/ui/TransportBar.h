@@ -87,6 +87,12 @@ public:
         recordButton.triggerClick();
         return true;
     }
+    bool clickMidiMergeForScenario()
+    {
+        if (! midiMergeToggle.isShowing() || ! midiMergeToggle.isEnabled()) return false;
+        midiMergeToggle.triggerClick();
+        return true;
+    }
     bool clickKeyboardForScenario()
     {
         if (! keyboardButton.isShowing()) return false;
@@ -194,6 +200,7 @@ private:
                                           TransportIconButton::Icon::Metronome,
                                           juce::Colour (0xff60c060) };
     juce::TextButton countInToggle { "C/I" };
+    decltype(countInToggle) midiMergeToggle { "MIDI Merge" };
     juce::Label      bpmCaption;
     juce::Label      bpmValue;
     juce::TextButton tapButton      { "TAP" };

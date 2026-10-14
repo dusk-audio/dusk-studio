@@ -10,13 +10,17 @@ This document is aimed at a developer with a Windows machine who has been handed
    - During install, check the **"Desktop development with C++"** workload.
    - This brings MSVC, the Windows 10/11 SDK, and CMake. No separate CMake install needed.
 2. **Git for Windows**: https://git-scm.com/download/win
-3. **vcpkg**, for libsndfile, libsodium and LAME. libsndfile is not optional on any platform: all audio file I/O goes through it and configure hard-fails without it ([CMakeLists.txt:603-628](../CMakeLists.txt#L603-L628)). libsodium provides the signed SFZ catalog verification layer and is also required. LAME enables MP3 bounce; without it the build quietly stays WAV-only, so pass `-DDUSKSTUDIO_REQUIRE_LAME=ON` (as CI and the release build do) to make that a configure error. All three are declared in [vcpkg.json](../vcpkg.json) at the repo root, with a `builtin-baseline` that pins the exact codec versions, so run vcpkg in manifest mode from the checkout root and it installs what CI installs:
+3. **vcpkg**, for libsndfile, libsodium, LAME, libcurl, libarchive and utf8proc. libsndfile is not optional on any platform: all audio file I/O goes through it and configure hard-fails without it ([CMakeLists.txt:603-628](../CMakeLists.txt#L603-L628)). libsodium provides signed SFZ catalog verification and SHA-256 archive receipts and is also required. SFZ repository downloads require libcurl, ZIP extraction requires libarchive and zlib, and portable archive paths require utf8proc. LAME enables MP3 bounce; without it the build quietly stays WAV-only, so pass `-DDUSKSTUDIO_REQUIRE_LAME=ON` (as CI and the release build do) to make that a configure error. The direct libraries are declared in [vcpkg.json](../vcpkg.json) at the repo root, with a `builtin-baseline` that pins the exact codec versions, so run vcpkg in manifest mode from the checkout root and it installs what CI installs:
 
    ```cmd
    vcpkg install --triplet x64-windows-static
    ```
 
    Manifest mode rejects per-package arguments: `vcpkg install libsndfile:x64-windows-static` errors out while `vcpkg.json` is present. Your vcpkg clone must also already contain the baseline commit, because vcpkg resolves it locally and will not fetch it; clones updated on or after 2026-08-01 have it, so `git pull` in the vcpkg clone first if yours is older. The packages land in `vcpkg_installed\x64-windows-static` under the checkout, so add `-DCMAKE_PREFIX_PATH=<repo-root>/vcpkg_installed/x64-windows-static` to the configure line, forward slashes as with the DAF paths below.
+   The current baseline resolves curl 8.21.0 with Schannel/SSPI TLS, libarchive
+   3.8.7 with zlib 1.3.2 and optional features disabled, and utf8proc 2.11.3.
+   It does not add OpenSSL. Their installed notices are under
+   `vcpkg_installed/x64-windows-static/share/{curl,libarchive,utf8proc,zlib}/copyright`.
 4. **Steinberg ASIO SDK** — required for every Windows configuration. Dusk Studio does not support ASIO-less Windows builds. Download from https://www.steinberg.net/asiosdk, accept the EULA, unzip somewhere stable, then pass `-DASIOSDK_PATH=C:/path/to/asiosdk` (its `common/` must contain `iasiodrv.h`). CMake fails closed when the SDK is absent.
 
 ## Repository layout

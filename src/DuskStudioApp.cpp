@@ -777,7 +777,7 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
         const juce::String soundfontPath;
         const bool legacyMultisample = false;
 #endif
-        if (soundfontPath.isNotEmpty())
+        if (soundfontPath.isNotEmpty() || session->track (0).nativeMultisampleLocator)
         {
             std::fprintf (stdout,
                           "After SessionSerializer::load: track[0] soundfont=\"%s\"  "
@@ -836,9 +836,15 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
         engine->consumeTransportStateAfterLoad();
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
+        const auto loadDeadline = std::chrono::steady_clock::now() + std::chrono::seconds (30);
+        while (engine->hasPendingMultisampleLoads() && std::chrono::steady_clock::now() < loadDeadline)
+        {
+            engine->serviceMultisampleLoads();
+            std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        }
         // Re-read after consumption: a legacy descriptor only lands on
         // nativeMultisamplePath once the migration inside consume has run.
-        if (session->track (0).nativeMultisamplePath.isNotEmpty())
+        if (session->track (0).nativeMultisamplePath.isNotEmpty() || session->track (0).nativeMultisampleLocator)
         {
             auto& msStrip = engine->getStrip (0);
             if (msStrip.isNativeMultisampleLoaded())

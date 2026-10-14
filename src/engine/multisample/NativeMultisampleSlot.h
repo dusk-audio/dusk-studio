@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace duskstudio
@@ -46,6 +47,12 @@ public:
         if (instance != nullptr) instance->cancelPendingLoads();
     }
 
+    void prepareReplacement()
+    {
+        if (instance != nullptr) instance->drainPendingLoadsForReplacement();
+        releaseAttachedEditor();
+    }
+
     // State's retained soundfont reference is authoritative. Keep the generic
     // slot path in step when an in-editor file swap made it differ from the
     // bundle that originally constructed the slot.
@@ -70,7 +77,9 @@ public:
     {
         std::unique_ptr<MultisampleBundle>        bundle;
         std::unique_ptr<DuskMultisampleProcessor> instance;
+        hosting::InsertAdapter                    adapter;
         std::string                               path;
+        int                                       preparedMaxBlock = 0;
         bool                                      stateRestoreFailed = false;
 
         explicit operator bool() const noexcept { return instance != nullptr; }
@@ -80,7 +89,8 @@ public:
     static PrimedLoad prime (const std::filesystem::path& path,
                              double sampleRate, int maxBlock,
                              std::string& errorOut,
-                             const std::vector<std::uint8_t>* state = nullptr)
+                             const std::vector<std::uint8_t>* state = nullptr,
+                             bool resolvedPathAuthoritative = false)
     {
         PrimedLoad primed;
         auto b = std::make_unique<MultisampleBundle>();
@@ -93,7 +103,9 @@ public:
 
         auto inst = std::make_unique<DuskMultisampleProcessor>();
         const bool hasState = state != nullptr && ! state->empty();
-        if (hasState && ! inst->loadState (*state))
+        if (hasState && ! (resolvedPathAuthoritative
+                            ? inst->loadStateWithResolvedFile (*state, path)
+                            : inst->loadState (*state)))
         {
             // Carry the failure to the caller. The caller deliberately does
             // not commit this primed default-state instance, so the saved blob
@@ -112,6 +124,8 @@ public:
         }
         if (! inst->activate (sampleRate, maxBlock, err))
         { errorOut = "activate: " + err; return primed; }
+        primed.adapter.prepare (inst->portLayout(), maxBlock);
+        primed.preparedMaxBlock = maxBlock;
 
         primed.bundle   = std::move (b);
         primed.instance = std::move (inst);
@@ -119,23 +133,46 @@ public:
         return primed;
     }
 
-    // Message thread, audio thread fenced by the caller. Installs a primed
-    // instance and destroys the previous one; a failed prime is a no-op false.
-    // Drain the OUTGOING instance's loader before calling (drainPendingLoads) so
-    // its destructor does not join a decode while the audio thread is parked.
-    bool commit (PrimedLoad primed, int maxBlock)
+    // Fenced swap only. primed retains the outgoing occupant and scratch; the
+    // caller destroys it after leaving the engine gate.
+    bool commit (PrimedLoad& primed, int maxBlock)
     {
-        if (! primed) return false;
-        unload();
+        if (! primed || primed.stateRestoreFailed || primed.preparedMaxBlock != maxBlock)
+            return false;
+        releaseAttachedEditor();
+        processingOnline.store (false, std::memory_order_release);
+        ready.store (false, std::memory_order_release);
+        gen.fetch_add (1, std::memory_order_relaxed);
+        drainQueuedParamBindings();
         owesMidiReset = false;
-        bundle   = std::move (primed.bundle);
-        instance = std::move (primed.instance);
-        adapter.prepare (instance->portLayout(), maxBlock);
-        loadedPath = std::move (primed.path);
+        owedResetMidi.clear();
+        bundle.swap (primed.bundle);
+        instance.swap (primed.instance);
+        std::swap (adapter, primed.adapter);
+        loadedPath.swap (primed.path);
         loadedPluginId.clear();
         processingOnline.store (true, std::memory_order_release);
         ready.store (true, std::memory_order_release);
         return true;
+    }
+
+    // Fenced removal with the same deferred destruction contract as commit.
+    PrimedLoad detach()
+    {
+        releaseAttachedEditor();
+        processingOnline.store (false, std::memory_order_release);
+        ready.store (false, std::memory_order_release);
+        gen.fetch_add (1, std::memory_order_relaxed);
+        drainQueuedParamBindings();
+        owesMidiReset = false;
+        owedResetMidi.clear();
+        PrimedLoad outgoing;
+        bundle.swap (outgoing.bundle);
+        instance.swap (outgoing.instance);
+        std::swap (adapter, outgoing.adapter);
+        loadedPath.swap (outgoing.path);
+        loadedPluginId.clear();
+        return outgoing;
     }
 };
 } // namespace duskstudio

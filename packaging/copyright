@@ -18,3 +18,9 @@ Comment:
  Third-party components linked into or shipped with this package, their
  copyright holders, licenses and full license texts are inventoried in
  /usr/share/doc/dusk-studio/LICENSES.txt.
+ .
+ SFZ repository support links libcurl (curl license and ISC helper notices),
+ libarchive (BSD and per-file licenses), and utf8proc (MIT and Unicode data
+ notices). SHA-256 archive receipts use libsodium (ISC). Windows also links
+ zlib for libarchive; its zlib license is in the same inventory. System
+ shared-library packages carry their own dependency copyright notices.

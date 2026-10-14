@@ -634,6 +634,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/DafEditorHost.cpp
         src/ui/imgui/MasteringLimiterView.cpp
         src/ui/imgui/PanelControls.cpp
+        src/ui/imgui/SfzRepositoryView.cpp
         src/ui/imgui/StartupView.cpp
         src/ui/imgui/VirtualKeyboardView.cpp)
     target_include_directories(DuskStudio PRIVATE
@@ -734,6 +735,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/PluginSlot.cpp
     src/engine/sfz/SfzLibrary.cpp
     src/ui/multisample/SfzLibraryPanel.cpp
+    src/engine/MidiCaptureStream.cpp
     src/engine/RecordManager.cpp
     src/engine/ShutdownPhases.cpp
     src/engine/scenario/ScenarioContext.cpp
@@ -845,6 +847,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_plugin_editors.cpp
     src/ui/scenario/cases/gui_regions_markers.cpp
     src/ui/scenario/cases/gui_session_file.cpp
+    src/ui/scenario/cases/gui_sfz_repository.cpp
     src/ui/scenario/cases/gui_startup_quit.cpp
     src/ui/scenario/cases/gui_tracks.cpp
     src/ui/MainComponent.cpp
@@ -893,6 +896,7 @@ endif()
 
 target_sources(DuskStudio PRIVATE
     src/engine/audiofile/BufferedFileReader.cpp
+    src/engine/audiofile/ReaderFillPool.cpp
     src/engine/audiofile/FileReader.cpp
     src/engine/audiofile/WaveformPeaks.cpp
     src/engine/audiofile/FileWriter.cpp
@@ -961,8 +965,15 @@ endif()
 
 target_sources(DuskStudio PRIVATE
     src/engine/sfz/SfzCatalog.cpp
-    src/engine/sfz/SfzCatalogEnvelope.cpp)
-target_link_libraries(DuskStudio PRIVATE dusk_sodium)
+    src/engine/sfz/SfzCatalogEnvelope.cpp
+    src/engine/sfz/SfzTransfer.cpp
+    src/engine/sfz/SfzArchive.cpp
+    src/engine/sfz/SfzPathPolicy.cpp
+    src/engine/sfz/SfzProvider.cpp
+    src/engine/sfz/SfzPackStore.cpp
+    src/engine/sfz/SfzLibraryService.cpp)
+include(cmake/SfzDependencies.cmake)
+target_link_libraries(DuskStudio PRIVATE dusk_sfz_dependencies)
 
 # DeviceManager backing: Linux uses the native orchestrator (owns the device
 # types, drives open/start/stop/close and the callback fan-out itself); macOS /
@@ -1932,6 +1943,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz.h")
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
     target_sources(DuskStudio PRIVATE
         src/engine/multisample/DuskMultisampleProcessor.cpp
+        src/engine/multisample/MultisampleLoader.cpp
         src/engine/multisample/AriaBank.cpp
         src/engine/multisample/AriaGui.cpp
         src/engine/multisample/Sf2Reader.cpp
