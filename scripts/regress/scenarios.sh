@@ -906,6 +906,146 @@ scenarios_headless_leg() {
     return 0
 }
 
+# The GUI suite runs in several app instances at once, each in its own sandbox
+# on its own display. A case resets the window to launch state before it ends
+# and owns no state outside its sandbox, so the suite splits cleanly. Cases are
+# dealt longest first to the least-loaded instance, by the times the last run
+# took; a case with no time yet counts as 3 s. llvmpipe would otherwise give
+# every instance a thread per core, so each gets two.
+GUI_TIMES_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/dusk-regress/gui-case-ms.tsv"
+
+scenarios_gui_shard_count() {
+    if [[ -n "${DUSK_REGRESS_GUI_SHARDS:-}" ]]; then
+        printf '%s' "$DUSK_REGRESS_GUI_SHARDS"
+        return 0
+    fi
+    local cores shards
+    cores="$(nproc 2>/dev/null || echo 2)"
+    shards=$((cores / 2))
+    ((shards < 1)) && shards=1
+    ((shards > 4)) && shards=4
+    printf '%s' "$shards"
+}
+
+# scenarios_gui_sharded_leg <name> <budget per instance>
+scenarios_gui_sharded_leg() {
+    local name="$1" budget="$2"
+    printf '\n--- %s ---\n' "$name"
+    local start=$SECONDS shards dir
+    shards="$(scenarios_gui_shard_count)"
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-${name}.XXXXXX")" || return 1
+
+    # Every case the gui selector would run: Needs::Gui, so tagged gui, and not
+    # a helper.
+    scenarios_list | awk '$1 ~ /^gui\./ && $0 !~ /[[,]helper[],]/ { print $1 }' >"$dir/cases"
+    local total
+    total="$(wc -l <"$dir/cases")"
+    if ((total == 0)); then
+        rm -rf "$dir"
+        regress_skip "$name" "gui scenarios not in this binary"
+        return 0
+    fi
+    if [[ -s "$GUI_TIMES_FILE" ]]; then
+        awk -F'\t' 'FNR == NR { ms[$1] = $2; next } { print (($1 in ms) ? ms[$1] : 3000) "\t" $1 }' \
+            "$GUI_TIMES_FILE" "$dir/cases"
+    else
+        awk '{ print 3000 "\t" $1 }' "$dir/cases"
+    fi | sort -t$'\t' -k1,1nr | awk -v shards="$shards" -v dir="$dir" -F'\t' '
+        BEGIN { for (i = 0; i < shards; i++) load[i] = 0 }
+        {
+            best = 0
+            for (i = 1; i < shards; i++) if (load[i] < load[best]) best = i
+            load[best] += $1
+            print $2 "\t" best
+        }
+    ' >"$dir/dealt"
+    # Each instance runs its cases in suite order: the suite is written and
+    # proven in that order, so a case meets no predecessor it never had.
+    awk -F'\t' -v dir="$dir" '
+        FNR == NR { to[$1] = $2; next }
+        ($1 in to) { i = to[$1]; s[i] = s[i] (s[i] == "" ? "" : ",") $1 }
+        END { for (i in s) print s[i] > (dir "/shard" i ".spec") }
+    ' "$dir/dealt" "$dir/cases"
+
+    local spec idx
+    local -a pids=()
+    for spec in "$dir"/shard*.spec; do
+        idx="${spec##*/shard}"
+        idx="${idx%.spec}"
+        (
+            export LP_NUM_THREADS=2
+            # Each instance plays into a graph of its own, as a lone run does.
+            # The state copied into this subshell names the parent's daemon,
+            # which has to stay up, so it is cleared before starting another.
+            if [[ -n "$NULL_AUDIO_DIR" ]]; then
+                NULL_AUDIO_DIR="" NULL_AUDIO_PID="" NULL_AUDIO_LOG=""
+                null_audio_start >"$dir/shard${idx}.audio" 2>&1 || true
+            fi
+            rc=0
+            sandboxed_app_run "$budget" "gui:$(cat "$spec")" >"$dir/shard${idx}.log" 2>&1 || rc=$?
+            echo "$rc" >"$dir/shard${idx}.rc"
+            null_audio_stop
+        ) &
+        pids+=($!)
+    done
+    wait "${pids[@]}"
+
+    # An instance that dies before its first case (seen once as SIGPIPE with
+    # four starting together) ran nothing, so it is run again on its own; a
+    # case that fails in a started instance is never retried.
+    local retried=""
+    for spec in "$dir"/shard*.spec; do
+        idx="${spec##*/shard}"
+        idx="${idx%.spec}"
+        if [[ "$(cat "$dir/shard${idx}.rc" 2>/dev/null)" != 0 ]] \
+            && ! grep -q '^\[RUN\]' "$dir/shard${idx}.log"; then
+            retried="${retried}${retried:+, }$((idx + 1)) (rc $(cat "$dir/shard${idx}.rc"))"
+            local retry_rc=0
+            LP_NUM_THREADS=2 sandboxed_app_run "$budget" "gui:$(cat "$spec")" >"$dir/shard${idx}.log" 2>&1 \
+                || retry_rc=$?
+            echo "$retry_rc" >"$dir/shard${idx}.rc"
+        fi
+    done
+
+    # One log for the verdict. Each instance's own summary line is kept but
+    # renamed, so the leg passes only if every instance reached its summary.
+    local log="$dir/all.log" rc=0 shard_rc complete=1 pass=0 fail=0 skip=0 counts p f k
+    : >"$log"
+    for spec in "$dir"/shard*.spec; do
+        idx="${spec##*/shard}"
+        idx="${idx%.spec}"
+        shard_rc="$(cat "$dir/shard${idx}.rc" 2>/dev/null || echo 1)"
+        printf '### gui instance %s of %s (rc %s)\n' "$((idx + 1))" "$shards" "$shard_rc" >>"$log"
+        sed 's/^=== scenarios: /    instance summary: /' "$dir/shard${idx}.log" >>"$log"
+        ((shard_rc != 0 && rc == 0)) && rc="$shard_rc"
+        counts="$(sed -n 's/^=== scenarios: \([0-9]*\) pass, \([0-9]*\) fail, \([0-9]*\) skip ===$/\1 \2 \3/p' "$dir/shard${idx}.log" | tail -1)"
+        if [[ -z "$counts" ]]; then
+            complete=0
+        else
+            read -r p f k <<<"$counts"
+            pass=$((pass + p)); fail=$((fail + f)); skip=$((skip + k))
+        fi
+    done
+    if ((complete)); then
+        if ((pass + fail + skip != total)); then
+            printf '[FAIL] %s: %s cases dealt out, %s reported\n' "$name" "$total" "$((pass + fail + skip))" >>"$log"
+        fi
+        printf '=== scenarios: %s pass, %s fail, %s skip ===\n' "$pass" "$fail" "$skip" >>"$log"
+    fi
+    cat "$log"
+    regress_scenario_leg "$name" "$((SECONDS - start))" "$log" "$rc"
+    regress_note "${name}: ${total} cases in ${shards} instances"
+    [[ -z "$retried" ]] || regress_record "${name}:restart" WARN 0 "instance ${retried} ran no case; run again alone"
+
+    mkdir -p "${GUI_TIMES_FILE%/*}" 2>/dev/null || true
+    {
+        sed -n 's/^\[\(PASS\|FAIL\|SKIP\)\] \(gui\.[A-Za-z0-9_.]*\).*(\([0-9]*\) ms)$/\2\t\3/p' "$dir"/shard*.log
+        [[ -f "$GUI_TIMES_FILE" ]] && cat "$GUI_TIMES_FILE"
+    } 2>/dev/null | awk -F'\t' '!seen[$1]++' >"$dir/times" && mv "$dir/times" "$GUI_TIMES_FILE" 2>/dev/null || true
+    rm -rf "$dir"
+    return 0
+}
+
 # regress_scenarios_run <app_bin> [--gui]
 regress_scenarios_run() {
     APP_BIN="$1"
@@ -1013,11 +1153,7 @@ regress_scenarios_run() {
     trap regress_run_exit_hooks EXIT
 
     if ((want_gui)); then
-        if scenarios_has_case "gui."; then
-            scenarios_headless_leg "scenarios-gui" gui 900
-        else
-            regress_skip "scenarios-gui" "gui scenarios not in this binary"
-        fi
+        scenarios_gui_sharded_leg "scenarios-gui" 900
     fi
     null_audio_stop
     return 0

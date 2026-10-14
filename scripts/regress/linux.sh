@@ -256,7 +256,7 @@ sandboxed() {
 leg_ctest_runner_limits() {
     (
         ulimit -r 0 && ulimit -l 64 || exit 1
-        ctest --test-dir build-tests --output-on-failure
+        ctest --test-dir build-tests --output-on-failure --parallel "${JOBS}"
     )
 }
 
@@ -572,7 +572,7 @@ else
     else
         regress_leg "build-app" run_build cmake --build build -j"${JOBS}"
         regress_leg "build-tests" run_build cmake --build build-tests --target dusk-studio-tests -j"${JOBS}"
-        regress_leg "ctest" ctest --test-dir build-tests --output-on-failure
+        regress_leg "ctest" ctest --test-dir build-tests --output-on-failure --parallel "${JOBS}"
         regress_leg "ctest-runner-limits" leg_ctest_runner_limits
         regress_leg "juce-gate" bash tools/juce-gate.sh
     fi
