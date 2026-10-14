@@ -1,5 +1,5 @@
 <!-- summary-start -->
-A built-in plugin suite that works on a fresh install (Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2 and the Sunset synth), the 4K EQ 2 engine on the channels with EQ knobs that play the frequency they show, Tape Machine 2 on the master, a one-page quickstart, an offline instrument library, a first launch that picks an input and follows the system audio default, a signed checksum file, and the fixes found by walking record, overdub and bounce on all three platforms and by testing each behaviour the manual documents.
+The piano roll follows the takes you record over its region, and playing the virtual keyboard during a take no longer changes the earlier take.
 <!-- summary-end -->
 
 ### Downloads
@@ -40,7 +40,7 @@ key is `packaging/release-signing.pub` in the source repository; download it
 from this release's tag, compare its fingerprint with the one on the project
 site, import it, then check the signature before the hashes:
 
-    VERSION=0.14.0   # this release
+    VERSION=0.15.1   # this release
     curl -fsSLO "https://raw.githubusercontent.com/dusk-audio/dusk-studio/v$VERSION/packaging/release-signing.pub"
     gpg --show-keys --with-fingerprint release-signing.pub
     gpg --import release-signing.pub

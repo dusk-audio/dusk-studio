@@ -117,14 +117,24 @@ public:
 
     ImVec2 preferredSize() const override { return ImVec2 (kPanelW, kPanelH); }
 
-    // The layout's letters overlap the shell's single-key shortcuts, so the panel
-    // owns them for as long as it is up. Claim is layout membership rather than the
-    // note the current octave resolves to: a key the centre pushed past MIDI 127
-    // sounds nothing but must still not drop a punch point behind the panel.
+    // The layout's letters overlap the shell's shortcuts, so the panel owns them for
+    // as long as it is up. Claim is layout membership rather than the note the current
+    // octave resolves to: a key the centre pushed past MIDI 127 sounds nothing but must
+    // still not drop a punch point behind the panel. A layout key sounds with the
+    // command key held too, so Z, Y, S and Q keep their chords as well.
     bool claimsShortcut (ShellShortcut shortcut) const override
     {
         return shortcut == ShellShortcut::record        // R
-            || shortcut == ShellShortcut::togglePunch;  // P
+            || shortcut == ShellShortcut::togglePunch   // P
+            || shortcut == ShellShortcut::undo || shortcut == ShellShortcut::redo
+            || shortcut == ShellShortcut::save || shortcut == ShellShortcut::saveAs
+            || shortcut == ShellShortcut::quit;
+    }
+
+    bool keepsKey (const KeyChord& chord) const override
+    {
+        return std::any_of (layout().begin(), layout().end(),
+                            [&chord] (const LayoutKey& entry) { return entry.key == chord.key; });
     }
 
     bool takeDismissRequest() override

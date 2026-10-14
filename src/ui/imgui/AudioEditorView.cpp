@@ -456,15 +456,18 @@ public:
 
     bool takeDismissRequest() override { return std::exchange (dismissRequested, false); }
 
-    // Home and the loop and punch keys act on the editor's own view and cursor, and R
-    // picks the Range tool rather than recording; the other transport keys stay the
-    // shell's.
+    // Home and the loop and punch keys act on the editor's own view and cursor, R
+    // picks the Range tool rather than recording, and Undo, Redo, Save, Save As and
+    // Quit are answered by handleKey; the other transport keys stay the shell's.
     bool claimsShortcut (ShellShortcut shortcut) const override
     {
         return shortcut == ShellShortcut::playheadToZero || shortcut == ShellShortcut::toggleLoop
             || shortcut == ShellShortcut::togglePunch || shortcut == ShellShortcut::setLoopIn
             || shortcut == ShellShortcut::setLoopOut || shortcut == ShellShortcut::setPunchIn
-            || shortcut == ShellShortcut::setPunchOut || shortcut == ShellShortcut::record;
+            || shortcut == ShellShortcut::setPunchOut || shortcut == ShellShortcut::record
+            || shortcut == ShellShortcut::undo || shortcut == ShellShortcut::redo
+            || shortcut == ShellShortcut::save || shortcut == ShellShortcut::saveAs
+            || shortcut == ShellShortcut::quit;
     }
 
     int trackIndex() const override { return trackIdx; }

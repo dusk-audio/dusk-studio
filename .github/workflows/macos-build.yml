@@ -37,6 +37,8 @@ jobs:
       # dir across runs is enough — no CMake change. Stable dir for the
       # actions/cache key below.
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      SODIUM_VERSION: 1.0.22
+      SODIUM_SHA256: adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349
 
     steps:
       - name: Checkout Dusk Studio (with sfizz submodule)
@@ -54,13 +56,27 @@ jobs:
         # lame: libmp3lame for MP3 bounce/export (required by the configure).
         run: brew install ninja ccache lame libsndfile lilv suil lv2
 
+      - name: Compiler identity
+        id: compiler
+        run: echo "hash=$(clang++ --version | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore static libsodium
+        # Test CI only; release.yml builds it from source every time because it
+        # ships in the DMG.
+        id: sodium-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/libsodium
+          # The workflow hash covers the build recipe (configure flags,
+          # deployment target), so a recipe edit rebuilds instead of linking
+          # the stale cached library.
+          key: libsodium-macos-14-${{ env.SODIUM_VERSION }}-${{ steps.compiler.outputs.hash }}-${{ hashFiles('.github/workflows/macos-build.yml') }}
+
       - name: Build static libsodium (pinned)
         # Homebrew's bottle is built for the runner OS, newer than the app's
         # macOS 11 deployment target. Build the audited source at that target
         # instead, and keep the app free of a Homebrew dylib dependency.
-        env:
-          SODIUM_VERSION: 1.0.22
-          SODIUM_SHA256: adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349
+        if: steps.sodium-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           archive="${RUNNER_TEMP}/libsodium-${SODIUM_VERSION}.tar.gz"
@@ -177,6 +193,18 @@ jobs:
           cmake --build build-tests --target dusk-studio-tests -j5
           ctest --test-dir build-tests --output-on-failure --parallel 3
 
+      - name: Slowest compiles
+        # A single translation unit can dominate this runner's build time
+        # (memory pressure on 7 GB); list the worst edges so it shows.
+        if: always()
+        run: |
+          for dir in build build-tests; do
+            [[ -f "$dir/.ninja_log" ]] || continue
+            echo "== $dir"
+            awk -F'\t' '!/^#/ { printf "%7.1f s  %s\n", ($2 - $1) / 1000, $4 }' "$dir/.ninja_log" \
+              | sort -rn | head -10
+          done
+
       - name: ccache stats
         if: always()
         run: ccache -s
@@ -187,6 +215,13 @@ jobs:
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-macos-14-${{ github.sha }}
+
+      - name: Save static libsodium (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.sodium-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/libsodium
+          key: ${{ steps.sodium-cache.outputs.cache-primary-key }}
 
       - name: Prune older ccache snapshots (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -15,7 +15,26 @@ canonical source.
   export's loudness readings. Hot-plug and explicit MIDI refreshes wait until
   an offline bounce, stem export or freeze finishes.
 
-## [0.15.0] - Unreleased
+## [0.15.1] - 2026-10-11
+
+### Fixed
+
+- **The piano roll shows the new take after you record over its region.** It
+  kept showing the earlier take until something else redrew it. After Stop it
+  now shows the take the region plays, as the timeline does, and it moves with
+  the take when the take lands elsewhere on the track or the pass makes a region
+  of its own. Undo and redo of the pass, and Alt+T, update it too: undoing a
+  pass that made its own region brings the roll back to the region it showed,
+  and the roll closes if the track has no MIDI regions left.
+- **Alt+T and Alt+Shift+T step takes with the piano roll open.** They act on
+  the region the roll shows; after a recording or an undo they used to do
+  nothing until the region was selected again, which the roll did not allow.
+- **Playing the virtual keyboard during a take no longer edits the region in
+  the piano roll.** Step record put each note into the region as well as the
+  take, so the previous take gained the new notes. Step record is now off
+  while recording.
+
+## [0.15.0] - 2026-10-10
 
 Takes live on the track now, and the audio editor is where you comp them.
 
@@ -149,6 +168,18 @@ Takes live on the track now, and the audio editor is where you comp them.
   Its take used to cover only the part under the punch, and the pieces of the
   recording either side of the punch named no take. The take now spans the
   whole recording and both pieces name it.
+- **The import target picker describes each track truthfully** (#858). An
+  audio import called a MIDI track holding regions empty, and a MIDI import
+  did the same to an audio track. A track the import would switch to another
+  mode now shows that it will switch even when it is recommended, and a track
+  that would be switched while it holds regions is never recommended; the
+  track you drop on stays selected, and the Switch prompt still asks first.
+  The picker also follows an undo made while it is up: Import used to put
+  audio on a track the undo had put back in MIDI mode without asking, and now
+  asks before switching it. In a window too short for the whole list, the
+  track you drop on stays in view. The multi-import picker's **mode will
+  flip** marks follow an undo or a redo too, and the single-file picker's rows
+  follow a take that lands while it is up.
 - **A locked region takes no edit** (#816, #827). In the audio editor Delete,
   Split, Normalize, Reset gain, Reset fades, a typed gain or fade and
   Properties > Delete region all edited a locked region, and so did the
@@ -308,6 +339,48 @@ Takes live on the track now, and the audio editor is where you comp them.
   the new position on its own, and the region still plays from where you drag
   it. Changing an audio region's gain or mute while it plays is safe the same
   way.
+- **Keys a dialog does not use stay in it** (#858). Any key a dialog, menu or
+  editor did not use went on to the main window behind it, so typing in the
+  Import browser's file box, pressing **M** with the import target picker up,
+  or pressing a key after a click on a dialog's dimmed backdrop could drop a
+  marker and open its Name marker prompt over the dialog, toggle the click or
+  the count-in, or hide the timeline, and **Tab** could carry the keyboard out
+  of the dialog to a control behind it. Every dialog, menu and popup, and the
+  EQ, compressor, aux and plug-in editors, now let through only the transport
+  keys (**Space**, **R**, **Home**, **.**, **L**, **P**, **[**, **]**,
+  **Shift+[**, **Shift+]** and **F11**), Undo, Redo, Save, Save As and Quit,
+  however the key reaches the window, and **Tab** goes round the dialog's own
+  controls. The editors passed on every key from 0.14, and the file browsers
+  leaked them from 0.14. The compressor editor, Utility's knob panel and Audio
+  settings follow the same rule: on Windows every key reached the window behind
+  them, so **M** dropped a marker behind the compressor editor, and on Linux
+  Undo, Redo, Save, Save As and Quit did nothing from inside them. The tuner
+  keeps keys the same way, where **Delete** removed the selected region it
+  hid and **M** dropped a marker; **U** or **Esc** closes it, and it closes
+  the DuskVerb 2, Tape Echo 2, Sunset and Tape Machine 2 editors as it opens
+  rather than coming up hidden behind them. The virtual keyboard keeps the
+  same keys outside its layout, where **Delete** removed the selected region
+  it hid, **A** armed a track and the digits switched banks; **K** or **Esc**
+  closes it. It keeps every key in its layout, with or without Cmd: on macOS a
+  command chord reaches the window first, so **Cmd+Z** behind it undid an edit
+  and **Cmd+B** opened Bounce. Opened over the piano roll, on Linux and macOS
+  it still keeps its layout's keys, and the piano roll keeps its own editing
+  keys while it has the focus. The Startup dialog lets
+  no shortcut through. Letters typed into the Import browser's read-only file
+  box no longer start a take or toggle the loop, and **Tab** from its path box
+  goes on to the next control.
+- **Saving from a file browser no longer strands what was waiting on it**
+  (#858). Cmd+S in the Save As browser that the quit prompt's Save opens
+  replaced it with another browser, and the quit never heard back: the app
+  stayed open with no audio and no autosave. Save and Save As now do nothing
+  in a file browser. **Cmd+Q** still works there, and its prompt opens above
+  the browser instead of hidden beneath it. Its Save then opens the quit's own
+  Save As in the first browser's place and cancels that one, so what waited
+  on it backs out: a Startup dialog pick returns to the dialog once the quit's
+  browser is gone rather than covering it, and an earlier quit leaves the
+  audio and the autosave off for the quit now waiting. Save and Save As are
+  also refused while a DP-24/32 import runs, which would have left the
+  imported regions pointing into the old session folder.
 
 ## [0.14.0] - 2026-09-29
 

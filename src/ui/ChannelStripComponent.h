@@ -111,6 +111,9 @@ public:
     // up. The comp editor is a framework panel with no JUCE text to read.
     std::string moduleEditorTitleForScenario (int module) const;
     void closeModuleEditorsForScenario();
+    // A key into the open compressor editor or built-in unit editor, as its child
+    // would take it with the keyboard.
+    bool inputPanelForScenario (const std::string& input);
     bool meterClipForScenario();
     auto* midiSelectorForScenario (int kind)
     { return kind == 0 ? &midiInputSelector : kind == 1 ? &midiChannelSelector : &midiOutputSelector; }
@@ -536,6 +539,7 @@ public:
     // because the panel is an opaque native child and a modal opening behind it
     // can be neither seen nor clicked.
     void closeCompEditorPopup();
+    bool isCompEditorOpen() const noexcept;
 
     // Same reason again: the built-in unit editor is another native child, and
     // the shell has to be able to close it and to ask whether it is open.

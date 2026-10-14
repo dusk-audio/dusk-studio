@@ -742,12 +742,20 @@ fixtures a case needs in its `Scenario` so it skips with the fixture's name
 when the file is absent, and gate on `DUSKSTUDIO_HAS_NATIVE_*` with a skip on
 the other side.
 
-A GUI case lives in [src/ui/GuiScenarioCases.cpp](../src/ui/GuiScenarioCases.cpp),
-fills `runGui` instead of `run`, and talks to the window only through
-`scenario::GuiHost` ([src/ui/GuiHost.h](../src/ui/GuiHost.h)): strips, aux
-lanes, editors and the modal stack in std types. It cleans up after itself;
-there is no reset between GUI cases. Every file under `src/engine/scenario/`
-and the three GUI files are JUCE-free by construction and the gate keeps them
+A GUI case lives in the file for its feature area under
+[src/ui/scenario/cases/](../src/ui/scenario/cases/) (`gui_<area>.cpp`; a new
+file goes into the `CMakeLists.txt` source list), fills `runGui` instead of
+`run`, and talks to the window only through `scenario::GuiHost`
+([src/ui/GuiHost.h](../src/ui/GuiHost.h)): strips, aux lanes, editors and the
+modal stack in std types. Helpers that more than one area uses (`Step`,
+`runSteps`, `keepStage`, `drainModals` and the like) live in
+[src/ui/scenario/GuiScenarioSupport.h](../src/ui/scenario/GuiScenarioSupport.h);
+a helper only one file uses stays in that file. After each GUI case the runner
+resets the window (modals, editors, transport, stage) and fails a pass that left
+it dirty; session state such as regions and loaded plug-ins is not reset, so a
+case still cleans that up itself. Every file under
+`src/engine/scenario/` and `src/ui/scenario/` is JUCE-free by construction, as
+are `src/ui/GuiHost.h` and `src/ui/GuiScenarios.cpp`, and the gate keeps them
 that way; the engine members they need that carry framework types are reached
 through `auto`.
 

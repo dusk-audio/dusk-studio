@@ -968,6 +968,13 @@ jobs:
         # but keep the limit explicit so generator changes cannot unbound it.
         run: cmake --build build -j5
 
+      - name: Slowest compiles
+        if: always()
+        run: |
+          [[ -f build/.ninja_log ]] || exit 0
+          awk -F'\t' '!/^#/ { printf "%7.1f s  %s\n", ($2 - $1) / 1000, $4 }' build/.ninja_log \
+            | sort -rn | head -10
+
       - name: Headless self-test (DUSKSTUDIO_RUN_SELFTEST=1)
         # The runner has no GNU timeout; perl's alarm survives the exec and
         # bounds the run. 90 s because there is no audio device.

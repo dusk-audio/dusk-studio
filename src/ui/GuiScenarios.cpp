@@ -20,6 +20,7 @@
 #include "DuskContextMenu.h"
 #include "DuskFileBrowser.h"
 #include "DpImportDialog.h"
+#include "ImportTargetPicker.h"
 #include "MultiImportTargetPicker.h"
 #include "DuskAlerts.h"
 #include "MiniTimelineStrip.h"
@@ -43,6 +44,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -50,6 +52,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 // The GUI half of the scenario suite: the live window, presented to the cases
 // as scenario::GuiHost. Only a MainComponent member reaches the console, the aux
@@ -990,6 +993,36 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return clickFileBrowserChild ([] (const auto& child) { return child.getName() == "up"; }, false);
     }
+    bool clickFileBrowserFileField() override
+    {
+        using Editor = std::remove_pointer_t<decltype (owner.statusLabel.getCurrentTextEditor())>;
+        return clickFileBrowserChild ([] (const auto& child) { return dynamic_cast<const Editor*> (&child) != nullptr; },
+                                      false);
+    }
+    std::string fileBrowserFocus() const override
+    {
+        using Editor = std::remove_pointer_t<decltype (owner.statusLabel.getCurrentTextEditor())>;
+        using Button = std::remove_pointer_t<decltype (&owner.recordingStageBtn)>;
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || stack.back()->getBody() == nullptr) return {};
+        for (auto* child : stack.back()->getBody()->getChildren())
+        {
+            if (! child->hasKeyboardFocus (true)) continue;
+            for (auto* inner : child->getChildren())
+            {
+                if (! inner->hasKeyboardFocus (true)) continue;
+                if (inner->getName() == "path") return "path";
+                if (inner->getName() == "up") return "up";
+                if (inner->getTitle() == "Files") return "Files";
+                if (dynamic_cast<const Editor*> (inner) != nullptr) return "file";
+                return "other";
+            }
+            if (const auto* button = dynamic_cast<const Button*> (child))
+                return button->getButtonText().toStdString();
+            return "other";
+        }
+        return {};
+    }
     template <typename Matches>
     bool clickFileBrowserChild (Matches matches, bool nearLeftEdge)
     {
@@ -1026,6 +1059,20 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto& stack = EmbeddedModal::activeModalStack();
         if (stack.empty()) return {};
         const auto* picker = dynamic_cast<const MultiImportTargetPicker*> (stack.back()->getBody());
+        return picker != nullptr ? picker->rowsForScenario() : std::vector<std::string> {};
+    }
+    std::vector<std::string> multiImportTargetText() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* picker = dynamic_cast<const MultiImportTargetPicker*> (stack.back()->getBody());
+        return picker != nullptr ? picker->targetTextForScenario() : std::vector<std::string> {};
+    }
+    std::vector<std::string> importTargetRows() const override
+    {
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty()) return {};
+        const auto* picker = dynamic_cast<const ImportTargetPicker*> (stack.back()->getBody());
         return picker != nullptr ? picker->rowsForScenario() : std::vector<std::string> {};
     }
     bool clickMultiImportTarget (int row) override
@@ -1629,6 +1676,19 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (auto* strip = owner.consoleView->getStripComponent (track))
             strip->closeModuleEditorsForScenario();
     }
+    bool inputStripPanel (int track, const std::string& input) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip != nullptr && strip->inputPanelForScenario (input);
+    }
+    bool panelFrameDrawing() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return imgui::DuskPanelWindow::drawingForScenario();
+       #else
+        return false;
+       #endif
+    }
     bool clickMasterTape (bool label) override
     {
         auto* master = owner.consoleView->getMasterStripComponent();
@@ -1882,6 +1942,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     void autosaveTick() override { owner.writeAutosave(); }
     bool autosaveRunning() const override { return owner.isTimerRunning(); }
     bool engineDetached() const override { return owner.engineDetached; }
+    void abandonPendingFlows() override
+    {
+        ++owner.quitSaveSerial;
+        owner.startupPickInFlight = 0;
+        if (owner.engineDetached)
+        {
+            owner.engine.reattachAudioCallback();
+            owner.engineDetached = false;
+        }
+        if (! owner.isTimerRunning())
+            owner.startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
+    }
     bool sessionOnDisk() const override { return owner.sessionOnDisk; }
     bool closeNotepadAfterTyping (const std::string& text) override
     {
@@ -2424,6 +2496,54 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     void closePianoRoll() override { owner.closePianoRoll(); }
     int pianoRollRegion() const override { return owner.pianoRollRegionIdx; }
     bool pianoRollOpen() const override { return owner.pianoRoll != nullptr; }
+    int pianoRowOnScreen (int pitch, const std::filesystem::path& scratch) override
+    {
+        auto* piano = owner.pianoRoll.get();
+        auto* peer = owner.getPeer();
+        if (piano == nullptr || ! piano->isShowing() || peer == nullptr) return -1;
+        const auto file = scratch.string();
+        if (! platform::captureNativeWindowToPpm (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()), file))
+            return -1;
+        std::FILE* in = std::fopen (file.c_str(), "rb");
+        if (in == nullptr) return -1;
+        int width = 0, height = 0, maxValue = 0;
+        const bool header = std::fscanf (in, "P6 %d %d %d", &width, &height, &maxValue) == 3
+                         && std::fgetc (in) != EOF && width > 0 && height > 0;
+        std::vector<unsigned char> pixels (header ? (std::size_t) width * (std::size_t) height * 3 : 0);
+        const bool read = header && std::fread (pixels.data(), 1, pixels.size(), in) == pixels.size();
+        std::fclose (in);
+        if (! read) return -1;
+
+        auto* top = owner.getTopLevelComponent();
+        const double scale = (double) width / (double) std::max (1, top->getWidth());
+        const auto rowPoint = top->getLocalPoint (piano, piano->notePointForScenario (0, pitch));
+        const auto gridLeft = top->getLocalPoint (piano, piano->getLocalBounds().getTopLeft()
+                                                             .translated (PianoRollComponent::kKeyboardWidth + 2, 0));
+        const auto gridRight = top->getLocalPoint (piano, piano->getLocalBounds().getTopRight().translated (-4, 0));
+        const int y = (int) std::lround (rowPoint.y * scale);
+        const int x0 = std::max (0, (int) std::lround (gridLeft.x * scale));
+        const int x1 = std::min (width, (int) std::lround (gridRight.x * scale));
+        if (y < 0 || y >= height) return -1;
+
+        // Note fills are saturated hues; the grid, its lines and the 1 px
+        // cursors are grey or too thin to count.
+        int notes = 0, run = 0;
+        for (int x = x0; x <= x1; ++x)
+        {
+            bool fill = false;
+            if (x < x1)
+            {
+                const auto* p = &pixels[((std::size_t) y * (std::size_t) width + (std::size_t) x) * 3];
+                const int high = std::max ({ p[0], p[1], p[2] });
+                const int low = std::min ({ p[0], p[1], p[2] });
+                fill = high - low > 60 && high > 90;
+            }
+            if (fill) { ++run; continue; }
+            if (run >= 4) ++notes;
+            run = 0;
+        }
+        return notes;
+    }
     bool clickPianoGrid (std::int64_t tick, int pitch) override
     {
         auto* piano = owner.pianoRoll.get();
@@ -2586,6 +2706,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (virtualKeyboardOpen()) lines.push_back ("virtual keyboard open");
         if (tunerOpen())          lines.push_back ("tuner open");
         if (masterTapeEditorOpen()) lines.push_back ("master tape editor open");
+        if (owner.engineDetached) lines.push_back ("a quit holds the audio off");
+        if (! owner.isTimerRunning()) lines.push_back ("autosave stopped");
+        if (owner.startupPickInFlight != 0) lines.push_back ("a startup pick still waits");
         if (owner.session.master().mute.load() != launch.masterMute)
             lines.push_back (owner.session.master().mute.load() ? "master muted" : "master unmuted");
 
@@ -2630,6 +2753,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         auto& stack = EmbeddedModal::activeModalStack();
         for (int guard = 0; guard < 32 && ! stack.empty(); ++guard)
             stack.back()->close();
+        abandonPendingFlows();
 
         owner.closePianoRoll();
         owner.destroyAudioEditor();
