@@ -5,6 +5,16 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.16.0] - Unreleased
+
+### Fixed
+
+- **MIDI device refresh preserves audio state.** It keeps a deliberately
+  detached callback detached and no longer re-prepares the whole engine,
+  changing a no-device import's timeline rate or clearing a finished master
+  export's loudness readings. Hot-plug and explicit MIDI refreshes wait until
+  an offline bounce, stem export or freeze finishes.
+
 ## [0.15.0] - Unreleased
 
 Takes live on the track now, and the audio editor is where you comp them.

@@ -1070,9 +1070,9 @@ void AudioEngine::noteMidiDeviceChange()
 
 void AudioEngine::serviceMidiHotplug()
 {
-    // Held, not dropped: refreshMidiInputs detaches the audio callback, so a
-    // hub blip mid-take waits here and applies the moment the take ends.
-    if (! transport.isStopped()) return;
+    // Keep the pending refresh out of a take, render or another engine fence.
+    if (! transport.isStopped() || offlineRenderActive.load (std::memory_order_acquire)
+        || isProcessingSuspended()) return;
 
     midiHotplugTimer.stopTimer();
     refreshMidiInputs();
@@ -1080,11 +1080,23 @@ void AudioEngine::serviceMidiHotplug()
 
 void AudioEngine::refreshMidiInputs()
 {
-    // Detach both callbacks - JUCE's remove* joins the audio + MIDI
-    // dispatch sides before returning. Cheapest correct sync for a
-    // rare hot-plug event; lock-free vector mutation would cost more
-    // throughout the audio path than it's worth.
-    deviceManager.removeCallback (this);
+    if (offlineRenderActive.load (std::memory_order_acquire) || isProcessingSuspended())
+    {
+        noteMidiDeviceChange();
+        return;
+    }
+
+    // Reattaching audio re-prepares all DSP, clears meters and defeats a
+    // caller's deliberate detachment. The process gate drains audio without
+    // changing callback registration or the timeline's sample rate.
+    suspendProcessing();
+    workerPool.quiesce();
+    struct ResumeGuard
+    {
+        AudioEngine& engine;
+        ~ResumeGuard() { engine.resumeProcessing(); }
+    };
+    const ResumeGuard resumeGuard { *this };
     midiIn.detachCallback();
 
     // Disable currently-enabled inputs before rebuilding so the device
@@ -1127,12 +1139,10 @@ void AudioEngine::refreshMidiInputs()
         }
     }
 
-    // Must run BEFORE re-attaching callbacks - otherwise the audio
-    // thread reads the output bank while ensureOpen mutates it.
+    // Open outputs while audio is gated: ensureOpen mutates the output bank.
     openConfiguredMidiOutputs();
 
     midiIn.attachCallback();
-    deviceManager.addCallback (this);
 
     midiHotplugNoticesRefreshed = midiHotplugNotices;
     broadcastChange();
@@ -1615,9 +1625,8 @@ void AudioEngine::reresolveTrackMidiFromSession()
 
 void AudioEngine::rebuildMidiBanks()
 {
-    // Safe to mutate ONLY with the input + audio callbacks detached. Ctor's
-    // first call satisfies that (callbacks not yet registered); refreshMidiInputs
-    // does remove-then-call-then-add. Callbacks active during mutation = UB.
+    // MIDI input must be detached and audio absent or gated. The constructor
+    // runs before registration; refreshMidiInputs holds the process gate.
     const double sr = currentSampleRate.load (std::memory_order_relaxed);
     midiIn.rebuild (sr);
     midiOut.rebuild();

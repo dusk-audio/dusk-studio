@@ -204,8 +204,8 @@ public:
     Stage getStage() const noexcept { return stage.load (std::memory_order_relaxed); }
     void  setStage (Stage s) noexcept;
 
-    // Re-enumerate MIDI inputs after hot-plug. Detach + rebuild + reattach
-    // so audio thread doesn't race the mutation. Message-thread only.
+    // Re-enumerate MIDI banks with input detached and audio gated, preserving
+    // callback registration. Deferred during renders. Message-thread only.
     void refreshMidiInputs();
 
     // Engine-changed fanout (MIDI device banks rebuilt). Subscribers are keyed
@@ -1060,9 +1060,9 @@ private:
     // MIDI hot-plug. The backend's MIDI thread reports that the OS port set
     // moved; noteMidiDeviceChange arms a single delayed pass so one plug (a
     // client arrival plus a port arrival per port) costs one rebuild, and
-    // serviceMidiHotplug holds that pass until the transport is stopped -
-    // refreshMidiInputs detaches the audio callback, so applying it mid-take
-    // would drop audio. Message thread; only the ALSA backend raises it.
+    // serviceMidiHotplug holds that pass until stopped and outside a render
+    // or another engine fence, so rebuilding cannot interrupt a take or render.
+    // Message thread; only the ALSA backend raises it.
     void noteMidiDeviceChange();
     void serviceMidiHotplug();
     struct MidiHotplugTimer : dusk::Timer
@@ -1122,11 +1122,11 @@ private:
     void broadcastChange();
     void fireChangeListeners();
 
-    // Rebuild both device banks (message thread, input+audio callbacks
-    // DETACHED by the caller). Enumerates hardware, sizes perInputMidi,
+    // Rebuild both device banks (message thread, input detached and audio
+    // absent or gated by the caller). Enumerates hardware, sizes perInputMidi,
     // re-resolves the session sync/MCU identifiers to indices, eager-opens the
     // sync + MCU output ports, and resets the receivers/clock emitter. Called
-    // from the ctor and refreshMidiInputs inside their detach fences.
+    // from the ctor and refreshMidiInputs inside their fences.
     void rebuildMidiBanks();
 
     // Write the finished master mix (mixL/mixR) to its configured device output
