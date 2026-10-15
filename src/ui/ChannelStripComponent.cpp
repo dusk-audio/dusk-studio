@@ -2781,21 +2781,21 @@ void ChannelStripComponent::openPluginEditor()
         if (inst == nullptr) return;
         if (multisampleEditor == nullptr)
         {
-            StripSafePointer safe (this);
+            StripSafePointer editorOwner (this);
             multisampleEditor = std::make_unique<DuskMultisampleEditor> (*inst,
-                [safe] { if (auto* self = safe.getComponent()) self->openSfzLibrary(); },
-                [safe]
+                [editorOwner] { if (auto* self = editorOwner.getComponent()) self->openSfzLibrary(); },
+                [editorOwner]
                 {
-                    if (auto* self = safe.getComponent())
+                    if (auto* self = editorOwner.getComponent())
                     {
                         self->adoptInstrumentTrackDefaults();
                         self->refreshPluginSlotButton();
                         self->openEditorForPick();
                     }
                 },
-                [safe]
+                [editorOwner]
                 {
-                    if (auto* self = safe.getComponent())
+                    if (auto* self = editorOwner.getComponent())
                     {
                         self->engine.cancelNativeMultisampleLoad (self->trackIndex);
                         self->track.nativeMultisamplePath = {};
@@ -2806,7 +2806,7 @@ void ChannelStripComponent::openPluginEditor()
                 });
             multisampleEditorOwner = inst;
             multisampleEditorRelease = std::make_shared<std::function<void()>> (
-                [safe] { if (auto* self = safe.getComponent()) self->dropMultisampleEditor(); });
+                [editorOwner] { if (auto* self = editorOwner.getComponent()) self->dropMultisampleEditor(); });
             engine.getChannelStrip (trackIndex).getNativeMultisampleSlot()
                 .setInstanceReleaseHook (multisampleEditorRelease);
         }

@@ -288,6 +288,9 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
 
 void pushClick (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, std::string control)
 {
+    // Tabs require a hovered frame before their overlapping hit target accepts a press.
+    steps.push_back ({ 0, [] {}, [&host, control] { return host.sfzLibraryPointer (kStripIndex, control, 0.5f, false); },
+                      "SFZ control did not appear: " + control, {}, kSettleBoundMs });
     steps.push_back ({ 0, [] {}, [&host, control] { return host.sfzLibraryPointer (kStripIndex, control, 0.5f, true); },
                       "SFZ control did not appear: " + control, {}, kSettleBoundMs });
     steps.push_back ({ 0, [&host, &ctx, control]
@@ -508,7 +511,8 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         auto& slot = ctx.engine().getChannelStrip (1).getNativeMultisampleSlot();
         const auto& track = ctx.session().track (1);
         const auto expected = state->installed->directory / "Instruments/One.sfz";
-        ctx.expect (slot.getInstance() && slot.getInstance()->hasLoadedRuntime()
+        const auto* instance = slot.getInstance();
+        ctx.expect (instance != nullptr && instance->hasLoadedRuntime()
                     && slot.getLoadedSoundfontPath() == expected.u8string(), "cloned editor did not load the selected replacement");
         ctx.expect (track.nativeMultisamplePath.toStdString() == expected.u8string()
                     && track.nativeMultisampleLocator == state->installed->locatorFor (state->installed->instruments[0]),

@@ -42,6 +42,8 @@ const char* stateLabel (LibraryState state, bool busy)
 {
     switch (state)
     {
+        case LibraryState::Idle:
+        case LibraryState::Complete: return busy ? "Updating library..." : "Ready";
         case LibraryState::Browsing: return "Browsing repository...";
         case LibraryState::Resolving: return "Checking version and license...";
         case LibraryState::Downloading: return "Downloading instrument pack...";

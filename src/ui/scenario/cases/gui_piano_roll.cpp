@@ -609,8 +609,8 @@ std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext&
     auto& session = ctx.session();
     auto& transport = engine.getTransport();
     auto& track = session.track (0);
+    const bool originalMonitor = track.inputMonitor.load();
     ctx.keep (track.inputMonitor);
-    track.inputMonitor.store (true);
     auto* strip = host.strip (0);
     if (! ctx.expect (strip != nullptr, "the MIDI Merge track has no strip")) return ctx.verdict();
     bool hasProbe = false;
@@ -673,6 +673,9 @@ std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext&
         if (passes > 0) ctx.expect (region.lengthInTicks >= 3840, "MIDI Merge did not grow the seed region");
     };
     auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [strip] { strip->clickMonitor(); } });
+    steps->push_back ({ 700, [&track, strip]
+    { if (! track.inputMonitor.load()) strip->clickMonitor(); } });
     steps->push_back ({ 200, [&ctx, &host, &session]
     {
         ctx.expect (! session.midiMergeEnabled.load(), "MIDI Merge did not start off");
@@ -713,7 +716,7 @@ std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext&
                 engine.suspendProcessing();
                 const auto voicesHeld = midiprobe::counter (ctx, 0, "voicesHeld");
                 engine.resumeProcessing();
-                ctx.expect (voicesHeld == 1.0,
+                ctx.expect (std::abs (voicesHeld - 1.0) < 1.0e-6,
                             "IN-off Merge did not keep the seed accompaniment alone while the live note was held");
             }
            #else
@@ -751,6 +754,10 @@ std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext&
             check (restored);
         }
     } });
+    steps->push_back ({ 0, [&track, strip, originalMonitor]
+    { if (track.inputMonitor.load() != originalMonitor) strip->clickMonitor(); } });
+    steps->push_back ({ 0, [] {}, [&track, originalMonitor]
+    { return track.inputMonitor.load() == originalMonitor; }, "IN did not return to its initial state", {}, 3000 });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
