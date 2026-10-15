@@ -1,3 +1,7 @@
+#if defined(_WIN32) && ! defined(NOMINMAX)
+ #define NOMINMAX
+#endif
+
 #include "SfzTransfer.h"
 #include "../../foundation/Json.h"
 
@@ -15,9 +19,6 @@
 #include <utility>
 
 #if defined(_WIN32)
- #ifndef NOMINMAX
-  #define NOMINMAX
- #endif
  #include <windows.h>
  #include <fcntl.h>
  #include <io.h>
