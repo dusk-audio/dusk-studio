@@ -565,6 +565,33 @@ part left out. A case the suite skipped with `missing fixture:` also gets a
 `SKIP` row of its own, `scenarios-headless:fixtures` or
 `scenarios-gui:fixtures`, under the leg that ran it.
 
+#### Reader pool measurements
+
+`DUSKSTUDIO_PERF_SESSION=/path/to/session` runs a real session through the
+full mixer without an audio device. `DUSKSTUDIO_PERF_READER_MODE` selects
+`plain`, `locate` or `loop`; reader statistics accompany the DSP table.
+Use the private-display isolation described above when running the app on Linux.
+
+For an isolated reader comparison, build the standalone workload:
+
+```bash
+g++ -std=c++17 -O2 -pthread -Isrc tools/reader-pool-benchmark.cpp \
+    src/engine/audiofile/BufferedFileReader.cpp \
+    src/engine/audiofile/ReaderFillPool.cpp \
+    src/engine/audiofile/FileReader.cpp -lsndfile -o /tmp/dusk-reader-pool-benchmark
+/tmp/dusk-reader-pool-benchmark --mode plain --output /tmp/reader-plain.json
+/tmp/dusk-reader-pool-benchmark --mode locate --output /tmp/reader-locate.json
+/tmp/dusk-reader-pool-benchmark --mode loop --output /tmp/reader-loop.json
+```
+
+The workload checks source phase and reports uncovered read misses, callback
+timing, sampled memory, thread count and worker wait returns. Run it while the
+host is idle. The [0.16 comparison](validation/0.16-reader-pool.json) retains
+before/after results, baseline instrumentation and TSan results. Wait returns
+include timeouts and notifications; they are not OS scheduler wake-ups. The
+[live SFZ validation](validation/0.16-sfz-live.json) records five downloaded
+packs, their verified licenses, archive receipts and native sampler renders.
+
 #### Package mode
 
 `--tarball <path>` or `--release-run <id>` points the Linux legs at a release

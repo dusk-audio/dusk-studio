@@ -54,6 +54,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <thread>
 
 #include "ui/PlatformWindowing.h"
@@ -1185,6 +1186,7 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
 // table. Measures the full mixer path (region playback, automation,
 // buses, aux, master) with no audio device - for attributing a DSP-load
 // report to a specific section of the callback.
+// DUSKSTUDIO_PERF_READER_MODE=plain|locate|loop optionally overrides saved looping.
 static bool runHeadlessSessionPerf (const juce::String& sessionPath)
 {
     constexpr double sampleRate = 48000.0;
@@ -1192,6 +1194,16 @@ static bool runHeadlessSessionPerf (const juce::String& sessionPath)
     constexpr int    numBlocks  = 2000;   // ~10.7 s at 48k/256
     constexpr int    numInChannels  = 2;
     constexpr int    numOutChannels = 2;
+    const char* readerModeEnv = std::getenv ("DUSKSTUDIO_PERF_READER_MODE");
+    const bool overrideReaderMode = readerModeEnv != nullptr && *readerModeEnv != '\0';
+    const char* readerMode = overrideReaderMode ? readerModeEnv : "plain";
+    const bool locateReaders = std::strcmp (readerMode, "locate") == 0;
+    const bool loopReaders = std::strcmp (readerMode, "loop") == 0;
+    if (! locateReaders && ! loopReaders && std::strcmp (readerMode, "plain") != 0)
+    {
+        std::fprintf (stderr, "FAIL: DUSKSTUDIO_PERF_READER_MODE must be plain, locate or loop\n");
+        return false;
+    }
 
     std::fprintf (stdout, "=== Dusk Studio Headless Session Perf ===\n");
     std::fprintf (stdout, "Session: %s\nSR=%.0f BS=%d Blocks=%d (realtime-paced)\n",
@@ -1229,18 +1241,56 @@ static bool runHeadlessSessionPerf (const juce::String& sessionPath)
     engine->prepareForSelfTest (sampleRate, blockSize);
 
     int regions = 0, midiRegions = 0, inserts = 0, hwInserts = 0;
+    std::int64_t sessionEnd = 0;
+    const auto includeRange = [&sessionEnd] (std::int64_t start, std::int64_t length)
+    {
+        if (start < 0 || length <= 0) return;
+        const auto end = start > std::numeric_limits<std::int64_t>::max() - length
+                       ? std::numeric_limits<std::int64_t>::max() : start + length;
+        sessionEnd = std::max (sessionEnd, end);
+    };
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
-        regions     += (int) session->track (t).regions.size();
-        midiRegions += (int) session->track (t).midiRegions.current().size();
+        const auto& track = session->track (t);
+        regions     += (int) track.regions.size();
+        midiRegions += (int) track.midiRegions.current().size();
+        if (track.frozen.load())
+            includeRange (track.frozenRegion.timelineStart, track.frozenRegion.lengthInSamples);
+        else
+        {
+            for (const auto& region : track.regions)
+                includeRange (region.timelineStart, region.lengthInSamples);
+            for (const auto& region : track.midiRegions.current())
+                includeRange (region.timelineStart, region.lengthInSamples);
+        }
         if (engine->getStrip (t).getPluginSlot().isLoaded())          ++inserts;
         if (session->track (t).hardwareInsert.enabled.load())          ++hwInserts;
     }
     std::fprintf (stdout, "Loaded: %d audio regions, %d MIDI regions, %d plugin inserts, %d HW inserts\n",
                   regions, midiRegions, inserts, hwInserts);
 
+    auto& transport = engine->getTransport();
+    if ((locateReaders || loopReaders) && sessionEnd < blockSize)
+    {
+        std::fprintf (stderr, "FAIL: reader locate/loop mode requires at least one block of session content\n");
+        return false;
+    }
+    if (overrideReaderMode)
+    {
+        transport.setLoopEnabled (loopReaders);
+        if (loopReaders)
+        {
+            const auto twoSeconds = static_cast<std::int64_t> (2.0 * sampleRate);
+            const auto loopEnd = std::min (sessionEnd, 2 * twoSeconds);
+            const auto loopStart = loopEnd == 2 * twoSeconds ? twoSeconds : std::int64_t { 0 };
+            transport.setLoopRange (loopStart, loopEnd);
+        }
+    }
+    std::fprintf (stdout, "Reader mode: %s%s; session content end: %lld samples\n", readerMode,
+                  ! overrideReaderMode && transport.isLoopEnabled() ? " (saved loop retained)" : "",
+                  (long long) sessionEnd);
     engine->setPerfCaptureEnabled (true);
-    engine->getTransport().setPlayhead (0);
+    transport.setPlayhead (0);
     engine->play();
 
     std::vector<std::vector<float>> inputs ((size_t) numInChannels,
@@ -1259,10 +1309,26 @@ static bool runHeadlessSessionPerf (const juce::String& sessionPath)
 
     const double blockMs = 1000.0 * blockSize / sampleRate;
     const auto   wall0   = juce::Time::getMillisecondCounterHiRes();
+    auto& playback = engine->getPlaybackEngine();
+    const auto readerStats0 = playback.readerStats();
+    const auto readerWall0 = std::chrono::steady_clock::now();
+    std::size_t peakReaderBytes = readerStats0.allocatedBytes;
+    std::size_t peakResidentReaders = readerStats0.residentReaders;
+    double pacingPauseMs = 0.0;
+    int locateCount = 0;
     float masterPeak = 0.0f;
 
     for (int b = 0; b < numBlocks; ++b)
     {
+        if (locateReaders && (b == numBlocks / 4 || b == numBlocks / 2 || b == 3 * numBlocks / 4))
+        {
+            const auto lastStart = std::max<std::int64_t> (0, sessionEnd - blockSize);
+            const auto target = lastStart / 4 * (++locateCount);
+            const auto seekStart = std::chrono::steady_clock::now();
+            transport.locate (target);
+            pacingPauseMs += std::chrono::duration<double, std::milli> (
+                std::chrono::steady_clock::now() - seekStart).count();
+        }
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
         engine->audioDeviceIOCallback (
             inputPtrs.data(), numInChannels,
@@ -1273,15 +1339,33 @@ static bool runHeadlessSessionPerf (const juce::String& sessionPath)
             masterPeak = std::max ({ masterPeak,
                                      std::abs (outputs[0][(size_t) s]),
                                      std::abs (outputs[1][(size_t) s]) });
+        const auto readerStats = playback.readerStats();
+        peakReaderBytes = std::max (peakReaderBytes, readerStats.allocatedBytes);
+        peakResidentReaders = std::max (peakResidentReaders, readerStats.residentReaders);
 
         // Pace to realtime so the prefetch thread fills readers the way a
         // live device run would; free-running would outrun it and the
         // resulting silence would let strips skip, undercounting cost.
-        const double target = wall0 + (double) (b + 1) * blockMs;
+        const double target = wall0 + pacingPauseMs + (double) (b + 1) * blockMs;
         while (juce::Time::getMillisecondCounterHiRes() < target)
             juce::Thread::sleep (1);
     }
 
+    const auto readerStats = playback.readerStats();
+    peakReaderBytes = std::max (peakReaderBytes, readerStats.allocatedBytes);
+    peakResidentReaders = std::max (peakResidentReaders, readerStats.residentReaders);
+    const double readerSeconds = std::chrono::duration<double> (
+        std::chrono::steady_clock::now() - readerWall0).count();
+    std::fprintf (stdout,
+        "Reader pool: worker threads=%zu (configured), registered readers=%zu, sampled peak resident readers=%zu\n"
+        "Reader pool: sampled peak storage bytes=%zu (windows, staging, scratch), read misses=%llu, fill errors=%llu\n"
+        "Reader pool: worker wait returns=%llu, wait returns/sec=%.2f, locates=%d\n",
+        readerStats.workers, readerStats.readers, peakResidentReaders, peakReaderBytes,
+        (unsigned long long) (readerStats.readMisses - readerStats0.readMisses),
+        (unsigned long long) (readerStats.fillErrors - readerStats0.fillErrors),
+        (unsigned long long) (readerStats.workerWakeups - readerStats0.workerWakeups),
+        readerSeconds > 0.0 ? (double) (readerStats.workerWakeups - readerStats0.workerWakeups) / readerSeconds : 0.0,
+        locateCount);
     engine->stop();
     std::fprintf (stdout, "Master peak over run: %.4f %s\n", masterPeak,
                   masterPeak <= 1.0e-6f ? "(SILENT - check playhead/regions; costs below undercount the live case)"
