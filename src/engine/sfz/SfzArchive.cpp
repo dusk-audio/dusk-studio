@@ -3,18 +3,22 @@
 #include <archive.h>
 #include <archive_entry.h>
 #include <sodium.h>
+#include <utf8proc.h>
 
 #include <algorithm>
 #include <array>
 #include <cerrno>
 #include <clocale>
 #include <cstdio>
+#include <cstdlib>
 #include <cwchar>
 #include <cstring>
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -703,6 +707,20 @@ bool preflight (Input& input, const ArchiveRequest& request,
     return true;
 }
 
+std::optional<std::string> canonicalZipPath (std::string_view path)
+{
+    if (path.size() > static_cast<std::size_t> (std::numeric_limits<utf8proc_ssize_t>::max()))
+        return std::nullopt;
+    utf8proc_uint8_t* mapped = nullptr;
+    const auto size = utf8proc_map (reinterpret_cast<const utf8proc_uint8_t*> (path.data()),
+                                  static_cast<utf8proc_ssize_t> (path.size()), &mapped,
+                                  static_cast<utf8proc_option_t> (UTF8PROC_STABLE | UTF8PROC_COMPOSE));
+    const std::unique_ptr<utf8proc_uint8_t, decltype (&std::free)> owned (mapped, std::free);
+    if (size < 0) return std::nullopt;
+    if (size == 0) return std::string {};
+    return std::string (reinterpret_cast<const char*> (mapped), static_cast<std::size_t> (size));
+}
+
 bool sfzName (const std::string& path)
 {
     if (path.size() < 4) return false;
@@ -755,7 +773,10 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
             return fail ("Cannot open ZIP decoder");
         std::map<std::string, const ZipEntry*> indexed;
         for (const auto& entry : entries)
-            if (! indexed.emplace (entry.name, &entry).second) return fail ("Duplicate ZIP entry");
+        {
+            const auto key = canonicalZipPath (entry.name);
+            if (! key || ! indexed.emplace (*key, &entry).second) return fail ("Duplicate or invalid ZIP entry");
+        }
         std::set<std::string> extracted;
         bool licenseFound = false;
         std::array<unsigned char, kChunkBytes> chunk {};
@@ -778,8 +799,11 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
                 return fail ("ZIP entry is encrypted or is a link");
             const auto* pathname = archive_entry_pathname_utf8 (decoded);
             if (pathname == nullptr) return fail ("ZIP pathname is not UTF-8");
-            const auto found = indexed.find (pathname);
-            if (found == indexed.end() || ! extracted.insert (pathname).second)
+            // macOS libarchive decomposes UTF-8 names; only canonical equivalence is allowed here.
+            const auto key = canonicalZipPath (pathname);
+            if (! key) return fail ("ZIP pathname is not UTF-8");
+            const auto found = indexed.find (*key);
+            if (found == indexed.end() || ! extracted.insert (*key).second)
                 return fail ("ZIP decoder pathname disagrees with its directory");
             const auto& entry = *found->second;
             if (archive_entry_filetype (decoded) != (entry.directory ? AE_IFDIR : AE_IFREG)

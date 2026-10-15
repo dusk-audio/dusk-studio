@@ -12,6 +12,7 @@
 #include <iterator>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #if ! defined(_WIN32)
@@ -189,14 +190,17 @@ TEST_CASE ("SFZ ZIP extraction strips only the expected root and verifies its li
     ScratchTree tree;
     const std::string instrument = "<region> sample=Samples/tone.wav";
     const std::string license = "CC0-1.0";
+    std::string entrypoint;
+    SECTION ("Composed Unicode pathname") { entrypoint = u8"Étude.sfz"; }
+    SECTION ("Decomposed Unicode pathname") { entrypoint = u8"E\u0301tude.sfz"; }
     auto request = requestFor (tree, zip ({
-        { "pack-release/", {}, true }, { u8"pack-release/Étude.sfz", instrument },
+        { "pack-release/", {}, true }, { "pack-release/" + entrypoint, instrument },
         { "pack-release/Samples/tone.wav", "sample bytes" }, { "pack-release/LICENSE", license }
     }));
     request.expectedRoot = "pack-release";
     request.licensePath = "LICENSE";
     request.licenseSha256 = sha256 (license);
-    request.expectedEntrypoints = { u8"Étude.sfz" };
+    request.expectedEntrypoints = { entrypoint };
     OperationProgress latest;
     OperationControl control;
     control.progress = [&latest] (const OperationProgress& progress) { latest = progress; };
@@ -215,10 +219,10 @@ TEST_CASE ("SFZ ZIP extraction strips only the expected root and verifies its li
    #else
     CHECK (uselocale (nullptr) == originalThreadLocale);
    #endif
-    REQUIRE (result.sfzPaths == std::vector<std::string> { u8"Étude.sfz" });
+    REQUIRE (result.sfzPaths == std::vector<std::string> { entrypoint });
     CHECK (result.files == 3);
     CHECK (result.expandedBytes == instrument.size() + license.size() + 12);
-    CHECK (readFile (request.stagingDirectory / std::filesystem::u8path (u8"Étude.sfz")) == instrument);
+    CHECK (readFile (request.stagingDirectory / std::filesystem::u8path (entrypoint)) == instrument);
     CHECK (readFile (request.stagingDirectory / "LICENSE") == license);
     CHECK_FALSE (std::filesystem::exists (request.stagingDirectory / "pack-release"));
     CHECK (latest.completedFiles == result.files);
@@ -336,6 +340,11 @@ TEST_CASE ("SFZ ZIP extraction refuses encrypted and conflicting local headers")
     SECTION ("local and central names differ")
     {
         bytes[local + 30] = 'x';
+    }
+    SECTION ("canonically equivalent local and central names still differ")
+    {
+        bytes = zip ({ { u8"e\u0301\u0323.sfz", "instrument" } });
+        std::swap (bytes[32], bytes[34]);
     }
     const auto request = requestFor (tree, bytes);
     CHECK (extractZip (request).status == OperationStatus::Failed);
