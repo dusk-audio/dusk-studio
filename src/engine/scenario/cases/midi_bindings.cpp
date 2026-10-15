@@ -477,6 +477,9 @@ ScenarioResult runBankRelative (ScenarioContext& ctx)
 ScenarioResult runLearn (ScenarioContext& ctx)
 {
     auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const bool hardwareInputs = engine.setHardwareMidiInputsEnabledForScenario (false);
+    ctx.cleanup ([&engine, hardwareInputs] { engine.setHardwareMidiInputsEnabledForScenario (hardwareInputs); });
     constexpr int kTrack = 2;
 
     ctx.keep (session.midiLearnPending);
