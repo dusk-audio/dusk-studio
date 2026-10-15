@@ -203,6 +203,10 @@ public:
                           { "owner", { { "login", "sfzinstruments" } } }, { "private", false }, { "disabled", false },
                           { "license", { { "spdx_id", "CC0-1.0" } } } };
         if (request.url == "https://api.github.com/orgs/sfzinstruments/repos?type=public&sort=full_name&per_page=50&page=1") reply = Json::array ({ repo });
+        else if (request.url == "https://musical-artifacts.com/artifacts.json?formats=sfz&page=1&q=")
+            reply = Json::array ({ { { "id", std::stoull (packId) }, { "name", "Community Piano" },
+                                    { "author", "Fixture author" }, { "license", "cc-zero" },
+                                    { "formats", Json::array ({ "sfz" }) } } });
         else if (request.url == api) reply = repo;
         else if (request.url == api + "/commits/HEAD")
             reply = { { "sha", commit }, { "commit", { { "tree", { { "sha", tree } } } } } };
@@ -371,8 +375,10 @@ void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, c
     steps.push_back ({ 0, [&ctx, state]
     {
         const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
-        ctx.expect (snapshot.page.items.size() == 1 && snapshot.page.items.front().packId == state->transport->packId,
-                    "explicit Browse did not show the fixture repository");
+        ctx.expect (snapshot.page.items.size() == 2 && snapshot.page.items.front().packId == state->transport->packId
+                    && snapshot.page.items.front().sourceId == "sfzinstruments"
+                    && snapshot.page.items.back().sourceId == "musical-artifacts",
+                    "explicit All repositories search did not combine both fixture sources");
     } });
     pushWorkClick (steps, host, ctx, state, "online-item-0", LibraryState::Complete);
     steps.push_back ({ 0, [&ctx, state]
@@ -674,7 +680,7 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     steps->push_back ({ 0, [&ctx, state]
     {
         const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
-        ctx.expect (snapshot.page.items.size() == 1 && snapshot.page.items.front().packId == state->transport->packId,
+        ctx.expect (snapshot.page.items.size() == 2 && snapshot.page.items.front().packId == state->transport->packId,
                     "failed refresh discarded the last good repository page");
         ctx.expect (snapshot.error.find ("Retry-After: 25") != std::string::npos,
                     "repository failure discarded actionable retry information");

@@ -23,6 +23,9 @@ canonical source.
   absolute path. Missing packs stay offline without downloading on session load.
   A larger, responsive browser shows source stars or favorites and opens
   published demos before downloading an instrument pack.
+  All repositories is the default search, combining both sources with separate
+  page progress and repository labels; one unavailable source leaves the other
+  source's results usable.
 - **Complete MIDI channel controls.** Recording, import, session save and
   playback keep pitch bend, channel and polyphonic pressure, and program changes
   alongside notes and CCs.

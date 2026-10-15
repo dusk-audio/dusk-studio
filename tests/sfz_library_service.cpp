@@ -198,6 +198,15 @@ std::size_t ownedInstallFiles (const Tree& tree)
 }
 
 const std::string listing = R"([{"id":42,"name":"Service piano","author":"Fixture author","license":"cc-zero","formats":["sfz"]}])";
+std::string githubListing (const std::string& name = "Grand-Piano", unsigned id = 42)
+{
+    return dusk::json::Json::array ({ {
+        { "id", id }, { "name", name }, { "description", "Community instrument" },
+        { "owner", { { "login", "sfzinstruments" } } }, { "private", false }, { "disabled", false },
+        { "license", { { "spdx_id", "CC0-1.0" } } }
+    } }).dump();
+}
+
 ProviderSummary summary()
 {
     return { "musical-artifacts", "42", "42", "Service piano", "Fixture author", {},
@@ -544,4 +553,223 @@ TEST_CASE ("SFZ library shutdown joins an idle worker after acknowledged jobs", 
         }
     }
     REQUIRE (transport->count() == 0);
+}
+
+TEST_CASE ("SFZ all repositories searches every source and retains resolvable identities", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ githubListing() });
+    transport->append ({ listing });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.browse ("all", 1, "Piano"));
+    const auto result = settled (service);
+    REQUIRE (result.state == LibraryState::Complete);
+    REQUIRE (result.error.empty());
+    REQUIRE (result.page.items.size() == 2);
+    CHECK (result.page.items[0].sourceId == "sfzinstruments");
+    CHECK (result.page.items[1].sourceId == "musical-artifacts");
+    CHECK (result.page.items[0].packId == result.page.items[1].packId);
+    CHECK (result.page.items[0].locator == "Grand-Piano");
+    CHECK (result.page.items[1].locator == "42");
+    REQUIRE (transport->count() == 2);
+    CHECK (transport->request (0).url.find ("api.github.com/orgs/sfzinstruments/") != std::string::npos);
+    CHECK (transport->request (1).url.find ("q=Piano") != std::string::npos);
+
+    transport->append ({ dusk::json::Json {
+        { "id", 42 }, { "name", "Service piano" }, { "author", "Fixture author" },
+        { "license", "cc-zero" }, { "formats", { "sfz" } },
+        { "file", "https://musical-artifacts.com/artifacts/42/piano.zip" },
+        { "file_hash", hash ("archive") }, { "file_list", { "Piano.sfz" } }
+    }.dump() });
+    transport->append ({ R"([{"short_name":"cc-zero","name":"Creative Commons CC0 1.0 Universal","license_type":"cc"}])" });
+    REQUIRE (service.resolve (result.page.items[1]));
+    const auto resolved = settled (service);
+    REQUIRE (resolved.state == LibraryState::Complete);
+    REQUIRE (resolved.pack);
+    CHECK (resolved.pack->sourceId == "musical-artifacts");
+    CHECK (resolved.pack->packId == "42");
+    CHECK (transport->count() == 4);
+}
+
+TEST_CASE ("SFZ all repositories keeps independent pagination through sparse search pages", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ githubListing ("Banjo"), 200, { { "x-total-pages", "3" } } });
+    transport->append ({ githubListing(), 200, { { "x-total-pages", "3" } } });
+    transport->append ({ listing });
+    transport->append ({ githubListing ("Upright-Piano", 43) });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.browse ("all", 1, "Piano"));
+    const auto first = settled (service);
+    REQUIRE (first.state == LibraryState::Complete);
+    REQUIRE (first.page.items.size() == 2);
+    REQUIRE (first.page.nextPage == 2);
+    REQUIRE (transport->count() == 3);
+    CHECK (transport->request (1).url.find ("page=2") != std::string::npos);
+
+    REQUIRE (service.browse ("all", first.page.nextPage, "Piano"));
+    const auto second = settled (service);
+    REQUIRE (second.state == LibraryState::Complete);
+    REQUIRE (second.page.items.size() == 1);
+    CHECK (second.page.items.front().sourceId == "sfzinstruments");
+    CHECK (second.page.items.front().packId == "43");
+    CHECK (second.page.nextPage == 0);
+    REQUIRE (transport->count() == 4);
+    CHECK (transport->request (3).url.find ("page=3") != std::string::npos);
+
+    REQUIRE (service.browse ("all", 1, "Piano", true));
+    const auto cachedFirst = settled (service);
+    REQUIRE (cachedFirst.state == LibraryState::Complete);
+    CHECK (cachedFirst.cachedResponse);
+    CHECK (cachedFirst.page.items.size() == 2);
+    REQUIRE (service.browse ("all", cachedFirst.page.nextPage, "Piano", true));
+    const auto cachedSecond = settled (service);
+    REQUIRE (cachedSecond.state == LibraryState::Complete);
+    CHECK (cachedSecond.page.items.size() == 1);
+    REQUIRE (service.browse ("all", 1, "Piano", true));
+    CHECK (settled (service).page.items.size() == 2);
+    CHECK (transport->count() == 4);
+}
+
+TEST_CASE ("SFZ all repositories retains successful sources and reports source failures", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    LibraryService service (tree.root, transport);
+    settled (service);
+    bool githubFails = true, bothFail = false;
+    SECTION ("First source is unavailable") {}
+    SECTION ("Second source is unavailable") { githubFails = false; }
+    SECTION ("Both sources fail without replacing the last results") { bothFail = true; }
+    if (bothFail)
+    {
+        transport->append ({ githubListing() });
+        transport->append ({ listing });
+        REQUIRE (service.browse ("all", 1, "Piano"));
+        REQUIRE (settled (service).page.items.size() == 2);
+    }
+    transport->append ({ githubListing(), githubFails ? 429 : 200, { { "retry-after", "25" } } });
+    transport->append ({ listing, ! githubFails || bothFail ? 429 : 200, { { "retry-after", "25" } } });
+    REQUIRE (service.browse ("all", 1, "Piano"));
+    const auto result = settled (service);
+    REQUIRE (result.state == (bothFail ? LibraryState::Failed : LibraryState::Complete));
+    REQUIRE (result.error.find (githubFails ? "SFZ Instruments" : "Musical Artifacts") != std::string::npos);
+    CHECK (result.error.find ("25") != std::string::npos);
+    if (bothFail)
+    {
+        CHECK (result.error.find ("Musical Artifacts") != std::string::npos);
+        REQUIRE (result.page.items.size() == 2);
+        CHECK (result.page.items.front().packId == "42");
+        return;
+    }
+    REQUIRE (result.page.items.size() == 1);
+    CHECK (result.page.items.front().sourceId == (githubFails ? "musical-artifacts" : "sfzinstruments"));
+    REQUIRE (result.page.nextPage == 2);
+    transport->append ({ githubFails ? githubListing() : listing });
+    REQUIRE (service.browse ("all", result.page.nextPage, "Piano"));
+    const auto retried = settled (service);
+    REQUIRE (retried.state == LibraryState::Complete);
+    CHECK (retried.error.empty());
+    REQUIRE (retried.page.items.size() == 1);
+    CHECK (retried.page.items.front().sourceId == (githubFails ? "sfzinstruments" : "musical-artifacts"));
+    CHECK (retried.page.nextPage == 0);
+    CHECK (transport->count() == 3);
+    CHECK (transport->request (2).url.find ("page=1") != std::string::npos);
+}
+
+TEST_CASE ("SFZ all repositories keeps validated caches separate from failed sources", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    LibraryService service (tree.root, transport);
+    settled (service);
+    SECTION ("A malformed source cannot overwrite its last good cache")
+    {
+        transport->append ({ githubListing() });
+        transport->append ({ listing });
+        REQUIRE (service.browse ("all", 1, "Piano"));
+        REQUIRE (settled (service).page.items.size() == 2);
+        transport->append ({ "{broken JSON" });
+        transport->append ({ listing });
+        REQUIRE (service.browse ("all", 1, "Piano"));
+        const auto partial = settled (service);
+        REQUIRE (partial.state == LibraryState::Complete);
+        CHECK_FALSE (partial.error.empty());
+        REQUIRE (partial.page.items.size() == 1);
+        REQUIRE (service.browse ("all", 1, "Piano", true));
+        const auto cached = settled (service);
+        REQUIRE (cached.state == LibraryState::Complete);
+        CHECK (cached.cachedResponse);
+        CHECK (cached.error.empty());
+        CHECK (cached.page.items.size() == 2);
+        CHECK (transport->count() == 4);
+    }
+    SECTION ("Missing source cache is explicit and never starts HTTP")
+    {
+        transport->append ({ listing });
+        REQUIRE (service.browse ("musical-artifacts", 1, "Piano"));
+        REQUIRE (settled (service).page.items.size() == 1);
+        REQUIRE (service.browse ("all", 1, "Piano", true));
+        const auto cached = settled (service);
+        REQUIRE (cached.state == LibraryState::Complete);
+        CHECK (cached.cachedResponse);
+        CHECK (cached.error.find ("SFZ Instruments") != std::string::npos);
+        REQUIRE (cached.page.items.size() == 1);
+        CHECK (cached.page.items.front().sourceId == "musical-artifacts");
+        CHECK (transport->count() == 1);
+    }
+}
+
+TEST_CASE ("SFZ all repositories interruption preserves the last complete page", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ githubListing() });
+    transport->append ({ listing });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.browse ("all", 1, "Piano"));
+    REQUIRE (settled (service).page.items.size() == 2);
+    bool pause = false, holdSecond = false;
+    SECTION ("Cancel during the first source") {}
+    SECTION ("Pause during the first source and resume") { pause = true; }
+    SECTION ("Cancel while the second source is pending") { holdSecond = true; }
+    Reply reply { githubListing ("New-Piano", 99) };
+    if (! holdSecond)
+        reply.afterChunk = [&] (std::size_t) { if (pause) service.setHeavyWork (true); else service.cancel(); };
+    transport->append (std::move (reply));
+    if (holdSecond)
+    {
+        Reply held { listing };
+        held.hold = true;
+        transport->append (std::move (held));
+    }
+    REQUIRE (service.browse ("all", 1, "New"));
+    if (holdSecond)
+    {
+        REQUIRE (transport->waitEntered (4));
+        service.cancel();
+        transport->release();
+    }
+    const auto stopped = settled (service);
+    REQUIRE (stopped.state == (pause ? LibraryState::Paused : LibraryState::Cancelled));
+    REQUIRE (stopped.page.items.size() == 2);
+    CHECK (stopped.page.items.front().packId == "42");
+    CHECK (transport->count() == (holdSecond ? 4 : 3));
+    if (pause)
+    {
+        transport->append ({ githubListing ("New-Piano", 99) });
+        transport->append ({ listing });
+        service.setHeavyWork (false);
+        REQUIRE (service.resume());
+        const auto resumed = settled (service);
+        REQUIRE (resumed.state == LibraryState::Complete);
+        REQUIRE (resumed.page.items.size() == 2);
+        CHECK (resumed.page.items.front().packId == "99");
+        CHECK (transport->count() == 5);
+    }
 }

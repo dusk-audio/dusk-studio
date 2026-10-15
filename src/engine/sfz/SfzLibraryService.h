@@ -14,6 +14,8 @@
 
 namespace duskstudio::sfz
 {
+inline constexpr const char* kAllRepositoriesSourceId = "all";
+
 enum class LibraryState
 {
     Idle, Browsing, Resolving, Downloading, Extracting, Paused, Complete, Failed, Cancelled
@@ -69,9 +71,17 @@ private:
         std::filesystem::path part, staging;
     };
 
+    struct BrowseSession
+    {
+        std::string query;
+        bool offlineOnly = false;
+        std::vector<std::vector<unsigned>> pages;
+    };
+
     bool enqueue (Job);
     void run();
     OperationResult execute (Job&, const OperationControl&);
+    OperationResult browseAll (const Job&, const OperationControl&);
     void setState (std::uint64_t generation, LibraryState);
     void cleanInstall (Job&) noexcept;
 
@@ -83,6 +93,7 @@ private:
     LibrarySnapshot current;
     std::optional<Job> pending;
     std::optional<Job> paused;
+    std::optional<BrowseSession> allBrowse;
     std::atomic<bool> stopping { false }, cancelRequested { false }, heavyWork { false };
     std::thread worker;
 };

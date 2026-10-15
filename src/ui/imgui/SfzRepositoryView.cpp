@@ -89,7 +89,10 @@ public:
         std::function<std::vector<sfz::ManagedSfzLocator>()> used,
         std::function<void (std::string)> source, std::function<void()> local)
         : service (s), onLoad (std::move (load)), inUse (std::move (used)),
-          openSource (std::move (source)), openLocalFolders (std::move (local)), sources (sfz::providerSources()) {}
+          openSource (std::move (source)), openLocalFolders (std::move (local)), sources (sfz::providerSources())
+    {
+        sources.insert (sources.begin(), { sfz::kAllRepositoriesSourceId, "All repositories", {} });
+    }
 
     ImVec2 preferredSize() const override { return { 1100.0f, 760.0f }; }
     bool capturesKeyboard() const override { return keyboardActive; }
@@ -254,6 +257,7 @@ private:
                 currentPage = requestedPage;
                 activeSource = requestedSource;
                 activeQuery = requestedQuery;
+                browseWarning = snapshot.error;
                 clearSelection();
             }
             else if (pendingIntent == Intent::Resolve && selectedSummary && snapshot.pack
@@ -397,7 +401,7 @@ private:
                 {
                     sourceIndex = static_cast<int> (i);
                     results.clear(); nextPage = 0; currentPage = 0; clearSelection();
-                    activeSource.clear(); activeQuery.clear();
+                    activeSource.clear(); activeQuery.clear(); browseWarning.clear();
                 }
             ImGui::EndCombo();
         }
@@ -422,6 +426,7 @@ private:
         if (currentPage == 0) muted ("No search yet");
         else ImGui::Text ("%zu results  |  Page %u%s", results.size(), currentPage, pageCached ? "  |  Cached" : "");
         if (! activeQuery.empty()) muted ("Results for \"" + activeQuery + "\"");
+        if (! browseWarning.empty()) muted (browseWarning);
         const float bodyHeight = std::max (ctx.s (40), height - (ImGui::GetCursorScreenPos().y - top));
         const float listWidth = std::max (ctx.s (100), (width - spacing) * 0.32f);
         if (ImGui::BeginChild ("##sfz-online-list", { listWidth, bodyHeight }, ImGuiChildFlags_Borders))
@@ -429,7 +434,7 @@ private:
             if (results.empty())
             {
                 heading (ctx, currentPage == 0 ? "Explore instruments" : "No instruments found", 18);
-                muted (currentPage == 0 ? "Choose a repository and select Search. Browse cached opens saved results while offline."
+                muted (currentPage == 0 ? "Search all repositories, or choose one to narrow the results. Browse cached opens saved results while offline."
                                        : "Try a different search or repository.");
             }
             for (std::size_t i = 0; i < results.size(); ++i)
@@ -441,7 +446,8 @@ private:
                 if (! count.empty()) hint += " | " + count;
                 const auto identifier = summary.locator.empty() ? summary.packId : summary.locator;
                 if (row (ctx, "online-item-" + std::to_string (i), displayTitle (summary.name, summary.sourceId),
-                    identifier, selectedSummary && summaryKey (*selectedSummary) == summaryKey (summary),
+                    sourceName (summary.sourceId) + " | " + identifier,
+                    selectedSummary && summaryKey (*selectedSummary) == summaryKey (summary),
                     available, ctx.s (96), hint))
                 {
                     clearSelection();
@@ -686,7 +692,8 @@ private:
             {
                 ImGui::TextWrapped ("%s", kPauseMessage);
             }
-            if (! snapshot.error.empty() && snapshot.state != LibraryState::Paused && snapshot.state != LibraryState::Cancelled)
+            if (! snapshot.error.empty() && snapshot.state != LibraryState::Paused
+                && snapshot.state != LibraryState::Cancelled && snapshot.state != LibraryState::Complete)
                 ImGui::TextWrapped ("%s", snapshot.error.c_str());
             if (! notice.empty()) ImGui::TextWrapped ("%s", notice.c_str());
         }
@@ -704,7 +711,7 @@ private:
     std::optional<sfz::ProviderPack> resolved;
     std::array<char, 257> query {};
     std::string selectedInstalled, selectedInstrument, resolvingSelection, notice;
-    std::string activeSource, activeQuery, requestedSource, requestedQuery;
+    std::string activeSource, activeQuery, requestedSource, requestedQuery, browseWarning;
     int sourceIndex = 0;
     unsigned currentPage = 0, nextPage = 0, requestedPage = 0;
     bool pageCached = false, resolutionCached = false, forceInstalled = false;

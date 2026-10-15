@@ -337,6 +337,81 @@ void LibraryService::cleanInstall (Job& job) noexcept
     job.part.clear();
 }
 
+OperationResult LibraryService::browseAll (const Job& job, const OperationControl& control)
+{
+    if (job.page == 0 || job.page > 200 || job.query.size() > 256)
+        return { OperationStatus::Failed, "Invalid repository browse request" };
+    const auto sources = providerSources();
+    BrowseSession session;
+    if (job.page == 1)
+    {
+        session.query = job.query;
+        session.offlineOnly = job.offlineOnly;
+        session.pages.push_back (std::vector<unsigned> (sources.size(), 1));
+    }
+    else
+    {
+        if (! allBrowse || allBrowse->query != job.query || allBrowse->offlineOnly != job.offlineOnly
+            || job.page > allBrowse->pages.size())
+            return { OperationStatus::Failed, "Start this repository search from its first page" };
+        session = *allBrowse;
+    }
+    auto cursors = session.pages[job.page - 1];
+    ProviderPageResult combined;
+    combined.status = OperationStatus::Complete;
+    unsigned completed = 0;
+    bool usedCache = false;
+    std::string warnings;
+    for (std::size_t i = 0; i < sources.size(); ++i)
+    {
+        unsigned page = cursors[i];
+        if (page == 0) continue;
+        for (;;)
+        {
+            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            CachedTransport cached (*transport, cacheRoot, job.offlineOnly);
+            auto result = browseProvider (cached, sources[i].id, page, job.query, control);
+            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            if (result.status == OperationStatus::Cancelled || result.status == OperationStatus::Paused)
+                return { result.status, result.error };
+            if (! result)
+            {
+                if (! warnings.empty()) warnings += '\n';
+                warnings += sources[i].name + ": " + rateLimitError (result.error, result.rateLimit);
+                cursors[i] = page;
+                break;
+            }
+            cached.commit();
+            usedCache = usedCache || cached.usedCache;
+            cursors[i] = result.nextPage;
+            // GitHub filters its alphabetical listing locally, so an empty
+            // matching page need not mean the search has no more instruments.
+            if (! job.query.empty() && result.items.empty() && result.nextPage != 0)
+            {
+                page = result.nextPage;
+                continue;
+            }
+            for (auto& item : result.items) combined.items.push_back (std::move (item));
+            ++completed;
+            break;
+        }
+    }
+    if (completed == 0)
+        return { OperationStatus::Failed, warnings.empty() ? "No repositories could be searched" : warnings };
+    if (job.page < 200 && std::any_of (cursors.begin(), cursors.end(), [] (unsigned page) { return page != 0; }))
+        combined.nextPage = job.page + 1;
+    session.pages.resize (job.page);
+    if (combined.nextPage != 0) session.pages.push_back (std::move (cursors));
+    const std::lock_guard<std::mutex> lock (mutex);
+    if (control.status() != OperationStatus::Complete) return interrupted (control);
+    if (current.generation != job.generation) return { OperationStatus::Cancelled, {} };
+    allBrowse = std::move (session);
+    current.page = std::move (combined);
+    current.cachedResponse = usedCache;
+    return { OperationStatus::Complete, warnings.empty() ? std::string()
+        : "Some repositories could not be searched:\n" + warnings };
+}
+
 OperationResult LibraryService::execute (Job& job, const OperationControl& control)
 {
     if (job.kind == JobKind::Cleanup)
@@ -345,6 +420,11 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         return { OperationStatus::Cancelled, {} };
     }
     if (control.status() != OperationStatus::Complete) return interrupted (control);
+    if (job.kind == JobKind::Browse && job.sourceId == kAllRepositoriesSourceId)
+    {
+        setState (job.generation, LibraryState::Browsing);
+        return browseAll (job, control);
+    }
     if (job.kind == JobKind::Browse || job.kind == JobKind::Resolve)
     {
         CachedTransport cached (*transport, cacheRoot, job.offlineOnly);
