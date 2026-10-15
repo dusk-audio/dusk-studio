@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SfzArchive.h"
+#include "SfzArtworkCache.h"
 #include "SfzPackStore.h"
 
 #include <atomic>
@@ -52,7 +53,12 @@ public:
     bool requestInstalled();
     bool remove (InstalledPack, std::vector<ManagedSfzLocator> inUse);
     bool setTransportForTest (std::shared_ptr<HttpTransport>);
-    void setHeavyWork (bool active) noexcept { heavyWork.store (active, std::memory_order_release); }
+    void setHeavyWork (bool active) noexcept
+    {
+        heavyWork.store (active, std::memory_order_release);
+        artworkCache.setHeavyWork (active);
+    }
+    ArtworkCache& artwork() noexcept { return artworkCache; }
     LibrarySnapshot snapshot() const;
 
 private:
@@ -88,6 +94,7 @@ private:
     PackStore store;
     std::shared_ptr<HttpTransport> transport;
     std::filesystem::path cacheRoot;
+    ArtworkCache artworkCache;
     mutable std::mutex mutex;
     std::condition_variable wake;
     LibrarySnapshot current;

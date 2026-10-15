@@ -126,6 +126,8 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
                             { "path", relative }, { "candidate", instrument.candidateOnly } });
     }
     const Json receipt { { "schema", 1 }, { "provider", Json::parse (providerPackToJson (provider)) },
+                         { "presentation", { { "artwork_url", provider.presentation.artworkUrl },
+                                               { "category_hint", provider.presentation.categoryHint } } },
                          { "archive_sha256", digest }, { "instruments", std::move (entries) } };
     if (! dusk::fs::writeStringToFile (staging / kReceipt, receipt.dump (2)))
         return failure ("Cannot write SFZ installation receipt");
@@ -158,6 +160,14 @@ std::optional<InstalledPack> PackStore::readReceipt (const fs::path& directory) 
     if (! parsed || ! parsed.pack) return {};
     InstalledPack pack;
     pack.provider = std::move (*parsed.pack);
+    const auto& presentation = dusk::json::child (receipt, "presentation");
+    const auto artwork = dusk::json::getString (presentation, "artwork_url");
+    if (artwork.size() <= 2048 && artwork.compare (0, 8, "https://") == 0
+        && artwork.find_first_of ("\r\n\t @\\") == std::string::npos && artwork.find ('\0') == std::string::npos)
+        pack.provider.presentation.artworkUrl = artwork;
+    const auto category = dusk::json::getString (presentation, "category_hint");
+    if (category.size() <= 8192 && category.find ('\0') == std::string::npos)
+        pack.provider.presentation.categoryHint = category;
     pack.archiveSha256 = dusk::json::getString (receipt, "archive_sha256");
     pack.directory = directory;
     if (! isSha256 (pack.archiveSha256)

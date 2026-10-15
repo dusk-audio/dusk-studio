@@ -190,11 +190,13 @@ std::string rateLimitError (std::string error, const ProviderRateLimit& limit)
 } // namespace
 
 LibraryService::LibraryService (fs::path root, std::shared_ptr<HttpTransport> supplied)
-    : store (std::move (root)), transport (supplied ? std::move (supplied) : std::make_shared<CurlTransport>()),
+    : store (root), transport (supplied ? std::move (supplied) : std::make_shared<CurlTransport>()),
+      artworkCache (root / ".artwork-cache", transport),
       worker ([this] { run(); }) {}
 
 LibraryService::~LibraryService()
 {
+    artworkCache.cancel();
     {
         const std::lock_guard<std::mutex> lock (mutex);
         stopping.store (true, std::memory_order_release);
@@ -215,6 +217,7 @@ bool LibraryService::setTransportForTest (std::shared_ptr<HttpTransport> replace
     const std::lock_guard<std::mutex> lock (mutex);
     if (current.busy || paused || stopping.load (std::memory_order_acquire)) return false;
     transport = replacement ? std::move (replacement) : std::make_shared<CurlTransport>();
+    artworkCache.setTransport (transport);
     return true;
 }
 
@@ -264,6 +267,10 @@ bool LibraryService::install (ProviderPack pack)
     Job job;
     job.kind = JobKind::Install;
     job.pack = std::move (*validated.pack);
+    if (pack.presentation.artworkUrl.size() <= 2048)
+        job.pack.presentation.artworkUrl = std::move (pack.presentation.artworkUrl);
+    if (pack.presentation.categoryHint.size() <= 8192)
+        job.pack.presentation.categoryHint = std::move (pack.presentation.categoryHint);
     return enqueue (std::move (job));
 }
 

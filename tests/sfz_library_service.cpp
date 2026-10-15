@@ -247,7 +247,9 @@ TEST_CASE ("SFZ library installs a downloaded archive and publishes its portable
 {
     Tree tree;
     const auto bytes = archiveBytes();
-    const auto pack = packFor (bytes);
+    auto pack = packFor (bytes);
+    pack.presentation.artworkUrl = "https://fixtures.example/piano.png";
+    pack.presentation.categoryHint = "piano";
     const auto transport = std::make_shared<ScriptedTransport>();
     transport->append ({ bytes, 200, { { "content-length", std::to_string (bytes.size()) } } });
     LibraryService service (tree.root, transport);
@@ -256,6 +258,8 @@ TEST_CASE ("SFZ library installs a downloaded archive and publishes its portable
     const auto result = settled (service);
     REQUIRE (result.state == LibraryState::Complete);
     REQUIRE (result.installed.size() == 1);
+    CHECK (result.installed[0].provider.presentation.artworkUrl == pack.presentation.artworkUrl);
+    CHECK (result.installed[0].provider.presentation.categoryHint == pack.presentation.categoryHint);
     REQUIRE (result.installed[0].archiveSha256 == hash (bytes));
     REQUIRE (transport->count() == 1);
     const auto locator = result.installed[0].locatorFor (result.installed[0].instruments.front());

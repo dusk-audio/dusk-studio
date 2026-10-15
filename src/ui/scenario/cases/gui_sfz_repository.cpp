@@ -3,6 +3,9 @@
 #include "../../../foundation/Json.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/SessionSerializer.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "../../imgui/SfzArtwork.h"
+#endif
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -128,6 +131,17 @@ public:
     OperationResult perform (const HttpRequest& request, const HttpHeadersCallback& headers,
                              const HttpBodyCallback& body, const OperationControl& control) override
     {
+        #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (request.url == artworkUrl())
+        {
+            artworkRequests.fetch_add (1, std::memory_order_relaxed);
+            const auto pixels = imgui::instrumentArtwork (InstrumentCategory::Piano);
+            if (control.status() != OperationStatus::Complete) return { control.status(), {} };
+            if (! headers ({ 200, request.url, { { "content-type", "image/png" } } }) || ! body (pixels))
+                return { OperationStatus::Failed, "Fixture image rejected" };
+            return { OperationStatus::Complete, {} };
+        }
+#endif
         requests.fetch_add (1, std::memory_order_relaxed);
         const auto stopped = [&]
         {
@@ -147,7 +161,7 @@ public:
             || request.url == kDemoPage)
         {
             const bool page = request.url == kDemoPage;
-            const auto bytes = page ? std::string ("<audio src=\"/assets/audio/woodwinds/dusk_gui.mp3\" controls></audio>")
+            const auto bytes = page ? std::string ("<audio src=\"/assets/audio/woodwinds/dusk_gui.mp3\" controls></audio><img src=\"/assets/img/woodwinds/") + name + ".png\">"
                 : "- name: \"Woodwinds\"\n  page: \"woodwinds\"\n  instruments:\n  - name: \"Fixture\"\n"
                   "    page: \"dusk_gui\"\n    url: \"" + source + "\"\n";
             if (! headers ({ 200, request.url, { { "content-type", page ? "text/html" : "text/plain" } } })) return stopped();
@@ -240,6 +254,8 @@ public:
         return { OperationStatus::Complete, {} };
     }
 
+    std::string artworkUrl() const { return "https://sfzinstruments.github.io/assets/img/woodwinds/" + name + ".png"; }
+
     void release()
     {
         holdArchive.store (false, std::memory_order_release);
@@ -247,7 +263,7 @@ public:
     }
 
     std::string name, packId, commit, tree, api, source, archiveUrl, archive;
-    std::atomic<unsigned> requests { 0 }, rangedRequests { 0 };
+    std::atomic<unsigned> requests { 0 }, rangedRequests { 0 }, artworkRequests { 0 };
     std::atomic<bool> pianoSearched { false };
     std::atomic<bool> networkFailure { false }, holdArchive { false }, archiveEntered { false };
     std::mutex barrierMutex;
@@ -342,6 +358,18 @@ void pushClick (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, s
                       "SFZ control did not appear: " + control, {}, kSettleBoundMs });
     steps.push_back ({ 0, [&host, &ctx, control]
     { ctx.expect (host.sfzLibraryPointer (kStripIndex, control, 0.5f, false), "SFZ control release failed: " + control); } });
+}
+
+void pushCategory (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, const std::string& category)
+{
+    const auto compact = std::make_shared<bool> (false);
+    steps.push_back ({ 0, [&host, compact]
+    { *compact = host.sfzLibraryPointer (kStripIndex, "category-filter", 0.5f, false); } });
+    steps.push_back ({ 0, [&host, compact]
+    { if (*compact) host.sfzLibraryPointer (kStripIndex, "category-filter", 0.5f, true); } });
+    steps.push_back ({ 0, [&host, compact]
+    { if (*compact) host.sfzLibraryPointer (kStripIndex, "category-filter", 0.5f, false); } });
+    pushClick (steps, host, ctx, "category-" + category);
 }
 
 void pushWorkClick (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx,
@@ -547,6 +575,22 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     if (! state) return ctx.verdict();
     auto steps = std::make_shared<std::vector<Step>>();
     pushStart (*steps, host, ctx, state);
+    steps->push_back ({ 0, [] {}, [&host]
+    { return host.sfzLibraryPointer (kStripIndex, "preview-source", 0.5f, false); },
+    "repository artwork did not replace the generic image", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&ctx, state]
+    {
+        ctx.expect (state->transport->artworkRequests.load() == 1, "selected repository artwork was not cached after its first request");
+        state->requests = state->transport->requests.load();
+    } });
+    pushCategory (*steps, host, ctx, "piano");
+    steps->push_back ({ 0, [&host, &ctx, state]
+    {
+        ctx.expect (! host.sfzLibraryPointer (kStripIndex, "online-item-3", 0.5f, false), "collection remained visible in Piano category");
+        ctx.expect (state->transport->requests.load() == state->requests, "category grouping contacted a repository");
+    } });
+    pushCategory (*steps, host, ctx, "all");
+    pushWorkClick (*steps, host, ctx, state, "online-item-0", LibraryState::Complete);
     pushClick (*steps, host, ctx, "source-link");
     pushClick (*steps, host, ctx, "license-link");
     pushClick (*steps, host, ctx, "demo-0");
@@ -585,13 +629,28 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
                         + ", minimum " + std::to_string (window[2]) + "x" + std::to_string (window[3])
                         + ", scale " + std::to_string (host.uiScale()));
     }, [&host] { return std::abs (host.uiScale() - 1.5) < 0.001; }, "the compact UI scale did not take effect" });
-    steps->push_back ({ 150, [&host, state] { host.captureSfzLibrary (kStripIndex, state->compactCapture); } });
+    steps->push_back ({ 150, [&host, &ctx, state]
+    {
+        ctx.expect (host.sfzLibraryPointer (kStripIndex, "category-filter", 0.5f, false),
+                    "compact SFZ browser did not collapse its categories into a dropdown");
+        host.captureSfzLibrary (kStripIndex, state->compactCapture);
+    } });
     steps->push_back ({ 0, [&ctx, state]
     {
         std::error_code error;
         ctx.expect (fs::file_size (state->compactCapture, error) > 0 && ! error, "compact SFZ library capture was not written");
     }, [state] { std::error_code error; return fs::is_regular_file (state->compactCapture, error); }, "compact SFZ library capture did not arrive" });
+    pushCategory (*steps, host, ctx, "piano");
+    pushCategory (*steps, host, ctx, "all");
+    pushWorkClick (*steps, host, ctx, state, "online-item-0", LibraryState::Complete);
     pushWorkClick (*steps, host, ctx, state, "download", LibraryState::Complete);
+    pushInstalledSelection (*steps, host, ctx, state);
+    steps->push_back ({ 0, [] {}, [&host]
+    { return host.sfzLibraryPointer (kStripIndex, "preview-source", 0.5f, false); },
+    "Installed did not reuse cached repository artwork", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&ctx, state]
+    { ctx.expect (state->transport->artworkRequests.load() == 1, "Installed fetched artwork instead of reusing its cache"); } });
+    pushCategory (*steps, host, ctx, "piano");
     pushInstalledSelection (*steps, host, ctx, state);
     steps->push_back ({ 0, [&ctx, state]
     {
@@ -601,6 +660,30 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         ctx.expect (ctx.engine().getSfzLibrary().snapshot().installed.size() == state->initialInstalled + 1,
                     "download did not add exactly one installed version");
     } });
+    pushClick (*steps, host, ctx, "installed-query");
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.sfzLibraryInput (kStripIndex, "focus-out"), "installed search parent-key replay did not receive focus");
+        for (const char c : std::string ("Two"))
+            ctx.expect (host.pressKey (std::string (1, c), c), "installed search did not receive text");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, state]
+    {
+        const auto installed = ctx.engine().getSfzLibrary().snapshot().installed;
+        for (std::size_t i = 0; i < installed.size(); ++i)
+            if (fixturePack (installed[i], *state))
+            {
+                const auto prefix = "installed-instrument-" + std::to_string (i) + "-";
+                ctx.expect (! host.sfzLibraryPointer (kStripIndex, prefix + "0", 0.5f, false), "installed search retained a nonmatching patch");
+                ctx.expect (host.sfzLibraryPointer (kStripIndex, prefix + "1", 0.5f, false), "installed search lost the matching patch");
+            }
+        ctx.expect (state->transport->artworkRequests.load() == 1, "installed filtering contacted the artwork source");
+    } });
+    pushClick (*steps, host, ctx, "installed-query");
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.sfzLibraryInput (kStripIndex, "command + a"), "installed search selection failed"); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.sfzLibraryInput (kStripIndex, "backspace"), "installed search clear failed"); } });
     pushClick (*steps, host, ctx, "instrument");
     pushClick (*steps, host, ctx, "instrument-choice-1");
     pushClick (*steps, host, ctx, "load");

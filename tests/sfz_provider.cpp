@@ -564,6 +564,8 @@ TEST_CASE ("SFZ cached descriptors validate paths, pins, and license receipts of
         decorated.presentation.stars = 99;
         decorated.presentation.favorites = 2;
         decorated.presentation.demos.push_back ({ "Source demo", "https://example.org/demo.mp3" });
+        decorated.presentation.artworkUrl = "https://example.org/piano.jpg";
+        decorated.presentation.categoryHint = "piano";
         CHECK (providerPackToJson (decorated) == providerPackToJson (pack));
         cached["presentation"] = { { "stars", 999 }, { "demos", Json::array ({ "https://example.org/demo.mp3" }) } };
         const auto result = providerPackFromJson (cached.dump());
@@ -581,6 +583,44 @@ TEST_CASE ("SFZ cached descriptors validate paths, pins, and license receipts of
     SECTION ("Unsafe instrument identity") { cached["instruments"][0]["id"] = "../id"; }
     SECTION ("Invalid field type") { cached["version_pinned"] = 1; }
     CHECK_FALSE (providerPackFromJson (cached.dump()));
+}
+
+TEST_CASE ("SFZ repository artwork uses declared images and immutable repository paths", "[sfz][provider][artwork]")
+{
+    FakeTransport transport;
+    auto summary = githubSummary();
+    transport.replies = githubReplies();
+    SECTION ("Repository cover uses the same pinned commit")
+    {
+        transport.replies[2].json["tree"].push_back ({ { "path", "Images/cover.png" }, { "type", "blob" }, { "mode", "100644" } });
+        const auto result = resolveProviderPack (transport, summary);
+        REQUIRE (result);
+        REQUIRE (result.pack);
+        CHECK (result.pack->presentation.artworkUrl == "https://raw.githubusercontent.com/sfzinstruments/Grand-Piano/" + kCommit + "/Images/cover.png");
+    }
+    SECTION ("Author-prefixed catalog instruments use the image actually declared by their page")
+    {
+        summary.locator = summary.name = "author.Grand-Piano";
+        transport.replies[0].json["name"] = summary.locator;
+        transport.replies.push_back ({ {}, 200, {}, "- name: Pianos\n  page: pianos\n  instruments:\n  - name: Grand Piano\n    url: https://creator.example/piano\n" });
+        transport.replies.push_back ({ {}, 200, {}, "<img src='/assets/img/pianos/actual_cover.jpg'>" });
+        const auto result = resolveProviderPack (transport, summary);
+        REQUIRE (result);
+        REQUIRE (result.pack);
+        CHECK (result.pack->presentation.artworkUrl == "https://sfzinstruments.github.io/assets/img/pianos/actual_cover.jpg");
+    }
+    SECTION ("Artifact tags and explicit HTTPS artwork survive browsing")
+    {
+        auto item = artifact();
+        item["tags"] = { "piano", "acoustic" };
+        item["image_url"] = "https://musical-artifacts.com/images/piano.jpg";
+        transport.replies = { { Json::array ({ item }) } };
+        const auto result = browseProvider (transport, "musical-artifacts");
+        REQUIRE (result);
+        REQUIRE (result.items.size() == 1);
+        CHECK (result.items.front().presentation.categoryHint.find ("acoustic") != std::string::npos);
+        CHECK (result.items.front().presentation.artworkUrl == "https://musical-artifacts.com/images/piano.jpg");
+    }
 }
 
 TEST_CASE ("SFZ provider requests can pause before using the transport", "[sfz][provider]")

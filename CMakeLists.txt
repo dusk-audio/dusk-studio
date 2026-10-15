@@ -340,7 +340,8 @@ juce_add_gui_app(DuskStudio
 # explicitly in DuskStudioApp::MainWindow so the WM / taskbar / Alt-Tab
 # render the brand icon regardless of install layout.
 if(EXISTS "${DUSKSTUDIO_ICON_PATH}")
-    juce_add_binary_data(DuskStudioBinaryIcon SOURCES "${DUSKSTUDIO_ICON_PATH}")
+    file(GLOB _dusk_sfz_artwork CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/sfz-instruments/sfz_*.png")
+    juce_add_binary_data(DuskStudioBinaryIcon SOURCES "${DUSKSTUDIO_ICON_PATH}" ${_dusk_sfz_artwork})
     target_link_libraries(DuskStudio PRIVATE DuskStudioBinaryIcon)
 endif()
 
@@ -637,11 +638,13 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/MasteringLimiterView.cpp
         src/ui/imgui/PanelControls.cpp
         src/ui/imgui/SfzRepositoryView.cpp
+        src/ui/imgui/SfzArtwork.cpp
         src/ui/imgui/StartupView.cpp
         src/ui/imgui/VirtualKeyboardView.cpp)
     target_include_directories(DuskStudio PRIVATE
         "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui"
         "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
+    target_include_directories(DuskStudio SYSTEM PRIVATE "${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl")
 
     # Gate spike for the GUI tower: a standalone framework application window rendering one
     # channel strip, used to measure frame cost and prove the shell. It ships with nothing,
@@ -969,6 +972,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/sfz/SfzCatalog.cpp
     src/engine/sfz/SfzCatalogEnvelope.cpp
     src/engine/sfz/SfzTransfer.cpp
+    src/engine/sfz/SfzArtworkCache.cpp
     src/engine/sfz/SfzArchive.cpp
     src/engine/sfz/SfzPathPolicy.cpp
     src/engine/sfz/SfzProvider.cpp

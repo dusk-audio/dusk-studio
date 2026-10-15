@@ -84,6 +84,24 @@ bool https (std::string_view value)
     return ! authority.empty() && authority.find ('@') == std::string_view::npos;
 }
 
+void presentationMetadata (const Json& object, ProviderPresentation& presentation)
+{
+    presentation.categoryHint = string (object, "description", 2048);
+    for (const auto* field : { "tags", "topics" })
+    {
+        const auto list = object.find (field);
+        if (list == object.end() || ! list->is_array() || list->size() > 64) continue;
+        for (const auto& tag : *list)
+            if (tag.is_string() && tag.get_ref<const std::string&>().size() <= 64 && presentation.categoryHint.size() < 4096)
+                presentation.categoryHint += " " + tag.get<std::string>();
+    }
+    for (const auto* field : { "image_url", "thumbnail_url", "image" })
+    {
+        const auto url = string (object, field, 2048);
+        if (https (url)) { presentation.artworkUrl = url; break; }
+    }
+}
+
 std::optional<std::uint64_t> popularity (const Json& object, const char* key)
 {
     const auto value = object.find (key);
@@ -156,7 +174,7 @@ std::optional<std::string> catalogPage (std::string_view text, const std::string
     struct Entry
     {
         bool active = false, invalid = false, downloads = false, hasPage = false, hasUrl = false;
-        std::string category, page;
+        std::string category, page, name;
         std::set<std::string> repositories;
     } entry;
     std::string category;
@@ -166,8 +184,22 @@ std::optional<std::string> catalogPage (std::string_view text, const std::string
     { return repositoryName (value) && value.find ('.') == std::string::npos; };
     const auto finish = [&]
     {
+        const auto slug = [] (std::string text)
+        {
+            for (auto& c : text)
+            {
+                if (c >= 'A' && c <= 'Z') c = static_cast<char> (c + 'a' - 'A');
+                if (c == ' ' || c == '-' || c == '.') c = '_';
+            }
+            return text;
+        };
+        const auto shortRepository = repository.substr (repository.find ('.') == std::string::npos
+            ? 0 : repository.find ('.') + 1);
+        const bool nameMatch = repository.find ('.') != std::string::npos && entry.repositories.empty()
+            && ! entry.name.empty() && slug (entry.name) == slug (shortRepository);
+        if (nameMatch && ! entry.hasPage) entry.page = slug (entry.name);
         if (entry.active && ! entry.invalid && pageSegment (entry.category) && pageSegment (entry.page)
-            && entry.repositories.size() == 1 && *entry.repositories.begin() == lower (repository))
+            && (nameMatch || (entry.repositories.size() == 1 && *entry.repositories.begin() == lower (repository))))
             pages.insert (entry.category + "/" + entry.page);
     };
     std::istringstream input { std::string (text) };
@@ -186,7 +218,7 @@ std::optional<std::string> catalogPage (std::string_view text, const std::string
         { if (categoryPage) return {}; category = scalar (content.substr (5)); categoryPage = true; }
         else if (indent == 2 && content.compare (0, 7, "- name:") == 0)
         {
-            finish(); entry = {}; entry.active = true; entry.category = category;
+            finish(); entry = {}; entry.active = true; entry.category = category; entry.name = scalar (content.substr (7));
             if (++entries > 4096) return {};
         }
         else if (entry.active && indent == 4)
@@ -243,10 +275,26 @@ OperationResult githubDemos (HttpTransport& transport, const std::string& reposi
         const auto end = html.body.find ('>', offset + 1);
         if (end == std::string::npos) break;
         const auto tag = html.body.substr (offset, end - offset + 1);
+        if (tag.compare (0, 5, "<img ") == 0 && presentation.artworkUrl.empty())
+        {
+            for (const char quote : { '\'', '"' })
+            {
+                const auto marker = std::string (" src=") + quote;
+                const auto start = tag.find (marker);
+                if (start == std::string::npos) continue;
+                const auto from = start + marker.size(), to = tag.find (quote, from);
+                if (to == std::string::npos) continue;
+                const auto path = tag.substr (from, to - from);
+                const auto prefix = "/assets/img/" + page->substr (0, page->find ('/')) + "/";
+                if (path.compare (0, prefix.size(), prefix) == 0 && path.find ("..") == std::string::npos
+                    && https ("https://sfzinstruments.github.io" + path))
+                    presentation.artworkUrl = "https://sfzinstruments.github.io" + path;
+            }
+        }
         if (tag.compare (0, 7, "<audio ") == 0
             && (tag.find (" src=\"" + audio + "\"") != std::string::npos
                 || tag.find (" src='" + audio + "'") != std::string::npos))
-        { presentation.demos.push_back ({ "Listen on SFZ Instruments", request.url }); break; }
+        { if (presentation.demos.empty()) presentation.demos.push_back ({ "Listen on SFZ Instruments", request.url }); }
         offset = end + 1;
     }
     return { OperationStatus::Complete, {} };
@@ -501,6 +549,7 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
     pack.downloadUrl = webBase + "/archive/" + revision + ".zip";
     pack.expectedRoot = summary.locator + "-" + revision;
     pack.versionPinned = true;
+    presentationMetadata (repository.json, pack.presentation);
     std::set<std::string> paths;
     std::set<std::string> regularFiles;
     for (const auto& entry : *entries)
@@ -512,6 +561,24 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
         if (sfzPath (path) && ! addInstrument (pack, path, paths)) return fail ("Repository has unsafe or ambiguous SFZ paths");
     }
     if (pack.instruments.empty()) return fail ("Repository contains no SFZ files at the pinned revision");
+    int bestImage = 0;
+    for (const auto& image : regularFiles)
+    {
+        const auto name = lower (image);
+        const auto extension = name.substr (name.find_last_of ('.') == std::string::npos ? name.size() : name.find_last_of ('.'));
+        if (extension != ".png" && extension != ".jpg" && extension != ".jpeg") continue;
+        if (name.find ("gui/") != std::string::npos || name.find ("skin") != std::string::npos
+            || name.find ("knob") != std::string::npos || name.find ("button") != std::string::npos) continue;
+        int score = name.find ('/') == std::string::npos ? 1 : 0;
+        for (const auto* term : { "cover", "preview", "photo", "thumbnail", "banner", "logo" })
+            if (name.find (term) != std::string::npos) score += 4;
+        if (score > bestImage)
+        {
+            bestImage = score;
+            pack.presentation.artworkUrl = "https://raw.githubusercontent.com/" + std::string (owner)
+                + "/" + summary.locator + "/" + revision + "/" + encode (image, true);
+        }
+    }
     // The VCSL SFZ release predates its LICENSE file; its archived README carries the CC0 grant.
     const bool hasLicenseFile = std::any_of (regularFiles.begin(), regularFiles.end(), [] (const std::string& path)
     {
@@ -604,6 +671,7 @@ ProviderPackResult artifactPack (HttpTransport& transport, const ProviderSummary
     pack.sourceId = "musical-artifacts";
     pack.packId = summary.packId;
     pack.displayName = string (detail.json, "name", 256);
+    presentationMetadata (detail.json, pack.presentation);
     pack.author = string (detail.json, "author", 256);
     pack.sourceUrl = source;
     pack.downloadUrl = download;
@@ -683,6 +751,7 @@ ProviderPageResult browseProvider (HttpTransport& transport, const std::string& 
         summary.packId = std::to_string (id);
         summary.name = string (entry, "name", 256);
         summary.description = string (entry, "description", 4096);
+        presentationMetadata (entry, summary.presentation);
         if (github)
         {
             summary.presentation.stars = popularity (entry, "stargazers_count");
@@ -747,7 +816,7 @@ ProviderPackResult resolveProviderPack (HttpTransport& transport, const Provider
 
 std::string providerPackToJson (const ProviderPack& pack)
 {
-    // Source popularity and demos must not change receipts or resumable-download identities.
+    // Optional presentation must not change provider identity or resumable-download keys.
     Json instruments = Json::array();
     for (const auto& instrument : pack.instruments)
         instruments.push_back ({ { "id", instrument.id }, { "name", instrument.name },

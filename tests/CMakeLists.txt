@@ -40,10 +40,12 @@ add_executable(dusk-studio-tests
     sfz_provider.cpp
     sfz_pack_store.cpp
     sfz_library_service.cpp
+    sfz_artwork_cache.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibrary.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalogEnvelope.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzTransfer.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzArtworkCache.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzArchive.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPathPolicy.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzProvider.cpp
@@ -403,6 +405,11 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk)
+    if(TARGET DuskStudioBinaryIcon AND EXISTS "${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl/src/nanovg/stb_image.h")
+        target_sources(dusk-studio-tests PRIVATE sfz_artwork_decode.cpp ${CMAKE_SOURCE_DIR}/src/ui/imgui/SfzArtwork.cpp)
+        target_include_directories(dusk-studio-tests SYSTEM PRIVATE "${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl")
+        target_link_libraries(dusk-studio-tests PRIVATE DuskStudioBinaryIcon)
+    endif()
     # Dear ImGui is vendored third-party code and does not build clean under this
     # target's warning set. The app silences it the same way for dgl-opengl3.
     set_source_files_properties(

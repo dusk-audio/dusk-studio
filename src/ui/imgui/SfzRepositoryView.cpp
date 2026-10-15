@@ -1,11 +1,13 @@
 #include "SfzRepositoryView.h"
 #include "DuskTheme.h"
 #include "PanelControls.h"
+#include "SfzArtwork.h"
 #include "../../foundation/MessageThread.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <chrono>
 #include <map>
 #include <utility>
 
@@ -95,6 +97,9 @@ public:
     }
 
     ImVec2 preferredSize() const override { return { 1100.0f, 760.0f }; }
+    ~SfzRepositoryView() override { service.artwork().cancel(); }
+    void reserveAtlasImages (ImFontAtlas& atlas) override { preview.reserve (atlas, previewCanvas.data(), 512, 320); }
+    void rasteriseAtlasImages (ImFontAtlas& atlas) override { preview.rasterise (atlas); }
     bool capturesKeyboard() const override { return keyboardActive; }
     bool escapeDismisses() const override { return ! keyboardWasActive; }
     bool controlPointForScenario (const std::string& name, ImVec2& point, float position) const override
@@ -112,7 +117,13 @@ public:
         keyboardWasActive = keyboardActive;
         frameMutation = false;
         controls.clear();
-        const auto snapshot = service.snapshot();
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= nextSnapshotPoll)
+        {
+            cachedSnapshot = service.snapshot();
+            nextSnapshotPoll = now + std::chrono::milliseconds (100);
+        }
+        const auto& snapshot = cachedSnapshot;
         synchronize (snapshot);
         std::function<void()> deferred;
         const ScopedFormStyle style (ctx);
@@ -167,6 +178,145 @@ public:
 
 private:
     enum class Intent { None, Browse, Resolve, Install, Refresh, Remove };
+    struct BrowserRow
+    {
+        std::size_t pack = 0, instrument = 0;
+        sfz::InstrumentCategory category = sfz::InstrumentCategory::Other;
+        std::string title, subtitle;
+    };
+
+    void rebuildInstalledRows (const sfz::LibrarySnapshot& snapshot)
+    {
+        if (installedGeneration == snapshot.generation && installedWasBusy == snapshot.busy) return;
+        installedGeneration = snapshot.generation;
+        installedWasBusy = snapshot.busy;
+        installedRows.clear(); installedCounts.fill (0);
+        installedFilterDirty = true;
+        for (std::size_t p = 0; p < snapshot.installed.size(); ++p)
+        {
+            const auto& pack = snapshot.installed[p];
+            const auto context = pack.provider.displayName + " " + pack.provider.presentation.categoryHint;
+            for (std::size_t i = 0; i < pack.instruments.size(); ++i)
+            {
+                const auto& instrument = pack.instruments[i];
+                const auto category = sfz::instrumentCategory (instrument.name, instrument.relativePath + " " + context);
+                installedRows.push_back ({ p, i, category, displayTitle (instrument.name, pack.provider.sourceId),
+                    displayTitle (pack.provider.displayName, pack.provider.sourceId) + " | " + sourceName (pack.provider.sourceId) });
+                ++installedCounts[static_cast<std::size_t> (category)];
+            }
+        }
+        std::stable_sort (installedRows.begin(), installedRows.end(), [] (const auto& a, const auto& b)
+        { return a.category != b.category ? a.category < b.category : a.title < b.title; });
+    }
+
+    void rebuildOnlineRows()
+    {
+        if (! onlineRowsDirty) return;
+        onlineRowsDirty = false;
+        onlineRows.clear(); onlineCounts.fill (0);
+        onlineFilterDirty = true;
+        for (std::size_t i = 0; i < results.size(); ++i)
+        {
+            const auto& item = results[i];
+            const auto category = sfz::instrumentCategory (item.locator + " " + item.name,
+                item.presentation.categoryHint + " " + item.description);
+            onlineRows.push_back ({ i, 0, category, displayTitle (item.name, item.sourceId), sourceName (item.sourceId) });
+            ++onlineCounts[static_cast<std::size_t> (category)];
+        }
+        std::stable_sort (onlineRows.begin(), onlineRows.end(), [] (const auto& a, const auto& b)
+        { return a.category != b.category ? a.category < b.category : a.title < b.title; });
+    }
+
+    void filterRows (const std::vector<BrowserRow>& rows, int category, std::vector<std::size_t>& visible,
+                     bool& dirty, const char* search = "")
+    {
+        if (! dirty) return;
+        dirty = false;
+        visible.clear();
+        const auto lower = [] (std::string text)
+        {
+            for (auto& c : text) if (c >= 'A' && c <= 'Z') c = static_cast<char> (c - 'A' + 'a');
+            return text;
+        };
+        const auto queryText = lower (search);
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            if ((category < 0 || static_cast<int> (rows[i].category) == category)
+                && (queryText.empty() || lower (rows[i].title + " " + rows[i].subtitle).find (queryText) != std::string::npos))
+                visible.push_back (i);
+    }
+
+    void drawPreview (dw::Context& ctx, float height, const std::string& key, const std::string& title,
+                      sfz::InstrumentCategory category, const std::string& url, bool allowNetwork)
+    {
+        const auto request = key + "|" + std::to_string (static_cast<int> (category)) + "|" + url + (allowNetwork ? "|online" : "|cached");
+        if (request != artworkRequest)
+        {
+            artworkRequest = request;
+            service.artwork().request (request, url, instrumentArtwork (category), decodeInstrumentArtwork, allowNetwork);
+        }
+        const auto artwork = service.artwork().snapshot();
+        const bool ready = artwork.key == request && artwork.pixels;
+        if (ready && artwork.pixels != previewPixels && preview.ready())
+        {
+            previewPixels = artwork.pixels;
+            previewCanvas = artwork.pixels->rgba;
+            preview.update (previewCanvas.data());
+        }
+        const auto at = ImGui::GetCursorScreenPos();
+        const ImVec2 end { at.x + ImGui::GetContentRegionAvail().x, at.y + height };
+        ImGui::GetWindowDrawList()->AddRectFilled (at, end, IM_COL32 (24, 27, 32, 255), ctx.s (5));
+        if (ready && previewPixels == artwork.pixels) preview.draw (*ImGui::GetWindowDrawList(), at, end);
+        ImGui::Dummy ({ end.x - at.x, height });
+        remember ("preview");
+        if (ready && previewPixels == artwork.pixels) remember (artwork.sourceImage ? "preview-source" : "preview-generic");
+        formTooltip (ready && artwork.sourceImage ? url.c_str() : instrumentArtworkCredit (category));
+        const auto caption = title.empty() ? std::string (sfz::kInstrumentCategories[static_cast<std::size_t> (category)].name) : title;
+        const auto captionAt = ImGui::GetCursorScreenPos();
+        const float captionWidth = ImGui::GetContentRegionAvail().x;
+        ImGui::GetWindowDrawList()->PushClipRect (captionAt, { captionAt.x + captionWidth, captionAt.y + ImGui::GetTextLineHeight() }, true);
+        ImGui::GetWindowDrawList()->AddText (captionAt, ImGui::GetColorU32 (ImGuiCol_Text), caption.c_str());
+        ImGui::GetWindowDrawList()->PopClipRect();
+        ImGui::Dummy ({ captionWidth, ImGui::GetTextLineHeight() });
+        formTooltip (caption.c_str());
+        ImGui::Separator();
+    }
+
+    bool beginCategoryList (dw::Context& ctx, int& category, const std::array<std::size_t, 17>& counts)
+    {
+        const bool columns = ImGui::GetContentRegionAvail().x >= ctx.s (420)
+            && ImGui::GetContentRegionAvail().y >= ctx.s (270);
+        const auto choose = [&] (int value, const std::string& label, const std::string& id)
+        {
+            if (ImGui::Selectable (label.c_str(), category == value))
+            {
+                category = value;
+                onlineFilterDirty = installedFilterDirty = true;
+                if (onlineTab) clearSelection();
+                else { selectedInstalled.clear(); selectedInstrument.clear(); }
+            }
+            remember ("category-" + id);
+        };
+        if (columns) ImGui::BeginChild ("##sfz-categories", { ctx.s (175), 0 }, ImGuiChildFlags_None);
+        else ImGui::SetNextItemWidth (-1);
+        const auto filterAt = ImGui::GetCursorScreenPos();
+        const ImVec2 filterEnd { filterAt.x + ImGui::GetContentRegionAvail().x, filterAt.y + ImGui::GetFrameHeight() };
+        if (! columns) controls["category-filter"] = { filterAt, filterEnd };
+        const bool open = columns || ImGui::BeginCombo ("##sfz-category",
+            category < 0 ? "All instruments" : sfz::kInstrumentCategories[static_cast<std::size_t> (category)].name);
+        if (open)
+        {
+            std::size_t total = 0;
+            for (const auto count : counts) total += count;
+            choose (-1, "All instruments (" + std::to_string (total) + ")", "all");
+            for (std::size_t i = 0; i < counts.size(); ++i)
+                if (counts[i] != 0 || category == static_cast<int> (i))
+                    choose (static_cast<int> (i), std::string (sfz::kInstrumentCategories[i].name)
+                        + " (" + std::to_string (counts[i]) + ")", sfz::kInstrumentCategories[i].id);
+            if (! columns) ImGui::EndCombo();
+        }
+        if (columns) { ImGui::EndChild(); ImGui::SameLine(); }
+        return columns;
+    }
 
     void remember (const std::string& name)
     {
@@ -224,6 +374,7 @@ private:
         requestedGeneration = before.generation + 1;
         pendingIntent = intent;
         frameMutation = true;
+        nextSnapshotPoll = {};
         notice.clear();
         return true;
     }
@@ -252,6 +403,8 @@ private:
             if (pendingIntent == Intent::Browse)
             {
                 results = snapshot.page.items;
+                onlineRowsDirty = true;
+                if (requestedPage == 1) onlineCategory = -1;
                 nextPage = snapshot.page.nextPage;
                 pageCached = snapshot.cachedResponse;
                 currentPage = requestedPage;
@@ -270,11 +423,13 @@ private:
             else if (pendingIntent == Intent::Install)
             {
                 forceInstalled = true;
+                installedCategory = -1;
                 for (const auto& installed : snapshot.installed)
                     if (resolved && installed.provider.sourceId == resolved->sourceId
                         && installed.provider.packId == resolved->packId && installed.provider.releaseId == resolved->releaseId)
                         selectedInstalled = packKey (installed);
                 selectedInstrument.clear();
+                installedQuery.fill (0); installedCategory = -1; installedFilterDirty = true;
                 notice = "Pack installed. Choose an SFZ file in Installed to load it.";
             }
         }
@@ -282,7 +437,7 @@ private:
     }
 
     bool row (const dw::Context& ctx, const std::string& control, const std::string& title, const std::string& subtitle,
-              bool selected, bool enabled, float height, const std::string& hint = {})
+              bool selected, bool enabled, float height)
     {
         ImGui::PushID (control.c_str());
         ImGui::BeginDisabled (! enabled || frameMutation);
@@ -298,15 +453,6 @@ private:
         list->PushClipRect (subtitleAt, { last.x, subtitleAt.y + line }, true);
         list->AddText (subtitleAt, ImGui::GetColorU32 (ImGuiCol_TextDisabled), subtitle.c_str());
         list->PopClipRect();
-        if (! hint.empty())
-        {
-            const ImVec2 at { first.x + ctx.s (10), first.y + 2 * line + ctx.s (24) };
-            const float badgeWidth = std::min (ImGui::CalcTextSize (hint.c_str()).x + ctx.s (12), last.x - at.x - ctx.s (8));
-            list->AddRectFilled (at, { at.x + badgeWidth, at.y + line + ctx.s (8) }, IM_COL32 (42, 48, 52, 255), ctx.s (4));
-            list->PushClipRect (at, { at.x + badgeWidth, at.y + line + ctx.s (8) }, true);
-            list->AddText ({ at.x + ctx.s (6), at.y + ctx.s (4) }, ImGui::GetColorU32 (ImGuiCol_Text), hint.c_str());
-            list->PopClipRect();
-        }
         list->PopClipRect();
         ImGui::EndDisabled();
         ImGui::PopID();
@@ -401,7 +547,7 @@ private:
                     && sourceIndex != static_cast<int> (i))
                 {
                     sourceIndex = static_cast<int> (i);
-                    results.clear(); nextPage = 0; currentPage = 0; clearSelection();
+                    results.clear(); onlineRowsDirty = true; onlineCategory = -1; nextPage = 0; currentPage = 0; clearSelection();
                     activeSource.clear(); activeQuery.clear(); browseWarning.clear();
                 }
                 remember ("source-" + sources[i].id);
@@ -431,36 +577,59 @@ private:
         if (! activeQuery.empty()) muted ("Results for \"" + activeQuery + "\"");
         if (! browseWarning.empty()) muted (browseWarning);
         const float bodyHeight = std::max (ctx.s (40), height - (ImGui::GetCursorScreenPos().y - top));
-        const float listWidth = std::max (ctx.s (100), (width - spacing) * 0.32f);
-        if (ImGui::BeginChild ("##sfz-online-list", { listWidth, bodyHeight }, ImGuiChildFlags_Borders))
+        rebuildOnlineRows();
+        const float listWidth = std::max (ctx.s (190), (width - spacing) * 0.53f);
+        if (ImGui::BeginChild ("##sfz-online-sidebar", { listWidth, bodyHeight }, ImGuiChildFlags_Borders))
         {
-            if (results.empty())
+            auto category = onlineCategory < 0 ? sfz::InstrumentCategory::Other : static_cast<sfz::InstrumentCategory> (onlineCategory);
+            std::string imageUrl, title;
+            if (selectedSummary)
             {
-                heading (ctx, currentPage == 0 ? "Explore instruments" : "No instruments found", 18);
-                muted (currentPage == 0 ? "Search all repositories, or choose one to narrow the results. Browse cached opens saved results while offline."
-                                       : "Try a different search or repository.");
+                category = sfz::instrumentCategory (selectedSummary->locator + " " + selectedSummary->name,
+                    selectedSummary->presentation.categoryHint + " " + selectedSummary->description);
+                title = displayTitle (selectedSummary->name, selectedSummary->sourceId);
+                imageUrl = resolved ? resolved->presentation.artworkUrl : selectedSummary->presentation.artworkUrl;
             }
-            for (std::size_t i = 0; i < results.size(); ++i)
+            drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
+                selectedSummary ? summaryKey (*selectedSummary) : "online-category", title, category, imageUrl, ! pageCached);
+            beginCategoryList (ctx, onlineCategory, onlineCounts);
+            filterRows (onlineRows, onlineCategory, visibleOnline, onlineFilterDirty);
+            if (ImGui::BeginChild ("##sfz-online-list", { 0, 0 }, ImGuiChildFlags_None))
             {
-                const auto& summary = results[i];
-                auto hint = summary.licenseHint.empty() || summary.licenseHint == "NOASSERTION"
-                    ? "Check license on selection" : "Listed: " + summary.licenseHint;
-                const auto count = popularity (summary.presentation, true);
-                if (! count.empty()) hint += " | " + count;
-                const auto identifier = summary.locator.empty() ? summary.packId : summary.locator;
-                if (row (ctx, "online-item-" + std::to_string (i), displayTitle (summary.name, summary.sourceId),
-                    sourceName (summary.sourceId) + " | " + identifier,
-                    selectedSummary && summaryKey (*selectedSummary) == summaryKey (summary),
-                    available, ctx.s (96), hint))
+                if (results.empty())
                 {
-                    clearSelection();
-                    selectedSummary = summary;
-                    resolvingSelection = summaryKey (summary);
-                    start (Intent::Resolve, [&] { return service.resolve (summary, pageCached); });
+                    heading (ctx, currentPage == 0 ? "Explore instruments" : "No instruments found", 18);
+                    muted (currentPage == 0 ? "Search all repositories, or choose one to narrow the results. Browse cached opens saved results while offline."
+                                           : "Try a different search or repository.");
                 }
-                const auto tooltip = summary.author + "\n" + hint + "\n" + summary.sourceUrl + "\n" + summary.description;
-                formTooltip (tooltip.c_str());
+                ImGuiListClipper clipper;
+                clipper.Begin (static_cast<int> (visibleOnline.size()), ctx.s (64) + ImGui::GetStyle().ItemSpacing.y);
+                while (clipper.Step())
+                    for (int visible = clipper.DisplayStart; visible < clipper.DisplayEnd; ++visible)
+                {
+                    const auto& entry = onlineRows[visibleOnline[static_cast<std::size_t> (visible)]];
+                    const auto i = entry.pack;
+                    const auto& summary = results[i];
+                    auto hint = summary.licenseHint.empty() || summary.licenseHint == "NOASSERTION"
+                        ? "Check license on selection" : "Listed: " + summary.licenseHint;
+                    const auto count = popularity (summary.presentation, true);
+                    if (! count.empty()) hint += " | " + count;
+                    const auto identifier = summary.locator.empty() ? summary.packId : summary.locator;
+                    if (row (ctx, "online-item-" + std::to_string (i), displayTitle (summary.name, summary.sourceId),
+                        sourceName (summary.sourceId) + " | " + identifier,
+                        selectedSummary && summaryKey (*selectedSummary) == summaryKey (summary),
+                        available, ctx.s (64)))
+                    {
+                        clearSelection();
+                        selectedSummary = summary;
+                        resolvingSelection = summaryKey (summary);
+                        start (Intent::Resolve, [&] { return service.resolve (summary, pageCached); });
+                    }
+                    const auto tooltip = summary.author + "\n" + hint + "\n" + summary.sourceUrl + "\n" + summary.description;
+                    formTooltip (tooltip.c_str());
+                }
             }
+            ImGui::EndChild();
         }
         ImGui::EndChild();
         ImGui::SameLine();
@@ -558,35 +727,62 @@ private:
         }
         if (width > ctx.s (680)) ImGui::SameLine();
         muted (std::to_string (snapshot.installed.size()) + " installed packs");
-        const float listWidth = std::max (ctx.s (100), (width - ImGui::GetStyle().ItemSpacing.x) * 0.32f);
+        rebuildInstalledRows (snapshot);
+        ImGui::SetNextItemWidth (-1);
+        if (ImGui::InputTextWithHint ("##sfz-installed-query", "Search installed instruments", installedQuery.data(), installedQuery.size()))
+            installedFilterDirty = true;
+        remember ("installed-query");
+        const float listWidth = std::max (ctx.s (190), (width - ImGui::GetStyle().ItemSpacing.x) * 0.53f);
         const float bodyHeight = std::max (ctx.s (40), height - (ImGui::GetCursorScreenPos().y - top));
         const sfz::InstalledPack* selected = nullptr;
         for (const auto& pack : snapshot.installed) if (packKey (pack) == selectedInstalled) selected = &pack;
-        if (ImGui::BeginChild ("##sfz-installed-list", { listWidth, bodyHeight }, ImGuiChildFlags_Borders))
+        if (ImGui::BeginChild ("##sfz-installed-sidebar", { listWidth, bodyHeight }, ImGuiChildFlags_Borders))
         {
-            if (snapshot.installed.empty())
+            auto category = installedCategory < 0 ? sfz::InstrumentCategory::Other : static_cast<sfz::InstrumentCategory> (installedCategory);
+            std::string imageUrl, title;
+            if (selected)
             {
-                heading (ctx, "Your instrument library", 18);
-                muted ("Downloaded packs appear here. Open Online to find Creative Commons instruments, or use Local SFZ folders.");
+                imageUrl = selected->provider.presentation.artworkUrl;
+                title = displayTitle (selected->provider.displayName, selected->provider.sourceId);
+                for (const auto& instrument : selected->instruments)
+                    if (instrument.id == selectedInstrument)
+                    {
+                        title = displayTitle (instrument.name, selected->provider.sourceId);
+                        category = sfz::instrumentCategory (instrument.name, instrument.relativePath + " " + selected->provider.presentation.categoryHint);
+                    }
             }
-            for (std::size_t i = 0; i < snapshot.installed.size(); ++i)
+            drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
+                selected ? packKey (*selected) + "/" + selectedInstrument : "installed-category", title, category, imageUrl, false);
+            beginCategoryList (ctx, installedCategory, installedCounts);
+            filterRows (installedRows, installedCategory, visibleInstalled, installedFilterDirty, installedQuery.data());
+            if (selectedInstalled.empty()) selected = nullptr;
+            if (ImGui::BeginChild ("##sfz-installed-list", { 0, 0 }, ImGuiChildFlags_None))
             {
-                const auto& pack = snapshot.installed[i];
-                std::string version = "Version " + pack.provider.releaseId.substr (0, 10);
-                const auto sameVersion = std::count_if (snapshot.installed.begin(), snapshot.installed.end(), [&pack] (const auto& other)
+                if (snapshot.installed.empty())
                 {
-                    return other.provider.sourceId == pack.provider.sourceId && other.provider.packId == pack.provider.packId
-                        && other.provider.releaseId == pack.provider.releaseId;
-                });
-                if (! pack.provider.versionPinned || sameVersion > 1) version += " / " + pack.archiveSha256.substr (0, 6);
-                version += " | " + sourceName (pack.provider.sourceId);
-                if (row (ctx, "installed-item-" + std::to_string (i), displayTitle (pack.provider.displayName, pack.provider.sourceId),
-                    version, packKey (pack) == selectedInstalled, available,
-                    ctx.s (96), pack.provider.license.id + " | Installed"))
-                { selectedInstalled = packKey (pack); selectedInstrument.clear(); selected = &pack; }
-                const auto tooltip = pack.provider.releaseId + "\n" + pack.archiveSha256 + "\n" + pack.provider.sourceUrl;
-                formTooltip (tooltip.c_str());
+                    heading (ctx, "Your instrument library", 18);
+                    muted ("Downloaded packs appear here. Open Online to find Creative Commons instruments, or use Local SFZ folders.");
+                }
+                ImGuiListClipper clipper;
+                clipper.Begin (static_cast<int> (visibleInstalled.size()), ctx.s (64) + ImGui::GetStyle().ItemSpacing.y);
+                while (clipper.Step())
+                    for (int visible = clipper.DisplayStart; visible < clipper.DisplayEnd; ++visible)
+                {
+                    const auto& entry = installedRows[visibleInstalled[static_cast<std::size_t> (visible)]];
+                    const auto i = entry.pack;
+                    const auto& pack = snapshot.installed[i];
+                    const auto& instrument = pack.instruments[entry.instrument];
+                    if (row (ctx, "installed-instrument-" + std::to_string (i) + "-" + std::to_string (entry.instrument),
+                        entry.title, entry.subtitle, packKey (pack) == selectedInstalled && selectedInstrument == instrument.id,
+                        available, ctx.s (64)))
+                    { selectedInstalled = packKey (pack); selectedInstrument = instrument.id; selected = &pack; }
+                    if (controls.find ("installed-item-" + std::to_string (i)) == controls.end())
+                        remember ("installed-item-" + std::to_string (i));
+                    const auto tooltip = pack.provider.releaseId + "\n" + pack.archiveSha256 + "\n" + pack.provider.sourceUrl;
+                    formTooltip (tooltip.c_str());
+                }
             }
+            ImGui::EndChild();
         }
         ImGui::EndChild();
         ImGui::SameLine();
@@ -710,9 +906,22 @@ private:
     std::function<void()> openLocalFolders;
     std::vector<sfz::ProviderSource> sources;
     std::vector<sfz::ProviderSummary> results;
+    std::vector<BrowserRow> onlineRows, installedRows;
+    std::vector<std::size_t> visibleOnline, visibleInstalled;
+    bool onlineFilterDirty = true, installedFilterDirty = true;
+    std::array<std::size_t, 17> onlineCounts {}, installedCounts {};
+    int onlineCategory = -1, installedCategory = -1;
+    bool onlineRowsDirty = true, installedWasBusy = false;
+    std::uint64_t installedGeneration = UINT64_MAX;
+    sfz::LibrarySnapshot cachedSnapshot;
+    std::chrono::steady_clock::time_point nextSnapshotPoll {};
+    AtlasImage preview;
+    std::vector<unsigned char> previewCanvas = std::vector<unsigned char> (512 * 320 * 4);
+    std::shared_ptr<const sfz::ArtworkPixels> previewPixels;
+    std::string artworkRequest;
     std::optional<sfz::ProviderSummary> selectedSummary;
     std::optional<sfz::ProviderPack> resolved;
-    std::array<char, 257> query {};
+    std::array<char, 257> query {}, installedQuery {};
     std::string selectedInstalled, selectedInstrument, resolvingSelection, notice;
     std::string activeSource, activeQuery, requestedSource, requestedQuery, browseWarning;
     int sourceIndex = 0;

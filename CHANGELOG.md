@@ -24,7 +24,10 @@ canonical source.
   machine without its old absolute path. Missing packs stay offline without
   downloading on session load.
   A larger, responsive browser shows source stars or favorites and opens
-  published demos before downloading an instrument pack.
+  published demos before downloading an instrument pack. Both tabs group
+  instruments by type, show repository artwork or licensed instrument cutouts,
+  and reuse background image caches. Installed search filters individual patches
+  without rescanning packs.
   All repositories is the default search, combining all four sources with separate
   page progress and repository labels; one unavailable source leaves the others'
   results usable. Versilian offers the official VSCO 2 CE and VCSL SFZ releases.

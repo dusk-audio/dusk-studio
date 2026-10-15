@@ -78,12 +78,16 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
     PackStore original (tree.root / "original");
     const auto staging = stage (original);
     REQUIRE (original.installed().empty());
-    const auto pack = provider();
+    auto pack = provider();
+    pack.presentation.artworkUrl = "https://fixtures.example/piano.jpg";
+    pack.presentation.categoryHint = "piano";
     const auto result = original.publish (pack, pack.expectedSha256, staging, { u8"Programs/Étude.sfz" });
     REQUIRE (result);
     REQUIRE (result.pack);
     REQUIRE_FALSE (fs::exists (staging));
     REQUIRE (original.installed().size() == 1);
+    CHECK (original.installed().front().provider.presentation.artworkUrl == pack.presentation.artworkUrl);
+    CHECK (original.installed().front().provider.presentation.categoryHint == "piano");
     const auto locator = result.pack->locatorFor (result.pack->instruments.front());
     const auto parsed = locatorFromJson (locatorToJson (locator));
     REQUIRE (parsed);

@@ -24,6 +24,7 @@ struct ProviderPresentation
 {
     std::optional<std::uint64_t> stars {}, favorites {};
     std::vector<ProviderDemo> demos {};
+    std::string artworkUrl, categoryHint;
 };
 
 struct ProviderSummary
