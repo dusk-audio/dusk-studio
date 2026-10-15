@@ -12,6 +12,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
@@ -234,6 +235,7 @@ struct CaseState
     std::shared_ptr<RepositoryTransport> transport;
     fs::path restore, originalDirectory, blank, capture, onlineCapture, compactCapture;
     std::vector<int> originalWindow;
+    float originalUiScale = 1.0f;
     std::int64_t originalPlayhead = 0;
     std::uint64_t generation = 0, cloneGeneration = 0;
     unsigned requests = 0;
@@ -261,6 +263,7 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
     state->onlineCapture = ctx.tempDir() / "sfz-online.png";
     state->compactCapture = ctx.tempDir() / "sfz-online-compact.png";
     state->originalWindow = host.mainWindowSize();
+    state->originalUiScale = static_cast<float> (host.uiScale());
     state->originalDirectory = currentSessionDirectory (ctx.session());
     state->originalPlayhead = ctx.engine().getTransport().getPlayhead();
     if (! ctx.expect (! state->transport->archive.empty(), "could not make the licensed SFZ ZIP fixture")
@@ -274,6 +277,7 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
         host.captureSfzSources (kStripIndex, false);
         if (auto* strip = host.strip (kStripIndex)) strip->closeEditor();
         if (auto* strip = host.strip (1)) strip->closeEditor();
+        host.restoreUiScale (state->originalUiScale);
         if (state->originalWindow.size() >= 2)
             host.resizeMainWindow (state->originalWindow[0], state->originalWindow[1]);
         auto& engine = ctx.engine();
@@ -413,6 +417,7 @@ void pushFinish (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, 
         host.closeSfzLibrary (kStripIndex);
         if (auto* strip = host.strip (kStripIndex)) strip->closeEditor();
         if (auto* strip = host.strip (1)) strip->closeEditor();
+        host.restoreUiScale (state->originalUiScale);
         if (state->originalWindow.size() >= 2)
             host.resizeMainWindow (state->originalWindow[0], state->originalWindow[1]);
         drainModals (host);
@@ -479,8 +484,14 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         std::error_code error;
         ctx.expect (fs::file_size (state->onlineCapture, error) > 0 && ! error, "online SFZ library capture was not written");
     }, [state] { std::error_code error; return fs::is_regular_file (state->onlineCapture, error); }, "online SFZ library capture did not arrive" });
-    steps->push_back ({ 0, [&host, &ctx]
-    { ctx.expect (host.resizeMainWindow (820, 680), "the SFZ library could not use a compact main window"); } });
+    steps->push_back ({ 0, [&host] { host.restoreUiScale (1.5f); } });
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        const auto window = host.mainWindowSize();
+        if (! ctx.expect (window.size() >= 4, "the main window reported no resize limits")) return;
+        ctx.expect (host.resizeMainWindow (std::max (820, window[2]), std::max (680, window[3])),
+                    "the SFZ library could not use the smallest legal compact main window");
+    }, [&host] { return std::abs (host.uiScale() - 1.5) < 0.001; }, "the compact UI scale did not take effect" });
     steps->push_back ({ 150, [&host, state] { host.captureSfzLibrary (kStripIndex, state->compactCapture); } });
     steps->push_back ({ 0, [&ctx, state]
     {
@@ -501,7 +512,10 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     pushClick (*steps, host, ctx, "instrument-choice-1");
     pushClick (*steps, host, ctx, "load");
     steps->push_back ({ 0, [&host, state]
-    { if (state->originalWindow.size() >= 2) host.resizeMainWindow (state->originalWindow[0], state->originalWindow[1]); } });
+    {
+        host.restoreUiScale (state->originalUiScale);
+        if (state->originalWindow.size() >= 2) host.resizeMainWindow (state->originalWindow[0], state->originalWindow[1]);
+    } });
     steps->push_back ({ 0, [&host, &ctx, state]
     {
         const auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();
