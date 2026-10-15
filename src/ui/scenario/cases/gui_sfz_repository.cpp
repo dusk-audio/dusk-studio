@@ -34,6 +34,12 @@ using namespace sfz;
 constexpr const char* kCc0 = "Creative Commons CC0 1.0 Universal\nhttps://creativecommons.org/publicdomain/zero/1.0/\n";
 constexpr const char* kDemoPage = "https://sfzinstruments.github.io/woodwinds/dusk_gui/";
 
+bool sameFile (const std::string& actual, const fs::path& expected)
+{
+    std::error_code error;
+    return ! actual.empty() && fs::equivalent (fs::u8path (actual), expected, error) && ! error;
+}
+
 std::string hash (std::string_view bytes)
 {
     if (sodium_init() < 0) return {};
@@ -529,8 +535,10 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         const auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();
         const auto& track = ctx.session().track (kStripIndex);
         const auto expected = state->installed->directory / state->installed->instruments[1].relativePath;
-        ctx.expect (slot.getLoadedSoundfontPath() == expected.u8string(), "Load did not use the chosen extracted SFZ path");
-        ctx.expect (track.nativeMultisamplePath.toStdString() == expected.u8string() && track.nativeMultisampleLocator
+        ctx.expect (sameFile (slot.getLoadedSoundfontPath(), expected),
+                    "Load did not use the chosen extracted SFZ path: expected '" + expected.u8string()
+                        + "', actual '" + slot.getLoadedSoundfontPath() + "'");
+        ctx.expect (sameFile (track.nativeMultisamplePath.toStdString(), expected) && track.nativeMultisampleLocator
                     && *track.nativeMultisampleLocator == state->installed->locatorFor (state->installed->instruments[1]),
                     "loaded SFZ did not persist its portable managed locator");
         if (auto* strip = host.strip (kStripIndex)) strip->closeEditor();
@@ -549,7 +557,7 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     {
         auto& slot = ctx.engine().getChannelStrip (1).getNativeMultisampleSlot();
         ctx.expect (ctx.session().track (1).nativeMultisampleLocator == ctx.session().track (kStripIndex).nativeMultisampleLocator
-                    && slot.getLoadedSoundfontPath() == (state->installed->directory / "Instruments/Two.sfz").u8string(),
+                    && sameFile (slot.getLoadedSoundfontPath(), state->installed->directory / "Instruments/Two.sfz"),
                     "asynchronous clone lost its managed version or entrypoint");
         state->cloneGeneration = slot.generation();
         auto* strip = host.strip (1);
@@ -579,8 +587,8 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         const auto expected = state->installed->directory / "Instruments/One.sfz";
         const auto* instance = slot.getInstance();
         ctx.expect (instance != nullptr && instance->hasLoadedRuntime()
-                    && slot.getLoadedSoundfontPath() == expected.u8string(), "cloned editor did not load the selected replacement");
-        ctx.expect (track.nativeMultisamplePath.toStdString() == expected.u8string()
+                    && sameFile (slot.getLoadedSoundfontPath(), expected), "cloned editor did not load the selected replacement");
+        ctx.expect (sameFile (track.nativeMultisamplePath.toStdString(), expected)
                     && track.nativeMultisampleLocator == state->installed->locatorFor (state->installed->instruments[0]),
                     "manual Browse within a managed pack did not rebind its instrument locator");
     }, [&host, &ctx, state]
@@ -649,7 +657,7 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();
         ctx.expect (! state->replacementSucceeded && ! state->replacementError.empty(), "missing replacement did not report failure");
         ctx.expect (slot.getInstance() && slot.getInstance()->hasLoadedRuntime()
-                    && slot.getLoadedSoundfontPath() == (state->installed->directory / "Instruments/Two.sfz").u8string(),
+                    && sameFile (slot.getLoadedSoundfontPath(), state->installed->directory / "Instruments/Two.sfz"),
                     "failed replacement discarded the previous working instrument");
         ctx.expect (ctx.session().track (kStripIndex).nativeMultisampleLocator
                     && ctx.session().track (kStripIndex).nativeMultisampleLocator->packId == state->transport->packId,
