@@ -936,6 +936,8 @@ std::optional<ScenarioResult> runFaderEntry (GuiHost& host, ScenarioContext& ctx
 {
     auto& session = ctx.session();
     auto& engine = ctx.engine();
+    const bool hardwareInputs = engine.setHardwareMidiInputsEnabledForScenario (false);
+    ctx.cleanup ([&engine, hardwareInputs] { engine.setHardwareMidiInputsEnabledForScenario (hardwareInputs); });
     const auto bindings = session.midiBindings.current();
     const auto originalStage = engine.getStage();
     ctx.cleanup ([&host, &session, bindings, originalStage]
@@ -1746,6 +1748,8 @@ std::optional<ScenarioResult> runEqMidiLearnBand (GuiHost& host, ScenarioContext
     auto& session = ctx.session();
     if (! engine.getTransport().isStopped() || ! host.modalStackEmpty() || session.midiLearnPending.load() >= 0)
         return ScenarioResult::skip ("requires stopped transport, no modal and no pending learn");
+    const bool hardwareInputs = engine.setHardwareMidiInputsEnabledForScenario (false);
+    ctx.cleanup ([&engine, hardwareInputs] { engine.setHardwareMidiInputsEnabledForScenario (hardwareInputs); });
     const auto capture = session.midiLearnCapture.load();
     const auto originalDir = currentSessionDirectory (session);
     const auto restore = ctx.tempDir() / "restore.json";
@@ -1991,6 +1995,8 @@ std::optional<ScenarioResult> runMidiBindingsPanel (GuiHost& host, ScenarioConte
     if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
     auto& session = ctx.session();
     auto& engine = ctx.engine();
+    const bool hardwareInputs = engine.setHardwareMidiInputsEnabledForScenario (false);
+    ctx.cleanup ([&engine, hardwareInputs] { engine.setHardwareMidiInputsEnabledForScenario (hardwareInputs); });
     const auto publish = [&session] (std::vector<MidiBinding> binds)
     {
         session.midiBindings.mutate ([&binds] (std::vector<MidiBinding>& current) { current = binds; });

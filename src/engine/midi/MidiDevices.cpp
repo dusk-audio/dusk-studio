@@ -123,6 +123,7 @@ void MidiInputClient::rebuild (double sampleRate)
     // whichever thread the backend ends up delivering them on.
     for (const auto& d : avail)
     {
+        if (! hardwareInputsEnabled) continue;
         // Failure usually = OS denied access (another app exclusively owns the
         // port). Keep the slot: it stays addressable, it just never fires.
         if (! backend->enable (d.identifier))
@@ -133,6 +134,11 @@ void MidiInputClient::rebuild (double sampleRate)
     }
 
     if (resumeDispatch) attachCallback();
+}
+
+bool MidiInputClient::setHardwareInputsEnabledForTest (bool enabled) noexcept
+{
+    return std::exchange (hardwareInputsEnabled, enabled);
 }
 
 void MidiInputClient::setDeviceChangeHandler (std::function<void()> h)

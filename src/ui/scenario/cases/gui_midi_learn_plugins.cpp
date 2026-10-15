@@ -39,6 +39,8 @@ std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContex
         || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded() || strip.isNativeAuLoaded()
         || strip.isNativeMultisampleLoaded() || strip.builtinReloadFailed())
         return ScenarioResult::skip ("requires an empty first insert");
+    const bool hardwareInputs = engine.setHardwareMidiInputsEnabledForScenario (false);
+    ctx.cleanup ([&engine, hardwareInputs] { engine.setHardwareMidiInputsEnabledForScenario (hardwareInputs); });
     const auto bindings = session.midiBindings.current();
     const auto capture = session.midiLearnCapture.load();
     const auto mode = strip.insertMode.load();
@@ -248,6 +250,8 @@ std::optional<ScenarioResult> runNativeMidiLearn (GuiHost& host, ScenarioContext
     if (handle == nullptr)
         return ScenarioResult::skip ("the console has no strip to drive");
 
+    const bool hardwareInputs = engine.setHardwareMidiInputsEnabledForScenario (false);
+    ctx.cleanup ([&engine, hardwareInputs] { engine.setHardwareMidiInputsEnabledForScenario (hardwareInputs); });
     const auto bindings = session.midiBindings.current();
     const auto capture  = session.midiLearnCapture.load();
     const auto mode     = session.track (kStripIndex).mode.load();

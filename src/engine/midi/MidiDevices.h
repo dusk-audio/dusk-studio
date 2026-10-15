@@ -70,6 +70,10 @@ public:
     // bytes under the dead identifier.
     void rebuild (double sampleRate);
 
+    // Message thread. Takes effect at the next fenced rebuild; enumeration and
+    // the synthetic keyboard slot stay intact while hardware is unsubscribed.
+    bool setHardwareInputsEnabledForTest (bool enabled) noexcept;
+
     // Message thread, before the first attachCallback. Delivery context is
     // backend-defined; defer handling to a fresh message-thread turn to avoid
     // re-entering backend callbacks. The consumer coalesces notification bursts;
@@ -130,6 +134,7 @@ private:
     // Message thread only. Mirrors whether the backend's dispatch is started, so
     // rebuild can fence itself against a caller that skipped detachCallback.
     bool dispatchRunning = false;
+    bool hardwareInputsEnabled = true;
 
     int virtualKeyboardIndex = -1;
 };

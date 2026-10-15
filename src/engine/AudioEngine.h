@@ -589,6 +589,15 @@ public:
     // AFTER collector drain. Cleared after one block.
     void stageTestMidiInjection (int inputIdx, dusk::MidiBuffer events);
 
+    // Scenario-only, stopped transport. Changes this engine's subscriptions
+    // while retaining input indices, virtual keyboard and staged MIDI input.
+    bool setHardwareMidiInputsEnabledForScenario (bool enabled)
+    {
+        const bool previous = midiIn.setHardwareInputsEnabledForTest (enabled);
+        if (previous != enabled) refreshMidiInputs();
+        return previous;
+    }
+
     // Test-only, message thread; holds the callback out while it runs. Caps
     // the track's routing buffer at `bytes` so a block can overflow it, which
     // the real ceiling only allows with two busy inputs and a dense timeline
