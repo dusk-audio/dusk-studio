@@ -525,7 +525,7 @@ The channel strip is completely unaware that its audio came from a plugin rather
 
 * Capture includes only the effective punch span, or its intersection with the loop range. A note held across a loop seam is closed at the seam and retriggered at the next pass's start.
 * With MIDI Merge off, the captured performance follows the existing replacement and take-history path. With it on, original events and take history remain intact and the new performance is added at its timeline position.
-* The transport's **MIDI Merge** toggle is off by default, saved in the session, and cannot change during a recording gesture.
+* The transport and piano-roll toolbar expose synchronized **MIDI Merge** toggles for the same session setting. It is off by default, saved in the session, and cannot change during a recording gesture.
 
 **BPM changes and existing MIDI regions:**
 

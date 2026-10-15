@@ -176,7 +176,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 17  | TIMELINE / TAPE   | Same as the tape strip toggle below the bar.                                     |
 | 18  | − / + / Fit      | Timeline zoom out / in / fit-to-window (in the timeline toolbar above the tape strip, shown when the timeline is expanded). |
 
-**MIDI Merge**, beside the clock display, layers a MIDI recording into an existing region. It starts off, is saved with the session and cannot change during recording. See *MIDI Merge* under Recording.
+**MIDI Merge**, beside the clock display and in the piano-roll toolbar, layers a MIDI recording into an existing region. Both buttons share the same setting. It starts off, is saved with the session and cannot change during recording. See *MIDI Merge* under Recording.
 
 In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
 
@@ -1215,7 +1215,7 @@ Silent audio passes remain available as takes. Empty MIDI passes are omitted bec
 
 ## MIDI Merge
 
-**MIDI Merge** on the transport bar adds a MIDI performance to an existing unlocked region instead of replacing its notes and controls. It starts off and is saved with the session. Set it before recording; it cannot be changed during a take. Audio recording works as before.
+**MIDI Merge** on the transport bar or piano-roll toolbar adds a MIDI performance to an existing unlocked region instead of replacing its notes and controls. It starts off and is saved with the session. Set it before recording; it cannot be changed during a take. Audio recording works as before.
 
 An overlapping region keeps its notes, channel controls and previous takes. Recording beyond either edge grows it without moving the existing performance in time. If there is no region to merge into, the pass creates one. In loop recording, each completed pass is one undo step, available while the transport is still rolling. Stopping adds the final partial pass as one step. Undoing a pass removes only that pass; Stop does not put it back. A pass with no recorded events adds no undo step.
 
@@ -1615,6 +1615,8 @@ Step record is off while the transport is recording: the keyboard's notes enter 
 The keyboard is a transport-bar tool rather than part of the piano roll. With the piano roll open, press **K** to open it over the roll; the ⌨ button sits under the piano roll's dim, and a click there closes the piano roll instead. While it is open it takes over the letter and digit keys in its layout, and **K** again closes it. See *The virtual keyboard* for the details.
 
 ## Recording with the piano roll open
+
+Use **MIDI Merge** beside **Snap** in the piano-roll toolbar to change the same session setting as the transport button. Both buttons stay in sync, including after reopening the editor, and are disabled during recording.
 
 The roll draws incoming notes while recording, and a held note grows until you release it. This preview follows the recording playhead without editing the region or creating undo steps. With **MIDI Merge** on, completed loop passes update the merged region while recording continues, and the roll follows that region. With **MIDI Merge** off, a pass that covers the whole region the roll shows becomes a new take of that region, and on Stop the roll shows the new take, as the timeline does; undo and redo of the pass switch the roll between the takes. A pass that makes a region of its own takes the roll to that region, and undoing the pass brings the roll back to the region it showed before. If an undo leaves the track with no MIDI regions, the roll closes. **Alt+T** / **Alt+Shift+T** step through the takes of the region the roll shows.
 

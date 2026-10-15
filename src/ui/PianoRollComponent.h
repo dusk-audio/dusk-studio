@@ -389,6 +389,7 @@ private:
         Glyph glyph;
     };
     juce::TextButton chaseToggle { "Chase" };
+    decltype(chaseToggle) midiMergeToggle { "MIDI Merge" };
     IconButton undoButton       { "Undo",       IconButton::Glyph::Undo };
     IconButton redoButton       { "Redo",       IconButton::Glyph::Redo };
     IconButton splitButton      { "Split",      IconButton::Glyph::Split };

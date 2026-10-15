@@ -19,6 +19,14 @@ namespace
 {
 template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
+
+template <typename Button>
+void syncToggle (Button& button, bool on)
+{
+    if (button.getToggleState() != on)
+        button.setToggleState (on, juce::dontSendNotification);
+}
+
 // Process-wide static modal for the piano roll's text-input dialogs
 // (region label rename). Mirrors the sharedAlertModal pattern in
 // PluginPickerHelpers - one in-window EmbeddedModal at a time, no
@@ -431,11 +439,23 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     toggleCcButton.setTooltip ("Show / hide CC lane");
     toggleCcButton.onClick = [this] { toggleCcLane(); };
 
+    midiMergeToggle.setClickingTogglesState (true);
+    midiMergeToggle.setMouseClickGrabsKeyboardFocus (false);
+    midiMergeToggle.setTooltip ("Add MIDI recording to an existing region. Each loop pass can be undone while recording.");
+    midiMergeToggle.onClick = [this]
+    {
+        if (! engine.getRecordManager().isActive())
+            session.midiMergeEnabled.store (midiMergeToggle.getToggleState(), std::memory_order_relaxed);
+    };
+    syncToggle (midiMergeToggle, session.midiMergeEnabled.load (std::memory_order_relaxed));
+    midiMergeToggle.setEnabled (! engine.getRecordManager().isActive());
+    addAndMakeVisible (midiMergeToggle);
+
     // Chase toggle - auto-scroll the grid to follow the transport playhead
     // when it leaves the visible window. Initial state follows the per-machine
     // Follow-playhead setting.
     chaseToggle.setClickingTogglesState (true);
-    chaseToggle.setToggleState (appconfig::getFollowPlayheadDefault(), juce::dontSendNotification);
+    syncToggle (chaseToggle, appconfig::getFollowPlayheadDefault());
     chaseToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff222226));
     chaseToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff406030));
     chaseToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
@@ -748,14 +768,17 @@ void PianoRollComponent::layoutIconRow (juce::Rectangle<int> area)
     place (quantizeButton);
     place (propertiesButton);
 
-    // Edit-mode palette sized to its internal layout (5 buttons + Snap
-    // toggle + denomination dropdown).
-    if (editModeToolbar != nullptr && inner.getWidth() > 0)
+    // Grab, Draw and Snap occupy only the visible part of the shared palette.
+    constexpr int kMergeWidth = 104;
+    if (editModeToolbar != nullptr)
     {
-        constexpr int kToolbarWidth = 390;
-        const int w = std::min (kToolbarWidth, inner.getWidth());
+        constexpr int kToolbarWidth = 156;
+        const int w = std::min (kToolbarWidth, std::max (0, inner.getWidth() - kMergeWidth - gap));
         editModeToolbar->setBounds (inner.removeFromLeft (w));
     }
+    inner.removeFromLeft (gap);
+    const int mergeWidth = std::min (kMergeWidth, std::max (0, inner.getWidth()));
+    midiMergeToggle.setBounds (inner.removeFromLeft (mergeWidth).withSizeKeepingCentre (mergeWidth, dia));
 }
 
 void PianoRollComponent::syncEditModeToolbar()
@@ -4153,12 +4176,12 @@ void PianoRollComponent::timerCallback()
         quantizeButton  .setEnabled (r != nullptr);
         propertiesButton.setEnabled (r != nullptr);
         glueButton      .setEnabled (selectedNotes.size() >= 2);
+        syncToggle (midiMergeToggle, session.midiMergeEnabled.load (std::memory_order_relaxed));
+        midiMergeToggle.setEnabled (! recorder.isActive());
         if (r != nullptr)
         {
-            if (muteToggle.getToggleState() != r->muted)
-                muteToggle.setToggleState (r->muted, juce::dontSendNotification);
-            if (lockToggle.getToggleState() != r->locked)
-                lockToggle.setToggleState (r->locked, juce::dontSendNotification);
+            syncToggle (muteToggle, r->muted);
+            syncToggle (lockToggle, r->locked);
         }
     }
     // Recompute the grid rect the same way paint() does so the

@@ -269,6 +269,9 @@ public:
     virtual bool doubleClickDspReadout() = 0;
     virtual bool clickRecord() = 0;
     virtual bool clickMidiMerge() = 0;
+    virtual bool clickPianoMidiMerge() = 0;
+    // Transport on/enabled, followed by piano-roll on/enabled; -1 until laid out.
+    virtual std::array<int, 4> midiMergeControls() const = 0;
     virtual bool doubleClickTempo() = 0;
     virtual bool rightClickPunch() = 0;
     virtual bool focusModalTextInput() = 0;

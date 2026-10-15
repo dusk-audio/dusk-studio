@@ -606,6 +606,80 @@ std::optional<ScenarioResult> beginMidiCaptureCase (GuiHost& host, ScenarioConte
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runPianoMidiMergeToggle (GuiHost& host, ScenarioContext& ctx)
+{
+    MidiRegion seed;
+    seed.lengthInTicks = 1920;
+    seed.notes = { { 1, 60, 90, 0, 480 } };
+    if (auto result = beginMidiCaptureCase (host, ctx, seed)) return result;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    const auto window = host.mainWindowSize();
+    const bool timeline = host.setTimelineShown (true);
+    ctx.cleanup ([&host, window, timeline]
+    {
+        if (window.size() >= 2) host.resizeMainWindow (window[0], window[1]);
+        host.setTimelineShown (timeline);
+    });
+    const auto controls = [&host] (bool on, bool enabled)
+    {
+        return host.midiMergeControls() == std::array<int, 4> { on ? 1 : 0, enabled ? 1 : 0,
+                                                                on ? 1 : 0, enabled ? 1 : 0 };
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 0, true), "the MIDI editor did not open"); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPianoMidiMerge(), "the piano-roll MIDI Merge button was not clickable"); },
+        [controls] { return controls (false, true); }, "both MIDI Merge controls did not start off", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx, &session]
+    {
+        ctx.expect (session.midiMergeEnabled.load(), "the piano-roll toggle did not enable MIDI Merge");
+        ctx.expect (host.clickMidiMerge(), "the transport MIDI Merge button was not clickable");
+    }, [controls] { return controls (true, true); }, "the piano-roll change did not reach the transport", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPianoMidiMerge(), "the piano-roll toggle was not clickable after a transport change"); },
+        [controls] { return controls (false, true); }, "the transport change did not reach the piano roll", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx, window]
+    {
+        host.closeRegionEditors();
+        ctx.expect (host.openRegionEditor (0, 0, true), "the MIDI editor did not reopen");
+        if (window.size() >= 4)
+            ctx.expect (host.resizeMainWindow (std::max (window[2], 820), std::max (window[3], 680)),
+                        "the MIDI editor could not use a smaller window");
+    }, [controls] { return controls (true, true); }, "MIDI Merge was not enabled before reopening", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPianoMidiMerge(), "the MIDI Merge button was clipped at the smaller window size"); },
+        [controls] { return controls (true, true); }, "reopening the MIDI editor lost MIDI Merge", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPianoMidiMerge(), "the smaller MIDI editor toggle was not clickable"); },
+        [controls] { return controls (false, true); }, "MIDI Merge did not turn off in the smaller editor", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickRecord(), "Record was unavailable with the MIDI editor open"); },
+        [controls] { return controls (true, true); }, "MIDI Merge did not turn back on", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx, &session, &engine]
+    {
+        ctx.expect (! host.clickPianoMidiMerge() && ! host.clickMidiMerge(), "MIDI Merge was editable during recording");
+        ctx.expect (session.midiMergeEnabled.load(), "recording changed MIDI Merge");
+        engine.pressStop();
+    }, [controls, &engine] { return engine.getTransport().isRecording() && controls (true, false); },
+        "both MIDI Merge buttons did not disable during recording", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPianoMidiMerge(), "the MIDI editor toggle stayed disabled after Stop"); },
+        [controls] { return controls (true, true); }, "MIDI Merge did not re-enable after Stop", {}, 4000 });
+    steps->push_back ({ 0, [&ctx, &session]
+    { ctx.expect (! session.midiMergeEnabled.load(), "the MIDI editor toggle did not turn merging off"); },
+        [controls] { return controls (false, true); }, "both MIDI Merge buttons did not finish off", {}, 4000 });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoMidiMergeToggle { Scenario {
+    "gui.piano_midi_merge_toggle", { "gui", "piano", "midi", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoMidiMergeToggle (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext& ctx)
 {
     MidiRegion seed;

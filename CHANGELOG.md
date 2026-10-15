@@ -9,10 +9,11 @@ canonical source.
 
 ### Added
 
-- **MIDI Merge.** The transport toggle adds each MIDI performance to an existing
-  region, growing it when needed and keeping its earlier notes, controls and
-  takes. Each completed loop pass is one undo step while recording continues.
-  The final partial pass is one step too, and Stop keeps an undone pass undone.
+- **MIDI Merge.** Matching toggles in the transport and piano-roll toolbar add
+  each MIDI performance to an existing region, growing it and keeping its earlier
+  notes, controls and takes. Each completed loop pass is one undo step while
+  recording continues. The final partial pass is one step too, and Stop keeps an
+  undone pass undone.
 - **Live notes in the piano roll.** Incoming notes appear while recording, and
   held notes grow until release. The preview leaves the region and undo history
   alone, and the roll follows the region a merge updates.

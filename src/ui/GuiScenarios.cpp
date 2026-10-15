@@ -1185,6 +1185,45 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool clickMidiMerge() override
     { return owner.transportBar != nullptr && owner.transportBar->clickMidiMergeForScenario(); }
 
+    bool clickPianoMidiMerge() override
+    {
+        auto* piano = owner.pianoRoll.get();
+        if (piano == nullptr || ! piano->isShowing()) return false;
+        for (auto* child : piano->getChildren())
+            if (auto* button = dynamic_cast<decltype (owner.hdrChaseBtn)*> (child);
+                button != nullptr && button->getButtonText() == "MIDI Merge")
+            {
+                if (! button->isShowing() || ! button->isEnabled()
+                    || ! piano->getLocalBounds().contains (button->getBounds()) || button->getWidth() < 90)
+                    return false;
+                const auto point = owner.getTopLevelComponent()->getLocalPoint (
+                    button, button->getLocalBounds().getCentre()).toFloat();
+                return clickAt (point.x, point.y, 1);
+            }
+        return false;
+    }
+    std::array<int, 4> midiMergeControls() const override
+    {
+        std::array<int, 4> states { -1, -1, -1, -1 };
+        const auto inspect = [&states, this] (const auto* parent, std::size_t offset, int minimumWidth)
+        {
+            if (parent == nullptr) return;
+            for (const auto* child : parent->getChildren())
+                if (const auto* button = dynamic_cast<const decltype (owner.hdrChaseBtn)*> (child);
+                    button != nullptr && button->getButtonText() == "MIDI Merge")
+                {
+                    if (! button->isShowing() || button->getWidth() < minimumWidth
+                        || ! parent->getLocalBounds().contains (button->getBounds())) return;
+                    states[offset] = button->getToggleState() ? 1 : 0;
+                    states[offset + 1] = button->isEnabled() ? 1 : 0;
+                    return;
+                }
+        };
+        inspect (owner.transportBar.get(), 0, 64);
+        inspect (owner.pianoRoll.get(), 2, 90);
+        return states;
+    }
+
     std::string dspReadout() const override
     {
         return owner.systemStatusBar != nullptr ? owner.systemStatusBar->dspReadoutForScenario()
