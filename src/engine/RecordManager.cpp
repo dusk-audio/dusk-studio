@@ -673,7 +673,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
     // ordering doesn't matter, but doing MIDI first keeps the two paths
     // visibly separate and the failure cases isolated.
     const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
-    const std::int64_t totalSamples = std::max ((std::int64_t) 1, endSample - recordStartSample);
+    const std::int64_t totalSamples = std::max ((std::int64_t) 0, endSample - recordStartSample);
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& cap = midiCaptures[(size_t) t];
@@ -788,8 +788,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 MidiRegion passRegion;
                 passRegion.timelineStart = loopPlan.captureStartSample;
                 passRegion.lengthInSamples = pass.lengthInSamples;
-                passRegion.lengthInTicks = samplesToTicks (
-                    pass.lengthInSamples, recordSampleRate, bpm);
+                passRegion.lengthInTicks = std::max<std::int64_t> (1, samplesToTicks (
+                    pass.lengthInSamples, recordSampleRate, bpm));
                 passRegion.recordedAtBPM = (double) bpm;
                 passRegion.provenance = {
                     gestureCapturedAtMs, pass.passOrdinal,
@@ -839,12 +839,12 @@ void RecordManager::stopRecording (std::int64_t endSample)
                         committed.channel = channel;
                         committed.noteNumber = ev.data1;
                         committed.velocity = note.velocity;
-                        committed.startTick = samplesToTicks (
-                            note.startSample, recordSampleRate, bpm);
+                        committed.startTick = std::clamp<std::int64_t> (samplesToTicks (
+                            note.startSample, recordSampleRate, bpm), 0, passRegion.lengthInTicks - 1);
                         const auto offTick = samplesToTicks (
                             ev.samplePos, recordSampleRate, bpm);
-                        committed.lengthInTicks = std::max<std::int64_t> (
-                            1, offTick - committed.startTick);
+                        committed.lengthInTicks = std::clamp<std::int64_t> (
+                            offTick - committed.startTick, 1, passRegion.lengthInTicks - committed.startTick);
                         passRegion.notes.push_back (committed);
                         note.active = false;
                     }
@@ -854,7 +854,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
                         MidiCc committed;
                         if (MidiCc::fromMessage (bytes,
                             statusType == 0xc0 || statusType == 0xd0 ? 2 : 3,
-                            samplesToTicks (ev.samplePos, recordSampleRate, bpm), committed))
+                            std::clamp<std::int64_t> (samplesToTicks (ev.samplePos, recordSampleRate, bpm),
+                                                     0, passRegion.lengthInTicks - 1), committed))
                         {
                             passRegion.ccs.push_back (committed);
                             const auto lane = (size_t) committed.laneKey();
@@ -875,8 +876,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     committed.channel = key / 128 + 1;
                     committed.noteNumber = key % 128;
                     committed.velocity = note.velocity;
-                    committed.startTick = samplesToTicks (
-                        note.startSample, recordSampleRate, bpm);
+                    committed.startTick = std::clamp<std::int64_t> (samplesToTicks (
+                        note.startSample, recordSampleRate, bpm), 0, passRegion.lengthInTicks - 1);
                     committed.lengthInTicks = std::max<std::int64_t> (
                         1, passRegion.lengthInTicks - committed.startTick);
                     passRegion.notes.push_back (committed);
@@ -967,7 +968,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
         MidiRegion region;
         region.timelineStart   = recordStartSample;
         region.lengthInSamples = totalSamples;
-        region.lengthInTicks   = samplesToTicks (totalSamples, recordSampleRate, bpm);
+        region.lengthInTicks   = totalSamples > 0 ? std::max<std::int64_t> (1,
+            samplesToTicks (totalSamples, recordSampleRate, bpm)) : 0;
         region.recordedAtBPM   = (double) bpm;
 
         // Pair Note On / Note Off into MidiNote entries. Pending map keyed
@@ -1003,9 +1005,11 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 n.channel    = channel;
                 n.noteNumber = ev.data1;
                 n.velocity   = it->second.velocity;
-                n.startTick  = samplesToTicks (it->second.startSample, recordSampleRate, bpm);
+                n.startTick  = std::clamp<std::int64_t> (samplesToTicks (
+                    it->second.startSample, recordSampleRate, bpm), 0, region.lengthInTicks - 1);
                 const auto offTick = samplesToTicks (ev.samplePos, recordSampleRate, bpm);
-                n.lengthInTicks = std::max ((std::int64_t) 1, offTick - n.startTick);
+                n.lengthInTicks = std::clamp<std::int64_t> (
+                    offTick - n.startTick, 1, region.lengthInTicks - n.startTick);
                 region.notes.push_back (n);
                 pending.erase (it);
             }
@@ -1014,7 +1018,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 const std::uint8_t bytes[] { ev.status, ev.data1, ev.data2 };
                 MidiCc c;
                 if (MidiCc::fromMessage (bytes, statusType == 0xc0 || statusType == 0xd0 ? 2 : 3,
-                                         samplesToTicks (ev.samplePos, recordSampleRate, bpm), c))
+                    std::clamp<std::int64_t> (samplesToTicks (ev.samplePos, recordSampleRate, bpm),
+                                             0, region.lengthInTicks - 1), c))
                     region.ccs.push_back (c);
             }
         }
@@ -1029,7 +1034,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
             n.channel    = (key / 256);
             n.noteNumber = (key % 256);
             n.velocity   = pn.velocity;
-            n.startTick  = samplesToTicks (pn.startSample, recordSampleRate, bpm);
+            n.startTick  = std::clamp<std::int64_t> (samplesToTicks (
+                pn.startSample, recordSampleRate, bpm), 0, region.lengthInTicks - 1);
             n.lengthInTicks = std::max ((std::int64_t) 1,
                 region.lengthInTicks - n.startTick);
             region.notes.push_back (n);

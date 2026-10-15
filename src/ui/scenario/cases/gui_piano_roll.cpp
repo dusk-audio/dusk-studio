@@ -4,6 +4,7 @@
 #include "../../../session/ParamEditAction.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/SessionSerializer.h"
+#include "../../../engine/scenario/cases/MidiProbeHarness.h"
 
 #include <algorithm>
 #include <array>
@@ -596,8 +597,8 @@ std::optional<ScenarioResult> beginMidiCaptureCase (GuiHost& host, ScenarioConte
 std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext& ctx)
 {
     MidiRegion seed;
-    seed.lengthInTicks = 480;
-    seed.notes = { { 1, 60, 90, 0, 240 } };
+    seed.lengthInTicks = 1920;
+    seed.notes = { { 1, 60, 90, 0, 1920 } };
     seed.ccs = { { 1, 7, 80, 0 } };
     MidiTakeRef earlier;
     earlier.lengthInTicks = 480;
@@ -608,6 +609,27 @@ std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext&
     auto& session = ctx.session();
     auto& transport = engine.getTransport();
     auto& track = session.track (0);
+    ctx.keep (track.inputMonitor);
+    track.inputMonitor.store (true);
+    auto* strip = host.strip (0);
+    if (! ctx.expect (strip != nullptr, "the MIDI Merge track has no strip")) return ctx.verdict();
+    bool hasProbe = false;
+   #if DUSKSTUDIO_HAS_NATIVE_CLAP
+    const auto fixture = ctx.fixture ("panic_probe.clap");
+    auto& channelStrip = engine.getChannelStrip (0);
+    if (fixture && ! channelStrip.getPluginSlot().isLoaded() && ! channelStrip.isNativeClapLoaded()
+        && ! channelStrip.isNativeLv2Loaded() && ! channelStrip.isNativeVst3Loaded()
+        && ! channelStrip.isNativeAuLoaded() && ! channelStrip.isNativeMultisampleLoaded()
+        && ! channelStrip.isBuiltinLoaded())
+    {
+        ctx.cleanup ([&engine, strip] { engine.stop(); strip->unloadNativePlugins(); strip->refreshInsertButton(); });
+        std::string error;
+        hasProbe = strip->loadNativeClap (*fixture, midiprobe::kPanicProbeClapId, error);
+        if (! ctx.expect (hasProbe, "the MIDI Merge instrument probe did not load: " + error)) return ctx.verdict();
+        strip->refreshInsertButton();
+    }
+   #endif
+    if (! hasProbe) ctx.note ("instrument routing assertions require an available panic probe and an empty insert");
     const auto loopLength = session.ticksToSamples (3840, engine.getCurrentSampleRate());
     transport.setLoopRange (0, loopLength);
     transport.setLoopEnabled (true);
@@ -666,9 +688,12 @@ std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext&
     {
         const int ordinal = index + 1;
         const int pitch = std::array<int, 3> { 64, 67, 69 }[(std::size_t) index];
-        steps->push_back ({ 100, [&ctx, &engine, &transport, &host, send, ordinal, pitch, index]
+        if (index > 0)
+            steps->push_back ({ 0, [strip] { strip->clickMonitor(); } });
+        steps->push_back ({ 100, [&ctx, &engine, &transport, &host, &track, send, ordinal, pitch, index]
         {
             ctx.expect (transport.isRecording(), "loop passes stopped the transport");
+            ctx.expect (track.inputMonitor.load() == (index != 1), "IN did not change for the MIDI Merge pass");
             const auto* preview = engine.getRecordManager().midiCapturePreview (0);
             ctx.expect (preview != nullptr && preview->passOrdinal == ordinal,
                         "a loop pass was missed before MIDI input");
@@ -677,8 +702,25 @@ std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext&
             if (index == 0) send (0xe0, 1, 96);
             if (index == 1) send (0xd0, 91);
             if (index == 2) send (0xc0, 12);
-        }, [passReady, ordinal] { return passReady (ordinal); }, "the next loop pass did not arrive", {}, 4000 });
-        steps->push_back ({ 200, [send, pitch] { send (0x80, (std::uint8_t) pitch); } });
+        }, [passReady, ordinal, &track, index]
+        { return passReady (ordinal) && track.inputMonitor.load() == (index != 1); },
+            "the next loop pass or its IN setting did not arrive", {}, 4000 });
+        steps->push_back ({ index == 1 ? 500 : 200, [&ctx, &engine, send, pitch, index, hasProbe]
+        {
+           #if DUSKSTUDIO_HAS_NATIVE_CLAP
+            if (index == 1 && hasProbe)
+            {
+                engine.suspendProcessing();
+                const auto voicesHeld = midiprobe::counter (ctx, 0, "voicesHeld");
+                engine.resumeProcessing();
+                ctx.expect (voicesHeld == 1.0,
+                            "IN-off Merge did not keep the seed accompaniment alone while the live note was held");
+            }
+           #else
+            (void) ctx; (void) engine; (void) index; (void) hasProbe;
+           #endif
+            send (0x80, (std::uint8_t) pitch);
+        } });
         steps->push_back ({ 0, [check, ordinal] { check (ordinal); },
             [passReady, ordinal] { return passReady (ordinal + 1); },
             "the completed MIDI pass did not commit while recording", {}, 4000 });

@@ -6358,7 +6358,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         //     (the track was frozen, or in an audio mode where the insert never
         //     ran): the note-offs of that stretch never reached it.
         //
-        // The route is exactly what pullLiveMidi reads below. A MIDI track
+        // The audible route excludes capture-only input: changing that input
+        // must not reset the instrument's timeline voices. A MIDI track
         // takes live input except in an offline render, which must stay
         // deterministic. A track playing its timeline takes it only with IN
         // on; otherwise the input is what the instrument plays, whatever IN
@@ -6367,20 +6368,22 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // unless its input already is the keyboard and events would double.
         const bool pullsLiveMidi = midiTrack && ! offlineRender
                                 && (monitorEnabled || ! (willReadFromDisk && ! isFrozen));
-        midi::LiveMidiRoute liveRoute;
-        if (pullsLiveMidi)
+        const bool capturesLiveMidi = isRecording && armed && midiTrack && ! offlineRender;
+        midi::LiveMidiRoute inputRoute;
+        if (pullsLiveMidi || capturesLiveMidi)
         {
             const int numInputs = (int) perInputMidi.size();
             const auto readable = [numInputs] (int index) noexcept
             {
                 return index >= 0 && index < numInputs ? index : -1;
             };
-            liveRoute.input = readable (session.track (t).midiInputIndex.load (std::memory_order_relaxed));
+            inputRoute.input = readable (session.track (t).midiInputIndex.load (std::memory_order_relaxed));
             const int keyboard = readable (midiIn.getVirtualKeyboardIndex());
-            if (armed && keyboard != liveRoute.input)
-                liveRoute.keyboard = keyboard;
-            liveRoute.channel = session.track (t).midiChannel.load (std::memory_order_relaxed);
+            if (armed && keyboard != inputRoute.input)
+                inputRoute.keyboard = keyboard;
+            inputRoute.channel = session.track (t).midiChannel.load (std::memory_order_relaxed);
         }
+        const auto liveRoute = pullsLiveMidi ? inputRoute : midi::LiveMidiRoute {};
         const bool liveRouteNarrowed = midi::liveRouteNarrows (lastLiveMidiRoute[(size_t) t], liveRoute);
         lastLiveMidiRoute[(size_t) t] = liveRoute;
 
@@ -6529,12 +6532,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     const int ch = (status & 0xF0) != 0xF0 ? (int) (status & 0x0F) + 1 : 0;
                     if (ch != chFilter) continue;
                 }
-                if (! midiEventsDropped
+                if (pullsLiveMidi && ! midiEventsDropped
                     && ! perTrackMidi[(size_t) t].addEvent (v.getRawData(),
                                                             v.getRawDataSize(),
                                                             meta.samplePosition))
                     midiEventsDropped = true;
-                if (isRecording && armed && midiTrack && ! liveRecordOverflow
+                if (capturesLiveMidi && ! liveRecordOverflow
                     && ! liveRecordMidiScratch.addEvent (v.getRawData(),
                                                          v.getRawDataSize(),
                                                          meta.samplePosition))
@@ -6546,8 +6549,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // from a source the flush never compared.
         auto pullLiveMidi = [&] ()
         {
-            pullInput (liveRoute.input, liveRoute.channel);
-            pullInput (liveRoute.keyboard, liveRoute.channel);
+            pullInput (inputRoute.input, inputRoute.channel);
+            pullInput (inputRoute.keyboard, inputRoute.channel);
         };
 
         if (willReadFromDisk && ! isFrozen)
@@ -6757,6 +6760,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // fails), and live input must never print into a deterministic file.
             pullLiveMidi();
         }
+        if (capturesLiveMidi && ! pullsLiveMidi)
+            pullLiveMidi();
 
         // A torn block can deliver a note-on without its note-off, and a
         // dropped one loses note-offs for notes it never started, so neither

@@ -236,20 +236,81 @@ TEST_CASE ("RecordManager Merge OFF retains all tagged channel-control messages"
            "[recording][recordmanager][midi][merge]")
 {
     CaptureFixture fixture (false);
-    REQUIRE (fixture.manager.startRecording (kSampleRate, 0));
-    fixture.manager.writeMidiBlock (0, controls(), 0, nullptr, 100);
-    fixture.manager.serviceMidiCapture();
-    REQUIRE (fixture.manager.midiCapturePreview (0)->ccs.size() == 5);
-    REQUIRE (fixture.manager.takeMidiPassGroups().empty());
-    fixture.manager.stopRecording (100);
-    const auto regions = fixture.session.track (0).midiRegions.current();
-    REQUIRE (regions.size() == 1);
-    REQUIRE (regions[0].ccs == std::vector<MidiCc> {
-        { 2, 64, 127, 1, MidiCc::Kind::ControlChange },
-        { 3, 0, 8193, 2, MidiCc::Kind::PitchBend },
-        { 4, 0, 70, 3, MidiCc::Kind::ChannelPressure },
-        { 5, 60, 80, 4, MidiCc::Kind::PolyPressure },
-        { 6, 0, 9, 5, MidiCc::Kind::ProgramChange } });
+    SECTION ("All tagged controls retain their captured values and positions")
+    {
+        REQUIRE (fixture.manager.startRecording (kSampleRate, 0));
+        fixture.manager.writeMidiBlock (0, controls(), 0, nullptr, 100);
+        fixture.manager.serviceMidiCapture();
+        REQUIRE (fixture.manager.midiCapturePreview (0)->ccs.size() == 5);
+        REQUIRE (fixture.manager.takeMidiPassGroups().empty());
+        fixture.manager.stopRecording (100);
+        const auto regions = fixture.session.track (0).midiRegions.current();
+        REQUIRE (regions.size() == 1);
+        REQUIRE (regions[0].ccs == std::vector<MidiCc> {
+            { 2, 64, 127, 1, MidiCc::Kind::ControlChange },
+            { 3, 0, 8193, 2, MidiCc::Kind::PitchBend },
+            { 4, 0, 70, 3, MidiCc::Kind::ChannelPressure },
+            { 5, 60, 80, 4, MidiCc::Kind::PolyPressure },
+            { 6, 0, 9, 5, MidiCc::Kind::ProgramChange } });
+    }
+    SECTION ("Final retained samples stay inside the half-open tick range")
+    {
+        bool looping = false;
+        int sampleLength = 50;
+        SECTION ("Straight capture") {}
+        SECTION ("Loop capture") { looping = true; }
+        SECTION ("Straight capture shorter than one tick") { sampleLength = 1; }
+        SECTION ("Loop capture shorter than one tick") { looping = true; sampleLength = 1; }
+        const RecordManager::LoopCapturePlan plan { looping, 0, sampleLength, 0, sampleLength };
+        REQUIRE (fixture.manager.startRecording (9600.0, 0, 0, plan));
+        dusk::MidiBuffer buffer;
+        const int lastSample = sampleLength - 1;
+        addMessage (buffer, 0x90, 60, 100, std::max (0, sampleLength - 2));
+        addMessage (buffer, 0x80, 60, 0, lastSample);
+        addMessage (buffer, 0x90, 64, 90, lastSample);
+        addMessage (buffer, 0xb1, 64, 127, lastSample);
+        addMessage (buffer, 0xe2, 1, 64, lastSample);
+        addMessage (buffer, 0xd3, 70, 0, lastSample);
+        addMessage (buffer, 0xa4, 60, 80, lastSample);
+        addMessage (buffer, 0xc5, 9, 0, lastSample);
+        addMessage (buffer, 0xb0, 7, 60, sampleLength);
+        addMessage (buffer, 0x80, 64, 0, sampleLength);
+        addMessage (buffer, 0x90, 67, 80, sampleLength);
+        if (looping)
+        {
+            const auto span = fixture.manager.coordinateLoopCaptureSpan (1, 0, 0, sampleLength + 10);
+            fixture.manager.beginLoopCaptureSpan (span);
+            fixture.manager.writeMidiBlock (0, buffer, 0, &span, sampleLength + 10);
+        }
+        else
+            fixture.manager.writeMidiBlock (0, buffer, 0, nullptr, sampleLength + 10);
+        fixture.manager.stopRecording (sampleLength);
+        const auto regions = fixture.session.track (0).midiRegions.current();
+        REQUIRE (regions.size() == 1);
+        const auto& region = regions[0];
+        const std::int64_t tickLength = sampleLength == 1 ? 1 : 5;
+        REQUIRE (region.lengthInSamples == sampleLength);
+        REQUIRE (region.lengthInTicks == tickLength);
+        REQUIRE (region.notes == std::vector<MidiNote> {
+            { 1, 60, 100, tickLength - 1, 1 }, { 1, 64, 90, tickLength - 1, 1 } });
+        REQUIRE (region.ccs == std::vector<MidiCc> {
+            { 2, 64, 127, tickLength - 1, MidiCc::Kind::ControlChange },
+            { 3, 0, 8193, tickLength - 1, MidiCc::Kind::PitchBend },
+            { 4, 0, 70, tickLength - 1, MidiCc::Kind::ChannelPressure },
+            { 5, 60, 80, tickLength - 1, MidiCc::Kind::PolyPressure },
+            { 6, 0, 9, tickLength - 1, MidiCc::Kind::ProgramChange } });
+    }
+    SECTION ("A stop at the capture start excludes every pending event")
+    {
+        REQUIRE (fixture.manager.startRecording (9600.0, 0));
+        dusk::MidiBuffer buffer;
+        addMessage (buffer, 0xb0, 7, 100, 0);
+        addMessage (buffer, 0x90, 60, 100, 0);
+        fixture.manager.writeMidiBlock (0, buffer, 0, nullptr, 10);
+        fixture.manager.stopRecording (0);
+        REQUIRE (fixture.session.track (0).midiRegions.current().empty());
+        REQUIRE (fixture.manager.getLastCommitDiff().empty());
+    }
 }
 
 TEST_CASE ("RecordManager Merge OFF loop takes chase every tagged control but reset only CCs",
