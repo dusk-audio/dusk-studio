@@ -524,5 +524,63 @@
       "notes": "Shared warm-page-cache PCM16 input; paced standalone reader and mix workload, no device or DSP. Callback timing excludes phase checks, statistics, pacing and locate priming. Wait-return counters include timeout and notification returns, not OS scheduler switches. Memory is sampled, not an allocation high-water counter; RSS includes harness overhead."
     }
   },
-  "tsan_limit": "GCC TSan does not instrument atomic_thread_fence; source review separately checked the seqlock ordering and lifetime protocol."
+  "tsan_limit": "GCC TSan does not instrument atomic_thread_fence; source review separately checked the seqlock ordering and lifetime protocol.",
+  "full_engine_checks": {
+    "commit": "efd6af1c903c612a2b251598ef92a37363da25de",
+    "binary_sha256": "055f535212e892b9596af111f7b8eb5f3c2dada45ec1506944fd7095f51cb505",
+    "harness": "DUSKSTUDIO_PERF_SESSION with DUSKSTUDIO_PERF_READER_MODE=plain|locate|loop; existing private Xvfb and null-audio helpers",
+    "session": {
+      "tracks": 24,
+      "audio_regions": 360,
+      "clip_frames": 384000,
+      "session_frames": 5760000,
+      "sample_rate": 48000,
+      "block_frames": 256,
+      "blocks": 2000,
+      "format": "PCM16 stereo; repeated eight-second clips, 15 per track; fader -36 dB",
+      "input_session_sha256": "764dcb547ba06bc14d6e6f048636c4fccd3153e34cba0dc87ce3b2b938bff05c"
+    },
+    "miss_definition": "Raw BufferedFileReader misses, before PlaybackEngine overlays the loop-start cache. Standalone output phase checks above prove uncovered misses separately.",
+    "runs": {
+      "plain": {
+        "exit_code": 0,
+        "configured_disk_workers": 3,
+        "registered_readers": 360,
+        "sampled_peak_resident_readers": 48,
+        "sampled_peak_storage_bytes": 58233216,
+        "raw_read_misses": 0,
+        "fill_errors": 0,
+        "worker_wait_returns": 3181,
+        "wait_returns_per_second": 298.2,
+        "locates": 0,
+        "master_peak": 0.2499
+      },
+      "locate": {
+        "exit_code": 0,
+        "configured_disk_workers": 3,
+        "registered_readers": 360,
+        "sampled_peak_resident_readers": 48,
+        "sampled_peak_storage_bytes": 46892416,
+        "raw_read_misses": 0,
+        "fill_errors": 0,
+        "worker_wait_returns": 3503,
+        "wait_returns_per_second": 327.42,
+        "locates": 3,
+        "master_peak": 0.2567
+      },
+      "loop": {
+        "exit_code": 0,
+        "configured_disk_workers": 3,
+        "registered_readers": 360,
+        "sampled_peak_resident_readers": 24,
+        "sampled_peak_storage_bytes": 38436864,
+        "raw_read_misses": 192,
+        "fill_errors": 0,
+        "worker_wait_returns": 3182,
+        "wait_returns_per_second": 298.3,
+        "locates": 0,
+        "master_peak": 0.2499
+      }
+    }
+  }
 }

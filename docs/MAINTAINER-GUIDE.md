@@ -570,6 +570,8 @@ part left out. A case the suite skipped with `missing fixture:` also gets a
 `DUSKSTUDIO_PERF_SESSION=/path/to/session` runs a real session through the
 full mixer without an audio device. `DUSKSTUDIO_PERF_READER_MODE` selects
 `plain`, `locate` or `loop`; reader statistics accompany the DSP table.
+Its raw read-miss count is measured before loop-start cache coverage. The
+standalone workload below separately checks uncovered misses and source phase.
 Use the private-display isolation described above when running the app on Linux.
 
 For an isolated reader comparison, build the standalone workload:

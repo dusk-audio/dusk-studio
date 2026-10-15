@@ -1358,7 +1358,7 @@ static bool runHeadlessSessionPerf (const juce::String& sessionPath)
         std::chrono::steady_clock::now() - readerWall0).count();
     std::fprintf (stdout,
         "Reader pool: worker threads=%zu (configured), registered readers=%zu, sampled peak resident readers=%zu\n"
-        "Reader pool: sampled peak storage bytes=%zu (windows, staging, scratch), read misses=%llu, fill errors=%llu\n"
+        "Reader pool: sampled peak storage bytes=%zu (windows, staging, scratch), raw read misses=%llu, fill errors=%llu\n"
         "Reader pool: worker wait returns=%llu, wait returns/sec=%.2f, locates=%d\n",
         readerStats.workers, readerStats.readers, peakResidentReaders, peakReaderBytes,
         (unsigned long long) (readerStats.readMisses - readerStats0.readMisses),
