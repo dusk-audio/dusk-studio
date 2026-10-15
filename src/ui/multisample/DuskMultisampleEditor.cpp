@@ -465,7 +465,7 @@ void DuskMultisampleEditor::resized()
     auto header = area.removeFromTop (28);
     titleLabel.setBounds (header.removeFromLeft (160));
     const int btnW = 80;
-    libraryButton.setBounds (header.removeFromLeft (btnW).reduced (2));
+    libraryButton.setBounds (header.removeFromLeft (112).reduced (2));
     browseButton.setBounds (header.removeFromLeft (btnW).reduced (2));
     reloadButton.setBounds (header.removeFromLeft (btnW).reduced (2));
     clearButton .setBounds (header.removeFromLeft (btnW).reduced (2));

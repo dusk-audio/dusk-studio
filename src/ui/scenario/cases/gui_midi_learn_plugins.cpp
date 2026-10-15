@@ -455,8 +455,12 @@ std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioCon
     const auto originalStage = engine.getStage();
     const auto restore = ctx.tempDir() / "restore.json";
     const auto soundfont = ctx.tempDir() / "Conversion fixture.sfz";
+    const auto bank = ctx.tempDir() / "Conversion fixture.bank.xml";
     if (! SessionSerializer::save (session, restore)
-        || ! dusk::fs::writeStringToFile (soundfont, "<region> key=60 sample=*sine\n"))
+        || ! dusk::fs::writeStringToFile (soundfont, "<region> key=60 sample=*sine\n")
+        || ! dusk::fs::writeStringToFile (bank,
+            "<AriaBank name=\"Conversion\"><AriaProgram name=\"Sine\">"
+            "<AriaElement path=\"Conversion fixture.sfz\"/></AriaProgram></AriaBank>"))
         return ScenarioResult::fail ("could not prepare the soundfont fixture");
     ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
     {
@@ -470,9 +474,26 @@ std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioCon
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 150, [&host, &ctx]
     { ctx.expect (host.clickInsert (0), "insert button did not receive a click"); } });
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        ctx.expect (! host.clickModalButton ("Soundfont (.sfz / .sf2 / .bank.xml)"),
+                    "insert chooser retained the redundant Soundfont option");
+        ctx.expect (host.clickModalButton ("SFZ Manager..."), "SFZ Manager did not open");
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.sfzLibraryPointer (0, "local-folders", 0.5f, true), "local folder button press failed"); },
+    [&host] { return host.sfzLibraryPointer (0, "local-folders", 0.5f, false); },
+    "SFZ Manager did not offer local folders" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.sfzLibraryPointer (0, "local-folders", 0.5f, false), "local folder button release failed"); } });
+    steps->push_back ({ 0, [] {}, [&host] { return host.clickModalButton ("Open local file..."); },
+                        "local library did not offer a file browser" });
+   #else
     steps->push_back ({ 150, [&host, &ctx]
     { ctx.expect (host.clickModalButton ("Soundfont (.sfz / .sf2 / .bank.xml)"), "soundfont chooser did not open"); } });
-    steps->push_back ({ 150, [&host, &ctx, soundfont]
+   #endif
+    steps->push_back ({ 150, [&host, &ctx, bank]
     {
         expectBrowserInHome (host, ctx, "the soundfont browser");
         ctx.expect (host.focusFileName(), "soundfont filename entry was not available");
@@ -481,7 +502,7 @@ std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioCon
        #else
         host.pressPeerKey ("ctrl + A", 'a');
        #endif
-        for (const char ch : soundfont.string())
+        for (const char ch : bank.string())
             host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
     } });
     steps->push_back ({ 200, [&host, &ctx]

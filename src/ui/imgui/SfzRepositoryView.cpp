@@ -127,7 +127,7 @@ public:
         ImGui::SetCursorScreenPos (origin);
         if (ImGui::BeginChild ("##sfz-repository-body", size, ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoBackground))
         {
-            heading (ctx, "SFZ instrument library", 24);
+            heading (ctx, "SFZ Manager", 24);
             muted ("Creative Commons instruments from community repositories.");
             if (forceInstalled) { onlineTab = false; forceInstalled = false; }
             const float tabWidth = std::min (ctx.s (158), (ImGui::GetContentRegionAvail().x - ctx.s (12)) * 0.5f);

@@ -719,18 +719,19 @@ public:
             hwBtn.onClick = [this] { if (onHwFn) onHwFn(); };
             addAndMakeVisible (hwBtn);
         }
+        const auto soundfontColour = juce::Colour (0xff5a4a78);
         if (sfVisible)
         {
             sfBtn.setButtonText ("Soundfont (.sfz / .sf2 / .bank.xml)");
-            style (sfBtn, juce::Colour (0xff5a4a78));
+            style (sfBtn, soundfontColour);
             sfBtn.onClick = [this] { if (onSfFn) onSfFn(); };
             addAndMakeVisible (sfBtn);
         }
         pluginBtn.setButtonText ("Plugin (VST3 / CLAP / LV2 / AU)");
         if (libraryVisible)
         {
-            libraryBtn.setButtonText ("SFZ Library...");
-            style (libraryBtn, sfBtn.findColour (decltype(sfBtn)::buttonColourId));
+            libraryBtn.setButtonText ("SFZ Manager...");
+            style (libraryBtn, soundfontColour);
             libraryBtn.onClick = [this] { if (onLibraryFn) onLibraryFn(); };
             addAndMakeVisible (libraryBtn);
         }
@@ -829,13 +830,10 @@ void openInsertChooser (PluginSlot& slot,
 
     // HW insert only makes sense on audio (effects) slots - a MIDI
     // instrument slot can't route audio out to a physical pair.
-    // Soundfont is shown whenever the caller hosts the multisample rung,
-    // regardless of slot kind: it loads via the same path as an instrument
-    // plugin and flips the track to MIDI, so flagging it as "wrong slot"
-    // on an audio strip would hide a valid choice.
+    // The manager also opens local files; the direct chooser serves surfaces without it.
     const bool showHw = (kind == PluginKind::Effects)
                         && static_cast<bool> (onPickHardwareInsert);
-    const bool showSf = static_cast<bool> (onPickSoundfont);
+    const bool showSf = static_cast<bool> (onPickSoundfont) && ! onPickSfzLibrary;
 
     auto onHw = [closeChooser, hw = onPickHardwareInsert]() mutable
     {

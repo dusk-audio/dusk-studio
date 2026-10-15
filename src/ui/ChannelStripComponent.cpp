@@ -34,6 +34,7 @@
 #if DUSKSTUDIO_HAS_MULTISAMPLE
   #include "multisample/DuskMultisampleEditor.h"
   #include "multisample/SfzLibraryPanel.h"
+  #include "../engine/multisample/AriaBank.h"
 #endif
 #include "DuskAlerts.h"
 #include "FreezeDialog.h"
@@ -2224,7 +2225,7 @@ void ChannelStripComponent::showPluginSlotMenu()
     }
    #if DUSKSTUDIO_HAS_MULTISAMPLE
     menu.addSeparator();
-    menu.addItem (2011, "SFZ Library...");
+    menu.addItem (2011, "SFZ Manager...");
    #endif
 
     juce::Component::SafePointer<ChannelStripComponent> safe (this);
@@ -4280,7 +4281,7 @@ void ChannelStripComponent::captureSfzLibrary (const std::string& capturePath)
 void ChannelStripComponent::openSfzLibrary()
 {
    #if ! (DUSKSTUDIO_HAS_NATIVE_UI && DUSKSTUDIO_HAS_MULTISAMPLE)
-    showDuskAlert (*this, "SFZ library", "The SFZ library needs the native UI and Multisample support.");
+    showDuskAlert (*this, "SFZ Manager", "The SFZ Manager needs the native UI and Multisample support.");
    #else
     if (isSfzLibraryOpen()) return;
     closeCompEditorPopup();
@@ -4294,14 +4295,14 @@ void ChannelStripComponent::openSfzLibrary()
     const auto parentHandle = embedscale::nativeParentHandle (*topLevel);
     if (parentHandle == 0)
     {
-        showDuskAlert (*topLevel, "SFZ library", "The library cannot open: the main window is not ready.");
+        showDuskAlert (*topLevel, "SFZ Manager", "The manager cannot open: the main window is not ready.");
         return;
     }
     if (auto hook = EmbeddedModal::beforeModalShown()) hook();
     if (sfzLibraryWindow == nullptr)
     {
         sfzLibraryWindow = std::make_unique<imgui::DuskPanelWindow> (
-            "dusk-studio-sfz-library", "sfz-library", "SFZ instrument library");
+            "dusk-studio-sfz-library", "sfz-library", "SFZ Manager");
         sfzLibraryWindow->setShellKeys (imgui::PanelShellKeys::dialog);
         imgui::DuskPanelWindow::Callbacks callbacks;
         callbacks.dismissed = [this] { closeSfzLibrary(); };
@@ -4347,7 +4348,7 @@ void ChannelStripComponent::openSfzLibrary()
             {
                 if (sourceOpen) sourceOpen (url);
                 else if (! dusk::desktop::openHttpsUrl (url))
-                    showDuskAlert (*self, "SFZ library", "The source website could not be opened.");
+                    showDuskAlert (*self, "SFZ Manager", "The source website could not be opened.");
             }
         },
         [safe]
@@ -4366,12 +4367,25 @@ void ChannelStripComponent::openSfzLibrary()
                 {
                     auto* target = safe.getComponent();
                     if (target == nullptr) return;
-                    filebrowser::open (*target, { "Load soundfont (.sfz / .sf2)", {}, "*.sfz;*.sf2", filebrowser::Mode::Open },
+                    filebrowser::open (*target, { "Load soundfont (.sfz / .sf2 / .bank.xml)", {}, "*.sfz;*.sf2;*.bank.xml", filebrowser::Mode::Open },
                         [safe] (const auto& file)
                         {
                             if (auto* owner = safe.getComponent(); owner != nullptr && file.existsAsFile())
+                            {
+                                auto soundfont = file;
+                                if (file.getFileName().toLowerCase().endsWith (".bank.xml"))
+                                {
+                                    const auto bank = AriaBank::tryLoadFromSfz (file);
+                                    if (! bank || bank->programs.empty())
+                                    {
+                                        showDuskAlert (*owner, "Bank load failed", "Bank manifest had no programs.");
+                                        return;
+                                    }
+                                    soundfont = bank->programs.front().sfzFile;
+                                }
                                 owner->loadNativeMultisampleForChannel (
-                                    std::filesystem::u8path (file.getFullPathName().toStdString()), {}, true);
+                                    std::filesystem::u8path (soundfont.getFullPathName().toStdString()), {}, true);
+                            }
                         });
                 });
         }));
@@ -4390,7 +4404,7 @@ void ChannelStripComponent::openSfzLibrary()
         sfzLibraryDim.reset();
         sfzLibraryHider.restore();
         const auto& error = sfzLibraryWindow->lastOpenFailure();
-        showDuskAlert (*topLevel, "SFZ library", error.empty() ? "The library cannot open on this display backend." : error.c_str());
+        showDuskAlert (*topLevel, "SFZ Manager", error.empty() ? "The manager cannot open on this display backend." : error.c_str());
     }
    #endif
 }

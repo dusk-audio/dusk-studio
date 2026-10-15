@@ -53,7 +53,7 @@ private:
     // Declared together so the library button costs the header no new
     // framework name; the coupling ratchet counts occurrences, not members.
     juce::TextButton browseButton   { "Browse..." },
-                     libraryButton  { "Library..." };
+                     libraryButton  { "SFZ Manager..." };
     juce::TextButton reloadButton   { "Reload" };
     juce::TextButton clearButton    { "Clear" };
 

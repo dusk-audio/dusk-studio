@@ -376,10 +376,10 @@ void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, c
         ctx.expect (! ctx.engine().getChannelStrip (kStripIndex).isNativeMultisampleLoaded(), "blank strip retained an instrument");
         ctx.expect (host.clickInsert (kStripIndex), "empty strip insert chooser was not reachable");
     }, [&ctx] { return ! ctx.engine().getSfzLibrary().snapshot().busy; }, "SFZ service initialization did not finish" });
-    steps.push_back ({ 0, [] {}, [&host] { return host.clickModalButton ("SFZ Library..."); },
-                      "insert chooser did not offer SFZ Library", {}, kSettleBoundMs });
+    steps.push_back ({ 0, [] {}, [&host] { return host.clickModalButton ("SFZ Manager..."); },
+                      "insert chooser did not offer SFZ Manager", {}, kSettleBoundMs });
     steps.push_back ({ 0, [] {}, [&host] { return host.sfzLibraryOpen (kStripIndex); },
-                      "SFZ Library did not open from the empty strip chooser", {}, kSettleBoundMs });
+                      "SFZ Manager did not open from the empty strip chooser", {}, kSettleBoundMs });
     pushClick (steps, host, ctx, "installed-tab");
     steps.push_back ({ 0, [&ctx, state]
     { ctx.expect (state->transport->requests.load() == 0, "opening Installed started an HTTP request"); } });

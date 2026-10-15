@@ -34,6 +34,9 @@ canonical source.
 
 ### Fixed
 
+- **SFZ Manager entry point.** The insert chooser opens one manager for online,
+  downloaded and local instruments. Its separate Soundfont choice is removed;
+  local SFZ, SF2 and ARIA bank files remain available through the manager.
 - **SFZ playback volume.** Fresh instruments apply the displayed master volume
   before their first note. The default 0 dB previously left sfizz's −7.35 dB
   initial attenuation in place until the volume control was moved.

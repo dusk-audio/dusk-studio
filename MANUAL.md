@@ -1752,7 +1752,7 @@ A **Built-In** section sits at the top of the list, above the manufacturer group
 The insert chooser and the bottom of the picker also provide these actions where applicable:
 
 - **Hardware insert**: configure the slot as an external hardware insert instead of a plugin.
-- **Soundfont (.sfz / .sf2 / .bank.xml)**: open a soundfont directly. Choosing this on an audio track converts the track to MIDI; see *Multi-sample instruments*.
+- **SFZ Manager...**: browse downloaded instruments, online repositories and local soundfont files. Loading an instrument on an audio track converts the track to MIDI; see *Multi-sample instruments*.
 - **Browse file…**: load a plugin by file path (useful for plugins not yet in the scan cache).
 - **Scan plugins**: re-scan.
 
@@ -1945,7 +1945,7 @@ When you load a session:
 
 ## Multi-sample instruments
 
-Click a track's **Insert** slot and choose **Soundfont (.sfz / .sf2 / .bank.xml)** to load one through the **sfizz** engine. If the track is not already MIDI, Dusk Studio converts it automatically. An ARIA bank manifest resolves to the bank's first program. Most SoundFont and SFZ instrument libraries work directly. The processor exposes three runtime overrides:
+Click a track's **Insert** slot and choose **SFZ Manager...** to load an instrument through the **sfizz** engine. To open a file already on your computer, choose **Local SFZ folders**, then pick an instrument or use **Open local file...** for an `.sfz`, `.sf2` or `.bank.xml` file. If the track is not already MIDI, Dusk Studio converts it automatically. An ARIA bank manifest resolves to the bank's first program. Most SoundFont and SFZ instrument libraries work directly. The processor exposes three runtime overrides:
 
 - **Master volume**: −60 to +12 dB, defaulting to 0 dB.
 - **Master tune**: −100 to +100 cents.
@@ -1953,7 +1953,7 @@ Click a track's **Insert** slot and choose **Soundfont (.sfz / .sf2 / .bank.xml)
 
 ### Instrument library
 
-**Library...** in the soundfont editor opens the instrument library. You can also choose **SFZ Library...** from a track's Insert menu. The **Installed** tab lists downloaded instrument packs, and **Online** browses Creative Commons SFZ instruments from external repositories. **Local SFZ folders** opens the folder library for `.sfz` and `.sf2` files already on this computer. **Browse...** still opens a file directly.
+**SFZ Manager...** in the soundfont editor or a track's Insert menu opens the manager. The **Installed** tab lists downloaded instrument packs, and **Online** browses Creative Commons SFZ instruments from external repositories. **Local SFZ folders** opens the folder library for `.sfz` and `.sf2` files already on this computer; its **Open local file...** button also accepts ARIA `.bank.xml` manifests. **Browse...** in the soundfont editor opens a file directly.
 
 ![Instrument library](docs/images/ms-02-sfz-library.png)
 
