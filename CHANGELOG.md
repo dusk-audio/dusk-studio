@@ -29,6 +29,8 @@ canonical source.
 
 ### Fixed
 
+- **SFZ instrument captions.** Crowded ARIA skin labels stay centred over their
+  controls and fit between adjacent captions, keeping drum-kit text readable.
 - **Shared audio reader workers.** Three workers fill immutable playback
   windows near the playhead and release distant sample buffers. Seeking primes
   the new position before it becomes audible; loop and offline render paths
