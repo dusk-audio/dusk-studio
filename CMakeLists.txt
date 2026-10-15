@@ -162,6 +162,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # on CMP0091=NEW (guaranteed by cmake_minimum_required 3.22).
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    # Source text and string literals must not depend on the Windows code page.
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")
 endif()
 
 # Emit compile_commands.json so clangd / editor tooling resolves JUCE +
