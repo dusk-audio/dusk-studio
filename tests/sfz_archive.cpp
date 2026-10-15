@@ -3,18 +3,23 @@
 #include "engine/sfz/SfzArchive.h"
 #include "foundation/Fs.h"
 
-#include <archive.h>
-#include <archive_entry.h>
 #include <sodium.h>
 
 #include <array>
 #include <cstdint>
+#include <clocale>
 #include <fstream>
 #include <iterator>
-#include <memory>
 #include <string>
 #include <system_error>
 #include <vector>
+
+#if ! defined(_WIN32)
+ #include <locale.h>
+ #if defined(__APPLE__)
+  #include <xlocale.h>
+ #endif
+#endif
 
 using namespace duskstudio::sfz;
 
@@ -36,40 +41,56 @@ struct Member
     std::string name;
     std::string data;
     bool directory = false;
-    std::string symlink;
+    std::string symlink {};
 };
 
 std::vector<unsigned char> zip (const std::vector<Member>& members)
 {
-    std::vector<unsigned char> bytes (2 * 1024 * 1024);
-    std::size_t written = 0;
-    std::unique_ptr<struct archive, decltype (&archive_write_free)> writer (
-        archive_write_new(), archive_write_free);
-    REQUIRE (writer);
-    REQUIRE (archive_write_set_format_zip (writer.get()) == ARCHIVE_OK);
-    REQUIRE (archive_write_set_format_option (writer.get(), "zip", "compression", "store") == ARCHIVE_OK);
-    REQUIRE (archive_write_set_format_option (writer.get(), "zip", "hdrcharset", "UTF-8") == ARCHIVE_OK);
-    REQUIRE (archive_write_open_memory (writer.get(), bytes.data(), bytes.size(), &written) == ARCHIVE_OK);
+    std::vector<unsigned char> bytes, central;
+    const auto append = [] (auto& target, std::uint32_t value, unsigned width)
+    {
+        for (unsigned i = 0; i < width; ++i)
+            target.push_back (static_cast<unsigned char> (value >> (8 * i)));
+    };
+    const auto checksum = [] (const std::string& data)
+    {
+        std::uint32_t crc = 0xffffffff;
+        for (const char byte : data)
+        {
+            crc ^= static_cast<unsigned char> (byte);
+            for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ (0xedb88320U & (0U - (crc & 1U)));
+        }
+        return ~crc;
+    };
+    // Write raw UTF-8 stored entries so fixture creation cannot depend on the process locale.
     for (const auto& member : members)
     {
-        std::unique_ptr<struct archive_entry, decltype (&archive_entry_free)> entry (
-            archive_entry_new(), archive_entry_free);
-        REQUIRE (entry);
-        archive_entry_set_pathname_utf8 (entry.get(), member.name.c_str());
-        archive_entry_set_perm (entry.get(), member.directory ? 0755 : 0644);
-        archive_entry_set_filetype (entry.get(), ! member.symlink.empty() ? AE_IFLNK
-                                                : member.directory ? AE_IFDIR : AE_IFREG);
-        if (! member.symlink.empty())
-            archive_entry_set_symlink_utf8 (entry.get(), member.symlink.c_str());
-        archive_entry_set_size (entry.get(), member.directory || ! member.symlink.empty()
-                                            ? 0 : static_cast<la_int64_t> (member.data.size()));
-        REQUIRE (archive_write_header (writer.get(), entry.get()) == ARCHIVE_OK);
-        if (! member.data.empty())
-            REQUIRE (archive_write_data (writer.get(), member.data.data(), member.data.size())
-                     == static_cast<la_ssize_t> (member.data.size()));
+        REQUIRE (member.name.size() <= 0xffff);
+        REQUIRE (member.data.size() < 2 * 1024 * 1024);
+        const auto data = ! member.symlink.empty() ? member.symlink : member.directory ? std::string {} : member.data;
+        const auto crc = checksum (data);
+        const auto size = static_cast<std::uint32_t> (data.size());
+        const auto offset = static_cast<std::uint32_t> (bytes.size());
+        const auto nameSize = static_cast<std::uint32_t> (member.name.size());
+        const std::uint32_t mode = ! member.symlink.empty() ? 0120644U : member.directory ? 0040755U : 0100644U;
+        append (bytes, 0x04034b50, 4); append (bytes, 20, 2); append (bytes, 0x0800, 2);
+        append (bytes, 0, 2); append (bytes, 0, 2); append (bytes, 33, 2); append (bytes, crc, 4);
+        append (bytes, size, 4); append (bytes, size, 4); append (bytes, nameSize, 2); append (bytes, 0, 2);
+        bytes.insert (bytes.end(), member.name.begin(), member.name.end());
+        bytes.insert (bytes.end(), data.begin(), data.end());
+        append (central, 0x02014b50, 4); append (central, 0x0314, 2); append (central, 20, 2);
+        append (central, 0x0800, 2); append (central, 0, 2); append (central, 0, 2); append (central, 33, 2);
+        append (central, crc, 4); append (central, size, 4); append (central, size, 4); append (central, nameSize, 2);
+        append (central, 0, 2); append (central, 0, 2); append (central, 0, 2); append (central, 0, 2);
+        append (central, (mode << 16) | (member.directory ? 0x10U : 0U), 4); append (central, offset, 4);
+        central.insert (central.end(), member.name.begin(), member.name.end());
     }
-    REQUIRE (archive_write_close (writer.get()) == ARCHIVE_OK);
-    bytes.resize (written);
+    REQUIRE (members.size() <= 0xffff);
+    const auto offset = static_cast<std::uint32_t> (bytes.size());
+    bytes.insert (bytes.end(), central.begin(), central.end());
+    append (bytes, 0x06054b50, 4); append (bytes, 0, 2); append (bytes, 0, 2);
+    append (bytes, static_cast<std::uint32_t> (members.size()), 2); append (bytes, static_cast<std::uint32_t> (members.size()), 2);
+    append (bytes, static_cast<std::uint32_t> (central.size()), 4); append (bytes, offset, 4); append (bytes, 0, 2);
     return bytes;
 }
 
@@ -179,9 +200,21 @@ TEST_CASE ("SFZ ZIP extraction strips only the expected root and verifies its li
     OperationProgress latest;
     OperationControl control;
     control.progress = [&latest] (const OperationProgress& progress) { latest = progress; };
+    const std::string originalCtype = std::setlocale (LC_CTYPE, nullptr);
+   #if defined(_WIN32)
+    const int originalLocaleMode = _configthreadlocale (0);
+   #else
+    const auto originalThreadLocale = uselocale (nullptr);
+   #endif
     const auto result = extractZip (request, control);
     INFO (result.error);
     REQUIRE (result);
+    CHECK (std::string (std::setlocale (LC_CTYPE, nullptr)) == originalCtype);
+   #if defined(_WIN32)
+    CHECK (_configthreadlocale (0) == originalLocaleMode);
+   #else
+    CHECK (uselocale (nullptr) == originalThreadLocale);
+   #endif
     REQUIRE (result.sfzPaths == std::vector<std::string> { u8"Étude.sfz" });
     CHECK (result.files == 3);
     CHECK (result.expandedBytes == instrument.size() + license.size() + 12);
@@ -481,8 +514,8 @@ TEST_CASE ("SFZ ZIP extraction reads a ZIP64 end directory")
     put (records, 4, 44, 8);
     put (records, 12, 45, 2);
     put (records, 14, 45, 2);
-    put (records, 24, count, 8);
-    put (records, 32, count, 8);
+    put (records, 24, static_cast<std::uint64_t> (count), 8);
+    put (records, 32, static_cast<std::uint64_t> (count), 8);
     put (records, 40, directoryBytes, 8);
     put (records, 48, directoryOffset, 8);
     put (records, 56, 0x07064b50, 4);

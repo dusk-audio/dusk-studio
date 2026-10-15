@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <clocale>
 #include <cstdio>
 #include <cwchar>
 #include <cstring>
@@ -25,8 +26,12 @@
 #else
  #include <dirent.h>
  #include <fcntl.h>
+ #include <locale.h>
  #include <sys/stat.h>
  #include <unistd.h>
+ #if defined(__APPLE__)
+  #include <xlocale.h>
+ #endif
 #endif
 
 namespace duskstudio::sfz
@@ -34,6 +39,57 @@ namespace duskstudio::sfz
 namespace
 {
 constexpr std::size_t kChunkBytes = 64 * 1024;
+
+class ScopedUtf8Locale
+{
+public:
+    ScopedUtf8Locale()
+    {
+       #if defined(_WIN32)
+        const auto* current = std::setlocale (LC_CTYPE, nullptr);
+        if (current == nullptr) return;
+        previousName = current;
+        previousMode = _configthreadlocale (_ENABLE_PER_THREAD_LOCALE);
+        if (previousMode != -1) valid = std::setlocale (LC_CTYPE, ".UTF8") != nullptr;
+       #else
+        const auto current = uselocale (nullptr);
+        for (const char* name : { "C.UTF-8", "en_US.UTF-8", "UTF-8" })
+        {
+            auto base = duplocale (current);
+            if (base == nullptr) return;
+            locale = newlocale (LC_CTYPE_MASK, name, base);
+            if (locale == nullptr) { freelocale (base); continue; }
+            previous = uselocale (locale);
+            valid = previous != nullptr;
+            return;
+        }
+       #endif
+    }
+    ~ScopedUtf8Locale()
+    {
+       #if defined(_WIN32)
+        if (previousMode != -1)
+        {
+            std::setlocale (LC_CTYPE, previousName.c_str());
+            _configthreadlocale (previousMode);
+        }
+       #else
+        if (previous != nullptr) uselocale (previous);
+        if (locale != nullptr) freelocale (locale);
+       #endif
+    }
+    ScopedUtf8Locale (const ScopedUtf8Locale&) = delete;
+    ScopedUtf8Locale& operator= (const ScopedUtf8Locale&) = delete;
+    bool valid = false;
+
+private:
+   #if defined(_WIN32)
+    int previousMode = -1;
+    std::string previousName;
+   #else
+    locale_t previous = nullptr, locale = nullptr;
+   #endif
+};
 
 #if defined(_WIN32)
 std::wstring windowsPath (const std::filesystem::path& path)
@@ -685,6 +741,9 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
         if (! preflight (input, request, control, entries, result)) return result;
         std::uint64_t totalBytes = 0;
         for (const auto& entry : entries) totalBytes += entry.expanded;
+        // libarchive converts header names through CTYPE even when ZIP names are UTF-8.
+        const ScopedUtf8Locale utf8;
+        if (! utf8.valid) return fail ("Cannot enable UTF-8 ZIP pathname decoding");
         Staging staging (request.stagingDirectory);
         if (! staging.valid) return fail ("Staging directory is not empty or cannot be safely opened");
         std::unique_ptr<struct archive, decltype (&archive_read_free)> reader (
@@ -708,7 +767,10 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
             const auto readStatus = archive_read_next_header (reader.get(), &decoded);
             if (readStatus == ARCHIVE_EOF) break;
             if (readStatus != ARCHIVE_OK || decoded == nullptr)
-                return fail ("ZIP entry cannot be decoded");
+            {
+                const auto* detail = archive_error_string (reader.get());
+                return fail (std::string ("ZIP entry cannot be decoded") + (detail ? std::string (": ") + detail : ""));
+            }
             if ((archive_format (reader.get()) & ARCHIVE_FORMAT_BASE_MASK) != ARCHIVE_FORMAT_ZIP
                 || archive_entry_is_encrypted (decoded) != 0
                 || archive_entry_symlink (decoded) != nullptr

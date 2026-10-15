@@ -93,9 +93,9 @@ struct Reply
 {
     std::string body;
     int status = 200;
-    HttpHeaders headers;
+    HttpHeaders headers {};
     std::size_t chunkBytes = 32768;
-    std::function<void (std::size_t)> afterChunk;
+    std::function<void (std::size_t)> afterChunk {};
     bool hold = false;
 };
 
@@ -445,7 +445,10 @@ TEST_CASE ("SFZ library resumes extraction from a completed locally verified par
 {
     Tree tree;
     const auto bytes = archiveBytes();
-    const auto pack = packFor (bytes);
+    const auto normalized = providerPackFromJson (providerPackToJson (packFor (bytes)));
+    REQUIRE (normalized);
+    REQUIRE (normalized.pack);
+    const auto pack = *normalized.pack;
     const auto transport = std::make_shared<ScriptedTransport>();
     LibraryService service (tree.root, transport);
     settled (service);
@@ -459,6 +462,7 @@ TEST_CASE ("SFZ library resumes extraction from a completed locally verified par
     service.setHeavyWork (false);
     REQUIRE (service.resume());
     const auto result = settled (service);
+    INFO (result.error);
     REQUIRE (result.state == LibraryState::Complete);
     REQUIRE (result.installed.size() == 1);
     REQUIRE (transport->count() == 0);
