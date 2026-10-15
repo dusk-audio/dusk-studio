@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <exception>
 #include <set>
+#include <sstream>
 #include <utility>
 
 namespace duskstudio::sfz
@@ -66,6 +68,174 @@ bool https (std::string_view value)
         || value.find_first_of ("\r\n\t \\") != std::string_view::npos) return false;
     const auto authority = value.substr (8, value.find_first_of ("/?#", 8) - 8);
     return ! authority.empty() && authority.find ('@') == std::string_view::npos;
+}
+
+std::optional<std::uint64_t> popularity (const Json& object, const char* key)
+{
+    const auto value = object.find (key);
+    if (value == object.end()) return {};
+    if (value->is_number_unsigned()) return value->get<std::uint64_t>();
+    if (value->is_number_integer() && value->get<std::int64_t>() >= 0)
+        return static_cast<std::uint64_t> (value->get<std::int64_t>());
+    return {};
+}
+
+void artifactDemos (const Json& object, ProviderPresentation& presentation)
+{
+    const auto links = object.find ("more_info");
+    if (links == object.end() || ! links->is_array() || links->size() > 64) return;
+    std::set<std::string> seen;
+    for (const auto& link : *links)
+    {
+        if (! link.is_string()) continue;
+        const auto url = link.get<std::string>();
+        if (url.size() > 2048 || url.find ('\0') != std::string::npos || ! https (url)) continue;
+        if (std::any_of (url.begin(), url.end(), [] (unsigned char c) { return c <= 32 || c == 127; })) continue;
+        const auto start = url.find_first_of ("/?#", 8);
+        if (start == std::string::npos || url[start] != '/') continue;
+        const auto host = lower (url.substr (8, start - 8));
+        const auto path = url.substr (start, url.find_first_of ("?#", start) - start);
+        std::string label;
+        if ((host == "youtube.com" || host == "www.youtube.com" || host == "m.youtube.com")
+            && ((path == "/watch" && url.find ("v=", start) != std::string::npos)
+                || path.compare (0, 7, "/embed/") == 0 || path.compare (0, 8, "/shorts/") == 0)) label = "YouTube demo";
+        else if (host == "youtu.be" && path.size() > 1) label = "YouTube demo";
+        else if ((host == "vimeo.com" || host == "www.vimeo.com") && decimalId (std::string_view (path).substr (1))) label = "Vimeo demo";
+        else if ((host == "soundcloud.com" || host == "www.soundcloud.com") && path.size() > 3
+            && path.find ('/', 1) != std::string::npos && path.back() != '/') label = "SoundCloud demo";
+        else
+        {
+            const auto extension = path.find_last_of ('.');
+            const auto suffix = extension == std::string::npos ? std::string {} : lower (path.substr (extension));
+            if (suffix == ".mp3" || suffix == ".wav" || suffix == ".flac" || suffix == ".ogg"
+                || suffix == ".m4a" || suffix == ".opus") label = "Audio demo";
+        }
+        if (! label.empty() && seen.insert (url).second) presentation.demos.push_back ({ label, url });
+        if (presentation.demos.size() == 4) break;
+    }
+}
+
+std::string scalar (std::string value)
+{
+    const auto first = value.find_first_not_of (' ');
+    if (first == std::string::npos) return {};
+    value.erase (0, first);
+    if (value.empty() || value.size() > 2048 || value.find_first_of ("\\\t\r\n") != std::string::npos) return {};
+    if (value.front() == '\'' || value.front() == '"')
+    {
+        const auto end = value.find (value.front(), 1);
+        if (end == std::string::npos) return {};
+        const auto tail = value.find_first_not_of (' ', end + 1);
+        if (tail != std::string::npos && value[tail] != '#') return {};
+        return value.substr (1, end - 1);
+    }
+    const auto comment = value.find (" #");
+    if (comment != std::string::npos) value.resize (comment);
+    while (! value.empty() && value.back() == ' ') value.pop_back();
+    if (value.find_first_of ("[]{}&*!|>'\"") != std::string::npos) return {};
+    return value;
+}
+
+std::optional<std::string> catalogPage (std::string_view text, const std::string& repository)
+{
+    // Project explicit repository URLs and simple page slugs, without interpreting general YAML.
+    struct Entry
+    {
+        bool active = false, invalid = false, downloads = false, hasPage = false, hasUrl = false;
+        std::string category, page;
+        std::set<std::string> repositories;
+    } entry;
+    std::string category;
+    bool categoryPage = false;
+    std::set<std::string> pages;
+    const auto pageSegment = [] (const std::string& value)
+    { return repositoryName (value) && value.find ('.') == std::string::npos; };
+    const auto finish = [&]
+    {
+        if (entry.active && ! entry.invalid && pageSegment (entry.category) && pageSegment (entry.page)
+            && entry.repositories.size() == 1 && *entry.repositories.begin() == lower (repository))
+            pages.insert (entry.category + "/" + entry.page);
+    };
+    std::istringstream input { std::string (text) };
+    std::string line;
+    std::size_t lines = 0, entries = 0;
+    while (std::getline (input, line))
+    {
+        if (++lines > 8192 || line.size() > 2048 || line.find ('\t') != std::string::npos) return {};
+        if (! line.empty() && line.back() == '\r') line.pop_back();
+        const auto indent = line.find_first_not_of (' ');
+        if (indent == std::string::npos || line[indent] == '#') continue;
+        const auto content = line.substr (indent);
+        if (indent == 0 && content.compare (0, 7, "- name:") == 0)
+        { finish(); entry = {}; category.clear(); categoryPage = false; }
+        else if (indent == 2 && content.compare (0, 5, "page:") == 0)
+        { if (categoryPage) return {}; category = scalar (content.substr (5)); categoryPage = true; }
+        else if (indent == 2 && content.compare (0, 7, "- name:") == 0)
+        {
+            finish(); entry = {}; entry.active = true; entry.category = category;
+            if (++entries > 4096) return {};
+        }
+        else if (entry.active && indent == 4)
+        {
+            if (content == "downloads:") entry.downloads = true;
+            else if (content.compare (0, 8, "- label:") != 0) entry.downloads = false;
+            if (content.compare (0, 5, "page:") == 0)
+            { if (entry.hasPage) entry.invalid = true; entry.page = scalar (content.substr (5)); entry.hasPage = true; }
+            if (content.compare (0, 4, "url:") == 0 && entry.hasUrl) entry.invalid = true;
+        }
+        if (! entry.active || ! ((indent == 4 || ((indent == 6 || indent == 8) && entry.downloads))
+            && content.compare (0, 4, "url:") == 0)) continue;
+        if (indent == 4) entry.hasUrl = true;
+        const auto url = scalar (content.substr (4));
+        constexpr std::string_view prefix = "https://github.com/sfzinstruments/";
+        if (! https (url) || url.compare (0, prefix.size(), prefix) != 0) continue;
+        const auto name = url.substr (prefix.size(), url.find_first_of ("/?#", prefix.size()) - prefix.size());
+        const auto suffix = url.substr (prefix.size() + name.size());
+        if (repositoryName (name) && (suffix.empty() || suffix == "/" || suffix.compare (0, 19, "/releases/download/") == 0))
+            entry.repositories.insert (lower (name));
+    }
+    finish();
+    return pages.size() == 1 ? std::optional<std::string> (*pages.begin()) : std::nullopt;
+}
+
+OperationResult githubDemos (HttpTransport& transport, const std::string& repository,
+                             ProviderPresentation& presentation, const OperationControl& control)
+{
+    HttpRequest request;
+    request.url = "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml";
+    request.connectTimeoutSeconds = 3; request.timeoutSeconds = 5; request.lowSpeedSeconds = 3;
+    const auto catalog = fetchHttpText (transport, request, 131072, control);
+    const auto catalogStatus = control.status();
+    if (catalogStatus != OperationStatus::Complete) return { catalogStatus, "Source demo lookup interrupted" };
+    if (catalog.status == OperationStatus::Paused || catalog.status == OperationStatus::Cancelled)
+        return { catalog.status, catalog.error };
+    if (! catalog || catalog.response.statusCode != 200) return { OperationStatus::Complete, {} };
+    const auto page = catalogPage (catalog.body, repository);
+    if (! page) return { OperationStatus::Complete, {} };
+    request.url = "https://sfzinstruments.github.io/" + *page + "/";
+    const auto html = fetchHttpText (transport, request, 262144, control);
+    const auto htmlStatus = control.status();
+    if (htmlStatus != OperationStatus::Complete) return { htmlStatus, "Source demo lookup interrupted" };
+    if (html.status == OperationStatus::Paused || html.status == OperationStatus::Cancelled)
+        return { html.status, html.error };
+    if (! html || html.response.statusCode != 200 || html.response.url != request.url)
+        return { OperationStatus::Complete, {} };
+    const auto audio = "/assets/audio/" + *page + ".mp3";
+    std::size_t offset = 0;
+    while ((offset = html.body.find ('<', offset)) != std::string::npos)
+    {
+        if (html.body.compare (offset, 4, "<!--") == 0)
+        { const auto end = html.body.find ("-->", offset + 4); if (end == std::string::npos) break; offset = end + 3; continue; }
+        const auto end = html.body.find ('>', offset + 1);
+        if (end == std::string::npos) break;
+        const auto tag = html.body.substr (offset, end - offset + 1);
+        if (tag.compare (0, 7, "<audio ") == 0
+            && (tag.find (" src=\"" + audio + "\"") != std::string::npos
+                || tag.find (" src='" + audio + "'") != std::string::npos))
+        { presentation.demos.push_back ({ "Listen on SFZ Instruments", request.url }); break; }
+        offset = end + 1;
+    }
+    return { OperationStatus::Complete, {} };
 }
 
 std::string encode (std::string_view value, bool retainSlash = false)
@@ -330,6 +500,18 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
         "https://github.com/sfzinstruments/" + summary.locator + "/blob/" + revision + "/" + encode (path, true), recognized->constraints };
     std::sort (pack.instruments.begin(), pack.instruments.end(), [] (const auto& a, const auto& b)
     { return a.relativePath < b.relativePath; });
+    pack.presentation.stars = popularity (repository.json, "stargazers_count");
+    try
+    {
+        const auto demo = githubDemos (transport, summary.locator, pack.presentation, control);
+        if (! demo) { result.status = demo.status; result.error = demo.error; return result; }
+    }
+    catch (const std::exception&)
+    {
+        const auto status = control.status();
+        if (status != OperationStatus::Complete)
+        { result.status = status; result.error = "Source demo lookup interrupted"; return result; }
+    }
     result.pack = std::move (pack);
     result.status = OperationStatus::Complete;
     return result;
@@ -409,6 +591,8 @@ ProviderPackResult artifactPack (HttpTransport& transport, const ProviderSummary
         }
     }
     if (pack.displayName.empty()) return fail ("Artifact name is missing");
+    pack.presentation.favorites = popularity (detail.json, "favorite_count");
+    artifactDemos (detail.json, pack.presentation);
     result.pack = std::move (pack);
     result.status = OperationStatus::Complete;
     return result;
@@ -449,6 +633,7 @@ ProviderPageResult browseProvider (HttpTransport& transport, const std::string& 
         summary.description = string (entry, "description", 4096);
         if (github)
         {
+            summary.presentation.stars = popularity (entry, "stargazers_count");
             summary.locator = summary.name;
             summary.author = string (dusk::json::child (entry, "owner"), "login", 100);
             const auto disabled = entry.find ("disabled"), privateRepo = entry.find ("private");
@@ -463,6 +648,7 @@ ProviderPageResult browseProvider (HttpTransport& transport, const std::string& 
         }
         else
         {
+            summary.presentation.favorites = popularity (entry, "favorite_count");
             summary.locator = summary.packId;
             summary.author = string (entry, "author", 256);
             const auto license = artifactLicense (string (entry, "license", 100));
@@ -501,6 +687,7 @@ ProviderPackResult resolveProviderPack (HttpTransport& transport, const Provider
 
 std::string providerPackToJson (const ProviderPack& pack)
 {
+    // Source popularity and demos must not change receipts or resumable-download identities.
     Json instruments = Json::array();
     for (const auto& instrument : pack.instruments)
         instruments.push_back ({ { "id", instrument.id }, { "name", instrument.name },

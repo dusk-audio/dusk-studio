@@ -31,6 +31,7 @@ namespace fs = std::filesystem;
 using Json = dusk::json::Json;
 using namespace sfz;
 constexpr const char* kCc0 = "Creative Commons CC0 1.0 Universal\nhttps://creativecommons.org/publicdomain/zero/1.0/\n";
+constexpr const char* kDemoPage = "https://sfzinstruments.github.io/woodwinds/dusk_gui/";
 
 std::string hash (std::string_view bytes)
 {
@@ -135,6 +136,17 @@ public:
             if (! body (R"({"message":"Fixture repository rate limit"})")) return stopped();
             return { OperationStatus::Complete, {} };
         }
+        if (request.url == "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml"
+            || request.url == kDemoPage)
+        {
+            const bool page = request.url == kDemoPage;
+            const auto bytes = page ? std::string ("<audio src=\"/assets/audio/woodwinds/dusk_gui.mp3\" controls></audio>")
+                : "- name: \"Woodwinds\"\n  page: \"woodwinds\"\n  instruments:\n  - name: \"Fixture\"\n"
+                  "    page: \"dusk_gui\"\n    url: \"" + source + "\"\n";
+            if (! headers ({ 200, request.url, { { "content-type", page ? "text/html" : "text/plain" } } })) return stopped();
+            if (! body (bytes)) return stopped();
+            return { OperationStatus::Complete, {} };
+        }
         if (request.url == archiveUrl)
         {
             std::size_t offset = 0;
@@ -180,6 +192,7 @@ public:
         }
         Json reply;
         const Json repo { { "id", std::stoull (packId) }, { "name", name }, { "description", "Two CC0 SFZ fixture instruments" },
+                          { "stargazers_count", 7 },
                           { "owner", { { "login", "sfzinstruments" } } }, { "private", false }, { "disabled", false },
                           { "license", { { "spdx_id", "CC0-1.0" } } } };
         if (request.url == "https://api.github.com/orgs/sfzinstruments/repos?type=public&sort=full_name&per_page=50&page=1") reply = Json::array ({ repo });
@@ -219,7 +232,8 @@ public:
 struct CaseState
 {
     std::shared_ptr<RepositoryTransport> transport;
-    fs::path restore, originalDirectory, blank, capture;
+    fs::path restore, originalDirectory, blank, capture, onlineCapture, compactCapture;
+    std::vector<int> originalWindow;
     std::int64_t originalPlayhead = 0;
     std::uint64_t generation = 0, cloneGeneration = 0;
     unsigned requests = 0;
@@ -244,6 +258,9 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
     state->restore = ctx.tempDir() / "restore.json";
     state->blank = ctx.tempDir() / "blank.json";
     state->capture = ctx.tempDir() / "sfz-library.png";
+    state->onlineCapture = ctx.tempDir() / "sfz-online.png";
+    state->compactCapture = ctx.tempDir() / "sfz-online-compact.png";
+    state->originalWindow = host.mainWindowSize();
     state->originalDirectory = currentSessionDirectory (ctx.session());
     state->originalPlayhead = ctx.engine().getTransport().getPlayhead();
     if (! ctx.expect (! state->transport->archive.empty(), "could not make the licensed SFZ ZIP fixture")
@@ -257,6 +274,8 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
         host.captureSfzSources (kStripIndex, false);
         if (auto* strip = host.strip (kStripIndex)) strip->closeEditor();
         if (auto* strip = host.strip (1)) strip->closeEditor();
+        if (state->originalWindow.size() >= 2)
+            host.resizeMainWindow (state->originalWindow[0], state->originalWindow[1]);
         auto& engine = ctx.engine();
         auto& service = engine.getSfzLibrary();
         if (state->rendering) { engine.setAssetRenderActive (false); state->rendering = false; }
@@ -394,6 +413,8 @@ void pushFinish (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, 
         host.closeSfzLibrary (kStripIndex);
         if (auto* strip = host.strip (kStripIndex)) strip->closeEditor();
         if (auto* strip = host.strip (1)) strip->closeEditor();
+        if (state->originalWindow.size() >= 2)
+            host.resizeMainWindow (state->originalWindow[0], state->originalWindow[1]);
         drainModals (host);
         ctx.engine().stop();
         reopenSavedSession (host, state->restore);
@@ -438,13 +459,34 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     pushStart (*steps, host, ctx, state);
     pushClick (*steps, host, ctx, "source-link");
     pushClick (*steps, host, ctx, "license-link");
+    pushClick (*steps, host, ctx, "demo-0");
     steps->push_back ({ 0, [&host, &ctx, state]
     {
         const auto pack = ctx.engine().getSfzLibrary().snapshot().pack;
         const auto links = host.sfzSourceRequests (kStripIndex);
-        if (ctx.expect (pack.has_value() && links.size() == 2, "source buttons did not request exactly two websites"))
-            ctx.expect (links[0] == state->transport->source && links[1] == pack->license.sourceUrl, "source button URLs differ from the repository and verified license");
-    }, [&host] { return host.sfzSourceRequests (kStripIndex).size() >= 2; }, "source buttons did not dispatch" });
+        if (ctx.expect (pack.has_value() && links.size() == 3, "source and demo buttons did not request exactly three websites"))
+        {
+            ctx.expect (links[0] == pack->sourceUrl && links[1] == pack->license.sourceUrl && links[2] == kDemoPage,
+                        "source button URLs differ from the selected version, verified license or published demo");
+            ctx.expect (pack->presentation.stars == 7 && ! pack->presentation.favorites,
+                        "the repository's popularity metadata was not retained");
+        }
+        ctx.expect (! state->transport->archiveEntered.load(), "listening to a demo downloaded the instrument archive");
+    }, [&host] { return host.sfzSourceRequests (kStripIndex).size() >= 3; }, "source and demo buttons did not dispatch" });
+    steps->push_back ({ 0, [&host, state] { host.captureSfzLibrary (kStripIndex, state->onlineCapture); } });
+    steps->push_back ({ 0, [&ctx, state]
+    {
+        std::error_code error;
+        ctx.expect (fs::file_size (state->onlineCapture, error) > 0 && ! error, "online SFZ library capture was not written");
+    }, [state] { std::error_code error; return fs::is_regular_file (state->onlineCapture, error); }, "online SFZ library capture did not arrive" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.resizeMainWindow (820, 680), "the SFZ library could not use a compact main window"); } });
+    steps->push_back ({ 150, [&host, state] { host.captureSfzLibrary (kStripIndex, state->compactCapture); } });
+    steps->push_back ({ 0, [&ctx, state]
+    {
+        std::error_code error;
+        ctx.expect (fs::file_size (state->compactCapture, error) > 0 && ! error, "compact SFZ library capture was not written");
+    }, [state] { std::error_code error; return fs::is_regular_file (state->compactCapture, error); }, "compact SFZ library capture did not arrive" });
     pushWorkClick (*steps, host, ctx, state, "download", LibraryState::Complete);
     pushInstalledSelection (*steps, host, ctx, state);
     steps->push_back ({ 0, [&ctx, state]
@@ -458,6 +500,8 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     pushClick (*steps, host, ctx, "instrument");
     pushClick (*steps, host, ctx, "instrument-choice-1");
     pushClick (*steps, host, ctx, "load");
+    steps->push_back ({ 0, [&host, state]
+    { if (state->originalWindow.size() >= 2) host.resizeMainWindow (state->originalWindow[0], state->originalWindow[1]); } });
     steps->push_back ({ 0, [&host, &ctx, state]
     {
         const auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();

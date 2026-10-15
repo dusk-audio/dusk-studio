@@ -591,6 +591,8 @@ The channel strip is completely unaware that its audio came from a plugin rather
 
 The instrument library has Installed and Online views, reached from the insert chooser and multi-sample editor. SFZ Instruments GitHub repositories and Musical Artifacts JSON listings are external sources, not a Dusk-hosted catalog. Resolve explicit Creative Commons licensing before download and display its constraints. GitHub archives are pinned to a commit and receive a locally computed archive SHA-256; verify a published upstream SHA-256 when the source supplies one.
 
+Show source-provided stars or favorites as popularity counts, preserving unavailable versus zero. Published source demos open in the browser before any instrument archive download; a missing demo is explicit. This optional presentation metadata stays outside installed receipts, managed identities and resumable download keys.
+
 One owned worker fetches bounded metadata and streams archives, checks portable paths and extraction limits, then atomically publishes a complete staged pack. Recording, bounce and freeze pause library work; resuming is explicit. Cancellation cleans unfinished state. Cached listings are available offline, and neither startup nor session restoration contacts a provider.
 
 Session format 11 stores managed source, pack, release, actual archive digest, instrument identity and relative SFZ entrypoint. Versions coexist; an absent pack leaves its slot offline with the identity intact. Direct local files keep their file reference. Removal refuses packs used by the current session or a pending load.

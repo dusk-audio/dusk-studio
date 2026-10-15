@@ -282,5 +282,23 @@
         "binarySha256": "6d38187047031b2a38394549e7cf3054fc83972d3563d5fa15f2c53617aaacaa"
       }
     }
-  ]
+  ],
+  "source_demo_check": {
+    "demos": [
+      {
+        "label": "Listen on SFZ Instruments",
+        "url": "https://sfzinstruments.github.io/woodwinds/ixox_flute/"
+      }
+    ],
+    "instrumentArchiveRequests": 0,
+    "license": "CC-BY-4.0",
+    "repository": "Ixox.Flute",
+    "stars": 3,
+    "validated_at_utc": "2026-10-15T01:37:15.774926+00:00",
+    "source_sha256": {
+      "src/engine/sfz/SfzProvider.cpp": "642e46da9ea7407d1f47eb70628deb7bf47c7c556190193c8f1cbc4215e68145",
+      "src/engine/sfz/SfzProvider.h": "8bc85e7a520a491bfcf7e5abba670ef4d9ec2b64cdb069a92cca5cb56ecb0872"
+    },
+    "harness": "Public provider API linked against the production app objects; live HTTPS metadata only"
+  }
 }

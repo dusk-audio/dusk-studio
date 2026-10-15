@@ -6,6 +6,8 @@
 #include <sodium.h>
 
 #include <array>
+#include <functional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -25,6 +27,7 @@ struct Reply
     int status = 200;
     HttpHeaders headers {};
     std::string raw {};
+    std::function<void()> beforeBody {};
 };
 
 class FakeTransport final : public HttpTransport
@@ -43,6 +46,8 @@ public:
         };
         if (control.status() != OperationStatus::Complete) return stopped();
         if (! headers ({ reply.status, request.url, reply.headers })) return stopped();
+        if (reply.beforeBody) reply.beforeBody();
+        if (control.status() != OperationStatus::Complete) return stopped();
         const auto bytes = reply.raw.empty() ? reply.json.dump() : reply.raw;
         if (! body (bytes)) return stopped();
         return { OperationStatus::Complete, {} };
@@ -132,7 +137,15 @@ TEST_CASE ("SFZ providers expose external repository sources", "[sfz][provider]"
 TEST_CASE ("SFZ Instruments browsing filters known non-CC licenses and retains pagination", "[sfz][provider]")
 {
     FakeTransport transport;
-    transport.replies = { { Json::array ({ repository(), repository (43, "Synth", "GPL-3.0"),
+    auto item = repository();
+    std::optional<std::uint64_t> stars;
+    SECTION ("Missing popularity stays unknown") {}
+    SECTION ("Zero is a real count") { item["stargazers_count"] = 0; stars = 0; }
+    SECTION ("Source stars are retained") { item["stargazers_count"] = 17; stars = 17; }
+    SECTION ("Negative counts are ignored") { item["stargazers_count"] = -1; }
+    SECTION ("Fractional counts are ignored") { item["stargazers_count"] = 1.5; }
+    SECTION ("String counts are ignored") { item["stargazers_count"] = "17"; }
+    transport.replies = { { Json::array ({ item, repository (43, "Synth", "GPL-3.0"),
                                            repository (44, "Unknown", "NOASSERTION") }), 200,
                            { { "link", "<https://api.github.com/orgs/sfzinstruments/repos?per_page=50&page=2>; rel=\"next\"" },
                              { "x-ratelimit-remaining", "57" } } } };
@@ -140,6 +153,8 @@ TEST_CASE ("SFZ Instruments browsing filters known non-CC licenses and retains p
     REQUIRE (result);
     REQUIRE (result.items.size() == 2);
     CHECK (result.items[0].packId == "42");
+    CHECK (result.items[0].presentation.stars == stars);
+    CHECK_FALSE (result.items[0].presentation.favorites);
     CHECK (result.items[1].licenseHint == "NOASSERTION");
     CHECK (result.nextPage == 2);
     CHECK (result.rateLimit.remaining == "57");
@@ -178,6 +193,39 @@ TEST_CASE ("SFZ Instruments resolves pinned archives with actual LICENSE bytes",
 {
     FakeTransport transport;
     transport.replies = githubReplies();
+    transport.replies[0].json["stargazers_count"] = 7;
+    const std::string catalog = "- name: \"Woodwinds\"\n  page: \"woodwinds\"\n  instruments:\n"
+        "  - name: \"Grand Piano\"\n    page: \"grand_piano\"\n"
+        "    url: \"https://github.com/sfzinstruments/Grand-Piano\"\n";
+    std::string projection = catalog;
+    std::string html = "<audio src=\"/assets/audio/woodwinds/grand_piano.mp3\" controls></audio>";
+    bool demo = false;
+    int optionalStatus = 200;
+    SECTION ("Explicit catalog match and published audio") { demo = true; }
+    SECTION ("Matching download repository")
+    {
+        projection = "- name: \"Woodwinds\"\n  page: \"woodwinds\"\n  instruments:\n"
+            "  - name: \"Grand Piano\"\n    page: \"grand_piano\"\n    downloads:\n"
+            "    - label: \"Instrument\"\n      url: \"https://github.com/sfzinstruments/Grand-Piano/releases/download/v1/pack.zip\"\n";
+        demo = true;
+    }
+    SECTION ("Different repository is not guessed from its title")
+    { projection.replace (projection.find ("/Grand-Piano"), 12, "/Other-Piano"); }
+    SECTION ("Conflicting catalog pages are ambiguous")
+    { projection += "  - name: \"Other version\"\n    page: \"other\"\n    url: \"https://github.com/sfzinstruments/Grand-Piano\"\n"; }
+    SECTION ("Duplicate page property is ambiguous") { projection += "    page: \"other\"\n"; }
+    SECTION ("No audio element") { html = "<p>No preview published.</p>"; }
+    SECTION ("Commented audio is not published") { html = "<!--" + html + "-->"; }
+    SECTION ("Different audio asset is not guessed") { html = "<audio src=\"/assets/audio/other.mp3\"></audio>"; }
+    SECTION ("Unsafe catalog page is ignored") { projection.replace (projection.find ("grand_piano"), 11, "../outside"); }
+    SECTION ("Non-HTTPS mapping is ignored") { projection.replace (projection.find ("https:"), 6, "http:"); }
+    SECTION ("Optional metadata denial does not invalidate license") { optionalStatus = 403; }
+    SECTION ("Optional transport exception does not invalidate license")
+    {
+        transport.replies.push_back ({ {}, 200, {}, "catalog", [] { throw std::runtime_error ("Fixture connection failure"); } });
+    }
+    transport.replies.push_back ({ {}, optionalStatus, {}, projection });
+    transport.replies.push_back ({ {}, 200, {}, html });
     const auto result = resolveProviderPack (transport, githubSummary());
     REQUIRE (result);
     REQUIRE (result.pack);
@@ -190,10 +238,17 @@ TEST_CASE ("SFZ Instruments resolves pinned archives with actual LICENSE bytes",
     CHECK (pack.license.text == kLicenseText);
     CHECK (pack.license.path == "LICENSE");
     CHECK (pack.license.sha256.size() == 64);
+    CHECK (pack.presentation.stars == 7);
+    CHECK (pack.presentation.demos.size() == (demo ? 1 : 0));
+    if (demo)
+    {
+        CHECK (pack.presentation.demos.front().url == "https://sfzinstruments.github.io/woodwinds/grand_piano/");
+        CHECK (transport.requests.back().timeoutSeconds == 5);
+    }
     REQUIRE (pack.instruments.size() == 2);
     CHECK (pack.instruments.front().candidateOnly);
     CHECK (pack.instruments.back().relativePath == "Instruments/Piano.sfz");
-    CHECK (transport.requests.back().url.find ("ref=" + kCommit) != std::string::npos);
+    CHECK (transport.requests[3].url.find ("ref=" + kCommit) != std::string::npos);
     REQUIRE (providerPackFromJson (providerPackToJson (pack)));
 }
 
@@ -238,18 +293,44 @@ TEST_CASE ("SFZ Instruments rejects incomplete trees and unsafe candidate paths"
 TEST_CASE ("Musical Artifacts browsing excludes generic free and gray-area items", "[sfz][provider]")
 {
     FakeTransport transport;
-    transport.replies = { { Json::array ({ artifact(), artifact (78, "public"), artifact (79, "gray"),
+    auto item = artifact();
+    std::optional<std::uint64_t> favorites;
+    SECTION ("Missing favorites stay unknown") {}
+    SECTION ("Zero favorites are retained") { item["favorite_count"] = 0; favorites = 0; }
+    SECTION ("Source favorites are retained") { item["favorite_count"] = 23; favorites = 23; }
+    SECTION ("Negative favorites are ignored") { item["favorite_count"] = -2; }
+    SECTION ("Fractional favorites are ignored") { item["favorite_count"] = 3.5; }
+    transport.replies = { { Json::array ({ item, artifact (78, "public"), artifact (79, "gray"),
                                            artifact (80, "gpl-v3"), artifact (81, "by-nc-nd") }) } };
     const auto result = browseProvider (transport, "musical-artifacts");
     REQUIRE (result);
     REQUIRE (result.items.size() == 2);
+    CHECK (result.items.front().presentation.favorites == favorites);
+    CHECK_FALSE (result.items.front().presentation.stars);
     CHECK (result.items.back().licenseHint == "CC-BY-NC-ND-4.0");
 }
 
 TEST_CASE ("Musical Artifacts resolves declared CC packs and retains upstream SHA-256", "[sfz][provider]")
 {
     FakeTransport transport;
-    transport.replies = { { artifact() }, { artifactLicenses() } };
+    auto item = artifact();
+    std::size_t demos = 0;
+    item["favorite_count"] = 0;
+    SECTION ("No optional demos") {}
+    SECTION ("Known media and direct audio links")
+    {
+        item["more_info"] = Json::array ({ "https://www.youtube.com/watch?v=demo", "https://vimeo.com/12345",
+            "https://soundcloud.com/artist/track", "https://example.org/audio.mp3", "https://example.org/audio.mp3" });
+        demos = 4;
+    }
+    SECTION ("Ordinary links and unsafe URLs are not demos")
+    {
+        item["more_info"] = Json::array ({ "https://example.org/about", "http://youtu.be/demo", "javascript:alert(1)",
+            "https://youtube.com.evil.invalid/watch?v=demo", "https://user@youtube.com/watch?v=demo", "https://www.youtube.com/channel/demo" });
+    }
+    SECTION ("Unbounded optional link list is ignored")
+    { item["more_info"] = std::vector<std::string> (65, "https://youtu.be/demo"); }
+    transport.replies = { { item }, { artifactLicenses() } };
     const auto result = resolveProviderPack (transport, artifactSummary());
     REQUIRE (result);
     REQUIRE (result.pack);
@@ -259,6 +340,8 @@ TEST_CASE ("Musical Artifacts resolves declared CC packs and retains upstream SH
     CHECK (pack.advertisedBytes == 1024);
     CHECK (pack.license.id == "CC-BY-4.0");
     CHECK (pack.license.path.empty());
+    CHECK (pack.presentation.favorites == 0);
+    CHECK (pack.presentation.demos.size() == demos);
     CHECK (pack.license.text.find ("Creative Commons Attribution 4.0") != std::string::npos);
     REQUIRE (pack.instruments.size() == 1);
     CHECK (pack.instruments.front().relativePath == "Piano/Piano.sfz");
@@ -372,6 +455,21 @@ TEST_CASE ("SFZ cached descriptors validate paths, pins, and license receipts of
         CHECK (result.pack->instruments.front().id == pack.instruments.front().id);
         return;
     }
+    SECTION ("Presentation does not change receipt or resume identity")
+    {
+        auto decorated = pack;
+        decorated.presentation.stars = 99;
+        decorated.presentation.favorites = 2;
+        decorated.presentation.demos.push_back ({ "Source demo", "https://example.org/demo.mp3" });
+        CHECK (providerPackToJson (decorated) == providerPackToJson (pack));
+        cached["presentation"] = { { "stars", 999 }, { "demos", Json::array ({ "https://example.org/demo.mp3" }) } };
+        const auto result = providerPackFromJson (cached.dump());
+        REQUIRE (result);
+        CHECK_FALSE (result.pack->presentation.stars);
+        CHECK_FALSE (result.pack->presentation.favorites);
+        CHECK (result.pack->presentation.demos.empty());
+        return;
+    }
     SECTION ("Traversal path") { cached["instruments"][0]["path"] = "../Piano.sfz"; }
     SECTION ("Mutable Git branch") { cached["release_id"] = "main"; }
     SECTION ("Tampered license text") { cached["license"]["text"] = "MIT License"; }
@@ -386,8 +484,32 @@ TEST_CASE ("SFZ provider requests can pause before using the transport", "[sfz][
 {
     FakeTransport transport;
     OperationControl control;
-    control.paused = [] { return true; };
-    CHECK (browseProvider (transport, "sfzinstruments", 1, {}, control).status == OperationStatus::Paused);
-    CHECK (resolveProviderPack (transport, githubSummary(), control).status == OperationStatus::Paused);
-    CHECK (transport.requests.empty());
+    SECTION ("Paused before any request")
+    {
+        control.paused = [] { return true; };
+        CHECK (browseProvider (transport, "sfzinstruments", 1, {}, control).status == OperationStatus::Paused);
+        CHECK (resolveProviderPack (transport, githubSummary(), control).status == OperationStatus::Paused);
+        CHECK (transport.requests.empty());
+    }
+    SECTION ("Pause during optional demo lookup is preserved")
+    {
+        bool paused = false;
+        control.paused = [&paused] { return paused; };
+        transport.replies = githubReplies();
+        transport.replies.push_back ({ {}, 200, {}, "catalog", [&paused] { paused = true; } });
+        const auto result = resolveProviderPack (transport, githubSummary(), control);
+        CHECK (result.status == OperationStatus::Paused);
+        CHECK_FALSE (result.pack);
+        CHECK (transport.requests.size() == 5);
+    }
+    SECTION ("Cancel during optional demo lookup is preserved")
+    {
+        bool cancelled = false;
+        control.cancelled = [&cancelled] { return cancelled; };
+        transport.replies = githubReplies();
+        transport.replies.push_back ({ {}, 200, {}, "catalog", [&cancelled] { cancelled = true; } });
+        const auto result = resolveProviderPack (transport, githubSummary(), control);
+        CHECK (result.status == OperationStatus::Cancelled);
+        CHECK_FALSE (result.pack);
+    }
 }

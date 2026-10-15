@@ -3,6 +3,7 @@
 #include "SfzTransfer.h"
 
 #include <optional>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -14,9 +15,21 @@ struct ProviderSource
     std::string id, name, url;
 };
 
+struct ProviderDemo
+{
+    std::string label, url;
+};
+
+struct ProviderPresentation
+{
+    std::optional<std::uint64_t> stars {}, favorites {};
+    std::vector<ProviderDemo> demos {};
+};
+
 struct ProviderSummary
 {
     std::string sourceId, packId, locator, name, author, description, sourceUrl, licenseHint;
+    ProviderPresentation presentation {};
 };
 
 struct ProviderRateLimit
@@ -50,6 +63,7 @@ struct ProviderPack
     bool versionPinned = false;
     ProviderLicense license;
     std::vector<ProviderInstrument> instruments;
+    ProviderPresentation presentation {};
 };
 
 struct ProviderPackResult : OperationResult

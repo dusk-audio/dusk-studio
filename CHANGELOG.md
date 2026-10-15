@@ -21,6 +21,8 @@ canonical source.
   to Installed. Downloads can pause, resume and cancel. Installed versions
   coexist, and sessions find the same pack on another machine without its old
   absolute path. Missing packs stay offline without downloading on session load.
+  A larger, responsive browser shows source stars or favorites and opens
+  published demos before downloading an instrument pack.
 - **Complete MIDI channel controls.** Recording, import, session save and
   playback keep pitch bend, channel and polyphonic pressure, and program changes
   alongside notes and CCs.
