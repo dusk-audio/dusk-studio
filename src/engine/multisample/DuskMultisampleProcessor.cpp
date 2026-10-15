@@ -45,6 +45,8 @@ DuskMultisampleProcessor::DuskMultisampleProcessor()
     impl->synth = sfizz_create_synth();
     // sfizz allocates per-voice state lazily on activate(), so the ctor is
     // cheap.
+    // Match sfizz's initial gain so the first render applies our requested volume.
+    if (impl->synth != nullptr) lastAppliedVolDb = sfizz_get_volume (impl->synth);
 
     // -1 = "CC never set by the UI" so widgets fall back to their own
     // default instead of snapping to 0.

@@ -1945,7 +1945,7 @@ When you load a session:
 
 Click a track's **Insert** slot and choose **Soundfont (.sfz / .sf2 / .bank.xml)** to load one through the **sfizz** engine. If the track is not already MIDI, Dusk Studio converts it automatically. An ARIA bank manifest resolves to the bank's first program. Most SoundFont and SFZ instrument libraries work directly. The processor exposes three runtime overrides:
 
-- **Master volume**: −60 to +12 dB.
+- **Master volume**: −60 to +12 dB, defaulting to 0 dB.
 - **Master tune**: −100 to +100 cents.
 - **Polyphony cap**: 1 to 256 voices.
 

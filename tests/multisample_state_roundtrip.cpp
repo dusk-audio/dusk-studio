@@ -5,6 +5,8 @@
 
 #include <juce_data_structures/juce_data_structures.h>
 
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -233,6 +235,77 @@ struct ScopedPathCleanup
 
 constexpr auto kPresetFallbackText = "using preset 0";
 } // namespace
+
+TEST_CASE ("DuskMultisampleProcessor applies the requested volume before its first note", "[multisample][sfz][gain]")
+{
+    const ScopedPathCleanup cleanup { createUniqueTempSoundfontDirectory() };
+    REQUIRE_FALSE (cleanup.path.empty());
+    const auto path = cleanup.path / "level.sfz";
+    {
+        std::ofstream file (path);
+        file << "<region> key=69 sample=*sine amp_veltrack=0 ampeg_attack=0 ampeg_decay=0 ampeg_sustain=100\n";
+        REQUIRE (file.good());
+    }
+    const juce::File sfz { juce::String (path.u8string()) };
+    duskstudio::DuskMultisampleProcessor fresh, reference;
+    juce::String loadError;
+    REQUIRE (fresh.loadSfzFile (sfz, loadError));
+    REQUIRE (reference.loadSfzFile (sfz, loadError));
+    float requestedDb = 0.0f;
+    SECTION ("A new instrument starts at unity") {}
+    SECTION ("Reloading retains the requested unity gain")
+    {
+        REQUIRE (fresh.reloadCurrentFile (loadError));
+    }
+    SECTION ("A saved unity gain is restored into a fresh instance")
+    {
+        std::vector<std::uint8_t> state;
+        REQUIRE (reference.saveState (state));
+        REQUIRE (fresh.loadState (state));
+    }
+    SECTION ("A requested attenuation is preserved") { requestedDb = -12.0f; }
+    SECTION ("A requested boost is preserved") { requestedDb = 6.0f; }
+
+    const auto renderEnergy = [requestedDb] (duskstudio::DuskMultisampleProcessor& processor, bool moveVolume)
+    {
+        constexpr int blockSize = 256;
+        std::string error;
+        REQUIRE (processor.activate (48000.0, blockSize, error));
+        std::array<float, blockSize> left {}, right {};
+        float* outputs[] { left.data(), right.data() };
+        dusk::MidiBuffer midi;
+        midi.reserveBytes (128);
+        duskstudio::hosting::PortBuffers io;
+        io.mainOut = outputs;
+        io.mainOutChannels = 2;
+        io.numFrames = blockSize;
+        io.midiIn = &midi;
+        io.offlineRender = true;
+        processor.getOverrides().masterVolDb.store (moveVolume ? -6.0f : requestedDb, std::memory_order_relaxed);
+        processor.processBlock (io);
+        processor.getOverrides().masterVolDb.store (requestedDb, std::memory_order_relaxed);
+        const std::uint8_t note[] { 0x90, 69, 127 };
+        REQUIRE (midi.addEvent (note, 3, 0));
+        double energy = 0.0;
+        for (int block = 0; block < 24; ++block)
+        {
+            left.fill (0.0f);
+            right.fill (0.0f);
+            processor.processBlock (io);
+            midi.clear();
+            if (block < 4) continue;
+            for (std::size_t sample = 0; sample < left.size(); ++sample)
+                energy += static_cast<double> (left[sample]) * left[sample]
+                        + static_cast<double> (right[sample]) * right[sample];
+        }
+        return energy;
+    };
+    const auto freshEnergy = renderEnergy (fresh, false);
+    const auto referenceEnergy = renderEnergy (reference, true);
+    REQUIRE (freshEnergy > 1.0e-6);
+    REQUIRE (referenceEnergy > 1.0e-6);
+    REQUIRE_THAT (std::sqrt (freshEnergy / referenceEnergy), WithinAbs (1.0, 1.0e-4));
+}
 
 // DuskMultisampleProcessor persists its file path + override params
 // (master volume / tune / polyphony) via saveState + loadState. A session

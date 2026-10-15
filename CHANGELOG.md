@@ -32,6 +32,9 @@ canonical source.
 
 ### Fixed
 
+- **SFZ playback volume.** Fresh instruments apply the displayed master volume
+  before their first note. The default 0 dB previously left sfizz's −7.35 dB
+  initial attenuation in place until the volume control was moved.
 - **SFZ search keyboard submission.** Enter and keypad Enter start the search,
   including when the parent window receives the search field's keyboard input.
 - **SFZ instrument captions.** Crowded ARIA skin labels stay centred over their
