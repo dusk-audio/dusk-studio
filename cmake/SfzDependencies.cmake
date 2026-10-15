@@ -25,16 +25,40 @@ if(WIN32)
     target_link_libraries(dusk_sfz_dependencies INTERFACE
         CURL::libcurl LibArchive::LibArchive ZLIB::ZLIB utf8proc::utf8proc)
 elseif(APPLE)
-    find_package(CURL 7.62.0 REQUIRED)
-    find_package(LibArchive 3.4.0 REQUIRED)
-    find_package(ZLIB REQUIRED)
-    target_link_libraries(dusk_sfz_dependencies INTERFACE
-        CURL::libcurl LibArchive::LibArchive ZLIB::ZLIB)
-
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(DUSKSTUDIO_UTF8PROC QUIET IMPORTED_TARGET GLOBAL libutf8proc>=2.11.3)
+    set(_duskstudio_sfz_sdk "${CMAKE_OSX_SYSROOT}")
+    if(NOT IS_DIRECTORY "${_duskstudio_sfz_sdk}")
+        execute_process(COMMAND xcrun --sdk macosx --show-sdk-path
+            OUTPUT_VARIABLE _duskstudio_sfz_sdk OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _duskstudio_sfz_sdk_result)
+        if(NOT _duskstudio_sfz_sdk_result EQUAL 0)
+            message(FATAL_ERROR "The macOS SDK is required for SFZ HTTPS support")
+        endif()
     endif()
+    find_path(DUSKSTUDIO_SDK_CURL_INCLUDE_DIR curl/curl.h
+        PATHS "${_duskstudio_sfz_sdk}/usr/include" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    find_library(DUSKSTUDIO_SDK_CURL_LIBRARY curl
+        PATHS "${_duskstudio_sfz_sdk}/usr/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    find_library(DUSKSTUDIO_SDK_ZLIB_LIBRARY z
+        PATHS "${_duskstudio_sfz_sdk}/usr/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    find_library(DUSKSTUDIO_SDK_ICONV_LIBRARY iconv
+        PATHS "${_duskstudio_sfz_sdk}/usr/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    file(STRINGS "${DUSKSTUDIO_SDK_CURL_INCLUDE_DIR}/curl/curlver.h" _duskstudio_sfz_curl_version
+        REGEX "^#define[\t ]+LIBCURL_VERSION[\t ]+\"" LIMIT_COUNT 1)
+    string(REGEX REPLACE "^#define[\t ]+LIBCURL_VERSION[\t ]+\"([^\"]+)\".*" "\\1"
+        _duskstudio_sfz_curl_version "${_duskstudio_sfz_curl_version}")
+    if(NOT _duskstudio_sfz_curl_version MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+       OR _duskstudio_sfz_curl_version VERSION_LESS 7.62.0)
+        message(FATAL_ERROR "SFZ HTTPS support requires macOS SDK libcurl >= 7.62.0")
+    endif()
+    add_library(CURL::libcurl UNKNOWN IMPORTED)
+    set_target_properties(CURL::libcurl PROPERTIES
+        IMPORTED_LOCATION "${DUSKSTUDIO_SDK_CURL_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${DUSKSTUDIO_SDK_CURL_INCLUDE_DIR}")
+    message(STATUS "libcurl: macOS SDK ${_duskstudio_sfz_curl_version}")
+    find_package(LibArchive 3.4.0 REQUIRED)
+    target_link_libraries(dusk_sfz_dependencies INTERFACE
+        CURL::libcurl LibArchive::LibArchive
+        "${DUSKSTUDIO_SDK_ZLIB_LIBRARY}" "${DUSKSTUDIO_SDK_ICONV_LIBRARY}")
 else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(DUSKSTUDIO_CURL REQUIRED IMPORTED_TARGET GLOBAL libcurl>=7.62.0)
@@ -45,7 +69,7 @@ else()
 endif()
 
 if(NOT WIN32)
-    if(DUSKSTUDIO_UTF8PROC_FOUND)
+    if(DUSKSTUDIO_UTF8PROC_FOUND AND NOT APPLE)
         target_link_libraries(dusk_sfz_dependencies INTERFACE PkgConfig::DUSKSTUDIO_UTF8PROC)
     else()
         include(FetchContent)
@@ -60,6 +84,6 @@ if(NOT WIN32)
         target_compile_features(dusk_utf8proc PRIVATE c_std_99)
         set_target_properties(dusk_utf8proc PROPERTIES POSITION_INDEPENDENT_CODE ON)
         target_link_libraries(dusk_sfz_dependencies INTERFACE dusk_utf8proc)
-        message(STATUS "utf8proc: pinned 2.11.3 source (system development package absent or older)")
+        message(STATUS "utf8proc: pinned 2.11.3 source (macOS deployment target or no compatible system package)")
     endif()
 endif()
