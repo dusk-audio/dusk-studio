@@ -2,9 +2,22 @@ add_library(dusk_sfz_dependencies INTERFACE)
 target_link_libraries(dusk_sfz_dependencies INTERFACE dusk_sodium)
 
 if(WIN32)
+    # Prefix-only builds bypass vcpkg's wrapper for zlib 1.3.2's zs/zsd names.
+    if(NOT ZLIB_LIBRARY)
+        find_library(ZLIB_LIBRARY_RELEASE
+            NAMES zs z zlibstatic zlibstat zlib
+            HINTS ${ZLIB_ROOT} ${CMAKE_PREFIX_PATH}
+            PATH_SUFFIXES lib
+            NO_DEFAULT_PATH)
+        find_library(ZLIB_LIBRARY_DEBUG
+            NAMES zsd zd zlibstaticd zlibstatd zlibd z
+            HINTS ${ZLIB_ROOT} ${CMAKE_PREFIX_PATH}
+            PATH_SUFFIXES debug/lib
+            NO_DEFAULT_PATH)
+    endif()
+    find_package(ZLIB REQUIRED)
     find_package(CURL CONFIG REQUIRED)
     find_package(utf8proc CONFIG REQUIRED)
-    find_package(ZLIB REQUIRED)
 
     # Prefix-only Windows builds do not run vcpkg's FindLibArchive wrapper,
     # which supplies the static archive's zlib dependency and library name.
