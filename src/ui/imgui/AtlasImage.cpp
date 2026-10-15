@@ -44,6 +44,10 @@ void AtlasImage::rasterise (ImFontAtlas& atlas)
     }
 
     atlas.CalcCustomRectUV (packed, &uv[0], &uv[1]);
+    uv[0].x += 0.5f / static_cast<float> (textureWidth);
+    uv[0].y += 0.5f / static_cast<float> (textureHeight);
+    uv[1].x -= 0.5f / static_cast<float> (textureWidth);
+    uv[1].y -= 0.5f / static_cast<float> (textureHeight);
     source = &atlas;
 }
 

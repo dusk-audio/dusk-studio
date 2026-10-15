@@ -245,6 +245,19 @@ private:
                 visible.push_back (i);
     }
 
+    void clearPreview (float height)
+    {
+        if (! artworkRequest.empty())
+        {
+            service.artwork().cancel();
+            artworkRequest.clear();
+            previewPixels.reset();
+        }
+        ImGui::Dummy ({ ImGui::GetContentRegionAvail().x, height });
+        ImGui::TextUnformatted ("All instruments");
+        ImGui::Separator();
+    }
+
     void drawPreview (dw::Context& ctx, float height, const std::string& key, const std::string& title,
                       sfz::InstrumentCategory category, const std::string& url, bool allowNetwork)
     {
@@ -268,7 +281,11 @@ private:
         if (ready && previewPixels == artwork.pixels) preview.draw (*ImGui::GetWindowDrawList(), at, end);
         ImGui::Dummy ({ end.x - at.x, height });
         remember ("preview");
-        if (ready && previewPixels == artwork.pixels) remember (artwork.sourceImage ? "preview-source" : "preview-generic");
+        if (ready && previewPixels == artwork.pixels)
+        {
+            remember (artwork.sourceImage ? "preview-source" : "preview-generic");
+            remember (std::string ("preview-category-") + sfz::kInstrumentCategories[static_cast<std::size_t> (category)].id);
+        }
         formTooltip (ready && artwork.sourceImage ? url.c_str() : instrumentArtworkCredit (category));
         const auto caption = title.empty() ? std::string (sfz::kInstrumentCategories[static_cast<std::size_t> (category)].name) : title;
         const auto captionAt = ImGui::GetCursorScreenPos();
@@ -590,8 +607,10 @@ private:
                 title = displayTitle (selectedSummary->name, selectedSummary->sourceId);
                 imageUrl = resolved ? resolved->presentation.artworkUrl : selectedSummary->presentation.artworkUrl;
             }
-            drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
-                selectedSummary ? summaryKey (*selectedSummary) : "online-category", title, category, imageUrl, ! pageCached);
+            if (selectedSummary || onlineCategory >= 0)
+                drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
+                    selectedSummary ? summaryKey (*selectedSummary) : "online-category", title, category, imageUrl, ! pageCached);
+            else clearPreview (std::min (ctx.s (164), bodyHeight * 0.30f));
             beginCategoryList (ctx, onlineCategory, onlineCounts);
             filterRows (onlineRows, onlineCategory, visibleOnline, onlineFilterDirty);
             if (ImGui::BeginChild ("##sfz-online-list", { 0, 0 }, ImGuiChildFlags_None))
@@ -740,19 +759,21 @@ private:
         {
             auto category = installedCategory < 0 ? sfz::InstrumentCategory::Other : static_cast<sfz::InstrumentCategory> (installedCategory);
             std::string imageUrl, title;
-            if (selected)
+            const BrowserRow* selectedRow = nullptr;
+            for (const auto& entry : installedRows)
+                if (&snapshot.installed[entry.pack] == selected
+                    && snapshot.installed[entry.pack].instruments[entry.instrument].id == selectedInstrument)
+                { selectedRow = &entry; break; }
+            if (selectedRow)
             {
                 imageUrl = selected->provider.presentation.artworkUrl;
-                title = displayTitle (selected->provider.displayName, selected->provider.sourceId);
-                for (const auto& instrument : selected->instruments)
-                    if (instrument.id == selectedInstrument)
-                    {
-                        title = displayTitle (instrument.name, selected->provider.sourceId);
-                        category = sfz::instrumentCategory (instrument.name, instrument.relativePath + " " + selected->provider.presentation.categoryHint);
-                    }
+                title = selectedRow->title;
+                category = selectedRow->category;
             }
-            drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
-                selected ? packKey (*selected) + "/" + selectedInstrument : "installed-category", title, category, imageUrl, false);
+            if (selectedRow || installedCategory >= 0)
+                drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
+                    selectedRow ? packKey (*selected) + "/" + selectedInstrument : "installed-category", title, category, imageUrl, false);
+            else clearPreview (std::min (ctx.s (164), bodyHeight * 0.30f));
             beginCategoryList (ctx, installedCategory, installedCounts);
             filterRows (installedRows, installedCategory, visibleInstalled, installedFilterDirty, installedQuery.data());
             if (selectedInstalled.empty()) selected = nullptr;
