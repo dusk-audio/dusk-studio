@@ -489,12 +489,12 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     {
         const auto window = host.mainWindowSize();
         if (! ctx.expect (window.size() >= 4, "the main window reported no resize limits")) return;
-        const auto width = (std::max) (820, window[2]);
-        const auto height = (std::max) (680, window[3]);
+        const auto width = (std::max) (window[2], (std::min) (820, window[0]));
+        const auto height = (std::max) (window[3], (std::min) (680, window[1]));
         const auto resized = host.resizeMainWindow (width, height);
         const auto actual = host.mainWindowSize();
         ctx.expect (resized,
-                    "the SFZ library could not use the smallest legal compact main window: requested "
+                    "the SFZ library could not use a fitting compact main window: requested "
                         + std::to_string (width) + "x" + std::to_string (height) + ", actual "
                         + (actual.size() >= 2 ? std::to_string (actual[0]) + "x" + std::to_string (actual[1]) : "unknown")
                         + ", minimum " + std::to_string (window[2]) + "x" + std::to_string (window[3])
