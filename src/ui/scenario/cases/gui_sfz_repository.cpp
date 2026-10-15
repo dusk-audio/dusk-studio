@@ -489,8 +489,16 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     {
         const auto window = host.mainWindowSize();
         if (! ctx.expect (window.size() >= 4, "the main window reported no resize limits")) return;
-        ctx.expect (host.resizeMainWindow ((std::max) (820, window[2]), (std::max) (680, window[3])),
-                    "the SFZ library could not use the smallest legal compact main window");
+        const auto width = (std::max) (820, window[2]);
+        const auto height = (std::max) (680, window[3]);
+        const auto resized = host.resizeMainWindow (width, height);
+        const auto actual = host.mainWindowSize();
+        ctx.expect (resized,
+                    "the SFZ library could not use the smallest legal compact main window: requested "
+                        + std::to_string (width) + "x" + std::to_string (height) + ", actual "
+                        + (actual.size() >= 2 ? std::to_string (actual[0]) + "x" + std::to_string (actual[1]) : "unknown")
+                        + ", minimum " + std::to_string (window[2]) + "x" + std::to_string (window[3])
+                        + ", scale " + std::to_string (host.uiScale()));
     }, [&host] { return std::abs (host.uiScale() - 1.5) < 0.001; }, "the compact UI scale did not take effect" });
     steps->push_back ({ 150, [&host, state] { host.captureSfzLibrary (kStripIndex, state->compactCapture); } });
     steps->push_back ({ 0, [&ctx, state]
