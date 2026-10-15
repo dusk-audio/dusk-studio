@@ -195,8 +195,11 @@ LibraryService::LibraryService (fs::path root, std::shared_ptr<HttpTransport> su
 
 LibraryService::~LibraryService()
 {
-    stopping.store (true, std::memory_order_release);
-    cancelRequested.store (true, std::memory_order_release);
+    {
+        const std::lock_guard<std::mutex> lock (mutex);
+        stopping.store (true, std::memory_order_release);
+        cancelRequested.store (true, std::memory_order_release);
+    }
     wake.notify_one();
     if (worker.joinable()) worker.join();
 }

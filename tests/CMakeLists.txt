@@ -973,8 +973,11 @@ catch_discover_tests(dusk-studio-tests
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "~[alsa]~[ipc]~[host-limits]")
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "[ipc]"
+    TEST_SPEC "[ipc]~[sfz-shutdown]"
     PROPERTIES RUN_SERIAL TRUE)
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[sfz-shutdown]"
+    PROPERTIES RUN_SERIAL TRUE TIMEOUT 30)
 
 if(APPLE)
     target_link_libraries(dusk-studio-tests PRIVATE dusk-coremidi "-framework CoreAudio")

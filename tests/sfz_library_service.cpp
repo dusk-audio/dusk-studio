@@ -525,3 +525,23 @@ TEST_CASE ("SFZ library destruction cancels a paused install and releases its ow
     REQUIRE (ownedInstallFiles (tree) == 0);
     REQUIRE (transport->count() == 1);
 }
+
+TEST_CASE ("SFZ library shutdown joins an idle worker after acknowledged jobs", "[sfz][service][ipc][sfz-shutdown]")
+{
+    Tree tree;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    bool refresh = false;
+    SECTION ("Initialization has just finished") {}
+    SECTION ("An installed scan has just finished") { refresh = true; }
+    for (int iteration = 0; iteration < 64; ++iteration)
+    {
+        LibraryService service (tree.root, transport);
+        REQUIRE (settled (service).state == LibraryState::Idle);
+        if (refresh)
+        {
+            REQUIRE (service.requestInstalled());
+            REQUIRE (settled (service).state == LibraryState::Complete);
+        }
+    }
+    REQUIRE (transport->count() == 0);
+}
