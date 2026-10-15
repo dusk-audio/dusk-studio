@@ -549,6 +549,7 @@ std::optional<ScenarioResult> beginMidiCaptureCase (GuiHost& host, ScenarioConte
     ctx.keep (session.countInEnabled);
     ctx.keep (session.midiMergeEnabled);
     ctx.keep (session.tempoBpm);
+    ctx.keep (session.lastRecordPointSamples);
     for (int index = 0; index < Session::kNumTracks; ++index)
     {
         const bool armed = session.track (index).recordArmed.load();
@@ -558,9 +559,12 @@ std::optional<ScenarioResult> beginMidiCaptureCase (GuiHost& host, ScenarioConte
     keepStage (host, ctx);
     ctx.cleanup ([&host, &engine, &session, &track, &transport,
                   regions = track.midiRegions.current(), directory = currentSessionDirectory (session), tempo = session.tempoMap,
-                  at = transport.getPlayhead(), loop = transport.isLoopEnabled(),
+                  at = transport.getPlayhead(), rollStart = transport.getRollStart(), loop = transport.isLoopEnabled(),
                   loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd(),
-                  punch = transport.isPunchEnabled()]
+                  punch = transport.isPunchEnabled(), punchIn = transport.getPunchIn(), punchOut = transport.getPunchOut(),
+                  savedLoopStart = session.savedLoopStart, savedLoopEnd = session.savedLoopEnd,
+                  savedLoopEnabled = session.savedLoopEnabled, savedPunchIn = session.savedPunchIn,
+                  savedPunchOut = session.savedPunchOut, savedPunchEnabled = session.savedPunchEnabled]
     {
         engine.stop();
         host.closeVirtualKeyboard();
@@ -571,9 +575,17 @@ std::optional<ScenarioResult> beginMidiCaptureCase (GuiHost& host, ScenarioConte
         applySessionDirectory (session, directory);
         engine.getUndoManager().clearUndoHistory();
         transport.setPlayhead (at);
+        transport.setRollStart (rollStart);
         transport.setLoopRange (loopStart, loopEnd);
         transport.setLoopEnabled (loop);
+        transport.setPunchRange (punchIn, punchOut);
         transport.setPunchEnabled (punch);
+        session.savedLoopStart = savedLoopStart;
+        session.savedLoopEnd = savedLoopEnd;
+        session.savedLoopEnabled = savedLoopEnabled;
+        session.savedPunchIn = savedPunchIn;
+        session.savedPunchOut = savedPunchOut;
+        session.savedPunchEnabled = savedPunchEnabled;
     });
     ctx.setSessionDirectory (ctx.tempDir() / "capture");
     session.countInEnabled.store (false);
@@ -705,6 +717,7 @@ std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext&
             if (index == 0) send (0xe0, 1, 96);
             if (index == 1) send (0xd0, 91);
             if (index == 2) send (0xc0, 12);
+            if (index == 0) host.autosaveTick();
         }, [passReady, ordinal, &track, index]
         { return passReady (ordinal) && track.inputMonitor.load() == (index != 1); },
             "the next loop pass or its IN setting did not arrive", {}, 4000 });
