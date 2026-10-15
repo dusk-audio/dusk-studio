@@ -24,6 +24,17 @@ if(WIN32)
     target_compile_definitions(dusk_sfz_dependencies INTERFACE LIBARCHIVE_STATIC)
     target_link_libraries(dusk_sfz_dependencies INTERFACE
         CURL::libcurl LibArchive::LibArchive ZLIB::ZLIB utf8proc::utf8proc)
+elseif(APPLE)
+    find_package(CURL 7.62.0 REQUIRED)
+    find_package(LibArchive 3.4.0 REQUIRED)
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(dusk_sfz_dependencies INTERFACE
+        CURL::libcurl LibArchive::LibArchive ZLIB::ZLIB)
+
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(DUSKSTUDIO_UTF8PROC QUIET IMPORTED_TARGET GLOBAL libutf8proc>=2.11.3)
+    endif()
 else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(DUSKSTUDIO_CURL REQUIRED IMPORTED_TARGET GLOBAL libcurl>=7.62.0)
@@ -31,7 +42,9 @@ else()
     pkg_check_modules(DUSKSTUDIO_UTF8PROC QUIET IMPORTED_TARGET GLOBAL libutf8proc>=2.11.3)
     target_link_libraries(dusk_sfz_dependencies INTERFACE
         PkgConfig::DUSKSTUDIO_CURL PkgConfig::DUSKSTUDIO_LIBARCHIVE)
+endif()
 
+if(NOT WIN32)
     if(DUSKSTUDIO_UTF8PROC_FOUND)
         target_link_libraries(dusk_sfz_dependencies INTERFACE PkgConfig::DUSKSTUDIO_UTF8PROC)
     else()

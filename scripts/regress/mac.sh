@@ -25,7 +25,7 @@ REGRESS_PLATFORM=mac
 MAC_HOST="${DUSK_REGRESS_MAC_HOST:-marc@macbook-air.local}"
 MAC_REPO="src/dusk-studio"
 MAC_DAF="src/DAF"
-JOBS="${DUSK_JOBS:-6}"
+JOBS="${DUSK_JOBS:-5}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30)
 
 while [[ $# -gt 0 ]]; do

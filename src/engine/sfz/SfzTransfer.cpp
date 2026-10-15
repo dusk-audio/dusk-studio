@@ -271,7 +271,11 @@ int curlProgress (void* context, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
     catch (...) { return 1; }
 }
 
-using File = std::unique_ptr<std::FILE, decltype (&std::fclose)>;
+struct CloseFile
+{
+    void operator() (std::FILE* handle) const noexcept { std::fclose (handle); }
+};
+using File = std::unique_ptr<std::FILE, CloseFile>;
 
 bool safeFilePath (const std::filesystem::path& path)
 {
@@ -292,29 +296,29 @@ bool safeFilePath (const std::filesystem::path& path)
 
 File openFile (const std::filesystem::path& path)
 {
-    if (! safeFilePath (path)) return { nullptr, &std::fclose };
+    if (! safeFilePath (path)) return File {};
    #if defined(_WIN32)
     const auto handle = CreateFileW (path.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
                                     nullptr, OPEN_ALWAYS, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) return { nullptr, &std::fclose };
+    if (handle == INVALID_HANDLE_VALUE) return File {};
     BY_HANDLE_FILE_INFORMATION info {};
     if (! GetFileInformationByHandle (handle, &info) || info.nNumberOfLinks != 1
         || (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0)
-    { CloseHandle (handle); return { nullptr, &std::fclose }; }
+    { CloseHandle (handle); return File {}; }
     const auto fd = _open_osfhandle (reinterpret_cast<intptr_t> (handle), _O_BINARY | _O_RDWR);
-    if (fd == -1) { CloseHandle (handle); return { nullptr, &std::fclose }; }
+    if (fd == -1) { CloseHandle (handle); return File {}; }
     auto* file = _fdopen (fd, "r+b");
     if (file == nullptr) _close (fd);
    #else
     const auto fd = ::open (path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
-    if (fd == -1) return { nullptr, &std::fclose };
+    if (fd == -1) return File {};
     struct stat info {};
     if (::fstat (fd, &info) != 0 || ! S_ISREG (info.st_mode) || info.st_nlink != 1)
-    { ::close (fd); return { nullptr, &std::fclose }; }
+    { ::close (fd); return File {}; }
     auto* file = ::fdopen (fd, "r+b");
     if (file == nullptr) ::close (fd);
    #endif
-    return { file, &std::fclose };
+    return File (file);
 }
 
 bool rewindFile (std::FILE* file, bool truncate)
