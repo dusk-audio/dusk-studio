@@ -1968,7 +1968,8 @@ void AudioEngine::serviceMultisampleLoads()
             if (request.onDone) request.onDone (false, "Soundfont load was superseded");
             continue;
         }
-        if (sr > 0.0 && blockSize > 0 && (request.sampleRate != sr || request.maxBlock != blockSize))
+        if (sr > 0.0 && blockSize > 0
+            && (std::abs (request.sampleRate - sr) > 0.0 || request.maxBlock != blockSize))
         {
             request.sampleRate = sr;
             request.maxBlock = blockSize;

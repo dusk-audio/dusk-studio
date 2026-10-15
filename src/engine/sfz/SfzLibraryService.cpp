@@ -176,8 +176,11 @@ std::string rateLimitError (std::string error, const ProviderRateLimit& limit)
     {
         if (value.empty()) return;
         std::string safe;
-        for (const unsigned char c : value.substr (0, 128))
-            if (c >= 32 && c < 127) safe += static_cast<char> (c);
+        for (const char character : value.substr (0, 128))
+        {
+            const auto c = static_cast<unsigned char> (character);
+            if (c >= 32 && c < 127) safe += character;
+        }
         if (! safe.empty()) error += std::string ("; ") + label + safe;
     };
     append ("Retry-After: ", limit.retryAfter);

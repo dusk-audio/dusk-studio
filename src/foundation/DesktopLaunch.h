@@ -20,6 +20,9 @@
  #include <thread>
  #include <unistd.h>
  #include <utility>
+ #if defined(__APPLE__)
+  #include <crt_externs.h>
+ #endif
 #endif
 
 namespace dusk::desktop
@@ -47,11 +50,11 @@ inline bool openHttpsUrl (const std::string& url)
         // Arrange the reaper before spawning, so a failed thread allocation never leaves a child behind.
         std::promise<pid_t> spawned;
         auto process = spawned.get_future();
-        std::thread reaper ([process = std::move (process)]() mutable
+        std::thread reaper ([childProcess = std::move (process)]() mutable
         {
             try
             {
-                const auto pid = process.get();
+                const auto pid = childProcess.get();
                 if (pid <= 0) return;
                 int status = 0;
                 while (::waitpid (pid, &status, 0) < 0 && errno == EINTR) {}
@@ -67,12 +70,14 @@ inline bool openHttpsUrl (const std::string& url)
         }
        #if defined(__APPLE__)
         const char* program = "/usr/bin/open";
+        char** environment = *::_NSGetEnviron();
        #else
         const char* program = "xdg-open";
+        char** environment = ::environ;
        #endif
         char* arguments[] = { const_cast<char*> (program), const_cast<char*> (url.c_str()), nullptr };
         pid_t pid = -1;
-        const auto result = ::posix_spawnp (&pid, program, nullptr, nullptr, arguments, ::environ);
+        const auto result = ::posix_spawnp (&pid, program, nullptr, nullptr, arguments, environment);
         spawned.set_value (result == 0 ? pid : -1);
         return result == 0;
     }
