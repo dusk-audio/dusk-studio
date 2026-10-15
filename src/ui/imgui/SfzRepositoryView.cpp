@@ -396,6 +396,7 @@ private:
         if (ImGui::BeginCombo ("##sfz-source", sourceLabel))
         {
             for (std::size_t i = 0; i < sources.size(); ++i)
+            {
                 if (ImGui::Selectable (sources[i].name.c_str(), sourceIndex == static_cast<int> (i))
                     && sourceIndex != static_cast<int> (i))
                 {
@@ -403,6 +404,8 @@ private:
                     results.clear(); nextPage = 0; currentPage = 0; clearSelection();
                     activeSource.clear(); activeQuery.clear(); browseWarning.clear();
                 }
+                remember ("source-" + sources[i].id);
+            }
             ImGui::EndCombo();
         }
         if (wide) ImGui::SameLine();
@@ -532,7 +535,7 @@ private:
     void drawPackDetails (const sfz::ProviderPack& pack)
     {
         ImGui::TextWrapped ("%s", sizeLabel (pack.advertisedBytes).c_str());
-        if (pack.sourceId == "sfzinstruments") ImGui::TextWrapped ("Git commit: %s", pack.releaseId.c_str());
+        if (pack.sourceId != "musical-artifacts") ImGui::TextWrapped ("Git commit: %s", pack.releaseId.c_str());
         else ImGui::TextWrapped ("Version: %s", pack.releaseId.c_str());
         ImGui::TextWrapped ("Source: %s", pack.sourceUrl.c_str());
         ImGui::TextWrapped ("Downloads use HTTPS.");

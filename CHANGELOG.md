@@ -17,16 +17,17 @@ canonical source.
 - **Live notes in the piano roll.** Incoming notes appear while recording, and
   held notes grow until release. The preview leaves the region and undo history
   alone, and the roll follows the region a merge updates.
-- **Creative Commons SFZ repositories.** Browse SFZ Instruments and Musical
-  Artifacts from the instrument library, check a pack's license, and download it
-  to Installed. Downloads can pause, resume and cancel. Installed versions
-  coexist, and sessions find the same pack on another machine without its old
-  absolute path. Missing packs stay offline without downloading on session load.
+- **Creative Commons SFZ repositories.** Browse SFZ Instruments, Musical
+  Artifacts, FreePats and Versilian Studios from the instrument library, check a
+  pack's license, and download it to Installed. Downloads can pause, resume and
+  cancel. Installed versions coexist, and sessions find the same pack on another
+  machine without its old absolute path. Missing packs stay offline without
+  downloading on session load.
   A larger, responsive browser shows source stars or favorites and opens
   published demos before downloading an instrument pack.
-  All repositories is the default search, combining both sources with separate
-  page progress and repository labels; one unavailable source leaves the other
-  source's results usable.
+  All repositories is the default search, combining all four sources with separate
+  page progress and repository labels; one unavailable source leaves the others'
+  results usable. Versilian offers the official VSCO 2 CE and VCSL SFZ releases.
 - **Complete MIDI channel controls.** Recording, import, session save and
   playback keep pitch bend, channel and polyphonic pressure, and program changes
   alongside notes and CCs.

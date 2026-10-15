@@ -462,7 +462,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             job.part = cacheRoot / (key + ".part");
         }
         const auto downloaded = downloadFile (*transport,
-            { job.pack.downloadUrl, job.part, job.pack.expectedSha256 }, control);
+            { job.pack.downloadUrl, job.part, job.pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes }, control);
         if (! downloaded) return { downloaded.status, downloaded.error };
         if (control.status() != OperationStatus::Complete) return interrupted (control);
         setState (job.generation, LibraryState::Extracting);

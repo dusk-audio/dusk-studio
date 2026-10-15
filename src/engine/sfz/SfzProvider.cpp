@@ -62,6 +62,20 @@ bool repositoryName (std::string_view value)
     });
 }
 
+const char* githubOwner (std::string_view source)
+{
+    if (source == "sfzinstruments") return "sfzinstruments";
+    if (source == "freepats") return "freepats";
+    if (source == "versilian") return "sgossner";
+    return nullptr;
+}
+
+bool githubRepositoryAllowed (std::string_view source, std::string_view repository)
+{
+    return repositoryName (repository)
+        && (source != "versilian" || repository == "VCSL" || repository == "VSCO-2-CE");
+}
+
 bool https (std::string_view value)
 {
     if (value.substr (0, 8) != "https://" || value.size() > 8192
@@ -335,7 +349,10 @@ std::optional<CcLicense> licenseText (const std::string& text, const std::string
     constexpr const char* types[] = { "by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nc-nd" };
     constexpr const char* versions[] = { "1.0", "2.0", "2.5", "3.0", "4.0" };
     if (containsUrl ("//creativecommons.org/publicdomain/zero/1.0")
-        || content.find ("cc0 1.0 universal") != std::string::npos) found.insert ("CC0-1.0");
+        || content.find ("cc0 1.0 universal") != std::string::npos
+        || (content.find ("open cc0 general-purpose sample library") != std::string::npos
+            && content.find ("this collection is under a creative commons 0 license.") != std::string::npos))
+        found.insert ("CC0-1.0");
     for (const auto* type : types)
         for (const auto* version : versions)
         {
@@ -435,15 +452,30 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
     ProviderPackResult result;
     const auto fail = [&] (const std::string& error)
     { result.status = OperationStatus::Failed; result.error = error; return result; };
-    if (! repositoryName (summary.locator) || ! decimalId (summary.packId)) return fail ("Invalid SFZ Instruments repository locator");
-    const auto base = "https://api.github.com/repos/sfzinstruments/" + summary.locator;
+    const auto* owner = githubOwner (summary.sourceId);
+    if (owner == nullptr || ! githubRepositoryAllowed (summary.sourceId, summary.locator)
+        || ! decimalId (summary.packId)) return fail ("Invalid GitHub SFZ repository locator");
+    const auto base = "https://api.github.com/repos/" + std::string (owner) + "/" + summary.locator;
     const auto repository = api (transport, base, 1048576, control);
     result.rateLimit = repository.rateLimit;
     if (! repository) { result.status = repository.status; result.error = repository.error; return result; }
     if (std::to_string (integer (repository.json, "id")) != summary.packId
-        || lower (string (dusk::json::child (repository.json, "owner"), "login", 100)) != "sfzinstruments")
+        || lower (string (dusk::json::child (repository.json, "owner"), "login", 100)) != owner)
         return fail ("Repository identity changed; refresh the source listing");
-    const auto commit = api (transport, base + "/commits/HEAD", 1048576, control);
+    std::string revisionRef = "HEAD";
+    if (summary.sourceId == "versilian")
+    {
+        // The default branches contain raw samples; published SFZ releases include the mappings.
+        const auto release = api (transport, base + "/releases/latest", 1048576, control);
+        result.rateLimit = release.rateLimit;
+        if (! release) { result.status = release.status; result.error = release.error; return result; }
+        revisionRef = string (release.json, "tag_name", 128);
+        const auto draft = release.json.find ("draft"), prerelease = release.json.find ("prerelease");
+        if (revisionRef.empty() || draft == release.json.end() || ! draft->is_boolean() || draft->get<bool>()
+            || prerelease == release.json.end() || ! prerelease->is_boolean() || prerelease->get<bool>())
+            return fail ("The repository has no published stable SFZ release");
+    }
+    const auto commit = api (transport, base + "/commits/" + encode (revisionRef), 1048576, control);
     result.rateLimit = commit.rateLimit;
     if (! commit) { result.status = commit.status; result.error = commit.error; return result; }
     const auto revision = string (commit.json, "sha", 40);
@@ -458,13 +490,15 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
         || truncated == tree.json.end() || ! truncated->is_boolean() || truncated->get<bool>())
         return fail ("Repository tree is incomplete or too large to resolve safely");
     ProviderPack pack;
-    pack.sourceId = "sfzinstruments";
+    pack.sourceId = summary.sourceId;
     pack.packId = summary.packId;
     pack.releaseId = revision;
     pack.displayName = summary.locator;
-    pack.author = "SFZ Instruments";
-    pack.sourceUrl = "https://github.com/sfzinstruments/" + summary.locator + "/tree/" + revision;
-    pack.downloadUrl = "https://github.com/sfzinstruments/" + summary.locator + "/archive/" + revision + ".zip";
+    pack.author = summary.sourceId == "freepats" ? "FreePats"
+        : summary.sourceId == "versilian" ? "Versilian Studios" : "SFZ Instruments";
+    const auto webBase = "https://github.com/" + std::string (owner) + "/" + summary.locator;
+    pack.sourceUrl = webBase + "/tree/" + revision;
+    pack.downloadUrl = webBase + "/archive/" + revision + ".zip";
     pack.expectedRoot = summary.locator + "-" + revision;
     pack.versionPinned = true;
     std::set<std::string> paths;
@@ -478,7 +512,17 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
         if (sfzPath (path) && ! addInstrument (pack, path, paths)) return fail ("Repository has unsafe or ambiguous SFZ paths");
     }
     if (pack.instruments.empty()) return fail ("Repository contains no SFZ files at the pinned revision");
-    const auto license = api (transport, base + "/license?ref=" + revision, 400000, control);
+    // The VCSL SFZ release predates its LICENSE file; its archived README carries the CC0 grant.
+    const bool hasLicenseFile = std::any_of (regularFiles.begin(), regularFiles.end(), [] (const std::string& path)
+    {
+        const auto name = lower (path);
+        return name.find ('/') == std::string::npos
+            && (name.find ("license") == 0 || name == "copying");
+    });
+    const bool readmeLicense = summary.sourceId == "versilian" && summary.locator == "VCSL"
+        && ! hasLicenseFile && regularFiles.count ("README.md") != 0;
+    const auto license = api (transport,
+        base + (readmeLicense ? "/contents/README.md?ref=" : "/license?ref=") + revision, 400000, control);
     result.rateLimit = license.rateLimit;
     if (! license) { result.status = license.status; result.error = license.error; return result; }
     const auto path = string (license.json, "path", 512);
@@ -497,14 +541,17 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
     const auto recognized = licenseText (text, hint);
     if (! recognized) return fail ("Repository LICENSE does not establish one supported Creative Commons license");
     pack.license = { recognized->id, text, path, sha256 (text),
-        "https://github.com/sfzinstruments/" + summary.locator + "/blob/" + revision + "/" + encode (path, true), recognized->constraints };
+        webBase + "/blob/" + revision + "/" + encode (path, true), recognized->constraints };
     std::sort (pack.instruments.begin(), pack.instruments.end(), [] (const auto& a, const auto& b)
     { return a.relativePath < b.relativePath; });
     pack.presentation.stars = popularity (repository.json, "stargazers_count");
     try
     {
-        const auto demo = githubDemos (transport, summary.locator, pack.presentation, control);
-        if (! demo) { result.status = demo.status; result.error = demo.error; return result; }
+        if (summary.sourceId == "sfzinstruments")
+        {
+            const auto demo = githubDemos (transport, summary.locator, pack.presentation, control);
+            if (! demo) { result.status = demo.status; result.error = demo.error; return result; }
+        }
     }
     catch (const std::exception&)
     {
@@ -602,19 +649,24 @@ ProviderPackResult artifactPack (HttpTransport& transport, const ProviderSummary
 std::vector<ProviderSource> providerSources()
 {
     return { { "sfzinstruments", "SFZ Instruments", "https://sfzinstruments.github.io/" },
-             { "musical-artifacts", "Musical Artifacts", "https://musical-artifacts.com/" } };
+             { "musical-artifacts", "Musical Artifacts", "https://musical-artifacts.com/" },
+             { "freepats", "FreePats", "https://freepats.zenvoid.org/" },
+             { "versilian", "Versilian Studios", "https://versilian-studios.com/" } };
 }
 
 ProviderPageResult browseProvider (HttpTransport& transport, const std::string& sourceId,
                                    unsigned page, const std::string& query, const OperationControl& control)
 {
     ProviderPageResult result;
+    const auto* owner = githubOwner (sourceId);
     if (page == 0 || page > 200 || query.size() > 256
-        || (sourceId != "sfzinstruments" && sourceId != "musical-artifacts"))
+        || (owner == nullptr && sourceId != "musical-artifacts"))
     { result.error = "Invalid repository browse request"; return result; }
-    const bool github = sourceId == "sfzinstruments";
+    const bool github = owner != nullptr;
     const auto url = github
-        ? "https://api.github.com/orgs/sfzinstruments/repos?type=public&sort=full_name&per_page=50&page=" + std::to_string (page)
+        ? "https://api.github.com/" + std::string (sourceId == "sfzinstruments" ? "orgs/" : "users/")
+            + owner + "/repos?type=" + (sourceId == "sfzinstruments" ? "public" : "owner")
+            + "&sort=full_name&per_page=50&page=" + std::to_string (page)
         : "https://musical-artifacts.com/artifacts.json?formats=sfz&page=" + std::to_string (page) + "&q=" + encode (query);
     const auto response = api (transport, url, 2 * 1048576, control);
     result.rateLimit = response.rateLimit;
@@ -637,13 +689,21 @@ ProviderPageResult browseProvider (HttpTransport& transport, const std::string& 
             summary.locator = summary.name;
             summary.author = string (dusk::json::child (entry, "owner"), "login", 100);
             const auto disabled = entry.find ("disabled"), privateRepo = entry.find ("private");
-            if (! repositoryName (summary.locator) || lower (summary.author) != "sfzinstruments"
+            if (! githubRepositoryAllowed (sourceId, summary.locator) || lower (summary.author) != owner
                 || (disabled != entry.end() && disabled->is_boolean() && disabled->get<bool>())
                 || (privateRepo != entry.end() && privateRepo->is_boolean() && privateRepo->get<bool>())) continue;
-            summary.sourceUrl = "https://github.com/sfzinstruments/" + summary.locator;
+            summary.sourceUrl = "https://github.com/" + std::string (owner) + "/" + summary.locator;
             summary.licenseHint = string (dusk::json::child (entry, "license"), "spdx_id", 100);
             if (! summary.licenseHint.empty() && summary.licenseHint != "NOASSERTION"
                 && ! ccLicense (summary.licenseHint)) continue;
+            if (sourceId != "sfzinstruments" && ! ccLicense (summary.licenseHint)) continue;
+            if (sourceId == "versilian")
+            {
+                summary.name = summary.locator == "VCSL" ? "Versilian Community Sample Library" : "VSCO 2 Community Edition";
+                summary.description += summary.locator == "VCSL"
+                    ? " SFZ keyboards, piano, organ, woodwinds, strings and percussion. Round-robin sampling varies by instrument."
+                    : " Official SFZ orchestra: strings, brass, woodwinds, piano and percussion, with round-robin short articulations.";
+            }
             if (! query.empty() && lower (summary.name + " " + summary.description).find (lower (query)) == std::string::npos) continue;
         }
         else
@@ -678,7 +738,7 @@ ProviderPackResult resolveProviderPack (HttpTransport& transport, const Provider
         result.error = "Cannot initialize SFZ descriptor hashing";
         return result;
     }
-    if (summary.sourceId == "sfzinstruments") return githubPack (transport, summary, control);
+    if (githubOwner (summary.sourceId) != nullptr) return githubPack (transport, summary, control);
     if (summary.sourceId == "musical-artifacts") return artifactPack (transport, summary, control);
     ProviderPackResult result;
     result.error = "Unknown SFZ repository";
@@ -769,13 +829,13 @@ ProviderPackResult providerPackFromJson (std::string_view source)
                                             || ! validateRelativePath (pack.expectedRoot, pathError)))
         || (! pack.license.path.empty() && ! validateRelativePath (pack.license.path, pathError)))
         return fail ("Cached SFZ descriptor has invalid identity, license, URL, or paths");
-    if (pack.sourceId == "sfzinstruments")
+    if (const auto* owner = githubOwner (pack.sourceId))
     {
-        const std::string prefix = "https://github.com/sfzinstruments/";
+        const auto prefix = "https://github.com/" + std::string (owner) + "/";
         const auto suffix = pack.downloadUrl.substr (std::min (pack.downloadUrl.size(), prefix.size()));
         const auto repository = suffix.substr (0, suffix.find ('/'));
         if (! gitSha (pack.releaseId) || ! pack.versionPinned || ! pack.expectedSha256.empty()
-            || ! repositoryName (repository) || pack.license.path.empty()
+            || ! githubRepositoryAllowed (pack.sourceId, repository) || pack.license.path.empty()
             || pack.downloadUrl != prefix + repository + "/archive/" + pack.releaseId + ".zip"
             || pack.expectedRoot != repository + "-" + pack.releaseId
             || pack.sourceUrl != prefix + repository + "/tree/" + pack.releaseId

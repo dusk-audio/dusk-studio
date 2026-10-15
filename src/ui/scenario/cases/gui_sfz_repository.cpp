@@ -203,6 +203,15 @@ public:
                           { "owner", { { "login", "sfzinstruments" } } }, { "private", false }, { "disabled", false },
                           { "license", { { "spdx_id", "CC0-1.0" } } } };
         if (request.url == "https://api.github.com/orgs/sfzinstruments/repos?type=public&sort=full_name&per_page=50&page=1") reply = Json::array ({ repo });
+        else if (request.url == "https://api.github.com/users/freepats/repos?type=owner&sort=full_name&per_page=50&page=1"
+                 || request.url == "https://api.github.com/users/sgossner/repos?type=owner&sort=full_name&per_page=50&page=1")
+        {
+            auto extra = repo;
+            const bool freepats = request.url.find ("/freepats/") != std::string::npos;
+            extra["owner"]["login"] = freepats ? "freepats" : "sgossner";
+            extra["name"] = freepats ? "FreePats-Piano" : "VCSL";
+            reply = Json::array ({ extra });
+        }
         else if (request.url == "https://musical-artifacts.com/artifacts.json?formats=sfz&page=1&q="
                  || request.url == "https://musical-artifacts.com/artifacts.json?formats=sfz&page=1&q=Piano")
         {
@@ -406,11 +415,31 @@ void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, c
     steps.push_back ({ 0, [&ctx, state]
     {
         const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
-        ctx.expect (snapshot.page.items.size() == 2 && snapshot.page.items.front().packId == state->transport->packId
+        ctx.expect (snapshot.page.items.size() == 4 && snapshot.page.items.front().packId == state->transport->packId
                     && snapshot.page.items.front().sourceId == "sfzinstruments"
-                    && snapshot.page.items.back().sourceId == "musical-artifacts",
-                    "explicit All repositories search did not combine both fixture sources");
+                    && snapshot.page.items[1].sourceId == "musical-artifacts"
+                    && snapshot.page.items[2].sourceId == "freepats"
+                    && snapshot.page.items.back().sourceId == "versilian",
+                    "explicit All repositories search did not combine all fixture sources");
     } });
+    for (const std::string source : { "freepats", "versilian" })
+    {
+        steps.push_back ({ 0, [state] { state->requests = state->transport->requests.load(); } });
+        pushClick (steps, host, ctx, "source");
+        pushClick (steps, host, ctx, "source-" + source);
+        steps.push_back ({ 0, [&ctx, state]
+        { ctx.expect (state->transport->requests.load() == state->requests, "choosing a source started HTTP before Search"); } });
+        pushWorkClick (steps, host, ctx, state, "browse", LibraryState::Complete);
+        steps.push_back ({ 0, [&ctx, source]
+        {
+            const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
+            ctx.expect (snapshot.page.items.size() == 1 && snapshot.page.items.front().sourceId == source,
+                        "the selected additional repository did not narrow the search");
+        } });
+    }
+    pushClick (steps, host, ctx, "source");
+    pushClick (steps, host, ctx, "source-all");
+    pushWorkClick (steps, host, ctx, state, "browse", LibraryState::Complete);
     pushWorkClick (steps, host, ctx, state, "online-item-0", LibraryState::Complete);
     steps.push_back ({ 0, [&ctx, state]
     {
@@ -724,7 +753,7 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     steps->push_back ({ 0, [&ctx, state]
     {
         const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
-        ctx.expect (snapshot.page.items.size() == 2 && snapshot.page.items.front().packId == state->transport->packId,
+        ctx.expect (snapshot.page.items.size() == 4 && snapshot.page.items.front().packId == state->transport->packId,
                     "failed refresh discarded the last good repository page");
         ctx.expect (snapshot.error.find ("Retry-After: 25") != std::string::npos,
                     "repository failure discarded actionable retry information");

@@ -589,9 +589,9 @@ The channel strip is completely unaware that its audio came from a plugin rather
 
 #### **Managed SFZ repository instruments**
 
-The instrument library has Installed and Online views, reached from the insert chooser and multi-sample editor. SFZ Instruments GitHub repositories and Musical Artifacts JSON listings are external sources, not a Dusk-hosted catalog. Resolve explicit Creative Commons licensing before download and display its constraints. GitHub archives are pinned to a commit and receive a locally computed archive SHA-256; verify a published upstream SHA-256 when the source supplies one.
+The instrument library has Installed and Online views, reached from the insert chooser and multi-sample editor. SFZ Instruments, Musical Artifacts, FreePats and Versilian Studios are external sources, not a Dusk-hosted catalog. Resolve explicit Creative Commons licensing before download and display its constraints. GitHub archives are pinned to a commit and receive a locally computed archive SHA-256; verify a published upstream SHA-256 when the source supplies one. Versilian is restricted to the official VSCO 2 CE and VCSL collections and resolves their latest stable SFZ release tags before pinning the commit; their raw-sample default branches are not installable SFZ releases.
 
-Online defaults to All repositories, combining both sources under one search while preserving each result's source and each provider's pagination. A source-specific selection narrows the search. Partial failures report the affected repository while retaining successful results; cached searches use only saved provider responses and report missing caches.
+Online defaults to All repositories, combining all sources under one search while preserving each result's source and each provider's pagination. A source-specific selection narrows the search. Partial failures report the affected repository while retaining successful results; cached searches use only saved provider responses and report missing caches.
 
 Show source-provided stars or favorites as popularity counts, preserving unavailable versus zero. Published source demos open in the browser before any instrument archive download; a missing demo is explicit. This optional presentation metadata stays outside installed receipts, managed identities and resumable download keys.
 

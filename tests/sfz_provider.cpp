@@ -129,9 +129,108 @@ ProviderPack resolvedGithub()
 TEST_CASE ("SFZ providers expose external repository sources", "[sfz][provider]")
 {
     const auto sources = providerSources();
-    REQUIRE (sources.size() == 2);
+    REQUIRE (sources.size() == 4);
     CHECK (sources[0].id == "sfzinstruments");
     CHECK (sources[1].id == "musical-artifacts");
+    CHECK (sources[2].id == "freepats");
+    CHECK (sources[3].id == "versilian");
+}
+
+TEST_CASE ("Additional SFZ repositories browse only their own Creative Commons collections", "[sfz][provider]")
+{
+    std::string source = "freepats", owner = "freepats", name = "world-percussion", query = "percussion";
+    SECTION ("FreePats offers its CC instruments") {}
+    SECTION ("Versilian offers the official orchestra")
+    { source = "versilian"; owner = "sgossner"; name = "VSCO-2-CE"; query = "orchestra"; }
+    SECTION ("Versilian piano searches include the community collection")
+    { source = "versilian"; owner = "sgossner"; name = "VCSL"; query = "piano"; }
+    auto item = repository (42, name, "CC0-1.0");
+    item["owner"]["login"] = owner;
+    item["description"] = "Sample library";
+    auto foreign = item; foreign["id"] = 43; foreign["owner"]["login"] = "someone-else";
+    auto restricted = item; restricted["id"] = 44; restricted["license"]["spdx_id"] = "GPL-3.0";
+    auto unrelated = item; unrelated["id"] = 45; unrelated["name"] = "Unrelated-project";
+    unrelated["description"] = "Unrelated project";
+    auto unlicensed = item; unlicensed["id"] = 46; unlicensed["license"]["spdx_id"] = "NOASSERTION";
+    FakeTransport transport;
+    transport.replies = { { Json::array ({ item, foreign, restricted, unrelated, unlicensed }) } };
+    const auto result = browseProvider (transport, source, 1, query);
+    REQUIRE (result);
+    REQUIRE (result.items.size() == 1);
+    CHECK (result.items.front().sourceId == source);
+    CHECK (result.items.front().locator == name);
+    CHECK (result.items.front().sourceUrl == "https://github.com/" + owner + "/" + name);
+    CHECK (transport.requests.front().url.find ("/users/" + owner + "/repos?") != std::string::npos);
+}
+
+TEST_CASE ("Additional GitHub SFZ repositories resolve licensed immutable archives", "[sfz][provider]")
+{
+    std::string source = "freepats", owner = "freepats", name = "world-percussion";
+    SECTION ("FreePats uses the latest source commit") {}
+    SECTION ("VSCO uses the SFZ release instead of the raw-sample branch")
+    { source = "versilian"; owner = "sgossner"; name = "VSCO-2-CE"; }
+    bool readmeLicense = false;
+    SECTION ("VCSL uses its generated SFZ release and pinned README declaration")
+    { source = "versilian"; owner = "sgossner"; name = "VCSL"; readmeLicense = true; }
+    FakeTransport transport;
+    const std::string license = readmeLicense
+        ? "An open CC0 general-purpose sample library.\nThis collection is under a Creative Commons 0 license.\n"
+        : "CC0 1.0 Universal\nhttps://creativecommons.org/publicdomain/zero/1.0/\n";
+    transport.replies = githubReplies (license);
+    transport.replies[0].json = repository (42, name, "CC0-1.0");
+    transport.replies[0].json["owner"]["login"] = owner;
+    transport.replies.back().json["license"]["spdx_id"] = "CC0-1.0";
+    if (readmeLicense)
+    {
+        transport.replies[2].json["tree"][0]["path"] = "README.md";
+        transport.replies.back().json["path"] = "README.md";
+        transport.replies.back().json.erase ("license");
+    }
+    if (source == "versilian")
+        transport.replies.insert (transport.replies.begin() + 1,
+            Reply { Json { { "tag_name", "SFZ-v1" }, { "draft", false }, { "prerelease", false } } });
+    ProviderSummary summary { source, "42", name, name, owner, {},
+        "https://github.com/" + owner + "/" + name, "CC0-1.0" };
+    const auto result = resolveProviderPack (transport, summary);
+    REQUIRE (result);
+    REQUIRE (result.pack);
+    const auto& pack = *result.pack;
+    const auto prefix = "https://github.com/" + owner + "/" + name;
+    CHECK (pack.sourceId == source);
+    CHECK (pack.releaseId == kCommit);
+    CHECK (pack.downloadUrl == prefix + "/archive/" + kCommit + ".zip");
+    CHECK (pack.expectedRoot == name + "-" + kCommit);
+    CHECK (pack.license.text == license);
+    CHECK (pack.license.id == "CC0-1.0");
+    CHECK (pack.license.path == (readmeLicense ? "README.md" : "LICENSE"));
+    CHECK (pack.instruments.size() == 2);
+    CHECK (pack.versionPinned);
+    REQUIRE (providerPackFromJson (providerPackToJson (pack)));
+    CHECK (transport.requests[source == "versilian" ? 2 : 1].url.find (
+        source == "versilian" ? "/commits/SFZ-v1" : "/commits/HEAD") != std::string::npos);
+    auto tampered = Json::parse (providerPackToJson (pack));
+    tampered["source_id"] = source == "freepats" ? "versilian" : "freepats";
+    CHECK_FALSE (providerPackFromJson (tampered.dump()));
+    if (readmeLicense)
+        CHECK (transport.requests.back().url.find ("/contents/README.md?ref=" + kCommit) != std::string::npos);
+}
+
+TEST_CASE ("Versilian SFZ resolution requires a published release of an approved library", "[sfz][provider]")
+{
+    FakeTransport transport;
+    auto summary = githubSummary();
+    summary.sourceId = "versilian";
+    summary.locator = "VCSL";
+    auto repo = repository (42, "VCSL", "CC0-1.0");
+    repo["owner"]["login"] = "sgossner";
+    Json release { { "tag_name", "SFZ-v1" }, { "draft", false }, { "prerelease", false } };
+    SECTION ("An unrelated repository is not accepted") { summary.locator = "Unrelated-project"; }
+    SECTION ("A missing tag is not HEAD") { release.erase ("tag_name"); }
+    SECTION ("A draft is not a published release") { release["draft"] = true; }
+    SECTION ("A prerelease is not selected") { release["prerelease"] = true; }
+    transport.replies = { { repo }, { release } };
+    CHECK_FALSE (resolveProviderPack (transport, summary));
+    CHECK (transport.requests.size() <= 2);
 }
 
 TEST_CASE ("SFZ Instruments browsing filters known non-CC licenses and retains pagination", "[sfz][provider]")
@@ -257,6 +356,10 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     FakeTransport transport;
     SECTION ("Only hint is present") { transport.replies = githubReplies ("All rights reserved; available for free."); }
     SECTION ("Generic public domain is not CC0") { transport.replies = githubReplies ("This instrument is public domain."); }
+    SECTION ("A CC0 project description without the grant is not a license")
+    { transport.replies = githubReplies ("An open CC0 general-purpose sample library."); }
+    SECTION ("An unversioned grant without the explicit CC0 identity is not guessed")
+    { transport.replies = githubReplies ("This collection is under a Creative Commons 0 license."); }
     SECTION ("Different CC license than API hint")
     { transport.replies = githubReplies ("https://creativecommons.org/licenses/by-nc/4.0/"); }
     SECTION ("Ambiguous CC licenses")
