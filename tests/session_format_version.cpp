@@ -135,7 +135,7 @@ TEST_CASE ("SessionSerializer stamps the current version on a session carrying b
     dir.deleteRecursively();
 }
 
-TEST_CASE ("SessionSerializer refuses a v11 session before touching the live model",
+TEST_CASE ("SessionSerializer refuses a future session before touching the live model",
            "[session][serializer][version]")
 {
     using duskstudio::Session;
@@ -147,7 +147,7 @@ TEST_CASE ("SessionSerializer refuses a v11 session before touching the live mod
     // One version above this build's format, carrying values the loader would
     // otherwise write into the live Session.
     writeRaw (target,
-              R"({"version":11,"tempo":76.0,)"
+              R"({"version":12,"tempo":76.0,)"
               R"("tracks":[{"name":"From the future","builtin_id":"dusk.builtin.utility"}]})");
 
     auto livePtr = std::make_unique<Session>();

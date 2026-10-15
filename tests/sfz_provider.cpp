@@ -23,8 +23,8 @@ struct Reply
 {
     Json json;
     int status = 200;
-    HttpHeaders headers;
-    std::string raw;
+    HttpHeaders headers {};
+    std::string raw {};
 };
 
 class FakeTransport final : public HttpTransport
@@ -151,7 +151,9 @@ TEST_CASE ("SFZ provider browse queries preserve bounded API requests", "[sfz][p
     FakeTransport transport;
     SECTION ("GitHub query is a local summary filter")
     {
-        transport.replies = { { Json::array ({ repository(), repository (43, "Synth") }) } };
+        auto synth = repository (43, "Synth");
+        synth["description"] = "A synthesizer collection";
+        transport.replies = { { Json::array ({ repository(), synth }) } };
         const auto result = browseProvider (transport, "sfzinstruments", 1, "piano");
         REQUIRE (result);
         REQUIRE (result.items.size() == 1);
