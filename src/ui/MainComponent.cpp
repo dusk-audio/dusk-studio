@@ -1376,6 +1376,15 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     const auto panelKeys = imgui::PanelShellKeys::all;
    #endif
     const bool modalUp = ! EmbeddedModal::activeModalStack().empty();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (! modalUp && consoleView != nullptr)
+        for (int track = 0; track < Session::kNumTracks; ++track)
+            if (auto* strip = consoleView->getStripComponent (track);
+                strip != nullptr && strip->isSfzLibraryOpen()
+                    && strip->offerSfzLibraryKey (key.getTextDescription().toStdString(),
+                    static_cast<std::uint32_t> (key.getTextCharacter())))
+                return true;
+   #endif
     // The tuner and the virtual keyboard cover the window as a dialog does and keep
     // the same keys, each closing on the key that opened it, U or K, or Escape.
     const bool noMods  = ! cmd && ! shift && ! mods.isAltDown();

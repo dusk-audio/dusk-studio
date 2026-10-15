@@ -122,13 +122,14 @@ struct NamedKey
     unsigned int code;
 };
 
-const std::array<NamedKey, 22>& namedKeys()
+const std::array<NamedKey, 23>& namedKeys()
 {
-    static const std::array<NamedKey, 22> keys { {
+    static const std::array<NamedKey, 23> keys { {
         { "spacebar", ImGuiKey_Space, DGL::kKeySpace },
         { "space", ImGuiKey_Space, DGL::kKeySpace },
         { "return", ImGuiKey_Enter, DGL::kKeyEnter },
         { "enter", ImGuiKey_Enter, DGL::kKeyEnter },
+        { "numpad enter", ImGuiKey_KeypadEnter, DGL::kKeyPadEnter },
         { "escape", ImGuiKey_Escape, DGL::kKeyEscape },
         { "backspace", ImGuiKey_Backspace, DGL::kKeyBackspace },
         { "delete", ImGuiKey_Delete, DGL::kKeyDelete },
@@ -484,6 +485,12 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
         bool inputForScenario (const std::string& input)
         {
+            if (input == "focus-out")
+            {
+                focusForScenario (false);
+                noteScenarioInput();
+                return true;
+            }
             if (input == "scroll-down")
             {
                 scrollForScenario (-20.0);
@@ -541,7 +548,10 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         // to keep through forwardShortcuts; every other key stays here.
         bool onKeyboard (const DGL::Widget::KeyboardEvent& event) override
         {
-            DGL::ImGuiTopLevelWidget::onKeyboard (event);
+            auto key = event;
+            // The framework's ImGui adapter does not map keypad Enter.
+            if (key.key == DGL::kKeyPadEnter) key.key = DGL::kKeyEnter;
+            DGL::ImGuiTopLevelWidget::onKeyboard (key);
             return true;
         }
 

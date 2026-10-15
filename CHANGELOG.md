@@ -32,6 +32,8 @@ canonical source.
 
 ### Fixed
 
+- **SFZ search keyboard submission.** Enter and keypad Enter start the search,
+  including when the parent window receives the search field's keyboard input.
 - **SFZ instrument captions.** Crowded ARIA skin labels stay centred over their
   controls and fit between adjacent captions, keeping drum-kit text readable.
 - **Shared audio reader workers.** Three workers fill immutable playback

@@ -198,15 +198,19 @@ public:
             return { OperationStatus::Complete, {} };
         }
         Json reply;
-        const Json repo { { "id", std::stoull (packId) }, { "name", name }, { "description", "Two CC0 SFZ fixture instruments" },
+        const Json repo { { "id", std::stoull (packId) }, { "name", name }, { "description", "Two CC0 piano SFZ fixture instruments" },
                           { "stargazers_count", 7 },
                           { "owner", { { "login", "sfzinstruments" } } }, { "private", false }, { "disabled", false },
                           { "license", { { "spdx_id", "CC0-1.0" } } } };
         if (request.url == "https://api.github.com/orgs/sfzinstruments/repos?type=public&sort=full_name&per_page=50&page=1") reply = Json::array ({ repo });
-        else if (request.url == "https://musical-artifacts.com/artifacts.json?formats=sfz&page=1&q=")
+        else if (request.url == "https://musical-artifacts.com/artifacts.json?formats=sfz&page=1&q="
+                 || request.url == "https://musical-artifacts.com/artifacts.json?formats=sfz&page=1&q=Piano")
+        {
+            pianoSearched.store (request.url.find ("q=Piano") != std::string::npos, std::memory_order_release);
             reply = Json::array ({ { { "id", std::stoull (packId) }, { "name", "Community Piano" },
                                     { "author", "Fixture author" }, { "license", "cc-zero" },
                                     { "formats", Json::array ({ "sfz" }) } } });
+        }
         else if (request.url == api) reply = repo;
         else if (request.url == api + "/commits/HEAD")
             reply = { { "sha", commit }, { "commit", { { "tree", { { "sha", tree } } } } } };
@@ -235,6 +239,7 @@ public:
 
     std::string name, packId, commit, tree, api, source, archiveUrl, archive;
     std::atomic<unsigned> requests { 0 }, rangedRequests { 0 };
+    std::atomic<bool> pianoSearched { false };
     std::atomic<bool> networkFailure { false }, holdArchive { false }, archiveEntered { false };
     std::mutex barrierMutex;
     std::condition_variable barrier;
@@ -346,7 +351,8 @@ void pushWorkClick (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ct
     }, "SFZ worker did not finish the panel request", {}, kSettleBoundMs });
 }
 
-void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, const std::shared_ptr<CaseState>& state)
+void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, const std::shared_ptr<CaseState>& state,
+                const std::string& searchKey = "Return", bool fromShell = false)
 {
     steps.push_back ({ 0, [&host, &ctx, state]
     {
@@ -371,7 +377,32 @@ void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, c
     pushClick (steps, host, ctx, "online-tab");
     steps.push_back ({ 0, [&ctx, state]
     { ctx.expect (state->transport->requests.load() == 0, "opening Online started an HTTP request"); } });
-    pushWorkClick (steps, host, ctx, state, "browse", LibraryState::Complete);
+    pushClick (steps, host, ctx, "query");
+    steps.push_back ({ 0, [&host, &ctx, state, searchKey, fromShell]
+    {
+        state->generation = ctx.engine().getSfzLibrary().snapshot().generation;
+        if (fromShell)
+        {
+            ctx.expect (host.sfzLibraryInput (kStripIndex, "focus-out"), "SFZ child focus loss was not delivered");
+            for (const char character : std::string ("Piano"))
+                ctx.expect (host.pressKey (std::string (1, character), character),
+                            "parent window did not give typed text to the SFZ search field");
+            ctx.expect (host.pressKey (searchKey), "parent window did not give Enter to the SFZ search field");
+        }
+        else ctx.expect (host.sfzLibraryInput (kStripIndex, searchKey), "SFZ search key was not delivered");
+    } });
+    steps.push_back ({ 0, [&ctx, state, fromShell]
+    {
+        const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
+        ctx.expect (snapshot.state == LibraryState::Complete, "SFZ keyboard search failed: " + snapshot.error);
+        if (fromShell)
+            ctx.expect (state->transport->pianoSearched.load (std::memory_order_acquire),
+                        "Enter did not submit the current Piano search text");
+    }, [&ctx, state]
+    {
+        const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
+        return ! snapshot.busy && snapshot.generation > state->generation;
+    }, "Enter did not submit the SFZ search", {}, kSettleBoundMs });
     steps.push_back ({ 0, [&ctx, state]
     {
         const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
@@ -466,6 +497,19 @@ void pushFinish (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, 
 }
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
+std::optional<ScenarioResult> runSearchKey (GuiHost& host, ScenarioContext& ctx, bool fromShell)
+{
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    auto state = prepare (host, ctx, fromShell ? "shell-enter" : "keypad-enter");
+    if (! state) return ctx.verdict();
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushStart (*steps, host, ctx, state, fromShell ? "Return" : "numpad enter", fromShell);
+    pushFinish (*steps, host, ctx, state);
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
 std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
 {
     if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
@@ -779,6 +823,7 @@ std::optional<ScenarioResult> runPauseCancel (GuiHost& host, ScenarioContext& ct
     return std::nullopt;
 }
 #else
+std::optional<ScenarioResult> runSearchKey (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runWorkflow (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runPauseCancel (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 #endif
@@ -790,6 +835,14 @@ const ScenarioRegistrar workflow { Scenario {
 const ScenarioRegistrar pauseCancel { Scenario {
     "gui.sfz_repository_pause_cancel", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
     {}, {}, 150000, runPauseCancel
+} };
+const ScenarioRegistrar keypadEnter { Scenario {
+    "gui.sfz_search_keypad_enter", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000, [] (GuiHost& host, ScenarioContext& ctx) { return runSearchKey (host, ctx, false); }
+} };
+const ScenarioRegistrar shellEnter { Scenario {
+    "gui.sfz_search_shell_enter", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000, [] (GuiHost& host, ScenarioContext& ctx) { return runSearchKey (host, ctx, true); }
 } };
 } // namespace
 } // namespace duskstudio::scenario::gui

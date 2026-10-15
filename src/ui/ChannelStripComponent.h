@@ -557,6 +557,7 @@ public:
     { sfzSourceOpenForScenario = std::move (callback); }
     void closeSfzLibrary();
     bool isSfzLibraryOpen() const noexcept;
+    bool offerSfzLibraryKey (const std::string& description, std::uint32_t character);
     bool sfzLibraryPointerForScenario (const std::string& control, float position, bool pressed);
     bool sfzLibraryInputForScenario (const std::string& input);
     void captureSfzLibrary (const std::string& capturePath);

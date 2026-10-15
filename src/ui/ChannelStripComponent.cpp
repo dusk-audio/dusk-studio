@@ -4238,6 +4238,16 @@ bool ChannelStripComponent::isSfzLibraryOpen() const noexcept
    #endif
 }
 
+bool ChannelStripComponent::offerSfzLibraryKey (const std::string& description, std::uint32_t character)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return sfzLibraryWindow != nullptr && sfzLibraryWindow->offerShellKey (description, character);
+   #else
+    (void) description; (void) character;
+    return false;
+   #endif
+}
+
 bool ChannelStripComponent::sfzLibraryPointerForScenario (const std::string& control, float position, bool pressed)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
