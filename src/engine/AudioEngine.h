@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <vector>
 #include <utility>
 #include "../dsp/AuxLaneStrip.h"
@@ -779,6 +780,12 @@ private:
     std::atomic<unsigned> assetRenderHolds { 0 };
     std::mutex assetPauseMutex;
     void updateAssetWorkPause() noexcept;
+    const std::thread::id ownerThread = std::this_thread::get_id();
+    // Restarting DSP must not re-enter the device manager's callback iteration.
+    std::atomic<unsigned> deviceLifecycleDepth { 0 };
+    std::atomic<std::int64_t> pendingDeviceStopSample { -1 };
+    void requestDeviceStopFinalization();
+    void finishPendingDeviceStop();
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     struct MultisampleLoadState;
     std::unique_ptr<MultisampleLoadState> multisampleLoads;

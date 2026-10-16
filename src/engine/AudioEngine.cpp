@@ -1724,6 +1724,11 @@ void AudioEngine::openConfiguredMidiOutputsSafely()
 void AudioEngine::detachAudioCallback()
 {
     deviceManager.removeCallback (this);
+    // The offline worker waits for this owner-thread handoff before touching
+    // playback streams, even though it has already raised the render flag.
+    if (std::this_thread::get_id() == ownerThread && ! isProcessingSuspended()
+        && (pendingDeviceStopSample.load (std::memory_order_acquire) >= 0 || recordManager.isActive()))
+        stop();
     if (audioRegistrationObserver) audioRegistrationObserver (isAudioCallbackRegistered());
 }
 void AudioEngine::reattachAudioCallback()
@@ -1779,11 +1784,8 @@ void AudioEngine::setStage (Stage s) noexcept
                                  || (s == Stage::Mastering);
     if (crossesMastering)
     {
-        if (transport.isRecording())
-            recordManager.stopRecording (transport.getPlayhead());
-        transport.setState (Transport::State::Stopped);
+        stop();
         masteringPlayer.stop();
-        playbackEngine.stopPlayback();
     }
 
     // Gates two different signal flows on the audio thread - release/acquire
@@ -1795,6 +1797,7 @@ void AudioEngine::setStage (Stage s) noexcept
 
 AudioEngine::~AudioEngine()
 {
+    finishPendingDeviceStop();
     // Before anything else: a hop posted by the poll thread can already be
     // sitting in the message queue, and joining that thread below will not
     // remove it. Clearing the flag makes it land on a no-op.
@@ -1805,7 +1808,7 @@ AudioEngine::~AudioEngine()
     changeListeners.clear();
     midiHotplugTimer.stopTimer();
     diagTimer.stopTimer();
-    if (transport.isRecording()) stop();
+    if (transport.isRecording() || recordManager.isActive()) stop();
     deviceManager.removeChangeListener (this);
     deviceManager.removeCallback (this);
     midiIn.detachCallback();
@@ -2223,12 +2226,14 @@ void AudioEngine::schedulePlaybackService()
 
 void AudioEngine::servicePlayback()
 {
+    finishPendingDeviceStop();
     // Leaves the streams to a render's worker. The worker raises the flag before
     // the hop to this thread that starts its render and lowers it after its last
     // stopPlayback, so a pass that finds it lowered runs wholly before the
     // worker's first touch of the streams or after its last.
     if (offlineRenderActive.load (std::memory_order_acquire))
         return;
+    performPendingDspRestartIfIdle();
     serviceMidiRecording();
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     serviceMultisampleLoads();
@@ -2248,9 +2253,10 @@ void AudioEngine::servicePlayback()
 
 void AudioEngine::serviceMidiRecording()
 {
+    finishPendingDeviceStop();
     recordManager.serviceMidiCapture();
     if (! recordManager.isMidiMergeCapture()) return;
-    const double sr = getCurrentSampleRate();
+    const double sr = getTimelineSampleRate();
     const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
     if (sr <= 0.0 || bpm <= 0.0f) return;
     for (auto& group : recordManager.takeMidiPassGroups())
@@ -2306,6 +2312,7 @@ void AudioEngine::serviceMidiRecording()
 
 void AudioEngine::play (PlaybackEngine::Audition audition)
 {
+    finishPendingDeviceStop();
     if (transport.isPlaying() || transport.isRecording()) return;
     performPendingDspRestartIfIdle();
 
@@ -2335,8 +2342,11 @@ void AudioEngine::play (PlaybackEngine::Audition audition)
 
 void AudioEngine::stop()
 {
-    if (transport.isStopped() && ! recordManager.isActive())
+    const auto deviceStopSample = std::this_thread::get_id() == ownerThread
+        ? pendingDeviceStopSample.exchange (-1, std::memory_order_acq_rel) : std::int64_t { -1 };
+    if (transport.isStopped() && ! recordManager.isActive() && deviceStopSample < 0)
     {
+        updateAssetWorkPause();
         performPendingDspRestartIfIdle();
         return;
     }
@@ -2349,7 +2359,7 @@ void AudioEngine::stop()
             ~ResumeGuard() { engine.resumeProcessing(); }
         } resumeGuard { *this };
 
-        const auto endSample = transport.getCommittedPlayhead();
+        const auto endSample = deviceStopSample >= 0 ? deviceStopSample : transport.getCommittedPlayhead();
         transport.setPlayhead (endSample);
         const bool wasRecording = transport.isRecording() || recordManager.isActive();
         transport.setState (Transport::State::Stopped);
@@ -2461,7 +2471,10 @@ void AudioEngine::restartDspWhenIdle()
 
 void AudioEngine::performPendingDspRestartIfIdle()
 {
-    if (! dspRestartPending_ || ! transport.isStopped()) return;
+    if (std::this_thread::get_id() != ownerThread
+        || deviceLifecycleDepth.load (std::memory_order_acquire) != 0
+        || isProcessingSuspended() || offlineRenderActive.load (std::memory_order_acquire)
+        || ! isAudioCallbackRegistered() || ! transport.isStopped() || ! dspRestartPending_) return;
     dspRestartPending_ = false;
     performDspRestart();
 }
@@ -2552,6 +2565,7 @@ void AudioEngine::applyMicrophoneAnswer (bool granted, bool addFirstLaunchInput)
 
 void AudioEngine::record()
 {
+    finishPendingDeviceStop();
     if (transport.isRecording())
     {
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): already recording, ignored.\n");
@@ -2647,7 +2661,8 @@ void AudioEngine::record()
         ~ResumeGuard() { engine.resumeProcessing(); }
     } resumeGuard { *this };
 
-    if (currentSampleRate.load (std::memory_order_relaxed) != sr)
+    if (pendingDeviceStopSample.load (std::memory_order_acquire) >= 0
+        || currentSampleRate.load (std::memory_order_relaxed) != sr)
     {
         if (onRecordBlocked_)
             onRecordBlocked_ ("Recording could not start because the audio device changed.\n\n"
@@ -4076,6 +4091,13 @@ void AudioEngine::consumePluginStateAfterLoad()
 
 void AudioEngine::audioDeviceAboutToStart (device::IODevice* device)
 {
+    deviceLifecycleDepth.fetch_add (1, std::memory_order_acq_rel);
+    struct LifecycleGuard
+    {
+        std::atomic<unsigned>& depth;
+        ~LifecycleGuard() { depth.fetch_sub (1, std::memory_order_release); }
+    } lifecycle { deviceLifecycleDepth };
+    finishPendingDeviceStop();
     // Mark that a live device is present so the next
     // onDeviceManagerChanged observing a null current device can
     // distinguish hot-unplug from steady-state "device was never up".
@@ -4190,6 +4212,7 @@ void AudioEngine::setTrackMidiCapacityForTest (int trackIndex, std::size_t bytes
 
 void AudioEngine::prepareForSelfTest (double sr, int bs)
 {
+    finishPendingDeviceStop();
     // Must run on the message thread. The function mutates shared DSP
     // state (every strip's prepare, every smoother reset, every scratch
     // buffer resize) without locks. If a future caller invokes this
@@ -4215,6 +4238,9 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         ~ResumeGuard() { e.resumeProcessing(); }
     };
     const ResumeGuard resumeGuard { *this };
+
+    if (rtTempoMapPool.size() > 1)
+        rtTempoMapPool.erase (rtTempoMapPool.begin(), rtTempoMapPool.end() - 1);
 
     // A finished render's cancel flag dies with its BounceEngine, and only the
     // next callback would clear the pointer; a slot processed directly before
@@ -4531,8 +4557,41 @@ void AudioEngine::audioDeviceError (const std::string& message)
         });
 }
 
+void AudioEngine::finishPendingDeviceStop()
+{
+    if (std::this_thread::get_id() == ownerThread
+        && ! isProcessingSuspended() && ! offlineRenderActive.load (std::memory_order_acquire)
+        && pendingDeviceStopSample.load (std::memory_order_acquire) >= 0)
+        stop();
+}
+
+void AudioEngine::requestDeviceStopFinalization()
+{
+    // A backend can stop on its device thread; capture and preview ownership
+    // remain on the message thread.
+    std::int64_t expected = -1;
+    const bool queued = pendingDeviceStopSample.compare_exchange_strong (
+        expected, std::max<std::int64_t> (0, transport.getCommittedPlayhead()), std::memory_order_acq_rel);
+    transport.setState (Transport::State::Stopped);
+    finishPendingDeviceStop();
+    if (queued)
+        dusk::callAsync ([this, alive = deviceCallbacksAlive]
+        {
+            if (! alive->load (std::memory_order_acquire)) return;
+            finishPendingDeviceStop();
+            performPendingDspRestartIfIdle();
+            schedulePlaybackService();
+        });
+}
+
 void AudioEngine::audioDeviceStopped()
 {
+    deviceLifecycleDepth.fetch_add (1, std::memory_order_acq_rel);
+    struct LifecycleGuard
+    {
+        std::atomic<unsigned>& depth;
+        ~LifecycleGuard() { depth.fetch_sub (1, std::memory_order_release); }
+    } lifecycle { deviceLifecycleDepth };
     // Drain any in-flight worker lanes FIRST, while the device's input buffers
     // (which trackJobs points into) are still alive - the device close() that
     // follows this callback frees them. Covers the force-killed-I/O-thread case
@@ -4548,40 +4607,12 @@ void AudioEngine::audioDeviceStopped()
     // reset the counter to reconcile any such leak.
     callbacksInFlight.store (0, std::memory_order_release);
 
-    // Stop any in-flight recording BEFORE clearing the sample rate: the
-    // writer drain in stopRecording depends on recordSampleRate being
-    // non-zero to map sample positions to seconds. Without this, a
-    // device disconnect mid-take leaves recordManager.active = true,
-    // and any audio block that slips in while the device is being torn
-    // down would call writeInputBlock at sr=0 with stale writers - data
-    // corruption shape. Also flips Transport state so the UI's
-    // record button immediately reflects "stopped" rather than the
-    // pre-disconnect "Recording".
-    if (recordManager.isActive())
-        recordManager.stopRecording (transport.getCommittedPlayhead());
-    // Force-stop the transport on ANY device loss (not just
-    // Recording). A hot-unplug while playing leaves the transport
-    // in Playing with no device to render - user gets a silent
-    // running transport which is confusing. Stop it explicitly so
-    // the next device come-up doesn't pick up mid-play.
-    if (transport.isPlaying() || transport.isRecording())
-        transport.setState (Transport::State::Stopped);
-
-    // dspRestartPending_ is message-thread-owned. Leave it set here for
-    // performPendingDspRestartIfIdle() to consume from the next message-thread
-    // stopped-state path; this callback may run on a backend/device thread.
-
     currentSampleRate.store (0.0, std::memory_order_relaxed);
     currentBlockSize.store  (0,   std::memory_order_relaxed);
-
-    // Reclaim retired tempo-map copies. Only safe here: no callback can be
-    // in flight, so nothing holds a pointer into the pool except the live
-    // map the next device start will read.
-    if (rtTempoMapPool.size() > 1)
-        rtTempoMapPool.erase (rtTempoMapPool.begin(), rtTempoMapPool.end() - 1);
     // Reset to the optimistic default so a transient "no device open" state
     // doesn't stick a NO OUTPUTS warning on the UI.
     usableOutputs.store (true, std::memory_order_relaxed);
+    requestDeviceStopFinalization();
 }
 
 void AudioEngine::onDeviceManagerChanged()
@@ -4637,17 +4668,7 @@ void AudioEngine::onDeviceManagerChanged()
                       "[Dusk Studio/AudioEngine] hot-unplug detected - no current "
                       "audio device. Transport stopped.\n");
 
-        // audioDeviceStopped already force-stopped transport +
-        // recording; this is belt-and-braces in case the order of
-        // callbacks differs across backends. setState is no-op when
-        // already Stopped.
-        if (transport.isPlaying() || transport.isRecording())
-        {
-            if (transport.isRecording())
-                recordManager.stopRecording (transport.getPlayhead());
-            transport.setState (Transport::State::Stopped);
-        }
-        performPendingDspRestartIfIdle();
+        requestDeviceStopFinalization();
 
         if (onDeviceLostAlert_)
         {

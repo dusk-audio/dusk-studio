@@ -1989,6 +1989,8 @@ Downloads use HTTPS. SFZ Instruments, FreePats and Versilian Studios archives ar
 
 Library work pauses during recording, bounce or freeze. Press **Resume** afterwards to continue; it does not resume by itself. **Cancel** removes the unfinished download. In **Installed**, select an instrument and press **Load** to put it on the track. **Remove** deletes a pack only when the current session and pending loads are not using it.
 
+Switching to Mastering or losing the audio device ends the take and releases the recording pause. Queued instrument loads can proceed when a working audio device is available; paused library work still waits for **Resume**.
+
 Installed versions coexist. A session references the exact source, pack, version, archive digest and instrument path, so another computer can resolve the same installed pack without matching the original absolute path. If that pack is missing, the slot stays offline and keeps its reference. Opening a session never downloads instruments or browses a repository. Files opened directly remain file references unless they belong to a known installed pack.
 
 Instrument replacement is prepared in the background while the current instrument keeps playing. A failed replacement leaves it playing, and an older request cannot replace a newer selection.
