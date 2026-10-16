@@ -6,20 +6,22 @@ if [[ "${1:-}" == --namespace ]]; then
     capacity_root="${3:?}"
     mounted=false
     trap 'if [[ "$mounted" == true ]]; then umount -- "$capacity_root"; fi' EXIT
-    for mode in inodes bytes; do
-        inodes=64
-        if [[ "$mode" == inodes ]]; then inodes=1; fi
-        if ! mount -t tmpfs -o "size=64k,nr_inodes=$inodes,mode=700" tmpfs "$capacity_root"; then
-            echo 'skip: cannot mount the private capacity fixture'
-            exit 77
-        fi
-        mounted=true
-        status=0
-        DUSK_SFZ_CAPACITY_ROOT="$capacity_root" DUSK_SFZ_CAPACITY_MODE="$mode" \
-            "$test_binary" '[sfz-disk-full]' || status=$?
-        umount -- "$capacity_root"
-        mounted=false
-        if [[ "$status" -ne 0 ]]; then exit "$status"; fi
+    for test_filter in '[sfz-disk-full]' '[sfz-service-disk-full]'; do
+        for mode in inodes bytes; do
+            inodes=64
+            if [[ "$mode" == inodes ]]; then inodes=1; fi
+            if ! mount -t tmpfs -o "size=64k,nr_inodes=$inodes,mode=700" tmpfs "$capacity_root"; then
+                echo 'skip: cannot mount the private capacity fixture'
+                exit 77
+            fi
+            mounted=true
+            status=0
+            DUSK_SFZ_CAPACITY_ROOT="$capacity_root" DUSK_SFZ_CAPACITY_MODE="$mode" \
+                "$test_binary" "$test_filter" || status=$?
+            umount -- "$capacity_root"
+            mounted=false
+            if [[ "$status" -ne 0 ]]; then exit "$status"; fi
+        done
     done
     exit 0
 fi

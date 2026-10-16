@@ -464,10 +464,14 @@ TEST_CASE ("SFZ library preserves saved downloads when its metadata cache is una
     const auto transport = std::make_shared<ScriptedTransport>();
     {
         LibraryService service;
-        REQUIRE (settled (service).state == LibraryState::Failed);
+        const auto initial = settled (service);
+        REQUIRE (initial.state == LibraryState::Failed);
+        CHECK (initial.failureKind == FailureKind::None);
         REQUIRE (service.setTransportForTest (transport));
         REQUIRE (service.install (pack));
-        REQUIRE (settled (service).state == LibraryState::Failed);
+        const auto failed = settled (service);
+        REQUIRE (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::None);
         CHECK (transport->count() == 0);
         REQUIRE (ownedInstallFiles (tree) == 2);
     }
@@ -945,6 +949,63 @@ TEST_CASE ("SFZ library rejects bad download content without publishing or retai
     const auto refreshed = settled (service);
     CHECK (refreshed.state == LibraryState::Complete);
     CHECK (refreshed.failureKind == FailureKind::None);
+}
+
+TEST_CASE ("SFZ library retains disk-full failures and completed downloads", "[sfz][service][ipc][sfz-service-disk-full]")
+{
+   #if defined(__linux__)
+    const auto* rootSetting = std::getenv ("DUSK_SFZ_CAPACITY_ROOT");
+    const auto* modeSetting = std::getenv ("DUSK_SFZ_CAPACITY_MODE");
+    if (! rootSetting || ! modeSetting) SKIP ("Requires the private tmpfs fixture from sfz_disk_full.sh");
+    const auto root = fs::canonical (rootSetting);
+    const std::string mode = modeSetting;
+    REQUIRE ((mode == "inodes" || mode == "bytes"));
+    REQUIRE (fs::is_empty (root));
+    REQUIRE (fs::space (root).capacity <= 64 * 1024);
+    const auto bytes = archiveBytes();
+    const auto normalized = providerPackFromJson (providerPackToJson (packFor (bytes)));
+    REQUIRE (normalized);
+    REQUIRE (normalized.pack);
+    const auto pack = *normalized.pack;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ bytes });
+    LibraryService service (root, transport);
+    const auto initial = settled (service);
+    if (mode == "inodes")
+    {
+        REQUIRE (initial.state == LibraryState::Failed);
+        CHECK (initial.failureKind == FailureKind::DiskFull);
+    }
+    else REQUIRE (initial.state == LibraryState::Idle);
+    REQUIRE (service.install (pack));
+    const auto failed = settled (service);
+    INFO (failed.error);
+    REQUIRE (failed.state == LibraryState::Failed);
+    CHECK (failed.failureKind == FailureKind::DiskFull);
+    CHECK (failed.installed.empty());
+    if (mode == "inodes") CHECK (transport->count() == 0);
+    else
+    {
+        const auto part = root / ".repository-cache" / (hash (providerPackToJson (pack)) + ".part");
+        REQUIRE (dusk::fs::loadFileAsString (part) == bytes);
+        REQUIRE (inspectDownloadPart (part, ArchiveLimits{}.maxArchiveBytes) == DownloadPartState::Reusable);
+        CHECK (transport->count() == 1);
+        for (const auto& entry : fs::directory_iterator (root))
+            CHECK (entry.path().filename().u8string().rfind (".install-", 0) != 0);
+        REQUIRE (service.requestInstalled());
+        const auto refreshed = settled (service);
+        CHECK (refreshed.state == LibraryState::Complete);
+        CHECK (refreshed.failureKind == FailureKind::None);
+        REQUIRE (service.install (pack));
+        const auto retried = settled (service);
+        CHECK (retried.state == LibraryState::Failed);
+        CHECK (retried.failureKind == FailureKind::DiskFull);
+        CHECK (transport->count() == 1);
+        CHECK (dusk::fs::loadFileAsString (part) == bytes);
+    }
+   #else
+    SKIP ("The bounded tmpfs fixture requires Linux user and mount namespaces");
+   #endif
 }
 
 TEST_CASE ("SFZ library resumes extraction from a completed locally verified part without HTTP", "[sfz][service][ipc]")

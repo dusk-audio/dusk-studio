@@ -36,12 +36,16 @@ std::string digest (std::string_view text)
     return hex.data();
 }
 
-bool plainDirectory (const fs::path& path)
+FailureKind storageFailureKind (const std::error_code& error)
 {
-    std::error_code error;
+    return error == std::errc::no_space_on_device ? FailureKind::DiskFull : FailureKind::None;
+}
+
+bool plainDirectory (const fs::path& path, std::error_code& error)
+{
     const auto ioPath = dusk::fs::nativeIOPath (path);
     fs::create_directory (ioPath, error);
-    error.clear();
+    if (error) return false;
     return fs::is_directory (fs::symlink_status (ioPath, error)) && ! error;
 }
 
@@ -642,7 +646,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
     {
         setState (job.generation, LibraryState::ChangingLocation);
         auto changed = changeLibraryLocation (locations, job.destination, job.moveExisting, control, configurationFile);
-        if (! changed || ! changed.locations) return { changed.status, changed.error };
+        if (! changed || ! changed.locations) return { changed.status, changed.error, changed.failureKind };
         locations = std::move (*changed.locations);
         store = PackStore (locations.active.root, locations.active.marker);
         const auto installed = installedLibraryPacks (locations);
@@ -702,13 +706,15 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
     if (job.kind == JobKind::Install)
     {
         std::string error;
-        if (! store.initialize (error)) return { OperationStatus::Failed, error };
+        std::error_code nativeError;
+        if (! store.initialize (error, &nativeError))
+            return { OperationStatus::Failed, error, storageFailureKind (nativeError) };
         setState (job.generation, LibraryState::Downloading);
-        if (! plainDirectory (job.part.parent_path()))
-            return { OperationStatus::Failed, "Cannot open the SFZ download directory" };
+        if (! plainDirectory (job.part.parent_path(), nativeError))
+            return { OperationStatus::Failed, "Cannot open the SFZ download directory", storageFailureKind (nativeError) };
         DirectoryLease next;
-        if (! next.acquire (job.part.parent_path(), DirectoryLease::Access::Shared, error))
-            return { OperationStatus::Failed, error };
+        if (! next.acquire (job.part.parent_path(), DirectoryLease::Access::Shared, error, &nativeError))
+            return { OperationStatus::Failed, error, storageFailureKind (nativeError) };
         job.partLease = std::move (next);
         const auto downloaded = downloadFile (*transport,
             { job.pack.downloadUrl, job.part, job.pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes }, control);
@@ -716,8 +722,8 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         if (! downloaded) return { downloaded.status, downloaded.error, downloaded.failureKind };
         if (control.status() != OperationStatus::Complete) return interrupted (control);
         setState (job.generation, LibraryState::Extracting);
-        job.staging = store.createStaging (error);
-        if (job.staging.empty()) return { OperationStatus::Failed, error };
+        job.staging = store.createStaging (error, &nativeError);
+        if (job.staging.empty()) return { OperationStatus::Failed, error, storageFailureKind (nativeError) };
         ArchiveRequest request;
         request.archive = job.part;
         request.stagingDirectory = job.staging;
@@ -729,7 +735,8 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         const auto extracted = extractZip (request, control);
         if (! extracted)
         {
-            if (extracted.status == OperationStatus::Failed) job.preserveDownload = false;
+            if (extracted.status == OperationStatus::Failed && extracted.failureKind != FailureKind::DiskFull)
+                job.preserveDownload = false;
             std::error_code ignored;
             fs::remove_all (dusk::fs::nativeIOPath (job.staging), ignored);
             job.staging.clear();
@@ -800,14 +807,16 @@ void LibraryService::run()
         sweepLocation (locations.active);
         for (const auto& previous : locations.previous) sweepLocation (previous);
     }
-    const bool initialized = initializationError.empty() && store.initialize (initializationError);
+    std::error_code initializationCode;
+    const bool initialized = initializationError.empty() && store.initialize (initializationError, &initializationCode);
+    auto initializationKind = storageFailureKind (initializationCode);
     bool cacheReady = false;
     DirectoryLease repositoryLease;
     if (initialized || ! configurationFile.empty())
     {
         std::error_code error;
         fs::create_directories (dusk::fs::nativeIOPath (cacheRoot.parent_path()), error);
-        cacheReady = plainDirectory (cacheRoot);
+        cacheReady = ! error && plainDirectory (cacheRoot, error);
         if (cacheReady)
         {
             const auto canonical = fs::canonical (dusk::fs::nativeIOPath (cacheRoot), error);
@@ -818,9 +827,13 @@ void LibraryService::run()
         {
             sweepWorkDirectory (cacheRoot);
             std::string ownershipError;
-            cacheReady = repositoryLease.acquire (cacheRoot, DirectoryLease::Access::Shared, ownershipError);
+            cacheReady = repositoryLease.acquire (cacheRoot, DirectoryLease::Access::Shared, ownershipError, &error);
         }
-        if (! cacheReady) initializationError = "Cannot open the SFZ repository cache directory";
+        if (! cacheReady)
+        {
+            initializationError = "Cannot open the SFZ repository cache directory";
+            initializationKind = storageFailureKind (error);
+        }
     }
     const auto installed = installedLibraryPacks (locations);
     {
@@ -832,6 +845,7 @@ void LibraryService::run()
         {
             current.state = LibraryState::Failed;
             current.error = initializationError;
+            current.failureKind = initializationKind;
         }
     }
     for (;;)
@@ -865,17 +879,23 @@ void LibraryService::run()
         {
             DirectoryLease nextRepository;
             std::string ownershipError;
+            std::error_code ownershipCode;
             const bool usesRepository = job.kind == JobKind::Browse || job.kind == JobKind::Resolve;
             if (cacheReady && usesRepository
-                && ! nextRepository.acquire (cacheRoot, DirectoryLease::Access::Shared, ownershipError))
-                result = { OperationStatus::Failed, ownershipError };
+                && ! nextRepository.acquire (cacheRoot, DirectoryLease::Access::Shared, ownershipError, &ownershipCode))
+                result = { OperationStatus::Failed, ownershipError, storageFailureKind (ownershipCode) };
             else
             {
                 if (nextRepository) repositoryLease = std::move (nextRepository);
                 result = cacheReady || job.kind == JobKind::ChangeLocation
                     ? execute (job, control)
-                    : OperationResult { OperationStatus::Failed, initializationError };
+                    : OperationResult { OperationStatus::Failed, initializationError, initializationKind };
             }
+        }
+        catch (const fs::filesystem_error& exception)
+        {
+            result = { OperationStatus::Failed, std::string ("SFZ library operation failed: ") + exception.what(),
+                       storageFailureKind (exception.code()) };
         }
         catch (const std::exception& exception)
         {
