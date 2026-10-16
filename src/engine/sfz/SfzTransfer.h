@@ -76,6 +76,7 @@ struct DownloadResult : OperationResult
 {
     std::string sha256;
     std::uint64_t bytes = 0;
+    bool resumeAvailable = false;
 };
 
 DownloadResult downloadFile (HttpTransport&, const DownloadRequest&,

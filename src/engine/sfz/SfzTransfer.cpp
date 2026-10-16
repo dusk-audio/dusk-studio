@@ -148,7 +148,7 @@ std::optional<std::string> httpsUrl (const std::string& source, const std::strin
 
 bool safeRequest (const HttpRequest& request)
 {
-    if (! httpsUrl (request.url) || request.connectTimeoutSeconds <= 0 || request.timeoutSeconds <= 0
+    if (! httpsUrl (request.url) || request.connectTimeoutSeconds <= 0 || request.timeoutSeconds < 0
         || request.lowSpeedBytesPerSecond <= 0 || request.lowSpeedSeconds <= 0) return false;
     if (! request.allowedHosts.empty() && ! httpsUrlOnHosts (request.url, request.allowedHosts)) return false;
     for (const auto& item : request.headers)
@@ -176,8 +176,8 @@ OperationResult requestHttps (HttpTransport& transport, HttpRequest request,
         if (state != OperationStatus::Complete) return { state, {} };
         const auto elapsed = std::chrono::duration_cast<std::chrono::seconds> (
             std::chrono::steady_clock::now() - started).count();
-        if (elapsed >= timeout) return { OperationStatus::Failed, "HTTPS request timed out" };
-        request.timeoutSeconds = timeout - static_cast<long> (elapsed);
+        if (timeout > 0 && elapsed >= timeout) return { OperationStatus::Failed, "HTTPS request timed out" };
+        request.timeoutSeconds = timeout > 0 ? timeout - static_cast<long> (elapsed) : 0;
         if (! safeRequest (request)) return { OperationStatus::Failed, "HTTPS host is not allowed for this request" };
         bool redirect = false;
         bool receivedHeaders = false;
@@ -610,7 +610,7 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
 {
     DownloadResult result;
     const auto fail = [&] (const std::string& message)
-    { result.status = OperationStatus::Failed; result.error = message; return result; };
+    { result.status = OperationStatus::Failed; result.error = message; result.resumeAvailable = false; return result; };
     const auto initialState = control.status();
     if (initialState != OperationStatus::Complete) { result.status = initialState; return result; }
     const auto url = httpsUrl (request.url);
@@ -634,6 +634,7 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     if (completed && *metadata.completedBytes != offset) return fail ("Completed download part has changed size; restart the download");
     const bool resume = offset != 0 && sameRequest
         && ! metadata.validator().empty() && httpsUrl (metadata.effectiveUrl).has_value();
+    result.resumeAvailable = offset != 0 && (resume || completed);
     if (! resume && ! completed)
     {
         if (! rewindFile (file.get(), true)) return fail ("Cannot restart download part");
@@ -667,7 +668,7 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     if (std::fseek (file.get(), 0, SEEK_CUR) != 0) return fail ("Cannot append download part");
     HttpRequest http;
     http.url = *url;
-    http.timeoutSeconds = 1800;
+    http.timeoutSeconds = 0;
     http.headers["accept-encoding"] = "identity";
     if (resume)
     {
@@ -679,10 +680,17 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     std::uint64_t received = 0;
     bool accepted = false;
     std::string failure;
+    const auto reject = [&] (const char* reason)
+    { failure = reason; result.resumeAvailable = false; return false; };
     const auto operation = requestHttps (transport, http, [&] (const HttpResponse& response)
     {
-        const auto reject = [&] (const char* reason) { failure = reason; return false; };
-        if (response.statusCode != 200 && response.statusCode != 206) return reject ("Download server rejected the request");
+        if (response.statusCode != 200 && response.statusCode != 206)
+        {
+            if (response.statusCode == 416) return reject ("Download server rejected the resume range");
+            // An HTTP error leaves an existing validated prefix untouched.
+            failure = "Download server rejected the request";
+            return false;
+        }
         const auto encoding = lower (header (response, "content-encoding"));
         if (! encoding.empty() && encoding != "identity") return reject ("Unsupported download content encoding");
         const auto declaredLength = response.headers.find ("content-length");
@@ -716,15 +724,16 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
         metadata = { *url, digest, response.url, header (response, "etag"), header (response, "last-modified"), {}, {} };
         if (! writeMetadata (sidecar, metadata)) return reject ("Cannot save download resume information");
         accepted = true;
+        result.resumeAvailable = ! metadata.validator().empty();
         return true;
     }, [&] (std::string_view chunk)
     {
-        if (! accepted) { failure = "Download body arrived before validation"; return false; }
+        if (! accepted) return reject ("Download body arrived before validation");
         if (chunk.size() > request.maxBytes - result.bytes
             || (expectedBody && chunk.size() > *expectedBody - received))
-        { failure = "Download exceeds the size limit or declared length"; return false; }
+            return reject ("Download exceeds the size limit or declared length");
         if (std::fwrite (chunk.data(), 1, chunk.size(), file.get()) != chunk.size())
-        { failure = "Cannot write download part"; return false; }
+            return reject ("Cannot write download part");
         crypto_hash_sha256_update (&hash, reinterpret_cast<const unsigned char*> (chunk.data()), chunk.size());
         result.bytes += chunk.size();
         received += chunk.size();
@@ -735,9 +744,15 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     result.error = failure.empty() ? operation.error : failure;
     if (! failure.empty()) result.status = OperationStatus::Failed;
     if (std::fflush (file.get()) != 0) return fail ("Cannot flush download part");
+    result.resumeAvailable = result.resumeAvailable && result.bytes != 0;
     if (! result) return result;
-    if (! accepted || (expectedBody && received != *expectedBody)
-        || (expectedTotal && result.bytes != *expectedTotal)) return fail ("Truncated download");
+    if (! accepted) return fail ("Download response has no accepted body");
+    if ((expectedBody && received != *expectedBody) || (expectedTotal && result.bytes != *expectedTotal))
+    {
+        result.status = OperationStatus::Failed;
+        result.error = "Truncated download";
+        return result;
+    }
     result.sha256 = hashDigest (hash);
     if (! digest.empty() && result.sha256 != digest) return fail ("Download SHA-256 does not match the expected digest");
     metadata.completedBytes = result.bytes;

@@ -54,6 +54,7 @@ struct FakeReply
     std::string body;
     std::size_t chunkBytes = 4;
     OperationStatus endStatus = OperationStatus::Complete;
+    bool failBeforeHeaders = false;
 };
 
 class FakeTransport final : public HttpTransport
@@ -71,6 +72,7 @@ public:
             return OperationResult { state == OperationStatus::Complete ? OperationStatus::Failed : state, "Aborted" };
         };
         if (control.status() != OperationStatus::Complete) return aborted();
+        if (reply.failBeforeHeaders) return { OperationStatus::Failed, "Scripted connection failure" };
         if (! onHeaders ({ reply.status, request.url, reply.headers })) return aborted();
         for (std::size_t offset = 0; offset < reply.body.size(); offset += reply.chunkBytes)
         {
@@ -114,14 +116,15 @@ TEST_CASE ("SFZ transfer streams and hashes a bounded archive", "[sfz][transfer]
     CHECK (result.bytes == 8);
     CHECK (result.sha256 == sha256 ("abcdefgh"));
     CHECK (readFile (temp.part()) == "abcdefgh");
-    CHECK (transport.requests.front().timeoutSeconds > transport.requests.front().connectTimeoutSeconds);
+    CHECK (transport.requests.front().timeoutSeconds == 0);
+    CHECK (transport.requests.front().lowSpeedSeconds == 30);
 }
 
 TEST_CASE ("SFZ transfer verifies an upstream digest before completion", "[sfz][transfer]")
 {
     TemporaryDownload temp;
     FakeTransport transport;
-    transport.replies.push_back ({ 200, {}, "abcdefgh" });
+    transport.replies.push_back ({ 200, { { "etag", "\"v1\"" } }, "abcdefgh" });
     SECTION ("Matching digest")
     {
         const auto result = downloadFile (transport, request (temp, sha256 ("abcdefgh")));
@@ -135,6 +138,7 @@ TEST_CASE ("SFZ transfer verifies an upstream digest before completion", "[sfz][
         CHECK (result.error.find ("SHA-256") != std::string::npos);
         CHECK (result.sha256 == sha256 ("abcdefgh"));
         CHECK (readFile (temp.part()) == "abcdefgh");
+        CHECK_FALSE (result.resumeAvailable);
     }
 }
 
@@ -199,9 +203,77 @@ TEST_CASE ("SFZ transfer does not append a mismatched resume response", "[sfz][t
     SECTION ("Unsatisfiable range") { reply.status = 416; }
     SECTION ("Partial response stops before entity end") { reply.headers["content-range"] = "bytes 4-5/8"; }
     transport.replies.push_back (reply);
-    CHECK_FALSE (downloadFile (transport, download));
+    const auto result = downloadFile (transport, download);
+    CHECK_FALSE (result);
+    CHECK_FALSE (result.resumeAvailable);
     CHECK (readFile (temp.part()) == "abcd");
     CHECK (transport.requests.size() == 2);
+}
+
+TEST_CASE ("SFZ transfer retains validated prefixes across transient failures", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    const auto download = request (temp, sha256 ("abcdefgh"));
+    FakeReply reply { 200, { { "content-length", "8" }, { "etag", "\"v1\"" } }, "abcd", 4, OperationStatus::Failed };
+    bool existing = false;
+    std::string prefix = "abcd";
+    SECTION ("Connection drops after a validated prefix") {}
+    SECTION ("A completed response contains only a prefix") { reply.endStatus = OperationStatus::Complete; }
+    SECTION ("An existing prefix survives a connection failure before headers")
+    {
+        existing = true;
+        reply.failBeforeHeaders = true;
+    }
+    SECTION ("An existing prefix survives a server error")
+    {
+        existing = true;
+        reply = { 503, {}, "Unavailable" };
+    }
+    SECTION ("A chunked resume response ends before its declared range")
+    {
+        existing = true;
+        reply = { 206, { { "content-range", "bytes 4-7/8" }, { "etag", "\"v1\"" } }, "ef" };
+        prefix = "abcdef";
+    }
+    if (existing) pauseAfterPrefix (transport, download);
+    transport.replies.push_back (reply);
+    const auto interrupted = downloadFile (transport, download);
+    REQUIRE_FALSE (interrupted);
+    REQUIRE (interrupted.resumeAvailable);
+    REQUIRE (interrupted.bytes == prefix.size());
+    REQUIRE (readFile (temp.part()) == prefix);
+    const auto tail = std::string ("abcdefgh").substr (prefix.size());
+    transport.replies.push_back ({ 206, { { "content-range", "bytes " + std::to_string (prefix.size()) + "-7/8" },
+                                          { "etag", "\"v1\"" }, { "content-length", std::to_string (tail.size()) } }, tail });
+    const auto result = downloadFile (transport, download);
+    REQUIRE (result);
+    CHECK (transport.requests.back().headers.at ("range") == "bytes=" + std::to_string (prefix.size()) + "-");
+    CHECK (result.sha256 == sha256 ("abcdefgh"));
+    CHECK (readFile (temp.part()) == "abcdefgh");
+}
+
+TEST_CASE ("SFZ transfer preserves validated prefixes while hashing is interrupted", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    const auto download = request (temp, sha256 ("abcdefgh"));
+    pauseAfterPrefix (transport, download);
+    bool cancelled = false, interrupted = false;
+    SECTION ("Pause") {}
+    SECTION ("Cancellation leaves deletion to the library service") { cancelled = true; }
+    OperationControl control;
+    control.paused = [&] { return interrupted && ! cancelled; };
+    control.cancelled = [&] { return interrupted && cancelled; };
+    control.progress = [&] (const OperationProgress&) { interrupted = true; };
+    const auto result = downloadFile (transport, download, control);
+    CHECK (result.status == (cancelled ? OperationStatus::Cancelled : OperationStatus::Paused));
+    CHECK (result.resumeAvailable);
+    CHECK (result.bytes == 4);
+    CHECK (transport.requests.size() == 1);
+    transport.replies.push_back ({ 206, { { "content-range", "bytes 4-7/8" }, { "etag", "\"v1\"" } }, "efgh" });
+    REQUIRE (downloadFile (transport, download));
+    CHECK (readFile (temp.part()) == "abcdefgh");
 }
 
 TEST_CASE ("SFZ transfer safely restarts when the server ignores its range", "[sfz][transfer]")
