@@ -237,7 +237,7 @@ std::optional<InstalledPack> PackStore::readReceipt (const fs::path& directory) 
     if (dusk::fs::fileSize (directory / kReceipt) > 8 * 1024 * 1024) return {};
     const auto receipt = Json::parse (dusk::fs::loadFileAsString (directory / kReceipt), nullptr, false);
     if (receipt.is_discarded() || dusk::json::getInt (receipt, "schema", 0) != 1) return {};
-    auto parsed = providerPackFromJson (dusk::json::child (receipt, "provider").dump());
+    auto parsed = providerPackFromJson (dusk::json::child (receipt, "provider").dump(), PackDescriptorUse::InstalledReceipt);
     if (! parsed || ! parsed.pack) return {};
     InstalledPack pack;
     pack.provider = std::move (*parsed.pack);

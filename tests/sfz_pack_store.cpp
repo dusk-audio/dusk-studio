@@ -88,6 +88,42 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
     REQUIRE (original.installed().size() == 1);
     CHECK (original.installed().front().provider.presentation.artworkUrl == pack.presentation.artworkUrl);
     CHECK (original.installed().front().provider.presentation.categoryHint == "piano");
+    SECTION ("prior restricted installations remain usable without permitting a new publication")
+    {
+        std::string type;
+        SECTION ("NonCommercial") { type = "by-nc"; }
+        SECTION ("NoDerivatives") { type = "by-nd"; }
+        SECTION ("NonCommercial ShareAlike") { type = "by-nc-sa"; }
+        SECTION ("NonCommercial NoDerivatives") { type = "by-nc-nd"; }
+        auto prior = pack;
+        prior.license.id = "CC-" + type + "-4.0";
+        for (auto& c : prior.license.id) if (c >= 'a' && c <= 'z') c = (char) (c + 'A' - 'a');
+        prior.license.text = prior.license.id + " https://creativecommons.org/licenses/" + type + "/4.0/";
+        prior.license.sha256 = hash (prior.license.text);
+        const auto descriptor = providerPackToJson (prior);
+        REQUIRE_FALSE (providerPackFromJson (descriptor));
+        REQUIRE (providerPackFromJson (descriptor, PackDescriptorUse::InstalledReceipt));
+        const auto receiptPath = result.pack->directory / ".dusk-pack.json";
+        auto receipt = Json::parse (dusk::fs::loadFileAsString (receiptPath));
+        receipt["provider"] = Json::parse (descriptor);
+        REQUIRE (dusk::fs::writeStringToFile (receiptPath, receipt.dump()));
+        const auto installed = original.installed();
+        REQUIRE (installed.size() == 1);
+        CHECK (installed.front().provider.license.id == prior.license.id);
+        const auto locator = installed.front().locatorFor (installed.front().instruments.front());
+        const auto path = original.resolve (locator);
+        REQUIRE (path);
+        CHECK (original.locatorForFile (*path) == locator);
+        CHECK_FALSE (original.publish (prior, prior.expectedSha256, stage (original), { u8"Programs/Étude.sfz" }));
+        CHECK (original.resolve (locator));
+        CHECK_FALSE (original.remove (installed.front(), { locator }));
+        CHECK (original.remove (installed.front(), {}));
+        auto tampered = prior;
+        tampered.license.sha256 = std::string (64, 'b');
+        CHECK_FALSE (providerPackFromJson (providerPackToJson (tampered), PackDescriptorUse::InstalledReceipt));
+        return;
+    }
+    SECTION ("portable relocation") {}
     const auto locator = result.pack->locatorFor (result.pack->instruments.front());
     const auto parsed = locatorFromJson (locatorToJson (locator));
     REQUIRE (parsed);

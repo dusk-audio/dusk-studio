@@ -81,5 +81,6 @@ ProviderPackResult resolveProviderPack (HttpTransport&, const ProviderSummary&,
                                        const OperationControl& = {});
 
 std::string providerPackToJson (const ProviderPack&);
-ProviderPackResult providerPackFromJson (std::string_view);
+enum class PackDescriptorUse { Download, InstalledReceipt };
+ProviderPackResult providerPackFromJson (std::string_view, PackDescriptorUse = PackDescriptorUse::Download);
 } // namespace duskstudio::sfz

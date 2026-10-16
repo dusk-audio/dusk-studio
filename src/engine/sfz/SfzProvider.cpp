@@ -451,6 +451,14 @@ std::optional<CcLicense> artifactLicense (const std::string& shortName)
     return ccLicense ("cc-" + type + "-" + version);
 }
 
+bool downloadLicenseAllowed (const CcLicense& license)
+{
+    return license.slug == "zero" || license.slug == "by" || license.slug == "by-sa";
+}
+
+constexpr const char* kRestrictedLicense =
+    "NonCommercial and NoDerivatives packs are unavailable. Choose CC0, CC BY or CC BY-SA content.";
+
 bool formalLicenseTitle (const std::string& text, const CcLicense& license)
 {
     auto title = lower (text);
@@ -938,7 +946,7 @@ std::string providerPackToJson (const ProviderPack& pack)
     }.dump();
 }
 
-ProviderPackResult providerPackFromJson (std::string_view source)
+ProviderPackResult providerPackFromJson (std::string_view source, PackDescriptorUse use)
 {
     ProviderPackResult result;
     const auto fail = [&] (const std::string& error) { result.error = error; return result; };
@@ -994,6 +1002,8 @@ ProviderPackResult providerPackFromJson (std::string_view source)
         string (license, "path", 512), string (license, "sha256", 64), string (license, "source_url"),
         string (license, "constraints", 1024) };
     const auto recognized = ccLicense (pack.license.id);
+    if (use == PackDescriptorUse::Download && recognized && ! downloadLicenseAllowed (*recognized))
+        return fail (kRestrictedLicense);
     std::string pathError;
     if (! decimalId (pack.packId) || pack.displayName.empty() || ! https (pack.sourceUrl) || ! https (pack.downloadUrl)
         || ! https (pack.license.sourceUrl) || ! recognized || pack.license.text.empty()
