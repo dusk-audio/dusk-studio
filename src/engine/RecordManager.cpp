@@ -287,12 +287,6 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     activeMidiCaptureTrackMask.store (0, std::memory_order_relaxed);
     activeStereoCaptureTrackMask.store (0, std::memory_order_relaxed);
 
-    // Reset the per-track audio-thread counters before the audio
-    // callback can start writing - the counter readout at stopRecording
-    // depends on a clean slate per take.
-    for (auto& c : writeMidiBlockCalls)
-        c.store (0, std::memory_order_relaxed);
-
     const auto stamp = juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
 
     // Tracks whether any track actually got a writer / MIDI capture. If every
@@ -340,12 +334,6 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
             midiCaptures[(size_t) t] = std::move (cap);
             captureTrackMask |= std::uint32_t { 1 } << t;
             midiCaptureTrackMask |= std::uint32_t { 1 } << t;
-            std::fprintf (stderr,
-                          "[Dusk Studio/RecordManager] startRecording: track %d set up MIDI capture "
-                          "(midiInputIndex=%d, midiChannel=%d).\n",
-                          t + 1,
-                          session.track (t).midiInputIndex.load (std::memory_order_relaxed),
-                          session.track (t).midiChannel.load (std::memory_order_relaxed));
             continue;
         }
 
@@ -388,13 +376,8 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
             continue;
         }
 
-        // Ring sized to hold ~4 s at the active sample rate so a brief
-        // disk stall (NFS hiccup, drive spindown) doesn't push the
-        // audio callback into dropped writes. Scaled by sampleRate so a
-        // 48k session doesn't pay the 12× memory tax of a 96k worst-
-        // case constant: ≈ 1.5 MB / track @ 48k stereo vs ≈ 3 MB @ 96k.
-        // Floor at 65536 samples to guarantee a safety margin even on
-        // exotic low-rate setups.
+        // Four seconds at the active rate tolerates brief disk stalls without
+        // reserving high-rate capacity for low-rate sessions.
         const int kRingFrames = std::max (65536, (int) (sampleRate * 4.0));
 
         // The ThreadedFileWriter ctor allocates a multi-MB ring per track, the
@@ -696,12 +679,6 @@ void RecordManager::stopRecording (std::int64_t endSample)
             continue;
         }
 
-        // Drain the lock-free FIFO into a flat vector so we can sort by
-        // sample-position before pairing Note On/Off events. Per JUCE's
-        // contract events arrive in sample order within a single block,
-        // but sample positions across blocks are monotonic so the FIFO
-        // order is already correct - we still copy into a vector to allow
-        // the linear note-pairing pass below.
         const int avail = cap->fifo.getNumReady();
         std::vector<PerTrackMidi::RawEvent> drained;
         drained.reserve ((size_t) avail);
@@ -710,21 +687,6 @@ void RecordManager::stopRecording (std::int64_t endSample)
         for (int i = 0; i < sz1; ++i) drained.push_back (cap->events[(size_t) (s1 + i)]);
         for (int i = 0; i < sz2; ++i) drained.push_back (cap->events[(size_t) (s2 + i)]);
         cap->fifo.finishedRead (sz1 + sz2);
-
-        // Diagnostic: how many MIDI events did we actually capture for
-        // this track? 0 means perTrackMidiScratch was empty across the
-        // whole take - usually means the track's midiInputIndex was -1
-        // (no MIDI input picked in the dropdown), so the per-track filter
-        // never copied any events into the scratch even though the chord
-        // analyzer (which reads engine-wide perInputMidi) might have
-        // shown chords.
-        std::fprintf (stderr,
-                      "[Dusk Studio/RecordManager] Track %d MIDI capture: %d events drained, "
-                      "writeMidiBlock-calls=%d, %d total samples, midiInputIndex=%d\n",
-                      t + 1, (int) drained.size(),
-                      writeMidiBlockCalls[(size_t) t].load (std::memory_order_relaxed),
-                      (int) totalSamples,
-                      session.track (t).midiInputIndex.load (std::memory_order_relaxed));
 
         if (drained.empty())
         {
@@ -1239,7 +1201,6 @@ void RecordManager::writeMidiBlockImpl (int trackIndex,
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return;
     auto& cap = midiCaptures[(size_t) trackIndex];
     if (cap == nullptr) return;
-    writeMidiBlockCalls[(size_t) trackIndex].fetch_add (1, std::memory_order_relaxed);
     const auto& selectedLoopSpan = explicitLoopSpan != nullptr
                                  ? *explicitLoopSpan : currentLoopSpan;
     if (loopPlan.enabled && (selectedLoopSpan.passOrdinal < 1 || selectedLoopSpan.numSamples <= 0))

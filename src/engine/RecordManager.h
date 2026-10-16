@@ -315,12 +315,6 @@ private:
     std::uint64_t midiCaptureGestureId = 0;
     bool midiMergeCapture = false;
 
-    // Diagnostic - distinguishes "track wasn't armed in MIDI mode"
-    // (counter 0, cap null) from "armed but no events arrived"
-    // (counter 0, cap exists) from "events filtered out at drain"
-    // (counter > drained.size()).
-    std::array<std::atomic<int>, Session::kNumTracks> writeMidiBlockCalls {};
-
     std::atomic<bool> active { false };
     static_assert (Session::kNumTracks <= 32,
                    "RecordManager capture masks require at most 32 tracks");
