@@ -33,7 +33,6 @@ public:
     // A seek the user asked for. During playback it also becomes the roll
     // start, so Stop comes back to the last place the user sent the playhead.
     // A take keeps its start: seeking while recording leaves the roll start.
-    // Message-thread seam: the engine warms readers before publishing a seek.
     std::function<void (std::int64_t)> onLocate;
     void locate (std::int64_t s)
     {

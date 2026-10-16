@@ -100,6 +100,11 @@ public:
         return earlyOutBlocks.load (std::memory_order_relaxed);
     }
 
+    std::uint64_t getProcessingSuspendCount() const noexcept
+    {
+        return processingSuspends.load (std::memory_order_relaxed);
+    }
+
     // True between suspendProcessing() and resumeProcessing(). Acquire pairs
     // with the release in resumeProcessing so a reader that sees "running"
     // also sees the state the resume published.
@@ -1202,6 +1207,7 @@ private:
     // touches until resume.
     std::atomic<bool>   processingSuspended { false };
     std::atomic<int>    callbacksInFlight   { 0 };
+    std::atomic<std::uint64_t> processingSuspends { 0 };
     // Silent-output diagnostics. The audio callback only bumps these atomics
     // (RT-safe); diagTimer drains them on the message thread and emits the
     // stderr line - stdio locks must never touch the audio thread. A silent-

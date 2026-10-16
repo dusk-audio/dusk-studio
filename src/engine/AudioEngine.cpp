@@ -790,15 +790,6 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     {
         if (offlineRenderActive.load (std::memory_order_acquire)
             || recordManager.isLoopCaptureActive()) return;
-        const bool alreadySuspended = processingSuspended.load (std::memory_order_acquire);
-        if (! alreadySuspended) suspendProcessing();
-        struct SeekGuard
-        {
-            AudioEngine& engine;
-            bool resume;
-            ~SeekGuard() { if (resume) engine.resumeProcessing(); }
-        } guard { *this, ! alreadySuspended };
-        playbackEngine.primeAt (position);
         transport.commitLocate (position);
     };
     // 500 units covers thousands of edits while bounding memory under
@@ -4450,6 +4441,7 @@ int AudioEngine::resolveTargetWorkers() const noexcept
 
 void AudioEngine::suspendProcessing()
 {
+    processingSuspends.fetch_add (1, std::memory_order_relaxed);
     processingSuspended.store (true, std::memory_order_seq_cst);
     int waitedMs = 0;
     while (callbacksInFlight.load (std::memory_order_seq_cst) > 0)
