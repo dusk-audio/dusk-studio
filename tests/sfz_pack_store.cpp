@@ -6,6 +6,7 @@
 #include <sodium.h>
 
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -253,6 +254,59 @@ TEST_CASE ("SFZ pack versions coexist without changing an older session locator"
     unknown = first.locatorFor (first.instruments.front());
     unknown.instrumentId = "unrelated";
     REQUIRE_FALSE (store.resolve (unknown));
+}
+
+TEST_CASE ("SFZ pack storage reports real filesystem capacity failures", "[sfz][store][sfz-store-disk-full]")
+{
+   #if defined(__linux__)
+    const auto* rootSetting = std::getenv ("DUSK_SFZ_CAPACITY_ROOT");
+    const auto* modeSetting = std::getenv ("DUSK_SFZ_CAPACITY_MODE");
+    if (! rootSetting || ! modeSetting) SKIP ("Requires the private tmpfs fixture from sfz_disk_full.sh");
+    const auto root = fs::canonical (rootSetting);
+    const std::string mode = modeSetting;
+    REQUIRE ((mode == "inodes" || mode == "bytes"));
+    REQUIRE (fs::is_empty (root));
+    REQUIRE (fs::space (root).capacity <= 64 * 1024);
+    PackStore store (root);
+    std::string error;
+    std::error_code nativeError;
+    if (mode == "inodes")
+    {
+        CHECK_FALSE (store.initialize (error, &nativeError));
+        CHECK (nativeError == std::errc::no_space_on_device);
+        CHECK (store.createStaging (error, &nativeError).empty());
+        CHECK (nativeError == std::errc::no_space_on_device);
+        const auto pack = provider();
+        const auto result = store.publish (pack, pack.expectedSha256, root / ".install-absent", { u8"Programs/Étude.sfz" });
+        CHECK (result.status == OperationStatus::Failed);
+        CHECK (result.failureKind == FailureKind::DiskFull);
+        CHECK (fs::is_empty (root));
+    }
+    else
+    {
+        const auto staging = stage (store);
+        const auto filler = root / "filler";
+        REQUIRE_FALSE (dusk::fs::writeStringToFile (filler, std::string (64 * 1024, 'f'), &nativeError));
+        REQUIRE (nativeError == std::errc::no_space_on_device);
+        const auto pack = provider();
+        const auto failed = store.publish (pack, pack.expectedSha256, staging, { u8"Programs/Étude.sfz" });
+        CHECK (failed.status == OperationStatus::Failed);
+        CHECK (failed.failureKind == FailureKind::DiskFull);
+        CHECK (failed.error == "Cannot write SFZ installation receipt");
+        CHECK_FALSE (failed.pack);
+        CHECK (fs::is_empty (root / "packs"));
+        CHECK (dusk::fs::loadFileAsString (staging / "Samples/tone.wav") == "fixture sample");
+        REQUIRE (fs::remove (filler));
+        REQUIRE (fs::remove_all (staging) > 0);
+        const auto retried = store.publish (pack, pack.expectedSha256, stage (store), { u8"Programs/Étude.sfz" });
+        REQUIRE (retried);
+        CHECK (retried.failureKind == FailureKind::None);
+        REQUIRE (retried.pack);
+        CHECK (store.resolve (retried.pack->locatorFor (retried.pack->instruments.front())));
+    }
+   #else
+    SKIP ("The bounded tmpfs fixture requires Linux user and mount namespaces");
+   #endif
 }
 
 TEST_CASE ("SFZ pack publication rejects incomplete or ambiguous extracted entrypoints", "[sfz][store]")

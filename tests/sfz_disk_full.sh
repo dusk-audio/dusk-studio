@@ -6,7 +6,7 @@ if [[ "${1:-}" == --namespace ]]; then
     capacity_root="${3:?}"
     mounted=false
     trap 'if [[ "$mounted" == true ]]; then umount -- "$capacity_root"; fi' EXIT
-    for test_filter in '[sfz-disk-full]' '[sfz-service-disk-full]' '[sfz-location-disk-full]'; do
+    for test_filter in '[sfz-disk-full]' '[sfz-service-disk-full]' '[sfz-location-disk-full]' '[sfz-store-disk-full]'; do
         for mode in inodes bytes; do
             inodes=64
             if [[ "$mode" == inodes ]]; then inodes=1; fi
