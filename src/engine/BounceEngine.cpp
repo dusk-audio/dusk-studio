@@ -151,6 +151,13 @@ bool BounceEngine::processOfflineBlock (
     int gateRetries = 0;
     while (! cancelRequested.load (std::memory_order_relaxed))
     {
+        if (engine.getStage() == AudioEngine::Stage::Mastering
+            && ! engine.getMasteringPlayer().primeOfflineBlock (numSamples))
+        {
+            const decltype(lastErrorLock)::ScopedLockType lock (lastErrorLock);
+            lastError = "Cannot read the mastering source for offline export";
+            return false;
+        }
         engine.getPlaybackEngine().primeAt (engine.getTransport().getPlayhead());
         const auto gatedBefore = engine.getGatedBlockCount();
         engine.audioDeviceIOCallback (inputChannelData,
@@ -622,6 +629,7 @@ void BounceEngine::run()
     {
         engine.getMasteringPlayer().stop();
         engine.getMasteringPlayer().setPlayhead (0);
+        engine.getMasteringPlayer().finishOfflineRender();
     }
     engine.setStage (savedStage);
     // Back to the user's realtime oversampling, then reattach on the message

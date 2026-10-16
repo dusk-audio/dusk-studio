@@ -33,6 +33,11 @@ public:
     bool loadFile (const juce::File& file);
     void unloadFile();
 
+    // Render owner only, with the device callback detached. Takes filling from
+    // the background worker and verifies every source span before process().
+    bool primeOfflineBlock (int numSamples);
+    void finishOfflineRender();
+
     bool        isLoaded() const noexcept    { return ownedReader != nullptr; }
     juce::File  getLoadedFile() const         { return loadedFile; }
     std::int64_t getLengthSamples() const noexcept;

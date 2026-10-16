@@ -144,6 +144,32 @@ double MasteringPlayer::getSourceSampleRate() const noexcept
     return ownedReader ? ownedReader->info().sampleRate : 0.0;
 }
 
+bool MasteringPlayer::primeOfflineBlock (int numSamples)
+{
+    if (ownedReader == nullptr || numSamples <= 0) return false;
+    ownedReader->setFillMode (dusk::audio::BufferedFileReader::Fill::Manual);
+    const auto start = getPlayhead();
+    const auto length = ownedReader->info().numFrames;
+    if (start < 0) return false;
+    if (start >= length) return true;
+    const auto ratio = speedRatio.load (std::memory_order_acquire);
+    const auto needed = std::abs (ratio - 1.0) < 1.0e-9 ? numSamples
+        : static_cast<int> (std::ceil (static_cast<double> (numSamples) * ratio)) + 8;
+    const auto available = std::min<std::int64_t> (needed, length - start);
+    ownedReader->prefetch (start);
+    ownedReader->fillNow();
+    return ownedReader->holds (start, available);
+}
+
+void MasteringPlayer::finishOfflineRender()
+{
+    if (ownedReader != nullptr)
+    {
+        ownedReader->prefetch (getPlayhead());
+        ownedReader->setFillMode (dusk::audio::BufferedFileReader::Fill::Background);
+    }
+}
+
 void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
 {
     if (L == nullptr || R == nullptr) return;

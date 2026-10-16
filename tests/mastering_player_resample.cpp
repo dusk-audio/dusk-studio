@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/MasteringPlayer.h"
 
@@ -6,15 +7,17 @@
 
 using namespace duskstudio;
 
-// A 44.1 kHz source on a 48 kHz device must play for len * 48/44.1 device
-// samples — the player resamples instead of clocking the file out 1:1 (which
-// played it ~8.8 % fast and sharp). The playhead stays in source samples.
+// Rewinding a tail-resident reader and rendering faster than its worker must
+// preserve sample content across windows, including through resampling.
 TEST_CASE ("MasteringPlayer resamples a source whose rate differs from the device",
            "[mastering][resample]")
 {
     constexpr double kSourceRate = 44100.0;
-    constexpr double kDeviceRate = 48000.0;
-    constexpr int    kSourceLen  = 22050;   // 0.5 s at source rate
+    double deviceRate = 48000.0;
+    SECTION ("Matching source and device rates") { deviceRate = kSourceRate; }
+    SECTION ("Resampling at 48 kHz") {}
+    SECTION ("Resampling at 96 kHz") { deviceRate = 96000.0; }
+    constexpr int    kSourceLen  = 176400;
     constexpr int    kBlock      = 512;
 
     const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
@@ -42,28 +45,39 @@ TEST_CASE ("MasteringPlayer resamples a source whose rate differs from the devic
     }
 
     MasteringPlayer player;
-    player.prepare (kBlock, kDeviceRate);
+    player.prepare (kBlock, deviceRate);
     REQUIRE (player.loadFile (wav));
     REQUIRE (player.getSourceSampleRate() == kSourceRate);
 
+    player.setPlayhead (kSourceLen - 2 * kBlock);
+    REQUIRE (player.primeOfflineBlock (kBlock));
+    player.setPlayhead (0);
     player.play();
     std::vector<float> outL ((size_t) kBlock), outR ((size_t) kBlock);
     juce::int64 deviceSamples = 0;
-    const juce::int64 hardCap = 10 * (juce::int64) kDeviceRate;
+    const juce::int64 hardCap = 10 * (juce::int64) deviceRate;
+    const auto expected = (juce::int64) std::llround ((double) kSourceLen * deviceRate / kSourceRate);
     while (player.isPlaying() && deviceSamples < hardCap)
     {
+        REQUIRE (player.primeOfflineBlock (kBlock));
         player.process (outL.data(), outR.data(), kBlock);
+        if (deviceSamples + kBlock < expected - kBlock)
+        {
+            for (const auto* samples : { outL.data(), outR.data() })
+            {
+                double energy = 0.0;
+                for (int n = 0; n < kBlock; ++n) energy += samples[n] * samples[n];
+                REQUIRE_THAT (energy / kBlock, Catch::Matchers::WithinAbs (0.125, 0.02));
+            }
+        }
         deviceSamples += kBlock;
     }
 
-    // Expected device-domain duration: 22050 * 48000/44100 = 24000 samples,
-    // ± one block of stop-detection quantisation either side.
-    const auto expected = (juce::int64) std::llround ((double) kSourceLen
-                                                       * kDeviceRate / kSourceRate);
     REQUIRE (deviceSamples >= expected - 2 * kBlock);
     REQUIRE (deviceSamples <= expected + 2 * kBlock);
 
     // Playhead is source-domain and lands at (or immediately before) EOF.
     REQUIRE (player.getPlayhead() >= kSourceLen - 8);
     REQUIRE (player.getPlayhead() <= kSourceLen);
+    player.finishOfflineRender();
 }
