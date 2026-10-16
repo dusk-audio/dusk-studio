@@ -2,7 +2,6 @@
 #include "MidiProbeHarness.h"
 #include "../../Transport.h"
 
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -13,9 +12,12 @@ namespace duskstudio::scenario
 {
 namespace
 {
+enum class PendingMode { intraBlock, latency, handoff };
+
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-ScenarioResult runPending (ScenarioContext& ctx, bool latency)
+ScenarioResult runPending (ScenarioContext& ctx, PendingMode mode)
 {
+    const bool latency = mode == PendingMode::latency;
     auto& engine = ctx.engine();
     auto& session = ctx.session();
     auto& transport = engine.getTransport();
@@ -88,18 +90,68 @@ ScenarioResult runPending (ScenarioContext& ctx, bool latency)
     ctx.pump (2);
     transport.setPlayhead (0);
     transport.setPunchEnabled (false);
-    transport.setLoopRange (0, latency ? 512 : 384);
+    transport.setLoopRange (0, mode == PendingMode::handoff ? 1024 : latency ? 512 : 384);
     transport.setLoopEnabled (true);
     engine.getUndoManager().clearUndoHistory();
     const auto generation = track.midiRegions.generation();
     const auto capture = track.midiRegions.read()->capture;
     const auto ons = midiprobe::counter (ctx, 0, "noteOnsSeen");
     const auto offs = midiprobe::counter (ctx, 0, "noteOffsSeen");
+    const auto expectUncommitted = [&]
+    {
+        ctx.expect (track.midiRegions.current().empty() && track.midiRegions.generation() == generation
+                    && track.midiRegions.read()->capture.gestureId == capture.gestureId
+                    && track.midiRegions.read()->capture.consumedThroughPass == capture.consumedThroughPass
+                    && ! engine.getUndoManager().canUndo(), "the callback check unexpectedly serviced a merge commit");
+    };
     engine.record();
     if (! ctx.expect (transport.isRecording(), "Record did not start")) return ctx.verdict();
 
     dusk::MidiBuffer notes;
     midiprobe::addMessage (notes, 0x90, 60, 100, 0);
+    if (mode == PendingMode::handoff)
+    {
+        ctx.pumpWithMidi (input, std::move (notes));
+        ctx.pump (2);
+        dusk::MidiBuffer release;
+        midiprobe::addMessage (release, 0x80, 60, 0, 132);
+        ctx.pumpWithMidi (input, std::move (release));
+        ctx.pump (1);
+        expectUncommitted();
+        ctx.expect ((int) midiprobe::counter (ctx, 0, "noteOnsSeen") == (int) ons + 2
+                    && (int) midiprobe::counter (ctx, 0, "noteOffsSeen") == (int) offs + 1
+                    && (int) midiprobe::counter (ctx, 0, "voicesHeld") == 1,
+                    "the pending performance was not sounding before publication");
+        engine.serviceMidiRecording();
+        const auto committed = track.midiRegions.read()->capture;
+        if (! ctx.expect (track.midiRegions.current().size() == 1 && committed.gestureId > capture.gestureId
+                          && committed.consumedThroughPass == 1, "the first pass was not published with its consumption stamp"))
+            return ctx.verdict();
+        ctx.pump (1);
+        ctx.expect ((int) midiprobe::counter (ctx, 0, "noteOnsSeen") == (int) ons + 2
+                    && (int) midiprobe::counter (ctx, 0, "noteOffsSeen") == (int) offs + 1
+                    && (int) midiprobe::counter (ctx, 0, "voicesHeld") == 1,
+                    "publication retriggered or released the pending held note");
+        if (! ctx.expect (engine.getUndoManager().undo(), "the rolling pass had no Undo")) return ctx.verdict();
+        ctx.expect (track.midiRegions.current().empty()
+                    && track.midiRegions.read()->capture.gestureId == committed.gestureId
+                    && track.midiRegions.read()->capture.consumedThroughPass == committed.consumedThroughPass,
+                    "Undo lost the consumed-pass stamp");
+        ctx.pump (1);
+        ctx.expect ((int) midiprobe::counter (ctx, 0, "noteOffsSeen") == (int) offs + 2
+                    && (int) midiprobe::counter (ctx, 0, "lastNoteOffOffset") == 0
+                    && (int) midiprobe::counter (ctx, 0, "voicesHeld") == 0,
+                    "Undo did not release the held note once at the next callback head");
+        ctx.pump (2);
+        ctx.expect ((int) midiprobe::counter (ctx, 0, "noteOnsSeen") == (int) ons + 2
+                    && (int) midiprobe::counter (ctx, 0, "noteOffsSeen") == (int) offs + 2
+                    && (int) midiprobe::counter (ctx, 0, "voicesHeld") == 0,
+                    "the undone pass returned on the next loop");
+        engine.stop();
+        ctx.expect (track.midiRegions.current().empty() && ! engine.getUndoManager().canUndo(),
+                    "Stop restored the undone performance");
+        return ctx.verdict();
+    }
     midiprobe::addMessage (notes, 0x80, 60, 0, 100);
     ctx.pumpWithMidi (input, std::move (notes));
     if (! latency) ctx.pump (1);
@@ -113,14 +165,11 @@ ScenarioResult runPending (ScenarioContext& ctx, bool latency)
                 "the replay release missed its next-pass callback position");
     ctx.expect ((int) midiprobe::counter (ctx, 0, "voicesHeld") == 0, "the short replay left a voice sounding");
     ctx.expect (transport.getCommittedPlayhead() == (latency ? 256 : 128), "the loop advanced to the wrong position");
-    ctx.expect (track.midiRegions.current().empty() && track.midiRegions.generation() == generation
-                && track.midiRegions.read()->capture.gestureId == capture.gestureId
-                && track.midiRegions.read()->capture.consumedThroughPass == capture.consumedThroughPass
-                && ! engine.getUndoManager().canUndo(), "the callback check unexpectedly serviced a merge commit");
+    expectUncommitted();
     return ctx.verdict();
 }
 #else
-ScenarioResult runPending (ScenarioContext&, bool)
+ScenarioResult runPending (ScenarioContext&, PendingMode)
 {
     return ScenarioResult::skip ("native CLAP hosting is not enabled");
 }
@@ -128,11 +177,15 @@ ScenarioResult runPending (ScenarioContext&, bool)
 
 const ScenarioRegistrar intraBlock { Scenario {
     "midi.merge_pending_intrablock", { "midi", "recording", "merge", "loop", "clap" }, Needs::Engine,
-    { "panic_probe.clap" }, [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runPending (ctx, false); }
+    { "panic_probe.clap" }, [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runPending (ctx, PendingMode::intraBlock); }
 } };
 const ScenarioRegistrar lookahead { Scenario {
     "midi.merge_pending_latency", { "midi", "recording", "merge", "loop", "clap", "latency" }, Needs::Engine,
-    { "panic_probe.clap" }, [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runPending (ctx, true); }
+    { "panic_probe.clap" }, [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runPending (ctx, PendingMode::latency); }
+} };
+const ScenarioRegistrar handoff { Scenario {
+    "midi.merge_pending_handoff_undo", { "midi", "recording", "merge", "loop", "clap", "undo" }, Needs::Engine,
+    { "panic_probe.clap" }, [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runPending (ctx, PendingMode::handoff); }
 } };
 } // namespace
 } // namespace duskstudio::scenario
