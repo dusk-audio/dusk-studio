@@ -17,6 +17,8 @@ struct ArchiveLimits
     std::uint64_t maxFileBytes = 32ULL * 1024 * 1024 * 1024;
     std::uint32_t maxFiles = 100000; // Includes implicit parent directories.
     PathLimits paths;
+    std::uint64_t maxCompressionRatio = 1000;
+    std::uint64_t freeSpaceReserveBytes = 64ULL * 1024 * 1024;
 };
 
 struct ArchiveRequest

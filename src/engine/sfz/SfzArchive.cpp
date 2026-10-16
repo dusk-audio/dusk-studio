@@ -539,7 +539,7 @@ bool zip64Extra (const std::vector<unsigned char>& extra, std::string_view name,
 
 bool preflight (Input& input, const ArchiveRequest& request,
                 const OperationControl& control, std::vector<ZipEntry>& entries,
-                ArchiveResult& result)
+                std::uint64_t& nodeCount, ArchiveResult& result)
 {
     const auto fail = [&] (const char* error) { result.error = error; return false; };
     if (! input.valid) return fail ("Cannot open a regular ZIP archive");
@@ -659,6 +659,9 @@ bool preflight (Input& input, const ArchiveRequest& request,
         if (entry.expanded > request.limits.maxFileBytes
             || entry.expanded > request.limits.maxExpandedBytes - declaredBytes)
             return fail ("ZIP declared size exceeds the expanded byte limit");
+        if (entry.expanded != 0 && (compressed == 0
+            || (entry.expanded - 1) / compressed >= request.limits.maxCompressionRatio))
+            return fail ("ZIP compression ratio exceeds the expansion limit");
         if (entry.directory && entry.expanded != 0) return fail ("ZIP directory contains data");
         declaredBytes += entry.expanded;
 
@@ -708,6 +711,7 @@ bool preflight (Input& input, const ArchiveRequest& request,
     std::sort (ranges.begin(), ranges.end());
     for (std::size_t i = 1; i < ranges.size(); ++i)
         if (ranges[i].first < ranges[i - 1].second) return fail ("ZIP entry data overlaps");
+    nodeCount = nodes.size();
     return true;
 }
 
@@ -760,9 +764,23 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
                 return fail ("Invalid expected SFZ entrypoint");
         Input input (request.archive);
         std::vector<ZipEntry> entries;
-        if (! preflight (input, request, control, entries, result)) return result;
+        std::uint64_t nodeCount = 0;
+        if (! preflight (input, request, control, entries, nodeCount, result)) return result;
         std::uint64_t totalBytes = 0;
         for (const auto& entry : entries) totalBytes += entry.expanded;
+        std::error_code spaceError;
+        const auto spacePath = request.stagingDirectory.parent_path();
+       #if defined(_WIN32)
+        const auto space = std::filesystem::space (windowsPath (spacePath), spaceError);
+       #else
+        const auto space = std::filesystem::space (spacePath, spaceError);
+       #endif
+        if (spaceError) return fail ("Cannot determine free space for SFZ installation: " + spaceError.message());
+        const auto allocationOverhead = nodeCount * 4096;
+        if (request.limits.freeSpaceReserveBytes > space.available
+            || allocationOverhead > space.available - request.limits.freeSpaceReserveBytes
+            || totalBytes > space.available - request.limits.freeSpaceReserveBytes - allocationOverhead)
+            return fail ("Insufficient free space for the expanded SFZ pack");
         // libarchive converts header names through CTYPE even when ZIP names are UTF-8.
         const ScopedUtf8Locale utf8;
         if (! utf8.valid) return fail ("Cannot enable UTF-8 ZIP pathname decoding");

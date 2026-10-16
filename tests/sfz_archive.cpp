@@ -10,6 +10,7 @@
 #include <clocale>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -397,6 +398,56 @@ TEST_CASE ("SFZ ZIP extraction enforces declared byte file and path limits")
     INFO (result.error);
     CHECK (result.status == OperationStatus::Failed);
     CHECK_FALSE (std::filesystem::exists (request.stagingDirectory));
+}
+
+TEST_CASE ("SFZ ZIP extraction bounds expansion before creating staging")
+{
+    ScratchTree tree;
+    auto bytes = zip ({ { "piano.sfz", "instrument" } }, true);
+    const auto local = signature (bytes, 0x04034b50);
+    const auto central = signature (bytes, 0x02014b50);
+    bool boundary = false;
+    std::uint64_t compressed = 1;
+    SECTION ("One byte above the default ratio") {}
+    SECTION ("A nonempty member declares no compressed bytes") { compressed = 0; }
+    SECTION ("A stored member at the configured ratio is allowed")
+    {
+        boundary = true;
+        bytes = zip ({ { "piano.sfz", "instrument" } });
+    }
+    if (! boundary)
+    {
+        put (bytes, local + 18, compressed, 4);
+        put (bytes, central + 20, compressed, 4);
+        put (bytes, local + 22, 1001, 4);
+        put (bytes, central + 24, 1001, 4);
+    }
+    auto request = requestFor (tree, bytes);
+    if (boundary) request.limits.maxCompressionRatio = 1;
+    const auto result = extractZip (request);
+    if (boundary)
+    {
+        REQUIRE (result);
+        CHECK (readFile (request.stagingDirectory / "piano.sfz") == "instrument");
+    }
+    else
+    {
+        CHECK_FALSE (result);
+        CHECK (result.error == "ZIP compression ratio exceeds the expansion limit");
+        CHECK_FALSE (std::filesystem::exists (request.stagingDirectory));
+    }
+}
+
+TEST_CASE ("SFZ ZIP extraction checks available space before creating staging")
+{
+    ScratchTree tree;
+    auto request = requestFor (tree, zip ({ { "piano.sfz", "instrument" } }));
+    request.limits.freeSpaceReserveBytes = std::numeric_limits<std::uint64_t>::max();
+    const auto result = extractZip (request);
+    CHECK_FALSE (result);
+    CHECK (result.error == "Insufficient free space for the expanded SFZ pack");
+    CHECK_FALSE (std::filesystem::exists (request.stagingDirectory));
+    CHECK (std::filesystem::is_regular_file (request.archive));
 }
 
 TEST_CASE ("SFZ ZIP extraction enforces actual bytes when ZIP declared sizes lie")
