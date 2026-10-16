@@ -44,10 +44,12 @@ add_executable(dusk-studio-tests
     sfz_library_locations.cpp
     sfz_library_service.cpp
     sfz_artwork_cache.cpp
+    sfz_directory_lease.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibrary.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalogEnvelope.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzTransfer.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzDirectoryLease.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzArtworkCache.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzArchive.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPathPolicy.cpp
