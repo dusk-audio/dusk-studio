@@ -1,11 +1,15 @@
 #include "../GuiScenarioSupport.h"
 #include "../../../engine/sfz/SfzLibraryService.h"
+#include "../../../foundation/Base64.h"
 #include "../../../foundation/Fs.h"
 #include "../../../foundation/Json.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/SessionSerializer.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "../../imgui/SfzArtwork.h"
+#endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+ #include "../../../engine/multisample/DuskMultisampleProcessor.h"
 #endif
 
 #include <archive.h>
@@ -333,7 +337,7 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
     state->compactCapture = ctx.tempDir() / "sfz-online-compact.png";
     const auto catalogKey = hash (Json { { "url", kCatalogUrl },
         { "headers", HttpHeaders { { "accept-encoding", "identity" } } } }.dump());
-    state->catalogCache = libraryLocationsFile().parent_path() / "sfz-cache" / "repository" / (catalogKey + ".json");
+    state->catalogCache = dusk::fs::appDataDir() / "sfz-cache" / "repository" / (catalogKey + ".json");
     state->catalogBackup = state->catalogCache.parent_path()
         / (".scenario-catalog-" + hash (ctx.tempDir().string() + name).substr (0, 32));
     state->originalWindow = host.mainWindowSize();
@@ -1310,7 +1314,170 @@ std::optional<ScenarioResult> runPauseCancel (GuiHost& host, ScenarioContext& ct
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
+
+std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bool fail)
+{
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    auto state = prepare (host, ctx, fail ? "relink-failure" : "relink-success");
+    if (! state) return ctx.verdict();
+    struct RelinkState
+    {
+        ManagedSfzLocator original, replacement;
+        std::string encoded, originalPath, choice;
+        fs::path target, held;
+        bool moved = false;
+    };
+    auto relink = std::make_shared<RelinkState>();
+    ctx.cleanup ([&ctx, relink]
+    {
+        if (! relink->moved) return;
+        std::error_code error;
+        fs::rename (relink->held, relink->target, error);
+        if (error) ctx.note ("Could not restore the relink fixture: " + error.message());
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushStart (*steps, host, ctx, state);
+    pushWorkClick (*steps, host, ctx, state, "enabled-download", LibraryState::Complete);
+    pushInstalledSelection (*steps, host, ctx, state);
+    steps->push_back ({ 0, [&host, &ctx, state, relink]
+    {
+        if (! ctx.expect (state->installed.has_value(), "relink fixture was not installed"))
+        { ctx.complete (ctx.verdict()); return; }
+        const auto& pack = *state->installed;
+        const auto program = std::find_if (pack.programs.begin(), pack.programs.end(),
+            [] (const auto& entry) { return entry.relativePath == "Instruments/Two.sfz"; });
+        if (! ctx.expect (program != pack.programs.end(), "relink fixture did not declare its second program"))
+        { ctx.complete (ctx.verdict()); return; }
+        const auto instrument = std::find_if (pack.instruments.begin(), pack.instruments.end(),
+            [&] (const auto& entry) { return entry.id == program->id; });
+        if (! ctx.expect (instrument != pack.instruments.end(), "the declared program has no native choice"))
+        { ctx.complete (ctx.verdict()); return; }
+        relink->choice = "instrument-choice-" + std::to_string (std::distance (pack.instruments.begin(), instrument));
+        relink->replacement = pack.locatorFor (*program);
+        relink->original = relink->replacement;
+        relink->original.releaseId = std::string (40, 'a');
+        relink->original.archiveSha256 = std::string (64, 'a');
+        relink->target = pack.directory / fs::u8path (program->relativePath);
+        relink->held = relink->target;
+        relink->held += ".relink-held-" + hash (ctx.tempDir().u8string()).substr (0, 12);
+        const auto stale = ctx.tempDir() / "old-relink.sfz";
+        if (! ctx.expect (dusk::fs::writeStringToFile (stale, "<region> sample=*sine key=60"),
+                          "could not write the old relink instrument"))
+        { ctx.complete (ctx.verdict()); return; }
+        std::string error;
+        auto saved = NativeMultisampleSlot::prime (stale, ctx.engine().getCurrentSampleRate(),
+                                                   ctx.engine().getCurrentBlockSize(), error);
+        if (! ctx.expect (static_cast<bool> (saved), "could not prime the old relink instrument: " + error))
+        { ctx.complete (ctx.verdict()); return; }
+        saved.instance->getOverrides().masterVolDb.store (-13.0f);
+        saved.instance->getOverrides().masterTuneCents.store (27.0f);
+        saved.instance->getOverrides().polyphony.store (29);
+        std::vector<std::uint8_t> bytes;
+        if (! ctx.expect (saved.instance->saveState (bytes), "could not save the relink controls"))
+        { ctx.complete (ctx.verdict()); return; }
+        saved = {};
+        std::error_code removeError;
+        if (! ctx.expect (fs::remove (stale, removeError) && ! removeError, "could not remove the old relink instrument"))
+        { ctx.complete (ctx.verdict()); return; }
+        relink->encoded = dusk::base64::encode (bytes.data(), bytes.size());
+        relink->originalPath = stale.u8string();
+        auto& track = ctx.session().track (kStripIndex);
+        track.mode.store (static_cast<int> (Track::Mode::Midi));
+        track.nativeMultisampleLocator = relink->original;
+        track.nativeMultisamplePath = relink->originalPath;
+        track.nativeMultisampleStateBase64 = relink->encoded;
+        host.closeSfzLibrary (kStripIndex);
+        ctx.expect (host.openSfzLibrary (kStripIndex), "could not reopen the manager for the offline slot");
+    } });
+    pushClick (*steps, host, ctx, "installed-tab");
+    for (const bool down : { false, true, false })
+        steps->push_back ({ 0, [] {}, [&host, &ctx, relink, down]
+        {
+            const auto installed = ctx.engine().getSfzLibrary().snapshot().installed;
+            for (std::size_t i = 0; i < installed.size(); ++i)
+            {
+                const auto& pack = installed[i];
+                const auto& wanted = relink->replacement;
+                if (pack.provider.sourceId == wanted.sourceId && pack.provider.packId == wanted.packId
+                    && pack.provider.releaseId == wanted.releaseId && pack.archiveSha256 == wanted.archiveSha256)
+                    return host.sfzLibraryPointer (kStripIndex, "installed-item-" + std::to_string (i), 0.5f, down);
+            }
+            return false;
+        }, "the exact replacement version was not selectable", {}, kSettleBoundMs });
+    pushClick (*steps, host, ctx, "instrument");
+    for (const bool down : { false, true, false })
+        steps->push_back ({ 0, [] {}, [&host, relink, down]
+        { return host.sfzLibraryPointer (kStripIndex, relink->choice, 0.5f, down); },
+        "the declared replacement program was not selectable", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&ctx, state, relink, fail]
+    {
+        state->requests = state->transport->requests.load();
+        if (fail)
+        {
+            std::error_code error;
+            fs::rename (relink->target, relink->held, error);
+            relink->moved = ! error;
+            if (! ctx.expect (! error, "could not make the selected program unavailable: " + error.message()))
+                ctx.complete (ctx.verdict());
+        }
+    } });
+    pushClick (*steps, host, ctx, "enabled-relink");
+    steps->push_back ({ 0, [&host, &ctx, state, relink, fail]
+    {
+        const auto& track = ctx.session().track (kStripIndex);
+        const auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();
+        const auto* instance = slot.getInstance();
+        if (fail)
+        {
+            ctx.expect (track.nativeMultisampleLocator == relink->original
+                && track.nativeMultisamplePath.toStdString() == relink->originalPath
+                && track.nativeMultisampleStateBase64.toStdString() == relink->encoded,
+                "failed native relink changed the saved identity or controls");
+            ctx.expect (! instance || ! instance->hasLoadedRuntime(), "failed native relink loaded an instrument");
+            std::error_code error;
+            fs::rename (relink->held, relink->target, error);
+            relink->moved = static_cast<bool> (error);
+            ctx.expect (! error, "could not restore the selected relink program: " + error.message());
+            dismissAlert (host);
+        }
+        else
+        {
+            ctx.expect (track.nativeMultisampleLocator == relink->replacement,
+                        "native relink did not save the selected program's complete locator");
+            ctx.expect (sameFile (track.nativeMultisamplePath.toStdString(), relink->target)
+                && sameFile (slot.getLoadedSoundfontPath(), relink->target), "native relink used the old or wrong program path");
+            if (ctx.expect (instance && instance->hasLoadedRuntime(), "the relinked runtime is offline"))
+            {
+                const auto& controls = instance->getOverrides();
+                ctx.expect (std::abs (controls.masterVolDb.load() + 13.0f) < 1.0e-6f
+                    && std::abs (controls.masterTuneCents.load() - 27.0f) < 1.0e-6f
+                    && controls.polyphony.load() == 29, "native relink reset the saved controls");
+            }
+            ctx.expect (! host.sfzLibraryOpen (kStripIndex), "successful relink left the manager open");
+            const auto file = ctx.tempDir() / "relinked.json";
+            ctx.expect (SessionSerializer::save (ctx.session(), file), "could not save the relinked session");
+            auto reopened = std::make_unique<Session>();
+            ctx.expect (SessionSerializer::load (*reopened, file), "could not reopen the relinked session");
+            ctx.expect (reopened->track (kStripIndex).nativeMultisampleLocator == relink->replacement
+                && reopened->track (kStripIndex).nativeMultisampleStateBase64.toStdString() == relink->encoded,
+                "session round trip lost the relinked identity or controls");
+        }
+        ctx.expect (state->transport->requests.load() == state->requests, "native relink contacted a repository");
+    }, [&host, &ctx, fail]
+    {
+        ctx.engine().serviceMultisampleLoads();
+        if (ctx.engine().hasPendingMultisampleLoads()) return false;
+        if (fail) return host.modalText().find ("Couldn't relink soundfont") != std::string::npos;
+        const auto* instance = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot().getInstance();
+        return instance && instance->hasLoadedRuntime();
+    }, "the native relink did not finish" });
+    pushFinish (*steps, host, ctx, state);
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
 #else
+std::optional<ScenarioResult> runRelink (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runSearchKey (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runArtworkCategories (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runWorkflow (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
@@ -1333,6 +1500,14 @@ const ScenarioRegistrar storageMove { Scenario {
 const ScenarioRegistrar pauseCancel { Scenario {
     "gui.sfz_repository_pause_cancel", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
     {}, {}, 150000, runPauseCancel
+} };
+const ScenarioRegistrar relinkInstalled { Scenario {
+    "gui.sfz_relink_installed_program", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
+    {}, {}, 90000, [] (GuiHost& host, ScenarioContext& ctx) { return runRelink (host, ctx, false); }
+} };
+const ScenarioRegistrar relinkFailure { Scenario {
+    "gui.sfz_failed_relink_keeps_identity", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
+    {}, {}, 90000, [] (GuiHost& host, ScenarioContext& ctx) { return runRelink (host, ctx, true); }
 } };
 const ScenarioRegistrar keypadEnter { Scenario {
     "gui.sfz_search_keypad_enter", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
