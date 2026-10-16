@@ -198,6 +198,17 @@ std::size_t ownedInstallFiles (const Tree& tree)
     return count;
 }
 
+void expireApiCache (const Tree& tree)
+{
+    for (const auto& entry : fs::directory_iterator (tree.root / ".repository-cache"))
+    {
+        if (entry.path().extension() != ".json") continue;
+        const auto json = dusk::json::Json::parse (dusk::fs::loadFileAsString (entry.path()), nullptr, false);
+        if (! json.is_discarded() && dusk::json::getString (json, "request_url").rfind ("https://api.github.com/", 0) == 0)
+            fs::last_write_time (entry.path(), fs::file_time_type::clock::now() - std::chrono::hours (1));
+    }
+}
+
 const std::string listing = R"([{"id":42,"name":"Service piano","author":"Fixture author","license":"cc-zero","formats":["sfz"]}])";
 std::string githubListing (const std::string& name = "Grand-Piano", unsigned id = 42,
                            const std::string& owner = "sfzinstruments")
@@ -474,6 +485,137 @@ TEST_CASE ("SFZ repository cache retains the last valid listing and supports exp
     REQUIRE (restored.browse ("musical-artifacts", 1, "uncached", true));
     REQUIRE (settled (restored).state == LibraryState::Failed);
     REQUIRE (offline->count() == 0);
+}
+
+TEST_CASE ("SFZ GitHub metadata freshness avoids repeated requests and repairs invalid caches", "[sfz][service][ipc]")
+{
+    Tree tree;
+    bool corrupt = false, expired = false;
+    SECTION ("Recent metadata is reused without a request") {}
+    SECTION ("A corrupt recent response is fetched again") { corrupt = true; }
+    SECTION ("Expired metadata is fetched again") { expired = true; }
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ githubListing ("FreePats-Piano", 42, "freepats") });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.browse ("freepats"));
+    REQUIRE (settled (service).page.items.size() == 1);
+    if (corrupt)
+        for (const auto& entry : fs::directory_iterator (tree.root / ".repository-cache"))
+        {
+            auto json = dusk::json::Json::parse (dusk::fs::loadFileAsString (entry.path()));
+            json["body"] = "[]";
+            REQUIRE (dusk::fs::writeStringToFile (entry.path(), json.dump()));
+        }
+    if (expired) expireApiCache (tree);
+    if (corrupt || expired) transport->append ({ githubListing ("FreePats-Flute", 44, "freepats") });
+    REQUIRE (service.browse ("freepats"));
+    const auto result = settled (service);
+    REQUIRE (result.state == LibraryState::Complete);
+    REQUIRE (result.page.items.size() == 1);
+    CHECK (result.page.items.front().packId == (corrupt || expired ? "44" : "42"));
+    CHECK (transport->count() == (corrupt || expired ? 2 : 1));
+}
+
+TEST_CASE ("SFZ repository revalidation sends saved ETags and retains the validated body", "[sfz][service][ipc]")
+{
+    Tree tree;
+    bool corrupt = false, updated = false;
+    SECTION ("The server confirms the saved representation") {}
+    SECTION ("A corrupt cached body triggers an unconditional repair") { corrupt = true; }
+    SECTION ("A not-modified response refreshes its validator and rate-limit metadata") { updated = true; }
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ listing, 200, { { "ETag", "\"catalog-v1\"" }, { "X-RateLimit-Remaining", "59" } } });
+    transport->append ({ corrupt ? listing : std::string {}, corrupt ? 200 : 304,
+        { { "ETag", updated ? "\"catalog-v2\"" : "\"catalog-v1\"" }, { "X-RateLimit-Remaining", "58" } } });
+    {
+        LibraryService service (tree.root, transport);
+        settled (service);
+        REQUIRE (service.browse ("musical-artifacts"));
+        REQUIRE (settled (service).page.items.size() == 1);
+    }
+    if (corrupt)
+        for (const auto& entry : fs::directory_iterator (tree.root / ".repository-cache"))
+            if (entry.path().extension() == ".json")
+            {
+                auto json = dusk::json::Json::parse (dusk::fs::loadFileAsString (entry.path()));
+                json["body"] = "{broken JSON";
+                REQUIRE (dusk::fs::writeStringToFile (entry.path(), json.dump()));
+            }
+    LibraryService restored (tree.root, transport);
+    settled (restored);
+    REQUIRE (restored.browse ("musical-artifacts"));
+    const auto result = settled (restored);
+    REQUIRE (result.state == LibraryState::Complete);
+    REQUIRE (result.page.items.size() == 1);
+    CHECK (result.page.rateLimit.remaining == "58");
+    CHECK (transport->request (0).headers.count ("if-none-match") == 0);
+    if (corrupt) CHECK (transport->request (1).headers.count ("if-none-match") == 0);
+    else CHECK (transport->request (1).headers.at ("if-none-match") == "\"catalog-v1\"");
+    REQUIRE (restored.browse ("musical-artifacts", 1, {}, true));
+    const auto cached = settled (restored);
+    REQUIRE (cached.page.items.size() == 1);
+    CHECK (cached.page.rateLimit.remaining == "58");
+    CHECK (transport->count() == 2);
+    if (updated)
+    {
+        transport->append ({ {}, 304, {} });
+        REQUIRE (restored.browse ("musical-artifacts"));
+        REQUIRE (settled (restored).state == LibraryState::Complete);
+        CHECK (transport->request (2).headers.at ("if-none-match") == "\"catalog-v2\"");
+    }
+}
+
+TEST_CASE ("SFZ repository does not accept an unsolicited not-modified response", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ {}, 304, {} });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.browse ("musical-artifacts"));
+    CHECK (settled (service).state == LibraryState::Failed);
+    REQUIRE (service.browse ("musical-artifacts", 1, {}, true));
+    CHECK (settled (service).state == LibraryState::Failed);
+    CHECK (transport->count() == 1);
+}
+
+TEST_CASE ("SFZ repository cache evicts old entries within count and byte limits", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto cache = tree.root / ".repository-cache";
+    REQUIRE (fs::create_directory (cache));
+    std::size_t count = 257;
+    std::uintmax_t bytes = 1;
+    bool expired = false;
+    SECTION ("Entry count") {}
+    SECTION ("Total bytes") { count = 8; bytes = 9 * 1024 * 1024; }
+    SECTION ("Entries older than thirty days") { count = 1; expired = true; }
+    const auto now = fs::file_time_type::clock::now();
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        const auto file = cache / (hash (std::to_string (i)) + ".json");
+        REQUIRE (dusk::fs::writeStringToFile (file, "x"));
+        fs::resize_file (file, bytes);
+        fs::last_write_time (file, now - std::chrono::hours (expired ? 24 * 31 : 1)
+                                      - std::chrono::seconds (count - i));
+    }
+    REQUIRE (dusk::fs::writeStringToFile (cache / "unrelated.json", "keep"));
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ listing, 200, {} });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.browse ("musical-artifacts"));
+    REQUIRE (settled (service).state == LibraryState::Complete);
+    CHECK_FALSE (fs::exists (cache / (hash ("0") + ".json")));
+    CHECK (dusk::fs::loadFileAsString (cache / "unrelated.json") == "keep");
+    std::size_t remaining = 0;
+    std::uintmax_t total = 0;
+    for (const auto& entry : fs::directory_iterator (cache))
+        if (entry.path().extension() == ".json" && isSha256 (entry.path().stem().u8string()))
+        { ++remaining; total += entry.file_size(); }
+    CHECK (remaining <= 256);
+    CHECK (total <= 64 * 1024 * 1024);
 }
 
 TEST_CASE ("SFZ repository detail resolution can use validated cached metadata offline", "[sfz][service][ipc]")
@@ -932,6 +1074,7 @@ TEST_CASE ("SFZ all repositories retains successful sources and reports source f
         appendAdditionalListings (transport);
         REQUIRE (service.browse ("all", 1, "Piano"));
         REQUIRE (settled (service).page.items.size() == 2);
+        expireApiCache (tree);
     }
     transport->append ({ githubListing(), githubFails ? 429 : 200, { { "retry-after", "25" } } });
     if (! githubFails) appendCatalogReply (transport);
@@ -984,6 +1127,7 @@ TEST_CASE ("SFZ all repositories keeps validated caches separate from failed sou
         appendAdditionalListings (transport);
         REQUIRE (service.browse ("all", 1, "Piano"));
         REQUIRE (settled (service).page.items.size() == 2);
+        expireApiCache (tree);
         transport->append ({ "{broken JSON" });
         transport->append ({ listing });
         appendAdditionalListings (transport);

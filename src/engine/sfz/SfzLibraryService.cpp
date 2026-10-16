@@ -23,6 +23,8 @@ namespace
 namespace fs = std::filesystem;
 using Json = dusk::json::Json;
 constexpr std::uint64_t kMaxCacheBody = 8 * 1024 * 1024;
+constexpr std::uint64_t kMaxCacheBytes = 64 * 1024 * 1024;
+constexpr std::size_t kMaxCacheEntries = 256;
 
 std::string digest (std::string_view text)
 {
@@ -68,6 +70,40 @@ bool atomicCacheWrite (const fs::path& target, const std::string& text)
     return replaced;
 }
 
+void trimRepositoryCache (const fs::path& root)
+{
+    struct Entry { fs::path path; fs::file_time_type modified; std::uintmax_t bytes; };
+    std::vector<Entry> entries;
+    std::uintmax_t total = 0;
+    std::error_code error;
+    for (auto it = fs::directory_iterator (root, error); ! error && it != fs::directory_iterator(); it.increment (error))
+    {
+        if (it->path().extension() != ".json" || ! isSha256 (it->path().stem().u8string())) continue;
+        std::error_code entryError;
+        if (! fs::is_regular_file (it->symlink_status (entryError)) || entryError) continue;
+        const auto size = it->file_size (entryError);
+        if (entryError) continue;
+        const auto modified = it->last_write_time (entryError);
+        if (entryError) continue;
+        if (size > kMaxCacheBytes)
+        {
+            fs::remove (it->path(), entryError);
+            continue;
+        }
+        entries.push_back ({ it->path(), modified, size });
+        total += size;
+    }
+    std::sort (entries.begin(), entries.end(), [] (const auto& a, const auto& b) { return a.modified < b.modified; });
+    std::size_t count = entries.size();
+    const auto oldest = fs::file_time_type::clock::now() - std::chrono::hours (24 * 30);
+    for (const auto& entry : entries)
+    {
+        if (entry.modified >= oldest && count <= kMaxCacheEntries && total <= kMaxCacheBytes) break;
+        std::error_code removeError;
+        if (fs::remove (entry.path, removeError)) { --count; total -= entry.bytes; }
+    }
+}
+
 OperationResult interrupted (const OperationControl& control)
 {
     const auto status = control.status();
@@ -88,11 +124,13 @@ public:
         const auto path = cache / (key + ".json");
         std::error_code cacheError;
         const auto modified = fs::last_write_time (path, cacheError);
-        const bool freshCatalog = ! cacheError
-            && request.url == "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml"
+        const auto freshness = request.url == "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml"
+            ? std::chrono::minutes (360) : request.url.rfind ("https://api.github.com/", 0) == 0
+                ? std::chrono::minutes (5) : std::chrono::minutes (0);
+        const bool fresh = ! cacheError
             && modified <= fs::file_time_type::clock::now()
-            && fs::file_time_type::clock::now() - modified < std::chrono::hours (6);
-        if (offlineOnly || freshCatalog)
+            && fs::file_time_type::clock::now() - modified < freshness;
+        if (offlineOnly)
         {
             std::error_code error;
             if (! fs::is_regular_file (fs::symlink_status (path, error)) || error
@@ -103,11 +141,12 @@ public:
             const auto& json = *parsed.root;
             const auto responseHeaders = json.find ("headers");
             const auto content = json.find ("body");
-            if (dusk::json::getInt (json, "schema", 0) != 1
+            if (dusk::json::getInt (json, "schema", 0) != 2
                 || dusk::json::getString (json, "request_url") != request.url
                 || responseHeaders == json.end() || ! responseHeaders->is_object()
                 || content == json.end() || ! content->is_string()
-                || content->get_ref<const std::string&>().size() > kMaxCacheBody)
+                || content->get_ref<const std::string&>().size() > kMaxCacheBody
+                || digest (content->get_ref<const std::string&>()) != dusk::json::getString (json, "body_sha256"))
                 return { OperationStatus::Failed, "Repository cache entry is invalid" };
             HttpResponse response { 200, dusk::json::getString (json, "response_url"), {} };
             std::size_t headerBytes = 0;
@@ -128,24 +167,78 @@ public:
                 if (! body (std::string_view (text).substr (offset, 32768)))
                     return { OperationStatus::Failed, "Cached repository response was rejected" };
             }
-            if (offlineOnly) usedCache = true;
+            usedCache = true;
             return { OperationStatus::Complete, {} };
         }
+        HttpResponse cachedResponse;
+        std::string cachedContent, etag;
+        CachedTransport saved (upstream, cache, true);
+        const auto cached = saved.perform (request, [&] (const HttpResponse& value)
+        {
+            cachedResponse = value;
+            const auto found = value.headers.find ("etag");
+            if (found != value.headers.end() && found->second.size() <= 1024
+                && found->second.find_first_of ("\r\n") == std::string::npos
+                && found->second.find ('\0') == std::string::npos) etag = found->second;
+            return true;
+        }, [&] (std::string_view bytes)
+        {
+            cachedContent.append (bytes.data(), bytes.size());
+            return true;
+        }, control);
+        const auto replay = [&] () -> OperationResult
+        {
+            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            if (! headers (cachedResponse)) return { OperationStatus::Failed, "Revalidated repository response was rejected" };
+            for (std::size_t offset = 0; offset < cachedContent.size(); offset += 32768)
+            {
+                if (control.status() != OperationStatus::Complete) return interrupted (control);
+                if (! body (std::string_view (cachedContent).substr (offset, 32768)))
+                    return { OperationStatus::Failed, "Revalidated repository response was rejected" };
+            }
+            return { OperationStatus::Complete, {} };
+        };
+        if (cached && fresh) return replay();
+        auto conditional = request;
+        if (cached && ! etag.empty()) conditional.headers["if-none-match"] = etag;
         HttpResponse response;
         std::string content;
-        const auto result = upstream.perform (request,
-            [&] (const HttpResponse& value) { response = value; return headers (value); },
+        const auto result = upstream.perform (conditional,
+            [&] (const HttpResponse& value)
+            {
+                response = value;
+                HttpHeaders normalized;
+                for (const auto& item : value.headers)
+                    if (! normalized.emplace (dusk::text::toLowerCase (item.first), item.second).second) return false;
+                response.headers = std::move (normalized);
+                return response.statusCode == 304 || headers (response);
+            },
             [&] (std::string_view bytes)
             {
+                if (response.statusCode == 304) return bytes.empty();
                 if (bytes.size() > kMaxCacheBody - content.size()) return false;
                 content.append (bytes.data(), bytes.size());
                 return body (bytes);
             }, control);
+        if (result && response.statusCode == 304)
+        {
+            if (! cached || etag.empty()) return { OperationStatus::Failed, "Repository returned 304 without a validated cached response" };
+            for (const auto* name : { "etag", "last-modified", "link", "x-ratelimit-remaining", "x-ratelimit-reset", "retry-after" })
+            {
+                const auto found = response.headers.find (name);
+                if (found != response.headers.end()) cachedResponse.headers[name] = found->second;
+            }
+            const auto replayed = replay();
+            if (! replayed) return replayed;
+            response = std::move (cachedResponse);
+            content = std::move (cachedContent);
+        }
         if (result && response.statusCode == 200)
         {
-            Json entry { { "schema", 1 }, { "request_url", request.url },
+            const auto contentHash = digest (content);
+            Json entry { { "schema", 2 }, { "request_url", request.url },
                          { "response_url", response.url }, { "headers", response.headers },
-                         { "body", std::move (content) } };
+                         { "body_sha256", contentHash }, { "body", std::move (content) } };
             updates.emplace_back (path, entry.dump());
         }
         return result;
@@ -154,6 +247,8 @@ public:
     void commit()
     {
         for (const auto& update : updates) atomicCacheWrite (update.first, update.second);
+        updates.clear();
+        trimRepositoryCache (cache);
     }
 
     bool usedCache = false;
