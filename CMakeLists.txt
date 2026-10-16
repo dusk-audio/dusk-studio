@@ -862,7 +862,6 @@ target_sources(DuskStudio PRIVATE
     src/ui/MasteringView.cpp
     src/ui/MasterStripComponent.cpp
     src/ui/MidiBindingsPanel.cpp
-    src/ui/PianoRollComponent.cpp
     src/ui/PianoRollEdit.cpp
     src/ui/PluginPickerHelpers.cpp
     src/ui/PluginPickerPanel.cpp
