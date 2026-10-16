@@ -99,8 +99,7 @@ bool BufferedFileReader::holds (std::int64_t startFrame, std::int64_t numFrames)
 
 bool BufferedFileReader::needsFillAt (const Window* window, std::int64_t h) const noexcept
 {
-    if (channels <= 0 || h >= fileInfo.numFrames
-        || failedHint.load (std::memory_order_acquire) == h)
+    if (channels <= 0 || h >= fileInfo.numFrames)
         return false;
     if (window == nullptr || h < window->startFrame
         || h >= window->startFrame + window->numFrames)
@@ -147,6 +146,7 @@ void BufferedFileReader::beginFill (std::int64_t startFrame)
     auto next = std::make_unique<Window>();
     next->startFrame = startFrame;
     next->numFrames = std::min (capacity - 1, fileInfo.numFrames - startFrame);
+    next->stride = next->numFrames;
     if ((std::uint64_t) next->numFrames > std::numeric_limits<std::size_t>::max()
                                                   / sizeof (float) / (std::size_t) channels)
         throw std::length_error ("audio read window is too large");
@@ -171,51 +171,71 @@ void BufferedFileReader::publishStaging()
 
 bool BufferedFileReader::fillOnce()
 {
-    if (channels <= 0 || source == nullptr) return false;
-    const auto h = std::clamp (hint(), (std::int64_t) 0, fileInfo.numFrames);
-    if (h >= fileInfo.numFrames)
+    if (std::chrono::steady_clock::now() < nextFillAttempt) return false;
+    try
     {
-        stagingWindow.reset();
-        updateAllocatedBytes();
-        return false;
-    }
-    if (stagingWindow != nullptr
-        && (h < stagingWindow->startFrame
-            || h >= stagingWindow->startFrame + stagingWindow->numFrames))
-    {
-        stagingWindow.reset();
-        stagingFilled = 0;
-        updateAllocatedBytes();
-    }
-    if (stagingWindow == nullptr)
-    {
-        if (! needsFillAt (currentWindow.get(), h)) return false;
-        beginFill (h);
-    }
+        if (channels <= 0 || source == nullptr) return false;
+        const auto h = std::clamp (hint(), (std::int64_t) 0, fileInfo.numFrames);
+        if (h >= fileInfo.numFrames)
+        {
+            stagingWindow.reset();
+            updateAllocatedBytes();
+            return false;
+        }
+        if (stagingWindow != nullptr
+            && (h < stagingWindow->startFrame
+                || h >= stagingWindow->startFrame + stagingWindow->numFrames))
+        {
+            stagingWindow.reset();
+            stagingFilled = 0;
+            updateAllocatedBytes();
+        }
+        if (stagingWindow == nullptr)
+        {
+            if (! needsFillAt (currentWindow.get(), h)) return false;
+            beginFill (h);
+        }
 
-    const auto stride = stagingWindow->numFrames;
-    const auto chunk = std::min (kFillChunkFrames, stride - stagingFilled);
-    for (int c = 0; c < channels; ++c)
-        fillDest[(std::size_t) c] = stagingWindow->data.data()
-                               + (std::size_t) c * (std::size_t) stride
-                               + (std::size_t) stagingFilled;
-    const auto got = source->read (fillDest.data(), channels,
-                                   stagingWindow->startFrame + stagingFilled, chunk);
-    stagingFilled += got;
-    updateAllocatedBytes();
-    if (got < chunk)
+        const auto stride = stagingWindow->numFrames;
+        const auto chunk = std::min (kFillChunkFrames, stride - stagingFilled);
+        for (int c = 0; c < channels; ++c)
+            fillDest[(std::size_t) c] = stagingWindow->data.data()
+                                   + (std::size_t) c * (std::size_t) stride
+                                   + (std::size_t) stagingFilled;
+        const auto got = source->read (fillDest.data(), channels,
+                                       stagingWindow->startFrame + stagingFilled, chunk);
+        stagingFilled += got;
+        updateAllocatedBytes();
+        if (got < chunk)
+        {
+            nextFillAttempt = std::chrono::steady_clock::now() + std::chrono::milliseconds (100);
+            const auto partialEnd = stagingWindow->startFrame + stagingFilled;
+            const bool keepCurrent = currentWindow != nullptr
+                && h >= currentWindow->startFrame
+                && h < currentWindow->startFrame + currentWindow->numFrames
+                && partialEnd < currentWindow->startFrame + currentWindow->numFrames;
+            if (stagingFilled > 0 && ! keepCurrent)
+            {
+                stagingWindow->numFrames = stagingFilled;
+                publishStaging();
+            }
+            else
+                stagingWindow.reset();
+            stagingFilled = 0;
+            updateAllocatedBytes();
+            return false;
+        }
+        if (stagingFilled == stride) publishStaging();
+        return true;
+    }
+    catch (...)
     {
-        failedHint.store (h, std::memory_order_release);
-        // A short disk read cannot publish the unwritten suffix as resident.
-        // Keep the previous complete snapshot instead of changing its contract.
+        nextFillAttempt = std::chrono::steady_clock::now() + std::chrono::milliseconds (100);
         stagingWindow.reset();
         stagingFilled = 0;
         updateAllocatedBytes();
-        return false;
+        throw;
     }
-    failedHint.store (-1, std::memory_order_release);
-    if (stagingFilled == stride) publishStaging();
-    return true;
 }
 
 void BufferedFileReader::fillNow()
@@ -233,7 +253,7 @@ void BufferedFileReader::releaseResidency() noexcept
     stagingFilled = 0;
     std::vector<float*>().swap (fillDest);
     if (source != nullptr) source->releaseReadScratch();
-    failedHint.store (-1, std::memory_order_release);
+    nextFillAttempt = {};
     updateAllocatedBytes();
 }
 
@@ -248,7 +268,8 @@ void BufferedFileReader::run()
         }
         catch (...)
         {
-            return;
+            wake.wait (kIdleWaitMs);
+            continue;
         }
         const auto h = hint();
         const bool moving = h != lastHint;
@@ -297,7 +318,7 @@ bool BufferedFileReader::readRt (float* const* dest, int numDestCh,
                     std::fill (dest[c], dest[c] + destinationOffset, 0.0f);
                     std::memcpy (dest[c] + destinationOffset,
                                  window->data.data()
-                                    + (std::size_t) c * (std::size_t) window->numFrames
+                                    + (std::size_t) c * (std::size_t) window->stride
                                     + (std::size_t) sourceOffset,
                                  (std::size_t) have * sizeof (float));
                     std::fill (dest[c] + destinationOffset + have, dest[c] + numFrames, 0.0f);

@@ -4,6 +4,7 @@
 #include "../../foundation/AutoResetEvent.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -70,6 +71,7 @@ private:
     {
         std::int64_t startFrame = 0;
         std::int64_t numFrames = 0;
+        std::int64_t stride = 0;
         std::vector<float> data;
     };
 
@@ -91,11 +93,11 @@ private:
     std::unique_ptr<Window> stagingWindow;
     std::vector<float*> fillDest;
     std::int64_t stagingFilled = 0;
+    std::chrono::steady_clock::time_point nextFillAttempt {};
 
     std::atomic<const Window*> publishedWindow { nullptr };
     mutable std::atomic<unsigned> activeReads { 0 };
     std::atomic<std::int64_t> hintFrame { 0 };
-    std::atomic<std::int64_t> failedHint { -1 };
     std::atomic<std::size_t> allocated { 0 };
     std::atomic<std::uint64_t> misses { 0 };
 
