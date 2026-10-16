@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/MidiTimelineSchedule.h"
+#include "engine/LoopTimeline.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -40,7 +41,8 @@ struct Timeline
     }
 
     midischedule::Outcome play (std::int64_t start, std::int64_t end, bool chased,
-                                std::vector<Event>& out, int& scans)
+                                std::vector<Event>& out, int& scans,
+                                const midischedule::PendingCapture* pending = nullptr)
     {
         return midischedule::scheduleSpan (
             *published, nullptr, kRate, kBpm, { start, end, chased }, scans, chase,
@@ -48,7 +50,7 @@ struct Timeline
             {
                 out.push_back ({ s, d1, d2, start + inSpan });
                 return true;
-            });
+            }, pending);
     }
 };
 
@@ -59,7 +61,289 @@ MidiRegion regionOfTicks (std::int64_t ticks)
     region.lengthInSamples = ticksToSamples (ticks, kRate, kBpm);
     return region;
 }
+
+MidiMergePlayback pendingLoop (std::int64_t length)
+{
+    MidiMergePlayback pending;
+    pending.configure (42, length, [] (std::int64_t sample) { return samplesToTicks (sample, kRate, kBpm); });
+    return pending;
+}
 } // namespace
+
+TEST_CASE ("pending MIDI Merge reaches the next pass within a block or a latency window",
+           "[midi][schedule][merge]")
+{
+    std::int64_t length = 384, windowStart = 256, release = 300;
+    int expectedOn = 128;
+    bool completed = true;
+    SECTION ("an intra-block seam") {}
+    SECTION ("lookahead enters the next pass before capture completes")
+    { length = 512; windowStart = 400; release = 100; expectedOn = 112; completed = false; }
+    auto pending = pendingLoop (length);
+    pending.pushEvent (1, 0, 0x90, 60, 100);
+    pending.pushEvent (1, release, 0x80, 60, 0);
+    pending.publishProgress (1, completed ? length : 256, completed);
+    Timeline timeline;
+    std::vector<Event> events;
+    int scans = 32768;
+    midischedule::PendingCapture overlay;
+    overlay.playback = &pending;
+    REQUIRE (overlay.locateTarget (*timeline.published, 0, length, kRate, kBpm, scans));
+    forEachLoopTimelineSpan (windowStart, 256, true, 0, length, [&] (const LoopTimelineSpan& span)
+    {
+        overlay.playbackPass = 1 + (int) ((windowStart + span.bufferOffset) / length);
+        std::vector<Event> part;
+        REQUIRE (timeline.play (span.timelineStart, span.timelineStart + span.length,
+                                span.wrappedBefore, part, scans, &overlay) == midischedule::Outcome::complete);
+        for (auto event : part)
+        { event.at += span.bufferOffset - span.timelineStart; events.push_back (event); }
+    });
+    std::stable_sort (events.begin(), events.end(), [] (const auto& a, const auto& b) { return a.at < b.at; });
+    REQUIRE_FALSE (events.empty());
+    CHECK (events[0].status == 0x90);
+    CHECK (events[0].at == expectedOn);
+    if (! completed)
+    {
+        REQUIRE (events.size() == 2);
+        CHECK (events[1].status == 0x80);
+        CHECK (events[1].at == 212);
+    }
+}
+
+TEST_CASE ("committed and pending notes share release-before-onset ordering",
+           "[midi][schedule][merge]")
+{
+    Timeline timeline;
+    auto region = regionOfTicks (20);
+    auto pending = pendingLoop (1000);
+    SECTION ("pending release before committed onset")
+    {
+        region.notes.push_back ({ 1, 60, 100, 1, 2 });
+        pending.pushEvent (1, 0, 0x90, 60, 90);
+        pending.pushEvent (1, 50, 0x80, 60, 0);
+    }
+    SECTION ("committed release before pending onset")
+    {
+        region.notes.push_back ({ 1, 60, 100, 0, 1 });
+        pending.pushEvent (1, 50, 0x90, 60, 90);
+        pending.pushEvent (1, 100, 0x80, 60, 0);
+    }
+    timeline.add (region);
+    midischedule::PendingCapture overlay;
+    overlay.playback = &pending;
+    overlay.playbackPass = 2;
+    int scans = 32768;
+    REQUIRE (overlay.locateTarget (*timeline.published, 0, 1000, kRate, kBpm, scans));
+    std::vector<Event> events;
+    REQUIRE (timeline.play (50, 51, false, events, scans, &overlay) == midischedule::Outcome::complete);
+    REQUIRE (events.size() == 2);
+    CHECK (events[0].status == 0x80);
+    CHECK (events[1].status == 0x90);
+    CHECK (events[0].at == 50);
+    CHECK (events[1].at == 50);
+}
+
+TEST_CASE ("pending MIDI held reconciliation survives publication and releases late closures once",
+           "[midi][schedule][merge]")
+{
+    Timeline timeline;
+    auto pending = pendingLoop (1000);
+    pending.pushEvent (1, 0, 0x90, 60, 90);
+    midischedule::PendingCapture overlay;
+    overlay.playback = &pending;
+    overlay.playbackPass = 2;
+    int scans = 32768;
+    REQUIRE (overlay.locateTarget (*timeline.published, 0, 1000, kRate, kBpm, scans));
+    midischedule::NoteCount sounding, held;
+    sounding.hear (0x90, 60, 90);
+    std::vector<Event> events;
+    const auto reconcile = [&] (std::int64_t at)
+    {
+        return midischedule::releaseStranded (*timeline.published, nullptr, kRate, kBpm, at,
+            scans, sounding, held, [&] (std::uint8_t s, std::uint8_t d1, std::uint8_t d2, std::int64_t)
+            { events.push_back ({ s, d1, d2, 0 }); return true; }, &overlay);
+    };
+    SECTION ("actual closure behind lookahead releases at the next head")
+    {
+        pending.pushEvent (1, 100, 0x80, 60, 0);
+        REQUIRE (reconcile (256) == midischedule::Outcome::complete);
+        REQUIRE (events.size() == 1);
+        CHECK (sounding.total == 0);
+        REQUIRE (reconcile (256) == midischedule::Outcome::complete);
+        CHECK (events.size() == 1);
+    }
+    SECTION ("an end exactly at the head is left for the ordinary release")
+    {
+        auto region = regionOfTicks (20);
+        region.notes.push_back ({ 1, 60, 100, 0, 10 });
+        timeline.add (region);
+        sounding.hear (0x90, 60, 100);
+        pending.pushEvent (1, 100, 0x80, 60, 0);
+        REQUIRE (reconcile (100) == midischedule::Outcome::complete);
+        CHECK (events.empty());
+        REQUIRE (timeline.play (100, 101, false, events, scans, &overlay) == midischedule::Outcome::complete);
+        REQUIRE (events.size() == 1);
+        sounding.hear (events[0].status, events[0].data1, events[0].data2);
+        CHECK (sounding.total == 1);
+    }
+    SECTION ("commit retains held sound and Undo cannot revive pending content")
+    {
+        auto region = regionOfTicks (20);
+        region.notes.push_back ({ 1, 60, 90, 0, 20 });
+        timeline.add (region);
+        timeline.published->capture = { 42, 1 };
+        REQUIRE (overlay.locateTarget (*timeline.published, 0, 1000, kRate, kBpm, scans));
+        REQUIRE (reconcile (256) == midischedule::Outcome::complete);
+        CHECK (events.empty());
+        CHECK (sounding.total == 1);
+        timeline.published = buildMidiTimeline ({}, nullptr, { 42, 1 });
+        REQUIRE (overlay.locateTarget (*timeline.published, 0, 1000, kRate, kBpm, scans));
+        REQUIRE (reconcile (256) == midischedule::Outcome::complete);
+        CHECK (events.size() == 1);
+        events.clear();
+        REQUIRE (timeline.play (0, 256, false, events, scans, &overlay) == midischedule::Outcome::complete);
+        CHECK (events.empty());
+    }
+}
+
+TEST_CASE ("pending MIDI uses the merge target's rounded origin and mute policy",
+           "[midi][schedule][merge]")
+{
+    Timeline timeline;
+    auto region = regionOfTicks (20);
+    region.timelineStart = 17;
+    int expectedAt = 17;
+    bool muted = false;
+    SECTION ("a non-grid region origin") {}
+    SECTION ("a muted target") { region.muted = true; muted = true; }
+    SECTION ("a locked overlap creates an independent region") { region.locked = true; expectedAt = 0; }
+    timeline.add (region);
+    auto pending = pendingLoop (512);
+    pending.pushEvent (1, 0, 0x90, 60, 90);
+    midischedule::PendingCapture overlay;
+    overlay.playback = &pending;
+    overlay.playbackPass = 2;
+    int scans = 32768;
+    REQUIRE (overlay.locateTarget (*timeline.published, 0, 512, kRate, kBpm, scans));
+    std::vector<Event> events;
+    REQUIRE (timeline.play (0, 256, false, events, scans, &overlay) == midischedule::Outcome::complete);
+    if (muted) CHECK (events.empty());
+    else
+    {
+        REQUIRE (events.size() == 1);
+        CHECK (events[0].at == expectedAt);
+    }
+}
+
+TEST_CASE ("pending controller chase combines lanes and puts banks before programs",
+           "[midi][schedule][merge]")
+{
+    Timeline timeline;
+    auto region = regionOfTicks (20);
+    region.ccs = { { 1, 7, 20, 0 }, { 1, 0, 4, 0, MidiCc::Kind::ProgramChange } };
+    timeline.add (region);
+    auto pending = pendingLoop (1000);
+    pending.pushEvent (1, 0, 0xb0, 7, 90);
+    pending.pushEvent (1, 50, 0xb0, 0, 3);
+    midischedule::PendingCapture overlay;
+    overlay.playback = &pending;
+    overlay.playbackPass = 2;
+    int scans = 32768;
+    REQUIRE (overlay.locateTarget (*timeline.published, 0, 1000, kRate, kBpm, scans));
+    std::vector<Event> events;
+    REQUIRE (timeline.play (50, 51, true, events, scans, &overlay) == midischedule::Outcome::complete);
+    REQUIRE (events.size() == 3);
+    CHECK (events[0].status == 0xb0);
+    CHECK (events[0].data1 == 7);
+    CHECK (events[0].data2 == 90);
+    CHECK (events[1].status == 0xb0);
+    CHECK (events[1].data1 == 0);
+    CHECK (events[2].status == 0xc0);
+}
+
+TEST_CASE ("pending controller precedence agrees with the published merge amid overlapping regions",
+           "[midi][schedule][merge]")
+{
+    Timeline timeline;
+    auto target = regionOfTicks (20);
+    target.ccs = { { 1, 7, 10, 0 } };
+    timeline.add (target);
+    auto later = target;
+    later.locked = true;
+    later.ccs[0].value = 20;
+    timeline.add (later);
+    auto pending = pendingLoop (1000);
+    pending.pushEvent (1, 0, 0xb0, 7, 90);
+    midischedule::PendingCapture overlay;
+    overlay.playback = &pending;
+    overlay.playbackPass = 2;
+    int scans = 32768;
+    REQUIRE (overlay.locateTarget (*timeline.published, 0, 1000, kRate, kBpm, scans));
+    int start = 0;
+    bool chase = false;
+    SECTION ("explicit equal-time values") {}
+    SECTION ("chased equal-time values") { start = 50; chase = true; }
+    std::vector<Event> before, after;
+    REQUIRE (timeline.play (start, start + 1, chase, before, scans, &overlay) == midischedule::Outcome::complete);
+    REQUIRE_FALSE (before.empty());
+    CHECK (before.back().data2 == 20);
+    MidiRegion pass = regionOfTicks (20);
+    pass.ccs = { { 1, 7, 90, 0 } };
+    REQUIRE (mergeMidiPass (timeline.regions[0], pass, 0).changed);
+    timeline.published = buildMidiTimeline (timeline.regions, nullptr, { 42, 1 });
+    REQUIRE (overlay.locateTarget (*timeline.published, 0, 1000, kRate, kBpm, scans));
+    REQUIRE (timeline.play (start, start + 1, chase, after, scans, &overlay) == midischedule::Outcome::complete);
+    REQUIRE_FALSE (after.empty());
+    CHECK (after.back().data2 == before.back().data2);
+}
+
+TEST_CASE ("an ineligible pending capture cannot reorder existing controller regions",
+           "[midi][schedule][merge]")
+{
+    Timeline timeline;
+    auto target = regionOfTicks (20);
+    target.timelineStart = 100;
+    target.ccs = { { 1, 7, 10, 2 } };
+    timeline.add (target);
+    auto earlier = target;
+    earlier.locked = true;
+    earlier.timelineStart = 50;
+    earlier.ccs = { { 1, 7, 20, 3 } };
+    timeline.add (earlier);
+    auto pending = pendingLoop (1000);
+    int playbackPass = 2;
+    SECTION ("empty capture") {}
+    SECTION ("the source pass is still playing")
+    { pending.pushEvent (1, 200, 0xb0, 7, 90); playbackPass = 1; }
+    SECTION ("the acquired snapshot already consumed the pass")
+    { pending.pushEvent (1, 200, 0xb0, 7, 90); timeline.published->capture = { 42, 1 }; }
+    midischedule::PendingCapture overlay;
+    overlay.playback = &pending;
+    overlay.playbackPass = playbackPass;
+    int scans = 32768;
+    REQUIRE (overlay.locateTarget (*timeline.published, 0, 1000, kRate, kBpm, scans));
+    for (bool chased : { false, true })
+    {
+        std::vector<Event> events;
+        const int start = chased ? 201 : 200;
+        REQUIRE (timeline.play (start, start + 1, chased, events, scans, &overlay) == midischedule::Outcome::complete);
+        REQUIRE_FALSE (events.empty());
+        CHECK (events.back().data2 == 10);
+    }
+}
+
+TEST_CASE ("ordinary MIDI scheduling keeps its scan budget across ten thousand empty overlaps",
+           "[midi][schedule][regression]")
+{
+    Timeline timeline;
+    timeline.regions.assign (10000, regionOfTicks (20));
+    timeline.published = buildMidiTimeline (timeline.regions);
+    int scans = 32768;
+    std::vector<Event> events;
+    REQUIRE (timeline.play (1, 2, false, events, scans) == midischedule::Outcome::complete);
+    CHECK (events.empty());
+    CHECK (scans > 0);
+}
 
 TEST_CASE ("a region dense with controllers still plays its notes, a block at a time",
            "[midi][schedule][regression]")

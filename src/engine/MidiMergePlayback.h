@@ -118,6 +118,23 @@ public:
 
     bool takeOverflow() noexcept { return std::exchange (overflowed, false); }
 
+    bool hasEligible (MidiCaptureStamp consumed, int playbackPass, int& scans) const noexcept
+    {
+        if (! available) return false;
+        const int through = consumedPass (consumed);
+        if (heldCount > 0 && currentPass > through && currentPass < playbackPass && currentPass <= observedPass)
+            return true;
+        auto first = head, past = tail;
+        while (first < past)
+        {
+            if (! takeScan (scans)) return false;
+            const auto middle = first + (past - first) / 2;
+            if (records[(std::size_t) (middle % records.size())].pass <= through) first = middle + 1;
+            else past = middle;
+        }
+        return first < tail && records[(std::size_t) (first % records.size())].pass < playbackPass;
+    }
+
     template <typename Visit>
     bool forEachNote (MidiCaptureStamp consumed, int playbackPass, int& scans, Visit&& visit) const noexcept
     {

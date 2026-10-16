@@ -61,8 +61,14 @@ TEST_CASE ("Pending MIDI Merge can replay a known onset before its source pass c
     pending.configure (12, 512, {});
     pending.pushEvent (1, 0, 0x92, 64, 87);
     pending.publishProgress (1, 256, false);
+    int scans = 100;
+    CHECK (pending.hasEligible ({}, 2, scans));
+    CHECK_FALSE (pending.hasEligible ({}, 1, scans));
+    CHECK_FALSE (pending.hasEligible ({ 12, 1 }, 2, scans));
     CHECK (notesFor (pending, {}, 2) == std::vector<MidiNote> { { 3, 64, 87, 0, 512 } });
     pending.pushEvent (1, 300, 0x82, 64, 0);
+    CHECK (pending.hasEligible ({}, 2, scans));
+    CHECK_FALSE (pending.hasEligible ({ 12, 1 }, 2, scans));
     CHECK (notesFor (pending, {}, 2) == std::vector<MidiNote> { { 3, 64, 87, 0, 300 } });
     CHECK (notesFor (pending, { 12, 1 }, 2).empty());
     CHECK (notesFor (pending, { 11, 999 }, 2).size() == 1);
