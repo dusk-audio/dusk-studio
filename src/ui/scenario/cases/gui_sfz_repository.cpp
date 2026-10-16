@@ -260,7 +260,7 @@ public:
         return { OperationStatus::Complete, {} };
     }
 
-    std::string artworkUrl() const { return "https://sfzinstruments.github.io/assets/img/woodwinds/" + name + ".png"; }
+    std::string artworkUrl() const { return "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/assets/img/woodwinds/" + name + ".png"; }
 
     void release()
     {
