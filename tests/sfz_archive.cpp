@@ -454,6 +454,7 @@ TEST_CASE ("SFZ ZIP extraction checks available space before creating staging")
     const auto result = extractZip (request);
     CHECK_FALSE (result);
     CHECK (result.error == "Insufficient free space for the expanded SFZ pack");
+    CHECK (result.failureKind == FailureKind::DiskFull);
     CHECK_FALSE (std::filesystem::exists (request.stagingDirectory));
     CHECK (std::filesystem::is_regular_file (request.archive));
 }
@@ -480,7 +481,32 @@ TEST_CASE ("SFZ ZIP extraction rejects corrupt member data")
     const auto extras = std::size_t (bytes[local + 28]) + (std::size_t (bytes[local + 29]) << 8);
     bytes[local + 30 + names + extras] ^= 1;
     const auto request = requestFor (tree, bytes);
-    CHECK (extractZip (request).status == OperationStatus::Failed);
+    const auto result = extractZip (request);
+    CHECK (result.status == OperationStatus::Failed);
+    CHECK (result.failureKind == FailureKind::Integrity);
+}
+
+TEST_CASE ("SFZ ZIP extraction distinguishes unavailable input from corrupt contents")
+{
+   #if defined(_WIN32)
+    SKIP ("Windows keeps an open archive protected against concurrent truncation");
+   #else
+    ScratchTree tree;
+    const auto request = requestFor (tree, zip ({ { "piano.sfz", std::string (512 * 1024, 'x') } }));
+    bool truncated = false;
+    OperationControl control;
+    control.progress = [&] (const OperationProgress& progress)
+    {
+        if (truncated || progress.completedBytes == 0) return;
+        std::filesystem::resize_file (request.archive, 0);
+        truncated = true;
+    };
+    const auto result = extractZip (request, control);
+    REQUIRE (truncated);
+    CHECK (result.status == OperationStatus::Failed);
+    CHECK (result.failureKind == FailureKind::None);
+    CHECK (result.error.find ("Cannot read ZIP payload") != std::string::npos);
+   #endif
 }
 
 TEST_CASE ("SFZ ZIP extraction refuses fake and truncated ZIP payloads")

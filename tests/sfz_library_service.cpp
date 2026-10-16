@@ -938,8 +938,13 @@ TEST_CASE ("SFZ library rejects bad download content without publishing or retai
     const auto result = settled (service);
     REQUIRE (result.state == LibraryState::Failed);
     REQUIRE_FALSE (result.error.empty());
+    CHECK (result.failureKind == FailureKind::Integrity);
     REQUIRE (result.installed.empty());
     REQUIRE (ownedInstallFiles (tree) == 0);
+    REQUIRE (service.requestInstalled());
+    const auto refreshed = settled (service);
+    CHECK (refreshed.state == LibraryState::Complete);
+    CHECK (refreshed.failureKind == FailureKind::None);
 }
 
 TEST_CASE ("SFZ library resumes extraction from a completed locally verified part without HTTP", "[sfz][service][ipc]")
