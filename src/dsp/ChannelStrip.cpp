@@ -928,18 +928,11 @@ void ChannelStrip::setPendingBuiltin (std::string unitId,
 
 void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept
 {
-    // The delay length changes only once the line has fully drained (silent
-    // for at least the currently-applied length) - then a reset() drops only
-    // silence, so the latency change is click-free. Both callers run this
-    // BEFORE pushing the block into the line, so the decision uses the drain
-    // state ahead of this block: a loud block ending a fully-drained stretch
-    // (un-mute, skip-path exit) still relatches immediately instead of
-    // deferring to the next silent gap. A continuously-loud track defers the
-    // change to its next silent gap (latency edits happen on plugin load,
-    // which is normally done with the transport stopped -> silent ->
-    // immediate).
+    // Inspect the history before consuming this block so resumed audio can
+    // use the new delay. A zero-length line still needs a silent gap.
     const int target = pdcTargetSamples.load (std::memory_order_relaxed);
-    if (target != pdcAppliedSamples && pdcSilentRun >= (std::int64_t) pdcAppliedSamples)
+    if (target != pdcAppliedSamples && pdcSilentRun > 0
+        && pdcSilentRun >= (std::int64_t) pdcAppliedSamples)
     {
         pdcDelayL.setDelay ((float) target);
         pdcDelayR.setDelay ((float) target);
@@ -994,6 +987,8 @@ void ChannelStrip::drainPdcForSkip() noexcept
         frozenAlignR.reset();
         pdcSilentRun = requiredDrain;
     }
+    // A closed gate is a silent gap even when the current delay is zero.
+    pdcSilentRun = std::max (pdcSilentRun, std::int64_t { 1 });
 }
 
 // The MIDI dispatch below hands the block's MIDI to whichever slot is loaded,
@@ -1243,6 +1238,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 : (std::int64_t) std::max (pdcAppliedSamples, osLatencySamples);
         if (peakL <= 1e-6f && peakR <= 1e-6f && pdcSilentRun >= requiredDrain)
         {
+            pdcSilentRun += numSamples;
            #if DUSKSTUDIO_HAS_DUSK_DSP
             // No comp ran this block, so the GR meter would otherwise pin
             // at the last reduction value. Force it to 0 so a silent track

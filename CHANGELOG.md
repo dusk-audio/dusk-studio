@@ -41,6 +41,9 @@ canonical source.
 
 ### Fixed
 
+- **PDC changes during playback.** Tracks already playing without compensation
+  wait for silence before adding delay. Silent and muted tracks adopt the new
+  compensation when their audio resumes.
 - **Sampler shutdown.** File-loading workers use atomic stop flags, removing a
   race when an instrument is replaced or destroyed.
 - **Portable SFZ ZIP compression.** Stored and deflate entries install on every
