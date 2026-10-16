@@ -6423,8 +6423,6 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
             pianoRollDim->setNativeChildArea (logical.expanded (1));
         }
         const auto g = embedscale::childGeometryFor (*top, logical);
-        pianoRollChildX = g.x;
-        pianoRollChildY = g.y;
         return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
     };
     const auto geometry = callbacks.geometry();

@@ -557,7 +557,6 @@ private:
     bool pianoRollClosing = false;
     bool pianoRollForwardingKey = false;
     std::uint64_t pianoRollGeneration = 0;
-    int pianoRollChildX = 0, pianoRollChildY = 0;
     void finishPianoRollClose();
     void closeNativePanelsForModal (bool keepPianoRoll = false);
    #endif

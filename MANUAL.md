@@ -2406,7 +2406,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 
 ## Piano roll
 
-The piano roll modal captures its own keypresses first (see `PianoRollComponent::keyPressed`); the table below is the full set.
+The piano roll handles its editing keys before the window's other shortcuts; the table below lists them.
 
 | Shortcut                          | Action                                                       |
 | --------------------------------- | ------------------------------------------------------------ |
@@ -2429,7 +2429,7 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 | **Home** / **End**                | Jump view to region start / end                              |
 | **Cmd+]** / **Cmd+[**             | Next / previous MIDI region                                  |
 | **[** / **]**                     | Set the loop in / out point at the edit cursor (**Shift** = punch in / out) |
-| **Esc**                           | Close modal                                                  |
+| **Esc**                           | Close a popup first; otherwise clear the selection, then close the roll |
 
 ## Notepad
 

@@ -138,7 +138,7 @@ That round-trip — **UI writes atom → audio reads atom → audio writes meter
 | A mixer strip's look or controls | [src/ui/ChannelStripComponent.cpp](../src/ui/ChannelStripComponent.cpp) (5000 lines — the biggest file) |
 | The overall window layout / view switching | [src/ui/MainComponent.cpp](../src/ui/MainComponent.cpp) |
 | The arrangement / timeline / regions | [src/ui/TapeStrip.cpp](../src/ui/TapeStrip.cpp) |
-| The MIDI piano-roll editor | [src/ui/PianoRollComponent.cpp](../src/ui/PianoRollComponent.cpp) |
+| The MIDI piano-roll editor | [src/ui/imgui/PianoRollView.cpp](../src/ui/imgui/PianoRollView.cpp) (native view) + [src/ui/PianoRollEdit.cpp](../src/ui/PianoRollEdit.cpp) (edit logic) |
 | The audio region editor (fades/trim/take lanes) | [src/ui/imgui/AudioEditorView.cpp](../src/ui/imgui/AudioEditorView.cpp) |
 | Transport buttons / clock / tempo | [src/ui/TransportBar.cpp](../src/ui/TransportBar.cpp), [src/engine/Transport.h](../src/engine/Transport.h) |
 | Recording to disk | [src/engine/RecordManager.cpp](../src/engine/RecordManager.cpp) |
