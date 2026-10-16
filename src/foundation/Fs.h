@@ -34,16 +34,29 @@
 // used inline as std::filesystem at call sites, so they live no helper here.
 namespace dusk::fs
 {
+inline std::filesystem::path nativeIOPath (const std::filesystem::path& path)
+{
+   #if defined(_WIN32)
+    if (path.native().compare (0, 4, L"\\\\?\\") == 0) return path;
+    auto absolute = std::filesystem::absolute (path).lexically_normal();
+    const auto full = absolute.make_preferred().native();
+    if (full.compare (0, 2, L"\\\\") == 0) return std::filesystem::path (L"\\\\?\\UNC\\" + full.substr (2));
+    return std::filesystem::path (L"\\\\?\\" + full);
+   #else
+    return path;
+   #endif
+}
+
 inline std::string loadFileAsString (const std::filesystem::path& path)
 {
-    std::ifstream in (path, std::ios::binary);
+    std::ifstream in (nativeIOPath (path), std::ios::binary);
     if (! in) return {};
     return std::string (std::istreambuf_iterator<char> (in), std::istreambuf_iterator<char>());
 }
 
 inline bool writeStringToFile (const std::filesystem::path& path, std::string_view text)
 {
-    std::ofstream out (path, std::ios::binary | std::ios::trunc);
+    std::ofstream out (nativeIOPath (path), std::ios::binary | std::ios::trunc);
     if (! out) return false;
     out.write (text.data(), (std::streamsize) text.size());
     out.flush();   // surface disk-full / write errors that only appear at flush

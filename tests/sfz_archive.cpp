@@ -126,7 +126,7 @@ ArchiveRequest requestFor (ScratchTree& tree, const std::vector<unsigned char>& 
 
 std::string readFile (const std::filesystem::path& path)
 {
-    std::ifstream stream (path, std::ios::binary);
+    std::ifstream stream (dusk::fs::nativeIOPath (path), std::ios::binary);
     return { std::istreambuf_iterator<char> (stream), std::istreambuf_iterator<char>() };
 }
 
@@ -208,6 +208,11 @@ TEST_CASE ("SFZ ZIP extraction strips only the expected root and verifies its li
     std::string entrypoint;
     SECTION ("Composed Unicode pathname") { entrypoint = u8"Étude.sfz"; }
     SECTION ("Decomposed Unicode pathname") { entrypoint = u8"E\u0301tude.sfz"; }
+    SECTION ("Deep Unicode pathname")
+    {
+        for (int index = 0; index < 4; ++index) entrypoint += std::string (72, char ('a' + index)) + '/';
+        entrypoint += u8"音色.sfz";
+    }
     auto request = requestFor (tree, zip ({
         { "pack-release/", {}, true }, { "pack-release/" + entrypoint, instrument },
         { "pack-release/Samples/tone.wav", "sample bytes" }, { "pack-release/LICENSE", license }

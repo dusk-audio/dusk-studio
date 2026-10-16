@@ -4,7 +4,6 @@
 
 #include <juce_core/juce_core.h>
 
-#include <algorithm>
 #include <filesystem>
 #include <random>
 #include <set>
@@ -113,6 +112,34 @@ TEST_CASE ("dusk::fs::matchesWildcard", "[foundation][fs]")
     REQUIRE_FALSE (fs::matchesWildcard ("xx.txt", "?.txt"));
     REQUIRE (fs::matchesWildcard ("anything", "*"));
     REQUIRE_FALSE (fs::matchesWildcard ("a.wav", "*.flac"));
+}
+
+TEST_CASE ("native IO paths support long files without changing portable paths", "[foundation][fs]")
+{
+   #if defined(_WIN32)
+    CHECK (fs::nativeIOPath (L"C:/library/./samples/../piano.sfz")
+        == stdfs::path (LR"(\\?\C:\library\piano.sfz)"));
+    CHECK (fs::nativeIOPath (LR"(\\server\share\piano.sfz)")
+        == stdfs::path (LR"(\\?\UNC\server\share\piano.sfz)"));
+    const stdfs::path extended (LR"(\\?\C:\library\piano.sfz)");
+    CHECK (fs::nativeIOPath (extended) == extended);
+    auto root = fs::createUniqueTempDirectory ("dusk-long-io-");
+    const auto nativeRoot = fs::nativeIOPath (root);
+    const auto removeRoot = [&nativeRoot] (void*)
+    { std::error_code error; stdfs::remove_all (nativeRoot, error); };
+    const std::unique_ptr<void, decltype (removeRoot)> cleanup (&root, removeRoot);
+    auto directory = root;
+    for (int index = 0; index < 4; ++index) directory /= std::wstring (72, wchar_t (L'a' + index));
+    REQUIRE (directory.native().size() > 260);
+    REQUIRE (stdfs::create_directories (fs::nativeIOPath (directory)));
+    const auto file = directory / stdfs::u8path (u8"音色.sfz");
+    REQUIRE (fs::writeStringToFile (file, "long-path instrument"));
+    CHECK (fs::loadFileAsString (file) == "long-path instrument");
+    CHECK (file.native().compare (0, 4, L"\\\\?\\") != 0);
+   #else
+    const stdfs::path original ("alias/../library/piano.sfz");
+    CHECK (fs::nativeIOPath (original).native() == original.native());
+   #endif
 }
 
 TEST_CASE ("directory walks report increment errors without throwing", "[foundation][fs][issue-374]")

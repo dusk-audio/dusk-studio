@@ -3,6 +3,7 @@
 #endif
 
 #include "SfzArchive.h"
+#include "../../foundation/Fs.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -97,14 +98,6 @@ private:
 };
 
 #if defined(_WIN32)
-std::wstring windowsPath (const std::filesystem::path& path)
-{
-    auto full = std::filesystem::absolute (path).lexically_normal().wstring();
-    if (full.compare (0, 4, L"\\\\?\\") == 0) return full;
-    if (full.compare (0, 2, L"\\\\") == 0) return L"\\\\?\\UNC\\" + full.substr (2);
-    return L"\\\\?\\" + full;
-}
-
 struct Handle
 {
     HANDLE value = INVALID_HANDLE_VALUE;
@@ -159,7 +152,7 @@ public:
     explicit Input (const std::filesystem::path& path)
     {
        #if defined(_WIN32)
-        handle = Handle (CreateFileW (windowsPath (path).c_str(), GENERIC_READ,
+        handle = Handle (CreateFileW (dusk::fs::nativeIOPath (path).c_str(), GENERIC_READ,
             FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
         LARGE_INTEGER length {};
         valid = handle.value != INVALID_HANDLE_VALUE
@@ -251,12 +244,12 @@ public:
     {
         if (! root.is_absolute()) return;
        #if defined(_WIN32)
-        if (! CreateDirectoryW (windowsPath (root).c_str(), nullptr)
+        if (! CreateDirectoryW (dusk::fs::nativeIOPath (root).c_str(), nullptr)
             && GetLastError() != ERROR_ALREADY_EXISTS) return;
         handle = openDirectory (root);
         if (handle.value == INVALID_HANDLE_VALUE) return;
         WIN32_FIND_DATAW entry {};
-        const auto search = FindFirstFileW (windowsPath (root / L"*").c_str(), &entry);
+        const auto search = FindFirstFileW (dusk::fs::nativeIOPath (root / L"*").c_str(), &entry);
         if (search == INVALID_HANDLE_VALUE)
         {
             valid = GetLastError() == ERROR_FILE_NOT_FOUND;
@@ -312,13 +305,13 @@ public:
             current /= std::filesystem::u8path (part);
             if (last && ! directory)
             {
-                output = Handle (CreateFileW (windowsPath (current).c_str(), GENERIC_WRITE,
+                output = Handle (CreateFileW (dusk::fs::nativeIOPath (current).c_str(), GENERIC_WRITE,
                     0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
                     nullptr));
                 return output.value != INVALID_HANDLE_VALUE
                     && ordinaryHandle (output.value, false);
             }
-            if (! CreateDirectoryW (windowsPath (current).c_str(), nullptr)
+            if (! CreateDirectoryW (dusk::fs::nativeIOPath (current).c_str(), nullptr)
                 && GetLastError() != ERROR_ALREADY_EXISTS) return false;
             auto child = openDirectory (current);
             if (child.value == INVALID_HANDLE_VALUE || ! rememberDirectory (child, spelling))
@@ -414,7 +407,7 @@ private:
    #if defined(_WIN32)
     static Handle openDirectory (const std::filesystem::path& path)
     {
-        Handle opened (CreateFileW (windowsPath (path).c_str(), GENERIC_READ,
+        Handle opened (CreateFileW (dusk::fs::nativeIOPath (path).c_str(), GENERIC_READ,
             FILE_SHARE_READ, nullptr, OPEN_EXISTING,
             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
         if (opened.value != INVALID_HANDLE_VALUE && ! ordinaryHandle (opened.value, true))
@@ -770,11 +763,7 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
         for (const auto& entry : entries) totalBytes += entry.expanded;
         std::error_code spaceError;
         const auto spacePath = request.stagingDirectory.parent_path();
-       #if defined(_WIN32)
-        const auto space = std::filesystem::space (windowsPath (spacePath), spaceError);
-       #else
-        const auto space = std::filesystem::space (spacePath, spaceError);
-       #endif
+        const auto space = std::filesystem::space (dusk::fs::nativeIOPath (spacePath), spaceError);
         if (spaceError) return fail ("Cannot determine free space for SFZ installation: " + spaceError.message());
         const auto allocationOverhead = nodeCount * 4096;
         if (request.limits.freeSpaceReserveBytes > space.available
