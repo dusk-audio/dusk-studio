@@ -8,6 +8,7 @@
 #include <sodium.h>
 
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 
@@ -167,6 +168,7 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
     LibraryTree tree;
     const auto configBefore = dusk::fs::loadFileAsString (tree.configuration);
     auto file = tree.configuration;
+    auto failureKind = FailureKind::None;
     OperationControl control;
     bool cancelled = false;
     bool removedDestination = false, replacedDestination = false;
@@ -211,6 +213,16 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
         const auto copy = tree.destination / "packs" / tree.pack.directory.filename();
         fs::copy (tree.pack.directory, copy, fs::copy_options::recursive);
         REQUIRE (dusk::fs::writeStringToFile (copy / "Samples/tone.wav", "different samples"));
+        failureKind = FailureKind::Integrity;
+    }
+    SECTION ("Equal-length destination corruption fails its content hash")
+    {
+        const auto prepared = changeLibraryLocation ({}, tree.destination, false, {}, {});
+        REQUIRE (prepared);
+        const auto copy = tree.destination / "packs" / tree.pack.directory.filename();
+        fs::copy (tree.pack.directory, copy, fs::copy_options::recursive);
+        REQUIRE (dusk::fs::writeStringToFile (copy / "Samples/tone.wav", std::string (tree.sample.size(), 'b')));
+        failureKind = FailureKind::Integrity;
     }
     SECTION ("A destination nested inside the source is rejected")
     {
@@ -271,6 +283,7 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
     CHECK_FALSE (result.locations);
     CHECK (dusk::fs::loadFileAsString (tree.configuration) == configBefore);
     CHECK (dusk::fs::loadFileAsString (tree.pack.directory / "Samples/tone.wav") == tree.sample);
+    CHECK (result.failureKind == failureKind);
     CHECK (resolveLibraryInstrument (tree.before, tree.pack.locatorFor (tree.pack.instruments.front())).has_value());
     if (removedDestination) CHECK_FALSE (fs::exists (tree.destination));
     else
@@ -280,6 +293,37 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
     if (replacedDestination) CHECK (fs::is_empty (tree.destination / "packs"));
     if (! removedStaging.empty()) CHECK_FALSE (fs::exists (removedStaging));
     if (! replacedStaging.empty()) CHECK (fs::is_empty (replacedStaging));
+}
+
+TEST_CASE ("SFZ relocation reports disk exhaustion without losing originals", "[sfz][storage][sfz-location-disk-full]")
+{
+   #if defined(__linux__)
+    const auto* rootSetting = std::getenv ("DUSK_SFZ_CAPACITY_ROOT");
+    const auto* modeSetting = std::getenv ("DUSK_SFZ_CAPACITY_MODE");
+    if (! rootSetting || ! modeSetting) SKIP ("Requires the private tmpfs fixture from sfz_disk_full.sh");
+    const auto destination = fs::canonical (rootSetting);
+    const std::string mode = modeSetting;
+    REQUIRE ((mode == "inodes" || mode == "bytes"));
+    REQUIRE (fs::is_empty (destination));
+    REQUIRE (fs::space (destination).capacity <= 64 * 1024);
+    LibraryTree tree;
+    const auto configuration = dusk::fs::loadFileAsString (tree.configuration);
+    const auto changed = changeLibraryLocation (tree.before, destination, true, {}, tree.configuration);
+    INFO (changed.error);
+    REQUIRE (changed.status == OperationStatus::Failed);
+    CHECK (changed.failureKind == FailureKind::DiskFull);
+    CHECK (changed.error == (mode == "inodes" ? "Cannot mark the selected SFZ library folder"
+                                             : "Cannot write the destination SFZ file"));
+    CHECK_FALSE (changed.locations);
+    CHECK (dusk::fs::loadFileAsString (tree.configuration) == configuration);
+    CHECK (dusk::fs::loadFileAsString (tree.pack.directory / "Samples/tone.wav") == tree.sample);
+    CHECK (resolveLibraryInstrument (tree.before, tree.pack.locatorFor (tree.pack.instruments.front())));
+    for (const auto& entry : fs::directory_iterator (destination))
+        CHECK (entry.path().filename().u8string().rfind (".install-", 0) != 0);
+    if (fs::is_directory (destination / "packs")) CHECK (fs::is_empty (destination / "packs"));
+   #else
+    SKIP ("The bounded tmpfs fixture requires Linux user and mount namespaces");
+   #endif
 }
 
 TEST_CASE ("SFZ external library markers prevent writes to a disconnected mount point", "[sfz][storage]")

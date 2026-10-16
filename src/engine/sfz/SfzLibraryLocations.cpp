@@ -98,48 +98,70 @@ std::optional<LibraryGuard> guardLibrary (const LibraryLocation& location)
     return {};
 }
 
-bool syncPath (const fs::path& path, bool directory)
+FailureKind storageFailureKind (const std::error_code& error)
 {
+    return error == std::errc::no_space_on_device ? FailureKind::DiskFull : FailureKind::None;
+}
+
+OperationResult outputFailure (const char* message)
+{
+    const auto kind = storageFailureKind ({ errno, std::generic_category() });
+    return { OperationStatus::Failed, message, kind };
+}
+
+bool syncPath (const fs::path& path, bool directory, std::error_code& error)
+{
+    error.clear();
 #if defined(_WIN32)
     // Directory publication uses MoveFileEx's write-through flag on Windows.
     if (directory) return directoryIdentity (path).has_value();
     const auto handle = CreateFileW (dusk::fs::nativeIOPath (path).c_str(), GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
         FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) return false;
+    if (handle == INVALID_HANDLE_VALUE)
+    { error = { static_cast<int> (GetLastError()), std::system_category() }; return false; }
     BY_HANDLE_FILE_INFORMATION info {};
-    const bool ordinary = GetFileInformationByHandle (handle, &info) != 0
-        && (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) == 0;
+    const bool read = GetFileInformationByHandle (handle, &info) != 0;
+    if (! read) error = { static_cast<int> (GetLastError()), std::system_category() };
+    const bool ordinary = read && (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) == 0;
     const bool flushed = ordinary && FlushFileBuffers (handle) != 0;
+    if (ordinary && ! flushed) error = { static_cast<int> (GetLastError()), std::system_category() };
     const bool closed = CloseHandle (handle) != 0;
+    if (! closed && ! error) error = { static_cast<int> (GetLastError()), std::system_category() };
     return flushed && closed;
 #else
     const auto handle = ::open (path.c_str(), O_NOFOLLOW | (directory ? O_RDONLY | O_DIRECTORY : O_RDWR));
-    if (handle < 0) return false;
+    if (handle < 0) { error = { errno, std::generic_category() }; return false; }
     struct stat info {};
-    const bool ordinary = ::fstat (handle, &info) == 0
-        && (directory ? S_ISDIR (info.st_mode) : S_ISREG (info.st_mode));
+    const bool read = ::fstat (handle, &info) == 0;
+    if (! read) error = { errno, std::generic_category() };
+    const bool ordinary = read && (directory ? S_ISDIR (info.st_mode) : S_ISREG (info.st_mode));
     int flushed = -1;
     if (ordinary) do { flushed = ::fsync (handle); } while (flushed != 0 && errno == EINTR);
+    if (ordinary && flushed != 0) error = { errno, std::generic_category() };
     const bool closed = ::close (handle) == 0;
+    if (! closed && ! error) error = { errno, std::generic_category() };
     return flushed == 0 && closed;
 #endif
 }
 
-bool renamePath (const fs::path& source, const fs::path& target)
+bool renamePath (const fs::path& source, const fs::path& target, std::error_code& error)
 {
+    error.clear();
 #if defined(_WIN32)
-    return MoveFileExW (dusk::fs::nativeIOPath (source).c_str(), dusk::fs::nativeIOPath (target).c_str(),
-                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+    if (MoveFileExW (dusk::fs::nativeIOPath (source).c_str(), dusk::fs::nativeIOPath (target).c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0) return true;
+    error = { static_cast<int> (GetLastError()), std::system_category() };
+    return false;
 #else
-    std::error_code error;
     fs::rename (source, target, error);
     return ! error;
 #endif
 }
 
-bool createDirectoriesDurably (const fs::path& path)
+bool createDirectoriesDurably (const fs::path& path, std::error_code& error)
 {
+    error.clear();
     std::vector<fs::path> missing;
     auto parent = path;
     while (! plainDirectory (parent))
@@ -150,8 +172,8 @@ bool createDirectoriesDurably (const fs::path& path)
     }
     for (auto it = missing.rbegin(); it != missing.rend(); ++it)
     {
-        std::error_code error;
-        if (! fs::create_directory (dusk::fs::nativeIOPath (*it), error) || error || ! syncPath (it->parent_path(), true)) return false;
+        if (! fs::create_directory (dusk::fs::nativeIOPath (*it), error) || error
+            || ! syncPath (it->parent_path(), true, error)) return false;
     }
     return true;
 }
@@ -189,8 +211,9 @@ bool validMarker (const std::string& text)
 
 enum class ConfigurationWrite { Failed, Visible, Durable };
 
-ConfigurationWrite writeConfiguration (const fs::path& file, const LibraryLocations& locations)
+ConfigurationWrite writeConfiguration (const fs::path& file, const LibraryLocations& locations, std::error_code& error)
 {
+    error.clear();
     if (file.empty()) return ConfigurationWrite::Durable;
     const auto token = newMarker();
     if (token.empty()) return ConfigurationWrite::Failed;
@@ -199,22 +222,23 @@ ConfigurationWrite writeConfiguration (const fs::path& file, const LibraryLocati
     Json previous = Json::array();
     for (const auto& location : locations.previous) previous.push_back (encode (location));
     const Json value { { "schema", 1 }, { "active", encode (locations.active) }, { "previous", previous } };
-    std::error_code error;
-    if (! createDirectoriesDurably (file.parent_path())) return ConfigurationWrite::Failed;
+    if (! createDirectoriesDurably (file.parent_path(), error)) return ConfigurationWrite::Failed;
     const auto temporary = file.parent_path() / (".sfz-location-" + token);
-    if (! dusk::fs::writeStringToFile (temporary, value.dump (2)) || ! syncPath (temporary, false)
-        || ! syncPath (file.parent_path(), true))
+    if (! dusk::fs::writeStringToFile (temporary, value.dump (2), &error) || ! syncPath (temporary, false, error)
+        || ! syncPath (file.parent_path(), true, error))
     {
-        fs::remove (dusk::fs::nativeIOPath (temporary), error);
+        std::error_code ignored;
+        fs::remove (dusk::fs::nativeIOPath (temporary), ignored);
         return ConfigurationWrite::Failed;
     }
-    if (! renamePath (temporary, file))
+    if (! renamePath (temporary, file, error))
     {
-        if (! fs::exists (dusk::fs::nativeIOPath (temporary), error) && ! error) return ConfigurationWrite::Visible;
-        fs::remove (dusk::fs::nativeIOPath (temporary), error);
+        std::error_code ignored;
+        if (! fs::exists (dusk::fs::nativeIOPath (temporary), ignored) && ! ignored) return ConfigurationWrite::Visible;
+        fs::remove (dusk::fs::nativeIOPath (temporary), ignored);
         return ConfigurationWrite::Failed;
     }
-    return syncPath (file.parent_path(), true) ? ConfigurationWrite::Durable : ConfigurationWrite::Visible;
+    return syncPath (file.parent_path(), true, error) ? ConfigurationWrite::Durable : ConfigurationWrite::Visible;
 }
 
 bool nested (const fs::path& child, const fs::path& parent)
@@ -270,31 +294,32 @@ OperationResult interrupted (const OperationControl& control)
 }
 
 bool createPackParents (const DirectoryGuard& destination, const fs::path& relative,
-                        const LibraryGuard& library)
+                        const LibraryGuard& library, std::error_code& error)
 {
+    error.clear();
     auto current = destination.path;
     for (const auto& component : relative)
     {
         if (! library.matches() || ! destination.matches()) return false;
         const auto parent = current;
         current /= component;
-        std::error_code error;
         const auto status = fs::symlink_status (dusk::fs::nativeIOPath (current), error);
         if (error && error != std::errc::no_such_file_or_directory) return false;
         if (! fs::exists (status))
         {
             error.clear();
-            if (! fs::create_directory (dusk::fs::nativeIOPath (current), error) || error || ! syncPath (parent, true)) return false;
+            if (! fs::create_directory (dusk::fs::nativeIOPath (current), error) || error
+                || ! syncPath (parent, true, error)) return false;
         }
         else if (! fs::is_directory (status)) return false;
     }
     return library.matches() && destination.matches();
 }
 
-bool syncPackDirectories (const DirectoryGuard& pack, const LibraryGuard& library)
+bool syncPackDirectories (const DirectoryGuard& pack, const LibraryGuard& library, std::error_code& error)
 {
+    error.clear();
     std::vector<fs::path> directories { pack.path };
-    std::error_code error;
     for (fs::recursive_directory_iterator it (dusk::fs::nativeIOPath (pack.path), error), end; ! error && it != end; it.increment (error))
     {
         if (! library.matches() || ! pack.matches()) return false;
@@ -304,7 +329,7 @@ bool syncPackDirectories (const DirectoryGuard& pack, const LibraryGuard& librar
     }
     if (error) return false;
     for (auto it = directories.rbegin(); it != directories.rend(); ++it)
-        if (! library.matches() || ! pack.matches() || ! syncPath (*it, true)) return false;
+        if (! library.matches() || ! pack.matches() || ! syncPath (*it, true, error)) return false;
     return true;
 }
 
@@ -327,16 +352,28 @@ OperationResult transferPack (const fs::path& source, const DirectoryGuard& dest
         std::error_code ec;
         if (copy)
         {
-            if (! createPackParents (destination, file.relative.parent_path(), library))
-                return { OperationStatus::Failed, "Cannot create folders under the verified SFZ staging directory" };
+            if (! createPackParents (destination, file.relative.parent_path(), library, ec))
+                return { OperationStatus::Failed, "Cannot create folders under the verified SFZ staging directory", storageFailureKind (ec) };
         }
-        else if (! fs::is_regular_file (fs::symlink_status (dusk::fs::nativeIOPath (target), ec)) || ec
-                 || fs::file_size (dusk::fs::nativeIOPath (target), ec) != file.bytes || ec)
-            return { OperationStatus::Failed, "An existing destination pack differs from the installed pack" };
+        else
+        {
+            if (! fs::is_regular_file (fs::symlink_status (dusk::fs::nativeIOPath (target), ec)) || ec)
+                return { OperationStatus::Failed, "An existing destination pack differs from the installed pack" };
+            const auto size = fs::file_size (dusk::fs::nativeIOPath (target), ec);
+            if (ec) return { OperationStatus::Failed, "Cannot inspect the destination SFZ file" };
+            if (size != file.bytes)
+                return { OperationStatus::Failed, "An existing destination pack differs from the installed pack", FailureKind::Integrity };
+        }
         std::ifstream input (dusk::fs::nativeIOPath (source / file.relative), std::ios::binary);
+        if (! input) return { OperationStatus::Failed, "Cannot open an SFZ file for relocation" };
         std::ofstream output;
-        if (copy) output.open (dusk::fs::nativeIOPath (target), std::ios::binary | std::ios::trunc);
-        if (! input || (copy && ! output)) return { OperationStatus::Failed, "Cannot open an SFZ file for relocation" };
+        if (copy)
+        {
+            const auto ioTarget = dusk::fs::nativeIOPath (target);
+            errno = 0;
+            output.open (ioTarget, std::ios::binary | std::ios::trunc);
+            if (! output) return outputFailure ("Cannot open an SFZ file for relocation");
+        }
         crypto_hash_sha256_state expected {};
         crypto_hash_sha256_init (&expected);
         std::uintmax_t bytes = 0;
@@ -351,21 +388,28 @@ OperationResult transferPack (const fs::path& source, const DirectoryGuard& dest
             crypto_hash_sha256_update (&expected, reinterpret_cast<const unsigned char*> (buffer.data()), static_cast<std::size_t> (count));
             if (copy)
             {
+                errno = 0;
                 output.write (buffer.data(), count);
-                if (! output) return { OperationStatus::Failed, "Cannot write the destination SFZ file" };
+                if (! output) return outputFailure ("Cannot write the destination SFZ file");
             }
             completed += static_cast<std::uint64_t> (count);
             if (control.progress) control.progress ({ completed, 0, 0 });
             if (! available()) return disconnected;
         }
-        if (input.bad() || bytes != file.bytes) return { OperationStatus::Failed, "The source SFZ file changed or could not be read" };
+        if (input.bad()) return { OperationStatus::Failed, "The source SFZ file could not be read" };
+        if (bytes != file.bytes) return { OperationStatus::Failed, "The source SFZ file changed during the move", FailureKind::Integrity };
         if (copy)
         {
+            errno = 0;
+            output.flush();
+            if (! output) return outputFailure ("Cannot flush the destination SFZ file");
+            errno = 0;
             output.close();
-            if (! output) return { OperationStatus::Failed, "Cannot flush the destination SFZ file" };
+            if (! output) return outputFailure ("Cannot close the destination SFZ file");
         }
         if (! available()) return disconnected;
-        if (! syncPath (target, false)) return { OperationStatus::Failed, "Cannot durably flush the destination SFZ file; originals were kept" };
+        if (! syncPath (target, false, ec))
+            return { OperationStatus::Failed, "Cannot durably flush the destination SFZ file; originals were kept", storageFailureKind (ec) };
         std::ifstream check (dusk::fs::nativeIOPath (target), std::ios::binary);
         if (! check) return { OperationStatus::Failed, "Cannot read back the destination SFZ file" };
         crypto_hash_sha256_state actual {};
@@ -384,18 +428,21 @@ OperationResult transferPack (const fs::path& source, const DirectoryGuard& dest
         std::array<unsigned char, crypto_hash_sha256_BYTES> a {}, b {};
         crypto_hash_sha256_final (&expected, a.data());
         crypto_hash_sha256_final (&actual, b.data());
-        if (check.bad() || verified != file.bytes || a != b)
-            return { OperationStatus::Failed, "The destination SFZ file failed verification; originals were kept" };
+        if (check.bad()) return { OperationStatus::Failed, "Cannot read back the destination SFZ file; originals were kept" };
+        if (verified != file.bytes || a != b)
+            return { OperationStatus::Failed, "The destination SFZ file failed verification; originals were kept", FailureKind::Integrity };
     }
     std::vector<FileEntry> copied;
     if (! available()) return disconnected;
-    if (! fileTree (destination.path, copied, error) || copied.size() != files.size())
-        return { OperationStatus::Failed, "The destination SFZ pack has a different file set" };
+    if (! fileTree (destination.path, copied, error)) return { OperationStatus::Failed, error };
+    if (copied.size() != files.size())
+        return { OperationStatus::Failed, "The destination SFZ pack has a different file set", FailureKind::Integrity };
     for (std::size_t i = 0; i < files.size(); ++i)
         if (files[i].relative != copied[i].relative || files[i].bytes != copied[i].bytes)
-            return { OperationStatus::Failed, "The destination SFZ pack has a different file set" };
-    if (! syncPackDirectories (destination, library))
-        return { OperationStatus::Failed, "Cannot durably flush the destination SFZ folders; originals were kept" };
+            return { OperationStatus::Failed, "The destination SFZ pack has a different file set", FailureKind::Integrity };
+    std::error_code ec;
+    if (! syncPackDirectories (destination, library, ec))
+        return { OperationStatus::Failed, "Cannot durably flush the destination SFZ folders; originals were kept", storageFailureKind (ec) };
     return { OperationStatus::Complete, {} };
 }
 
@@ -501,7 +548,8 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
                                            bool moveExisting, const OperationControl& control, const fs::path& configurationFile)
 {
     LocationChangeResult result;
-    const auto fail = [&] (const std::string& message) { result.error = message; return result; };
+    const auto fail = [&] (const std::string& message, FailureKind kind = FailureKind::None)
+    { result.error = message; result.failureKind = kind; return result; };
     if (sodium_init() < 0) return fail ("Cannot initialize SFZ library verification");
     if (control.status() != OperationStatus::Complete) { result.status = control.status(); return result; }
     std::error_code error;
@@ -531,27 +579,27 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
         marker = newMarker();
         const auto temporary = target / (".sfz-marker-" + marker);
         if (marker.empty() || ! chosenDirectory->matches()
-            || ! dusk::fs::writeStringToFile (temporary, marker) || ! syncPath (temporary, false)
-            || ! chosenDirectory->matches() || ! renamePath (temporary, target / kMarker))
-            return fail ("Cannot mark the selected SFZ library folder");
+            || ! dusk::fs::writeStringToFile (temporary, marker, &error) || ! syncPath (temporary, false, error)
+            || ! chosenDirectory->matches() || ! renamePath (temporary, target / kMarker, error))
+            return fail ("Cannot mark the selected SFZ library folder", storageFailureKind (error));
     }
-    if (! chosenDirectory->matches() || ! syncPath (target / kMarker, false) || ! syncPath (target, true))
-        return fail ("Cannot durably save the SFZ library marker");
+    if (! chosenDirectory->matches() || ! syncPath (target / kMarker, false, error) || ! syncPath (target, true, error))
+        return fail ("Cannot durably save the SFZ library marker", storageFailureKind (error));
     const auto packsPath = target / "packs";
     if (! fs::exists (fs::symlink_status (dusk::fs::nativeIOPath (packsPath), error)))
     {
         error.clear();
         const auto temporary = target / (".sfz-packs-" + newMarker());
         if (! chosenDirectory->matches() || ! fs::create_directory (dusk::fs::nativeIOPath (temporary), error) || error
-            || ! chosenDirectory->matches() || ! renamePath (temporary, packsPath) || ! syncPath (target, true))
-            return fail ("Cannot create the SFZ packs directory on the selected drive");
+            || ! chosenDirectory->matches() || ! renamePath (temporary, packsPath, error) || ! syncPath (target, true, error))
+            return fail ("Cannot create the SFZ packs directory on the selected drive", storageFailureKind (error));
     }
     const LibraryLocation active { target, marker };
     const auto destinationLibrary = guardLibrary (active);
     if (! destinationLibrary || ! chosenDirectory->matches()) return fail ("The destination SFZ library drive is unavailable");
     PackStore destinationStore (target, marker);
     std::string initializationError;
-    if (! destinationStore.initialize (initializationError)) return fail (initializationError);
+    if (! destinationStore.initialize (initializationError, &error)) return fail (initializationError, storageFailureKind (error));
     after.active = active;
     after.previous.clear();
     std::set<fs::path> seen { target };
@@ -612,27 +660,28 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
                     if (! publishedDirectory) return fail ("The destination SFZ version is not a plain directory");
                     if (publishedDirectory->identity == sourcePack->identity) continue;
                     const auto verified = transferPack (pack.directory, *publishedDirectory, *destinationLibrary, false, control, completed);
-                    if (! verified) { result.status = verified.status; return fail (verified.error); }
+                    if (! verified) { result.status = verified.status; return fail (verified.error, verified.failureKind); }
                 }
                 else
                 {
-                    auto staging = destinationStore.createStaging (initializationError);
-                    if (staging.empty()) return fail (initializationError);
+                    auto staging = destinationStore.createStaging (initializationError, &error);
+                    if (staging.empty()) return fail (initializationError, storageFailureKind (error));
                     const auto stagingDirectory = guardDirectory (staging);
                     if (! stagingDirectory || ! destinationLibrary->matches())
                         return fail ("The destination SFZ drive disconnected while preparing the move");
                     rollback.paths.push_back (*stagingDirectory);
                     const auto verified = transferPack (pack.directory, *stagingDirectory, *destinationLibrary, true, control, completed);
-                    if (! verified) { result.status = verified.status; return fail (verified.error); }
+                    if (! verified) { result.status = verified.status; return fail (verified.error, verified.failureKind); }
                     if (! destinationLibrary->matches() || ! stagingDirectory->matches())
                         return fail ("The destination SFZ drive disconnected during the move");
-                    if (! renamePath (staging, published)) return fail ("Cannot publish the relocated SFZ pack");
+                    if (! renamePath (staging, published, error))
+                        return fail ("Cannot publish the relocated SFZ pack", storageFailureKind (error));
                     rollback.paths.back().path = published;
                     if (! destinationLibrary->matches() || ! rollback.paths.back().matches()
-                        || ! syncPath (packsPath, true) || ! syncPath (target, true))
+                        || ! syncPath (packsPath, true, error) || ! syncPath (target, true, error))
                     {
                         rollback.committed = true;
-                        return fail ("Cannot confirm durable publication of the SFZ pack; copies and originals were kept");
+                        return fail ("Cannot confirm durable publication of the SFZ pack; copies and originals were kept", storageFailureKind (error));
                     }
                 }
                 const auto publishedDirectory = guardDirectory (published);
@@ -641,10 +690,11 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
             }
         }
     if (control.status() != OperationStatus::Complete) { result.status = control.status(); return result; }
-    if (! destinationLibrary->matches() || ! syncPath (packsPath, true) || ! syncPath (target, true))
-        return fail ("The destination SFZ library drive is unavailable or could not be flushed");
-    const auto configured = writeConfiguration (configurationFile, after);
-    if (configured == ConfigurationWrite::Failed) return fail ("Cannot save the SFZ library location; originals were kept");
+    if (! destinationLibrary->matches() || ! syncPath (packsPath, true, error) || ! syncPath (target, true, error))
+        return fail ("The destination SFZ library drive is unavailable or could not be flushed", storageFailureKind (error));
+    const auto configured = writeConfiguration (configurationFile, after, error);
+    if (configured == ConfigurationWrite::Failed)
+        return fail ("Cannot save the SFZ library location; originals were kept", storageFailureKind (error));
     rollback.committed = true;
     if (configured == ConfigurationWrite::Visible)
     {
@@ -671,11 +721,12 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
         auto pruned = after;
         pruned.previous.erase (std::remove_if (pruned.previous.begin(), pruned.previous.end(), [] (const auto& location)
         {
-            return emptyLibrary (location) && syncPath (location.root / "packs", true) && syncPath (location.root, true);
+            std::error_code error;
+            return emptyLibrary (location) && syncPath (location.root / "packs", true, error) && syncPath (location.root, true, error);
         }), pruned.previous.end());
         if (pruned.previous.size() != after.previous.size())
         {
-            const auto saved = writeConfiguration (configurationFile, pruned);
+            const auto saved = writeConfiguration (configurationFile, pruned, error);
             if (saved != ConfigurationWrite::Failed) after = std::move (pruned);
             if (saved != ConfigurationWrite::Durable)
                 result.error = "The new library is active. Cleanup of previous library settings could not be durably saved.";
