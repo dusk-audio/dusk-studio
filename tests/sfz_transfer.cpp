@@ -2,6 +2,7 @@
 
 #include "engine/sfz/SfzTransfer.h"
 #include "engine/sfz/SfzNetworkPolicy.h"
+#include "foundation/Fs.h"
 #include "foundation/Json.h"
 
 #include <sodium.h>
@@ -44,7 +45,7 @@ struct TemporaryDownload
 
 std::string readFile (const std::filesystem::path& path)
 {
-    std::ifstream stream (path, std::ios::binary);
+    std::ifstream stream (dusk::fs::nativeIOPath (path), std::ios::binary);
     return { std::istreambuf_iterator<char> (stream), std::istreambuf_iterator<char>() };
 }
 
@@ -103,7 +104,9 @@ void pauseAfterPrefix (FakeTransport& transport, const DownloadRequest& download
     REQUIRE (result.status == OperationStatus::Paused);
     REQUIRE (result.bytes == 4);
     REQUIRE (readFile (download.partPath) == "abcd");
-    REQUIRE (std::filesystem::exists (download.partPath.string() + ".resume.json"));
+    auto sidecar = download.partPath;
+    sidecar += ".resume.json";
+    REQUIRE (std::filesystem::exists (dusk::fs::nativeIOPath (sidecar)));
 }
 } // namespace
 
@@ -276,16 +279,25 @@ TEST_CASE ("SFZ transfer resumes a paused archive using its entity validator", "
 {
     TemporaryDownload temp;
     FakeTransport transport;
-    const auto download = request (temp, sha256 ("abcdefgh"));
+    auto download = request (temp, sha256 ("abcdefgh"));
+    SECTION ("Ordinary download path") {}
+    SECTION ("Deep download path")
+    {
+        auto directory = temp.root;
+        for (int index = 0; index < 4; ++index) directory /= std::string (72, char ('a' + index));
+        download.partPath = directory / "archive.part";
+    }
     pauseAfterPrefix (transport, download);
+    REQUIRE (inspectDownloadPart (download.partPath, download.maxBytes) == DownloadPartState::Reusable);
     transport.replies.push_back ({ 206, { { "content-length", "4" }, { "content-range", "bytes 4-7/8" },
                                           { "etag", "\"v1\"" } }, "efgh" });
     const auto result = downloadFile (transport, download);
     REQUIRE (result);
     CHECK (transport.requests.back().headers.at ("range") == "bytes=4-");
     CHECK (transport.requests.back().headers.at ("if-range") == "\"v1\"");
-    CHECK (readFile (temp.part()) == "abcdefgh");
+    CHECK (readFile (download.partPath) == "abcdefgh");
     CHECK (result.sha256 == sha256 ("abcdefgh"));
+    CHECK (inspectDownloadPart (download.partPath, download.maxBytes) == DownloadPartState::Reusable);
 }
 
 TEST_CASE ("SFZ transfer does not append a mismatched resume response", "[sfz][transfer]")

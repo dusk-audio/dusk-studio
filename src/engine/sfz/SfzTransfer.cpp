@@ -14,6 +14,7 @@
  #include <netinet/in.h>
  #include <sys/socket.h>
 #endif
+#include "../../foundation/Fs.h"
 #include <curl/curl.h>
 #include <sodium.h>
 
@@ -328,7 +329,7 @@ bool safeFilePath (const std::filesystem::path& path)
     for (const auto& part : absolute)
     {
         current /= part;
-        const auto status = std::filesystem::symlink_status (current, error);
+        const auto status = std::filesystem::symlink_status (dusk::fs::nativeIOPath (current), error);
         if (error && error != std::errc::no_such_file_or_directory) return false;
         error.clear();
         if (std::filesystem::is_symlink (status)) return false;
@@ -340,7 +341,7 @@ File openFile (const std::filesystem::path& path, bool readOnly = false)
 {
     if (! safeFilePath (path)) return File {};
    #if defined(_WIN32)
-    const auto handle = CreateFileW (path.c_str(), readOnly ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
+    const auto handle = CreateFileW (dusk::fs::nativeIOPath (path).c_str(), readOnly ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
                                     FILE_SHARE_READ, nullptr, readOnly ? OPEN_EXISTING : OPEN_ALWAYS,
                                     FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
     if (handle == INVALID_HANDLE_VALUE) return File {};
@@ -401,11 +402,11 @@ ResumeMetadata readMetadata (const std::filesystem::path& path, bool* unavailabl
     if (unavailable) *unavailable = true;
     if (! safeFilePath (path)) return {};
     std::error_code error;
-    const auto status = std::filesystem::symlink_status (path, error);
+    const auto status = std::filesystem::symlink_status (dusk::fs::nativeIOPath (path), error);
     if (error == std::errc::no_such_file_or_directory || (! error && ! std::filesystem::is_regular_file (status)))
     { if (unavailable) *unavailable = false; return {}; }
     if (error) return {};
-    const auto sizeBytes = std::filesystem::file_size (path, error);
+    const auto sizeBytes = std::filesystem::file_size (dusk::fs::nativeIOPath (path), error);
     if (error) return {};
     if (sizeBytes > 16384) { if (unavailable) *unavailable = false; return {}; }
     auto file = openFile (path, true);
@@ -620,11 +621,11 @@ DownloadPartState inspectDownloadPart (const std::filesystem::path& path, std::u
 {
     if (! safeFilePath (path) || ! curlReady()) return DownloadPartState::Unavailable;
     std::error_code error;
-    const auto status = std::filesystem::symlink_status (path, error);
+    const auto status = std::filesystem::symlink_status (dusk::fs::nativeIOPath (path), error);
     if (error == std::errc::no_such_file_or_directory || (! error && ! std::filesystem::is_regular_file (status)))
         return DownloadPartState::Invalid;
     if (error) return DownloadPartState::Unavailable;
-    const auto size = std::filesystem::file_size (path, error);
+    const auto size = std::filesystem::file_size (dusk::fs::nativeIOPath (path), error);
     if (error) return DownloadPartState::Unavailable;
     if (size == 0 || size > maxBytes) return DownloadPartState::Invalid;
     auto file = openFile (path, true);
@@ -660,7 +661,7 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     if (! safeFilePath (request.partPath) || ! safeFilePath (sidecar)) return fail ("Unsafe download path");
     std::error_code error;
     const auto parent = request.partPath.parent_path();
-    if (! parent.empty()) std::filesystem::create_directories (parent, error);
+    if (! parent.empty()) std::filesystem::create_directories (dusk::fs::nativeIOPath (parent), error);
     if (error) return fail ("Cannot create download directory");
     DirectoryLease downloadLease;
     std::string ownershipError;
@@ -675,7 +676,7 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     }
     auto file = openFile (request.partPath);
     if (! file) return fail ("Cannot open download part safely");
-    auto offset = std::filesystem::file_size (request.partPath, error);
+    auto offset = std::filesystem::file_size (dusk::fs::nativeIOPath (request.partPath), error);
     if (error || offset > request.maxBytes) return fail ("Existing download part exceeds the size limit");
     auto metadata = readMetadata (sidecar);
     const bool sameRequest = metadata.url == *url && metadata.digest == digest;
