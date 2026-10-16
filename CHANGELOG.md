@@ -5,6 +5,81 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.16.0] - Unreleased
+
+### Added
+
+- **MIDI Merge.** Matching toggles in the transport and piano-roll toolbar add
+  each MIDI performance to an existing region, growing it and keeping its earlier
+  notes, controls and takes. Each completed loop pass is one undo step while
+  recording continues. The final partial pass is one step too, and Stop keeps an
+  undone pass undone.
+- **Live notes in the piano roll.** Incoming notes appear while recording, and
+  held notes grow until release. The preview leaves the region and undo history
+  alone, and the roll follows the region a merge updates.
+- **Creative Commons SFZ repositories.** Browse SFZ Instruments, Musical
+  Artifacts, FreePats and Versilian Studios from the instrument library, check a
+  pack's license, and download it to Installed. Downloads can pause, resume and
+  cancel. Installed versions coexist, and sessions find the same pack on another
+  machine without its old absolute path. Missing packs stay offline without
+  downloading on session load.
+  A larger, responsive browser shows source stars or favorites and opens
+  published demos before downloading an instrument pack. Both tabs group
+  instruments by type, show repository artwork or licensed instrument cutouts,
+  and reuse background image caches. Installed search includes program names and
+  descriptions without rescanning packs.
+  All repositories is the default search, combining all four sources with separate
+  page progress and repository labels; one unavailable source leaves the others'
+  results usable. Versilian offers the official VSCO 2 CE and VCSL SFZ releases.
+- **Settings tabs and SFZ storage.** Top tabs replace the long settings page.
+  Choose a download folder on an external drive, keep existing packs in place or
+  move them after copying and verification. Session instrument references survive
+  the move, and disconnected drives are reported.
+- **Complete MIDI channel controls.** Recording, import, session save and
+  playback keep pitch bend, channel and polyphonic pressure, and program changes
+  alongside notes and CCs.
+
+### Fixed
+
+- **Sampler shutdown.** File-loading workers use atomic stop flags, removing a
+  race when an instrument is replaced or destroyed.
+- **Portable SFZ ZIP compression.** Stored and deflate entries install on every
+  platform; packs using other compression methods are refused before extraction.
+- **Settings dropdown keys.** Open dropdowns keep Home and End for navigating
+  their choices, preventing repeated Home events through the main window.
+- **Installed SFZ counts and programs.** Each installed pack counts once per
+  category. ARIA bank declarations supply its normal program choices; internal
+  SFZ mappings remain accessible through Show all SFZ files.
+- **SFZ description search.** Search includes community catalog descriptions,
+  including Swirly Drums when searching for Brushes.
+- **Exact recording offset.** Type a sample value or adjust it one sample at a
+  time with minus and plus buttons.
+- **SFZ Manager entry point.** The insert chooser opens one manager for online,
+  downloaded and local instruments. Its separate Soundfont choice is removed;
+  local SFZ, SF2 and ARIA bank files remain available through the manager.
+- **SFZ preview selection.** Generic patch names in older installed packs use
+  their pack's instrument category, matching the browser list. All instruments
+  has no placeholder image. Image edges no longer sample neighboring atlas pixels.
+- **SFZ playback volume.** Fresh instruments apply the displayed master volume
+  before their first note. The default 0 dB previously left sfizz's −7.35 dB
+  initial attenuation in place until the volume control was moved.
+- **SFZ search keyboard submission.** Enter and keypad Enter start the search,
+  including when the parent window receives the search field's keyboard input.
+- **SFZ instrument captions.** Crowded ARIA skin labels stay centred over their
+  controls and fit between adjacent captions, keeping drum-kit text readable.
+- **Shared audio reader workers.** Three workers fill immutable playback
+  windows near the playhead and release distant sample buffers. Seeking primes
+  the new position before it becomes audible; loop and offline render paths
+  keep their read-ahead coverage.
+- **Background instrument replacement.** The current instrument keeps playing
+  while its replacement loads. Failed and stale requests leave it in place,
+  and retired instruments are destroyed after the audio swap.
+- **MIDI device refresh preserves audio state.** It keeps a deliberately
+  detached callback detached and no longer re-prepares the whole engine,
+  changing a no-device import's timeline rate or clearing a finished master
+  export's loudness readings. Hot-plug and explicit MIDI refreshes wait until
+  an offline bounce, stem export or freeze finishes.
+
 ## [0.15.1] - 2026-10-11
 
 ### Fixed

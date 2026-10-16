@@ -148,6 +148,7 @@ Physical-feeling transport controls:
 * REW / FF / STOP / PLAY / RECORD buttons (large, obvious)
 * Punch In / Punch Out buttons (with indicator lights)
 * Loop toggle button
+* **MIDI Merge** toggle, saved per session and fixed for the duration of a recording gesture
 * **Click button** — toggles the metronome on/off (see "Metronome / click track" below)
 * **MARK button** — drops a named marker at current playhead position
 * **Marker jump** — left/right arrow buttons to jump between markers, or click markers in the tape strip
@@ -207,15 +208,15 @@ AudioCallback (one buffer, e.g. 256 samples):
 10. If recording MIDI: push captured MIDI events to session model (non-RT thread)
 ```
 
-**Disk streaming**: double-buffered ring buffers (`juce::AbstractFifo`) between real-time thread and background disk I/O thread. One read stream per playing track, one write stream per recording track. Use `juce::TimeSliceThread` for the background disk work.
+**Disk streaming**: playback readers share three fill workers (the pool clamps worker counts to 2-4). Readers retain their file handles, but sample memory is resident only near the playhead, normally about three seconds ahead and two seconds behind. Workers publish immutable sample windows and retire old windows after real-time readers leave them. The audio callback only copies available samples and publishes position hints through atomics; it performs no disk I/O, locking or worker wakeup. Message-thread seeks prime the destination before publishing it. Loop-start caches and explicit non-real-time priming cover loop wraps and offline renders.
 
-**Ring buffer sizing**: each per-stream ring buffer is allocated at `bufferDurationSeconds × sampleRate × sizeof(float) × numChannels` bytes. The default buffer duration is 4.0 seconds, exposed as a configurable parameter (`diskBufferSeconds`, clamped to 2.0–8.0 seconds). A track is either reading (playback) or writing (record-armed and rolling) at any instant — never both — so the worst case is 24 stereo streams active simultaneously. At default settings (24 stereo streams, 48 kHz, 4 s): 24 × 2 × 4 × 48000 × 4 bytes ≈ 36 MB. This is allocated once at session load (or audio device initialization) — not per-buffer-callback. Validate the configured value before allocation: values below 2.0 s risk underruns on slow disks, values above 8.0 s waste memory with diminishing returns. Log the total memory budget at allocation time for diagnostics.
+Recording writers remain separate from this reader pool. Buffer preparation and filling happen outside the audio callback.
 
 **Disk stream underrun/overrun policy**:
 
-* **Read stream underrun** (slow disk or CPU stall): when a read stream (`juce::AbstractFifo` / `TimeSliceThread` backed) has insufficient buffered data, emit silence for the requested frames, increment a per-stream `underrunCount` atomic counter, and log a rate-limited error (at most once per second) including the stream ID and current `diskBufferSeconds`. Do not block or retry on the audio thread.
+* **Read stream miss** (slow disk or CPU stall): clear missing frames to silence and count the miss. Never block, retry or log on the audio thread.
 * **Write stream overrun** (recording buffer full): when a write stream's ring buffer is full, drop the oldest buffered samples (ring-buffer wrap) to make room for new data, increment a per-stream `overrunCount` atomic counter, and log a rate-limited warning. If `overrunCount` exceeds a configurable threshold (default: 10 within any 5-second window), expose a callback/flag (`onRecordingOverrun`) to pause recording or notify the UI so the user can take action (e.g., increase `diskBufferSeconds` or reduce track count).
-* These behaviors are enforced after validating/clamping `diskBufferSeconds` (2.0–8.0) and should be included in allocation-time diagnostics alongside the total memory budget log.
+* Report reader residency, fill activity and misses from non-real-time diagnostics. Recording buffer limits are separate from the playback residency horizon.
 
 **Latency compensation**: offset recorded regions by the audio buffer size so they align on playback. Apply this at region creation time.
 
@@ -357,7 +358,7 @@ struct PunchRange {
 **MidiRegion `tickLength` semantics** (resolves the prior ambiguity around region length under tempoLock=ON):
 
 * `tickLength` is the canonical musical extent of the region, expressed in ticks at `kSessionPPQN`. It exists *separately* from event positions: a region can be 4 bars long even if the last note ends on beat 1.5 of bar 1.
-* **On creation during recording**: when MIDI recording begins, a new `MidiRegion` is created with `tickLength` rounded up to the next bar boundary at the current BPM and time signature. As recording continues, `tickLength` extends to (current playhead tick) rounded up to the next bar boundary. When recording stops, `tickLength` is finalized — typically padded to the next bar to leave musical breathing room.
+* **During recording**: the separate preview grows with published capture progress. Merge-off capture is committed after Stop; MIDI Merge commits completed loop passes while rolling and the final partial pass after Stop. Region length covers the captured pass and its note ends; left growth rebases stored events without shifting their absolute musical positions.
 * **On manual edit**: when a user moves or adds an event past the current `tickLength` in the piano roll, `tickLength` extends to cover (rounded up to the next beat). The user can also drag the region's right edge in the tape strip to set `tickLength` directly.
 * **lengthInSamples derivation**: with `tempoLock=ON`, `region.lengthInSamples = tickLength × samplesPerTick(currentBPM)` — recomputed whenever Session BPM changes. With `tempoLock=OFF`, `lengthInSamples` is frozen at the moment of locking (computed once with `bakedBPM`); `tickLength` is preserved on the region for reference but no longer drives playback length.
 * **Empty region**: a freshly created MIDI region (no events yet) has `tickLength` set to one bar at the current time signature so it is visible in the tape strip and the piano roll has a default canvas to draw on.
@@ -507,11 +508,12 @@ The channel strip is completely unaware that its audio came from a plugin rather
 
 **Recording:**
 
-* When a MIDI channel is armed and the transport is recording, incoming MIDI events are captured into a new MidiRegion with tick-based timestamps (relative to region start, at 480 PPQN resolution).
+* When a MIDI channel is armed and the transport is recording, incoming events receive tick-based timestamps at 480 PPQN. With MIDI Merge off, recording retains the existing take-history behavior. With it on, each pass adds to an overlapping unlocked region, growing either edge while keeping the absolute timing of existing events and preserving previous takes. Each completed loop pass is one undo transaction across the recording MIDI tracks, available while rolling; the final partial pass is committed once at Stop. Empty passes make no undo action, and stopping never restores an undone pass. The merge mode is captured when recording starts.
 * Ticks are derived from the session BPM and sample position. This means MIDI data is tempo-relative — if you change BPM later, MIDI regions stretch/compress musically.
 * The instrument plugin receives events in real time during recording so the musician hears themselves through the channel strip (zero-additional-latency monitoring — the plugin is already in the audio graph).
 * Audio output from the instrument plugin is NOT recorded to disk. It's always generated live. This means you can change instruments after recording.
-* **All MIDI event types are captured**: note on/off, control change (CC — modwheel, sustain, expression, etc.), pitch bend, channel pressure, polyphonic aftertouch. The piano roll in v1 edits **notes only**; CCs and other event types play back unchanged but are not visible/editable in the piano roll. Users who want to suppress non-note events should filter them at the input source (most MIDI controllers can do this in their setup), or wait for a post-v1 MIDI-input-filter slot. This is a deliberate v1 trade-off — capturing a complete performance is more important than editability of every nuance.
+* **Channel performances are captured**: notes, CC, 14-bit pitch bend, channel pressure, polyphonic pressure and program changes. Tagged controls retain their wire lengths and independent chase lanes; bank selection precedes a chased program. The piano roll edits notes and CCs; other controls play back unchanged.
+* **Live preview** uses a separate strict single-producer/single-consumer capture stream. The UI never drains the legacy recording FIFO. Progress extends held preview notes without mutating the region or undo history, and gaps truncate pending notes rather than pairing later releases with stale onsets. Completed passes update the merged region on the message thread.
 
 **Playback:**
 
@@ -519,22 +521,11 @@ The channel strip is completely unaware that its audio came from a plugin rather
 * Read-ahead buffer: convert the next ~1 second of MIDI events to sample-accurate timestamps each audio callback. This is computationally trivial compared to audio disk streaming.
 * **Plugin-latency-aware look-ahead**: when an instrument plugin reports `getLatencyInSamples() = L > 0`, the MIDI engine reads ahead by an additional `L` samples relative to the playhead when dispatching events to that plugin. This means the *effective* read-ahead horizon is per-channel: `1 second + L_i` for each instrument slot `i`. Across active slots, the engine schedules its read-ahead pass to cover `max(L_i)` so all plugins are correctly fed. The 1-second baseline is comfortably more than any realistic instrument plugin latency, so in practice the read-ahead horizon does not need to grow — it just shifts the dispatch time per plugin. Compensation is required for sample-accurate alignment of plugin audio output with the timeline.
 
-**Punch in/out for MIDI:**
+**Punch in/out and MIDI Merge:**
 
-* Works identically to audio punch — at the punch-in point, a new MidiRegion is created. Events from the old region before the punch point are preserved, the new recording replaces everything in the punched range.
-* No crossfade needed (MIDI is discrete events, not continuous audio), but a note-off should be sent for any currently-sounding notes at the punch boundary to prevent hanging notes.
-
-**Overdub mode (MIDI-specific):**
-
-* In addition to standard punch (replace), MIDI channels get an overdub toggle. When overdub is ON during recording, new events are merged into the existing region rather than replacing it. This lets you layer drum parts or build up chords across multiple passes — a common and expected MIDI workflow.
-
-**Punch + Overdub interaction:** Punch in/out and the overdub toggle can be enabled simultaneously. Three canonical rules govern the behavior:
-
-1. **At punch-in (both modes)**: send note-off for all currently-sounding notes to prevent hanging notes across the region boundary.
-2. **Overdub OFF + Punch** (replace mode): discard all original events inside `[punch-in, punch-out)`. Insert synthetic note-offs at punch-in for any notes that started before punch-in (truncating their sustain at the boundary). At punch-out, send note-off only for newly recorded notes ending at the boundary. Events strictly before punch-in and strictly after punch-out are preserved unchanged.
-3. **Overdub ON + Punch** (merge mode): preserve all original events unchanged — original notes that sustain through the punched range continue undisturbed. New recorded events are added (merged) inside the punched range only. At punch-out, send note-off only for newly recorded notes ending at the boundary.
-
-These rules are implemented in the region edit code that computes punch boundaries and note-off insertion. The `applyThinnedAutomation()` commit and thread-safety behavior described below is unchanged.
+* Capture includes only the effective punch span, or its intersection with the loop range. A note held across a loop seam is closed at the seam and retriggered at the next pass's start.
+* With MIDI Merge off, the captured performance follows the existing replacement and take-history path. With it on, original events and take history remain intact and the new performance is added at its timeline position.
+* The transport and piano-roll toolbar expose synchronized **MIDI Merge** toggles for the same session setting. It is off by default, saved in the session, and cannot change during a recording gesture.
 
 **BPM changes and existing MIDI regions:**
 
@@ -595,6 +586,24 @@ These rules are implemented in the region edit code that computes punch boundari
 **Plugin latency:**
 
 * Instrument plugins may report latency. Dusk Studio must compensate: offset the MIDI event dispatch by the plugin's reported latency so that the audio output aligns with the timeline. This is handled in the MIDI engine, not the channel strip. (See "Plugin-latency-aware look-ahead" under MIDI Playback above for the read-ahead horizon implications.)
+
+#### **Managed SFZ repository instruments**
+
+The SFZ Manager has Installed and Online views, reached from the insert chooser and multi-sample editor. It also opens the local folder library and file browser for SFZ, SF2 and ARIA bank files, replacing the insert chooser's separate Soundfont action. SFZ Instruments, Musical Artifacts, FreePats and Versilian Studios are external sources, not a Dusk-hosted catalog. Resolve explicit Creative Commons licensing before download and display its constraints. GitHub archives are pinned to a commit and receive a locally computed archive SHA-256; verify a published upstream SHA-256 when the source supplies one. ZIP entries must use stored or deflate compression so supported packs are identical across platforms. Versilian is restricted to the official VSCO 2 CE and VCSL collections and resolves their latest stable SFZ release tags before pinning the commit; their raw-sample default branches are not installable SFZ releases.
+
+Online defaults to All repositories, combining all sources under one search while preserving each result's source and each provider's pagination. A source-specific selection narrows the search. Partial failures report the affected repository while retaining successful results; cached searches use only saved provider responses and report missing caches.
+
+Show source-provided stars or favorites as popularity counts, preserving unavailable versus zero. Published source demos open in the browser before any instrument archive download; a missing demo is explicit. Popularity and demo metadata stay outside installed receipts. Artwork URLs and category hints are optional receipt presentation fields; all presentation metadata stays outside managed identities and resumable download keys.
+
+Both tabs expose category grouping and a selected-instrument image. Installed browsing lists and counts packs, with each pack counted once per category. An ARIA bank program index selects normal entrypoints without changing raw receipt identities; a full-file option retains internal candidates. Search includes source descriptions and the SFZ Instruments community catalog descriptions. Derive categories from instrument names before collection context, and use the cached row category for its preview. All instruments has no image until an instrument is selected. Cache grouped rows between service generations and clip lists to visible rows; local search never rescans packs. Use declared repository images, falling back to bundled licensed instrument cutouts with no AI-generated artwork. A separate service-owned low-priority worker decodes bounded images and maintains a 24-image memory cache and a 64 MiB / 256-image disk cache. Installed and cached selections never fetch artwork; failures leave the category preview available. Stale selection generations cannot publish over the current image.
+
+One owned worker fetches bounded metadata and streams archives, checks portable paths and extraction limits, then atomically publishes a complete staged pack. Recording, bounce and freeze pause library work; resuming is explicit. Cancellation cleans unfinished state. Cached listings are available offline, and neither startup nor session restoration contacts a provider.
+
+Settings uses top tabs, including an SFZ Library tab for the download folder. Changing folders can retain previous roots for existing packs or explicitly move them after copying and verification. External roots require their stored marker; an absent drive never silently creates a replacement library. Moving refuses current or pending managed instruments, preserves portable identities and keeps originals until the new files and configuration are safely committed.
+
+Session format 11 stores managed source, pack, release, actual archive digest, instrument identity and relative SFZ entrypoint. Versions coexist; an absent pack leaves its slot offline with the identity intact. Direct local files keep their file reference. Removal refuses packs used by the current session or a pending load.
+
+Instrument priming is asynchronous. The current instrument plays until a short ownership swap; retired resources are destroyed after the processing gate. Request, session and slot generations reject stale completions, and changed device settings require re-priming.
 
 #### **5d. MIDI Channel Strip UI Differences**
 

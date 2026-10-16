@@ -4,6 +4,7 @@
 #include "../../../session/ParamEditAction.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/SessionSerializer.h"
+#include "../../../engine/scenario/cases/MidiProbeHarness.h"
 
 #include <algorithm>
 #include <array>
@@ -531,8 +532,510 @@ const ScenarioRegistrar pianoStepRecord { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoStepRecord (host, ctx); }
 } };
 
+std::optional<ScenarioResult> beginMidiCaptureCase (GuiHost& host, ScenarioContext& ctx, MidiRegion seed)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty() || host.virtualKeyboardOpen())
+        return ScenarioResult::skip ("requires stopped transport, no modal and no virtual keyboard");
+    if (engine.getCurrentSampleRate() <= 0.0 || engine.getVirtualKeyboardInputIndex() < 0)
+        return ScenarioResult::skip ("requires an audio device and virtual MIDI input");
+    auto& track = session.track (0);
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.keep (track.midiInputIndex);
+    ctx.keep (track.midiChannel);
+    ctx.keep (session.countInEnabled);
+    ctx.keep (session.midiMergeEnabled);
+    ctx.keep (session.tempoBpm);
+    ctx.keep (session.lastRecordPointSamples);
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        const bool armed = session.track (index).recordArmed.load();
+        ctx.cleanup ([&session, index, armed] { session.setTrackArmed (index, armed); });
+        session.setTrackArmed (index, index == 0);
+    }
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, &engine, &session, &track, &transport,
+                  regions = track.midiRegions.current(), directory = currentSessionDirectory (session), tempo = session.tempoMap,
+                  at = transport.getPlayhead(), rollStart = transport.getRollStart(), loop = transport.isLoopEnabled(),
+                  loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd(),
+                  punch = transport.isPunchEnabled(), punchIn = transport.getPunchIn(), punchOut = transport.getPunchOut(),
+                  savedLoopStart = session.savedLoopStart, savedLoopEnd = session.savedLoopEnd,
+                  savedLoopEnabled = session.savedLoopEnabled, savedPunchIn = session.savedPunchIn,
+                  savedPunchOut = session.savedPunchOut, savedPunchEnabled = session.savedPunchEnabled]
+    {
+        engine.stop();
+        host.closeVirtualKeyboard();
+        host.closeRegionEditors();
+        drainModals (host);
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+        session.tempoMap = tempo;
+        applySessionDirectory (session, directory);
+        engine.getUndoManager().clearUndoHistory();
+        transport.setPlayhead (at);
+        transport.setRollStart (rollStart);
+        transport.setLoopRange (loopStart, loopEnd);
+        transport.setLoopEnabled (loop);
+        transport.setPunchRange (punchIn, punchOut);
+        transport.setPunchEnabled (punch);
+        session.savedLoopStart = savedLoopStart;
+        session.savedLoopEnd = savedLoopEnd;
+        session.savedLoopEnabled = savedLoopEnabled;
+        session.savedPunchIn = savedPunchIn;
+        session.savedPunchOut = savedPunchOut;
+        session.savedPunchEnabled = savedPunchEnabled;
+    });
+    ctx.setSessionDirectory (ctx.tempDir() / "capture");
+    session.countInEnabled.store (false);
+    session.midiMergeEnabled.store (false);
+    session.tempoBpm.store (120.0f);
+    session.tempoMap.clear();
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
+    track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    track.midiChannel.store (1);
+    seed.lengthInSamples = session.ticksToSamples (seed.lengthInTicks, engine.getCurrentSampleRate());
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { seed }));
+    engine.getUndoManager().clearUndoHistory();
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    transport.setPlayhead (0);
+    host.switchToStage (GuiHost::Stage::Recording);
+    return std::nullopt;
+}
+
+std::optional<ScenarioResult> runPianoMidiMergeToggle (GuiHost& host, ScenarioContext& ctx)
+{
+    MidiRegion seed;
+    seed.lengthInTicks = 1920;
+    seed.notes = { { 1, 60, 90, 0, 480 } };
+    if (auto result = beginMidiCaptureCase (host, ctx, seed)) return result;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    const auto window = host.mainWindowSize();
+    const bool timeline = host.setTimelineShown (true);
+    ctx.cleanup ([&host, window, timeline]
+    {
+        if (window.size() >= 2) host.resizeMainWindow (window[0], window[1]);
+        host.setTimelineShown (timeline);
+    });
+    const auto controls = [&host] (bool on, bool enabled)
+    {
+        return host.midiMergeControls() == std::array<int, 4> { on ? 1 : 0, enabled ? 1 : 0,
+                                                                on ? 1 : 0, enabled ? 1 : 0 };
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 0, true), "the MIDI editor did not open"); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPianoMidiMerge(), "the piano-roll MIDI Merge button was not clickable"); },
+        [controls] { return controls (false, true); }, "both MIDI Merge controls did not start off", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx, &session]
+    {
+        ctx.expect (session.midiMergeEnabled.load(), "the piano-roll toggle did not enable MIDI Merge");
+        ctx.expect (host.clickMidiMerge(), "the transport MIDI Merge button was not clickable");
+    }, [controls] { return controls (true, true); }, "the piano-roll change did not reach the transport", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPianoMidiMerge(), "the piano-roll toggle was not clickable after a transport change"); },
+        [controls] { return controls (false, true); }, "the transport change did not reach the piano roll", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx, window]
+    {
+        host.closeRegionEditors();
+        ctx.expect (host.openRegionEditor (0, 0, true), "the MIDI editor did not reopen");
+        if (window.size() >= 4)
+            ctx.expect (host.resizeMainWindow (std::max (window[2], 820), std::max (window[3], 680)),
+                        "the MIDI editor could not use a smaller window");
+    }, [controls] { return controls (true, true); }, "MIDI Merge was not enabled before reopening", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPianoMidiMerge(), "the MIDI Merge button was clipped at the smaller window size"); },
+        [controls] { return controls (true, true); }, "reopening the MIDI editor lost MIDI Merge", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPianoMidiMerge(), "the smaller MIDI editor toggle was not clickable"); },
+        [controls] { return controls (false, true); }, "MIDI Merge did not turn off in the smaller editor", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickRecord(), "Record was unavailable with the MIDI editor open"); },
+        [controls] { return controls (true, true); }, "MIDI Merge did not turn back on", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx, &session, &engine]
+    {
+        ctx.expect (! host.clickPianoMidiMerge() && ! host.clickMidiMerge(), "MIDI Merge was editable during recording");
+        ctx.expect (session.midiMergeEnabled.load(), "recording changed MIDI Merge");
+        engine.pressStop();
+    }, [controls, &engine] { return engine.getTransport().isRecording() && controls (true, false); },
+        "both MIDI Merge buttons did not disable during recording", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickPianoMidiMerge(), "the MIDI editor toggle stayed disabled after Stop"); },
+        [controls] { return controls (true, true); }, "MIDI Merge did not re-enable after Stop", {}, 4000 });
+    steps->push_back ({ 0, [&ctx, &session]
+    { ctx.expect (! session.midiMergeEnabled.load(), "the MIDI editor toggle did not turn merging off"); },
+        [controls] { return controls (false, true); }, "both MIDI Merge buttons did not finish off", {}, 4000 });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoMidiMergeToggle { Scenario {
+    "gui.piano_midi_merge_toggle", { "gui", "piano", "midi", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoMidiMergeToggle (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext& ctx)
+{
+    MidiRegion seed;
+    seed.lengthInTicks = 1920;
+    seed.notes = { { 1, 60, 90, 0, 1920 } };
+    seed.ccs = { { 1, 7, 80, 0 } };
+    MidiTakeRef earlier;
+    earlier.lengthInTicks = 480;
+    earlier.notes = { { 1, 59, 70, 0, 120 } };
+    seed.previousTakes = { earlier };
+    if (auto result = beginMidiCaptureCase (host, ctx, seed)) return result;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    auto& track = session.track (0);
+    const bool originalMonitor = track.inputMonitor.load();
+    ctx.keep (track.inputMonitor);
+    auto* strip = host.strip (0);
+    if (! ctx.expect (strip != nullptr, "the MIDI Merge track has no strip")) return ctx.verdict();
+    bool hasProbe = false;
+   #if DUSKSTUDIO_HAS_NATIVE_CLAP
+    const auto fixture = ctx.fixture ("panic_probe.clap");
+    auto& channelStrip = engine.getChannelStrip (0);
+    if (fixture && ! channelStrip.getPluginSlot().isLoaded() && ! channelStrip.isNativeClapLoaded()
+        && ! channelStrip.isNativeLv2Loaded() && ! channelStrip.isNativeVst3Loaded()
+        && ! channelStrip.isNativeAuLoaded() && ! channelStrip.isNativeMultisampleLoaded()
+        && ! channelStrip.isBuiltinLoaded())
+    {
+        ctx.cleanup ([&engine, strip] { engine.stop(); strip->unloadNativePlugins(); strip->refreshInsertButton(); });
+        std::string error;
+        hasProbe = strip->loadNativeClap (*fixture, midiprobe::kPanicProbeClapId, error);
+        if (! ctx.expect (hasProbe, "the MIDI Merge instrument probe did not load: " + error)) return ctx.verdict();
+        strip->refreshInsertButton();
+    }
+   #endif
+    if (! hasProbe) ctx.note ("instrument routing assertions require an available panic probe and an empty insert");
+    const auto loopLength = session.ticksToSamples (3840, engine.getCurrentSampleRate());
+    transport.setLoopRange (0, loopLength);
+    transport.setLoopEnabled (true);
+    const auto send = [&engine] (std::uint8_t status, std::uint8_t first, std::uint8_t second = 0)
+    {
+        const std::uint8_t message[] { status, first, second };
+        engine.postVirtualKeyboardMidi (message, (status == 0xc0 || status == 0xd0) ? 2 : 3);
+    };
+    const auto passReady = [&engine] (int ordinal)
+    {
+        engine.serviceMidiRecording();
+        const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+        return preview != nullptr && preview->passOrdinal >= ordinal;
+    };
+    const auto check = [&ctx, &track, seed] (int passes)
+    {
+        const auto& regions = track.midiRegions.current();
+        if (! ctx.expect (regions.size() == 1, "MIDI Merge made extra regions")) return;
+        const auto& region = regions.front();
+        ctx.expect (region.notes.size() == (std::size_t) passes + 1, "MIDI Merge has the wrong number of pass notes");
+        ctx.expect (std::find (region.notes.begin(), region.notes.end(), seed.notes.front()) != region.notes.end(),
+                    "MIDI Merge changed the seed note");
+        ctx.expect (region.previousTakes.size() == 1 && region.previousTakes.front().notes == seed.previousTakes.front().notes,
+                    "MIDI Merge changed the take history");
+        ctx.expect (region.ccs.size() == (std::size_t) passes + 1
+                    && std::find (region.ccs.begin(), region.ccs.end(), seed.ccs.front()) != region.ccs.end(),
+                    "MIDI Merge lost seed or recorded channel controls");
+        for (int index = 0; index < passes; ++index)
+        {
+            const int pitch = std::array<int, 3> { 64, 67, 69 }[(std::size_t) index];
+            ctx.expect (std::count_if (region.notes.begin(), region.notes.end(), [pitch] (const auto& note)
+                        { return note.noteNumber == pitch && note.lengthInTicks > 0; }) == 1,
+                        "MIDI Merge lost or duplicated a played note");
+            const auto kind = std::array<MidiCc::Kind, 3> { MidiCc::Kind::PitchBend,
+                MidiCc::Kind::ChannelPressure, MidiCc::Kind::ProgramChange }[(std::size_t) index];
+            const int value = std::array<int, 3> { 12289, 91, 12 }[(std::size_t) index];
+            ctx.expect (std::any_of (region.ccs.begin(), region.ccs.end(), [kind, value] (const auto& event)
+                        { return event.kind == kind && event.channel == 1 && event.value == value; }),
+                        "MIDI Merge changed a channel-control message");
+        }
+        if (passes > 0) ctx.expect (region.lengthInTicks >= 3840, "MIDI Merge did not grow the seed region");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [strip] { strip->clickMonitor(); } });
+    steps->push_back ({ 700, [&track, strip]
+    { if (! track.inputMonitor.load()) strip->clickMonitor(); } });
+    steps->push_back ({ 200, [&ctx, &host, &session]
+    {
+        ctx.expect (! session.midiMergeEnabled.load(), "MIDI Merge did not start off");
+        ctx.expect (host.clickMidiMerge(), "the MIDI Merge toggle is unavailable");
+    } });
+    steps->push_back ({ 100, [&ctx, &host, &session]
+    {
+        ctx.expect (session.midiMergeEnabled.load(), "the MIDI Merge toggle did not enable merging");
+        ctx.expect (host.openRegionEditor (0, 0, true), "the seeded piano roll did not open");
+        ctx.expect (host.clickRecord(), "Record was unavailable");
+    } });
+    for (int index = 0; index < 3; ++index)
+    {
+        const int ordinal = index + 1;
+        const int pitch = std::array<int, 3> { 64, 67, 69 }[(std::size_t) index];
+        if (index > 0)
+            steps->push_back ({ 0, [strip] { strip->clickMonitor(); } });
+        steps->push_back ({ 100, [&ctx, &engine, &transport, &host, &track, send, ordinal, pitch, index]
+        {
+            ctx.expect (transport.isRecording(), "loop passes stopped the transport");
+            ctx.expect (track.inputMonitor.load() == (index != 1), "IN did not change for the MIDI Merge pass");
+            const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+            ctx.expect (preview != nullptr && preview->passOrdinal == ordinal,
+                        "a loop pass was missed before MIDI input");
+            if (index == 0) ctx.expect (! host.clickMidiMerge(), "MIDI Merge changed during a recording gesture");
+            send (0x90, (std::uint8_t) pitch, 100);
+            if (index == 0) send (0xe0, 1, 96);
+            if (index == 1) send (0xd0, 91);
+            if (index == 2) send (0xc0, 12);
+            if (index == 0) host.autosaveTick();
+        }, [passReady, ordinal, &track, index]
+        { return passReady (ordinal) && track.inputMonitor.load() == (index != 1); },
+            "the next loop pass or its IN setting did not arrive", {}, 4000 });
+        steps->push_back ({ index == 1 ? 500 : 200, [&ctx, &engine, send, pitch, index, hasProbe]
+        {
+           #if DUSKSTUDIO_HAS_NATIVE_CLAP
+            if (index == 1 && hasProbe)
+            {
+                engine.suspendProcessing();
+                const auto voicesHeld = midiprobe::counter (ctx, 0, "voicesHeld");
+                engine.resumeProcessing();
+                ctx.expect (std::abs (voicesHeld - 1.0) < 1.0e-6,
+                            "IN-off Merge did not keep the seed accompaniment alone while the live note was held");
+            }
+           #else
+            (void) ctx; (void) engine; (void) index; (void) hasProbe;
+           #endif
+            send (0x80, (std::uint8_t) pitch);
+        } });
+        steps->push_back ({ 0, [check, ordinal] { check (ordinal); },
+            [passReady, ordinal] { return passReady (ordinal + 1); },
+            "the completed MIDI pass did not commit while recording", {}, 4000 });
+    }
+    steps->push_back ({ 0, [&ctx, &host, &transport, check]
+    {
+        ctx.expect (transport.isRecording(), "three passes required stopping the transport");
+        ctx.expect (host.focusPiano() && host.pressPeerKey (commandChord ('z'), 'z'),
+                    "Undo did not reach the piano roll while recording");
+        check (2);
+    } });
+    steps->push_back ({ 0, [&engine, &transport, &ctx, check]
+    {
+        engine.pressStop();
+        ctx.expect (transport.isStopped(), "Stop did not finish loop recording");
+        check (2);
+        ctx.expect (engine.getUndoManager().redo(), "the undone third pass could not be redone after Stop");
+        check (3);
+        for (int remaining = 2; remaining >= 0; --remaining)
+        {
+            ctx.expect (engine.getUndoManager().undo(), "one completed pass did not have its own Undo");
+            check (remaining);
+        }
+        ctx.expect (! engine.getUndoManager().canUndo(), "recording left an extra whole-gesture undo transaction");
+        for (int restored = 1; restored <= 3; ++restored)
+        {
+            ctx.expect (engine.getUndoManager().redo(), "a pass could not be redone");
+            check (restored);
+        }
+    } });
+    steps->push_back ({ 0, [&track, strip, originalMonitor]
+    { if (track.inputMonitor.load() != originalMonitor) strip->clickMonitor(); } });
+    steps->push_back ({ 0, [] {}, [&track, originalMonitor]
+    { return track.inputMonitor.load() == originalMonitor; }, "IN did not return to its initial state", {}, 3000 });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar midiMergeLoops { Scenario {
+    "gui.midi_merge_loops", { "gui", "piano", "midi", "recording", "loop", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMidiMergeLoops (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runMidiMergeGrowsRegion (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    MidiRegion seed;
+    seed.timelineStart = ticksToSamples (480, engine.getCurrentSampleRate(), 120.0f);
+    seed.lengthInTicks = 480;
+    seed.notes = { { 1, 60, 90, 0, 240 } };
+    seed.ccs = { { 1, 7, 80, 120 } };
+    if (auto result = beginMidiCaptureCase (host, ctx, seed)) return result;
+    auto& transport = engine.getTransport();
+    const auto target = session.ticksToSamples (1920, engine.getCurrentSampleRate());
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx] { ctx.expect (host.clickMidiMerge(), "MIDI Merge was unavailable"); } });
+    steps->push_back ({ 100, [&host, &ctx, &session]
+    {
+        ctx.expect (session.midiMergeEnabled.load(), "MIDI Merge did not enable");
+        ctx.expect (host.clickRecord(), "Record was unavailable");
+    } });
+    steps->push_back ({ 100, [&engine]
+    {
+        const std::uint8_t message[] { 0x90, 64, 100 };
+        engine.postVirtualKeyboardMidi (message, 3);
+    }, [&transport] { return transport.isRecording(); }, "recording did not start", {}, 3000 });
+    steps->push_back ({ 250, [&engine]
+    {
+        const std::uint8_t message[] { 0x80, 64, 0 };
+        engine.postVirtualKeyboardMidi (message, 3);
+    } });
+    steps->push_back ({ 0, [&engine, &session, &ctx, seed]
+    {
+        engine.pressStop();
+        const auto& regions = session.track (0).midiRegions.current();
+        if (! ctx.expect (regions.size() == 1, "recording before the region made a second region")) return;
+        const auto& region = regions.front();
+        ctx.expect (region.timelineStart == 0 && region.lengthInTicks >= 1920,
+                    "MIDI Merge did not grow the region in both directions");
+        auto shiftedNote = seed.notes.front();
+        shiftedNote.startTick += 480;
+        auto shiftedCc = seed.ccs.front();
+        shiftedCc.atTick += 480;
+        ctx.expect (region.notes.size() == 2 && std::find (region.notes.begin(), region.notes.end(), shiftedNote) != region.notes.end()
+                    && region.ccs == std::vector<MidiCc> { shiftedCc }, "left growth changed the seed's absolute event positions");
+        ctx.expect (engine.getUndoManager().undo(), "the partial merge pass could not be undone");
+        const auto& restored = session.track (0).midiRegions.current();
+        ctx.expect (restored.size() == 1 && restored.front().timelineStart == seed.timelineStart
+                    && restored.front().notes == seed.notes && restored.front().ccs == seed.ccs,
+                    "Undo did not restore the region before left growth");
+    }, [&transport, target] { return transport.getPlayhead() >= target; }, "recording did not pass the seed region", {}, 4000 });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar midiMergeGrowsRegion { Scenario {
+    "gui.midi_merge_grows_region", { "gui", "midi", "recording", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 12000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMidiMergeGrowsRegion (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runPianoLiveRecordingPreview (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! defined (__linux__) || ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native virtual keyboard and X server readback");
+   #else
+    const int typedPitch = std::clamp (appconfig::getVkbCentreNote(), 0, 120) + 2;
+    if (typedPitch < 0 || typedPitch > 127)
+        return ScenarioResult::skip ("requires the typing note below MIDI 128");
+    const int heldPitch = typedPitch == 64 ? 67 : 64;
+    MidiRegion seed;
+    seed.lengthInTicks = 7680;
+    if (auto result = beginMidiCaptureCase (host, ctx, seed)) return result;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    const auto scratch = ctx.tempDir() / "preview.ppm";
+    const auto length = [&engine, heldPitch]
+    {
+        engine.serviceMidiRecording();
+        const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+        if (preview != nullptr)
+            for (const auto& note : preview->notes)
+                if (note.noteNumber == heldPitch) return note.lengthInTicks;
+        return std::int64_t { 0 };
+    };
+    const auto unchanged = [&ctx, &session]
+    {
+        const auto& regions = session.track (0).midiRegions.current();
+        ctx.expect (regions.size() == 1 && regions.front().notes.empty(),
+                    "live recording preview or virtual keyboard step recording changed the committed model");
+    };
+    const auto heldLength = std::make_shared<std::int64_t> (0);
+    const auto releasedProgress = std::make_shared<std::int64_t> (0);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&ctx, &host]
+    {
+        ctx.expect (host.openRegionEditor (0, 0, true), "the empty piano roll did not open");
+        ctx.expect (host.pressPeerKey ("K", 'k'), "K did not open the piano roll's virtual keyboard");
+    } });
+    steps->push_back ({ 0, [&ctx, &host] { ctx.expect (host.clickRecord(), "Record was unavailable with the keyboard open"); },
+        [&host] { return host.virtualKeyboardOpen(); }, "the virtual keyboard did not open", {}, 3000 });
+    steps->push_back ({ 100, [&ctx, &engine, &host, heldPitch]
+    {
+        const std::uint8_t message[] { 0x90, (std::uint8_t) heldPitch, 100 };
+        engine.postVirtualKeyboardMidi (message, 3);
+        ctx.expect (host.inputVirtualKeyboard ("x"), "the typing note did not reach the virtual keyboard while recording");
+    }, [&transport] { return transport.isRecording(); }, "Record did not start", {}, 3000 });
+    steps->push_back ({ 0, [&host] { host.closeVirtualKeyboard(); } });
+    steps->push_back ({ 300, [&ctx, &host, scratch, heldPitch, heldLength, length, unchanged]
+    {
+        *heldLength = length();
+        ctx.expect (host.pianoRowOnScreen (heldPitch, scratch) == 1, "the held note did not appear before note-off");
+        unchanged();
+    }, [length] { return length() >= 120; }, "the held note did not reach the live preview", {}, 3000 });
+    steps->push_back ({ 300, [&ctx, &host, scratch, heldPitch, heldLength, length, unchanged, &engine]
+    {
+        ctx.expect (length() >= *heldLength + 120, "the held-note preview did not grow across audio blocks");
+        ctx.expect (host.pianoRowOnScreen (heldPitch, scratch) == 1, "the growing held note disappeared from the roll");
+        unchanged();
+        const std::uint8_t message[] { 0x80, (std::uint8_t) heldPitch, 0 };
+        engine.postVirtualKeyboardMidi (message, 3);
+        const std::uint8_t marker[] { 0xb0, 113, 37 };
+        engine.postVirtualKeyboardMidi (marker, 3);
+    }, [length, heldLength] { return length() >= *heldLength + 120; }, "the held-note length stopped growing", {}, 3000 });
+    steps->push_back ({ 0, [&engine, heldLength, releasedProgress, length, unchanged]
+    {
+        *heldLength = length();
+        *releasedProgress = engine.getRecordManager().midiCapturePreview (0)->lengthInTicks;
+        unchanged();
+    }, [&engine]
+    {
+        engine.serviceMidiRecording();
+        const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+        return preview != nullptr && std::any_of (preview->ccs.begin(), preview->ccs.end(), [] (const auto& cc)
+        {
+            return cc.kind == MidiCc::Kind::ControlChange && cc.channel == 1
+                && cc.controller == 113 && cc.value == 37;
+        });
+    }, "the note-off marker did not reach the capture preview", {}, 3000 });
+    steps->push_back ({ 300, [&ctx, &host, scratch, heldPitch, heldLength, length, unchanged, &engine]
+    {
+        ctx.expect (length() == *heldLength, "the preview kept extending the note after note-off");
+        ctx.expect (host.pianoRowOnScreen (heldPitch, scratch) == 1, "the released note vanished before Stop");
+        unchanged();
+        engine.pressStop();
+    }, [&engine, releasedProgress]
+    {
+        engine.serviceMidiRecording();
+        const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+        return preview != nullptr && preview->lengthInTicks >= *releasedProgress + 120;
+    }, "the capture preview stopped advancing after note-off", {}, 3000 });
+    steps->push_back ({ 300, [&ctx, &host, &session, &transport, heldPitch, typedPitch, heldLength, scratch]
+    {
+        ctx.expect (transport.isStopped(), "Stop did not finish MIDI recording");
+        const auto& regions = session.track (0).midiRegions.current();
+        if (! ctx.expect (regions.size() == 2 && regions.back().notes.size() == 2,
+                          "recording committed extra virtual-keyboard step notes or lost captured notes")) return;
+        ctx.expect (host.pianoRollRegion() == 1, "Stop did not follow the newly committed MIDI region");
+        const auto& notes = regions.back().notes;
+        ctx.expect (std::count_if (notes.begin(), notes.end(), [heldPitch, heldLength] (const auto& note)
+                    { return note.noteNumber == heldPitch && note.lengthInTicks == *heldLength; }) == 1,
+                    "the committed held note differs from the released preview");
+        ctx.expect (std::count_if (notes.begin(), notes.end(), [typedPitch] (const auto& note)
+                    { return note.noteNumber == typedPitch; }) == 1, "the typing note was duplicated by step recording");
+        ctx.expect (host.pianoRowOnScreen (heldPitch, scratch) == 1,
+                    "the committed roll did not retain the held-note preview");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar pianoLiveRecordingPreview { Scenario {
+    "gui.piano_live_recording_preview", { "gui", "piano", "midi", "recording", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoLiveRecordingPreview (host, ctx); }
+} };
+
 // A pass recorded over the region the piano roll shows lands as a new take of
-// it. The roll draws nothing new while the pass records, shows each take after
+// it. The roll previews the unfinished pass, shows each take after
 // Stop, follows undo and redo, and Alt+T steps the takes of the region it shows.
 // With a later region on the track the take lands at another index, which the
 // roll follows, and a pass that makes a region of its own takes the roll with
@@ -659,9 +1162,20 @@ std::optional<ScenarioResult> runPianoRollShowsEachTake (GuiHost& host, Scenario
         } });
         steps->push_back ({ 300, [note, pitch] { note (pitch, true); } });
         steps->push_back ({ 300, [note, pitch] { note (pitch, false); } });
-        steps->push_back ({ tailMs, [&ctx, &engine, &host, scratch, pitch, name]
+        steps->push_back ({ tailMs, [&ctx, &session, &engine, &host, scratch, pitch, name]
         {
-            ctx.expect (host.pianoRowOnScreen (pitch, scratch) == 0, name + ": the roll drew a note still being recorded");
+            engine.serviceMidiRecording();
+            const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+            ctx.expect (preview != nullptr && std::any_of (preview->notes.begin(), preview->notes.end(),
+                        [pitch] (const auto& n) { return n.noteNumber == pitch; }), name + ": capture preview is missing the recorded note");
+            const int shown = host.pianoRollRegion();
+            const auto& regions = session.track (0).midiRegions.current();
+            if (shown >= 0 && shown < (int) regions.size()
+                && engine.getRecordManager().midiCaptureTimelineStart() == regions[(std::size_t) shown].timelineStart)
+                ctx.expect (host.pianoRowOnScreen (pitch, scratch) == 1, name + ": the roll did not preview the recorded note");
+            for (const auto& region : session.track (0).midiRegions.current())
+                ctx.expect (std::none_of (region.notes.begin(), region.notes.end(), [pitch] (const auto& n)
+                            { return n.noteNumber == pitch; }), name + ": the preview changed the committed notes before Stop");
             engine.pressStop();
         },
         becomesTake ? std::function<bool()> (pastShownRegion) : std::function<bool()> {},

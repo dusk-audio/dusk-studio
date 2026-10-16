@@ -12,6 +12,8 @@ public:
     // `rgba` is width * height * 4 bytes, straight RGBA. Nothing is copied.
     void reserve (ImFontAtlas& atlas, const unsigned char* rgba, int width, int height);
     void rasterise (ImFontAtlas& atlas);
+    // Fixed-size pixel replacement during draw, with the panel's graphics context current.
+    void update (const unsigned char* rgba);
 
     bool ready() const noexcept;
     ImTextureID textureId() const noexcept;
@@ -22,7 +24,7 @@ public:
     void draw (ImDrawList& dl, ImVec2 tl, ImVec2 br) const;
 
 private:
-    const ImFontAtlas* source = nullptr;
+    ImFontAtlas* source = nullptr;
     const unsigned char* pixels = nullptr;
     ImVec2 uv[2] = {};
     int rect = -1;

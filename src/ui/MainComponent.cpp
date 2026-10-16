@@ -13,6 +13,7 @@
  #define DUSKSTUDIO_HAS_BINARY_ICON 0
 #endif
 #include "DuskFileBrowser.h"
+#include "../engine/sfz/SfzLibraryService.h"
 #include "SaveTargetChecks.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
@@ -844,18 +845,25 @@ MainComponent::MainComponent()
         const bool rollCaptured = rollTrack >= 0 && rollTrack < Session::kNumTracks
                                && (capturedTracks & (std::uint32_t { 1 } << rollTrack)) != 0;
         const auto rollEdits = rollCaptured ? session.track (rollTrack).midiRegions.edits() : 0u;
+        const bool mergeCapture = engine.getRecordManager().isMidiMergeCapture();
         // The take lands once this returns, and a picker up over the window
         // counts what each track holds.
         const juce::Component::SafePointer<MainComponent> safeThis (this);
-        dusk::callAsync ([safeThis, rollCaptured, rollTrack, rollEdits]
+        dusk::callAsync ([safeThis, rollCaptured, rollTrack, rollEdits, mergeCapture]
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
             self->refreshImportPickers();
-            if (rollCaptured && self->pianoRoll != nullptr && self->pianoRollTrackIdx == rollTrack
+            if (! mergeCapture && rollCaptured && self->pianoRoll != nullptr && self->pianoRollTrackIdx == rollTrack
                 && self->session.track (rollTrack).midiRegions.edits() != rollEdits)
                 self->pianoRoll->showCommittedRegion();
         });
+    };
+    engine.onMidiPassCommitted = [this] (int trackIndex, int regionIndex)
+    {
+        if (pianoRoll != nullptr && pianoRollTrackIdx == trackIndex)
+            pianoRoll->showCommittedRegion (regionIndex);
+        refreshImportPickers();
     };
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
                                           std::int64_t timelineStart,
@@ -1234,6 +1242,7 @@ MainComponent::~MainComponent()
     engine.onBeforeTracksMove = nullptr;
     engine.onTracksMoved = nullptr;
     engine.onBeforeRecordCommit = nullptr;
+    engine.onMidiPassCommitted = nullptr;
 
     // Drop the modal hook before anything else: its closure holds a raw this,
     // and the teardown below can still raise an alert.
@@ -1368,6 +1377,19 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     const auto panelKeys = imgui::PanelShellKeys::all;
    #endif
     const bool modalUp = ! EmbeddedModal::activeModalStack().empty();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (! modalUp && audioSettingsWindow != nullptr
+        && audioSettingsWindow->offerShellKey (key.getTextDescription().toStdString(),
+            static_cast<std::uint32_t> (key.getTextCharacter())))
+        return true;
+    if (! modalUp && consoleView != nullptr)
+        for (int track = 0; track < Session::kNumTracks; ++track)
+            if (auto* strip = consoleView->getStripComponent (track);
+                strip != nullptr && strip->isSfzLibraryOpen()
+                    && strip->offerSfzLibraryKey (key.getTextDescription().toStdString(),
+                    static_cast<std::uint32_t> (key.getTextCharacter())))
+                return true;
+   #endif
     // The tuner and the virtual keyboard cover the window as a dialog does and keep
     // the same keys, each closing on the key that opened it, U or K, or Escape.
     const bool noMods  = ! cmd && ! shift && ! mods.isAltDown();
@@ -2537,6 +2559,44 @@ void MainComponent::openAudioSettings()
 
     juce::Component::SafePointer<MainComponent> safeThis (this);
     imgui::AudioSettingsHost host;
+    host.initialTab = audioSettingsTab;
+    host.tabChanged = [safeThis] (int tab)
+    {
+        if (auto* self = safeThis.getComponent()) self->audioSettingsTab = tab;
+    };
+    host.chooseSfzFolder = [safeThis] (bool moveExisting)
+    {
+        auto* self = safeThis.getComponent();
+        if (self == nullptr) return;
+        self->handOffAudioSettings ([safeThis, moveExisting]
+        {
+            auto* owner = safeThis.getComponent();
+            if (owner == nullptr) return;
+            filebrowser::Options options;
+            options.title = "Choose SFZ library folder";
+            options.selectDirectories = true;
+            const auto root = owner->engine.getSfzLibrary().snapshot().locations.active.root;
+            using Folder = decltype (options.initialFileOrDirectory);
+            options.initialFileOrDirectory = Folder (root.u8string().c_str());
+            filebrowser::open (*owner, std::move (options), [safeThis, moveExisting] (auto folder)
+            {
+                auto* back = safeThis.getComponent();
+                if (back == nullptr) return;
+                std::string error;
+                if (folder.isDirectory()
+                    && ! back->engine.changeSfzLibraryLocation (
+                        std::filesystem::u8path (folder.getFullPathName().toStdString()), moveExisting, error))
+                {
+                    showDuskAlert (*back, "SFZ library location", error, [safeThis]
+                    {
+                        if (auto* settings = safeThis.getComponent()) settings->openAudioSettings();
+                    });
+                    return;
+                }
+                back->openAudioSettings();
+            });
+        });
+    };
     host.alert = [safeThis] (std::string title, std::string message)
     {
         auto* const self = safeThis.getComponent();

@@ -18,6 +18,9 @@ namespace duskstudio::imgui
 // What the settings panel cannot do from its own side of the framework boundary.
 struct AudioSettingsHost
 {
+    int initialTab = 0;
+    std::function<void (int)> tabChanged;
+
     // A device or ALSA-period failure, phrased for the user.
     std::function<void (std::string title, std::string message)> alert;
 
@@ -31,6 +34,7 @@ struct AudioSettingsHost
     // takes the panel down, runs the modal, and brings the panel back.
     std::function<void()> openMidiBindings;
     std::function<void()> openSelfTest;
+    std::function<void (bool moveExisting)> chooseSfzFolder;
 };
 
 std::unique_ptr<DuskPanelView> makeAudioSettingsView (device::DeviceManager& deviceManager,

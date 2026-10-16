@@ -1,4 +1,5 @@
 #include "AtlasImage.h"
+#include <OpenGL.hpp>
 
 #include <cstddef>
 
@@ -43,12 +44,40 @@ void AtlasImage::rasterise (ImFontAtlas& atlas)
     }
 
     atlas.CalcCustomRectUV (packed, &uv[0], &uv[1]);
+    uv[0].x += 0.5f / static_cast<float> (textureWidth);
+    uv[0].y += 0.5f / static_cast<float> (textureHeight);
+    uv[1].x -= 0.5f / static_cast<float> (textureWidth);
+    uv[1].y -= 0.5f / static_cast<float> (textureHeight);
     source = &atlas;
 }
 
 bool AtlasImage::ready() const noexcept
 {
     return source != nullptr && source->TexID != ImTextureID();
+}
+
+void AtlasImage::update (const unsigned char* rgba)
+{
+    if (! ready() || rgba == nullptr) return;
+    pixels = rgba;
+    rasterise (*source);
+    const auto* packed = source->GetCustomRectByIndex (rect);
+    unsigned char* data = nullptr;
+    int width = 0, height = 0;
+    source->GetTexDataAsRGBA32 (&data, &width, &height);
+    if (packed == nullptr || data == nullptr) return;
+    GLint binding = 0, alignment = 4, rowLength = 0;
+    glGetIntegerv (GL_TEXTURE_BINDING_2D, &binding);
+    glGetIntegerv (GL_UNPACK_ALIGNMENT, &alignment);
+    glGetIntegerv (GL_UNPACK_ROW_LENGTH, &rowLength);
+    glBindTexture (GL_TEXTURE_2D, static_cast<GLuint> (source->TexID));
+    glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei (GL_UNPACK_ROW_LENGTH, width);
+    glTexSubImage2D (GL_TEXTURE_2D, 0, packed->X, packed->Y, imageWidth, imageHeight,
+                     GL_RGBA, GL_UNSIGNED_BYTE, data + (static_cast<std::size_t> (packed->Y) * width + packed->X) * 4);
+    glPixelStorei (GL_UNPACK_ROW_LENGTH, rowLength);
+    glPixelStorei (GL_UNPACK_ALIGNMENT, alignment);
+    glBindTexture (GL_TEXTURE_2D, static_cast<GLuint> (binding));
 }
 
 ImTextureID AtlasImage::textureId() const noexcept

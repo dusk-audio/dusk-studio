@@ -233,10 +233,14 @@ void AriaGuiComponent::buildChildren()
                 lbl->setColour(juce::Label::textColourId, w.textColour);
                 lbl->setJustificationType(juce::Justification::centred);
                 lbl->setInterceptsMouseClicks(false, false);
-                // ARIA labels are typically small; pick a sane default
-                // matching the bounds height.
                 const int fontH = std::max(10, w.bounds.getHeight() - 4);
-                lbl->setFont(juce::Font(juce::FontOptions((float) fontH)));
+                auto font = lbl->getFont().withHeight((float) fontH);
+                const float textWidth = juce::GlyphArrangement::getStringWidth(font, w.text);
+                if (textWidth > (float) w.bounds.getWidth())
+                    font = font.withHeight(std::max(9.0f, (float) fontH * (float) w.bounds.getWidth() / textWidth));
+                lbl->setFont(font);
+                lbl->setBorderSize({});
+                lbl->setMinimumHorizontalScale(1.0f);
                 addAndMakeVisible(*lbl);
                 children_.push_back(std::move(lbl));
                 break;

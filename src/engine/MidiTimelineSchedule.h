@@ -14,13 +14,13 @@
 // carries (MidiPlaybackRegion). Audio thread: no allocation, no locks.
 namespace duskstudio::midischedule
 {
-// The latest value each channel and controller had before a chased span. Held
+// The latest event each channel-control lane had before a chased span. Held
 // by the engine, so the audio thread does not carry it on its stack.
 struct ControllerChase
 {
-    static constexpr int kKeys = 16 * 128;
+    static constexpr int kKeys = MidiCc::kLaneCount;
 
-    std::array<int, kKeys>          value {};
+    std::array<MidiPlaybackRegion::Controller, kKeys> event {};
     std::array<std::int64_t, kKeys> at {};
     std::array<bool, kKeys>         seen {};
     std::array<bool, kKeys>         explicitAtStart {};
@@ -347,7 +347,7 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
                             chase.keys[(std::size_t) chase.keyCount++] = (int) key;
                         chase.seen[key] = true;
                         chase.at[key] = at;
-                        chase.value[key] = (next - 1)->value;
+                        chase.event[key] = *(next - 1);
                     }
                 }
                 if (end > span.start && next != to && clock.at (next->tick) == span.start)
@@ -356,6 +356,25 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
         }
         scans += chaseScans;
     }
+
+    // A bank selection must precede its program, including when one is
+    // explicit at the span start and the other is chased from before it.
+    const auto chasedControllers = [&] (bool programs) noexcept
+    {
+        if (! span.chase) return Outcome::complete;
+        for (int k = 0; k < chase.keyCount; ++k)
+        {
+            const auto key = (std::size_t) chase.keys[(std::size_t) k];
+            if (chase.explicitAtStart[key]) continue;
+            const auto message = chase.event[key].message();
+            if ((message.kind == MidiCc::Kind::ProgramChange) != programs) continue;
+            if (! emit (message.statusByte(), message.dataByte1(), message.dataByte2(), 0))
+                return Outcome::eventRefused;
+        }
+        return Outcome::complete;
+    };
+    const auto chasedValues = chasedControllers (false);
+    if (chasedValues != Outcome::complete) return chasedValues;
 
     const auto controllers = eachRegion ([&] (std::size_t region) noexcept
     {
@@ -372,21 +391,15 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
             if (! take (1)) return Outcome::scanBudgetSpent;
             const auto at = clock.at (c->tick);
             if (at >= span.end || at >= end) break;
-            if (! emit (status (0xB0, c->channel), c->controller, c->value, at - span.start))
+            const auto message = c->message();
+            if (! emit (message.statusByte(), message.dataByte1(), message.dataByte2(), at - span.start))
                 return Outcome::eventRefused;
         }
         return Outcome::complete;
     });
     if (controllers != Outcome::complete) return controllers;
-    if (span.chase)
-        for (int k = 0; k < chase.keyCount; ++k)
-        {
-            const auto key = (std::size_t) chase.keys[(std::size_t) k];
-            if (chase.explicitAtStart[key]) continue;
-            if (! emit (status (0xB0, (std::uint8_t) (key / 128)), (std::uint8_t) (key % 128),
-                        (std::uint8_t) chase.value[key], 0))
-                return Outcome::eventRefused;
-        }
+    const auto chasedPrograms = chasedControllers (true);
+    if (chasedPrograms != Outcome::complete) return chasedPrograms;
 
     const auto releases = eachRegion ([&] (std::size_t region) noexcept
     {

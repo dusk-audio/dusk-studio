@@ -128,7 +128,8 @@ jobs:
             libpipewire-0.3-dev
             liblilv-dev libsuil-dev lv2-dev
             ladspa-sdk
-            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev
+            libcurl4-openssl-dev libarchive-dev
+            libfreetype-dev libfontconfig1-dev
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev
             libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev
@@ -511,7 +512,7 @@ jobs:
           fi
           echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
 
-      - name: Install libmp3lame + libsndfile (vcpkg)
+      - name: Install static manifest dependencies (vcpkg)
         shell: bash
         # mp3lame: MP3 bounce/export. libsndfile: the audio file I/O layer,
         # required on every platform. x64-windows-static = static libs + /MT
@@ -519,7 +520,7 @@ jobs:
         # (sfizz forces /MT). The -md triplet (/MD) would LNK2038 against the
         # /MT objects. These vcpkg libraries link into the binary, so they add
         # no runtime DLLs to the MSI.
-        # CMake finds both through their config packages on CMAKE_PREFIX_PATH
+        # CMake finds the installed libraries on CMAKE_PREFIX_PATH
         # (forward-slashed so cmake parses the path cleanly).
         # Manifest mode: versions come from vcpkg.json's builtin-baseline and
         # install under <manifest-root>/vcpkg_installed, not the image's vcpkg
@@ -842,6 +843,8 @@ jobs:
       # ccache obj cache (auto-detected by CMakeLists.txt). Stable dir for
       # the actions/cache key below — release builds reuse the same cache.
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      LIBARCHIVE_VERSION: 3.8.7
+      LIBARCHIVE_SHA256: d3a8ba457ae25c27c84fd2830a2efdcc5b1d40bf585d4eb0d35f47e99e5d4774
 
     steps:
       - name: Checkout Dusk Studio (with sfizz submodule)
@@ -878,6 +881,38 @@ jobs:
           # Keep this small autotools build aligned with the three-core runner.
           make -j3 check
           make install
+
+      - name: Build static libarchive (pinned, macOS 11)
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/libarchive-${LIBARCHIVE_VERSION}.tar.xz"
+          source_dir="${RUNNER_TEMP}/libarchive-source"
+          build_dir="${RUNNER_TEMP}/libarchive-build"
+          prefix="${RUNNER_TEMP}/libarchive"
+          sdk="$(xcrun --sdk macosx --show-sdk-path)"
+          curl --fail --location --proto '=https' --proto-redir '=https' \
+            --retry 3 --retry-all-errors --output "${archive}" \
+            "https://github.com/libarchive/libarchive/releases/download/v${LIBARCHIVE_VERSION}/libarchive-${LIBARCHIVE_VERSION}.tar.xz"
+          echo "${LIBARCHIVE_SHA256}  ${archive}" | shasum -a 256 --check
+          mkdir -p "${source_dir}"
+          tar -xJf "${archive}" -C "${source_dir}" --strip-components=1
+          cmake -S "${source_dir}" -B "${build_dir}" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${prefix}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_OSX_SYSROOT="${sdk}" \
+            -DZLIB_INCLUDE_DIR="${sdk}/usr/include" -DZLIB_LIBRARY="${sdk}/usr/lib/libz.tbd" \
+            -DICONV_INCLUDE_DIR="${sdk}/usr/include" -DLIBICONV_PATH="${sdk}/usr/lib/libiconv.tbd" \
+            -DBUILD_SHARED_LIBS=OFF -DENABLE_ZLIB=ON -DENABLE_ICONV=ON \
+            -DENABLE_OPENSSL=OFF -DENABLE_NETTLE=OFF -DENABLE_MBEDTLS=OFF \
+            -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF -DENABLE_LZO=OFF -DENABLE_LZMA=OFF \
+            -DENABLE_ZSTD=OFF -DENABLE_BZip2=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF \
+            -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_LIBGCC=OFF \
+            -DENABLE_CNG=OFF -DENABLE_WIN32_XMLLITE=OFF -DENABLE_XATTR=OFF -DENABLE_ACL=OFF \
+            -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF -DENABLE_UNZIP=OFF -DENABLE_TEST=OFF
+          cmake --build "${build_dir}" -j5
+          cmake --install "${build_dir}"
+          minimum_versions="$(otool -l "${prefix}/lib/libarchive.a" | awk '$1 == "minos" {print $2}' | sort -u)"
+          [[ "${minimum_versions}" == 11.0 ]] || {
+            echo "::error::libarchive objects do not all target macOS 11.0" >&2; exit 1; }
 
       - name: Cache ccache objects
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -945,7 +980,7 @@ jobs:
           # Apple Silicon. No Developer ID, no Hardened Runtime, no notary.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/libarchive;$(brew --prefix)" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
@@ -962,6 +997,8 @@ jobs:
           done
           grep -Eq '^DUSKSTUDIO_SODIUM_STATIC_LIBRARY:FILEPATH=.*/libsodium\.a$' build/CMakeCache.txt || {
             echo "::error::macOS release configure did not select static libsodium" >&2; exit 1; }
+          grep -Eq '^LibArchive_LIBRARY:FILEPATH=.*/libarchive/lib/libarchive\.a$' build/CMakeCache.txt || {
+            echo "::error::macOS release configure did not select pinned static libarchive" >&2; exit 1; }
 
       - name: Build (Release)
         # Preserve Ninja's five-worker default on this three-core runner,
@@ -1000,7 +1037,7 @@ jobs:
           set -euo pipefail
           cmake -S . -B build-tests -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/libarchive;$(brew --prefix)" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
@@ -1016,6 +1053,8 @@ jobs:
           done
           grep -Eq '^DUSKSTUDIO_SODIUM_STATIC_LIBRARY:FILEPATH=.*/libsodium\.a$' build-tests/CMakeCache.txt || {
             echo "::error::macOS release tests did not select static libsodium" >&2; exit 1; }
+          grep -Eq '^LibArchive_LIBRARY:FILEPATH=.*/libarchive/lib/libarchive\.a$' build-tests/CMakeCache.txt || {
+            echo "::error::macOS release tests did not select pinned static libarchive" >&2; exit 1; }
           cmake --build build-tests --target dusk-studio-tests -j5
           ctest --test-dir build-tests --output-on-failure
 

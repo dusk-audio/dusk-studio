@@ -79,11 +79,12 @@ void openPickerMenu (PluginSlot& slot,
                       std::function<void (const std::string&)> onPickBuiltin = {});
 
 // Two-step insert flow. Step 1 shows a small modal with three big
-// buttons - Hardware Insert / Soundfont / Plugin - letting the user
+// buttons - Hardware Insert / SFZ Manager / Plugin - letting the user
 // pick WHAT kind of insert they want before the (potentially long)
 // plugin list appears. Step 2 routes to the existing helper:
 //   - Hardware Insert -> onPickHardwareInsert() (no-op if unset)
-//   - Soundfont       -> onPickSoundfont with the chosen .sfz / .sf2
+//   - SFZ Manager     -> onPickSfzLibrary()
+//   - Soundfont       -> direct local-file fallback when no manager is available
 //   - Plugin          -> openPickerMenu (existing plugin list flow)
 // Same lifetime / callback contract as openPickerMenu - onChange runs
 // on every successful slot change. Buttons whose callback is unset are
@@ -99,7 +100,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {},
                          std::function<void (const juce::File&)> onPickSoundfont = {},
                          std::function<void (const juce::String&)> onPickNativeAu = {},
-                         std::function<void (const std::string&)> onPickBuiltin = {});
+                         std::function<void (const std::string&)> onPickBuiltin = {},
+                         std::function<void()> onPickSfzLibrary = {});
 
 // Synchronous scan. Blocks the message thread during scanInstalledPlugins().
 // Shows a Dusk in-window completion alert in `parent` (top-level Component)

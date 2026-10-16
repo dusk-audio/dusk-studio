@@ -2010,6 +2010,11 @@ std::optional<ScenarioResult> runImportWithoutDevice (GuiHost& host, ScenarioCon
         engine.setLastDeviceSampleRateForScenario (standIn);
         ctx.expect (engine.getCurrentSampleRate() <= 0.0 && std::abs (engine.getTimelineSampleRate() - standIn) < 0.5,
                     "the detached engine does not measure the timeline at the stand-in rate");
+        engine.refreshMidiInputs();
+        ctx.expect (! engine.isAudioCallbackRegistered() && engine.getCurrentSampleRate() <= 0.0,
+                    "MIDI refresh reattached the deliberately detached audio callback");
+        ctx.expect (std::abs (engine.getTimelineSampleRate() - standIn) < 0.5,
+                    "MIDI refresh changed the detached timeline's rate");
         ctx.expect (host.dropFilesOnTrack (audioTrack, { wav }), "the audio drop was rejected");
     } });
     steps->push_back ({ 300, [&host, &ctx]

@@ -246,7 +246,7 @@ TEST_CASE ("Loading a v8 session turns audio take history into track takes",
     {
         auto root = original;
         REQUIRE (migrateSession (root, 8));
-        CHECK (root["version"].get<int>() == 10);
+        CHECK (root["version"].get<int>() == 11);
 
         // Playback parity: a region gains take_id and loses previous_takes,
         // and nothing else about it moves.
@@ -317,7 +317,7 @@ TEST_CASE ("Loading a v8 session turns audio take history into track takes",
 
     REQUIRE (SessionSerializer::save (*loaded, target));
     const auto resaved = readJson (target);
-    CHECK (resaved["version"].get<int>() == 10);
+    CHECK (resaved["version"].get<int>() == 11);
     for (const auto& track : resaved["tracks"])
         for (const auto& region : track["regions"])
             CHECK_FALSE (region.contains ("previous_takes"));
@@ -337,7 +337,7 @@ TEST_CASE ("Loading a v9 session turns audio take history into track takes",
 
     auto root = original;
     REQUIRE (migrateSession (root, 9));
-    CHECK (root["version"].get<int>() == 10);
+    CHECK (root["version"].get<int>() == 11);
     CHECK (root["tracks"][0]["lv2_state_tag"] == "track18");
     for (const auto& region : root["tracks"][0]["regions"])
         CHECK_FALSE (region.contains ("previous_takes"));

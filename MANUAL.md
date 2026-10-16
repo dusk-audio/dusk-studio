@@ -176,6 +176,8 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 17  | TIMELINE / TAPE   | Same as the tape strip toggle below the bar.                                     |
 | 18  | − / + / Fit      | Timeline zoom out / in / fit-to-window (in the timeline toolbar above the tape strip, shown when the timeline is expanded). |
 
+**MIDI Merge**, beside the clock display and in the piano-roll toolbar, layers a MIDI recording into an existing region. Both buttons share the same setting. It starts off, is saved with the session and cannot change during recording. See *MIDI Merge* under Recording.
+
 In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
 
 ## The channel strip — MIXING stage
@@ -456,7 +458,7 @@ Press **RECORDING** to focus the channel strips on input routing and arm control
 
 ## Configuring audio
 
-Open **Settings → Audio…** to choose your audio device. The panel is divided into six sections.
+Open **Settings → Audio…** to choose your audio device. Use the tabs across the top to switch between Audio, Control Surface, MIDI Bindings, MIDI Sync, General, Advanced and SFZ Library. The panel remembers the last tab while Dusk Studio is open.
 
 ### Audio
 
@@ -503,8 +505,14 @@ All seven are saved with the session, so a project that syncs to an external clo
 
 - **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus compressor, and the master EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Each oversampled stage adds about half a millisecond of delay at 2× and 4×; delay compensation keeps tracks, buses and aux returns lined up, and bounces trim it out. The master tape and the mastering chain are the exceptions and ignore this setting: the tape anti-aliases locally at a fixed internal rate, the mastering EQ and limiter always run at 4×, and the multiband compressor runs at the session rate.
 - **Multicore DSP**: spreads the per-block DSP of the 24 channel strips across several CPU cores instead of running them all on the single audio thread. **Auto** (default) uses *cores − 2* worker threads on machines with 4 or more cores — leaving one core for the interface and one for the operating system — and falls back to single-core on smaller machines. **Off** forces the single-core path; you can also pin an explicit worker count. This is a **per-machine** setting: it is stored on this computer and is **not** saved in the session, so a project made on a many-core workstation will not overload a smaller machine (a 4-core Raspberry Pi 5, say) when you open it there. The bus, aux, and master stages always run on the audio thread; only the channel strips fan out, and on a quad-core machine that heavy strip work runs roughly three times faster. Hosted plugins on those strips process on the worker threads too; in the unlikely event a specific plugin misbehaves with this enabled, switch it Off.
-- **Recording offset**: a manual correction, in samples, subtracted from where each newly recorded audio take is placed on the timeline. Use it when your monitoring path adds a round-trip delay that isn't already reported — analog converters, an external effects loop, or a plugin that under-reports its latency — so what you played lands back in time instead of slightly late. A positive value pulls takes earlier; the take is never moved before sample 0 — a take that would land entirely before it is discarded with a warning. It affects **audio** takes only — MIDI is captured with no converter delay and is left where it was played. **To calibrate**: route your interface's output back into an input (a physical loopback cable, or the same converter you monitor through), record the metronome click for a few bars, then open the take in the audio editor and read off, in samples, how far the recorded click sits after the beat it should land on. Enter that number here. The value is **per-machine** — it describes this desk's I/O latency, not the session — and applies to the next take, no restart needed.
+- **Recording offset**: a manual correction, in samples, subtracted from where each newly recorded audio take is placed on the timeline. Use it when your monitoring path adds a round-trip delay that isn't already reported — analog converters, an external effects loop, or a plugin that under-reports its latency — so what you played lands back in time instead of slightly late. A positive value pulls takes earlier; the take is never moved before sample 0 — a take that would land entirely before it is discarded with a warning. It affects **audio** takes only — MIDI is captured with no converter delay and is left where it was played. **To calibrate**: route your interface's output back into an input (a physical loopback cable, or the same converter you monitor through), record the metronome click for a few bars, then open the take in the audio editor and read off, in samples, how far the recorded click sits after the beat it should land on. Type that number and press Enter, or use **-** and **+** to change it one sample at a time. Values are limited to -192,000 through 192,000 samples. The value is **per-machine** — it describes this desk's I/O latency, not the session — and applies to the next take, no restart needed.
 - **Run self-test**: runs Dusk Studio's headless audio engine against a synthetic test signal and reports pass/fail. The suite includes a determinism check that the multicore mix matches the single-core mix sample-for-sample (within floating-point rounding). As with the bindings panel, the settings panel steps out of the way while the self-test is open and comes back when you close it.
+
+### SFZ Library
+
+**SFZ download location** shows the folder used for downloaded instrument packs. **Change folder...** lets you select an existing folder on this computer or an external drive. With **Move existing installed packs** unchecked, only future downloads use the new folder; existing packs remain available from their previous folders.
+
+Check **Move existing installed packs** before changing folders to relocate the current library too. Unload managed instruments first. Dusk Studio copies and verifies the packs before removing their originals, and keeps their portable session references intact. Recording or rendering pauses the operation; resume or cancel it from this tab afterwards. An unavailable external drive is reported rather than replaced with an empty local library. Reconnect it to use its instruments, or choose another folder for future downloads.
 
 \newpage
 
@@ -581,6 +589,7 @@ From left to right:
 - **TAP**. Click on each beat; Dusk Studio averages the last four intervals and sets the tempo. A gap longer than two seconds starts a new tap sequence.
 - **Time signature**. Click to choose from common signatures or enter a custom one.
 - **Clock display**. Shows the current playhead position. Right-click to flip between **Bars.Beats.Ticks** (e.g. `5.2.120`) and **mm:ss.mmm** (e.g. `01:23.456`).
+- **MIDI Merge**. Adds recorded MIDI to an existing region. Saved with the session, off by default and unavailable during a take. Each completed merged loop pass is one undo step while recording continues.
 - **Tuner**. Opens a chromatic tuner that listens to the selected input.
 - **▾ TIMELINE / ▴ TAPE**. Collapses or expands the tape strip below the console.
 
@@ -1204,11 +1213,19 @@ To repeat a section while you experiment:
 2. Check that the **Loop** button on the transport bar is lit. **L** or the button turns loop off and on again without moving the brackets.
 3. Press Play (for loop playback) or Record (for loop recording).
 
-In loop play, the transport wraps at the loop boundary indefinitely. Loop recording also wraps and creates a new take on each pass. On an audio track every pass is kept as a take on the track, up to **1,024 passes** in one loop take, and the newest pass is placed on the timeline; pick between the passes in the audio editor's take lanes. On a MIDI track the current pass plus up to **8 previous passes** stay attached to one range-aligned region, so you can cycle performances after stopping. A loop must be at least 128 samples long to record.
+In loop play, the transport wraps at the loop boundary indefinitely. Loop recording also wraps and creates a new take on each pass. On an audio track every pass is kept as a take on the track, up to **1,024 passes** in one loop take, and the newest pass is placed on the timeline; pick between the passes in the audio editor's take lanes. With **MIDI Merge** off, a MIDI track keeps the current pass plus up to **8 previous passes** attached to one range-aligned region, so you can cycle performances after stopping. With **MIDI Merge** on, each pass adds its performance to the region instead. A loop must be at least 128 samples long to record.
 
 With Punch enabled, each pass records only the overlap between the loop and punch ranges. Pressing Record anywhere inside the loop aligns the gesture to that effective capture start before count-in or pre-roll begins, so every pass covers the same timeline range. Punch post-roll auto-stop is suspended during loop recording; press Stop when you are finished.
 
 Silent audio passes remain available as takes. Empty MIDI passes are omitted because they contain no note or controller performance to recall.
+
+## MIDI Merge
+
+**MIDI Merge** on the transport bar or piano-roll toolbar adds a MIDI performance to an existing unlocked region instead of replacing its notes and controls. It starts off and is saved with the session. Set it before recording; it cannot be changed during a take. Audio recording works as before.
+
+An overlapping region keeps its notes, channel controls and previous takes. Recording beyond either edge grows it without moving the existing performance in time. If there is no region to merge into, the pass creates one. In loop recording, each completed pass is one undo step, available while the transport is still rolling. Stopping adds the final partial pass as one step. Undoing a pass removes only that pass; Stop does not put it back. A pass with no recorded events adds no undo step.
+
+MIDI recording keeps notes, control changes, 14-bit pitch bend, channel pressure, polyphonic pressure and program changes. They are saved and played back with the region. The piano roll's CC lane edits control changes; the other channel controls play back unchanged.
 
 ## Where files are saved
 
@@ -1227,7 +1244,7 @@ A session you have not saved yet records into the `audio/` folder of `~/Music/Du
 
 Every recorded audio file is a **24-bit WAV** at the session's sample rate. Filenames include the track number and a timestamp so re-recording the same track on the same day still produces distinct files.
 
-MIDI tracks do not produce separate files; their note and CC data is embedded in `session.json`.
+MIDI tracks do not produce separate files; their notes and channel controls are embedded in `session.json`.
 
 ## Takes
 
@@ -1245,9 +1262,9 @@ A region names its take only while it plays that take's audio. **Reverse region*
 
 A region that names no take (an imported file, a reversed or rendered region, or a region an older session loads without one) first becomes a take of its own when something is recorded or put from a take lane over it, so the audio cut away from it can be put back. It gets a lane in the audio editor like any other take.
 
-MIDI tracks keep their own take history. Each MIDI region holds up to **8 previous takes**; see *Take count and MIDI take cycling* under The tape strip.
+With **MIDI Merge** off, MIDI tracks keep their own take history. Each MIDI region holds up to **8 previous takes**; see *Take count and MIDI take cycling* under The tape strip. Merging preserves that history while adding to the current performance.
 
-Sessions saved by Dusk Studio 0.14 load with each region's old take history as takes on its track, numbered oldest first. The audio files are not touched. Sessions are now saved in format v10, which Dusk Studio 0.14 and earlier cannot open, so keep a copy of a 0.14 session if you still need to open it there.
+Sessions saved by Dusk Studio 0.14 load with each region's old take history as takes on its track, numbered oldest first. The audio files are not touched. Sessions are now saved in format v11 to preserve the full MIDI channel performance and managed SFZ references. Dusk Studio 0.15.1 and earlier cannot open them, so keep a copy before saving if you still need an older version.
 
 ## Recording errors
 
@@ -1599,13 +1616,15 @@ The note-creation grid is set from the toolbar dropdown; there is no keyboard sh
 
 With the piano roll open, virtual-keyboard notes enter at the transport playhead. Notes held together share that position. After all keys are released, the first note of the next chord advances the playhead by one snap step before inserting. This is the fastest way to enter a chord progression without playing in real time.
 
-Step record is off while the transport is recording: the keyboard's notes then go to the take only, and the region the roll shows is left as it was.
+Step record is off while the transport is recording: the keyboard's notes enter the recorded performance. They do not become separate step-record edits of the region the roll shows.
 
 The keyboard is a transport-bar tool rather than part of the piano roll. With the piano roll open, press **K** to open it over the roll; the ⌨ button sits under the piano roll's dim, and a click there closes the piano roll instead. While it is open it takes over the letter and digit keys in its layout, and **K** again closes it. See *The virtual keyboard* for the details.
 
 ## Recording with the piano roll open
 
-The roll does not draw notes while a take is recording; they appear when you stop. A pass that covers the whole region the roll shows becomes a new take of that region, and on Stop the roll shows the new take, as the timeline does; undo and redo of the pass switch the roll between the takes. A pass that makes a region of its own takes the roll to that region, and undoing the pass brings the roll back to the region it showed before. If an undo leaves the track with no MIDI regions, the roll closes. **Alt+T** / **Alt+Shift+T** step through the takes of the region the roll shows.
+Use **MIDI Merge** beside **Snap** in the piano-roll toolbar to change the same session setting as the transport button. Both buttons stay in sync, including after reopening the editor, and are disabled during recording.
+
+The roll draws incoming notes while recording, and a held note grows until you release it. This preview follows the recording playhead without editing the region or creating undo steps. With **MIDI Merge** on, completed loop passes update the merged region while recording continues, and the roll follows that region. With **MIDI Merge** off, a pass that covers the whole region the roll shows becomes a new take of that region, and on Stop the roll shows the new take, as the timeline does; undo and redo of the pass switch the roll between the takes. A pass that makes a region of its own takes the roll to that region, and undoing the pass brings the roll back to the region it showed before. If an undo leaves the track with no MIDI regions, the roll closes. **Alt+T** / **Alt+Shift+T** step through the takes of the region the roll shows.
 
 ## Navigation
 
@@ -1739,7 +1758,7 @@ A **Built-In** section sits at the top of the list, above the manufacturer group
 The insert chooser and the bottom of the picker also provide these actions where applicable:
 
 - **Hardware insert**: configure the slot as an external hardware insert instead of a plugin.
-- **Soundfont (.sfz / .sf2 / .bank.xml)**: open a soundfont directly. Choosing this on an audio track converts the track to MIDI; see *Multi-sample instruments*.
+- **SFZ Manager...**: browse downloaded instruments, online repositories and local soundfont files. Loading an instrument on an audio track converts the track to MIDI; see *Multi-sample instruments*.
 - **Browse file…**: load a plugin by file path (useful for plugins not yet in the scan cache).
 - **Scan plugins**: re-scan.
 
@@ -1932,23 +1951,45 @@ When you load a session:
 
 ## Multi-sample instruments
 
-Click a track's **Insert** slot and choose **Soundfont (.sfz / .sf2 / .bank.xml)** to load one through the **sfizz** engine. If the track is not already MIDI, Dusk Studio converts it automatically. An ARIA bank manifest resolves to the bank's first program. Most SoundFont and SFZ instrument libraries work directly. The processor exposes three runtime overrides:
+Click a track's **Insert** slot and choose **SFZ Manager...** to load an instrument through the **sfizz** engine. To open a file already on your computer, choose **Local SFZ folders**, then pick an instrument or use **Open local file...** for an `.sfz`, `.sf2` or `.bank.xml` file. If the track is not already MIDI, Dusk Studio converts it automatically. An ARIA bank manifest resolves to the bank's first program. Most SoundFont and SFZ instrument libraries work directly. The processor exposes three runtime overrides:
 
-- **Master volume**: −60 to +12 dB.
+- **Master volume**: −60 to +12 dB, defaulting to 0 dB.
 - **Master tune**: −100 to +100 cents.
 - **Polyphony cap**: 1 to 256 voices.
 
 ### Instrument library
 
-**Library...** in the soundfont editor's header lists the `.sfz` and `.sf2` already installed on this computer, so loading one does not mean remembering where it lives. **Browse...** is still there for a file the library does not cover.
+**SFZ Manager...** in the soundfont editor or a track's Insert menu opens the manager. The **Installed** tab lists downloaded instrument packs, and **Online** browses Creative Commons SFZ instruments from external repositories. **Local SFZ folders** opens the folder library for `.sfz` and `.sf2` files already on this computer; its **Open local file...** button also accepts ARIA `.bank.xml` manifests. **Browse...** in the soundfont editor opens a file directly.
+
+Both tabs have an instrument preview above a grouped browser. Choose **Piano**, **Drum Kit**, **Acoustic Guitar** or another category to narrow the current list; **All instruments** restores it and leaves the preview blank until you select an instrument. On smaller windows the category list becomes a dropdown. **Installed** lists each downloaded pack once, and category counts count packs rather than SFZ files. **Search installed instruments** matches pack names, program names and saved descriptions without rescanning. Select a pack and choose its **Program**: when an ARIA bank declares its programs, the normal list uses those declarations and hides internal mapping fragments. **Show all SFZ files** exposes the full extracted file list when needed. Without usable bank metadata, all discovered SFZ candidates remain available.
+
+The preview uses repository artwork when the source declares a suitable image. Otherwise it shows a licensed instrument cutout for the category. Image decoding and downloads run in the background, with bounded memory and disk caches. Installed and cached browsing reuse saved images without network requests; an uncached or unavailable image uses the category cutout. Older installations without saved artwork metadata use the same category for their list grouping and cutout, including patches with generic filenames. Image credits are included in **LICENSES.txt**.
 
 ![Instrument library](docs/images/ms-02-sfz-library.png)
 
-The library looks in a short list of standard locations for your platform, plus any folder you add with **Add folder...**. On Linux that includes the directories distribution packages install into, so a machine with a packaged General MIDI bank shows something the first time it opens. Your added folders are remembered per machine, not per session.
+The local folder library looks in a short list of standard locations for your platform, plus any folder you add with **Add folder...**. On Linux that includes the directories distribution packages install into, so a machine with a packaged General MIDI bank shows something the first time it opens. Your added folders are remembered per machine, not per session.
 
 Type in the filter box to narrow the list by instrument or folder name; clearing it brings the whole list back without rescanning. **Rescan** picks up instruments added since the panel opened.
 
-Scanning happens only when you open the panel, press **Rescan**, or add a folder. It never runs at startup or while a session loads, and it never reaches the network: this is a view of your own disk, nothing more. A folder that has gone missing or cannot be read is listed as such at the top rather than silently contributing nothing.
+Scanning happens only when you open the panel, press **Rescan**, or add a folder. It never runs at startup or while a session loads, and it never reaches the network: the local folder list is a view of your own disk. A folder that has gone missing or cannot be read is listed as such at the top rather than silently contributing nothing.
+
+In **Online**, **All repositories** is selected by default: enter an optional search, then press **Search** or Enter to search **SFZ Instruments**, **Musical Artifacts**, **FreePats** and **Versilian Studios**. Choose a repository to narrow the search. Search includes descriptions supplied by the source. SFZ Instruments also uses its community catalog descriptions, so searching for **Brushes** can find **Swirly Drums**. Each result names its repository. Editing the search keeps the last results visible until you submit it. **Previous** and **Next** move between result pages, keeping each repository's progress independently. If one repository is unavailable or rate-limited, its error appears while results from the others remain available. **Browse cached** searches saved listings without contacting the repositories and reports any missing cache.
+
+**FreePats** offers its Creative Commons instrument repositories. **Versilian Studios** offers the official **VSCO 2 Community Edition** and **Versilian Community Sample Library** collections, using their latest stable SFZ releases. Round-robin sampling varies by instrument and articulation; a collection's inclusion does not mean every patch has round robins.
+
+Select a pack on the left to see its license, contents and download action on the right. Check its license before pressing **Download**. Creative Commons licenses can require attribution or restrict commercial use or derivatives; read the displayed license before using a pack. A pack's size can be unknown until it downloads.
+
+GitHub stars and Musical Artifacts favorites appear when supplied by the source. These counts indicate popularity, not a sound-quality rating. **Listen to demo** opens a published audio or video demo in your browser without downloading or installing the instrument pack. **More demos** lists additional demos when available. Some packs have no published demo; the library then displays **No source demo available.** If you decide against a downloaded pack, unload its instruments from the current session and use **Remove** in **Installed**.
+
+**Version and download details** shows the source revision and archive verification information. The library adapts to the main window's available space, with separate scrolling for the pack list and details. Download progress and pause, resume or error messages appear in its status bar.
+
+Downloads use HTTPS. SFZ Instruments, FreePats and Versilian Studios archives are pinned to a GitHub commit; GitHub does not supply an archive SHA-256, so Dusk Studio computes one for the local installation receipt. Musical Artifacts downloads are checked against the published SHA-256 when one is available. ZIP packs must use stored or deflate compression on every platform. Archives are unpacked into a staging folder with path and size checks, and appear in **Installed** only after installation finishes.
+
+Library work pauses during recording, bounce or freeze. Press **Resume** afterwards to continue; it does not resume by itself. **Cancel** removes the unfinished download. In **Installed**, select an instrument and press **Load** to put it on the track. **Remove** deletes a pack only when the current session and pending loads are not using it.
+
+Installed versions coexist. A session references the exact source, pack, version, archive digest and instrument path, so another computer can resolve the same installed pack without matching the original absolute path. If that pack is missing, the slot stays offline and keeps its reference. Opening a session never downloads instruments or browses a repository. Files opened directly remain file references unless they belong to a known installed pack.
+
+Instrument replacement is prepared in the background while the current instrument keeps playing. A failed replacement leaves it playing, and an older request cannot replace a newer selection.
 
 When a `.sf2` holds more than one preset (most GM/GS/XG SoundFonts do), a **preset picker** appears. Click it to open a filterable browser: start typing to filter presets by name or number, or read across the columns. Presets are grouped program-first — an instrument and its bank variations list together, drum kits last — each shown as `program [bank] name`.
 
@@ -2436,7 +2477,7 @@ An open chord slot takes the keys instead:
 
 ## Notes on shortcut design
 
-- Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback.
+- Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback. An open dropdown in Audio settings keeps the keyboard too: Home and End highlight its first and last choices, and Enter selects the highlighted choice. Session shortcuts resume after the dropdown closes.
 - **M** drops a marker at the playhead, not mute; per-track mute is **X** to avoid the clash with the marker action.
 - Plain **B** taps tempo; **Cmd+B** triggers Bounce (Logic convention).
 - While a prompt that decides what happens to your session is up, no shortcut works: the unsaved-changes prompt when you quit, open or start another session, **Recover from autosave?**, and the Startup dialog, which decides which session there is to work on. **Space** and **R** do nothing until you answer it. A control surface or a MIDI binding can still start a take behind it, and so can **R** in the Save As browser that **Save** opens for a session you have never saved; **Save** stops that take first and saves it with the session. **Escape** still does whatever that prompt allows.

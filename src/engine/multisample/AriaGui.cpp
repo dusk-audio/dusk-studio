@@ -165,6 +165,37 @@ std::optional<AriaGuiDoc> AriaGuiDoc::parse(const juce::File& xmlFile)
     for (auto* child : xml->getChildIterator())
         doc.widgets.push_back(parseWidget(*child));
 
+    // Some skins give captions overlapping boxes wider than their control
+    // spacing. Keep each caption centred while reserving a gap to its peers.
+    std::vector<int> textWidths(doc.widgets.size(), 0);
+    for (size_t i = 0; i < doc.widgets.size(); ++i)
+    {
+        const auto& widget = doc.widgets[i];
+        if (widget.kind != AriaWidgetKind::StaticText || widget.bounds.isEmpty())
+            continue;
+        auto& width = textWidths[i];
+        width = widget.bounds.getWidth();
+        for (const auto& other : doc.widgets)
+        {
+            if (other.kind != AriaWidgetKind::StaticText || other.bounds.isEmpty()
+                || other.bounds.getY() != widget.bounds.getY()
+                || ! widget.bounds.intersects(other.bounds))
+                continue;
+            const int spacing = std::abs(other.bounds.getCentreX() - widget.bounds.getCentreX());
+            if (spacing > 0)
+                width = std::min(width, std::max(1, spacing - 2));
+        }
+    }
+    for (size_t i = 0; i < doc.widgets.size(); ++i)
+    {
+        if (textWidths[i] <= 0)
+            continue;
+        auto& bounds = doc.widgets[i].bounds;
+        const auto centre = bounds.getCentre();
+        bounds.setWidth(textWidths[i]);
+        bounds.setCentre(centre);
+    }
+
     return doc;
 }
 

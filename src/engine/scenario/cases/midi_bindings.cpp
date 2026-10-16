@@ -56,6 +56,36 @@ void checkHotplugWhileRolling (ScenarioContext& ctx, std::shared_ptr<snd_seq_t> 
     });
 }
 
+void checkHotplugWhileRendering (ScenarioContext& ctx, std::shared_ptr<snd_seq_t> portClient)
+{
+    auto& engine = ctx.engine();
+    engine.setOfflineRenderActive (true);
+    const int port = snd_seq_create_simple_port (portClient.get(), "rendering",
+        SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ, SND_SEQ_PORT_TYPE_APPLICATION);
+    if (! ctx.expect (port >= 0, "could not create a virtual MIDI port during render"))
+    {
+        ctx.complete (ctx.verdict());
+        return;
+    }
+    const auto identifier = "alsa-seq:dusk-hotplug-" + std::to_string (snd_seq_client_id (portClient.get()))
+                          + ":rendering";
+    const auto visible = [&engine, identifier]
+    {
+        const auto& devices = engine.getMidiInputDevices();
+        return std::any_of (devices.begin(), devices.end(), [&identifier] (const auto& device)
+        { return device.identifier == identifier; });
+    };
+    ctx.later (1200, [&ctx, &engine, portClient, visible]
+    {
+        ctx.expect (! visible(), "MIDI ports rebuilt during an offline render");
+        engine.refreshMidiInputs();
+        ctx.expect (! visible(), "an explicit MIDI refresh rebuilt ports during an offline render");
+        engine.setOfflineRenderActive (false);
+        ctx.waitUntil (visible, 4000, [&ctx] { ctx.complete (ctx.verdict()); },
+                       "the new MIDI port did not appear after the render");
+    });
+}
+
 std::optional<ScenarioResult> hotplugWaitsForStop (ScenarioContext& ctx)
 {
     snd_seq_t* raw = nullptr;
@@ -74,12 +104,14 @@ std::optional<ScenarioResult> hotplugWaitsForStop (ScenarioContext& ctx)
     session.setTrackArmed (0, true);
     ctx.cleanup ([&engine, &session, portClient]
     {
+        engine.setOfflineRenderActive (false);
         engine.stop();
         session.setTrackArmed (0, false);
     });
     checkHotplugWhileRolling (ctx, portClient, false, [&ctx, portClient]
     {
-        checkHotplugWhileRolling (ctx, portClient, true, [&ctx] { ctx.complete (ctx.verdict()); });
+        checkHotplugWhileRolling (ctx, portClient, true, [&ctx, portClient]
+        { checkHotplugWhileRendering (ctx, portClient); });
     });
     return std::nullopt;
 }
@@ -445,6 +477,9 @@ ScenarioResult runBankRelative (ScenarioContext& ctx)
 ScenarioResult runLearn (ScenarioContext& ctx)
 {
     auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const bool hardwareInputs = engine.setHardwareMidiInputsEnabledForScenario (false);
+    ctx.cleanup ([&engine, hardwareInputs] { engine.setHardwareMidiInputsEnabledForScenario (hardwareInputs); });
     constexpr int kTrack = 2;
 
     ctx.keep (session.midiLearnPending);
@@ -605,7 +640,7 @@ const ScenarioRegistrar banked { Scenario {
 #if DUSKSTUDIO_HAS_ALSA
 const ScenarioRegistrar hotplug { Scenario {
     "midi.hotplug_waits_for_stop", { "midi", "hardware" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return hotplugWaitsForStop (ctx); }, 15000
+    [] (ScenarioContext& ctx) { return hotplugWaitsForStop (ctx); }, 20000
 } };
 #endif
 const ScenarioRegistrar learn { Scenario {

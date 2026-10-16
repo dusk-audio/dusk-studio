@@ -172,6 +172,7 @@ RegionRebuildBatch::~RegionRebuildBatch()
 
 bool undoTransaction (AudioEngine& engine)
 {
+    engine.serviceMidiRecording();
     if (trackMoveUndoRefusal (engine, false).kind != TrackMoveRefusal::Kind::None) return false;
     const RegionRebuildBatch batch (engine);
     return engine.getUndoManager().undo();
@@ -849,6 +850,7 @@ struct CloneTrackAction::Impl
     // its own pair alongside the description above.
     juce::String         multisamplePath;
     std::vector<uint8_t> multisampleState;
+    std::optional<sfz::ManagedSfzLocator> multisampleLocator;
 #endif
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -887,7 +889,7 @@ struct CloneTrackAction::Impl
 namespace
 {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
-    || DUSKSTUDIO_HAS_NATIVE_VST3 || DUSKSTUDIO_HAS_NATIVE_AU
+    || DUSKSTUDIO_HAS_NATIVE_VST3 || DUSKSTUDIO_HAS_NATIVE_AU || DUSKSTUDIO_HAS_MULTISAMPLE
 std::vector<uint8_t> decodeCarriedState (const juce::String& base64)
 {
     auto blob = dusk::base64::decode (base64.toRawUTF8(), base64.getNumBytesAsUTF8());
@@ -1193,6 +1195,9 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     auto& msSlot = engine.getStrip (idx).getNativeMultisampleSlot();
+    s.multisampleLocator = t.nativeMultisampleLocator;
+    s.multisamplePath = t.nativeMultisamplePath;
+    s.multisampleState = decodeCarriedState (t.nativeMultisampleStateBase64);
     // The editor can clear the soundfont in place, leaving a loaded slot with no
     // file - the live path decides, as in publishPluginStateForSave. applyTrack
     // reads an empty path as "no multisample", so a blob captured beside one
@@ -1501,47 +1506,24 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     }
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
-    // After the JUCE replay: a multisample load evicts the JUCE slot, so doing
-    // it second keeps "one host per insert" whichever way the clone goes.
     {
         auto& strip = engine.getStrip (idx);
-        if (s.multisamplePath.isNotEmpty() || strip.isNativeMultisampleLoaded())
-        {
-            // Two-phase: parse the soundfont off the engine gate, fence the swap
-            // only (see NativeMultisampleSlot::prime).
-            NativeMultisampleSlot::PrimedLoad primed;
-            std::string msErr;
-            if (s.multisamplePath.isNotEmpty())
-                primed = strip.primeNativeMultisample (juce::File (s.multisamplePath),
-                                                        msErr, &s.multisampleState);
-            const bool msStateRestored = ! primed.stateRestoreFailed;
-            strip.getNativeMultisampleSlot().drainPendingLoads();
-
-            engine.suspendProcessing();
-            bool msLoaded = false;
-            if (primed && msStateRestored)
-                msLoaded = strip.commitNativeMultisample (std::move (primed));
-            else
-                strip.unloadNativeMultisample();
-            engine.resumeProcessing();
-
-            if ((! msLoaded || ! msStateRestored) && s.multisamplePath.isNotEmpty())
-            {
-                // Keep the reference so a save right after the clone still
-                // round-trips it and the load can be retried, exactly like a
-                // failed restore in consumePluginStateAfterLoad.
-                strip.markNativeMultisampleRestoreFailed();
-                DBG ("CloneTrackAction: multisample restore failed on strip " << idx
-                      << " (" << s.multisamplePath << "): " << msErr.c_str());
-            }
-        }
-
-        // Unconditional, like the plugin writes above: a clone from a source
-        // with no multisample has to clear whatever the destination held.
+        strip.getNativeMultisampleSlot().prepareReplacement();
+        engine.suspendProcessing();
+        auto outgoing = strip.getNativeMultisampleSlot().detach();
+        engine.resumeProcessing();
         t.nativeMultisamplePath = s.multisamplePath;
+        t.nativeMultisampleLocator = s.multisampleLocator;
         t.nativeMultisampleStateBase64 = s.multisampleState.empty()
             ? std::string()
             : dusk::base64::encode (s.multisampleState.data(), s.multisampleState.size());
+        if (s.multisamplePath.isNotEmpty() || s.multisampleLocator)
+        {
+            strip.markNativeMultisampleRestoreFailed();
+            engine.requestNativeMultisampleLoad (idx,
+                std::filesystem::u8path (s.multisamplePath.toStdString()),
+                s.multisampleLocator, {}, -1, true, s.multisampleState);
+        }
     }
 #endif
 
@@ -1863,6 +1845,25 @@ bool JoinRegionsAction::undo()
 }
 
 // RecordCommitAction
+
+bool MidiMergePassAction::apply (bool forward)
+{
+    TrackSlotMask tracks {};
+    for (const auto& diff : diffs)
+    {
+        if (diff.trackIndex < 0 || diff.trackIndex >= Session::kNumTracks
+            || frozenLocked (session, diff.trackIndex)) return false;
+    }
+    for (const auto& diff : diffs)
+    {
+        session.track (diff.trackIndex).midiRegions.mutate (
+            [&diff, forward] (std::vector<MidiRegion>& regions)
+            { regions = forward ? diff.after : diff.before; });
+        tracks[(std::size_t) diff.trackIndex] = true;
+    }
+    refreshPlayback (engine, tracks);
+    return ! diffs.empty();
+}
 
 RecordCommitAction::RecordCommitAction (Session& s, AudioEngine& e,
                                           std::vector<TrackDiff> d)

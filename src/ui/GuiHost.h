@@ -135,6 +135,14 @@ public:
 
     virtual bool builtinPointer (int track, const std::string& control, float position, bool pressed) = 0;
     virtual void closeBuiltin (int track) = 0;
+    virtual bool openSfzLibrary (int track) = 0;
+    virtual void closeSfzLibrary (int track) = 0;
+    virtual bool sfzLibraryOpen (int track) const = 0;
+    virtual bool sfzLibraryPointer (int track, const std::string& control, float position, bool pressed) = 0;
+    virtual bool sfzLibraryInput (int track, const std::string& input) = 0;
+    virtual void captureSfzLibrary (int track, const std::filesystem::path&) = 0;
+    virtual void captureSfzSources (int track, bool enabled) = 0;
+    virtual std::vector<std::string> sfzSourceRequests (int track) const = 0;
     // Escape at the window, sent through the display server so the message loop
     // has to reach the window system to read it. False where the platform has no
     // such route.
@@ -260,6 +268,10 @@ public:
     virtual std::string dspReadout() const = 0;
     virtual bool doubleClickDspReadout() = 0;
     virtual bool clickRecord() = 0;
+    virtual bool clickMidiMerge() = 0;
+    virtual bool clickPianoMidiMerge() = 0;
+    // Transport on/enabled, followed by piano-roll on/enabled; -1 until laid out.
+    virtual std::array<int, 4> midiMergeControls() const = 0;
     virtual bool doubleClickTempo() = 0;
     virtual bool rightClickPunch() = 0;
     virtual bool focusModalTextInput() = 0;

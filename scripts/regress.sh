@@ -12,6 +12,7 @@
 #   scripts/regress.sh windows --release-run <id> --fixtures-run <id>
 #   scripts/regress.sh all --msi <path>
 #   scripts/regress.sh all --release-run <id>
+#   scripts/regress.sh prepush               linux + mac source legs, at once
 #
 # Per-platform prerequisites and what each leg proves: docs/MAINTAINER-GUIDE.md,
 # "Part 9b - Regression run across platforms".
@@ -23,7 +24,7 @@ REGRESS_DIR="${REPO_ROOT}/scripts/regress"
 
 usage() {
     cat <<'EOF'
-usage: scripts/regress.sh [linux|mac|windows|all] [options]
+usage: scripts/regress.sh [linux|mac|windows|all|prepush] [options]
 
   linux    (default) build, tests, ctest, JUCE gate, self-test, IPC and
            scenario legs
@@ -80,6 +81,14 @@ usage: scripts/regress.sh [linux|mac|windows|all] [options]
            that one instead. DUSK_REGRESS_DRY_RUN=1 prints the routing and
            stops.
 
+  prepush  before asking for a push: the linux and mac source legs at the
+           same time (they run on different machines), then one table. The
+           linux options above go to linux and --host to mac; package and
+           Windows options are refused, since a push is about this checkout.
+           Each platform's full output goes to a log named in the table's
+           header. Windows is left to CI, which builds the artifact the
+           guest runs.
+
   -h, --help   this text
 EOF
 }
@@ -96,7 +105,7 @@ if [[ $# -gt 0 && "$1" != -* ]]; then
 fi
 
 case "$TARGET" in
-    linux | mac | windows | all) ;;
+    linux | mac | windows | all | prepush) ;;
     *)
         usage >&2
         echo >&2
@@ -105,7 +114,7 @@ case "$TARGET" in
         ;;
 esac
 
-if [[ "$TARGET" != all ]]; then
+if [[ "$TARGET" != all && "$TARGET" != prepush ]]; then
     exec bash "${REGRESS_DIR}/${TARGET}.sh" "$@"
 fi
 
@@ -186,6 +195,17 @@ while [[ $# -gt 0 ]]; do
             exit 2
         fi
     fi
+    if [[ "$TARGET" == prepush && -n "$owner" ]]; then
+        kept=""
+        for platform in $owner; do
+            [[ "$platform" == windows ]] || kept="${kept:+${kept} }${platform}"
+        done
+        owner="$kept"
+        if [[ -z "$owner" ]]; then
+            echo "error: prepush runs no Windows leg; $1 does not belong in it" >&2
+            exit 2
+        fi
+    fi
     if [[ -z "$owner" ]]; then
         usage >&2
         echo >&2
@@ -201,6 +221,17 @@ while [[ $# -gt 0 ]]; do
         shift
     fi
 done
+
+if [[ "$TARGET" == prepush ]]; then
+    for arg in ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"} ${MAC_ARGS[@]+"${MAC_ARGS[@]}"}; do
+        case "$arg" in
+            --tarball | --dmg | --release-run | --scenarios-only)
+                echo "error: prepush builds and tests this checkout; $arg does not belong in it" >&2
+                exit 2
+                ;;
+        esac
+    done
+fi
 
 if [[ "${DUSK_REGRESS_DRY_RUN:-0}" == 1 ]]; then
     printf 'linux:   %s\n' "${LINUX_ARGS[*]-}"
@@ -219,6 +250,8 @@ rc=0
 run_platform() {
     local platform="$1" status=0
     shift
+    # Keep the wrapper alive until its runner finishes signal cleanup.
+    if [[ "$TARGET" == prepush ]]; then trap ':' INT TERM; fi
     bash "${REGRESS_DIR}/${platform}.sh" "$@" || status=$?
     if ((status != 0)); then
         rc=1
@@ -228,18 +261,60 @@ run_platform() {
     fi
     return 0
 }
-run_platform linux ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"}
-run_platform mac ${MAC_ARGS[@]+"${MAC_ARGS[@]}"}
-run_platform windows ${WINDOWS_ARGS[@]+"${WINDOWS_ARGS[@]}"}
+if [[ "$TARGET" == prepush ]]; then
+    # In parallel the two outputs would interleave, so each goes to a log that
+    # outlives the run; run_platform's rc is lost in the background, but a
+    # failing runner always leaves a FAIL row, which the check below reads.
+    LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dusk-prepush.XXXXXX")"
+    stop_runners() {
+        trap '' INT TERM
+        local -a runner_pids=($(jobs -pr)) targets=()
+        local caller_group
+        caller_group=$(ps -o pgid= -p "$$")
+        # timeout creates separate groups. Snapshot the whole tree before
+        # signalling, while the parent links still identify its descendants.
+        targets=($(ps -eo pid=,ppid=,pgid= | awk -v roots="${runner_pids[*]}" -v caller="$caller_group" '
+            BEGIN { n = split(roots, ids, " "); for (i = 1; i <= n; ++i) root[ids[i]] = 1 }
+            { parent[$1] = $2; group[$1] = $3 }
+            END {
+                for (pid in parent) {
+                    ancestor = pid
+                    while (ancestor in parent && !root[ancestor]) ancestor = parent[ancestor]
+                    if (root[ancestor]) {
+                        target[pid] = 1
+                        if (group[pid] != caller + 0) groups[group[pid]] = 1
+                    }
+                }
+                for (pgid in groups) print "-" pgid
+                for (pid in target) print pid
+            }'))
+        kill -TERM -- "${targets[@]}" 2>/dev/null || true
+        wait
+        exit 130
+    }
+    trap stop_runners INT TERM
+    set -m
+    run_platform linux ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"} >"${LOG_DIR}/linux.log" 2>&1 &
+    run_platform mac ${MAC_ARGS[@]+"${MAC_ARGS[@]}"} >"${LOG_DIR}/mac.log" 2>&1 &
+    echo "prepush: linux and mac running; logs in ${LOG_DIR}"
+    wait
+    set +m
+    trap - INT TERM
+else
+    run_platform linux ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"}
+    run_platform mac ${MAC_ARGS[@]+"${MAC_ARGS[@]}"}
+    run_platform windows ${WINDOWS_ARGS[@]+"${WINDOWS_ARGS[@]}"}
+fi
 
-printf '\n===== regress all =====\n'
+printf '\n===== regress %s =====\n' "$TARGET"
+[[ -z "${LOG_DIR:-}" ]] || printf 'logs: %s/{linux,mac}.log\n' "$LOG_DIR"
 printf '%-6s %-40s %8s  %s\n' "RESULT" "LEG" "SECONDS" "NOTE"
 while IFS=$'\t' read -r platform status name secs note; do
     printf '%-6s %-40s %8s  %s\n' "$status" "${platform}/${name}" "$secs" "$note"
 done <"$RECORD_FILE"
 if ((rc != 0)) || grep -q $'^[a-z]*\tFAIL\t' "$RECORD_FILE"; then
-    printf '\nregress all: FAILED\n'
+    printf '\nregress %s: FAILED\n' "$TARGET"
     exit 1
 fi
-printf '\nregress all: OK\n'
+printf '\nregress %s: OK\n' "$TARGET"
 exit 0

@@ -1,5 +1,7 @@
 <!-- summary-start -->
-The piano roll follows the takes you record over its region, and playing the virtual keyboard during a take no longer changes the earlier take.
+MIDI Merge layers performances into a region, with one undo step per loop pass while recording continues. The piano roll shows incoming notes live. Browse Creative Commons SFZ instruments from SFZ Instruments, Musical Artifacts, FreePats and Versilian Studios, then download them to your installed library. Sessions keep the exact installed pack reference across computers. Playback readers share three fill workers and keep sample buffers near the playhead.
+
+Sessions save in format 11, which Dusk Studio 0.15.1 and earlier cannot open. Keep a copy before saving if you need to use an older version.
 <!-- summary-end -->
 
 ### Downloads
@@ -9,10 +11,13 @@ The piano roll follows the takes you record over its region, and playing the vir
   icon, PATH launcher and session-file association. On Wayland the dock icon
   only appears after `install.sh`. The aarch64 build targets 64-bit Raspberry Pi
   OS (Pi 3/4/5). The binary needs `libpipewire-0.3-0` (linked in even to run
-  the ALSA backend), `libsuil-0-0`, `libmp3lame0` and `libsndfile1` present on
-  the system; the first three are not on a stock desktop install. `README-linux.txt`
+  the ALSA backend), `libsuil-0-0`, `libmp3lame0`, `libsndfile1`, `libcurl4` and
+  `libarchive13` present on the system; the first three are not on a stock desktop install. `README-linux.txt`
   in the tarball lists every linked library with its Debian/Ubuntu package name
   and an `apt install` line. libsodium is compiled in and needs nothing.
+  System utf8proc builds also need `libutf8proc3`; the pinned static fallback
+  does not. The tarball relies on the distro packages for libcurl and
+  libarchive and their shared-library dependencies.
 - **macOS** (`.dmg`, Apple Silicon / arm64 only): ad-hoc signed, not
   notarized. The first launch is blocked: click Done, then System Settings ->
   Privacy & Security -> Open Anyway, Open Anyway again, and approve with Touch

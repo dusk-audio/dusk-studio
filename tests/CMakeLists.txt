@@ -35,9 +35,26 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/UtilityUnit.cpp
     sfz_catalog.cpp
     sfz_library_scan.cpp
+    sfz_transfer.cpp
+    sfz_archive.cpp
+    sfz_provider.cpp
+    sfz_pack_store.cpp
+    sfz_pack_index.cpp
+    sfz_library_locations.cpp
+    sfz_library_service.cpp
+    sfz_artwork_cache.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibrary.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalogEnvelope.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzTransfer.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzArtworkCache.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzArchive.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPathPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzProvider.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPackStore.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPackIndex.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibraryLocations.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibraryService.cpp
     # Native CLAP tests + sources are added conditionally below.
     plugin_descriptor.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginDescriptor.cpp
@@ -60,6 +77,10 @@ add_executable(dusk-studio-tests
     hosting_midi_fit.cpp
     output_pair_routing.cpp
     multiband_comp_presets.cpp
+    midi_merge.cpp
+    midi_channel_playback.cpp
+    midi_capture_stream.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/MidiCaptureStream.cpp
     atomic_park.cpp
     audio_worker_pool.cpp
     rt_priority.cpp
@@ -203,6 +224,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/DpAligner.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp
     record_loop_take_stacking.cpp
+    record_midi_merge_capture.cpp
     record_midi_overdub_diff.cpp
     record_offset_placement.cpp
     record_stop_waits_for_audio.cpp
@@ -332,15 +354,17 @@ target_sources(dusk-studio-tests PRIVATE
     waveform_details.cpp
     audiofile_ab_null.cpp
     audiofile_buffered_reader.cpp
+    reader_fill_pool.cpp
     audiofile_drain_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/BufferedFileReader.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ReaderFillPool.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileReader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WaveformPeaks.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ThreadedFileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WriterDrainPool.cpp)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sndfile)
-target_link_libraries(dusk-studio-tests PRIVATE dusk_sodium)
+target_link_libraries(dusk-studio-tests PRIVATE dusk_sfz_dependencies)
 
 if(DUSK_PLUGINS_PATH)
     # Built-in units are the app's own static libraries of the donor's DAF
@@ -385,6 +409,11 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk)
+    if(TARGET DuskStudioBinaryIcon AND EXISTS "${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl/src/nanovg/stb_image.h")
+        target_sources(dusk-studio-tests PRIVATE sfz_artwork_decode.cpp ${CMAKE_SOURCE_DIR}/src/ui/imgui/SfzArtwork.cpp)
+        target_include_directories(dusk-studio-tests SYSTEM PRIVATE "${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl")
+        target_link_libraries(dusk-studio-tests PRIVATE DuskStudioBinaryIcon)
+    endif()
     # Dear ImGui is vendored third-party code and does not build clean under this
     # target's warning set. The app silences it the same way for dgl-opengl3.
     set_source_files_properties(
@@ -760,7 +789,11 @@ target_link_libraries(dusk-studio-tests PRIVATE
 # define for the same gating the main app uses. Skip when sfizz isn't
 # vendored (the multisample sources are then a no-op too).
 if(TARGET sfizz_static)
-    target_link_libraries(dusk-studio-tests PRIVATE sfizz::static)
+    target_sources(dusk-studio-tests PRIVATE
+        multisample_resolved_path.cpp
+        multisample_loader.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/multisample/MultisampleLoader.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE sfizz::static sfizz::pugixml)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
 endif()
 
@@ -945,14 +978,16 @@ catch_discover_tests(dusk-studio-tests
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[host-limits]"
     EXTRA_ARGS --allow-running-no-tests)
-# [ipc] cases start the plug-in host process and several assert on timing windows
-# (the park-timeout stub parks against a 250 ms block). Under ctest --parallel the
-# runner's cores are shared, so those windows close; run them serially.
+# [ipc] cases start plug-in hosts and assert on bounded response times. Run
+# them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "~[alsa]~[ipc]~[host-limits]")
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "[ipc]"
+    TEST_SPEC "[ipc]~[sfz-shutdown]"
     PROPERTIES RUN_SERIAL TRUE)
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[sfz-shutdown]"
+    PROPERTIES RUN_SERIAL TRUE TIMEOUT 30)
 
 if(APPLE)
     target_link_libraries(dusk-studio-tests PRIVATE dusk-coremidi "-framework CoreAudio")
@@ -986,6 +1021,11 @@ if(UNIX)
                 COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
                         "${CMAKE_CURRENT_SOURCE_DIR}/install_linux.sh"
                         "${CMAKE_SOURCE_DIR}")
+            add_test(NAME regression-runner-contract
+                COMMAND "${Python3_EXECUTABLE}"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/regress_orchestration.py"
+                        "${CMAKE_SOURCE_DIR}")
+            set_tests_properties(regression-runner-contract PROPERTIES TIMEOUT 30)
         endif()
         add_test(NAME release-mechanics-contract
             COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"

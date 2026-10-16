@@ -8,6 +8,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -44,6 +45,8 @@ public:
     void processBlock (const hosting::PortBuffers& io) noexcept override;
     bool saveState (std::vector<uint8_t>& out) const override;
     bool loadState (const std::vector<uint8_t>& in) override;
+    bool loadStateWithResolvedFile (const std::vector<uint8_t>& in,
+                                    const std::filesystem::path& resolvedFile);
     int  getLatencySamples() const noexcept override { return 0; }
 
     // Load an .sfz file synchronously on the message thread. Returns
@@ -101,16 +104,15 @@ public:
     // retained. Returns true on success.
     bool reloadCurrentFile (juce::String& errorMessage);
 
-    // Background variants: the load (SF2 sample extraction + sfizz parse can
-    // take seconds on a GM bank) runs on the processor's own worker thread
-    // and onDone(ok, error) fires on the message thread. The worker joins in
-    // the destructor, so a slot unload blocks until an in-flight load
-    // finishes instead of destroying the synth under it. One load at a time -
-    // callers gate UI on isLoadPending().
-    void loadFileAsync (const juce::File& file,
-                        std::function<void (bool, juce::String)> onDone);
-    void loadSf2PresetAsync (int presetIndex,
-                             std::function<void (bool, juce::String)> onDone);
+    using LoadCompletion = std::function<void (bool, juce::String)>;
+    using ReplacementCompletion = std::function<void (bool, std::string)>;
+    using ReplacementLoader = std::function<void (std::filesystem::path, int,
+                                                  ReplacementCompletion)>;
+    // Message thread. An engine-owned loader primes a replacement while this
+    // occupant keeps playing. Without one, standalone users retain the local worker.
+    void setReplacementLoader (ReplacementLoader loader) { replacementLoader = std::move (loader); }
+    void loadFileAsync (const juce::File& file, LoadCompletion onDone);
+    void loadSf2PresetAsync (int presetIndex, LoadCompletion onDone);
     bool isLoadPending() const noexcept
     {
         return loadPending.load (std::memory_order_relaxed);
@@ -121,6 +123,7 @@ public:
     // teardown joins loadPool in the destructor, and a GM-bank load takes
     // seconds - parking the audio thread across it is an audible stall.
     void cancelPendingLoads();
+    void drainPendingLoadsForReplacement();
 
     // Thread-safe copy of the persisted soundfont path, empty after Clear.
     // loadedFilePath itself is written by the loader thread, so JUCE's String
@@ -196,6 +199,10 @@ public:
     std::vector<std::pair<int, juce::String>> getControlCcLabels() const;
 
 private:
+    bool loadStateImpl (const std::vector<uint8_t>& in,
+                        const std::filesystem::path* resolvedFile);
+    ReplacementCompletion makeLoadCompletion (LoadCompletion onDone);
+    ReplacementLoader replacementLoader;
     // Convert + load one preset of an SF2 through sfizz. Initial file loads
     // defer state publication until their new preset metadata is committed;
     // direct preset switches publish immediately.

@@ -1,6 +1,7 @@
 #include "ChannelStripComponent.h"
 #include "CompBypassLed.h"
 #include "DuskContextMenu.h"
+#include "DuskFileBrowser.h"
 #include "DuskLabelEditor.h"
 #include "DuskStudioLookAndFeel.h"
 #include "ChannelEqEditor.h"
@@ -9,6 +10,7 @@
  #include "imgui/BuiltinUnitView.h"
  #include "imgui/ChannelCompView.h"
  #include "imgui/DuskPanelWindow.h"
+ #include "imgui/SfzRepositoryView.h"
 #endif
 #include "DimOverlay.h"
 #include "EmbeddedModal.h"
@@ -16,6 +18,7 @@
 #include "PluginPickerHelpers.h"
 #include "TrackMeterSource.h"
 #include "../engine/CompModeMap.h"
+#include "../foundation/DesktopLaunch.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "ClapPluginEditorComponent.h"   // Linux-only native CLAP editor
 #endif
@@ -30,6 +33,8 @@
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
   #include "multisample/DuskMultisampleEditor.h"
+  #include "multisample/SfzLibraryPanel.h"
+  #include "../engine/multisample/AriaBank.h"
 #endif
 #include "DuskAlerts.h"
 #include "FreezeDialog.h"
@@ -1510,6 +1515,9 @@ ChannelStripComponent::~ChannelStripComponent()
     compEditorDim.reset();
     builtinEditorWindow.reset();
     builtinEditorDim.reset();
+    sfzLibraryWindow.reset();
+    sfzLibraryDim.reset();
+    sfzLibraryHider.restore();
    #endif
     ioConfigModal.closeAndDeleteBodyNow();
     // FreezeDialog's destructor cancels a BounceEngine render against the
@@ -1823,6 +1831,7 @@ void ChannelStripComponent::openPluginPicker()
                                             self->track.nativeAuStateBase64 = {};
                                             self->track.nativeMultisamplePath = {};
                                             self->track.nativeMultisampleStateBase64 = {};
+                                            self->track.nativeMultisampleLocator.reset();
                                             self->track.builtinUnitId.clear();
                                             self->track.builtinStateBase64.clear();
                                         }
@@ -1911,7 +1920,12 @@ void ChannelStripComponent::openPluginPicker()
     // Soundfont route - the native multisample rung; instruments only.
     std::function<void (const juce::File&)> onSoundfont;
 #if DUSKSTUDIO_HAS_MULTISAMPLE
-    onSoundfont = loadThenOpen (&ChannelStripComponent::loadNativeMultisampleForChannel);
+    onSoundfont = [safe] (const auto& file)
+    {
+        if (auto* self = safe.getComponent())
+            self->loadNativeMultisampleForChannel (
+                std::filesystem::u8path (file.getFullPathName().toStdString()), {}, true);
+    };
 #endif
 
     std::function<void (const juce::String&)> onAu;
@@ -1921,6 +1935,10 @@ void ChannelStripComponent::openPluginPicker()
 
     std::function<void (const std::string&)> onBuiltin =
         loadThenOpen (&ChannelStripComponent::loadBuiltinForChannel);
+    std::function<void()> onSfzLibrary;
+#if DUSKSTUDIO_HAS_MULTISAMPLE && DUSKSTUDIO_HAS_NATIVE_UI
+    onSfzLibrary = [safe] { if (auto* self = safe.getComponent()) self->openSfzLibrary(); };
+#endif
 
     pluginpicker::openInsertChooser (pluginSlot,
                                       pluginSlotButton,
@@ -1932,7 +1950,7 @@ void ChannelStripComponent::openPluginPicker()
                                       std::move (onVst3),
                                       std::move (onSoundfont),
                                       std::move (onAu),
-                                      std::move (onBuiltin));
+                                      std::move (onBuiltin), std::move (onSfzLibrary));
 }
 
 void ChannelStripComponent::openHardwareInsertEditor()
@@ -2078,6 +2096,7 @@ void ChannelStripComponent::unloadPluginSlot()
             engine.resumeProcessing();
             track.nativeMultisamplePath = {};
             track.nativeMultisampleStateBase64 = {};
+            track.nativeMultisampleLocator.reset();
             refreshPluginSlotButton();
             return;
         }
@@ -2126,6 +2145,7 @@ void ChannelStripComponent::unloadPluginSlot()
         track.nativeAuStateBase64 = {};
         track.nativeMultisamplePath = {};
         track.nativeMultisampleStateBase64 = {};
+        track.nativeMultisampleLocator.reset();
         track.builtinUnitId.clear();
         track.builtinStateBase64.clear();
         refreshPluginSlotButton();
@@ -2203,6 +2223,10 @@ void ChannelStripComponent::showPluginSlotMenu()
     {
         menu.addItem (2010, "Add insert...");
     }
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    menu.addSeparator();
+    menu.addItem (2011, "SFZ Manager...");
+   #endif
 
     juce::Component::SafePointer<ChannelStripComponent> safe (this);
     showContextMenu (menu, pluginSlotButton,
@@ -2237,6 +2261,7 @@ void ChannelStripComponent::showPluginSlotMenu()
                         self->trackIndex);
                     break;
                 case 2010: self->openPluginPicker(); break;
+                case 2011: self->openSfzLibrary(); break;
                 default: break;
             }
         });
@@ -2757,8 +2782,34 @@ void ChannelStripComponent::openPluginEditor()
         if (inst == nullptr) return;
         if (multisampleEditor == nullptr)
         {
-            multisampleEditor = std::make_unique<DuskMultisampleEditor> (*inst);
+            StripSafePointer editorOwner (this);
+            multisampleEditor = std::make_unique<DuskMultisampleEditor> (*inst,
+                [editorOwner] { if (auto* self = editorOwner.getComponent()) self->openSfzLibrary(); },
+                [editorOwner]
+                {
+                    if (auto* self = editorOwner.getComponent())
+                    {
+                        self->adoptInstrumentTrackDefaults();
+                        self->refreshPluginSlotButton();
+                        self->openEditorForPick();
+                    }
+                },
+                [editorOwner]
+                {
+                    if (auto* self = editorOwner.getComponent())
+                    {
+                        self->engine.cancelNativeMultisampleLoad (self->trackIndex);
+                        self->track.nativeMultisamplePath = {};
+                        self->track.nativeMultisampleStateBase64 = {};
+                        self->track.nativeMultisampleLocator.reset();
+                        self->refreshPluginSlotButton();
+                    }
+                });
             multisampleEditorOwner = inst;
+            multisampleEditorRelease = std::make_shared<std::function<void()>> (
+                [editorOwner] { if (auto* self = editorOwner.getComponent()) self->dropMultisampleEditor(); });
+            engine.getChannelStrip (trackIndex).getNativeMultisampleSlot()
+                .setInstanceReleaseHook (multisampleEditorRelease);
         }
         pluginEditorModal.showBorrowed (*parent, *multisampleEditor, onClose);
         return;
@@ -3072,6 +3123,7 @@ void ChannelStripComponent::closeEditorsForTrackMove()
     hardwareInsertModal.closeAndDeleteBodyNow();
     closeCompEditorPopup();
     closeBuiltinEditorPopup();
+    closeSfzLibrary();
     dropPluginEditor (NativeEditorTeardown::Destroy);
 }
 
@@ -3113,8 +3165,7 @@ void ChannelStripComponent::dropPluginEditor (NativeEditorTeardown teardown)
     }
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
-    multisampleEditor.reset();   // pure Dusk UI - plain teardown
-    multisampleEditorOwner = nullptr;
+    dropMultisampleEditor();
 #endif
     // ~AudioProcessorEditor tears down the plugin's internal X11
     // children synchronously (colour pickers, preset browsers,
@@ -3256,6 +3307,7 @@ bool ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     track.nativeAuStateBase64 = {};
     track.nativeMultisamplePath = {};
     track.nativeMultisampleStateBase64 = {};
+    track.nativeMultisampleLocator.reset();
     refreshPluginSlotButton();
     return true;
 }
@@ -3332,6 +3384,7 @@ bool ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
     track.nativeAuStateBase64 = {};
     track.nativeMultisamplePath = {};
     track.nativeMultisampleStateBase64 = {};
+    track.nativeMultisampleLocator.reset();
     refreshPluginSlotButton();
     return true;
 }
@@ -3408,6 +3461,7 @@ bool ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
     track.nativeAuStateBase64 = {};
     track.nativeMultisamplePath = {};
     track.nativeMultisampleStateBase64 = {};
+    track.nativeMultisampleLocator.reset();
     refreshPluginSlotButton();
     return true;
 }
@@ -3473,6 +3527,7 @@ bool ChannelStripComponent::loadNativeAuForChannel (const juce::String& componen
         track.nativeVst3StateBase64 = {};
         track.nativeMultisamplePath = {};
         track.nativeMultisampleStateBase64 = {};
+        track.nativeMultisampleLocator.reset();
         refreshPluginSlotButton();
         return false;
     }
@@ -3493,6 +3548,7 @@ bool ChannelStripComponent::loadNativeAuForChannel (const juce::String& componen
     track.nativeVst3StateBase64 = {};
     track.nativeMultisamplePath = {};
     track.nativeMultisampleStateBase64 = {};
+    track.nativeMultisampleLocator.reset();
     track.pluginDescriptor.reset();
     track.pluginLegacyDescriptionXml.clear();
     track.pluginStateBase64.clear();
@@ -3560,6 +3616,7 @@ bool ChannelStripComponent::loadBuiltinForChannel (const std::string& unitId)
     track.nativeAuStateBase64 = {};
     track.nativeMultisamplePath = {};
     track.nativeMultisampleStateBase64 = {};
+    track.nativeMultisampleLocator.reset();
     track.builtinUnitId.clear();
     track.builtinStateBase64.clear();
 
@@ -3616,6 +3673,15 @@ void ChannelStripComponent::syncNativeEditorOwners()
 }
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
+void ChannelStripComponent::dropMultisampleEditor()
+{
+    multisampleEditorRelease.reset();
+    if (multisampleEditor != nullptr && pluginEditorModal.getBody() == multisampleEditor.get())
+        pluginEditorModal.closeAndDeleteBodyNow();
+    multisampleEditor.reset();
+    multisampleEditorOwner = nullptr;
+}
+
 void ChannelStripComponent::syncMultisampleEditorOwner()
 {
     if (multisampleEditor == nullptr) { multisampleEditorOwner = nullptr; return; }
@@ -3626,10 +3692,7 @@ void ChannelStripComponent::syncMultisampleEditorOwner()
     // The instance the editor references is gone or was swapped. Dismiss the
     // modal FIRST - it borrows the body by raw pointer, so leaving it showing
     // (or re-showable) past the reset is a second use-after-free.
-    if (pluginEditorModal.getBody() == multisampleEditor.get())
-        pluginEditorModal.close();
-    multisampleEditor.reset();
-    multisampleEditorOwner = nullptr;
+    dropMultisampleEditor();
 }
 
 void ChannelStripComponent::drainMultisampleLoads()
@@ -3637,77 +3700,38 @@ void ChannelStripComponent::drainMultisampleLoads()
     engine.getChannelStrip (trackIndex).getNativeMultisampleSlot().drainPendingLoads();
 }
 
-bool ChannelStripComponent::loadNativeMultisampleForChannel (const juce::File& soundfont)
+bool ChannelStripComponent::loadNativeMultisampleForChannel (const std::filesystem::path& soundfont,
+    std::optional<sfz::ManagedSfzLocator> locator, bool openEditor)
 {
-    auto& strip = engine.getChannelStrip (trackIndex);
-
-    // One insert per strip - tear down whatever editor is open first. Mirrors
-    // loadNativeClapForChannel.
-    closePluginEditor();
-#if DUSKSTUDIO_HAS_NATIVE_CLAP
-    clapEditor.reset();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_LV2
-    lv2Editor.reset();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-    vst3Editor.reset();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_AU
-    auEditor.reset();
-#endif
-    multisampleEditor.reset();
-    multisampleEditorOwner = nullptr;
-    pluginEditor.reset();
-    pluginEditorOwner = nullptr;
-   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
-    resetRemoteEditorEmbed();
-   #endif
-   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
-    remoteForeignEmbed.reset();
-   #endif
-
-    // Two-phase: parse the soundfont (seconds on a GM bank) with the audio thread
-    // still running the current occupant, then fence only the swap.
-    // commitNativeMultisample evicts the CLAP + LV2 + VST3 + JUCE occupants.
-    std::string err;
-    auto primed = strip.primeNativeMultisample (soundfont, err);
-    drainMultisampleLoads();   // outgoing instance's loader, before it is destroyed
-    bool ok = false;
-    if (primed)
+    StripSafePointer safe (this);
+    const bool started = engine.requestNativeMultisampleLoad (trackIndex, soundfont, std::move (locator),
+        [safe, openEditor] (bool success, const std::string& error)
+        {
+            auto* self = safe.getComponent();
+            if (self == nullptr) return;
+            if (! success)
+            {
+                showDuskAlert (*self, "Couldn't load soundfont", error.c_str());
+                return;
+            }
+            self->dropPluginEditor (NativeEditorTeardown::Destroy);
+            self->adoptInstrumentTrackDefaults();
+            self->refreshPluginSlotButton();
+            if (openEditor)
+            {
+                self->closeSfzLibrary();
+                self->openEditorForPick();
+            }
+        }, -1, false, {},
+        [safe]
+        {
+            if (auto* self = safe.getComponent()) self->dropPluginEditor (NativeEditorTeardown::Destroy);
+        });
+    if (! started)
     {
-        engine.suspendProcessing();
-        ok = strip.commitNativeMultisample (std::move (primed));
-        if (ok)
-            strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
-        engine.resumeProcessing();
+        showDuskAlert (*this, "Couldn't load soundfont", "The soundfont load could not be queued. Try again after other library work finishes.");
     }
-
-    if (! ok)
-    {
-        // Nothing was committed, so whatever ran before still runs - the
-        // persisted references have to keep describing it.
-        showDuskAlert (*this, "Couldn't load soundfont",
-                       soundfont.getFileNameWithoutExtension() + ":\n" + juce::String (err));
-        return false;
-    }
-
-    adoptInstrumentTrackDefaults();
-    track.nativeMultisamplePath = soundfont.getFullPathName();
-    track.nativeMultisampleStateBase64 = {};
-    track.nativeClapPath = {};
-    track.nativeClapPluginId = {};
-    track.nativeClapStateBase64 = {};
-    track.nativeLv2Path = {};
-    track.nativeLv2PluginId = {};
-    track.nativeLv2StateBase64 = {};
-    track.nativeVst3Path = {};
-    track.nativeVst3PluginId = {};
-    track.nativeVst3StateBase64 = {};
-    track.nativeAuIdentifier = {};
-    track.nativeAuStateBase64 = {};
-    refreshPluginSlotButton();
-    return true;
+    return started;
 }
 #endif // DUSKSTUDIO_HAS_MULTISAMPLE
 
@@ -4190,11 +4214,198 @@ void ChannelStripComponent::closeCompEditorPopup()
 
 void ChannelStripComponent::closeBuiltinEditorPopup()
 {
+    closeSfzLibrary();
    #if DUSKSTUDIO_HAS_NATIVE_UI
     if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
         builtinEditorWindow->close();
     if (builtinPluginEditor != nullptr && builtinPluginEditor->isOpen())
         builtinPluginEditor->close();
+   #endif
+}
+
+void ChannelStripComponent::closeSfzLibrary()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (sfzLibraryWindow != nullptr && sfzLibraryWindow->isOpen()) sfzLibraryWindow->close();
+   #endif
+}
+
+bool ChannelStripComponent::isSfzLibraryOpen() const noexcept
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return sfzLibraryWindow != nullptr && sfzLibraryWindow->isOpen();
+   #else
+    return false;
+   #endif
+}
+
+bool ChannelStripComponent::offerSfzLibraryKey (const std::string& description, std::uint32_t character)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return sfzLibraryWindow != nullptr && sfzLibraryWindow->offerShellKey (description, character);
+   #else
+    (void) description; (void) character;
+    return false;
+   #endif
+}
+
+bool ChannelStripComponent::sfzLibraryPointerForScenario (const std::string& control, float position, bool pressed)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return sfzLibraryWindow != nullptr && sfzLibraryWindow->pointerControlForScenario (control, position, pressed);
+   #else
+    (void) control; (void) position; (void) pressed;
+    return false;
+   #endif
+}
+
+bool ChannelStripComponent::sfzLibraryInputForScenario (const std::string& input)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return sfzLibraryWindow != nullptr && sfzLibraryWindow->inputForScenario (input);
+   #else
+    (void) input;
+    return false;
+   #endif
+}
+
+void ChannelStripComponent::captureSfzLibrary (const std::string& capturePath)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (sfzLibraryWindow != nullptr && sfzLibraryWindow->isOpen()) sfzLibraryWindow->captureNextFrameTo (capturePath);
+   #else
+    (void) capturePath;
+   #endif
+}
+
+void ChannelStripComponent::openSfzLibrary()
+{
+   #if ! (DUSKSTUDIO_HAS_NATIVE_UI && DUSKSTUDIO_HAS_MULTISAMPLE)
+    showDuskAlert (*this, "SFZ Manager", "The SFZ Manager needs the native UI and Multisample support.");
+   #else
+    if (isSfzLibraryOpen()) return;
+    closeCompEditorPopup();
+    closeBuiltinEditorPopup();
+    closePluginEditor();
+    pluginEditorModal.closeAndDeleteBodyNow();
+    if (eqEditorModal.isOpen()) eqEditorModal.close();
+    if (auxEditorModal.isOpen()) auxEditorModal.close();
+    auto* topLevel = getTopLevelComponent();
+    if (topLevel == nullptr) topLevel = this;
+    const auto parentHandle = embedscale::nativeParentHandle (*topLevel);
+    if (parentHandle == 0)
+    {
+        showDuskAlert (*topLevel, "SFZ Manager", "The manager cannot open: the main window is not ready.");
+        return;
+    }
+    if (auto hook = EmbeddedModal::beforeModalShown()) hook();
+    if (sfzLibraryWindow == nullptr)
+    {
+        sfzLibraryWindow = std::make_unique<imgui::DuskPanelWindow> (
+            "dusk-studio-sfz-library", "sfz-library", "SFZ Manager");
+        sfzLibraryWindow->setShellKeys (imgui::PanelShellKeys::dialog);
+        imgui::DuskPanelWindow::Callbacks callbacks;
+        callbacks.dismissed = [this] { closeSfzLibrary(); };
+        callbacks.closed = [this]
+        {
+            sfzLibraryDim.reset();
+            sfzLibraryHider.restore();
+            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent()) target->grabKeyboardFocus();
+        };
+        callbacks.shortcut = [] (imgui::ShellShortcut shortcut) { return dispatchShellShortcut (shortcut); };
+        callbacks.geometry = [this]
+        {
+            auto* const top = getTopLevelComponent();
+            if (top == nullptr || sfzLibraryWindow == nullptr) return imgui::DuskPanelWindow::Geometry {};
+            const auto plate = sfzLibraryWindow->plateSize();
+            const auto bounds = embedscale::centredChildBounds (*top, plate.width, plate.height);
+            if (sfzLibraryDim != nullptr)
+            {
+                sfzLibraryDim->setBounds (top->getLocalBounds());
+                sfzLibraryDim->setNativeChildArea (bounds.expanded (1));
+            }
+            const auto geometry = embedscale::childGeometryFor (*top, bounds);
+            return imgui::DuskPanelWindow::Geometry { geometry.x, geometry.y, geometry.width, geometry.height, geometry.scale };
+        };
+        sfzLibraryWindow->setCallbacks (std::move (callbacks));
+    }
+    StripSafePointer safe (this);
+    sfzLibraryWindow->setView (imgui::makeSfzRepositoryView (engine.getSfzLibrary(),
+        [safe] (const auto& pack, const auto& instrument)
+        {
+            if (auto* self = safe.getComponent())
+                self->loadNativeMultisampleForChannel (
+                    pack.directory / std::filesystem::u8path (instrument.relativePath), pack.locatorFor (instrument), true);
+        },
+        [safe]
+        {
+            if (auto* self = safe.getComponent()) return self->engine.managedSfzInUse();
+            return std::vector<sfz::ManagedSfzLocator> {};
+        },
+        [safe, sourceOpen = sfzSourceOpenForScenario] (const std::string& url)
+        {
+            if (auto* self = safe.getComponent())
+            {
+                if (sourceOpen) sourceOpen (url);
+                else if (! dusk::desktop::openHttpsUrl (url))
+                    showDuskAlert (*self, "SFZ Manager", "The source website could not be opened.");
+            }
+        },
+        [safe]
+        {
+            auto* self = safe.getComponent();
+            if (self == nullptr) return;
+            self->closeSfzLibrary();
+            sfzlibrary::show (*self,
+                [safe] (const auto& file)
+                {
+                    if (auto* target = safe.getComponent())
+                        target->loadNativeMultisampleForChannel (
+                            std::filesystem::u8path (file.getFullPathName().toStdString()), {}, true);
+                },
+                [safe]
+                {
+                    auto* target = safe.getComponent();
+                    if (target == nullptr) return;
+                    filebrowser::open (*target, { "Load soundfont (.sfz / .sf2 / .bank.xml)", {}, "*.sfz;*.sf2;*.bank.xml", filebrowser::Mode::Open },
+                        [safe] (const auto& file)
+                        {
+                            if (auto* owner = safe.getComponent(); owner != nullptr && file.existsAsFile())
+                            {
+                                auto soundfont = file;
+                                if (file.getFileName().toLowerCase().endsWith (".bank.xml"))
+                                {
+                                    const auto bank = AriaBank::tryLoadFromSfz (file);
+                                    if (! bank || bank->programs.empty())
+                                    {
+                                        showDuskAlert (*owner, "Bank load failed", "Bank manifest had no programs.");
+                                        return;
+                                    }
+                                    soundfont = bank->programs.front().sfzFile;
+                                }
+                                owner->loadNativeMultisampleForChannel (
+                                    std::filesystem::u8path (soundfont.getFullPathName().toStdString()), {}, true);
+                            }
+                        });
+                });
+        }));
+    const auto plate = sfzLibraryWindow->plateSize();
+    const auto bounds = embedscale::centredChildBounds (*topLevel, plate.width, plate.height);
+    sfzLibraryDim = std::make_unique<DimOverlay> (sfzLibraryWindow->dimAlpha());
+    sfzLibraryDim->setBounds (topLevel->getLocalBounds());
+    sfzLibraryDim->setNativeChildArea (bounds.expanded (1));
+    sfzLibraryDim->onClick = [this] { closeSfzLibrary(); };
+    topLevel->addAndMakeVisible (sfzLibraryDim.get());
+    sfzLibraryHider.hideUnder (*topLevel, { sfzLibraryDim.get() });
+    const auto geometry = embedscale::childGeometryFor (*topLevel, bounds);
+    if (! sfzLibraryWindow->open (parentHandle,
+        { geometry.x, geometry.y, geometry.width, geometry.height, geometry.scale }))
+    {
+        sfzLibraryDim.reset();
+        sfzLibraryHider.restore();
+        const auto& error = sfzLibraryWindow->lastOpenFailure();
+        showDuskAlert (*topLevel, "SFZ Manager", error.empty() ? "The manager cannot open on this display backend." : error.c_str());
+    }
    #endif
 }
 

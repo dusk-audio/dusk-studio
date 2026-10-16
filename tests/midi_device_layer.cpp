@@ -251,4 +251,40 @@ TEST_CASE ("MidiInputClient rebuild fences the backend's dispatch", "[midi][devi
     // A rebuild with dispatch already stopped leaves it stopped.
     client.rebuild (48000.0);
     REQUIRE (! probe->dispatching);
+
+    SECTION ("Hardware isolation retains slots and the virtual keyboard, then restores subscriptions")
+    {
+        const int enabledBefore = probe->enableCount;
+        REQUIRE (client.setHardwareInputsEnabledForTest (false));
+        client.disableAllDevices();
+        client.rebuild (1.0);
+        REQUIRE (probe->enableCount == enabledBefore);
+        REQUIRE (client.getNumInputs() == 3);
+        REQUIRE (client.resolveIndex ("probe:a") == 0);
+        REQUIRE (client.resolveIndex ("probe:b") == 1);
+        REQUIRE (client.getVirtualKeyboardIndex() == 2);
+
+        dusk::MidiBuffer out;
+        out.reserveBytes (256);
+        for (int input = 0; input < 2; ++input)
+        {
+            client.drainBlock (input, out, 512);
+            REQUIRE (out.isEmpty());
+        }
+        client.postVirtualKeyboardMidi (kProbeNote, 3);
+        client.drainBlock (client.getVirtualKeyboardIndex(), out, 512);
+        REQUIRE (countProbeNotes (out) == 1);
+        REQUIRE_FALSE (client.setHardwareInputsEnabledForTest (false));
+        REQUIRE_FALSE (client.setHardwareInputsEnabledForTest (true));
+
+        client.disableAllDevices();
+        client.rebuild (1.0);
+        REQUIRE (probe->enableCount == enabledBefore + 2);
+        for (int input = 0; input < 2; ++input)
+        {
+            client.drainBlock (input, out, 512);
+            REQUIRE (countProbeNotes (out) == 1);
+        }
+        REQUIRE (client.setHardwareInputsEnabledForTest (true));
+    }
 }

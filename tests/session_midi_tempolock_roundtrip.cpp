@@ -24,6 +24,85 @@ juce::File makeTempSessionDir()
 }
 } // namespace
 
+TEST_CASE ("MIDI Merge is session state and older transport blocks reset it off",
+           "[session][serializer][midi][merge]")
+{
+    using namespace duskstudio;
+    const auto dir = makeTempSessionDir();
+    const struct Cleanup { juce::File directory; ~Cleanup() { directory.deleteRecursively(); } } cleanup { dir };
+    const auto file = dir.getChildFile ("session.json");
+    Session saved;
+    REQUIRE_FALSE (saved.midiMergeEnabled.load());
+    saved.midiMergeEnabled.store (true);
+    REQUIRE (SessionSerializer::save (saved, file));
+    Session restored;
+    REQUIRE (SessionSerializer::load (restored, file));
+    REQUIRE (restored.midiMergeEnabled.load());
+
+    auto json = nlohmann::json::parse (file.loadFileAsString().toStdString());
+    SECTION ("old session with a transport block") { json["transport"].erase ("midi_merge_enabled"); }
+    SECTION ("wrong type") { json["transport"]["midi_merge_enabled"] = "yes"; }
+    SECTION ("saved off") { json["transport"]["midi_merge_enabled"] = false; }
+    REQUIRE (file.replaceWithText (juce::String (json.dump())));
+    REQUIRE (SessionSerializer::load (restored, file));
+    REQUIRE_FALSE (restored.midiMergeEnabled.load());
+}
+
+TEST_CASE ("Tagged MIDI channel controls round trip in current and previous takes",
+           "[session][serializer][midi][controllers]")
+{
+    using namespace duskstudio;
+    const auto dir = makeTempSessionDir();
+    const struct Cleanup { juce::File directory; ~Cleanup() { directory.deleteRecursively(); } } cleanup { dir };
+    const auto file = dir.getChildFile ("session.json");
+    const std::vector<MidiCc> controls {
+        { 1, 64, 127, 0 },
+        { 2, 0, 16383, 120, MidiCc::Kind::PitchBend },
+        { 3, 0, 90, 240, MidiCc::Kind::ChannelPressure },
+        { 4, 60, 70, 360, MidiCc::Kind::PolyPressure },
+        { 5, 0, 12, 480, MidiCc::Kind::ProgramChange }
+    };
+    Session saved;
+    MidiRegion region;
+    region.lengthInTicks = 960;
+    region.lengthInSamples = 48000;
+    region.ccs = controls;
+    region.previousTakes.push_back (makeMidiTakeRef (region));
+    saved.track (0).midiRegions.currentMutable().push_back (region);
+    REQUIRE (SessionSerializer::save (saved, file));
+    Session restored;
+    REQUIRE (SessionSerializer::load (restored, file));
+    const auto& regions = restored.track (0).midiRegions.current();
+    REQUIRE (regions.size() == 1);
+    REQUIRE (regions[0].ccs == controls);
+    REQUIRE (regions[0].previousTakes.size() == 1);
+    REQUIRE (regions[0].previousTakes[0].ccs == controls);
+}
+
+TEST_CASE ("Managed SFZ identities survive session save and missing local packs",
+           "[session][serializer][sfz]")
+{
+    using namespace duskstudio;
+    const auto dir = makeTempSessionDir();
+    const struct Cleanup { juce::File directory; ~Cleanup() { directory.deleteRecursively(); } } cleanup { dir };
+    const auto file = dir.getChildFile ("session.json");
+    Session saved;
+    saved.track (0).nativeMultisampleLocator = sfz::ManagedSfzLocator {
+        "sfzinstruments", "123", "commit", std::string (64, 'a'), "Piano", "Programs/Piano.sfz" };
+    saved.track (0).nativeMultisamplePath = "/missing/old-machine/Piano.sfz";
+    saved.track (0).nativeMultisampleStateBase64 = "retained-state";
+    REQUIRE (SessionSerializer::save (saved, file));
+    Session restored;
+    REQUIRE (SessionSerializer::load (restored, file));
+    REQUIRE (restored.track (0).nativeMultisampleLocator == saved.track (0).nativeMultisampleLocator);
+    REQUIRE (restored.track (0).nativeMultisampleStateBase64 == "retained-state");
+    auto json = nlohmann::json::parse (file.loadFileAsString().toStdString());
+    json["tracks"][0]["native_multisample_managed"]["entrypoint"] = "../escape.sfz";
+    REQUIRE (file.replaceWithText (juce::String (json.dump())));
+    REQUIRE (SessionSerializer::load (restored, file));
+    REQUIRE_FALSE (restored.track (0).nativeMultisampleLocator.has_value());
+}
+
 // MidiRegion gained tempoLock + recordedAtBPM in the Phase-4 BPM-retime
 // work. The fields are spec'd in docs/DuskStudio.md §5b and only matter once
 // the user changes BPM after recording. A round-trip miss here means a

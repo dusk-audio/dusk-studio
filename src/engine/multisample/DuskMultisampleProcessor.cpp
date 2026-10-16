@@ -45,6 +45,8 @@ DuskMultisampleProcessor::DuskMultisampleProcessor()
     impl->synth = sfizz_create_synth();
     // sfizz allocates per-voice state lazily on activate(), so the ctor is
     // cheap.
+    // Match sfizz's initial gain so the first render applies our requested volume.
+    if (impl->synth != nullptr) lastAppliedVolDb = sfizz_get_volume (impl->synth);
 
     // -1 = "CC never set by the UI" so widgets fall back to their own
     // default instead of snapping to 0.
@@ -157,6 +159,18 @@ void DuskMultisampleProcessor::cancelPendingLoads()
     // The bump disowns the completion already posted by a job that WAS running.
     loadGeneration.fetch_add (1, std::memory_order_acq_rel);
     loadPending.store (false, std::memory_order_release);
+}
+
+void DuskMultisampleProcessor::drainPendingLoadsForReplacement()
+{
+    if (! replacementLoader)
+    {
+        cancelPendingLoads();
+        return;
+    }
+    // An accepted engine replacement still owns this occupant's completion.
+    // Its local jobs must finish before the swap, without cancelling that bridge.
+    loadPool.removeAllJobs (true, -1);
 }
 
 bool DuskMultisampleProcessor::create (const MultisampleBundle& bundle,
@@ -362,67 +376,70 @@ bool DuskMultisampleProcessor::loadSf2Preset (int presetIndex,
     return false;
 }
 
-void DuskMultisampleProcessor::loadFileAsync (
-    const juce::File& file, std::function<void (bool, juce::String)> onDone)
+DuskMultisampleProcessor::ReplacementCompletion
+DuskMultisampleProcessor::makeLoadCompletion (LoadCompletion onDone)
+{
+    const auto generation = loadGeneration.load (std::memory_order_acquire);
+    juce::WeakReference<DuskMultisampleProcessor> weak (this);
+    return [weak, generation, onDone = std::move (onDone)] (bool ok, std::string error)
+    {
+        auto* self = weak.get();
+        if (self == nullptr || self->loadGeneration.load (std::memory_order_acquire) != generation)
+            return;
+        self->loadPending.store (false, std::memory_order_release);
+        if (! ok) self->lastLoadError = error.c_str();
+        if (onDone) onDone (ok, error.c_str());
+    };
+}
+
+void DuskMultisampleProcessor::loadFileAsync (const juce::File& file, LoadCompletion onDone)
 {
     if (loadPending.exchange (true, std::memory_order_acq_rel))
     {
         if (onDone) onDone (false, "A load is already in progress");
         return;
     }
-    const std::uint64_t gen = loadGeneration.load (std::memory_order_acquire);
-    // Built here on the message thread: a WeakReference's first construction
-    // lazily creates the shared master reference, which must not race the
-    // destructor from the pool thread.
-    juce::WeakReference<DuskMultisampleProcessor> weak (this);
-    loadPool.addJob ([this, weak, file, gen, onDone = std::move (onDone)]
+    auto completion = makeLoadCompletion (std::move (onDone));
+    if (replacementLoader)
+    {
+        replacementLoader (std::filesystem::u8path (file.getFullPathName().toStdString()),
+                            -1, std::move (completion));
+        return;
+    }
+    loadPool.addJob ([this, file, completion = std::move (completion)]
     {
         juce::String err;
         const bool ok = file.getFileExtension().toLowerCase() == ".sf2"
                             ? loadSf2File (file, err)
                             : loadSfzFile (file, err);
-        dusk::callAsync ([weak, onDone, ok, err, gen]
+        dusk::callAsync ([completion, ok, error = err.toStdString()]
         {
-            // Skip entirely if the processor was destroyed after posting this:
-            // removeAllJobs joins the pool job, not this queued callback.
-            auto* self = weak.get();
-            if (self == nullptr) return;
-            // Same for a cancel: this load was disowned, and the pending flag
-            // it would clear now belongs to whatever load came after it.
-            if (self->loadGeneration.load (std::memory_order_acquire) != gen) return;
-            // Clear pending FIRST so the UI refresh in onDone observes the
-            // finished load: getSf2Presets / getNumRegions / control-image
-            // queries all return empty while a load is pending.
-            self->loadPending.store (false, std::memory_order_release);
-            if (onDone) onDone (ok, err);
+            completion (ok, error);
         });
     });
 }
 
-void DuskMultisampleProcessor::loadSf2PresetAsync (
-    int presetIndex, std::function<void (bool, juce::String)> onDone)
+void DuskMultisampleProcessor::loadSf2PresetAsync (int presetIndex, LoadCompletion onDone)
 {
     if (loadPending.exchange (true, std::memory_order_acq_rel))
     {
         if (onDone) onDone (false, "A load is already in progress");
         return;
     }
-    const std::uint64_t gen = loadGeneration.load (std::memory_order_acquire);
-    juce::WeakReference<DuskMultisampleProcessor> weak (this);
-    loadPool.addJob ([this, weak, presetIndex, gen, onDone = std::move (onDone)]
+    auto completion = makeLoadCompletion (std::move (onDone));
+    if (replacementLoader)
+    {
+        replacementLoader (std::filesystem::u8path (getLoadedPathSnapshot()),
+                            presetIndex, std::move (completion));
+        return;
+    }
+    loadPool.addJob ([this, presetIndex, completion = std::move (completion)]
     {
         juce::String err;
         const bool ok = loadSf2Preset (presetIndex, err);
-        dusk::callAsync ([weak, onDone, ok, err, gen]
+        dusk::callAsync ([completion, ok, error = err.toStdString()]
         {
-            auto* self = weak.get();
-            if (self == nullptr) return;
-            if (self->loadGeneration.load (std::memory_order_acquire) != gen) return;
-            // Clear pending FIRST, mirroring loadFileAsync - onDone re-runs the
-            // editor's timerCallback, whose pending-guarded getters would
-            // otherwise observe an empty snapshot.
-            self->loadPending.store (false, std::memory_order_release);
-            if (onDone) onDone (ok, err);
+            completion (ok, error);
         });
     });
 }
@@ -749,12 +766,25 @@ bool DuskMultisampleProcessor::saveState (std::vector<uint8_t>& out) const
 
 bool DuskMultisampleProcessor::loadState (const std::vector<uint8_t>& in)
 {
+    return loadStateImpl (in, nullptr);
+}
+
+bool DuskMultisampleProcessor::loadStateWithResolvedFile (const std::vector<uint8_t>& in,
+                                                        const std::filesystem::path& resolvedFile)
+{
+    return loadStateImpl (in, &resolvedFile);
+}
+
+bool DuskMultisampleProcessor::loadStateImpl (const std::vector<uint8_t>& in,
+                                            const std::filesystem::path* resolvedFile)
+{
     if (in.empty()) return false;
     juce::MemoryInputStream stream (in.data(), in.size(), false);
     const auto state = juce::ValueTree::readFromStream (stream);
     if (! state.isValid()) return false;
 
-    const auto path = state.getProperty ("file").toString();
+    auto path = state.getProperty ("file").toString();
+    if (resolvedFile != nullptr) path = resolvedFile->u8string().c_str();
     // Skip the re-load when a caller already loaded this exact file. Loading a
     // soundfont is the single most expensive thing this plugin does (~1.5s of
     // sample decode); doing it twice per restored instance is pure waste.

@@ -19,10 +19,15 @@
 #include "FaderBindingMap.h"
 #include "CompModeMap.h"
 #include "../session/RegionEditActions.h"
+#include "../session/MidiMerge.h"
 #include "../session/TakeComp.h"
 #include "../session/TrackMove.h"
 #include "DeviceFallbackMessage.h"
 #include "LegacyStateBase64.h"
+#include "sfz/SfzLibraryService.h"
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+ #include "multisample/MultisampleLoader.h"
+#endif
 #include "../foundation/AppConfigDir.h"
 #include "../foundation/Base64.h"
 #include "../foundation/MessageThread.h"
@@ -734,6 +739,17 @@ private:
 #endif
 };
 
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+struct AudioEngine::MultisampleLoadState
+{
+    MultisampleLoader worker;
+    std::uint64_t sessionGeneration = 1;
+    std::array<std::uint64_t, Session::kNumTracks> generations {};
+    std::array<bool, Session::kNumTracks> pending {};
+    std::array<std::optional<MultisampleLoader::Request>, Session::kNumTracks> deferred;
+};
+#endif
+
 AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     : session (sessionToBindTo), desiredWorkers (std::max (0, initialWorkers))
    #if ! defined(__linux__) && ! DUSKSTUDIO_HAS_NATIVE_COREMIDI
@@ -743,6 +759,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     , midiIn (midi::makeJuceMidiInputBackend (&deviceManager.juceManager()))
    #endif
 {
+    sfzLibrary = std::make_unique<sfz::LibraryService>();
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    multisampleLoads = std::make_unique<MultisampleLoadState>();
+#endif
     if (const char* p = std::getenv ("DUSKSTUDIO_PERF"); p != nullptr && p[0] == '1')
     {
         perf.enabled.store (true, std::memory_order_relaxed);
@@ -766,6 +786,21 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // The controller ticks on the message thread, which the timeline rate is read on.
     mcuController->setSampleRateProvider ([this] { return getTimelineSampleRate(); });
     playbackEngine.bindTransport (transport);
+    transport.onLocate = [this] (std::int64_t position)
+    {
+        if (offlineRenderActive.load (std::memory_order_acquire)
+            || recordManager.isLoopCaptureActive()) return;
+        const bool alreadySuspended = processingSuspended.load (std::memory_order_acquire);
+        if (! alreadySuspended) suspendProcessing();
+        struct SeekGuard
+        {
+            AudioEngine& engine;
+            bool resume;
+            ~SeekGuard() { if (resume) engine.resumeProcessing(); }
+        } guard { *this, ! alreadySuspended };
+        playbackEngine.primeAt (position);
+        transport.commitLocate (position);
+    };
     // 500 units covers thousands of edits while bounding memory under
     // multi-hour sessions; without this the stack grows unbounded.
     // 50 minimum kept even when total exceeds the cap.
@@ -1070,9 +1105,9 @@ void AudioEngine::noteMidiDeviceChange()
 
 void AudioEngine::serviceMidiHotplug()
 {
-    // Held, not dropped: refreshMidiInputs detaches the audio callback, so a
-    // hub blip mid-take waits here and applies the moment the take ends.
-    if (! transport.isStopped()) return;
+    // Keep the pending refresh out of a take, render or another engine fence.
+    if (! transport.isStopped() || offlineRenderActive.load (std::memory_order_acquire)
+        || isProcessingSuspended()) return;
 
     midiHotplugTimer.stopTimer();
     refreshMidiInputs();
@@ -1080,11 +1115,23 @@ void AudioEngine::serviceMidiHotplug()
 
 void AudioEngine::refreshMidiInputs()
 {
-    // Detach both callbacks - JUCE's remove* joins the audio + MIDI
-    // dispatch sides before returning. Cheapest correct sync for a
-    // rare hot-plug event; lock-free vector mutation would cost more
-    // throughout the audio path than it's worth.
-    deviceManager.removeCallback (this);
+    if (offlineRenderActive.load (std::memory_order_acquire) || isProcessingSuspended())
+    {
+        noteMidiDeviceChange();
+        return;
+    }
+
+    // Reattaching audio re-prepares all DSP, clears meters and defeats a
+    // caller's deliberate detachment. The process gate drains audio without
+    // changing callback registration or the timeline's sample rate.
+    suspendProcessing();
+    workerPool.quiesce();
+    struct ResumeGuard
+    {
+        AudioEngine& engine;
+        ~ResumeGuard() { engine.resumeProcessing(); }
+    };
+    const ResumeGuard resumeGuard { *this };
     midiIn.detachCallback();
 
     // Disable currently-enabled inputs before rebuilding so the device
@@ -1127,12 +1174,10 @@ void AudioEngine::refreshMidiInputs()
         }
     }
 
-    // Must run BEFORE re-attaching callbacks - otherwise the audio
-    // thread reads the output bank while ensureOpen mutates it.
+    // Open outputs while audio is gated: ensureOpen mutates the output bank.
     openConfiguredMidiOutputs();
 
     midiIn.attachCallback();
-    deviceManager.addCallback (this);
 
     midiHotplugNoticesRefreshed = midiHotplugNotices;
     broadcastChange();
@@ -1483,6 +1528,10 @@ void AudioEngine::reapplyFreezeState() noexcept
 
 bool AudioEngine::canMoveTracks() const noexcept
 {
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (std::any_of (multisampleLoads->pending.begin(), multisampleLoads->pending.end(),
+                     [] (bool pending) { return pending; })) return false;
+#endif
     // Suspended means another fence is up on this thread: the gate does not
     // nest, so the resume at the end of a move would let the callback back in
     // under its owner.
@@ -1615,9 +1664,8 @@ void AudioEngine::reresolveTrackMidiFromSession()
 
 void AudioEngine::rebuildMidiBanks()
 {
-    // Safe to mutate ONLY with the input + audio callbacks detached. Ctor's
-    // first call satisfies that (callbacks not yet registered); refreshMidiInputs
-    // does remove-then-call-then-add. Callbacks active during mutation = UB.
+    // MIDI input must be detached and audio absent or gated. The constructor
+    // runs before registration; refreshMidiInputs holds the process gate.
     const double sr = currentSampleRate.load (std::memory_order_relaxed);
     midiIn.rebuild (sr);
     midiOut.rebuild();
@@ -1765,8 +1813,7 @@ AudioEngine::~AudioEngine()
     changeListeners.clear();
     midiHotplugTimer.stopTimer();
     diagTimer.stopTimer();
-    if (transport.isRecording())
-        recordManager.stopRecording (transport.getPlayhead());
+    if (transport.isRecording()) stop();
     deviceManager.removeChangeListener (this);
     deviceManager.removeCallback (this);
     midiIn.detachCallback();
@@ -1774,7 +1821,244 @@ AudioEngine::~AudioEngine()
     // After the callback is gone - nothing pushes to the out-queue, the
     // pump drains or drops what's left, then the output bank can destruct.
     midiOut.stopPump();
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    multisampleLoads.reset();
+#endif
+    sfzLibrary.reset();
 }
+
+void AudioEngine::updateAssetWorkPause() noexcept
+{
+    const std::lock_guard<std::mutex> lock (assetPauseMutex);
+    const bool paused = recordManager.isActive()
+        || offlineRenderActive.load (std::memory_order_acquire)
+        || assetRenderHolds.load (std::memory_order_acquire) != 0;
+    if (sfzLibrary) sfzLibrary->setHeavyWork (paused);
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (multisampleLoads) multisampleLoads->worker.setPaused (paused);
+#endif
+}
+
+void AudioEngine::setOfflineRenderActive (bool active) noexcept
+{
+    offlineRenderActive.store (active, std::memory_order_release);
+    updateAssetWorkPause();
+}
+
+void AudioEngine::setAssetRenderActive (bool active) noexcept
+{
+    if (active) assetRenderHolds.fetch_add (1, std::memory_order_acq_rel);
+    else assetRenderHolds.fetch_sub (1, std::memory_order_acq_rel);
+    updateAssetWorkPause();
+}
+
+bool AudioEngine::changeSfzLibraryLocation (std::filesystem::path destination, bool moveExisting, std::string& error)
+{
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (moveExisting && (! managedSfzInUse().empty() || hasPendingMultisampleLoads()))
+    {
+        error = "Unload managed SFZ instruments before moving their files, or choose the new folder for future downloads only.";
+        return false;
+    }
+   #endif
+    if (! sfzLibrary->changeLocation (std::move (destination), moveExisting))
+    {
+        error = "Wait for the current SFZ library operation to finish, or resume or cancel it before changing folders.";
+        return false;
+    }
+    return true;
+}
+
+std::vector<sfz::ManagedSfzLocator> AudioEngine::managedSfzInUse() const
+{
+    std::vector<sfz::ManagedSfzLocator> result;
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    const auto installed = sfzLibrary->snapshot().installed;
+#endif
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        if (session.track (t).nativeMultisampleLocator)
+            result.push_back (*session.track (t).nativeMultisampleLocator);
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        if (multisampleLoads->deferred[(std::size_t) t]
+            && multisampleLoads->deferred[(std::size_t) t]->locator)
+            result.push_back (*multisampleLoads->deferred[(std::size_t) t]->locator);
+        else if (const auto& pending = multisampleLoads->deferred[(std::size_t) t]; pending)
+            for (const auto& pack : installed)
+                for (const auto& instrument : pack.instruments)
+                    if ((pack.directory / std::filesystem::u8path (instrument.relativePath)).lexically_normal()
+                        == pending->path.lexically_normal())
+                        result.push_back (pack.locatorFor (instrument));
+#endif
+    }
+    return result;
+}
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+bool AudioEngine::requestNativeMultisampleLoad (
+    int trackIndex, std::filesystem::path path, std::optional<sfz::ManagedSfzLocator> locator,
+    std::function<void (bool, std::string)> onDone, int presetIndex,
+    bool restoring, std::vector<std::uint8_t> state, std::function<void()> beforeCommit)
+{
+    if (sfzLibrary->isMovingPacks()) return false;
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks
+        || (! restoring && session.track (trackIndex).frozen.load (std::memory_order_acquire))) return false;
+    auto& loads = *multisampleLoads;
+    MultisampleLoader::Request request;
+    request.trackIndex = trackIndex;
+    request.requestGeneration = ++loads.generations[(std::size_t) trackIndex];
+    request.sessionGeneration = loads.sessionGeneration;
+    request.slotGeneration = getStrip (trackIndex).getNativeMultisampleSlot().generation();
+    request.sampleRate = getCurrentSampleRate();
+    request.maxBlock = getCurrentBlockSize();
+    if (request.maxBlock <= 0) request.sampleRate = 0.0;
+    request.path = std::move (path);
+    request.locator = std::move (locator);
+    request.state = std::move (state);
+    request.presetIndex = presetIndex;
+    request.restoring = restoring;
+    if (onDone)
+    {
+        const auto active = std::make_shared<std::atomic<bool>> (true);
+        request.onDone = [active, completion = std::move (onDone)] (bool success, std::string error)
+        {
+            if (! active->exchange (false, std::memory_order_acq_rel)) return;
+            if (! success && error == "Soundfont load cancelled") return;
+            completion (success, std::move (error));
+        };
+    }
+    request.beforeCommit = std::move (beforeCommit);
+    loads.pending[(std::size_t) trackIndex] = true;
+    loads.deferred[(std::size_t) trackIndex] = request;
+    if (request.sampleRate > 0.0 && request.maxBlock > 0)
+        loads.worker.submit (std::move (request));
+    schedulePlaybackService();
+    return true;
+}
+
+void AudioEngine::cancelNativeMultisampleLoad (int trackIndex)
+{
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return;
+    auto& loads = *multisampleLoads;
+    const auto index = static_cast<std::size_t> (trackIndex);
+    ++loads.generations[index];
+    if (loads.deferred[index] && loads.deferred[index]->onDone)
+        loads.deferred[index]->onDone (false, "Soundfont load cancelled");
+    loads.pending[index] = false;
+    loads.deferred[index].reset();
+    if (auto* instance = getStrip (trackIndex).getNativeMultisampleSlot().getInstance())
+        instance->cancelPendingLoads();
+    schedulePlaybackService();
+}
+
+bool AudioEngine::hasPendingMultisampleLoads() const
+{
+    return multisampleLoads->worker.hasPendingWork()
+        || std::any_of (multisampleLoads->pending.begin(), multisampleLoads->pending.end(),
+                        [] (bool pending) { return pending; });
+}
+
+void AudioEngine::serviceMultisampleLoads()
+{
+    if (recordManager.isActive() || offlineRenderActive.load (std::memory_order_acquire)
+        || assetRenderHolds.load (std::memory_order_acquire) != 0) return;
+    auto& loads = *multisampleLoads;
+    const double sr = getCurrentSampleRate();
+    const int blockSize = getCurrentBlockSize();
+    for (auto& deferred : loads.deferred)
+        if (deferred && deferred->sampleRate <= 0.0 && sr > 0.0 && blockSize > 0)
+        {
+            deferred->sampleRate = sr;
+            deferred->maxBlock = blockSize;
+            loads.worker.submit (*deferred);
+        }
+    for (auto& result : loads.worker.takeCompleted())
+    {
+        auto& request = result.request;
+        const auto index = (std::size_t) request.trackIndex;
+        auto& strip = getStrip (request.trackIndex);
+        const bool current = request.sessionGeneration == loads.sessionGeneration
+            && request.requestGeneration == loads.generations[index];
+        if (! current || request.slotGeneration != strip.getNativeMultisampleSlot().generation()
+            || (! request.restoring && session.track (request.trackIndex).frozen.load (std::memory_order_acquire)))
+        {
+            if (current) { loads.pending[index] = false; loads.deferred[index].reset(); }
+            if (request.onDone) request.onDone (false, "Soundfont load was superseded");
+            continue;
+        }
+        if (sr > 0.0 && blockSize > 0
+            && (std::abs (request.sampleRate - sr) > 0.0 || request.maxBlock != blockSize))
+        {
+            request.sampleRate = sr;
+            request.maxBlock = blockSize;
+            loads.deferred[index] = request;
+            loads.worker.submit (std::move (request));
+            continue;
+        }
+        if (sr <= 0.0 || blockSize <= 0)
+        {
+            request.sampleRate = 0.0;
+            loads.deferred[index] = std::move (request);
+            continue;
+        }
+        bool loaded = result.primed && ! result.primed.stateRestoreFailed;
+        if (loaded)
+        {
+            if (request.beforeCommit) request.beforeCommit();
+            strip.getNativeMultisampleSlot().prepareReplacement();
+            suspendProcessing();
+            loaded = strip.commitNativeMultisample (result.primed);
+            if (loaded) strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+            resumeProcessing();
+        }
+        loads.pending[index] = false;
+        loads.deferred[index].reset();
+        auto& track = session.track (request.trackIndex);
+        if (loaded)
+        {
+            track.nativeMultisamplePath = request.path.u8string();
+            track.nativeMultisampleLocator = request.locator;
+            if (! request.restoring) track.nativeMultisampleStateBase64.clear();
+            track.nativeClapPath.clear(); track.nativeClapPluginId.clear(); track.nativeClapStateBase64.clear();
+            track.nativeLv2Path.clear(); track.nativeLv2PluginId.clear(); track.nativeLv2StateBase64.clear();
+            track.nativeVst3Path.clear(); track.nativeVst3PluginId.clear(); track.nativeVst3StateBase64.clear();
+            track.nativeAuIdentifier.clear(); track.nativeAuStateBase64.clear();
+            track.pluginDescriptor.reset(); track.pluginLegacyDescriptionXml.clear(); track.pluginStateBase64.clear();
+            track.builtinUnitId.clear(); track.builtinStateBase64.clear();
+            auto* instance = strip.getNativeMultisampleSlot().getInstance();
+            const auto alive = playbackServiceAlive;
+            instance->setReplacementLoader ([this, alive, instance] (std::filesystem::path path, int preset,
+                                                               std::function<void (bool, std::string)> done)
+            {
+                if (! alive->load (std::memory_order_acquire)) return;
+                int t = -1;
+                for (int candidate = 0; candidate < Session::kNumTracks; ++candidate)
+                    if (getStrip (candidate).getNativeMultisampleSlot().getInstance() == instance)
+                    { t = candidate; break; }
+                if (t < 0) { done (false, "The soundfont is no longer attached to a track"); return; }
+                auto& slot = getStrip (t).getNativeMultisampleSlot();
+                std::vector<std::uint8_t> state;
+                slot.saveState (state);
+                auto locator = path.u8string() == slot.getLoadedSoundfontPath()
+                    ? session.track (t).nativeMultisampleLocator : std::nullopt;
+                if (! requestNativeMultisampleLoad (t, std::move (path), std::move (locator), done,
+                                                     preset, false, std::move (state)))
+                    done (false, "The track cannot load a soundfont now");
+            });
+            recomputePdc();
+            broadcastChange();
+        }
+        else if (request.restoring)
+        {
+            strip.markNativeMultisampleRestoreFailed();
+            lastPluginLoadFailures.push_back ({ dusk::text::format ("Track %d", request.trackIndex + 1),
+                request.path.stem().u8string(), "multisample", result.error });
+            broadcastChange();
+        }
+        if (request.onDone) request.onDone (loaded, result.error);
+    }
+}
+#endif
 
 void AudioEngine::drainCallbackDiagnostics()
 {
@@ -1953,13 +2237,88 @@ void AudioEngine::servicePlayback()
     // worker's first touch of the streams or after its last.
     if (offlineRenderActive.load (std::memory_order_acquire))
         return;
+    serviceMidiRecording();
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    serviceMultisampleLoads();
+#endif
     playbackEngine.service();
     // A swap the audio thread has taken is still fading for a few milliseconds
     // before it hands the old streams back, so the timer outlasts the last work.
-    if (playbackEngine.hasPendingWork())
+    bool workPending = recordManager.isActive() || playbackEngine.hasPendingWork();
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    workPending = workPending || hasPendingMultisampleLoads();
+#endif
+    if (workPending)
         playbackIdleTicks = 0;
     else if (++playbackIdleTicks >= 50)
         playbackServiceTimer.stopTimer();
+}
+
+void AudioEngine::serviceMidiRecording()
+{
+    recordManager.serviceMidiCapture();
+    if (! recordManager.isMidiMergeCapture()) return;
+    const double sr = getCurrentSampleRate();
+    const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
+    if (sr <= 0.0 || bpm <= 0.0f) return;
+    for (auto& group : recordManager.takeMidiPassGroups())
+    {
+        std::uint32_t changedMask = 0;
+        for (const auto& captured : group.tracks)
+            if (! captured.pass.notes.empty() || ! captured.pass.ccs.empty())
+                changedMask |= std::uint32_t { 1 } << captured.trackIndex;
+        if (changedMask == 0) continue;
+        if (onBeforeRecordCommit) onBeforeRecordCommit (changedMask);
+        std::vector<MidiMergePassAction::TrackDiff> diffs;
+        std::vector<std::pair<int, int>> committed;
+        for (const auto& captured : group.tracks)
+        {
+            if (captured.pass.notes.empty() && captured.pass.ccs.empty()) continue;
+            auto& track = session.track (captured.trackIndex);
+            auto before = track.midiRegions.current();
+            auto after = before;
+            int targetIndex = -1;
+            const auto passEnd = group.timelineStart + captured.pass.lengthInSamples;
+            for (int i = (int) after.size() - 1; i >= 0; --i)
+            {
+                const auto& region = after[(std::size_t) i];
+                if (! region.locked && group.timelineStart <= region.timelineStart + region.lengthInSamples
+                    && passEnd >= region.timelineStart)
+                {
+                    targetIndex = i;
+                    break;
+                }
+            }
+            if (targetIndex < 0)
+            {
+                targetIndex = (int) after.size();
+                MidiRegion fresh;
+                fresh.timelineStart = group.timelineStart;
+                fresh.recordedAtBPM = bpm;
+                after.push_back (std::move (fresh));
+            }
+            auto& target = after[(std::size_t) targetIndex];
+            MidiRegion pass;
+            pass.notes = captured.pass.notes;
+            pass.ccs = captured.pass.ccs;
+            pass.lengthInTicks = captured.pass.lengthInTicks;
+            const auto merged = mergeMidiPass (target, pass,
+                samplesToTicks (group.timelineStart - target.timelineStart,
+                               group.capturedSampleRate, group.capturedBpm));
+            if (! merged.changed) continue;
+            target.timelineStart -= ticksToSamples (merged.leadingTicks,
+                                                    group.capturedSampleRate, group.capturedBpm);
+            target.lengthInSamples = ticksToSamples (target.lengthInTicks, sr, bpm);
+            diffs.push_back ({ captured.trackIndex, std::move (before), std::move (after) });
+            committed.emplace_back (captured.trackIndex, targetIndex);
+        }
+        if (diffs.empty()) continue;
+        undoManager.beginNewTransaction ("MIDI Merge pass");
+        if (undoManager.perform (new MidiMergePassAction (session, *this, std::move (diffs))))
+            for (const auto& target : committed)
+                if (onMidiPassCommitted) onMidiPassCommitted (target.first, target.second);
+        undoManager.beginNewTransaction();
+    }
 }
 
 void AudioEngine::play (PlaybackEngine::Audition audition)
@@ -2012,6 +2371,8 @@ void AudioEngine::stop()
             if (onBeforeRecordCommit)
                 onBeforeRecordCommit (recordManager.getActiveCaptureTrackMask());
             recordManager.stopRecording (transport.getPlayhead());
+            updateAssetWorkPause();
+            serviceMidiRecording();
             activeRecordStart.store (std::numeric_limits<std::int64_t>::min(),
                                       std::memory_order_relaxed);
             activeLoopRecordPassOrdinal.store (0, std::memory_order_relaxed);
@@ -2328,6 +2689,7 @@ void AudioEngine::record()
         transport.setPlayhead (startSample);
 
     activeRecordStart.store (startSample, std::memory_order_relaxed);
+    updateAssetWorkPause();
     activeLoopRecordPassOrdinal.store (loopPlan.enabled ? 1 : 0,
                                         std::memory_order_release);
 
@@ -2373,6 +2735,7 @@ void AudioEngine::record()
 
     playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);  // un-armed tracks still play through
     transport.setState (Transport::State::Recording);
+    schedulePlaybackService();
 }
 
 void AudioEngine::jumpToPrevMarker()
@@ -2585,6 +2948,7 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
         {
             track.nativeMultisamplePath.clear();
             track.nativeMultisampleStateBase64.clear();
+            track.nativeMultisampleLocator.reset();
         }
 #endif
         if (strip.isBuiltinLoaded())
@@ -2823,6 +3187,12 @@ void AudioEngine::consumeTransportStateAfterLoad()
 
 void AudioEngine::consumePluginStateAfterLoad()
 {
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    ++multisampleLoads->sessionGeneration;
+    multisampleLoads->worker.cancelAll();
+    multisampleLoads->pending.fill (false);
+    for (auto& request : multisampleLoads->deferred) request.reset();
+#endif
     // Mirror of publish: read the (just-deserialised) strings on each track
     // and re-instantiate the plugin in the live PluginSlot. Failures log
     // and continue rather than aborting the whole session load - a missing
@@ -3187,7 +3557,7 @@ void AudioEngine::consumePluginStateAfterLoad()
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
         migrateLegacyMultisampleTrack (track, pluginManager);
-        if (track.nativeMultisamplePath.isNotEmpty())
+        if (track.nativeMultisamplePath.isNotEmpty() || track.nativeMultisampleLocator)
         {
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
@@ -3201,52 +3571,19 @@ void AudioEngine::consumePluginStateAfterLoad()
                     dusk::text::format ("Track %d", t + 1),
                     soundfont.getFileNameWithoutExtension(), "multisample"))
                 continue;
-            auto& blob = decoded.bytes;
-            if (strip.isPrepared())
-            {
-                // Two-phase: the soundfont parse + state restore run with the
-                // audio thread untouched; only the swap is gated.
-                std::string err;
-                auto primed = strip.primeNativeMultisample (soundfont, err, &blob);
-                const bool stateWasSupplied = ! blob.empty();
-                const bool stateRestored = ! primed.stateRestoreFailed;
-                // The swap destroys the outgoing instance - join its loader here,
-                // not with the audio thread parked (mirrors the teardown below).
-                strip.getNativeMultisampleSlot().drainPendingLoads();
-                suspendProcessing();
-                // Evict every other host and the outgoing soundfont whether or not
-                // the prime succeeded, so a failed restore can't leave the previous
-                // session's instrument playing (loadNativeClap does this inline).
-                strip.unloadNativeClap();
-                strip.unloadNativeLv2();
-                strip.unloadNativeVst3();
-                strip.unloadNativeAu();
-                bool loaded = static_cast<bool> (primed);
-                if (loaded && stateRestored)
-                    loaded = strip.commitNativeMultisample (std::move (primed));
-                const auto reason = hosting::enforceRestorePolicy (
-                    loaded, stateWasSupplied, stateRestored, err, blob.size(),
-                    [&] { strip.unloadNativeMultisample(); });
-                resumeProcessing();
-                if (! reason.empty())
-                {
-                    // Must follow the unload above, which clears the flag.
-                    strip.markNativeMultisampleRestoreFailed();   // keep refs - see the CLAP twin
-                    lastPluginLoadFailures.push_back ({
-                        "Track " + juce::String (t + 1),
-                        soundfont.getFileNameWithoutExtension(),
-                        "multisample", reason });
-                }
-            }
-            else
-            {
-                strip.unloadNativeClap();   // see the CLAP pending branch above
-                strip.unloadNativeLv2();
-                strip.unloadNativeVst3();
-                strip.unloadNativeAu();
-                strip.unloadBuiltin();
-                strip.setPendingNativeMultisample (soundfont, std::move (blob));
-            }
+            strip.getNativeMultisampleSlot().prepareReplacement();
+            suspendProcessing();
+            auto outgoing = strip.getNativeMultisampleSlot().detach();
+            strip.unloadNativeClap();
+            strip.unloadNativeLv2();
+            strip.unloadNativeVst3();
+            strip.unloadNativeAu();
+            strip.unloadBuiltin();
+            resumeProcessing();
+            strip.markNativeMultisampleRestoreFailed();
+            requestNativeMultisampleLoad (t,
+                std::filesystem::u8path (track.nativeMultisamplePath.toStdString()),
+                track.nativeMultisampleLocator, {}, -1, true, std::move (decoded.bytes));
             continue;
         }
 #endif
@@ -3997,7 +4334,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         }
     }
     metronome.prepare (sr);
-    playbackEngine.prepare (bs);  // size the playback read scratch - audio thread mustn't allocate
+    playbackEngine.prepare (bs, sr);
     pitchDetector.prepare (sr);   // ~46 ms history at the device rate
 
     mixL.assign ((size_t) bs, 0.0f);
@@ -5680,6 +6017,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const std::int64_t loopReadEnd = loopRecordingActive
         ? loopRecordPlan.loopEndSample
         : (playbackLoopActive ? transport.getLoopEnd() : -1);
+    playbackEngine.beginAudioBlock (blockStartSamples, loopReadStart, loopReadEnd);
 
     // Re-enumerated at each capture site instead of storing a variable-size
     // span list. The helper invokes callbacks directly, so the audio thread
@@ -5843,7 +6181,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // A frozen track reads its baked WAV during Play/Record even if armed
         // (frozen playback is the render, never live input) - but it stays silent
         // when stopped, like any other disk track.
-        const bool willReadFromDisk = isPlaying || (isRecording && (isFrozen || ! armed));
+        const bool willReadFromDisk = isPlaying || (isRecording
+            && (isFrozen || ! armed || (midiTrack && recordManager.isMidiMergeCapture())));
 
         // Live-input monitor gate. IN is the ONLY control over live-input
         // monitoring. ARM is purely a recorder-enable; it does NOT gate
@@ -6038,7 +6377,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         //     (the track was frozen, or in an audio mode where the insert never
         //     ran): the note-offs of that stretch never reached it.
         //
-        // The route is exactly what pullLiveMidi reads below. A MIDI track
+        // The audible route excludes capture-only input: changing that input
+        // must not reset the instrument's timeline voices. A MIDI track
         // takes live input except in an offline render, which must stay
         // deterministic. A track playing its timeline takes it only with IN
         // on; otherwise the input is what the instrument plays, whatever IN
@@ -6047,20 +6387,22 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // unless its input already is the keyboard and events would double.
         const bool pullsLiveMidi = midiTrack && ! offlineRender
                                 && (monitorEnabled || ! (willReadFromDisk && ! isFrozen));
-        midi::LiveMidiRoute liveRoute;
-        if (pullsLiveMidi)
+        const bool capturesLiveMidi = isRecording && armed && midiTrack && ! offlineRender;
+        midi::LiveMidiRoute inputRoute;
+        if (pullsLiveMidi || capturesLiveMidi)
         {
             const int numInputs = (int) perInputMidi.size();
             const auto readable = [numInputs] (int index) noexcept
             {
                 return index >= 0 && index < numInputs ? index : -1;
             };
-            liveRoute.input = readable (session.track (t).midiInputIndex.load (std::memory_order_relaxed));
+            inputRoute.input = readable (session.track (t).midiInputIndex.load (std::memory_order_relaxed));
             const int keyboard = readable (midiIn.getVirtualKeyboardIndex());
-            if (armed && keyboard != liveRoute.input)
-                liveRoute.keyboard = keyboard;
-            liveRoute.channel = session.track (t).midiChannel.load (std::memory_order_relaxed);
+            if (armed && keyboard != inputRoute.input)
+                inputRoute.keyboard = keyboard;
+            inputRoute.channel = session.track (t).midiChannel.load (std::memory_order_relaxed);
         }
+        const auto liveRoute = pullsLiveMidi ? inputRoute : midi::LiveMidiRoute {};
         const bool liveRouteNarrowed = midi::liveRouteNarrows (lastLiveMidiRoute[(size_t) t], liveRoute);
         lastLiveMidiRoute[(size_t) t] = liveRoute;
 
@@ -6140,8 +6482,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                      std::uint8_t data2, int sampleOffset) noexcept
         {
             const std::array<std::uint8_t, 3> bytes { status, data1, data2 };
+            const int size = ((status & 0xf0) == 0xc0 || (status & 0xf0) == 0xd0) ? 2 : 3;
             const bool added = generatedMidiBudget.spendDiscretionary (kGeneratedEventBytes)
-                && perTrackMidi[(size_t) t].addEvent (bytes.data(), (int) bytes.size(),
+                && perTrackMidi[(size_t) t].addEvent (bytes.data(), size,
                                                       sampleOffset);
             if (! added) midiEventsDropped = true;
             return added;
@@ -6208,12 +6551,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     const int ch = (status & 0xF0) != 0xF0 ? (int) (status & 0x0F) + 1 : 0;
                     if (ch != chFilter) continue;
                 }
-                if (! midiEventsDropped
+                if (pullsLiveMidi && ! midiEventsDropped
                     && ! perTrackMidi[(size_t) t].addEvent (v.getRawData(),
                                                             v.getRawDataSize(),
                                                             meta.samplePosition))
                     midiEventsDropped = true;
-                if (isRecording && armed && midiTrack && ! liveRecordOverflow
+                if (capturesLiveMidi && ! liveRecordOverflow
                     && ! liveRecordMidiScratch.addEvent (v.getRawData(),
                                                          v.getRawDataSize(),
                                                          meta.samplePosition))
@@ -6225,8 +6568,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // from a source the flush never compared.
         auto pullLiveMidi = [&] ()
         {
-            pullInput (liveRoute.input, liveRoute.channel);
-            pullInput (liveRoute.keyboard, liveRoute.channel);
+            pullInput (inputRoute.input, inputRoute.channel);
+            pullInput (inputRoute.keyboard, inputRoute.channel);
         };
 
         if (willReadFromDisk && ! isFrozen)
@@ -6436,6 +6779,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // fails), and live input must never print into a deterministic file.
             pullLiveMidi();
         }
+        if (capturesLiveMidi && ! pullsLiveMidi)
+            pullLiveMidi();
 
         // A torn block can deliver a note-on without its note-off, and a
         // dropped one loses note-offs for notes it never started, so neither
@@ -6463,7 +6808,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // MIDI buffer in place, so by the time processAndAccumulate
         // returns, perTrackMidiScratch is typically empty. Writing here
         // captures the events the user actually played.
-        if (isRecording && armed && midiTrack && ! liveRecordMidiScratch.isEmpty())
+        if (isRecording && armed && midiTrack)
         {
             if (loopRecordingActive)
             {
@@ -6482,7 +6827,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 const auto recStart = activeRecordStart.load (std::memory_order_relaxed);
                 const auto blockOffsetFromRecord = blockStartSamples - recStart;
                 recordManager.writeMidiBlock (
-                    t, liveRecordMidiScratch, blockOffsetFromRecord);
+                    t, liveRecordMidiScratch, blockOffsetFromRecord, nullptr, numSamples);
             }
         }
 

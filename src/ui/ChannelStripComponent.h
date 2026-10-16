@@ -5,7 +5,9 @@
 #include <array>
 #include <chrono>
 #include <functional>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include "CompMeterStrip.h"
 #include "SplitModuleButton.h"
@@ -28,6 +30,7 @@ class ChannelStripComponent final : public juce::Component,
                                        private dusk::Timer
 {
 public:
+    using StripSafePointer = juce::Component::SafePointer<ChannelStripComponent>;
     ChannelStripComponent (int trackIndex, Track& trackRef, Session& sessionRef,
                             class PluginSlot& slotRef, AudioEngine& engineRef);
     ~ChannelStripComponent() override;
@@ -500,8 +503,12 @@ private:
     // or replace it from outside the UI, so the editor is dropped whenever the
     // slot's live instance stops matching (see syncMultisampleEditorOwner).
     class DuskMultisampleProcessor* multisampleEditorOwner = nullptr;
+    std::shared_ptr<std::function<void()>> multisampleEditorRelease;
+    void dropMultisampleEditor();
     void syncMultisampleEditorOwner();
-    bool loadNativeMultisampleForChannel (const juce::File& soundfont);
+    bool loadNativeMultisampleForChannel (const std::filesystem::path& soundfont,
+                                          std::optional<sfz::ManagedSfzLocator> locator = {},
+                                          bool openEditor = false);
     // Join an in-flight soundfont load. Call BEFORE suspendProcessing on any
     // path that tears the slot down - the teardown joins the loader pool, and
     // a GM-bank decode takes seconds the audio thread must not be parked for.
@@ -545,6 +552,15 @@ public:
     // the shell has to be able to close it and to ask whether it is open.
     void closeBuiltinEditorPopup();
     bool isBuiltinEditorOpen() const noexcept;
+    void openSfzLibrary();
+    void setSfzSourceOpenForScenario (std::function<void (std::string)> callback)
+    { sfzSourceOpenForScenario = std::move (callback); }
+    void closeSfzLibrary();
+    bool isSfzLibraryOpen() const noexcept;
+    bool offerSfzLibraryKey (const std::string& description, std::uint32_t character);
+    bool sfzLibraryPointerForScenario (const std::string& control, float position, bool pressed);
+    bool sfzLibraryInputForScenario (const std::string& input);
+    void captureSfzLibrary (const std::string& capturePath);
 
     // Before a track move: every editor and panel over this strip holds its
     // slot's insert or parameters, which are about to belong to another track.
@@ -555,6 +571,7 @@ public:
 private:
 
     bool compactMode = false;
+    std::function<void (std::string)> sfzSourceOpenForScenario;
     consolelayout::HorizontalDensity horizontalDensity =
         consolelayout::HorizontalDensity::Comfortable;
     SplitModuleButton eqCompactButton   { "EQ" };
@@ -575,6 +592,7 @@ private:
     // native child over a dim, dismissed by Escape, a click outside or the same
     // slot control that opened it.
     std::unique_ptr<imgui::DuskPanelWindow> builtinEditorWindow;
+    std::unique_ptr<imgui::DuskPanelWindow> sfzLibraryWindow;
     // A unit that is one of Dusk's own DAF plug-ins brings its own editor; the
     // panel window above stays for the units drawn from a parameter table.
     std::unique_ptr<imgui::DafEditorHost> builtinPluginEditor;
@@ -588,6 +606,8 @@ private:
     PluginEditorHider compEditorHider;
     std::unique_ptr<DimOverlay> builtinEditorDim;
     PluginEditorHider builtinEditorHider;
+    std::unique_ptr<DimOverlay> sfzLibraryDim;
+    PluginEditorHider sfzLibraryHider;
    #endif
     void openEqEditorPopup();
     void openCompEditorPopup();

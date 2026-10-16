@@ -380,6 +380,15 @@ const ScenarioRegistrar auxSources { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAuxSources (host, ctx); }
 } };
 
+void pushSettingsTab (std::vector<Step>& steps, GuiHost& host, const std::string& tab)
+{
+    const auto control = "tab-" + tab;
+    steps.push_back ({ 0, [] {}, [&host, control] { return host.pointerAudioSettings (control, 0.5f, false); },
+                       "Settings tab was not drawn: " + tab, {}, kSettleBoundMs });
+    steps.push_back ({ 0, [] {}, [&host, control] { return host.clickAudioSettingsControl (control); },
+                       "Settings tab could not be selected: " + tab, {}, kSettleBoundMs });
+}
+
 std::optional<ScenarioResult> runSettingsDefaults (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
@@ -444,7 +453,7 @@ std::optional<ScenarioResult> runSettingsDefaults (GuiHost& host, ScenarioContex
     {
         steps->push_back ({ 200, [&host, &ctx]
         { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
-        steps->push_back ({ 200, [&host] { host.inputAudioSettings ("scroll-down"); } });
+        pushSettingsTab (*steps, host, "general");
         steps->push_back ({ 200, [&host, &ctx]
         { ctx.expect (host.clickAudioSettingsControl ("tape-default"), "tape default checkbox was not visible"); } });
         steps->push_back ({ 200, [&host, &ctx]
@@ -528,7 +537,7 @@ std::optional<ScenarioResult> runSettingsUiScale (GuiHost& host, ScenarioContext
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
-    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("scroll-down"); } });
+    pushSettingsTab (*steps, host, "general");
     for (const float position : { 0.4f, 0.5f, 0.6f, 0.7f })
         steps->push_back ({ 200, [&host, &ctx, position]
         { ctx.expect (host.pointerAudioSettings ("ui-scale", position, true),
@@ -570,6 +579,94 @@ const ScenarioRegistrar settingsUiScale { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsUiScale (host, ctx); }
 } };
 
+std::optional<ScenarioResult> runSettingsRecordingOffset (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings");
+   #else
+    auto& engine = ctx.engine();
+    const auto original = engine.getRecordingLatencyOffsetSamples();
+    const auto config = dusk::fs::appConfigDir() / "app-config.properties";
+    const bool hadConfig = std::filesystem::exists (config);
+    const auto configText = dusk::fs::loadFileAsString (config);
+    ctx.cleanup ([&host, &engine, original, config, hadConfig, configText]
+    {
+        host.closeAudioSettings();
+        engine.setRecordingLatencyOffsetSamples (original);
+        if (hadConfig) dusk::fs::writeStringToFile (config, configText);
+        else { std::error_code error; std::filesystem::remove (config, error); }
+    });
+    appconfig::setRecordingLatencyOffsetSamples (0);
+    engine.setRecordingLatencyOffsetSamples (0);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
+    pushSettingsTab (*steps, host, "advanced");
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (! host.pointerAudioSettings ("autosave", 0.5f, false), "hidden General control retained a click target");
+        ctx.expect (host.clickAudioSettingsControl ("record-offset-plus"), "recording offset plus button was not visible");
+    } });
+    steps->push_back ({ 0, [&host, &ctx, &engine]
+    {
+        ctx.expect (engine.getRecordingLatencyOffsetSamples() == 1
+                    && appconfig::getRecordingLatencyOffsetSamples() == 1, "plus did not apply exactly one sample");
+        ctx.expect (host.clickAudioSettingsControl ("record-offset-minus"), "recording offset minus button was not visible");
+    } });
+    steps->push_back ({ 0, [&ctx, &engine]
+    { ctx.expect (engine.getRecordingLatencyOffsetSamples() == 0, "minus did not apply exactly one sample"); } });
+    for (const auto& value : std::vector<std::pair<std::string, int>> {
+            { "-137", -137 }, { "2486", 2486 }, { "192001", 192000 }, { "-192001", -192000 } })
+    {
+        steps->push_back ({ 0, [] {}, [&host] { return host.clickAudioSettingsControl ("record-offset"); },
+                           "recording offset input was not visible", {}, kSettleBoundMs });
+        steps->push_back ({ 0, [&host, &ctx]
+        { ctx.expect (host.inputAudioSettings ("command + a"), "recording offset text could not be selected"); } });
+        steps->push_back ({ 0, [&host, &ctx, value]
+        {
+            host.inputAudioSettings ("focus-out");
+            for (const char character : value.first)
+                ctx.expect (host.pressKey (std::string (1, character), character), "recording offset did not receive typed text");
+        } });
+        steps->push_back ({ 0, [&host, &ctx]
+        { ctx.expect (host.inputAudioSettings ("enter"), "recording offset did not accept Enter"); } });
+        steps->push_back ({ 0, [&ctx, &engine, value]
+        {
+            ctx.expect (engine.getRecordingLatencyOffsetSamples() == value.second
+                        && appconfig::getRecordingLatencyOffsetSamples() == value.second,
+                        "typed recording offset was not committed within its sample bounds: " + value.first);
+        } });
+    }
+    steps->push_back ({ 0, [&host] { host.closeAudioSettings(); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "settings did not reopen"); },
+    [&host] { return ! host.audioSettingsOpen(); }, "settings did not finish closing before reopening", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.pointerAudioSettings ("record-offset", 0.5f, false), "Settings did not retain the selected Advanced tab"); } });
+    steps->push_back ({ 0, [] {}, [&host] { return host.pointerAudioSettings ("record-offset-plus", 0.5f, false); },
+                       "reopened offset plus button was not visible", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickAudioSettingsControl ("record-offset-plus"), "reopened offset plus button could not be clicked"); } });
+    steps->push_back ({ 0, [&ctx, &engine]
+    { ctx.expect (engine.getRecordingLatencyOffsetSamples() == -191999,
+        "reopening Settings did not retain the saved offset: " + std::to_string (engine.getRecordingLatencyOffsetSamples())); } });
+    steps->push_back ({ 0, [&host] { host.closeAudioSettings(); } });
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.audioSettingsOpen(); }, kSettleBoundMs,
+                       [&ctx] { ctx.complete (ctx.verdict()); }, "recording offset Settings did not close");
+    });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsRecordingOffset { Scenario {
+    "gui.settings_recording_offset", { "gui", "settings", "recording" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000, runSettingsRecordingOffset
+} };
+
 std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
@@ -609,10 +706,11 @@ std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContex
     steps->push_back ({ 200, [&host] { host.closeAudioSettings(); } });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.openAudioSettings(), "settings did not reopen"); } });
-    steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.inputAudioSettings ("scroll-down"), "settings did not accept scrolling"); } });
+    pushSettingsTab (*steps, host, "general");
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickAudioSettingsControl ("autosave"), "autosave dropdown is not visible"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.inputAudioSettings ("focus-out"), "autosave dropdown did not accept the focus change"); } });
     steps->push_back ({ 200, [&host] { host.inputAudioSettings ("home"); } });
     steps->push_back ({ 200, [&host] { host.inputAudioSettings ("enter"); } });
     steps->push_back ({ 200, [&ctx, &session]
@@ -633,7 +731,7 @@ std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContex
         ctx.expect (nearly (savedFaderOf (saved), 0.0f), "autosave changed the canonical session");
         ctx.expect (host.openAudioSettings(), "settings did not reopen for the maximum cadence");
     } });
-    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("scroll-down"); } });
+    pushSettingsTab (*steps, host, "general");
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickAudioSettingsControl ("autosave"), "autosave dropdown is not visible"); } });
     steps->push_back ({ 200, [&host] { host.inputAudioSettings ("end"); } });
@@ -715,6 +813,7 @@ std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext&
     // frames. Rescanning again lists the same ports, so pressing Rescan as soon
     // as it is drawn, and once more if the list has not moved, cannot change
     // the verdict.
+    pushSettingsTab (*steps, host, "audio");
     steps->push_back ({ 0, [] {}, [&host] { return host.clickAudioSettingsControl ("rescan"); },
                         "Rescan devices button was not drawn" });
     steps->push_back ({ 0, [&host, &engine]
@@ -752,6 +851,7 @@ std::optional<ScenarioResult> runSettingsMidiBindings (GuiHost& host, ScenarioCo
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.openAudioSettings(), "native audio settings did not open"); } });
+    pushSettingsTab (*steps, host, "midi-bindings");
     steps->push_back ({ 400, [&host, &ctx]
     { ctx.expect (host.clickAudioSettingsControl ("midi-bindings"), "MIDI Bindings button was not drawn"); } });
     steps->push_back ({ 300, [&host, &ctx]
@@ -936,6 +1036,8 @@ std::optional<ScenarioResult> runFaderEntry (GuiHost& host, ScenarioContext& ctx
 {
     auto& session = ctx.session();
     auto& engine = ctx.engine();
+    const bool hardwareInputs = engine.setHardwareMidiInputsEnabledForScenario (false);
+    ctx.cleanup ([&engine, hardwareInputs] { engine.setHardwareMidiInputsEnabledForScenario (hardwareInputs); });
     const auto bindings = session.midiBindings.current();
     const auto originalStage = engine.getStage();
     ctx.cleanup ([&host, &session, bindings, originalStage]
@@ -1746,6 +1848,8 @@ std::optional<ScenarioResult> runEqMidiLearnBand (GuiHost& host, ScenarioContext
     auto& session = ctx.session();
     if (! engine.getTransport().isStopped() || ! host.modalStackEmpty() || session.midiLearnPending.load() >= 0)
         return ScenarioResult::skip ("requires stopped transport, no modal and no pending learn");
+    const bool hardwareInputs = engine.setHardwareMidiInputsEnabledForScenario (false);
+    ctx.cleanup ([&engine, hardwareInputs] { engine.setHardwareMidiInputsEnabledForScenario (hardwareInputs); });
     const auto capture = session.midiLearnCapture.load();
     const auto originalDir = currentSessionDirectory (session);
     const auto restore = ctx.tempDir() / "restore.json";
@@ -1991,6 +2095,8 @@ std::optional<ScenarioResult> runMidiBindingsPanel (GuiHost& host, ScenarioConte
     if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
     auto& session = ctx.session();
     auto& engine = ctx.engine();
+    const bool hardwareInputs = engine.setHardwareMidiInputsEnabledForScenario (false);
+    ctx.cleanup ([&engine, hardwareInputs] { engine.setHardwareMidiInputsEnabledForScenario (hardwareInputs); });
     const auto publish = [&session] (std::vector<MidiBinding> binds)
     {
         session.midiBindings.mutate ([&binds] (std::vector<MidiBinding>& current) { current = binds; });
@@ -2033,6 +2139,7 @@ std::optional<ScenarioResult> runMidiBindingsPanel (GuiHost& host, ScenarioConte
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.openAudioSettings(), "native audio settings did not open"); } });
+    pushSettingsTab (*steps, host, "midi-bindings");
     steps->push_back ({ 400, [&host, &ctx]
     { ctx.expect (host.clickAudioSettingsControl ("midi-bindings"), "MIDI Bindings button was not drawn"); } });
     steps->push_back ({ 300, [&host, &ctx, row, fader, pan]

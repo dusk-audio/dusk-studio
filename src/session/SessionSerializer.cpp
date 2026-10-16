@@ -80,7 +80,7 @@ inline std::optional<PluginDescriptor> descriptorFromObject (
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 10;
+constexpr int kFormatVersion = 11;
 
 inline bool hasTakeProvenance (const TakeProvenance& provenance) noexcept
 {
@@ -712,6 +712,13 @@ bool migrateSession (nlohmann::json& root, int from)
                 ++v;
                 break;
 
+            case 10:
+                // Tagged channel controls and managed SFZ identities cannot be
+                // preserved by older readers when they save the session again.
+                if (root.is_object()) root["version"] = 11;
+                ++v;
+                break;
+
             default:
                 std::fprintf (stderr,
                               "[Dusk Studio/SessionSerializer] no migrator from v%d to v%d\n",
@@ -927,10 +934,12 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
         obj["native_au_identifier"] = toStd (t.nativeAuIdentifier);
         obj["native_au_state"]      = toStd (t.nativeAuStateBase64);
     }
-    if (t.nativeMultisamplePath.isNotEmpty())
+    if (t.nativeMultisamplePath.isNotEmpty() || t.nativeMultisampleLocator)
     {
         obj["native_multisample_path"]  = toStd (t.nativeMultisamplePath);
         obj["native_multisample_state"] = toStd (t.nativeMultisampleStateBase64);
+        if (t.nativeMultisampleLocator)
+            obj["native_multisample_managed"] = sfz::locatorToJson (*t.nativeMultisampleLocator);
     }
     if (! t.builtinUnitId.empty())
     {
@@ -1198,6 +1207,8 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                     cObj["ctrl"] = c.controller;
                     cObj["val"]  = c.value;
                     cObj["at"]   = (std::int64_t) c.atTick;
+                    if (c.kind != MidiCc::Kind::ControlChange)
+                        cObj["kind"] = static_cast<int> (c.kind);
                     ccs.push_back (std::move (cObj));
                 }
                 rObj["ccs"] = std::move (ccs);
@@ -1253,6 +1264,8 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                             cObj["ctrl"] = c.controller;
                             cObj["val"]  = c.value;
                             cObj["at"]   = (std::int64_t) c.atTick;
+                            if (c.kind != MidiCc::Kind::ControlChange)
+                                cObj["kind"] = static_cast<int> (c.kind);
                             tccs.push_back (std::move (cObj));
                         }
                         tObj["ccs"] = std::move (tccs);
@@ -1500,6 +1513,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
     t.nativeAuStateBase64   = json::getString (v, "native_au_state");
     t.nativeMultisamplePath        = json::getString (v, "native_multisample_path");
     t.nativeMultisampleStateBase64 = json::getString (v, "native_multisample_state");
+    t.nativeMultisampleLocator = sfz::locatorFromJson (json::child (v, "native_multisample_managed"));
     t.builtinUnitId      = json::getString (v, "builtin_id");
     t.builtinStateBase64 = json::getString (v, "builtin_state");
 
@@ -1947,8 +1961,11 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
             if (! cv.is_object()) continue;
             MidiCc c;
             c.channel    = jlimit (1, 16,  json::getInt (cv, "ch", 1));
+            const int kind = json::getInt (cv, "kind", 0);
+            if (kind >= 0 && kind <= static_cast<int> (MidiCc::Kind::ProgramChange))
+                c.kind = static_cast<MidiCc::Kind> (kind);
             c.controller = jlimit (0, 127, json::getInt (cv, "ctrl", 0));
-            c.value      = jlimit (0, 127, json::getInt (cv, "val", 0));
+            c.value      = std::clamp (json::getInt (cv, "val", 0), 0, c.maxValue());
             c.atTick     = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (cv, "at", 0));
             dst.push_back (c);
         }
@@ -2430,6 +2447,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport["metronome_only_countin"]     = s.metronomeOnlyDuringCountIn.load();
     tport["metronome_polyphonic"]       = s.metronomePolyphonic.load();
     tport["count_in_enabled"]  = s.countInEnabled.load();
+    tport["midi_merge_enabled"] = s.midiMergeEnabled.load();
     tport["time_display_mode"] = s.timeDisplayMode.load();
     // Tascam-style transport-cluster state. The last-record point is
     // what the FFWD-while-stopped tap (= TO LAST REC) snaps to.
@@ -3054,6 +3072,7 @@ bool SessionSerializer::load (Session& s, const File& source)
         // tempo map, sync / MCU identifiers and MIDI bindings don't stay live
         // under the new session. Either way every field below is written once.
         const auto& tport = transportSection;
+        s.midiMergeEnabled.store (json::getBool (tport, "midi_merge_enabled", false));
         if (json::has (tport, "loop_enabled"))  s.savedLoopEnabled  = json::getBool  (tport, "loop_enabled", false);
         if (json::has (tport, "loop_start"))    s.savedLoopStart    = json::getInt64 (tport, "loop_start", 0);
         if (json::has (tport, "loop_end"))      s.savedLoopEnd      = json::getInt64 (tport, "loop_end", 0);

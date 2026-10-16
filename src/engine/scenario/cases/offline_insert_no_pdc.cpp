@@ -89,6 +89,142 @@ const ScenarioRegistrar auxPdcRegistrar { Scenario {
     [] (ScenarioContext& ctx) { return auxReturnAtPdcLimit (ctx); }
 } };
 
+ScenarioResult auxPdcWaitsForStop (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    ctx.cleanup ([&engine, &session]
+    {
+        engine.stop();
+        engine.setAuxStemCapture (1, nullptr, nullptr);
+        for (int a = 0; a < 2; ++a)
+        {
+            session.auxLane (a).hardwareInserts[0].enabled.store (false);
+            session.auxLane (a).hardwareInserts[0].routing.publish (
+                std::make_unique<HardwareInsertRouting>());
+            engine.getAuxLaneStrip (a).insertMode[0].store (AuxLaneStrip::kInsertEmpty);
+        }
+        session.recomputeRtCounters();
+        engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+        engine.recomputePdc();
+    });
+    ctx.keep (session.oversamplingFactor);
+    ctx.keep (track.inputSource);
+    ctx.keep (track.inputMonitor);
+    for (auto* enabled : { &session.master().eqEnabled, &session.master().compEnabled,
+                           &session.master().tapeEnabled })
+    {
+        ctx.keep (*enabled);
+        enabled->store (false);
+    }
+    session.oversamplingFactor.store (1);
+    track.inputSource.store (0);
+    track.inputMonitor.store (true);
+    session.recomputeRtCounters();
+
+    auto setLatency = [&] (int samples)
+    {
+        HardwareInsertRouting routing;
+        routing.latencySamples = samples;
+        session.auxLane (0).hardwareInserts[0].routing.publish (
+            std::make_unique<HardwareInsertRouting> (routing));
+    };
+    setLatency (64);
+    HardwareInsertRouting returnRouting;
+    returnRouting.inputChL = 2;
+    returnRouting.inputChR = 3;
+    session.auxLane (1).hardwareInserts[0].routing.publish (
+        std::make_unique<HardwareInsertRouting> (returnRouting));
+    for (int a = 0; a < 2; ++a)
+    {
+        session.auxLane (a).hardwareInserts[0].enabled.store (true);
+        engine.getAuxLaneStrip (a).insertMode[0].store (AuxLaneStrip::kInsertHardware);
+    }
+    constexpr int kFrames = ScenarioContext::kBlockSize;
+    engine.prepareForSelfTest (ScenarioContext::kSampleRate, kFrames);
+    engine.recomputePdc();
+    ctx.pump (8);
+    ctx.expect (engine.getMasterDryPdcTargetSamples() == 64,
+                "the initial aux latency did not reach the master target");
+    const int dryPathLatency = engine.getMixLatencySamples() - 64;
+
+    std::array<float, kFrames> dry {}, silent {}, inL {}, inR {}, outL {}, outR {}, wetL {}, wetR {};
+    const float* inputs[] = { dry.data(), silent.data(), inL.data(), inR.data() };
+    float* outputs[] = { outL.data(), outR.data() };
+    engine.setAuxStemCapture (1, wetL.data(), wetR.data());
+    auto checkDelay = [&] (int expected, const std::string& phase)
+    {
+        for (bool wet : { false, true })
+        {
+            const int expectedDelay = expected + (wet ? 0 : dryPathLatency);
+            std::array<int, 2> peakAt { -1, -1 };
+            std::array<float, 2> peak {};
+            for (int block = 0; block < 8; ++block)
+            {
+                dry.fill (0.0f); inL.fill (0.0f); inR.fill (0.0f);
+                wetL.fill (0.0f); wetR.fill (0.0f);
+                if (block == 0)
+                {
+                    if (wet) { inL[0] = 0.5f; inR[0] = 0.25f; }
+                    else dry[0] = 0.5f;
+                }
+                engine.audioDeviceIOCallback (inputs, 4, outputs, 2, kFrames, {});
+                const float* measured[] = { wet ? wetL.data() : outL.data(),
+                                            wet ? wetR.data() : outR.data() };
+                for (int c = 0; c < 2; ++c)
+                    for (int i = 0; i < kFrames; ++i)
+                        if (std::abs (measured[c][i]) > peak[(size_t) c])
+                        {
+                            peak[(size_t) c] = std::abs (measured[c][i]);
+                            peakAt[(size_t) c] = block * kFrames + i;
+                        }
+            }
+            const std::string path = phase + (wet ? " aux return" : " dry mix");
+            ctx.note (path + ": L=" + std::to_string (peakAt[0])
+                      + " R=" + std::to_string (peakAt[1])
+                      + " expected=" + std::to_string (expectedDelay));
+            ctx.expect (peak[0] > 0.1f && peak[1] > 0.1f, path + " was silent");
+            ctx.expect (peakAt[0] == expectedDelay && peakAt[1] == expectedDelay,
+                        path + " applied the wrong compensation");
+        }
+    };
+
+    checkDelay (64, "initially stopped");
+    int applied = 64;
+    for (bool recording : { false, true })
+    {
+        for (int target : { 512, 0 })
+        {
+            engine.play();
+            if (recording)
+                engine.getTransport().setState (Transport::State::Recording);
+            ctx.pump (1);
+            ctx.expect (engine.getTransport().getState() == (recording ? Transport::State::Recording
+                                                                     : Transport::State::Playing),
+                        "the transport did not start");
+            setLatency (target);
+            ctx.pump (1);
+            engine.recomputePdc();
+            ctx.expect (engine.getMasterDryPdcTargetSamples() == target,
+                        "the changed aux latency did not reach the master target");
+            checkDelay (applied, (recording ? "recording toward " : "playing toward ")
+                                    + std::to_string (target));
+            engine.stop();
+            ctx.pump (1);
+            checkDelay (target, "stopped at " + std::to_string (target));
+            applied = target;
+        }
+    }
+    engine.setAuxStemCapture (1, nullptr, nullptr);
+    return ctx.verdict();
+}
+
+const ScenarioRegistrar auxPdcStopRegistrar { Scenario {
+    "engine.aux_pdc_waits_for_stop", { "engine", "pdc" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return auxPdcWaitsForStop (ctx); }
+} };
+
 #if DUSKSTUDIO_HAS_NATIVE_VST3
 constexpr int kOfflineStrip = 0;
 constexpr int kOtherStrip   = 3;

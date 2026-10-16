@@ -554,6 +554,16 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     punchButton.addMouseListener (this, false);  // right-click -> settings menu
     addAndMakeVisible (punchButton);
 
+    midiMergeToggle.setClickingTogglesState (true);
+    midiMergeToggle.setTooltip ("Add MIDI recording to an existing region. Each loop pass can be undone while recording.");
+    midiMergeToggle.onClick = [this]
+    {
+        if (! engine.getRecordManager().isActive())
+            engine.getSession().midiMergeEnabled.store (midiMergeToggle.getToggleState(),
+                                                        std::memory_order_relaxed);
+    };
+    addAndMakeVisible (midiMergeToggle);
+
     keyboardButton.setTooltip ("Virtual MIDI Keyboard (K) - type on your keyboard to play notes.");
     keyboardButton.onClick = [this] { if (onVirtualKeyboardToggle) onVirtualKeyboardToggle(); };
     addAndMakeVisible (keyboardButton);
@@ -972,8 +982,11 @@ void TransportBar::refreshButtonStates()
                                  juce::dontSendNotification);
     clickToggle.setToggleState (engine.getSession().metronomeEnabled.load(),
                                 juce::dontSendNotification);
-    countInToggle.setToggleState (engine.getSession().countInEnabled.load(),
-                                   juce::dontSendNotification);
+    auto syncToggle = [] (auto& button, bool on)
+    { button.setToggleState (on, juce::dontSendNotification); };
+    syncToggle (countInToggle, engine.getSession().countInEnabled.load());
+    syncToggle (midiMergeToggle, engine.getSession().midiMergeEnabled.load());
+    midiMergeToggle.setEnabled (! engine.getRecordManager().isActive());
 
     // Avoid stomping the user's mid-edit text - only refresh the BPM
     // display when the label isn't currently being typed into. Show the tempo
@@ -1083,6 +1096,8 @@ void TransportBar::resized()
         area.removeFromLeft (6);
     }
     clockLabel.setBounds (area.removeFromLeft (compact ? 110 : 130));
+    area.removeFromLeft (6);
+    midiMergeToggle.setBounds (area.removeFromLeft (compact ? 74 : 94).reduced (1, 4));
 
     tapeToggle.setBounds (area.removeFromRight (compact ? 48 : 84).reduced (1));
     area.removeFromRight (12);

@@ -162,6 +162,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # on CMP0091=NEW (guaranteed by cmake_minimum_required 3.22).
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    # Source text and string literals must not depend on the Windows code page.
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")
 endif()
 
 # Emit compile_commands.json so clangd / editor tooling resolves JUCE +
@@ -338,7 +340,8 @@ juce_add_gui_app(DuskStudio
 # explicitly in DuskStudioApp::MainWindow so the WM / taskbar / Alt-Tab
 # render the brand icon regardless of install layout.
 if(EXISTS "${DUSKSTUDIO_ICON_PATH}")
-    juce_add_binary_data(DuskStudioBinaryIcon SOURCES "${DUSKSTUDIO_ICON_PATH}")
+    file(GLOB _dusk_sfz_artwork CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/sfz-instruments/sfz_*.png")
+    juce_add_binary_data(DuskStudioBinaryIcon SOURCES "${DUSKSTUDIO_ICON_PATH}" ${_dusk_sfz_artwork})
     target_link_libraries(DuskStudio PRIVATE DuskStudioBinaryIcon)
 endif()
 
@@ -634,11 +637,14 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/DafEditorHost.cpp
         src/ui/imgui/MasteringLimiterView.cpp
         src/ui/imgui/PanelControls.cpp
+        src/ui/imgui/SfzRepositoryView.cpp
+        src/ui/imgui/SfzArtwork.cpp
         src/ui/imgui/StartupView.cpp
         src/ui/imgui/VirtualKeyboardView.cpp)
     target_include_directories(DuskStudio PRIVATE
         "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui"
         "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
+    target_include_directories(DuskStudio SYSTEM PRIVATE "${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl")
 
     # Gate spike for the GUI tower: a standalone framework application window rendering one
     # channel strip, used to measure frame cost and prove the shell. It ships with nothing,
@@ -734,6 +740,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/PluginSlot.cpp
     src/engine/sfz/SfzLibrary.cpp
     src/ui/multisample/SfzLibraryPanel.cpp
+    src/engine/MidiCaptureStream.cpp
     src/engine/RecordManager.cpp
     src/engine/ShutdownPhases.cpp
     src/engine/scenario/ScenarioContext.cpp
@@ -845,6 +852,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_plugin_editors.cpp
     src/ui/scenario/cases/gui_regions_markers.cpp
     src/ui/scenario/cases/gui_session_file.cpp
+    src/ui/scenario/cases/gui_sfz_repository.cpp
     src/ui/scenario/cases/gui_startup_quit.cpp
     src/ui/scenario/cases/gui_tracks.cpp
     src/ui/MainComponent.cpp
@@ -893,6 +901,7 @@ endif()
 
 target_sources(DuskStudio PRIVATE
     src/engine/audiofile/BufferedFileReader.cpp
+    src/engine/audiofile/ReaderFillPool.cpp
     src/engine/audiofile/FileReader.cpp
     src/engine/audiofile/WaveformPeaks.cpp
     src/engine/audiofile/FileWriter.cpp
@@ -961,8 +970,18 @@ endif()
 
 target_sources(DuskStudio PRIVATE
     src/engine/sfz/SfzCatalog.cpp
-    src/engine/sfz/SfzCatalogEnvelope.cpp)
-target_link_libraries(DuskStudio PRIVATE dusk_sodium)
+    src/engine/sfz/SfzCatalogEnvelope.cpp
+    src/engine/sfz/SfzTransfer.cpp
+    src/engine/sfz/SfzArtworkCache.cpp
+    src/engine/sfz/SfzArchive.cpp
+    src/engine/sfz/SfzPathPolicy.cpp
+    src/engine/sfz/SfzProvider.cpp
+    src/engine/sfz/SfzPackStore.cpp
+    src/engine/sfz/SfzPackIndex.cpp
+    src/engine/sfz/SfzLibraryLocations.cpp
+    src/engine/sfz/SfzLibraryService.cpp)
+include(cmake/SfzDependencies.cmake)
+target_link_libraries(DuskStudio PRIVATE dusk_sfz_dependencies)
 
 # DeviceManager backing: Linux uses the native orchestrator (owns the device
 # types, drives open/start/stop/close and the callback fan-out itself); macOS /
@@ -1928,10 +1947,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz.h")
     unset(_dsk_chk_c)
 
     add_subdirectory(external/dusk-fizz EXCLUDE_FROM_ALL)
-    target_link_libraries(DuskStudio PRIVATE sfizz::static)
+    target_link_libraries(DuskStudio PRIVATE sfizz::static sfizz::pugixml)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
     target_sources(DuskStudio PRIVATE
         src/engine/multisample/DuskMultisampleProcessor.cpp
+        src/engine/multisample/MultisampleLoader.cpp
         src/engine/multisample/AriaBank.cpp
         src/engine/multisample/AriaGui.cpp
         src/engine/multisample/Sf2Reader.cpp

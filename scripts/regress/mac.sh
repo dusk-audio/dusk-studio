@@ -25,7 +25,7 @@ REGRESS_PLATFORM=mac
 MAC_HOST="${DUSK_REGRESS_MAC_HOST:-marc@macbook-air.local}"
 MAC_REPO="src/dusk-studio"
 MAC_DAF="src/DAF"
-JOBS="${DUSK_JOBS:-6}"
+JOBS="${DUSK_JOBS:-5}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30)
 
 while [[ $# -gt 0 ]]; do
@@ -49,17 +49,111 @@ MAC_PREV_BRANCH=""
 MAC_PREV_COMMIT=""
 MAC_PREV_SUBMODULES=""
 MAC_HOME=""
+MAC_RUN_TOKEN="regress-${HEAD_SHORT}-$$"
+MAC_RUN_STATE="$(mktemp "${TMPDIR:-/tmp}/dusk-mac-run.XXXXXX")"
+MAC_RUN_BLOCKED="${MAC_RUN_STATE}.blocked"
+
+# A disconnected non-PTY ssh session can leave its build running. Keep an
+# identifiable remote process group so cancellation can acknowledge its exit.
+MAC_SUPERVISOR=$(cat <<'REMOTE'
+set -euo pipefail
+token=$1
+umask 077
+base="$HOME/.cache/dusk-regress"
+mkdir -p "$base"
+slot="$base/$token"
+mkdir "$slot"
+cleanup() {
+    rc=$?
+    if ((rc == 0)); then
+        rm -f "$slot/pid"
+        rmdir "$slot"
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+pgid=$(ps -o pgid= -p "$$")
+pgid=${pgid//[[:space:]]/}
+[[ "$pgid" == "$$" ]] || exit 70
+printf '%s\n' "$$" >"$slot/pid"
+bash -s
+REMOTE
+)
+
+mac_cancel() {
+    [[ -s "$MAC_RUN_STATE" ]] || return 0
+    local command
+    printf -v command 'exec bash -c %q dusk-cancel %q' '
+set -euo pipefail
+token=$1
+slot="$HOME/.cache/dusk-regress/$token"
+for ((attempt = 0; attempt < 30; ++attempt)); do
+    [[ -s "$slot/pid" ]] && break
+    sleep 0.1
+done
+read -r pid <"$slot/pid" || exit 75
+[[ "$pid" =~ ^[0-9]+$ ]] || exit 75
+group_alive() {
+    ps -ax -o pgid=,stat= | awk -v group="$pid" '\''
+        $1 == group && $2 !~ /^Z/ { found = 1 }
+        END { exit !found }
+    '\''
+}
+if group_alive; then
+    pgid=$(ps -o pgid= -p "$pid")
+    pgid=${pgid//[[:space:]]/}
+    command=$(ps -ww -o command= -p "$pid")
+    [[ "$pgid" == "$pid" && "$command" == *" dusk-regress $token" ]] || exit 75
+    kill -TERM -- "-$pid" 2>/dev/null || true
+fi
+for ((attempt = 0; attempt < 100; ++attempt)); do
+    if ! group_alive; then
+        rm -f "$slot/pid"
+        rmdir "$slot" 2>/dev/null || true
+        exit 0
+    fi
+    sleep 0.1
+done
+exit 75
+' "$MAC_RUN_TOKEN"
+    if timeout --foreground 30 ssh "${SSH_OPTS[@]}" "$MAC_HOST" "$command" </dev/null; then
+        : >"$MAC_RUN_STATE"
+    else
+        touch "$MAC_RUN_BLOCKED"
+        echo "error: remote runner cancellation was not acknowledged; leaving the Mac checkout in place" >&2
+        return 1
+    fi
+}
+
+mac_interrupt() {
+    trap '' INT TERM
+    mac_cancel || true
+    exit 130
+}
+trap mac_interrupt INT TERM
 
 DONOR_REV="$(tr -d '[:space:]' < DONOR_REV)"
 [[ "$DONOR_REV" =~ ^[0-9a-f]{40}$ ]] || regress_die "DONOR_REV does not hold a valid commit"
 
 # mac_run <deadline seconds> <<'REMOTE' ... REMOTE
 mac_run() {
-    local deadline="$1"
-    timeout "$deadline" ssh "${SSH_OPTS[@]}" "$MAC_HOST" 'bash -s'
+    [[ ! -f "$MAC_RUN_BLOCKED" ]] || return 75
+    local deadline="$1" command status=0
+    printf -v command 'exec bash -c %q dusk-regress %q' "$MAC_SUPERVISOR" "$MAC_RUN_TOKEN"
+    printf '%s\n' "$MAC_RUN_TOKEN" >"$MAC_RUN_STATE"
+    timeout --foreground "$deadline" ssh "${SSH_OPTS[@]}" "$MAC_HOST" "$command" || status=$?
+    if ((status != 0)); then
+        mac_cancel || return 75
+    else
+        : >"$MAC_RUN_STATE"
+    fi
+    return "$status"
 }
 
 restore_branch() {
+    [[ ! -f "$MAC_RUN_BLOCKED" ]] || return 0
     [[ -n "$MAC_PREV_BRANCH" ]] || return 0
     # The name comes from the node's own checkout and is spliced into a script
     # the remote bash interprets, so it travels as a bash-quoted word (%q): a
@@ -90,19 +184,16 @@ git rev-parse --abbrev-ref HEAD
 git submodule status
 REMOTE
 }
-trap restore_branch EXIT
+mac_cleanup() {
+    restore_branch
+    rm -f "$MAC_RUN_STATE" "$MAC_RUN_BLOCKED"
+}
+trap mac_cleanup EXIT
 
 leg_preflight() {
     mac_run 180 <<REMOTE
 set -euo pipefail
 export PATH="\$HOME/bin:\$PATH"
-# The review model pins several GB of wired memory; a -j${JOBS} build on a
-# 16 GB laptop will swap with it resident.
-if curl -s -m 5 localhost:11434/api/generate -d '{"model":"qwen-review","keep_alive":0}' >/dev/null 2>&1; then
-    echo "ollama: unload requested"
-else
-    echo "ollama: not responding (nothing to unload)"
-fi
 echo "macOS \$(sw_vers -productVersion), \$(uname -m)"
 cd "\$HOME/${MAC_REPO}"
 # Submodule pointers are handled separately (they get synced to the pushed

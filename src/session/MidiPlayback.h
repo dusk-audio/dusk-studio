@@ -39,12 +39,14 @@ struct MidiPlaybackRegion
         std::int64_t tick       = 0;
         std::uint8_t channel    = 0;
         std::uint8_t controller = 0;
-        std::uint8_t value      = 0;
+        std::uint16_t value     = 0;
+        MidiCc::Kind kind      = MidiCc::Kind::ControlChange;
 
-        int key() const noexcept { return (int) channel * 128 + (int) controller; }
+        MidiCc message() const noexcept { return { (int) channel + 1, controller, value, tick, kind }; }
+        int key() const noexcept { return message().laneKey(); }
     };
 
-    // One channel and controller's events: [begin, end) of byController.
+    // One channel-control lane's events: [begin, end) of byController.
     struct Lane
     {
         int           key   = 0;
@@ -58,7 +60,7 @@ struct MidiPlaybackRegion
     std::vector<std::int64_t> chunkLatestEnd;  // the latest endTick of each kNoteChunk notes
     std::vector<Release>      releases;        // notes that end after they start, by endTick
     std::vector<Controller>   controllers;     // by tick
-    std::vector<Controller>   byController;    // by channel and controller, then tick
+    std::vector<Controller>   byController;    // by channel-control lane, then tick
     std::vector<Lane>         lanes;
 };
 
@@ -99,9 +101,13 @@ inline MidiPlaybackRegion buildMidiPlayback (const std::vector<MidiNote>& notes,
 
     playback.controllers.reserve (ccs.size());
     for (const auto& c : ccs)
-        if (c.channel >= 1 && c.channel <= 16 && c.controller >= 0 && c.controller < 128)
+        if (c.channel >= 1 && c.channel <= 16
+            && c.kind >= MidiCc::Kind::ControlChange && c.kind <= MidiCc::Kind::ProgramChange
+            && ((c.kind != MidiCc::Kind::ControlChange && c.kind != MidiCc::Kind::PolyPressure)
+                || (c.controller >= 0 && c.controller < 128)))
             playback.controllers.push_back ({ c.atTick, (std::uint8_t) (c.channel - 1),
-                                              (std::uint8_t) c.controller, dataByte (c.value) });
+                                              (std::uint8_t) std::clamp (c.controller, 0, 127),
+                                              (std::uint16_t) std::clamp (c.value, 0, c.maxValue()), c.kind });
     std::stable_sort (playback.controllers.begin(), playback.controllers.end(),
                       [] (const auto& a, const auto& b) { return a.tick < b.tick; });
 
@@ -150,7 +156,7 @@ struct MidiTimeline
     // ticks, and over it and every chunk before it.
     std::vector<std::int64_t>  chunkLongestSamples, chunkLongestTicks;
     std::vector<std::int64_t>  upToLongestSamples, upToLongestTicks;
-    // Each controller (channel * 128 + controller) an unmuted region sets, and
+    // Each channel-control lane an unmuted region sets, and
     // for each, holders[holdersFrom[k], holdersFrom[k + 1]): the positions in
     // byStart of the regions that set it, ascending.
     std::vector<int>           controllerKeys;
@@ -176,7 +182,7 @@ inline void indexMidiTimeline (MidiTimeline& timeline)
     timeline.startOf.resize (count);
     timeline.chunkLongestSamples.assign ((count + chunk - 1) / chunk, 0);
     timeline.chunkLongestTicks.assign ((count + chunk - 1) / chunk, 0);
-    constexpr int kKeys = 16 * 128;
+    constexpr int kKeys = MidiCc::kLaneCount;
     std::vector<std::uint32_t> perKey (kKeys + 1, 0);
     for (std::size_t p = 0; p < count; ++p)
     {

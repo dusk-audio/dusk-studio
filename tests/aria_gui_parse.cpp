@@ -55,6 +55,48 @@ TEST_CASE("AriaGui: parses GUI root + StaticImage + StaticText", "[aria_gui]")
     file.deleteFile();
 }
 
+TEST_CASE("AriaGui: crowded captions keep separate space above their controls", "[aria_gui][regression]")
+{
+    auto file = makeTempFile(R"(<GUI w="775" h="335">
+        <StaticText x="252" y="25" w="50" h="20" text="Snap" />
+        <StaticText x="282" y="25" w="50" h="20" text="Punch" />
+        <StaticText x="312" y="25" w="50" h="20" text="Epic" />
+        <StaticText x="342" y="25" w="50" h="20" text="Length" />
+        <StaticText x="192" y="9" w="50" h="20" text="SNARE" />
+        <StaticText x="252" y="112" w="50" h="18" text="Tune" />
+        <StaticText x="280" y="25" w="0" h="20" text="Hidden" />
+        <Slider param="83" x="264" y="41" w="12" h="69" />
+        <StaticImage x="0" y="0" w="773" h="333" image="bg.png" />
+        <StaticText x="450" y="25" w="60" h="20" text="Wide" />
+        <StaticText x="512" y="25" w="8" h="20" text="I" />
+    </GUI>)", ".xml");
+    const auto doc = duskstudio::AriaGuiDoc::parse(file);
+    file.deleteFile();
+    REQUIRE(doc.has_value());
+    REQUIRE(doc->width == 775);
+    REQUIRE(doc->height == 335);
+    REQUIRE(doc->widgets.size() == 11);
+
+    for (size_t i = 0; i < 4; ++i)
+    {
+        const auto& bounds = doc->widgets[i].bounds;
+        REQUIRE(bounds.getCentreX() == 277 + (int) i * 30);
+        REQUIRE(bounds.getY() == 25);
+        REQUIRE(bounds.getHeight() == 20);
+        REQUIRE(bounds.getWidth() == 28);
+        if (i > 0)
+            REQUIRE_FALSE(bounds.intersects(doc->widgets[i - 1].bounds));
+    }
+    REQUIRE(doc->widgets[4].bounds == juce::Rectangle<int>(192, 9, 50, 20));
+    REQUIRE(doc->widgets[5].bounds == juce::Rectangle<int>(252, 112, 50, 18));
+    REQUIRE(doc->widgets[6].bounds.isEmpty());
+    REQUIRE(doc->widgets[7].bounds == juce::Rectangle<int>(264, 41, 12, 69));
+    REQUIRE(doc->widgets[7].paramCC == 83);
+    REQUIRE(doc->widgets[8].bounds == juce::Rectangle<int>(0, 0, 773, 333));
+    REQUIRE(doc->widgets[9].bounds == juce::Rectangle<int>(450, 25, 60, 20));
+    REQUIRE(doc->widgets[10].bounds == juce::Rectangle<int>(512, 25, 8, 20));
+}
+
 TEST_CASE("AriaGui: parses Slider with filmstrip handle/bg + orientation",
           "[aria_gui]")
 {

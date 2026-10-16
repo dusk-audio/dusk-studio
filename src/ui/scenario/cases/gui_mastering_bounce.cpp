@@ -222,13 +222,21 @@ std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, Scenari
                 // meter measured of the master it wrote. The page shows what the
                 // live callbacks publish, so read it once a few have run.
                 auto settled = std::make_shared<std::vector<Step>>();
-                settled->push_back ({ 400, [&ctx, &session]
+                settled->push_back ({ 400, [&ctx, &engine, &session]
                 {
                     const float integrated = session.mastering().meterIntegratedLufs.load();
                     const float truePeak   = session.mastering().meterTruePeakDb.load();
                     ctx.expect (integrated > -70.0f && truePeak > -70.0f,
                                 "the finished export left the loudness readings at " + std::to_string (integrated)
                                     + " LUFS, " + std::to_string (truePeak) + " dBTP");
+                    engine.refreshMidiInputs();
+                    ctx.expect (engine.isAudioCallbackRegistered(), "MIDI refresh detached the live audio callback");
+                } });
+                settled->push_back ({ 400, [&ctx, &session]
+                {
+                    ctx.expect (session.mastering().meterIntegratedLufs.load() > -70.0f
+                                    && session.mastering().meterTruePeakDb.load() > -70.0f,
+                                "MIDI refresh cleared the finished export's loudness readings");
                 } });
                 runSteps (ctx, settled, exportOverExisting);
             }, "master export did not finish");

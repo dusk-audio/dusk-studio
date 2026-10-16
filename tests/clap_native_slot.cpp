@@ -294,9 +294,6 @@ TEST_CASE ("Linux track clone keeps native CLAP identity and state",
     REQUIRE (nearestGateIncludes (cloneSource,
                                   "Replay exactly one native owner",
                                   "DUSKSTUDIO_HAS_NATIVE_CLAP"));
-    REQUIRE (cloneSource.find ("if (primed && msStateRestored)")
-             != std::string::npos);
-
     constexpr int kBlock = 64;
     const auto bundle = std::filesystem::u8path (
         DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH);

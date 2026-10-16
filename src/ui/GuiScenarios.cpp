@@ -564,6 +564,58 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         if (auto* strip = owner.consoleView->getStripComponent (track)) strip->closeBuiltinForScenario();
     }
+    bool openSfzLibrary (int track) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        if (strip == nullptr) return false;
+        strip->openSfzLibrary();
+        return strip->isSfzLibraryOpen();
+    }
+    void closeSfzLibrary (int track) override
+    {
+        if (auto* strip = owner.consoleView->getStripComponent (track)) strip->closeSfzLibrary();
+    }
+    bool sfzLibraryOpen (int track) const override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip != nullptr && strip->isSfzLibraryOpen();
+    }
+    bool sfzLibraryPointer (int track, const std::string& control, float position, bool pressed) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip != nullptr && strip->sfzLibraryPointerForScenario (control, position, pressed);
+    }
+    bool sfzLibraryInput (int track, const std::string& input) override
+    {
+        auto* strip = owner.consoleView->getStripComponent (track);
+        return strip != nullptr && strip->sfzLibraryInputForScenario (input);
+    }
+    void captureSfzLibrary (int track, const std::filesystem::path& path) override
+    {
+        if (auto* strip = owner.consoleView->getStripComponent (track)) strip->captureSfzLibrary (path.string());
+    }
+    void captureSfzSources (int track, bool enabled) override
+    {
+        if (track < 0 || track >= Session::kNumTracks) return;
+        auto* strip = owner.consoleView->getStripComponent (track);
+        if (strip == nullptr) return;
+        auto& requests = sfzSources[static_cast<std::size_t> (track)];
+        if (! enabled)
+        {
+            strip->setSfzSourceOpenForScenario ({});
+            requests.reset();
+            return;
+        }
+        requests = std::make_shared<std::vector<std::string>>();
+        strip->setSfzSourceOpenForScenario ([requests] (std::string url)
+        { requests->push_back (std::move (url)); });
+    }
+    std::vector<std::string> sfzSourceRequests (int track) const override
+    {
+        if (track < 0 || track >= Session::kNumTracks) return {};
+        const auto& requests = sfzSources[static_cast<std::size_t> (track)];
+        return requests ? *requests : std::vector<std::string> {};
+    }
     bool pressEscapeThroughDisplayServer() override
     {
         auto* peer = owner.getPeer();
@@ -1130,6 +1182,47 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool clickRecord() override
     { return owner.transportBar != nullptr && owner.transportBar->clickRecordForScenario(); }
+    bool clickMidiMerge() override
+    { return owner.transportBar != nullptr && owner.transportBar->clickMidiMergeForScenario(); }
+
+    bool clickPianoMidiMerge() override
+    {
+        auto* piano = owner.pianoRoll.get();
+        if (piano == nullptr || ! piano->isShowing()) return false;
+        for (auto* child : piano->getChildren())
+            if (auto* button = dynamic_cast<decltype (owner.hdrChaseBtn)*> (child);
+                button != nullptr && button->getButtonText() == "MIDI Merge")
+            {
+                if (! button->isShowing() || ! button->isEnabled()
+                    || ! piano->getLocalBounds().contains (button->getBounds()) || button->getWidth() < 90)
+                    return false;
+                const auto point = owner.getTopLevelComponent()->getLocalPoint (
+                    button, button->getLocalBounds().getCentre()).toFloat();
+                return clickAt (point.x, point.y, 1);
+            }
+        return false;
+    }
+    std::array<int, 4> midiMergeControls() const override
+    {
+        std::array<int, 4> states { -1, -1, -1, -1 };
+        const auto inspect = [&states, this] (const auto* parent, std::size_t offset, int minimumWidth)
+        {
+            if (parent == nullptr) return;
+            for (const auto* child : parent->getChildren())
+                if (const auto* button = dynamic_cast<const decltype (owner.hdrChaseBtn)*> (child);
+                    button != nullptr && button->getButtonText() == "MIDI Merge")
+                {
+                    if (! button->isShowing() || button->getWidth() < minimumWidth
+                        || ! parent->getLocalBounds().contains (button->getBounds())) return;
+                    states[offset] = button->getToggleState() ? 1 : 0;
+                    states[offset + 1] = button->isEnabled() ? 1 : 0;
+                    return;
+                }
+        };
+        inspect (owner.transportBar.get(), 0, 64);
+        inspect (owner.pianoRoll.get(), 2, 90);
+        return states;
+    }
 
     std::string dspReadout() const override
     {
@@ -2881,6 +2974,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::string startupChoiceMade;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;
     std::array<std::unique_ptr<ScenarioAuxLaneHandle>, Session::kNumAuxLanes> lanes;
+    std::array<std::shared_ptr<std::vector<std::string>>, Session::kNumTracks> sfzSources;
     EmbeddedModal scrollingPickerModal;
 };
 

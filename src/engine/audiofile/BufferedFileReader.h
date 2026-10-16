@@ -4,6 +4,7 @@
 #include "../../foundation/AutoResetEvent.h"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <thread>
@@ -11,32 +12,13 @@
 
 namespace dusk::audio
 {
-// Audio-thread front end for FileReader. A background thread keeps a rolling
-// window of the file resident in memory; readRt() serves the audio thread from
-// that window and never blocks, allocates or touches the disk. Anything not
-// resident - right after a seek, or when the disk falls behind - is zero-filled
-// and reported as a miss, which is the contract the playback path is built on.
-//
-// One file, one window (sized at construction, never reallocated), one worker.
-//
-// Concurrency: only the fill thread mutates the window, only readRt reads it,
-// and the two are kept apart by publishing every discard before it happens.
-// The fill thread retires frames up to the last position readRt published
-// BEFORE it reuses their ring slots, and it brackets a seek that throws the
-// whole window away in an odd `generation`. readRt re-reads both after copying
-// and reports a miss if either moved, which covers the case where an earlier
-// read in the same block published a higher position than the one being served
-// (the loop-wrap block reads pre-wrap, then wrapped).
 class BufferedFileReader
 {
 public:
-    enum class Fill
-    {
-        Background,   // owned thread keeps the window resident
-        Manual        // no thread; the owner drives fillNow()
-    };
+    enum class Fill { Background, Manual };
 
     static constexpr std::int64_t kDefaultWindowFrames = 96000;
+    static constexpr std::int64_t kFillChunkFrames = 8192;
 
     explicit BufferedFileReader (std::unique_ptr<FileReader> source,
                                  std::int64_t windowFrames = kDefaultWindowFrames,
@@ -47,50 +29,63 @@ public:
     BufferedFileReader& operator= (const BufferedFileReader&) = delete;
 
     const FileInfo& info() const noexcept { return fileInfo; }
+    bool isManual() const noexcept { return fillMode == Fill::Manual; }
 
-    // Audio thread. Copies the resident part of [startFrame, startFrame +
-    // numFrames) into dest, zero-filling the rest; destination channels past
-    // the file's channel count are zero-filled too. Returns false when a
-    // wanted frame was missing - frames past the end of the file are silence
-    // by definition and don't count as a miss. Publishes startFrame as the
-    // prefetch position, so the window follows playback.
+    // RT: immutable snapshots, silence for missing frames, no disk or wakeup.
     bool readRt (float* const* dest, int numDestCh,
                  std::int64_t startFrame, std::int64_t numFrames) noexcept;
 
-    // Message thread. Points the window at startFrame and wakes the worker -
-    // warms a position before the audio thread reaches it, where readRt's own
-    // hint only moves the window after a miss.
-    void prefetch (std::int64_t startFrame) noexcept;
-
-    // Message thread. Whether [startFrame, startFrame + numFrames) is resident now,
-    // so a read of it would be served; frames past the end of the file count as
-    // held. An unreadable file holds nothing but never will, so it reports true.
+    void hintRt (std::int64_t startFrame) noexcept;
+    std::int64_t hint() const noexcept;
     bool holds (std::int64_t startFrame, std::int64_t numFrames) const noexcept;
 
-    // Fills the window from the current position until it is full or at EOF,
-    // on the calling thread. For Fill::Manual owners: it does the disk I/O the
-    // worker would otherwise do, which is what makes residency testable.
+    // Non-RT: prefetch also wakes the owned Background worker.
+    void prefetch (std::int64_t startFrame) noexcept;
+
+    // Exactly one filling owner. Manual callers/pools serialize these methods.
+    // Each fillOnce reads at most kFillChunkFrames; fillNow primes a full window.
+    bool fillOnce();
     void fillNow();
+    void releaseResidency() noexcept;
+
+    bool needsFill() const noexcept;
+    bool hasResidency() const noexcept;
+    std::size_t allocatedBytes() const noexcept;
+    std::uint64_t readMisses() const noexcept;
 
 private:
-    bool fillStep();
+    struct Window
+    {
+        std::int64_t startFrame = 0;
+        std::int64_t numFrames = 0;
+        std::vector<float> data;
+    };
+
+    const Window* acquireWindow() const noexcept;
+    void releaseWindow() const noexcept;
+    bool needsFillAt (const Window*, std::int64_t) const noexcept;
+    void beginFill (std::int64_t);
+    void publishStaging();
+    void updateAllocatedBytes() noexcept;
     void run();
 
-    std::unique_ptr<FileReader> source;     // fill thread only, once constructed
-    FileInfo                    fileInfo;
-    const int                   channels;
-    const std::int64_t          capacity;   // frames per channel; one is left
-                                            // free so the write head can never
-                                            // land on a resident frame
-    std::vector<float>          ring;       // channel-major: ch * capacity + frame % capacity
-    std::vector<float*>         fillDest;   // FileReader::read target, fill thread only
+    std::unique_ptr<FileReader> source;
+    FileInfo fileInfo;
+    const int channels;
+    const std::int64_t capacity;
+    const Fill fillMode;
 
-    // Resident file frames [residentStart, residentEnd); written by the fill
-    // thread only, monotonic within a generation.
-    std::atomic<std::int64_t>  residentStart { 0 };
-    std::atomic<std::int64_t>  residentEnd   { 0 };
-    std::atomic<std::int64_t>  hintFrame     { 0 };
-    std::atomic<std::uint64_t> generation    { 0 };   // odd while the window is in flux
+    std::unique_ptr<Window> currentWindow;
+    std::unique_ptr<Window> stagingWindow;
+    std::vector<float*> fillDest;
+    std::int64_t stagingFilled = 0;
+
+    std::atomic<const Window*> publishedWindow { nullptr };
+    mutable std::atomic<unsigned> activeReads { 0 };
+    std::atomic<std::int64_t> hintFrame { 0 };
+    std::atomic<std::int64_t> failedHint { -1 };
+    std::atomic<std::size_t> allocated { 0 };
+    std::atomic<std::uint64_t> misses { 0 };
 
     std::atomic<bool> stop { false };
     AutoResetEvent    wake;

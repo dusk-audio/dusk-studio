@@ -769,8 +769,12 @@ std::optional<ScenarioResult> runAudioEditorRecordStopRefocuses (GuiHost& host, 
         ctx.expect (selection.size() == 5 && selection[4] == 0,
                     "the take replaced the focused region and another stayed selected");
         ctx.expect (host.clickAudioEditorSample (12000), "the first region is not clickable");
-    }, [&host, &track, landed] { const auto focus = editorFocus (host, track); return focus && focus->takeId == *landed; },
-                        "the take landed and the editor is not on its region" });
+    }, [&host, &track, landed]
+    {
+        const auto focus = editorFocus (host, track);
+        const auto selection = host.audioEditorSelection();
+        return focus && focus->takeId == *landed && selection.size() == 5 && selection[1] == 0 && selection[4] == 0;
+    }, "the editor did not follow the landed take and clear its previous selection" });
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not handled"); },
                         [&host, &track] { const auto focus = editorFocus (host, track); return focus && focus->timelineStart == 0; },

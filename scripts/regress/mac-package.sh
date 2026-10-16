@@ -523,7 +523,7 @@ REMOTE
     [[ "$pid" =~ ^[0-9]+$ ]] || { echo "error: no pid for the permission launch: ${pid}" >&2; return 1; }
     echo "permission launch: pid ${pid}"
     while ((SECONDS < deadline)); do
-        value="$(awk '$1 == "answered" && $3 == "kTCCServiceMicrophone" { print $4 }' \
+        value="$(awk -v pid="$pid" '$1 == "answered" && index($2, pid ".") == 1 && $3 == "kTCCServiceMicrophone" { print $4 }' \
             "${RUN_DIR}/prompts.log" | tail -1)"
         [[ -n "$value" ]] && break
         out="$(mac_run 60 PID="$pid" SINCE="$WATCH_SINCE" <<'REMOTE'

@@ -300,6 +300,23 @@ CMake auto-detects three external repos at configure time, on top of three git s
 
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (a plugdata-team fork with ~5 local commits Dusk Studio depends on — XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
 - **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure stops with an error; reconfigure with network access or pass `-DDUSK_PLUGINS_PATH`. To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together.
+- **SFZ repository libraries:** [cmake/SfzDependencies.cmake](../cmake/SfzDependencies.cmake)
+  links libcurl >= 7.62.0 for HTTPS and libarchive >= 3.4.0 for ZIP extraction.
+  Linux uses pkg-config for libcurl and libarchive. Install `libarchive-dev`
+  alongside the curl development package on Debian/Ubuntu and Raspberry Pi OS.
+  A missing system utf8proc >= 2.11.3 package triggers a static source fallback
+  pinned to 2.11.3, commit `e5e799221b45bbb90f5fdc5c69b6b8dfbf017e78`.
+  macOS uses SDK libcurl, zlib and iconv, static libarchive, and always builds
+  the pinned static utf8proc source. Both macOS workflows build libarchive
+  3.8.7 for the macOS 11 deployment target and pass its installation prefix
+  through `CMAKE_PREFIX_PATH`.
+  Windows uses the existing static vcpkg manifest: curl 8.21.0 with
+  Schannel/SSPI TLS, libarchive 3.8.7 with zlib 1.3.2 and optional features
+  disabled, and utf8proc 2.11.3. No OpenSSL is added by that manifest.
+  SHA-256 download verification and installation receipts use the existing
+  libsodium target. Keep the package notices in LICENSES.txt synchronized;
+  DEB/RPM runtime requirements come from ELF dependency discovery, while the
+  portable Linux tarball needs its linked system libraries on the host.
 - **DAF and its in-tree widgets** (the native UI): `-DDAF_PATH=…` wins, then
   `../DAF`, then `external/DAF`. Without DAF and `widgets/imgui/DearImGui.hpp`,
   `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults OFF and every native view is unavailable.
@@ -384,11 +401,20 @@ Each platform primitive has three implementations (`*_Linux.cpp`, `*_Mac.cpp`, `
 
 ### Session.h is the source of truth
 
-[src/session/Session.h](../src/session/Session.h) (~1900 lines) defines all state: 24 `Track`s (each with `ChannelStripParams`, regions, routing), 4 `BusParams`, 4 `AuxLaneParams`, `MasterBusParams`, `MasteringParams`, plus global tempo/time-sig/oversampling and solo/arm counters. Audio params are `std::atomic`. Key region structs: `AudioRegion` (WAV-on-disk: `timelineStart`, `lengthInSamples`, `sourceOffset`, fades, `takeId`) and `MidiRegion` (notes + CCs, `previousTakes`). An audio track's takes are `Track::takes`.
+[src/session/Session.h](../src/session/Session.h) (~1900 lines) defines all state: 24 `Track`s (each with `ChannelStripParams`, regions, routing), 4 `BusParams`, 4 `AuxLaneParams`, `MasterBusParams`, `MasteringParams`, plus global tempo/time-sig/oversampling and solo/arm counters. Audio params are `std::atomic`. Key region structs: `AudioRegion` (WAV-on-disk: `timelineStart`, `lengthInSamples`, `sourceOffset`, fades, `takeId`) and `MidiRegion` (notes + tagged channel controls, `previousTakes`). An audio track's takes are `Track::takes`.
 
 ### Saving is crash-safe
 
-[src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) writes JSON to a temp file, fsyncs, then atomically renames over `session.json`, so a crash mid-save never leaves a half-written session. There's a `kFormatVersion` (currently 10) and a `migrateSession()` path that walks an older file forward one version at a time; unknown keys are ignored, and a file newer than `kFormatVersion` is refused outright before anything is written into the live session. Bump the version whenever an older build could accept a newer file and then discard state it has no model for on the next save - v7 exists because v6 builds (up to the released v0.13.2) would have erased built-in insert identities and patches that way. MIDI devices are saved by stable string identifier (not index) so a USB replug still resolves. Autosave and all save/load happen on the message thread only.
+[src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) writes JSON to a temp file, fsyncs, then atomically renames over `session.json`, so a crash mid-save never leaves a half-written session. There's a `kFormatVersion` (currently 11) and a `migrateSession()` path that walks an older file forward one version at a time; unknown keys are ignored, and a file newer than `kFormatVersion` is refused outright before anything is written into the live session. Bump the version whenever an older build could accept a newer file and then discard state it has no model for on the next save - v7 exists because v6 builds (up to the released v0.13.2) would have erased built-in insert identities and patches that way. MIDI devices are saved by stable string identifier (not index) so a USB replug still resolves. Autosave and all save/load happen on the message thread only.
+
+Format 11 protects tagged MIDI channel controls and managed SFZ identities from
+older builds that would lose or misinterpret them. It retains source, pack,
+release, actual archive digest, instrument and relative SFZ entrypoint. Resolve
+that identity against installed pack receipts before applying processor state;
+an old absolute path inside the processor state cannot override the resolved
+path. Missing packs remain offline with their identity intact. Restoring a
+session never initiates a repository request or download. The saved MIDI Merge
+flag defaults off when an older transport block omits it.
 
 ### Edits are undoable actions
 
@@ -452,7 +478,19 @@ scripts/regress.sh windows --release-run 1234567890
 scripts/regress.sh windows --release-run 1234567890 --fixtures-run 2345678901
 scripts/regress.sh all --perf --msi /path/to/installer.msi
 scripts/regress.sh all --release-run 1234567890 --fixtures-run 2345678901
+scripts/regress.sh prepush               # linux + mac source legs, before a push
 ```
+
+`prepush` is the check before a branch goes to GitHub: the Linux and macOS
+source legs (build, tests, `ctest-runner-limits`, JUCE gate, self-test,
+headless scenarios) run at the same time, since one runs here and the other on
+the Air, and one table ends the run. Each platform's output goes to a log under
+`$TMPDIR` named above the table. Linux options and `--host` pass through;
+package, release-run and Windows options are refused. Windows is left to CI:
+the `windows-tests.yml` run builds the MSVC artifact the guest tests. Green here
+means CI should find nothing new, so a branch needs one CI round rather than
+several, and pushes are batched, because each one cancels the macOS job in
+progress (about 45 minutes on a cold cache) and starts it again.
 
 `all` routes each option to the platform that owns it, so one command line can
 carry Linux, macOS and Windows options at once. An option no platform claims is
@@ -487,7 +525,8 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 |---|---|
 | `configure-check` | both build dirs build the donor from `DONOR_REV`: no `DUSK_PLUGINS_PATH` override, and `_deps/dusk-plugins` checked out at that commit. Any other donor changes the DSP under test, and the failure then reads as a Dusk Studio regression. A mismatch aborts the run before anything is built. |
 | `build-app` / `build-tests` | both targets compile at `-j6`. |
-| `ctest` | the Catch2 suite in `build-tests/`. |
+| `ctest` | the Catch2 suite in `build-tests/`, `--parallel` at the build's job count; the `[ipc]` and `[alsa]` cases still run one at a time. |
+| `ctest-runner-limits` | the same suite again with `ulimit -r 0` and `ulimit -l 64`, the hosted Ubuntu runners' realtime-priority and memlock limits. A test that needs either and does not skip cleanly without it (an all-skipped Catch2 run exits 4 unless its tag is discovered with `--allow-running-no-tests`) fails here instead of in CI. |
 | `juce-gate` | `tools/juce-gate.sh`: no file gained JUCE and no listed file gained occurrences. |
 | `selftest-xvfb` | `scripts/run-selftest-xvfb.sh` - the headless audio self-test on a private X display, with `DUSKSTUDIO_CLAP_STATE_FIXTURE` pointing at the multi-bus CLAP fixture when `build-tests/` has it, so the clone-track leg runs instead of skipping. |
 | `ipc-selftest` | `DUSKSTUDIO_RUN_IPC_SELFTEST=1`: the shm + futex round-trip against the `dusk-studio-plugin-host` stub. |
@@ -496,7 +535,7 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 | `scenario-fixtures` | every logical fixture the scenarios name resolves under `DUSKSTUDIO_FIXTURE_DIR`; `SKIP` naming the ones that do not. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
 | `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-window-close`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
-| `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui`: the plugin-editor scenarios that need a window. Off unless `--gui-scenarios` - it is the slowest leg and the most sensitive to GLX under Xvfb. |
+| `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui:<cases>`: the scenarios that need a window, split across several app instances that run at once, each in its own sandbox on its own Xvfb display (half the cores, at most four; `DUSK_REGRESS_GUI_SHARDS=N` overrides, `1` runs them in one instance). Cases are dealt longest first by the times the last run recorded in `~/.cache/dusk-regress/gui-case-ms.tsv`. The leg passes only if every instance reaches its summary line and every case dealt out reports. Off unless `--gui-scenarios`. |
 | `gui-plugin-picker`, `gui-settings-defaults` | `tests/gui_plugin_picker.sh` and `tests/gui_settings_defaults.sh` against the same binary: the GUI cases that need a seeded config (the picker filter, the native-row pick and the settings defaults), which the suite runs without (the picker cases skip there). With `--gui-scenarios` only. |
 | `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
 | `github-ruleset` | the `main` ruleset requires the six CI checks a merge has to pass (Linux amd64 and arm64, macOS, Windows, TSan, ASan+UBSan); `WARN` names the missing ones. Needs an authenticated `gh`. Off unless `--release-checks`. |
@@ -526,6 +565,39 @@ names it, because some cases treat a fixture as optional and pass with that
 part left out. A case the suite skipped with `missing fixture:` also gets a
 `SKIP` row of its own, `scenarios-headless:fixtures` or
 `scenarios-gui:fixtures`, under the leg that ran it.
+
+#### Reader pool measurements
+
+`DUSKSTUDIO_PERF_SESSION=/path/to/session` runs a real session through the
+full mixer without an audio device. `DUSKSTUDIO_PERF_READER_MODE` selects
+`plain`, `locate` or `loop`; reader statistics accompany the DSP table.
+Its raw read-miss count is measured before loop-start cache coverage. The
+standalone workload below separately checks uncovered misses and source phase.
+Use the private-display isolation described above when running the app on Linux.
+
+For an isolated reader comparison, build the standalone workload:
+
+```bash
+g++ -std=c++17 -O2 -pthread -Isrc tools/reader-pool-benchmark.cpp \
+    src/engine/audiofile/BufferedFileReader.cpp \
+    src/engine/audiofile/ReaderFillPool.cpp \
+    src/engine/audiofile/FileReader.cpp -lsndfile -o /tmp/dusk-reader-pool-benchmark
+/tmp/dusk-reader-pool-benchmark --mode plain --output /tmp/reader-plain.json
+/tmp/dusk-reader-pool-benchmark --mode locate --output /tmp/reader-locate.json
+/tmp/dusk-reader-pool-benchmark --mode loop --output /tmp/reader-loop.json
+```
+
+The workload checks source phase and reports uncovered read misses, callback
+timing, sampled memory, thread count and worker wait returns. Run it while the
+host is idle. The [0.16 comparison](validation/0.16-reader-pool.json) retains
+before/after results, baseline instrumentation and TSan results. Wait returns
+include timeouts and notifications; they are not OS scheduler wake-ups. The
+[historical live SFZ validation](validation/0.16-sfz-live.json) records its
+provider-source hashes and the render binary's commit,
+`b4dd29a9fdffc920e50991a1360f517c7750f39e`. It covers five downloaded packs,
+verified licenses, archive receipts and native sampler renders from SFZ
+Instruments and Musical Artifacts, before the FreePats and Versilian providers
+and the current ZIP pathname decoder and compression restrictions.
 
 #### Package mode
 
@@ -770,7 +842,7 @@ including when a leg fails.
 
 | Leg | What it proves |
 |---|---|
-| `mac-preflight` | node reachable, review model unloaded from ollama (it pins several GB and a `-j6` build would swap against it), working tree clean. |
+| `mac-preflight` | node reachable; tracked checkout and submodule worktrees clean; previous branch and commits recorded. |
 | `push-head` / `mac-checkout` | the node builds this exact commit. `WARN` when a submodule cannot be synced to the recorded pin. |
 | `daf-main` | `~/src/DAF` fast-forwarded to the tip of `main`, which is what CI builds against. Best effort: a node that cannot reach GitHub is a `WARN`, not a failure. DAF is left where it lands, not put back. |
 | `configure-app` / `configure-tests` | both trees configure through `~/mac-configure.sh`. |

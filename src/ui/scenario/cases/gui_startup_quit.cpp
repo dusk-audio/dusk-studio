@@ -372,7 +372,11 @@ std::optional<ScenarioResult> runPromptSaveKeepsBoundTake (GuiHost& host, Scenar
     host.switchToStage (GuiHost::Stage::Recording);
     ctx.keep (session.pendingTransportAction);
     ctx.keep (session.countInEnabled);
-    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
+    ctx.cleanup ([&host, &session, &engine, &transport, originalDir, restore,
+                  loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd(),
+                  looping = transport.isLoopEnabled(), punchIn = transport.getPunchIn(),
+                  punchOut = transport.getPunchOut(), punching = transport.isPunchEnabled(),
+                  playhead = transport.getPlayhead()]
     {
         engine.stop();
         drainModals (host);
@@ -380,13 +384,21 @@ std::optional<ScenarioResult> runPromptSaveKeepsBoundTake (GuiHost& host, Scenar
         session.setTrackArmed (0, false);
         reopenSavedSession (host, restore);
         applySessionDirectory (session, originalDir);
+        transport.setLoopRange (loopStart, loopEnd);
+        transport.setLoopEnabled (looping);
+        transport.setPunchRange (punchIn, punchOut);
+        transport.setPunchEnabled (punching);
+        transport.locate (playhead);
     });
 
     auto& track = session.track (0);
     track.mode.store ((int) Track::Mode::Mono);
     track.inputSource.store (0);
     track.regions.clear();
+    track.takes.clear();
     session.countInEnabled.store (false);
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
     const auto other = ctx.tempDir() / "Other" / "session.json";
     fs::create_directories (other.parent_path());
     if (! SessionSerializer::save (session, other))
@@ -418,23 +430,25 @@ std::optional<ScenarioResult> runPromptSaveKeepsBoundTake (GuiHost& host, Scenar
         typeReplacing (host, target.string());
         ctx.expect (host.clickModalButton ("Save"), how + ": the Save As browser has no Save button");
     };
-    // Every region of the saved session on a file of its own audio folder.
     const auto keptTakes = [&ctx] (const std::string& how, const fs::path& dir, std::size_t takes)
     {
         Session saved;
         applySessionDirectory (saved, dir);
         if (! ctx.expect (SessionSerializer::load (saved, dir / "session.json"), how + ": the saved session does not load"))
             return;
-        const auto& regions = saved.track (0).regions;
-        ctx.expect (regions.size() == takes, how + ": the saved session holds " + std::to_string (regions.size())
+        const auto& savedTrack = saved.track (0);
+        ctx.expect (savedTrack.takes.size() == takes, how + ": the saved session holds " + std::to_string (savedTrack.takes.size())
                                                  + " takes rather than " + std::to_string (takes));
-        for (const auto& region : regions)
+        ctx.expect (! savedTrack.regions.empty(), how + ": the saved session has no playback region for its takes");
+        const auto checkFile = [&ctx, &how, &dir] (const auto& audioFile)
         {
-            const auto file = fs::u8path (region.file.getFullPathName().toStdString());
+            const auto file = fs::u8path (audioFile.getFullPathName().toStdString());
             std::error_code ignored;
             ctx.expect (file.parent_path() == dir / "audio" && fs::is_regular_file (file, ignored),
-                        how + ": the saved session's take is at '" + file.string() + "', outside its folder");
-        }
+                        how + ": the saved session's audio is at '" + file.string() + "', outside its folder");
+        };
+        for (const auto& take : savedTrack.takes) checkFile (take.file);
+        for (const auto& region : savedTrack.regions) checkFile (region.file);
         ctx.expect (saved.missingAudioFilesAfterLoad.empty(), how + ": the saved session misses audio");
     };
 
@@ -455,7 +469,7 @@ std::optional<ScenarioResult> runPromptSaveKeepsBoundTake (GuiHost& host, Scenar
     steps->push_back ({ 700, [&host, &ctx, &session, &transport, promptUp]
     {
         if (! promptUp ("Save session as...", "Save in the quit prompt")) return;
-        ctx.expect (transport.isStopped() && session.track (0).regions.size() == 1,
+        ctx.expect (transport.isStopped() && session.track (0).takes.size() == 1,
                     "Save in the quit prompt did not end and keep the take before saving");
         ctx.expect (host.clickModalButton ("Cancel"), "the Save As browser has no Cancel");
     } });

@@ -72,8 +72,9 @@ PlaybackEngine::~PlaybackEngine()
     stopPlayback();
 }
 
-void PlaybackEngine::prepare (int maxBlockSize)
+void PlaybackEngine::prepare (int maxBlockSize, double sampleRate)
 {
+    fillPool.configure (sampleRate);
     // Pre-allocate the stereo scratch buffer once. Channel 1 is unused for
     // mono regions but allocated so the audio-thread read path never has to
     // grow on a stereo region.
@@ -84,6 +85,20 @@ void PlaybackEngine::prepare (int maxBlockSize)
                       "%d-sample read scratch; region playback stays silent until "
                       "the next prepare.\n",
                       std::max (1, maxBlockSize));
+}
+
+void PlaybackEngine::beginAudioBlock (std::int64_t playhead, std::int64_t loopStart,
+                                      std::int64_t loopEnd) noexcept
+{
+    AudioInFlightScope guard (audioInFlight);
+    if (! streamsActive.load (std::memory_order_seq_cst)) return;
+    fillPool.setPositionRt (playhead);
+    fillPool.setLoopRt (loopStart >= 0 && loopEnd > loopStart, loopStart, loopEnd);
+}
+
+void PlaybackEngine::primeAt (std::int64_t playhead)
+{
+    fillPool.primeAt (playhead);
 }
 
 void PlaybackEngine::refreshLiveRegionParams()
@@ -131,6 +146,10 @@ void PlaybackEngine::preparePlayback (Audition audition)
     auditionedTake.store (0, std::memory_order_relaxed);
 
     const std::int64_t warmAt = transport != nullptr ? transport->getPlayhead() : 0;
+    fillPool.setPositionRt (warmAt);
+    fillPool.setLoopRt (transport != nullptr && transport->isLoopEnabled(),
+                       transport != nullptr ? transport->getLoopStart() : 0,
+                       transport != nullptr ? transport->getLoopEnd() : 0);
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         TakeId auditioned = 0;
@@ -143,6 +162,7 @@ void PlaybackEngine::preparePlayback (Audition audition)
         slots[(size_t) t].current.store (stream.release(), std::memory_order_relaxed);
     }
 
+    primeAt (warmAt);
     streamsActive.store (true, std::memory_order_release);
 }
 
@@ -200,8 +220,7 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
                          dusk::audio::BufferedFileReader::kDefaultWindowFrames);
         auto buffered = std::make_unique<dusk::audio::BufferedFileReader> (
             std::move (rawReader), windowFrames,
-            synchronousReaders ? dusk::audio::BufferedFileReader::Fill::Manual
-                               : dusk::audio::BufferedFileReader::Fill::Background);
+            dusk::audio::BufferedFileReader::Fill::Manual);
         // Warm where playback will begin, not at the region head - every
         // caller sets the playhead before rebuilding, so Play from mid-song
         // starts warm instead of dropping blocks while the window re-seeks.
@@ -213,7 +232,11 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
             buffered->fillNow();
 
         RegionStream rs;
-        rs.reader          = std::move (buffered);
+        rs.reader = decltype(rs.reader) (buffered.release(),
+                                         ReaderDeleter { synchronousReaders ? nullptr : &fillPool });
+        if (! synchronousReaders)
+            fillPool.add (*rs.reader, region.timelineStart,
+                          region.timelineStart + region.lengthInSamples, region.sourceOffset);
         rs.sourcePath      = audioPath (region.file);
         rs.timelineStart   = region.timelineStart;
         rs.lengthInSamples = region.lengthInSamples;

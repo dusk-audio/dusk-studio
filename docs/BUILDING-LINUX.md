@@ -18,7 +18,8 @@ sudo apt-get install -y --no-install-recommends \
   libsndfile1-dev libsodium-dev libmp3lame-dev \
   liblilv-dev libsuil-dev lv2-dev \
   ladspa-sdk \
-  libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+  libcurl4-openssl-dev libarchive-dev \
+  libfreetype-dev libfontconfig1-dev \
   libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
   libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
   libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev \
@@ -34,7 +35,8 @@ sudo dnf install -y \
   libsndfile-devel libsodium-devel lame-devel \
   lilv-devel suil-devel lv2-devel \
   ladspa-devel \
-  libcurl-devel freetype-devel fontconfig-devel \
+  libcurl-devel libarchive-devel utf8proc-devel \
+  freetype-devel fontconfig-devel \
   libX11-devel libXcomposite-devel libXcursor-devel libXext-devel \
   libXinerama-devel libXrandr-devel libXrender-devel libXScrnSaver-devel \
   webkit2gtk4.0-devel mesa-libGL-devel mesa-libGLU-devel \
@@ -42,9 +44,13 @@ sudo dnf install -y \
 ```
 
 libsndfile and libsodium are not optional: all audio file I/O goes through
-libsndfile, and the signed SFZ catalog groundwork uses libsodium. Configure
-fails when either development package is missing. The PipeWire, LV2-host and
-MP3-bounce packages are probed at configure time and quietly drop their feature
+libsndfile, and SFZ catalog verification and archive receipts use libsodium.
+SFZ repositories also require libcurl >= 7.62.0 and libarchive >= 3.4.0.
+Configure fails if these development libraries are missing. utf8proc >= 2.11.3
+is used for portable archive paths when installed; otherwise configure fetches
+pinned utf8proc 2.11.3 and builds it statically, which needs network access.
+The minimum keeps archive collision keys on current Unicode tables.
+The PipeWire, LV2-host and MP3-bounce packages are probed at configure time and quietly drop their feature
 when absent; each miss costs you one easy-to-miss line in the configure log, so
 read it, or pass `-DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON`,
 `-DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON` and `-DDUSKSTUDIO_REQUIRE_LAME=ON`, as CI

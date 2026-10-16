@@ -1,0 +1,304 @@
+{
+  "issue": 804,
+  "completed_at_utc": "2026-10-15T00:07:13.194452+00:00",
+  "renders_completed_at_utc": "2026-10-15T00:10:15.731273+00:00",
+  "source_sha256": {
+    "src/engine/sfz/SfzTransfer.cpp": "7cdf27f93eb1ae835f8dd920bd28655d2f95dc7c47acbd38b6a1453bfa644a15",
+    "src/engine/sfz/SfzProvider.cpp": "725ad37361886bfb2234871791e7facd912e46cd64e35331369493902ddd30fc",
+    "src/engine/sfz/SfzPathPolicy.cpp": "e83457d70b9a3b230b6609f6f33f84149110213fd324ec4867de59266a643f74",
+    "src/engine/sfz/SfzArchive.cpp": "1b6b33738a1aeea9b1f539e71b9ed997db87f129e9c4f4eab668543197970c8e",
+    "src/engine/sfz/SfzPackStore.cpp": "1b1e9be353f35462460f5c64ea387d031c040a202d5dcd024510bf28fd662223",
+    "src/engine/sfz/SfzLibraryService.cpp": "1c571d8d65006de8d7faf397f43bdb34aa2798ed2f0eb5efaf53aee80133d966"
+  },
+  "render_binary": {
+    "sha256": "6d38187047031b2a38394549e7cf3054fc83972d3563d5fa15f2c53617aaacaa",
+    "head": "b4dd29a9fdffc920e50991a1360f517c7750f39e",
+    "harness": "DUSKSTUDIO_INSTRUMENT_TEST; native NativeMultisampleSlot, sfizz; C-major MIDI 60/64/67; 48000 Hz; 256 frames; 200 blocks",
+    "isolation": "existing scripts/regress/common.sh, xvfb.sh and scenarios.sh sandbox_env"
+  },
+  "browse": [
+    {
+      "error": "",
+      "items": 49,
+      "page": 1,
+      "rateLimitRemaining": "57",
+      "source": "sfzinstruments",
+      "success": true,
+      "itemsMeaning": "candidate summaries; license text is verified on resolution"
+    },
+    {
+      "error": "",
+      "items": 26,
+      "page": 2,
+      "rateLimitRemaining": "56",
+      "source": "sfzinstruments",
+      "success": true,
+      "itemsMeaning": "candidate summaries; license text is verified on resolution"
+    },
+    {
+      "error": "",
+      "items": 6,
+      "page": 1,
+      "source": "musical-artifacts",
+      "success": true,
+      "itemsMeaning": "candidate summaries; license text is verified on resolution"
+    }
+  ],
+  "scope": "Live provider resolution, verified license bytes, HTTPS download through LibraryService, ZIP installation, receipt and portable/offline locator resolution; five native sfizz renders. No instruments are bundled. Full HTTP bodies and local paths are omitted.",
+  "upstream_archive_sha256_note": "These GitHub repositories advertise no archive SHA-256. Recorded digests verify the downloaded bytes locally; pinned commits identify source revisions.",
+  "packs": [
+    {
+      "repository": "karoryfer.cowsynth",
+      "candidate": {
+        "archiveBytes": null,
+        "archiveUrl": "https://github.com/sfzinstruments/karoryfer.cowsynth/archive/5a5b5afc2dabbe54cf9d75ab64711ce01862b42c.zip",
+        "commit": "5a5b5afc2dabbe54cf9d75ab64711ce01862b42c",
+        "entrypoint": "cowsynth_fancy_organ.sfz",
+        "entrypointUrl": "https://github.com/sfzinstruments/karoryfer.cowsynth/blob/5a5b5afc2dabbe54cf9d75ab64711ce01862b42c/cowsynth_fancy_organ.sfz",
+        "expectedArchiveRoot": "karoryfer.cowsynth-5a5b5afc2dabbe54cf9d75ab64711ce01862b42c",
+        "license": "CC0-1.0",
+        "licensePath": "LICENSE",
+        "licenseUrl": "https://github.com/sfzinstruments/karoryfer.cowsynth/blob/5a5b5afc2dabbe54cf9d75ab64711ce01862b42c/LICENSE",
+        "packId": "184214220",
+        "renderNoteSuggestion": 60,
+        "repository": "karoryfer.cowsynth",
+        "repositoryUrl": "https://github.com/sfzinstruments/karoryfer.cowsynth",
+        "sourceId": "sfzinstruments",
+        "treeApiUrl": "https://api.github.com/repos/sfzinstruments/karoryfer.cowsynth/git/trees/5a5b5afc2dabbe54cf9d75ab64711ce01862b42c?recursive=1",
+        "treeBlobBytes": 14832493,
+        "treeFiles": 59,
+        "treeTruncated": false,
+        "upstreamArchiveSha256": null
+      },
+      "actualArchiveSha256": "7406ae9c39cbc0a6d072d6fc8676f910096faec84e1325eda777c936d7e198cb",
+      "archiveBytes": 14079321,
+      "instrumentCount": 17,
+      "locator": {
+        "archive_sha256": "7406ae9c39cbc0a6d072d6fc8676f910096faec84e1325eda777c936d7e198cb",
+        "entrypoint": "cowsynth_fancy_organ.sfz",
+        "instrument": "sfz-fa303ce8bce23f52092bd9960544b098",
+        "pack": "184214220",
+        "release": "5a5b5afc2dabbe54cf9d75ab64711ce01862b42c",
+        "source": "sfzinstruments"
+      },
+      "manualPathRebind": true,
+      "passed": true,
+      "licenseVerifiedAtResolution": true,
+      "extractedLicenseSha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+      "extractedLicenseMatchesVerifiedMetadata": true,
+      "nativeRender": {
+        "passed": true,
+        "exitCode": 0,
+        "peak": 0.756874,
+        "rms": 0.156298,
+        "binarySha256": "6d38187047031b2a38394549e7cf3054fc83972d3563d5fa15f2c53617aaacaa"
+      }
+    },
+    {
+      "repository": "ganjo",
+      "candidate": {
+        "archiveBytes": null,
+        "archiveUrl": "https://github.com/sfzinstruments/ganjo/archive/ccff5cd5cd3b513873a48994c07724d9d3c39e1c.zip",
+        "commit": "ccff5cd5cd3b513873a48994c07724d9d3c39e1c",
+        "entrypoint": "ganjo.sfz",
+        "entrypointUrl": "https://github.com/sfzinstruments/ganjo/blob/ccff5cd5cd3b513873a48994c07724d9d3c39e1c/ganjo.sfz",
+        "expectedArchiveRoot": "ganjo-ccff5cd5cd3b513873a48994c07724d9d3c39e1c",
+        "license": "CC0-1.0",
+        "licensePath": "LICENSE.md",
+        "licenseUrl": "https://github.com/sfzinstruments/ganjo/blob/ccff5cd5cd3b513873a48994c07724d9d3c39e1c/LICENSE.md",
+        "packId": "400997213",
+        "renderNoteSuggestion": 40,
+        "repository": "ganjo",
+        "repositoryUrl": "https://github.com/sfzinstruments/ganjo",
+        "sourceId": "sfzinstruments",
+        "treeApiUrl": "https://api.github.com/repos/sfzinstruments/ganjo/git/trees/ccff5cd5cd3b513873a48994c07724d9d3c39e1c?recursive=1",
+        "treeBlobBytes": 26113135,
+        "treeFiles": 66,
+        "treeTruncated": false,
+        "upstreamArchiveSha256": null
+      },
+      "actualArchiveSha256": "192f381bd5e19330afc5c203ab5aa348361fb97ee4890f96b62f395ca0fd90be",
+      "archiveBytes": 24320939,
+      "instrumentCount": 1,
+      "locator": {
+        "archive_sha256": "192f381bd5e19330afc5c203ab5aa348361fb97ee4890f96b62f395ca0fd90be",
+        "entrypoint": "ganjo.sfz",
+        "instrument": "sfz-f902c2d012848e510eea299d99055983",
+        "pack": "400997213",
+        "release": "ccff5cd5cd3b513873a48994c07724d9d3c39e1c",
+        "source": "sfzinstruments"
+      },
+      "manualPathRebind": true,
+      "passed": true,
+      "licenseVerifiedAtResolution": true,
+      "extractedLicenseSha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+      "extractedLicenseMatchesVerifiedMetadata": true,
+      "nativeRender": {
+        "passed": true,
+        "exitCode": 0,
+        "peak": 0.247091,
+        "rms": 0.020232,
+        "binarySha256": "6d38187047031b2a38394549e7cf3054fc83972d3563d5fa15f2c53617aaacaa"
+      }
+    },
+    {
+      "repository": "Ixox.Flute",
+      "candidate": {
+        "archiveBytes": null,
+        "archiveUrl": "https://github.com/sfzinstruments/Ixox.Flute/archive/0cc54468bb0d2d9b32921958585caad65ba8df21.zip",
+        "commit": "0cc54468bb0d2d9b32921958585caad65ba8df21",
+        "entrypoint": "Ixox Flute.sfz",
+        "entrypointUrl": "https://github.com/sfzinstruments/Ixox.Flute/blob/0cc54468bb0d2d9b32921958585caad65ba8df21/Ixox%20Flute.sfz",
+        "expectedArchiveRoot": "Ixox.Flute-0cc54468bb0d2d9b32921958585caad65ba8df21",
+        "license": "CC-BY-4.0",
+        "licensePath": "LICENSE",
+        "licenseUrl": "https://github.com/sfzinstruments/Ixox.Flute/blob/0cc54468bb0d2d9b32921958585caad65ba8df21/LICENSE",
+        "packId": "277114082",
+        "renderNoteSuggestion": 60,
+        "repository": "Ixox.Flute",
+        "repositoryUrl": "https://github.com/sfzinstruments/Ixox.Flute",
+        "sourceId": "sfzinstruments",
+        "treeApiUrl": "https://api.github.com/repos/sfzinstruments/Ixox.Flute/git/trees/0cc54468bb0d2d9b32921958585caad65ba8df21?recursive=1",
+        "treeBlobBytes": 10215373,
+        "treeFiles": 162,
+        "treeTruncated": false,
+        "upstreamArchiveSha256": null
+      },
+      "actualArchiveSha256": "60a0f8f0514ce0de920853433c05fcb3524bab435d5822c3c95caa0cf0d1da5a",
+      "archiveBytes": 9538321,
+      "instrumentCount": 1,
+      "locator": {
+        "archive_sha256": "60a0f8f0514ce0de920853433c05fcb3524bab435d5822c3c95caa0cf0d1da5a",
+        "entrypoint": "Ixox Flute.sfz",
+        "instrument": "sfz-f66afce8ec1d41a13e347baeff78c709",
+        "pack": "277114082",
+        "release": "0cc54468bb0d2d9b32921958585caad65ba8df21",
+        "source": "sfzinstruments"
+      },
+      "manualPathRebind": true,
+      "passed": true,
+      "licenseVerifiedAtResolution": true,
+      "extractedLicenseSha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+      "extractedLicenseMatchesVerifiedMetadata": true,
+      "nativeRender": {
+        "passed": true,
+        "exitCode": 0,
+        "peak": 0.116801,
+        "rms": 0.031457,
+        "binarySha256": "6d38187047031b2a38394549e7cf3054fc83972d3563d5fa15f2c53617aaacaa"
+      }
+    },
+    {
+      "repository": "karoryfer.272-merry-orks",
+      "candidate": {
+        "archiveBytes": null,
+        "archiveUrl": "https://github.com/sfzinstruments/karoryfer.272-merry-orks/archive/a437e2c02014e02710a104a6692193eab8672d0a.zip",
+        "commit": "a437e2c02014e02710a104a6692193eab8672d0a",
+        "entrypoint": "ork_dialogue.sfz",
+        "entrypointUrl": "https://github.com/sfzinstruments/karoryfer.272-merry-orks/blob/a437e2c02014e02710a104a6692193eab8672d0a/ork_dialogue.sfz",
+        "expectedArchiveRoot": "karoryfer.272-merry-orks-a437e2c02014e02710a104a6692193eab8672d0a",
+        "license": "CC0-1.0",
+        "licensePath": "LICENSE",
+        "licenseUrl": "https://github.com/sfzinstruments/karoryfer.272-merry-orks/blob/a437e2c02014e02710a104a6692193eab8672d0a/LICENSE",
+        "packId": "184210293",
+        "renderNoteSuggestion": 36,
+        "repository": "karoryfer.272-merry-orks",
+        "repositoryUrl": "https://github.com/sfzinstruments/karoryfer.272-merry-orks",
+        "sourceId": "sfzinstruments",
+        "treeApiUrl": "https://api.github.com/repos/sfzinstruments/karoryfer.272-merry-orks/git/trees/a437e2c02014e02710a104a6692193eab8672d0a?recursive=1",
+        "treeBlobBytes": 45627769,
+        "treeFiles": 277,
+        "treeTruncated": false,
+        "upstreamArchiveSha256": null
+      },
+      "actualArchiveSha256": "d8551750346f1aaacdeccedcd4e2e8f0442697291181cdaf23f59e40633b59ce",
+      "archiveBytes": 40465846,
+      "instrumentCount": 3,
+      "locator": {
+        "archive_sha256": "d8551750346f1aaacdeccedcd4e2e8f0442697291181cdaf23f59e40633b59ce",
+        "entrypoint": "ork_dialogue.sfz",
+        "instrument": "sfz-296521aa56607efbc2408c0c74fc2e15",
+        "pack": "184210293",
+        "release": "a437e2c02014e02710a104a6692193eab8672d0a",
+        "source": "sfzinstruments"
+      },
+      "manualPathRebind": true,
+      "passed": true,
+      "licenseVerifiedAtResolution": true,
+      "extractedLicenseSha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+      "extractedLicenseMatchesVerifiedMetadata": true,
+      "nativeRender": {
+        "passed": true,
+        "exitCode": 0,
+        "peak": 0.01699,
+        "rms": 0.001325,
+        "binarySha256": "6d38187047031b2a38394549e7cf3054fc83972d3563d5fa15f2c53617aaacaa"
+      }
+    },
+    {
+      "repository": "body_percussion",
+      "candidate": {
+        "archiveBytes": null,
+        "archiveUrl": "https://github.com/sfzinstruments/body_percussion/archive/4ac9d8966679c648b62fa10a188179e186b97f24.zip",
+        "commit": "4ac9d8966679c648b62fa10a188179e186b97f24",
+        "entrypoint": "Programs/body.sfz",
+        "entrypointUrl": "https://github.com/sfzinstruments/body_percussion/blob/4ac9d8966679c648b62fa10a188179e186b97f24/Programs/body.sfz",
+        "expectedArchiveRoot": "body_percussion-4ac9d8966679c648b62fa10a188179e186b97f24",
+        "license": "CC0-1.0",
+        "licensePath": "LICENSE",
+        "licenseUrl": "https://github.com/sfzinstruments/body_percussion/blob/4ac9d8966679c648b62fa10a188179e186b97f24/LICENSE",
+        "packId": "387895082",
+        "renderNoteSuggestion": 36,
+        "repository": "body_percussion",
+        "repositoryUrl": "https://github.com/sfzinstruments/body_percussion",
+        "sourceId": "sfzinstruments",
+        "treeApiUrl": "https://api.github.com/repos/sfzinstruments/body_percussion/git/trees/4ac9d8966679c648b62fa10a188179e186b97f24?recursive=1",
+        "treeBlobBytes": 61733852,
+        "treeFiles": 233,
+        "treeTruncated": false,
+        "upstreamArchiveSha256": null
+      },
+      "actualArchiveSha256": "5a4a9dbf23c4f499c8a113e1be7f3a4128d8968c9ca279e192a8724ddd200c9f",
+      "archiveBytes": 39120945,
+      "instrumentCount": 29,
+      "locator": {
+        "archive_sha256": "5a4a9dbf23c4f499c8a113e1be7f3a4128d8968c9ca279e192a8724ddd200c9f",
+        "entrypoint": "Programs/body.sfz",
+        "instrument": "sfz-fda141cff128f020e3ebe424b66cab1d",
+        "pack": "387895082",
+        "release": "4ac9d8966679c648b62fa10a188179e186b97f24",
+        "source": "sfzinstruments"
+      },
+      "manualPathRebind": true,
+      "passed": true,
+      "licenseVerifiedAtResolution": true,
+      "extractedLicenseSha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+      "extractedLicenseMatchesVerifiedMetadata": true,
+      "nativeRender": {
+        "passed": true,
+        "exitCode": 0,
+        "peak": 0.031443,
+        "rms": 0.000608,
+        "binarySha256": "6d38187047031b2a38394549e7cf3054fc83972d3563d5fa15f2c53617aaacaa"
+      }
+    }
+  ],
+  "source_demo_check": {
+    "demos": [
+      {
+        "label": "Listen on SFZ Instruments",
+        "url": "https://sfzinstruments.github.io/woodwinds/ixox_flute/"
+      }
+    ],
+    "instrumentArchiveRequests": 0,
+    "license": "CC-BY-4.0",
+    "repository": "Ixox.Flute",
+    "stars": 3,
+    "validated_at_utc": "2026-10-15T01:37:15.774926+00:00",
+    "source_sha256": {
+      "src/engine/sfz/SfzProvider.cpp": "642e46da9ea7407d1f47eb70628deb7bf47c7c556190193c8f1cbc4215e68145",
+      "src/engine/sfz/SfzProvider.h": "8bc85e7a520a491bfcf7e5abba670ef4d9ec2b64cdb069a92cca5cb56ecb0872"
+    },
+    "harness": "Public provider API linked against the production app objects; live HTTPS metadata only"
+  }
+}

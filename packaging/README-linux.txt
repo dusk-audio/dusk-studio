@@ -43,6 +43,8 @@ not on a stock desktop install, so check them first if the binary exits with
     libsuil-0.so.0         libsuil-0-0
     libmp3lame.so.0        libmp3lame0
     libsndfile.so.1        libsndfile1
+    libcurl.so.4           libcurl4
+    libarchive.so.13       libarchive13
     libasound.so.2         libasound2
     libfreetype.so.6       libfreetype6
     libfontconfig.so.1     libfontconfig1
@@ -56,10 +58,16 @@ not on a stock desktop install, so check them first if the binary exits with
 The right-hand column is the Debian/Ubuntu package name. On those:
 
     sudo apt install libpipewire-0.3-0 libsuil-0-0 libmp3lame0 libsndfile1 \
+        libcurl4 libarchive13 \
         libasound2 libfreetype6 libfontconfig1 libgl1 libx11-6 libxcursor1 \
         libxext6 libxrandr2 libdbus-1-3
 
-libsodium is compiled into the binary and needs nothing from the host.
+libsodium is compiled into the release binary and needs nothing from the host.
+A build linked to system utf8proc also needs libutf8proc.so.3 (Debian/Ubuntu:
+libutf8proc3). The pinned static utf8proc fallback needs no host utf8proc.
+libcurl and libarchive can require further libraries supplied by their distro
+packages. The tarball does not bundle those shared-library dependencies; DEB
+and RPM packages discover their runtime requirements from the linked ELF files.
 
 
 LICENSE

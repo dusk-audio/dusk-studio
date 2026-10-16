@@ -3,6 +3,7 @@
 #include "SfzLibraryPanel.h"
 
 #include <algorithm>
+#include <utility>
 #include "AriaGuiComponent.h"
 #include "../DuskFileBrowser.h"
 #include "../../engine/multisample/AriaBank.h"
@@ -11,8 +12,11 @@
 
 namespace duskstudio
 {
-DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
-    : processor (proc)
+DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc,
+    std::function<void()> openLibrary, std::function<void()> replacementFinished,
+    std::function<void()> fileCleared)
+    : processor (proc), libraryRequested (std::move (openLibrary)),
+      replacementCompleted (std::move (replacementFinished)), onFileCleared (std::move (fileCleared))
 {
     setSize (520, 260);
 
@@ -29,9 +33,14 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
     browseButton.onClick = [this] { openFileChooser(); };
     addAndMakeVisible (browseButton);
 
-    libraryButton.setTooltip ("Browse the soundfonts already installed on this computer.");
+    libraryButton.setTooltip ("Browse installed soundfonts and Creative Commons SFZ repositories.");
     libraryButton.onClick = [this]
     {
+        if (libraryRequested)
+        {
+            dusk::callAsync (libraryRequested);
+            return;
+        }
         auto safe = juce::Component::SafePointer<DuskMultisampleEditor> (this);
         sfzlibrary::show (*this,
                           [safe] (auto file)
@@ -50,9 +59,9 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
     reloadButton.setTooltip ("Re-parse the current .sfz from disk - useful when editing the file externally.");
     reloadButton.onClick = [this]
     {
-        juce::String err;
-        if (! processor.reloadCurrentFile (err))
-            filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
+        if (! processor.hasLoadedFile()) return;
+        if (! processor.getSf2Presets().empty()) startAsyncLoad ({}, processor.getSf2PresetIndex());
+        else startAsyncLoad (juce::File (processor.getLoadedFilePath()));
     };
     addAndMakeVisible (reloadButton);
 
@@ -407,7 +416,8 @@ void DuskMultisampleEditor::startAsyncLoad (const juce::File& file, int presetIn
                             juce::dontSendNotification);
 
     juce::Component::SafePointer<DuskMultisampleEditor> safe (this);
-    auto onDone = [safe, presetIndex] (bool, juce::String)
+    const auto replacementFinished = replacementCompleted;
+    auto onDone = [safe, presetIndex, replacementFinished] (bool success, juce::String)
     {
         // The processor outlives a closed editor (worker joins in ITS
         // destructor) - only the UI refresh needs the guard.
@@ -423,6 +433,7 @@ void DuskMultisampleEditor::startAsyncLoad (const juce::File& file, int presetIn
             }
             self->timerCallback();
         }
+        if (success && replacementFinished) replacementFinished();
     };
 
     if (presetIndex >= 0)
@@ -435,6 +446,8 @@ void DuskMultisampleEditor::clearLoadedFile()
 {
     processor.clearLoadedFile();
     timerCallback();
+    const auto callback = onFileCleared;
+    if (callback) callback();
 }
 
 void DuskMultisampleEditor::paint (juce::Graphics& g)
@@ -452,7 +465,7 @@ void DuskMultisampleEditor::resized()
     auto header = area.removeFromTop (28);
     titleLabel.setBounds (header.removeFromLeft (160));
     const int btnW = 80;
-    libraryButton.setBounds (header.removeFromLeft (btnW).reduced (2));
+    libraryButton.setBounds (header.removeFromLeft (112).reduced (2));
     browseButton.setBounds (header.removeFromLeft (btnW).reduced (2));
     reloadButton.setBounds (header.removeFromLeft (btnW).reduced (2));
     clearButton .setBounds (header.removeFromLeft (btnW).reduced (2));

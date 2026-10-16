@@ -675,17 +675,19 @@ namespace
 class InsertChooserPanel final : public juce::Component
 {
 public:
-    InsertChooserPanel (bool showHardware, bool showSoundfont,
+    InsertChooserPanel (bool showHardware, bool showSoundfont, bool showLibrary,
                          std::function<void()> onHw,
                          std::function<void()> onSf,
+                         std::function<void()> onLibrary,
                          std::function<void()> onPlugin,
                          std::function<void()> onCancel)
         : onHwFn (std::move (onHw)),
           onSfFn (std::move (onSf)),
+          onLibraryFn (std::move (onLibrary)),
           onPluginFn (std::move (onPlugin)),
           onCancelFn (std::move (onCancel)),
           hwVisible (showHardware),
-          sfVisible (showSoundfont)
+          sfVisible (showSoundfont), libraryVisible (showLibrary)
     {
         setOpaque (true);
 
@@ -717,14 +719,22 @@ public:
             hwBtn.onClick = [this] { if (onHwFn) onHwFn(); };
             addAndMakeVisible (hwBtn);
         }
+        const auto soundfontColour = juce::Colour (0xff5a4a78);
         if (sfVisible)
         {
             sfBtn.setButtonText ("Soundfont (.sfz / .sf2 / .bank.xml)");
-            style (sfBtn, juce::Colour (0xff5a4a78));
+            style (sfBtn, soundfontColour);
             sfBtn.onClick = [this] { if (onSfFn) onSfFn(); };
             addAndMakeVisible (sfBtn);
         }
         pluginBtn.setButtonText ("Plugin (VST3 / CLAP / LV2 / AU)");
+        if (libraryVisible)
+        {
+            libraryBtn.setButtonText ("SFZ Manager...");
+            style (libraryBtn, soundfontColour);
+            libraryBtn.onClick = [this] { if (onLibraryFn) onLibraryFn(); };
+            addAndMakeVisible (libraryBtn);
+        }
         style (pluginBtn, juce::Colour (0xff385a38));
         pluginBtn.onClick = [this] { if (onPluginFn) onPluginFn(); };
         addAndMakeVisible (pluginBtn);
@@ -735,7 +745,8 @@ public:
         cancelBtn.onClick = [this] { if (onCancelFn) onCancelFn(); };
         addAndMakeVisible (cancelBtn);
 
-        const int visibleBigButtons = 1 + (hwVisible ? 1 : 0) + (sfVisible ? 1 : 0);
+        const int visibleBigButtons = 1 + (hwVisible ? 1 : 0) + (sfVisible ? 1 : 0)
+                                         + (libraryVisible ? 1 : 0);
         constexpr int kBigBtnH = 44;
         constexpr int kGap     = 8;
         const int total = 16 + 22 + 6 + 18 + 12               // title + prompt + padding
@@ -769,6 +780,11 @@ public:
             sfBtn.setBounds (area.removeFromTop (kBigBtnH));
             area.removeFromTop (kGap);
         }
+        if (libraryVisible)
+        {
+            libraryBtn.setBounds (area.removeFromTop (kBigBtnH));
+            area.removeFromTop (kGap);
+        }
         if (hwVisible)
         {
             hwBtn.setBounds (area.removeFromTop (kBigBtnH));
@@ -785,9 +801,9 @@ public:
 
 private:
     juce::Label titleLabel, promptLabel;
-    juce::TextButton hwBtn, sfBtn, pluginBtn, cancelBtn;
-    std::function<void()> onHwFn, onSfFn, onPluginFn, onCancelFn;
-    bool hwVisible, sfVisible;
+    juce::TextButton hwBtn, sfBtn, libraryBtn, pluginBtn, cancelBtn;
+    std::function<void()> onHwFn, onSfFn, onLibraryFn, onPluginFn, onCancelFn;
+    bool hwVisible, sfVisible, libraryVisible;
 };
 } // namespace
 
@@ -801,7 +817,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3,
                          std::function<void (const juce::File&)> onPickSoundfont,
                          std::function<void (const juce::String&)> onPickNativeAu,
-                         std::function<void (const std::string&)> onPickBuiltin)
+                         std::function<void (const std::string&)> onPickBuiltin,
+                         std::function<void()> onPickSfzLibrary)
 {
     auto* parent = target.getTopLevelComponent();
     if (parent == nullptr) parent = &target;
@@ -813,13 +830,10 @@ void openInsertChooser (PluginSlot& slot,
 
     // HW insert only makes sense on audio (effects) slots - a MIDI
     // instrument slot can't route audio out to a physical pair.
-    // Soundfont is shown whenever the caller hosts the multisample rung,
-    // regardless of slot kind: it loads via the same path as an instrument
-    // plugin and flips the track to MIDI, so flagging it as "wrong slot"
-    // on an audio strip would hide a valid choice.
+    // The manager also opens local files; the direct chooser serves surfaces without it.
     const bool showHw = (kind == PluginKind::Effects)
                         && static_cast<bool> (onPickHardwareInsert);
-    const bool showSf = static_cast<bool> (onPickSoundfont);
+    const bool showSf = static_cast<bool> (onPickSoundfont) && ! onPickSfzLibrary;
 
     auto onHw = [closeChooser, hw = onPickHardwareInsert]() mutable
     {
@@ -856,9 +870,15 @@ void openInsertChooser (PluginSlot& slot,
     };
 
     auto onCancel = closeChooser;
+    auto onLibrary = [closeChooser, safeTarget, onPickSfzLibrary]
+    {
+        closeChooser();
+        if (safeTarget.getComponent() != nullptr && onPickSfzLibrary) onPickSfzLibrary();
+    };
 
     auto panel = std::make_unique<InsertChooserPanel> (
-        showHw, showSf, std::move (onHw), std::move (onSf),
+        showHw, showSf, static_cast<bool> (onPickSfzLibrary), std::move (onHw), std::move (onSf),
+        std::move (onLibrary),
         std::move (onPlugin), std::move (onCancel));
 
     sharedChooserModal().show (*parent, std::move (panel),

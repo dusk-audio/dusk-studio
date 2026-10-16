@@ -250,6 +250,16 @@ sandboxed() {
     return "$rc"
 }
 
+# The hosted Ubuntu runners grant no realtime priority and a 64 KiB memlock
+# limit. A test that needs either and does not skip cleanly without it passes
+# on this box and fails in CI, so the suite runs once more under those limits.
+leg_ctest_runner_limits() {
+    (
+        ulimit -r 0 && ulimit -l 64 || exit 1
+        ctest --test-dir build-tests --output-on-failure --parallel "${JOBS}"
+    )
+}
+
 leg_selftest() {
     local -a fixture=()
     local clap="${REPO_ROOT}/build-tests/dusk-studio-multi-bus-clap-fixture.clap"
@@ -503,7 +513,7 @@ if ((PACKAGE_MODE)); then
 
     # The source legs build and test this checkout, which says nothing about
     # the package, so they are reported as not run rather than dropped.
-    for leg in configure-check build-app build-tests ctest juce-gate; do
+    for leg in configure-check build-app build-tests ctest ctest-runner-limits juce-gate; do
         regress_skip "$leg" "not run (package mode)"
     done
 
@@ -556,13 +566,14 @@ else
     resolve_app_bin
 
     if ((SCENARIOS_ONLY)); then
-        for leg in build-app build-tests ctest juce-gate; do
+        for leg in build-app build-tests ctest ctest-runner-limits juce-gate; do
             regress_skip "$leg" "not run (--scenarios-only)"
         done
     else
         regress_leg "build-app" run_build cmake --build build -j"${JOBS}"
         regress_leg "build-tests" run_build cmake --build build-tests --target dusk-studio-tests -j"${JOBS}"
-        regress_leg "ctest" ctest --test-dir build-tests --output-on-failure
+        regress_leg "ctest" ctest --test-dir build-tests --output-on-failure --parallel "${JOBS}"
+        regress_leg "ctest-runner-limits" leg_ctest_runner_limits
         regress_leg "juce-gate" bash tools/juce-gate.sh
     fi
 fi

@@ -26,6 +26,7 @@
 #include "TrackMove.h"
 #include "../engine/PluginDescriptor.h"
 #include "../engine/StopBehavior.h"
+#include "../engine/sfz/ManagedSfzLocator.h"
 
 namespace duskstudio
 {
@@ -1217,6 +1218,7 @@ struct Track
     // Soundfont path (.sfz / .sf2) - the multisample rung has no plugin id.
     juce::String nativeMultisamplePath;
     juce::String nativeMultisampleStateBase64;
+    std::optional<sfz::ManagedSfzLocator> nativeMultisampleLocator;
     // Built-in unit: the registry id is the whole identity, and the state blob
     // carries its parameter values.
     std::string builtinUnitId;
@@ -1795,6 +1797,7 @@ public:
     // Shifts playhead back one bar so metronome ticks pre-roll before
     // capture. WAV's first sample still maps to playhead-at-Record-press.
     std::atomic<bool>  countInEnabled    { false };
+    std::atomic<bool>  midiMergeEnabled  { false };
 
     // Timeline position the most recent record pass STARTED at; FFWD-
     // while-stopped jumps here. 0 = haven't recorded yet (first tap is

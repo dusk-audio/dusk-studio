@@ -135,6 +135,7 @@ void eachTrackField (Track& dst, Src& src, Fields& f)
     f.value (dst.nativeAuStateBase64, src.nativeAuStateBase64);
     f.value (dst.nativeMultisamplePath, src.nativeMultisamplePath);
     f.value (dst.nativeMultisampleStateBase64, src.nativeMultisampleStateBase64);
+    f.value (dst.nativeMultisampleLocator, src.nativeMultisampleLocator);
     f.value (dst.builtinUnitId, src.builtinUnitId);
     f.value (dst.builtinStateBase64, src.builtinStateBase64);
 

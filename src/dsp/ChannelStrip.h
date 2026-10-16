@@ -193,7 +193,7 @@ public:
     NativeMultisampleSlot::PrimedLoad primeNativeMultisample (
         const juce::File& soundfont, std::string& errorOut,
         const std::vector<uint8_t>* state = nullptr) const;
-    bool commitNativeMultisample (NativeMultisampleSlot::PrimedLoad primed);
+    bool commitNativeMultisample (NativeMultisampleSlot::PrimedLoad& primed);
     bool nativeMultisampleReloadFailed() const noexcept { return multisampleReloadFailed.load (std::memory_order_relaxed); }
     void markNativeMultisampleRestoreFailed() noexcept { multisampleReloadFailed.store (true, std::memory_order_relaxed); }
 #else

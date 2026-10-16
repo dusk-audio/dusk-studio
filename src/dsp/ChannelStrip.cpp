@@ -869,7 +869,7 @@ NativeMultisampleSlot::PrimedLoad ChannelStrip::primeNativeMultisample (
         preparedSampleRate, preparedBlockSize, errorOut, state);
 }
 
-bool ChannelStrip::commitNativeMultisample (NativeMultisampleSlot::PrimedLoad primed)
+bool ChannelStrip::commitNativeMultisample (NativeMultisampleSlot::PrimedLoad& primed)
 {
     if (! primed) return false;
     // One host per insert - see loadNativeClap.
@@ -879,7 +879,7 @@ bool ChannelStrip::commitNativeMultisample (NativeMultisampleSlot::PrimedLoad pr
     unloadNativeAu();
     unloadBuiltin();
     pluginSlot.unload();
-    const bool ok = nativeMultisampleSlot.commit (std::move (primed), preparedBlockSize);
+    const bool ok = nativeMultisampleSlot.commit (primed, preparedBlockSize);
     // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
     multisampleReloadFailed.store (false, std::memory_order_relaxed);
     return ok;

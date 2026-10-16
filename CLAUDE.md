@@ -90,7 +90,7 @@ The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/
 
 Phases 1a → 5 of [DuskStudio.md](docs/DuskStudio.md) have all shipped, so there is no phase to work toward: the live mixer, multitrack recording with atomic JSON save/load and autosave, send-bus plugin hosting, take folders (every recording pass kept whole as a take on its track, loop passes included) with comping in the audio editor's take lanes, markers, console automation (Write / Read / Touch) with breakpoint editing, punch and loop, and MTC + MIDI Clock sync are working features. Check the feature table in [README.md](README.md) and the relevant chapter of [MANUAL.md](MANUAL.md) before assuming something is unbuilt.
 
-Current focus is milestone 0.15 (GitHub milestone #8): finish its features with automated coverage of every behaviour MANUAL.md documents, close the open blockers, then bump and tag. The tag is gated on the maintainer's own manual pass on Linux, macOS and Windows - never tag or run a release flow on your own initiative.
+Current focus is milestone 0.16 (GitHub milestone #9): finish its features with automated coverage of every behaviour MANUAL.md documents, close the open blockers, then bump and tag. The tag is gated on the maintainer's own manual pass on Linux, macOS and Windows - never tag or run a release flow on your own initiative.
 
 ## Audio thread rules (MANDATORY)
 
@@ -200,6 +200,10 @@ cmake --build build-tests --target dusk-studio-tests -j6 && ctest --test-dir bui
 ```
 
 If a change touches a unit that has tests, those tests must pass. If it touches a unit that *doesn't* have tests but easily could, add at least one.
+
+### Before a push
+
+Run `scripts/regress.sh prepush` (`TMPDIR=/var/tmp` on the Linux dev box) and push only on `regress prepush: OK`. It builds and tests the checkout on Linux and on the macOS build node at once, including the suite under CI's realtime and memlock limits. Windows compiles only in CI. Batch fixes into one push: every push restarts the macOS CI job from the beginning.
 
 ### The two contracts around the suite
 
