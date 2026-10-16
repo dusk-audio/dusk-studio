@@ -35,6 +35,7 @@ void MidiCaptureStream::configure (SampleToTick conversion,
     completed.clear();
     lastCompletedOrdinal = 0;
     sealed = false;
+    previewNeedsRebuild = true;
     ++generation;
     rebuildPreview();
 }
@@ -107,6 +108,7 @@ void MidiCaptureStream::appendHeldNote (int key, std::int64_t endSample,
 
 void MidiCaptureStream::recoverGap()
 {
+    previewNeedsRebuild = true;
     for (int key = 0; key < (int) heldNotes.size(); ++key)
         appendHeldNote (key, current.lengthInSamples, current.notes, false, &noteBounds);
     heldNotes = {};
@@ -114,6 +116,7 @@ void MidiCaptureStream::recoverGap()
 
 void MidiCaptureStream::finishPass (std::int64_t endSample, bool carryState)
 {
+    previewNeedsRebuild = true;
     endSample = std::max<std::int64_t> (0, endSample);
     if (loopLength > 0) endSample = std::min (loopLength, endSample);
     current.lengthInSamples = endSample;
@@ -195,6 +198,7 @@ void MidiCaptureStream::consume (const Record& record)
         return;
     const int status = event.status & 0xf0;
     if (status != 0xc0 && status != 0xd0 && event.data2 > 127) return;
+    previewNeedsRebuild = true;
     const int key = (event.status & 15) * 128 + event.data1;
     if (status == 0x90 && event.data2 > 0)
     {
@@ -221,11 +225,46 @@ void MidiCaptureStream::consume (const Record& record)
 
 void MidiCaptureStream::rebuildPreview()
 {
+    constexpr auto noIndex = std::numeric_limits<std::size_t>::max();
+    if (! previewNeedsRebuild)
+        for (std::size_t key = 0; key < heldNotes.size(); ++key)
+            if (heldNotes[key].active && heldNotes[key].startSample < current.lengthInSamples
+                && heldPreviewIndices[key] == noIndex)
+            {
+                previewNeedsRebuild = true;
+                break;
+            }
+    if (! previewNeedsRebuild)
+    {
+        previewSnapshot.lengthInSamples = current.lengthInSamples;
+        previewSnapshot.lengthInTicks = current.lengthInTicks;
+        for (std::size_t key = 0; key < heldNotes.size(); ++key)
+            if (heldNotes[key].active && heldPreviewIndices[key] != noIndex)
+            {
+                auto& note = previewSnapshot.notes[heldPreviewIndices[key]];
+                note.lengthInTicks = std::max<std::int64_t> (1, ticksAt (current.lengthInSamples) - note.startTick);
+            }
+        previewSnapshot.generation = generation;
+        return;
+    }
     static_cast<MidiCapturedPass&> (previewSnapshot) = current;
     for (int key = 0; key < (int) heldNotes.size(); ++key)
         appendHeldNote (key, current.lengthInSamples, previewSnapshot.notes);
     std::stable_sort (previewSnapshot.notes.begin(), previewSnapshot.notes.end(),
         [] (const MidiNote& a, const MidiNote& b) { return a.startTick < b.startTick; });
+    heldPreviewIndices.fill (noIndex);
+    for (std::size_t i = 0; i < previewSnapshot.notes.size(); ++i)
+    {
+        const auto& note = previewSnapshot.notes[i];
+        const auto key = (std::size_t) ((note.channel - 1) * 128 + note.noteNumber);
+        const auto& held = heldNotes[key];
+        // Stable sorting leaves the appended held note after equal closed
+        // notes, so the last matching entry is the one whose length can grow.
+        if (held.active && held.startSample < current.lengthInSamples
+            && note.velocity == held.velocity && note.startTick == ticksAt (held.startSample))
+            heldPreviewIndices[key] = i;
+    }
+    previewNeedsRebuild = false;
     previewSnapshot.generation = generation;
 }
 
@@ -281,6 +320,7 @@ void MidiCaptureStream::sealFinal (int passOrdinal, std::int64_t endSample)
     current = {};
     current.passOrdinal = std::max (1, passOrdinal);
     sealed = true;
+    previewNeedsRebuild = true;
     ++generation;
     rebuildPreview();
 }

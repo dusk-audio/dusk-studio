@@ -108,6 +108,8 @@ private:
     std::array<HeldNote, 16 * 128> heldNotes {};
     std::vector<MidiCapturedPass> completed;
     MidiCapturePreview previewSnapshot;
+    std::array<std::size_t, 16 * 128> heldPreviewIndices {};
+    bool previewNeedsRebuild = true;
     std::uint64_t expectedSequence = 1;
     std::uint64_t generation = 0;
     int lastCompletedOrdinal = 0;
