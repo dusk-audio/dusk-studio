@@ -194,7 +194,9 @@ public:
         std::optional<sfz::ManagedSfzLocator> locator = {},
         std::function<void (bool, std::string)> onDone = {}, int presetIndex = -1,
         bool restoring = false, std::vector<std::uint8_t> state = {},
-        std::function<void()> beforeCommit = {});
+        std::function<void()> beforeCommit = {}, bool preserveSavedState = false);
+    bool requestManagedSfzRelink (int trackIndex, sfz::ManagedSfzLocator replacement,
+        std::function<void (bool, std::string)> onDone = {}, std::function<void()> beforeCommit = {});
     void cancelNativeMultisampleLoad (int trackIndex);
     void serviceMultisampleLoads();
     bool hasPendingMultisampleLoads() const;

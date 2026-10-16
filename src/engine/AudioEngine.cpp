@@ -1893,7 +1893,8 @@ std::vector<sfz::ManagedSfzLocator> AudioEngine::managedSfzInUse() const
 bool AudioEngine::requestNativeMultisampleLoad (
     int trackIndex, std::filesystem::path path, std::optional<sfz::ManagedSfzLocator> locator,
     std::function<void (bool, std::string)> onDone, int presetIndex,
-    bool restoring, std::vector<std::uint8_t> state, std::function<void()> beforeCommit)
+    bool restoring, std::vector<std::uint8_t> state, std::function<void()> beforeCommit,
+    bool preserveSavedState)
 {
     if (sfzLibrary->isMovingPacks()) return false;
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks
@@ -1912,6 +1913,7 @@ bool AudioEngine::requestNativeMultisampleLoad (
     request.state = std::move (state);
     request.presetIndex = presetIndex;
     request.restoring = restoring;
+    request.preserveSavedState = preserveSavedState;
     if (onDone)
     {
         const auto active = std::make_shared<std::atomic<bool>> (true);
@@ -1929,6 +1931,23 @@ bool AudioEngine::requestNativeMultisampleLoad (
         loads.worker.submit (std::move (request));
     schedulePlaybackService();
     return true;
+}
+
+bool AudioEngine::requestManagedSfzRelink (int trackIndex, sfz::ManagedSfzLocator replacement,
+    std::function<void (bool, std::string)> onDone, std::function<void()> beforeCommit)
+{
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return false;
+    const auto& track = session.track (trackIndex);
+    const auto& original = track.nativeMultisampleLocator;
+    const auto& slot = getStrip (trackIndex).getNativeMultisampleSlot();
+    if (! original || original->sourceId != replacement.sourceId || original->packId != replacement.packId
+        || track.frozen.load (std::memory_order_acquire)
+        || (slot.getInstance() && slot.getInstance()->hasLoadedRuntime())) return false;
+    auto saved = decodeStoredStateBase64 (track.nativeMultisampleStateBase64.toStdString());
+    if (saved.unreadable) return false;
+    if (saved.bytes.empty()) slot.saveState (saved.bytes);
+    return requestNativeMultisampleLoad (trackIndex, {}, std::move (replacement), std::move (onDone), -1,
+                                        false, std::move (saved.bytes), std::move (beforeCommit), true);
 }
 
 void AudioEngine::cancelNativeMultisampleLoad (int trackIndex)
@@ -1972,15 +1991,18 @@ void AudioEngine::serviceMultisampleLoads()
         auto& request = result.request;
         const auto index = (std::size_t) request.trackIndex;
         auto& strip = getStrip (request.trackIndex);
-        const bool current = request.sessionGeneration == loads.sessionGeneration
-            && request.requestGeneration == loads.generations[index];
-        if (! current || request.slotGeneration != strip.getNativeMultisampleSlot().generation()
-            || (! request.restoring && session.track (request.trackIndex).frozen.load (std::memory_order_acquire)))
+        const auto superseded = [&]
         {
+            const bool current = request.sessionGeneration == loads.sessionGeneration
+                && request.requestGeneration == loads.generations[index];
+            if (current && request.slotGeneration == strip.getNativeMultisampleSlot().generation()
+                && (request.restoring || ! session.track (request.trackIndex).frozen.load (std::memory_order_acquire)))
+                return false;
             if (current) { loads.pending[index] = false; loads.deferred[index].reset(); }
             if (request.onDone) request.onDone (false, "Soundfont load was superseded");
-            continue;
-        }
+            return true;
+        };
+        if (superseded()) continue;
         if (sr > 0.0 && blockSize > 0
             && (std::abs (request.sampleRate - sr) > 0.0 || request.maxBlock != blockSize))
         {
@@ -2000,6 +2022,7 @@ void AudioEngine::serviceMultisampleLoads()
         if (loaded)
         {
             if (request.beforeCommit) request.beforeCommit();
+            if (superseded()) continue;
             strip.getNativeMultisampleSlot().prepareReplacement();
             suspendProcessing();
             loaded = strip.commitNativeMultisample (result.primed);
@@ -2013,7 +2036,7 @@ void AudioEngine::serviceMultisampleLoads()
         {
             track.nativeMultisamplePath = request.path.u8string();
             track.nativeMultisampleLocator = request.locator;
-            if (! request.restoring) track.nativeMultisampleStateBase64.clear();
+            if (! request.restoring && ! request.preserveSavedState) track.nativeMultisampleStateBase64.clear();
             track.nativeClapPath.clear(); track.nativeClapPluginId.clear(); track.nativeClapStateBase64.clear();
             track.nativeLv2Path.clear(); track.nativeLv2PluginId.clear(); track.nativeLv2StateBase64.clear();
             track.nativeVst3Path.clear(); track.nativeVst3PluginId.clear(); track.nativeVst3StateBase64.clear();

@@ -31,6 +31,7 @@ public:
         std::optional<sfz::ManagedSfzLocator> locator;
         std::vector<std::uint8_t> state;
         bool restoring = false;
+        bool preserveSavedState = false;
         std::function<void (bool, std::string)> onDone;
         std::function<void()> beforeCommit;
     };
