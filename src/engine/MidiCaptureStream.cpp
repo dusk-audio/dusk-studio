@@ -41,7 +41,10 @@ void MidiCaptureStream::configure (SampleToTick conversion,
 
 bool MidiCaptureStream::push (Record record) noexcept
 {
-    record.event.sequence = nextSequence++;
+    // Only a missing payload can invalidate held notes. Progress can be
+    // reconstructed from later markers or the final capture bound.
+    record.event.sequence = nextSequence;
+    if (! record.progress) ++nextSequence;
     const auto write = writePosition.load (std::memory_order_relaxed);
     const auto read = readPosition.load (std::memory_order_acquire);
     const bool fits = write - read < records.size();
@@ -50,13 +53,13 @@ bool MidiCaptureStream::push (Record record) noexcept
         records[(std::size_t) (write % records.size())] = record;
         writePosition.store (write + 1, std::memory_order_release);
     }
-    else
+    else if (! record.progress)
     {
         const auto count = droppedWrites.load (std::memory_order_relaxed);
         if (count != std::numeric_limits<std::uint64_t>::max())
             droppedWrites.store (count + 1, std::memory_order_relaxed);
     }
-    attemptedSequence.store (record.event.sequence, std::memory_order_release);
+    attemptedSequence.store (nextSequence - 1, std::memory_order_release);
     return fits;
 }
 
@@ -173,7 +176,7 @@ void MidiCaptureStream::consume (const Record& record)
 {
     const auto& event = record.event;
     if (event.sequence != expectedSequence) recoverGap();
-    expectedSequence = event.sequence + 1;
+    expectedSequence = event.sequence + (record.progress ? 0 : 1);
     if (event.passOrdinal < current.passOrdinal || event.passOrdinal < 1
         || event.passOrdinal <= lastCompletedOrdinal) return;
     advanceToPass (event.passOrdinal);

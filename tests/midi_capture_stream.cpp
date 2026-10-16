@@ -198,26 +198,62 @@ TEST_CASE ("MIDI capture decodes every tagged channel control and filters malfor
 TEST_CASE ("MIDI capture overflow retains queued data and truncates a dropped note release",
            "[recording][midi][capture-stream]")
 {
-    MidiCaptureStream stream (3);
-    stream.configure ({}, 100);
-    REQUIRE (stream.pushEvent (1, 0, 0x90, 60, 100));
-    REQUIRE (stream.publishProgress (1, 10, false));
-    REQUIRE (stream.pushEvent (1, 8, 0xb0, 7, 100));
-    REQUIRE_FALSE (stream.pushEvent (1, 20, 0x80, 60, 0));
-    REQUIRE_FALSE (stream.publishProgress (1, 100, true));
-    REQUIRE (stream.overflowCount() == 2);
-    stream.service();
-    const auto passes = stream.takeCompleted();
-    REQUIRE (passes.size() == 1);
-    REQUIRE (passes[0].lengthInSamples == 100);
-    REQUIRE (passes[0].notes == std::vector<MidiNote> { { 1, 60, 100, 0, 10 } });
-    REQUIRE (passes[0].ccs == std::vector<MidiCc> { { 1, 7, 100, 8 } });
-    REQUIRE (stream.preview().passOrdinal == 2);
-    REQUIRE (stream.preview().notes.empty());
-    stream.pushEvent (2, 30, 0x90, 64, 80);
-    stream.publishProgress (2, 40, false);
-    stream.service();
-    REQUIRE (stream.preview().notes == std::vector<MidiNote> { { 1, 64, 80, 30, 10 } });
+    SECTION ("Dropped progress preserves a held note until Stop")
+    {
+        MidiCaptureStream stream (1);
+        REQUIRE (stream.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE_FALSE (stream.publishProgress (1, 10, false));
+        stream.service();
+        stream.sealFinal (1, 20);
+        REQUIRE (stream.overflowCount() == 0);
+        const auto passes = stream.takeCompleted();
+        REQUIRE (passes.size() == 1);
+        REQUIRE (passes[0].notes == std::vector<MidiNote> { { 1, 60, 100, 0, 20 } });
+    }
+    SECTION ("Dropped completion preserves the held note and its next-pass carry")
+    {
+        MidiCaptureStream stream (1);
+        stream.configure ({}, 100);
+        REQUIRE (stream.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE_FALSE (stream.publishProgress (1, 100, true));
+        stream.service();
+        const auto passes = stream.takeCompleted();
+        REQUIRE (passes.size() == 1);
+        REQUIRE (passes[0].notes == std::vector<MidiNote> { { 1, 60, 100, 0, 100 } });
+        REQUIRE (stream.publishProgress (2, 25, false));
+        stream.service();
+        REQUIRE (stream.preview().notes == std::vector<MidiNote> { { 1, 60, 100, 0, 25 } });
+        REQUIRE (stream.pushEvent (2, 30, 0x80, 60, 0));
+        REQUIRE_FALSE (stream.publishProgress (2, 40, false));
+        stream.sealFinal (2, 50);
+        const auto final = stream.takeCompleted();
+        REQUIRE (final.size() == 1);
+        REQUIRE (final[0].notes == std::vector<MidiNote> { { 1, 60, 100, 0, 30 } });
+        REQUIRE (stream.overflowCount() == 0);
+    }
+    SECTION ("A dropped note release truncates the held note")
+    {
+        MidiCaptureStream stream (3);
+        stream.configure ({}, 100);
+        REQUIRE (stream.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE (stream.publishProgress (1, 10, false));
+        REQUIRE (stream.pushEvent (1, 8, 0xb0, 7, 100));
+        REQUIRE_FALSE (stream.pushEvent (1, 20, 0x80, 60, 0));
+        REQUIRE_FALSE (stream.publishProgress (1, 100, true));
+        REQUIRE (stream.overflowCount() == 1);
+        stream.service();
+        const auto passes = stream.takeCompleted();
+        REQUIRE (passes.size() == 1);
+        REQUIRE (passes[0].lengthInSamples == 100);
+        REQUIRE (passes[0].notes == std::vector<MidiNote> { { 1, 60, 100, 0, 10 } });
+        REQUIRE (passes[0].ccs == std::vector<MidiCc> { { 1, 7, 100, 8 } });
+        REQUIRE (stream.preview().passOrdinal == 2);
+        REQUIRE (stream.preview().notes.empty());
+        stream.pushEvent (2, 30, 0x90, 64, 80);
+        stream.publishProgress (2, 40, false);
+        stream.service();
+        REQUIRE (stream.preview().notes == std::vector<MidiNote> { { 1, 64, 80, 30, 10 } });
+    }
 }
 
 TEST_CASE ("MIDI capture gaps cannot pair later note-offs with stale held notes",
@@ -247,6 +283,7 @@ TEST_CASE ("MIDI capture recovers several dropped empty loop completions exactly
     REQUIRE (stream.publishProgress (1, 100, true));
     REQUIRE_FALSE (stream.publishProgress (2, 100, true));
     REQUIRE_FALSE (stream.publishProgress (3, 100, true));
+    REQUIRE (stream.overflowCount() == 0);
     stream.service();
     const auto passes = stream.takeCompleted();
     REQUIRE (passes.size() == 3);

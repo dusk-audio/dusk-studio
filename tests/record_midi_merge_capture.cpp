@@ -381,22 +381,67 @@ TEST_CASE ("RecordManager MIDI merge reports stream overflow without legacy reco
            "[recording][recordmanager][midi][merge]")
 {
     CaptureFixture fixture (true);
-    REQUIRE (fixture.manager.startRecording (kSampleRate, 0));
+    int extra = 0;
+    bool looping = false;
+    SECTION ("Only the progress marker overflows") {}
+    SECTION ("Four channel messages overflow") { extra = 4; }
+    SECTION ("A dropped loop marker preserves pending playback") { looping = true; }
+    const int count = (int) MidiCaptureStream::kDefaultCapacity + extra;
+    RecordManager::LoopCapturePlan plan;
+    if (looping) plan = { true, 0, count, 0, count };
+    REQUIRE (fixture.manager.startRecording (kSampleRate, 0, 0, plan));
     dusk::MidiBuffer buffer;
-    constexpr int kCount = (int) MidiCaptureStream::kDefaultCapacity + 4;
-    for (int index = 0; index < kCount; ++index)
+    addMessage (buffer, 0x90, 60, 100, 0);
+    if (looping) addMessage (buffer, 0x80, 60, 0, 1);
+    for (int index = looping ? 2 : 1; index < count; ++index)
         addMessage (buffer, 0xb0, 1, (std::uint8_t) (index & 127), index);
-    fixture.manager.writeMidiBlock (0, buffer, 0, nullptr, kCount);
-    fixture.manager.stopRecording (kCount);
+    if (looping)
+    {
+        const auto span = fixture.manager.coordinateLoopCaptureSpan (1, 0, 0, count);
+        fixture.manager.beginLoopCaptureSpan (span);
+        fixture.manager.writeMidiBlock (0, buffer, 0, &span, count);
+        bool present = false, overflow = false, eligible = false, iterated = false, notesMatch = true;
+        int notes = 0;
+        fixture.manager.withPendingMidiPlayback (0, [&] (auto* pending, double, float)
+        {
+            if (pending == nullptr) return;
+            present = true;
+            overflow = pending->takeOverflow();
+            int scans = (int) MidiCaptureStream::kDefaultCapacity + 1;
+            eligible = pending->hasEligible ({}, 2, scans);
+            scans = (int) MidiCaptureStream::kDefaultCapacity + 1;
+            iterated = pending->forEachNote ({}, 2, scans, [&] (const MidiNote& note)
+            {
+                ++notes;
+                notesMatch = notesMatch && note == MidiNote { 1, 60, 100, 0, 1 };
+                return true;
+            });
+        });
+        REQUIRE (present);
+        REQUIRE_FALSE (overflow);
+        REQUIRE (eligible);
+        REQUIRE (iterated);
+        REQUIRE (notes == 1);
+        REQUIRE (notesMatch);
+    }
+    else
+        fixture.manager.writeMidiBlock (0, buffer, 0, nullptr, count);
+    fixture.manager.stopRecording (count);
     const auto& errors = fixture.manager.getLastRecordErrors();
-    REQUIRE (errors.size() == 1);
-    REQUIRE (errors[0].kind == RecordManager::RecordErrorKind::MidiOverflow);
-    REQUIRE (errors[0].count == 5);
+    if (extra == 0) REQUIRE (errors.empty());
+    else
+    {
+        REQUIRE (errors.size() == 1);
+        REQUIRE (errors[0].kind == RecordManager::RecordErrorKind::MidiOverflow);
+        REQUIRE (errors[0].count == (std::uint64_t) extra);
+    }
     const auto groups = fixture.manager.takeMidiPassGroups();
     REQUIRE (groups.size() == 1);
-    REQUIRE (groups[0].tracks[0].pass.ccs.size() == MidiCaptureStream::kDefaultCapacity);
-    REQUIRE (groups[0].tracks[0].pass.ccs.front().atTick == 0);
+    REQUIRE (groups[0].tracks[0].pass.ccs.size() == MidiCaptureStream::kDefaultCapacity - (looping ? 2 : 1));
+    REQUIRE (groups[0].tracks[0].pass.ccs.front().atTick == (looping ? 2 : 1));
     REQUIRE (groups[0].tracks[0].pass.ccs.back().atTick == (int) MidiCaptureStream::kDefaultCapacity - 1);
+    if (extra == 0)
+        REQUIRE (groups[0].tracks[0].pass.notes == std::vector<MidiNote> { { 1, 60, 100, 0, looping ? 1 : count } });
     REQUIRE (fixture.session.track (0).midiRegions.current().empty());
     REQUIRE (fixture.manager.getLastCommitDiff().empty());
 }

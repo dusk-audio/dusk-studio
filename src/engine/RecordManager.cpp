@@ -1336,12 +1336,9 @@ void RecordManager::writeMidiBlockImpl (int trackIndex,
         ? selectedLoopSpan.timelineStart - loopPlan.captureStartSample + selectedLoopSpan.numSamples
         : blockStartFromRecord + std::max (0, numSamples);
     const bool complete = loopPlan.enabled && selectedLoopSpan.endsPass;
-    const bool retained = cap->stream.publishProgress (passOrdinal, end, complete);
+    cap->stream.publishProgress (passOrdinal, end, complete);
     if (cap->pendingPlayback)
-    {
-        if (retained) cap->pendingPlayback->publishProgress (passOrdinal, end, complete);
-        else          cap->pendingPlayback->recoverGap();
-    }
+        cap->pendingPlayback->publishProgress (passOrdinal, end, complete);
     cap->lastPassOrdinal = passOrdinal;
     cap->lastEndSample = std::max<std::int64_t> (0, end);
 }
