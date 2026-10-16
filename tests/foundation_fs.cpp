@@ -135,6 +135,7 @@ TEST_CASE ("native IO paths support long files without changing portable paths",
     const auto file = directory / stdfs::u8path (u8"音色.sfz");
     REQUIRE (fs::writeStringToFile (file, "long-path instrument"));
     CHECK (fs::loadFileAsString (file) == "long-path instrument");
+    CHECK (fs::fileSize (file) == 20);
     CHECK (file.native().compare (0, 4, L"\\\\?\\") != 0);
    #else
     const stdfs::path original ("alias/../library/piano.sfz");

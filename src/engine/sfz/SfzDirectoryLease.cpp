@@ -3,6 +3,7 @@
 #endif
 
 #include "SfzDirectoryLease.h"
+#include "../../foundation/Fs.h"
 
 #include <system_error>
 #include <utility>
@@ -62,10 +63,10 @@ bool DirectoryLease::acquire (const std::filesystem::path& directory, Access acc
     auto current = absolute.root_path();
     const auto plain = [&]
     {
-        const auto status = std::filesystem::symlink_status (current, ec);
+        const auto status = std::filesystem::symlink_status (dusk::fs::nativeIOPath (current), ec);
         if (ec || ! std::filesystem::is_directory (status)) return false;
        #if defined(_WIN32)
-        const auto attributes = GetFileAttributesW (current.c_str());
+        const auto attributes = GetFileAttributesW (dusk::fs::nativeIOPath (current).c_str());
         if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return false;
        #endif
         return true;
@@ -79,7 +80,7 @@ bool DirectoryLease::acquire (const std::filesystem::path& directory, Access acc
     const auto path = absolute / ".dusk-sfz.lock";
     DirectoryLease candidate;
    #if defined(_WIN32)
-    const auto file = CreateFileW (path.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+    const auto file = CreateFileW (dusk::fs::nativeIOPath (path).c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                                   nullptr, OPEN_ALWAYS, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
     if (file == INVALID_HANDLE_VALUE)
     { error = "Cannot open SFZ ownership: " + std::error_code (static_cast<int> (GetLastError()), std::system_category()).message(); return false; }

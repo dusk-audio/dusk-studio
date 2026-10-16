@@ -65,9 +65,13 @@ inline bool writeStringToFile (const std::filesystem::path& path, std::string_vi
 
 inline std::int64_t fileSize (const std::filesystem::path& path) noexcept
 {
-    std::error_code ec;
-    const auto sz = std::filesystem::file_size (path, ec);
-    return ec ? 0 : (std::int64_t) sz;
+    try
+    {
+        std::error_code ec;
+        const auto sz = std::filesystem::file_size (nativeIOPath (path), ec);
+        return ec ? 0 : (std::int64_t) sz;
+    }
+    catch (...) { return 0; }
 }
 
 // glob with '*' (any run) and '?' (one char), case-insensitive, matching JUCE.

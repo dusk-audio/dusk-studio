@@ -24,11 +24,18 @@ struct LeaseTree
 TEST_CASE ("SFZ directory owners exclude maintenance until their last lease ends", "[sfz][store]")
 {
     LeaseTree tree;
+    auto root = tree.root;
+    SECTION ("Ordinary root") {}
+    SECTION ("Deep root")
+    {
+        for (int index = 0; index < 4; ++index) root /= std::string (72, char ('a' + index));
+        REQUIRE (fs::create_directories (dusk::fs::nativeIOPath (root)));
+    }
     std::string error;
     DirectoryLease first, second, maintenance;
-    REQUIRE (first.acquire (tree.root, Access::Shared, error));
-    REQUIRE (second.acquire (tree.root, Access::Shared, error));
-    CHECK_FALSE (maintenance.acquire (tree.root, Access::Exclusive, error));
+    REQUIRE (first.acquire (root, Access::Shared, error));
+    REQUIRE (second.acquire (root, Access::Shared, error));
+    CHECK_FALSE (maintenance.acquire (root, Access::Exclusive, error));
     CHECK (error.empty());
     DirectoryLease moved (std::move (first));
     CHECK_FALSE (static_cast<bool> (first));
@@ -36,26 +43,26 @@ TEST_CASE ("SFZ directory owners exclude maintenance until their last lease ends
     first = std::move (second);
     CHECK_FALSE (static_cast<bool> (second));
     moved = {};
-    CHECK_FALSE (maintenance.acquire (tree.root, Access::Exclusive, error));
+    CHECK_FALSE (maintenance.acquire (root, Access::Exclusive, error));
     CHECK (error.empty());
     SECTION ("Move assignment releases the destination's previous directory")
     {
-        const auto otherRoot = tree.root / "other";
-        REQUIRE (fs::create_directory (otherRoot));
+        const auto otherRoot = root / "other";
+        REQUIRE (fs::create_directory (dusk::fs::nativeIOPath (otherRoot)));
         DirectoryLease other, otherMaintenance;
         REQUIRE (other.acquire (otherRoot, Access::Shared, error));
         other = std::move (first);
         REQUIRE (otherMaintenance.acquire (otherRoot, Access::Exclusive, error));
-        CHECK_FALSE (maintenance.acquire (tree.root, Access::Exclusive, error));
+        CHECK_FALSE (maintenance.acquire (root, Access::Exclusive, error));
         CHECK (error.empty());
     }
     first = {};
-    REQUIRE (maintenance.acquire (tree.root, Access::Exclusive, error));
+    REQUIRE (maintenance.acquire (root, Access::Exclusive, error));
     CHECK (error.empty());
     maintenance = {};
-    CHECK (fs::is_regular_file (tree.root / ".dusk-sfz.lock"));
-    REQUIRE (first.acquire (tree.root, Access::Shared, error));
-    CHECK_FALSE (maintenance.acquire (tree.root, Access::Exclusive, error));
+    CHECK (fs::is_regular_file (dusk::fs::nativeIOPath (root / ".dusk-sfz.lock")));
+    REQUIRE (first.acquire (root, Access::Shared, error));
+    CHECK_FALSE (maintenance.acquire (root, Access::Exclusive, error));
     CHECK (error.empty());
 }
 
