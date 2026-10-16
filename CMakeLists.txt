@@ -765,6 +765,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/midi_bindings.cpp
     src/engine/scenario/cases/midi_dropped_block_releases.cpp
     src/engine/scenario/cases/midi_insert_unfed_releases.cpp
+    src/engine/scenario/cases/midi_merge_pending.cpp
     src/engine/scenario/cases/midi_out_dense_block.cpp
     src/engine/scenario/cases/midi_panic_all_paths.cpp
     src/engine/scenario/cases/midi_route_change_releases.cpp
