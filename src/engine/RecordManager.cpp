@@ -2,6 +2,7 @@
 #include "audiofile/FileWriter.h"
 #include "../session/TakeComp.h"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -17,6 +18,7 @@ namespace
 // MIDI regions still carry their own take history. Repeated punch-recording
 // in one spot would otherwise grow it without bound; the oldest entries go.
 constexpr int kMaxMidiTakesPerRegion = 8;
+std::atomic<std::uint64_t> nextMidiCaptureGestureId { 1 };
 
 void trimMidiTakeHistory (MidiRegion& region) noexcept
 {
@@ -267,6 +269,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     midiMergeCapture = session.midiMergeEnabled.load (std::memory_order_relaxed);
     capturedMidiTrackMask = 0;
     nextMidiGroupOrdinal = 1;
+    midiCaptureGestureId = nextMidiCaptureGestureId.fetch_add (1, std::memory_order_relaxed);
     midiCompletedOrdinals = {};
     for (auto& pending : pendingMidiPasses) pending.clear();
     for (auto& preview : lastMidiPreviews) preview.reset();
@@ -572,6 +575,7 @@ std::vector<RecordManager::CapturedMidiPassGroup> RecordManager::takeMidiPassGro
     while (nextMidiGroupOrdinal <= minimumCompleted)
     {
         CapturedMidiPassGroup group;
+        group.gestureId = midiCaptureGestureId;
         group.passOrdinal = nextMidiGroupOrdinal++;
         group.timelineStart = midiCaptureTimelineStart();
         group.capturedSampleRate = recordSampleRate;

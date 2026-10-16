@@ -123,6 +123,7 @@ public:
     };
     struct CapturedMidiPassGroup
     {
+        std::uint64_t gestureId = 0;
         int passOrdinal = 1;
         std::int64_t timelineStart = 0;
         double capturedSampleRate = 0.0;
@@ -289,6 +290,7 @@ private:
     std::array<int, Session::kNumTracks> midiCompletedOrdinals {};
     std::uint32_t capturedMidiTrackMask = 0;
     int nextMidiGroupOrdinal = 1;
+    std::uint64_t midiCaptureGestureId = 0;
     bool midiMergeCapture = false;
 
     // Diagnostic - distinguishes "track wasn't armed in MIDI mode"

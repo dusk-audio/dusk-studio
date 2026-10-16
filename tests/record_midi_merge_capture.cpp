@@ -154,6 +154,8 @@ TEST_CASE ("RecordManager waits for every captured MIDI track before publishing 
     auto groups = fixture.manager.takeMidiPassGroups();
     REQUIRE (groups.size() == 1);
     REQUIRE (groups[0].passOrdinal == 1);
+    const auto gesture = groups[0].gestureId;
+    REQUIRE (gesture != 0);
     REQUIRE (groups[0].tracks.size() == 2);
     REQUIRE (groups[0].tracks[0].trackIndex == 0);
     REQUIRE (groups[0].tracks[1].trackIndex == 1);
@@ -164,6 +166,7 @@ TEST_CASE ("RecordManager waits for every captured MIDI track before publishing 
     groups = fixture.manager.takeMidiPassGroups();
     REQUIRE (groups.size() == 1);
     REQUIRE (groups[0].passOrdinal == 2);
+    REQUIRE (groups[0].gestureId == gesture);
     REQUIRE (groups[0].tracks.size() == 1);
     REQUIRE (groups[0].tracks[0].pass.notes[0].noteNumber == 62);
     writeLoop (fixture.manager, 0, 3, empty);
@@ -171,9 +174,18 @@ TEST_CASE ("RecordManager waits for every captured MIDI track before publishing 
     groups = fixture.manager.takeMidiPassGroups();
     REQUIRE (groups.size() == 1);
     REQUIRE (groups[0].passOrdinal == 3);
+    REQUIRE (groups[0].gestureId == gesture);
     REQUIRE (groups[0].tracks.empty());
     fixture.manager.stopRecording (200);
     REQUIRE (fixture.manager.takeMidiPassGroups().empty());
+    REQUIRE (fixture.manager.startRecording (kSampleRate, 100, 0, loopPlan()));
+    writeLoop (fixture.manager, 0, 1, note (67));
+    writeLoop (fixture.manager, 1, 1, empty);
+    groups = fixture.manager.takeMidiPassGroups();
+    REQUIRE (groups.size() == 1);
+    REQUIRE (groups[0].gestureId != 0);
+    REQUIRE (groups[0].gestureId != gesture);
+    fixture.manager.stopRecording (200);
 }
 
 TEST_CASE ("RecordManager final MIDI merge group survives teardown and seals a partial loop once",
