@@ -36,6 +36,7 @@ namespace dusk::fs
 {
 inline std::filesystem::path nativeIOPath (const std::filesystem::path& path)
 {
+    if (path.empty()) return path;
    #if defined(_WIN32)
     if (path.native().compare (0, 4, L"\\\\?\\") == 0) return path;
     auto absolute = std::filesystem::absolute (path).lexically_normal();

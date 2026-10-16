@@ -116,6 +116,7 @@ TEST_CASE ("dusk::fs::matchesWildcard", "[foundation][fs]")
 
 TEST_CASE ("native IO paths support long files without changing portable paths", "[foundation][fs]")
 {
+    CHECK (fs::nativeIOPath ({}).empty());
    #if defined(_WIN32)
     CHECK (fs::nativeIOPath (L"C:/library/./samples/../piano.sfz")
         == stdfs::path (LR"(\\?\C:\library\piano.sfz)"));
