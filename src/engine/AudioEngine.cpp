@@ -6478,6 +6478,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             return added;
         };
         auto& timelineSounding = midiTimelineSounding[(size_t) t];
+        const auto timelineBeforeBlock = timelineSounding;
         auto emitHangingMidiReset = [&] (int sampleOffset) noexcept
         {
             // A reset is structural: either all 48 three-byte messages fit or
@@ -6506,7 +6507,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                          });
         }
 
-        auto pullInput = [&] (int srcIdx, int chFilter)
+        auto pullInput = [&] (int srcIdx, int chFilter, bool capture)
         {
             if (srcIdx < 0 || srcIdx >= (int) perInputMidi.size()) return;
             if (perInputMidi[(size_t) srcIdx].isEmpty()) return;
@@ -6521,12 +6522,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     const int ch = (status & 0xF0) != 0xF0 ? (int) (status & 0x0F) + 1 : 0;
                     if (ch != chFilter) continue;
                 }
-                if (pullsLiveMidi && ! midiEventsDropped
+                if (! capture && ! midiEventsDropped
                     && ! perTrackMidi[(size_t) t].addEvent (v.getRawData(),
                                                             v.getRawDataSize(),
                                                             meta.samplePosition))
                     midiEventsDropped = true;
-                if (capturesLiveMidi && ! liveRecordOverflow
+                if (capture && ! liveRecordOverflow
                     && ! liveRecordMidiScratch.addEvent (v.getRawData(),
                                                          v.getRawDataSize(),
                                                          meta.samplePosition))
@@ -6536,24 +6537,55 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // Reads the route the flush above judged, not the session again: a
         // message-thread change between the two reads would otherwise pull
         // from a source the flush never compared.
-        auto pullLiveMidi = [&] ()
+        auto pullLiveMidi = [&] (bool capture)
         {
-            pullInput (inputRoute.input, inputRoute.channel);
-            pullInput (inputRoute.keyboard, inputRoute.channel);
+            pullInput (inputRoute.input, inputRoute.channel, capture);
+            pullInput (inputRoute.keyboard, inputRoute.channel, capture);
         };
 
-        if (willReadFromDisk && ! isFrozen)
+        // A callback can already play the following pass. Capture every
+        // input span first; instruments may also consume their MIDI buffer.
+        auto captureLiveInput = [&] () noexcept
         {
-            // Frozen tracks skip MIDI scheduling - the instrument is bypassed
-            // and the notes are already baked into the WAV being read above.
-            // Acquire on tempoBpm pairs with the release store in
-            // duskstudio::applyTempoChange so this MIDI scheduling block
-            // observes the BPM that matches the published-with-release
-            // MidiRegion sample positions. Without acquire here, a stale
-            // BPM combined with new region positions could schedule notes
-            // at the wrong tick->sample translation for one audio block
-            // following a BPM change.
-            const float bpm = session.tempoBpm.load (std::memory_order_acquire);
+            if (capturesLiveMidi) pullLiveMidi (true);
+            if (liveRecordOverflow) liveRecordMidiScratch.clear();
+            if (! isRecording || ! armed || ! midiTrack) return;
+            if (loopRecordingActive)
+            {
+                // Pass the SAME unsliced callback buffer to every span. The
+                // explicit absolute inputOffset filters events into exactly one
+                // pass before the instrument is allowed to consume the buffer.
+                forEachRecordCaptureSpan (
+                    [&] (const RecordManager::LoopCaptureSpan& span) noexcept
+                    {
+                        recordManager.writeMidiBlock (
+                            t, liveRecordMidiScratch, 0, &span);
+                    });
+            }
+            else
+            {
+                const auto recStart = activeRecordStart.load (std::memory_order_relaxed);
+                const auto blockOffsetFromRecord = blockStartSamples - recStart;
+                recordManager.writeMidiBlock (
+                    t, liveRecordMidiScratch, blockOffsetFromRecord, nullptr, numSamples);
+            }
+        };
+
+        auto scheduleTimelineMidi = [&] (MidiMergePlayback* pendingPlayback,
+                                         double capturedRate, float capturedBpm) noexcept
+        {
+            // Acquire tempo before the snapshot whose positions it publishes.
+            const float bpm = schedulesTimelineMidi ? session.tempoBpm.load (std::memory_order_acquire) : 0.0f;
+            const auto timelineEdits = schedulesTimelineMidi ? session.track (t).midiRegions.edits() : 0;
+            const auto* timeline = schedulesTimelineMidi ? session.track (t).midiRegions.read() : nullptr;
+            if (pendingPlayback && timeline) pendingPlayback->discardConsumed (timeline->capture);
+            captureLiveInput();
+            if (! schedulesTimelineMidi) return;
+            if (pendingPlayback)
+            {
+                if (liveRecordOverflow) pendingPlayback->recoverGap();
+                if (pendingPlayback->takeOverflow()) { midiEventsDropped = true; return; }
+            }
             const double sr = currentSampleRate.load (std::memory_order_relaxed);
             // Lock-free tempo-map snapshot. When non-empty, note/CC ticks resolve
             // to absolute timeline samples through the map (so playback follows
@@ -6578,12 +6610,22 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // The track's MIDI timeline, loaded once for the block and kept
             // alive by the callback's snapshot scope. The edit count, loaded
             // first, is at least as old as it.
-            MidiTimelineStamp timelineStamp { session.track (t).midiRegions.edits(), 0, tm };
+            MidiTimelineStamp timelineStamp { timelineEdits, 0, tm };
             std::memcpy (&timelineStamp.bpmBits, &bpm, sizeof (timelineStamp.bpmBits));
-            const auto& midiTimeline = *session.track (t).midiRegions.read();
+            const auto& midiTimeline = *timeline;
+            midischedule::PendingCapture pending;
+            pending.playback = pendingPlayback;
+            if (! pending.locateTarget (midiTimeline, loopRecordPlan.captureStartSample,
+                                        loopRecordPlan.captureEndSample, capturedRate, capturedBpm,
+                                        midiScheduleScansRemaining))
+            {
+                midiEventsDropped = true;
+                return;
+            }
             // Due until the window's head has looked; a block that never gets
             // there leaves it to the next.
-            bool strandedCheckDue = midiTrack && timelineStamp != midiTimelineSeen[(size_t) t];
+            bool strandedCheckDue = midiTrack
+                && (pendingPlayback != nullptr || timelineStamp != midiTimelineSeen[(size_t) t]);
 
             // Loop recording already rejects ranges shorter than the shared
             // recording minimum.
@@ -6645,6 +6687,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 windowStart, windowLength, midiLoopActive, loopReadStart, loopReadEnd,
                 [&] (const LoopTimelineSpan& span) noexcept
                 {
+                    if (pendingPlayback != nullptr)
+                    {
+                        const auto unwrapped = blockStartSamples - loopReadStart + midiWindowAhead + span.bufferOffset;
+                        const auto wraps = std::max<std::int64_t> (0, unwrapped / (loopReadEnd - loopReadStart));
+                        pending.playbackPass = loopRecordPassAtBlockStart + (int) wraps;
+                    }
                     const bool seam = span.bufferOffset == 0 ? headSeam : span.wrappedBefore;
                     // Structural resets are emitted before every overload
                     // bailout. Their capacity was reserved exactly above, so
@@ -6688,7 +6736,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             {
                                 return addGeneratedMidi (status, data1, data2,
                                                          bufferOffsetOf (span.bufferOffset));
-                            });
+                            }, &pending);
                         if (released != midischedule::Outcome::complete)
                         {
                             midiEventsDropped = true;
@@ -6704,35 +6752,35 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                         [&] (std::uint8_t status, std::uint8_t data1, std::uint8_t data2,
                              std::int64_t sampleInSpan) noexcept
                         {
-                            if (! addGeneratedMidi (status, data1, data2,
-                                                    bufferOffsetOf (span.bufferOffset + (int) sampleInSpan)))
-                                return false;
-                            if (midiTrack)
-                                timelineSounding.hear (status, data1, data2);
-                            return true;
-                        });
+                            return addGeneratedMidi (status, data1, data2,
+                                                     bufferOffsetOf (span.bufferOffset + (int) sampleInSpan));
+                        }, &pending);
                     if (outcome == midischedule::Outcome::scanBudgetSpent)
                         midiEventsDropped = true;
                 });
             if (! strandedCheckDue)
                 midiTimelineSeen[(size_t) t] = timelineStamp;
+        };
+        if (loopRecordingActive && capturesLiveMidi)
+            recordManager.withPendingMidiPlayback (t, scheduleTimelineMidi);
+        else
+            scheduleTimelineMidi (nullptr, 0.0, 0.0f);
 
-            if (pullsLiveMidi)
-                pullLiveMidi();
-        }
-        else if (pullsLiveMidi)
+        if (midiTrack && ! midiEventsDropped)
         {
-            // Live monitoring path - only meaningful on MIDI tracks; effect
-            // inserts on Mono / Stereo strips don't consume per-track MIDI
-            // (their pluginMidiScratch is built fresh inside the strip).
-            // Gated off during offline render: a frozen MIDI track reaches this
-            // branch under an offline drive (transport is Playing, so
-            // willReadFromDisk holds, but the ! isFrozen guard on the disk branch
-            // fails), and live input must never print into a deterministic file.
-            pullLiveMidi();
+            timelineSounding = timelineBeforeBlock;
+            const bool counted = midi::forEachMidiSorted (perTrackMidi[(size_t) t], midiOutSortScratch,
+                [&] (const midi::MidiSortScratch::EventRef& event) noexcept
+                {
+                    if (event.numBytes == 3)
+                        timelineSounding.hear (event.data[0], event.data[1], event.data[2]);
+                    return true;
+                });
+            if (! counted) midiEventsDropped = true;
         }
-        if (capturesLiveMidi && ! pullsLiveMidi)
-            pullLiveMidi();
+
+        // Keep live onsets behind scheduled releases at equal timestamps.
+        if (pullsLiveMidi) pullLiveMidi (false);
 
         // A torn block can deliver a note-on without its note-off, and a
         // dropped one loses note-offs for notes it never started, so neither
@@ -6748,40 +6796,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             timelineSounding.clear();
             midiChaseAfterDrop[(size_t) t] = true;
         }
-        if (liveRecordOverflow)
-            liveRecordMidiScratch.clear();
-
         if (midiTrack && ! perTrackMidi[(size_t) t].isEmpty())
             session.track (t).midiActivity.store (true, std::memory_order_relaxed);
-
-        // Recording capture has to happen BEFORE the strip's instrument
-        // plugin sees the buffer. AudioPluginInstance::processBlock is
-        // allowed (and most VST3 instruments do) to consume / replace the
-        // MIDI buffer in place, so by the time processAndAccumulate
-        // returns, perTrackMidiScratch is typically empty. Writing here
-        // captures the events the user actually played.
-        if (isRecording && armed && midiTrack)
-        {
-            if (loopRecordingActive)
-            {
-                // Pass the SAME unsliced callback buffer to every span. The
-                // explicit absolute inputOffset filters events into exactly one
-                // pass before the instrument is allowed to consume the buffer.
-                forEachRecordCaptureSpan (
-                    [&] (const RecordManager::LoopCaptureSpan& span) noexcept
-                    {
-                        recordManager.writeMidiBlock (
-                            t, liveRecordMidiScratch, 0, &span);
-                    });
-            }
-            else
-            {
-                const auto recStart = activeRecordStart.load (std::memory_order_relaxed);
-                const auto blockOffsetFromRecord = blockStartSamples - recStart;
-                recordManager.writeMidiBlock (
-                    t, liveRecordMidiScratch, blockOffsetFromRecord, nullptr, numSamples);
-            }
-        }
 
         // External MIDI output. When this MIDI track has a hardware port
         // selected, mirror the just-built per-track buffer to that port

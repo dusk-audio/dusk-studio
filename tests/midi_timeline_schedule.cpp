@@ -2,6 +2,7 @@
 
 #include "engine/MidiTimelineSchedule.h"
 #include "engine/LoopTimeline.h"
+#include "engine/midi/MidiSort.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -343,6 +344,44 @@ TEST_CASE ("ordinary MIDI scheduling keeps its scan budget across ten thousand e
     REQUIRE (timeline.play (1, 2, false, events, scans) == midischedule::Outcome::complete);
     CHECK (events.empty());
     CHECK (scans > 0);
+}
+
+TEST_CASE ("MIDI held counts follow scheduled timestamps and channel resets",
+           "[midi][schedule][regression]")
+{
+    Timeline timeline;
+    auto region = regionOfTicks (20);
+    region.notes = { { 1, 60, 90, 0, 2 }, { 2, 60, 100, 0, 20 }, { 3, 64, 100, 4, 10 } };
+    timeline.add (region);
+    dusk::MidiBuffer generated;
+    generated.reserveBytes (dusk::kMidiGeneratedBlockBytes);
+    int scans = 32768;
+    REQUIRE (midischedule::scheduleSpan (*timeline.published, nullptr, kRate, kBpm, { 0, 256, false },
+        scans, timeline.chase, [&] (std::uint8_t s, std::uint8_t d1, std::uint8_t d2, std::int64_t at)
+        {
+            const std::uint8_t bytes[] { s, d1, d2 };
+            return generated.addEvent (bytes, 3, (int) at);
+        }) == midischedule::Outcome::complete);
+    midischedule::NoteCount sounding;
+    sounding.hear (0x93, 67, 100);
+    int expectedTotal = 3;
+    SECTION ("a note wholly within the block leaves no count") {}
+    SECTION ("only the reset channels release their counts")
+    {
+        const std::uint8_t resetSecond[] { 0xb1, 120, 0 }, resetFourth[] { 0xb3, 123, 0 };
+        REQUIRE (generated.addEvent (resetSecond, 3, 150));
+        REQUIRE (generated.addEvent (resetFourth, 3, 125));
+        expectedTotal = 1;
+    }
+    midi::MidiSortScratch scratch;
+    REQUIRE (midi::forEachMidiSorted (generated, scratch, [&] (const midi::MidiSortScratch::EventRef& event)
+    {
+        sounding.hear (event.data[0], event.data[1], event.data[2]);
+        return true;
+    }));
+    CHECK (sounding.total == expectedTotal);
+    CHECK (sounding.count[midischedule::NoteCount::keyOf (0, 60)] == 0);
+    CHECK (sounding.count[midischedule::NoteCount::keyOf (2, 64)] == 1);
 }
 
 TEST_CASE ("a region dense with controllers still plays its notes, a block at a time",

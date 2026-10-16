@@ -61,8 +61,8 @@ struct NoteCount
         ++total;
     }
 
-    // A note-on adds its key, a note-off (or a note-on at velocity 0) takes
-    // one away; anything else is not a note.
+    // Call in timestamp order, including channel resets, so a note wholly
+    // inside one block leaves no held count behind.
     void hear (std::uint8_t status, std::uint8_t key, std::uint8_t velocity) noexcept
     {
         const int kind = status & 0xF0;
@@ -73,6 +73,15 @@ struct NoteCount
         {
             --count[at];
             --total;
+        }
+        else if (kind == 0xb0 && (key == 120 || key == 123) && total > 0)
+        {
+            const auto first = (std::size_t) (status & 15) * 128;
+            for (auto i = first; i < first + 128; ++i)
+            {
+                total -= count[i];
+                count[i] = 0;
+            }
         }
     }
 
