@@ -3,11 +3,11 @@
 #include "Vst3BusPlan.h"
 #include "Vst3HostContext.h"
 #include "Vst3MidiNoteTracker.h"
+#include "Vst3ParameterChanges.h"
 
 #include <public.sdk/source/vst/hosting/connectionproxy.h>
 #include <public.sdk/source/vst/hosting/eventlist.h>
 #include <public.sdk/source/vst/hosting/module.h>
-#include <public.sdk/source/vst/hosting/parameterchanges.h>
 #include <public.sdk/source/vst/hosting/processdata.h>
 #include <public.sdk/source/vst/utility/stringconvert.h>
 #include <public.sdk/source/common/memorystream.h>
@@ -80,7 +80,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     // the AudioBusBuffers arrays; per block we only re-point channel buffers.
     Vst::HostProcessData     processData;
     Vst::ProcessContext      processContext {};
-    Vst::ParameterChanges    inParams, outParams;
+    detail::BoundedParameterChanges inParams;
     // The SDK's EventList defaults to 50 and addEvent() silently drops past
     // that. A block denser than this keeps its note-offs and drops other
     // events first (MidiFit.h).
@@ -92,11 +92,12 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     std::vector<float*>      scratchPtrs;             // per-channel pointer scratch
     detail::MidiNoteTracker  midiNotes;
     std::uint16_t pendingMidiPanicChannels = 0;
+    std::uint16_t pendingMidiParameterResetChannels = 0;
 
     // Parameters: snapshot at create(); UI->RT ring drained into inParams each block.
     std::vector<ParamInfo> params;
     struct ParamChange { uint32_t id; double value; };
-    hosting::SpscRing<ParamChange, 512> paramRing;
+    hosting::SpscRing<ParamChange, detail::kEditorParameterRingSize> paramRing;
 
     std::function<bool (int, int)> resizeViewFn;
 
@@ -583,13 +584,7 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
             buffers[bus].numChannels = channels;
         });
     impl->processData.inputParameterChanges  = &impl->inParams;
-    impl->processData.outputParameterChanges = &impl->outParams;
-    // Pre-warm the queue pool; per-queue point storage keeps its capacity across
-    // clearQueue. Keep one queue for controller-less plugins that still emit a
-    // parameter change from process().
-    const auto parameterQueueCount = std::max<int32> (1, (int32) impl->params.size());
-    impl->inParams.setMaxParameters (parameterQueueCount);
-    impl->outParams.setMaxParameters (parameterQueueCount);
+    impl->processData.outputParameterChanges = nullptr;
     impl->processData.inputEvents  = &impl->inEvents;
     impl->processData.outputEvents = &impl->outEvents;
     impl->processData.processContext = &impl->processContext;
@@ -610,6 +605,7 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     impl->latencySamples = (int) impl->processor->getLatencySamples();
     impl->midiNotes.reset();
     impl->pendingMidiPanicChannels = 0;
+    impl->pendingMidiParameterResetChannels = 0;
 
     impl->processor->setProcessing (true);
     impl->processing = true;
@@ -722,10 +718,9 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
     impl->processData.numSamples = numFrames;
     impl->inEvents.clear();
     impl->outEvents.clear();
-    impl->inParams.clearQueue();
-    impl->outParams.clearQueue();
+    impl->inParams.beginBlock (numFrames);
 
-    const bool recoveringMidi = impl->pendingMidiPanicChannels != 0;
+    bool recoveringMidi = impl->pendingMidiPanicChannels != 0 || impl->pendingMidiParameterResetChannels != 0;
     if (impl->hasEventIn)
         for (int16 channel = 0; channel < 16; ++channel)
         {
@@ -745,39 +740,57 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
             impl->pendingMidiPanicChannels &= (std::uint16_t) ~mask;
         }
 
-    // Queued UI/editor parameter changes -> this block's IParameterChanges.
-    // All at offset 0 - sample-accurate automation is a later step.
+    using Priority = detail::ParameterPointPriority;
+    std::uint64_t parameterOrder = 0;
+    std::uint16_t failedPanicChannels = 0;
+    const auto queueCcParam = [&] (int16 channel, int16 ctrl, double normalized, int32 offset, Priority priority) noexcept
+    {
+        if (ctrl < 0 || ctrl >= Vst::kCountCtrlNumber) return false;
+        const auto id = impl->ccParamId[(size_t) (channel * Vst::kCountCtrlNumber + ctrl)].load (std::memory_order_relaxed);
+        if (id == Impl::kNoCcParam) return false;
+        const bool accepted = impl->inParams.append (id, offset, normalized, parameterOrder++, priority);
+        if (! accepted && priority == Priority::Reset)
+        {
+            const auto mask = (std::uint16_t) (1u << channel);
+            impl->pendingMidiParameterResetChannels |= mask;
+            if (ctrl == Vst::kCtrlAllSoundsOff || ctrl == Vst::kCtrlAllNotesOff) failedPanicChannels |= mask;
+            recoveringMidi = true;
+        }
+        return accepted;
+    };
+    const auto ccPriority = [] (int ctrl, int value, int offset) noexcept
+    {
+        if (ctrl == Vst::kCtrlAllSoundsOff || ctrl == Vst::kCtrlAllNotesOff
+            || (value == 0 && (ctrl == 64 || ctrl == 121))) return Priority::Reset;
+        return offset == 0 ? Priority::Chase : Priority::Modulation;
+    };
+    const auto parameterResets = std::exchange (impl->pendingMidiParameterResetChannels, (std::uint16_t) 0);
+    if (parameterResets != 0)
+        midi::forEachTransportStopResetMessage ([&] (const std::uint8_t* data, int bytes) noexcept
+        {
+            const auto channel = (int16) (data[0] & 0x0F);
+            if ((parameterResets & (1u << channel)) == 0) return true;
+            if ((data[0] & 0xF0) == 0xB0)
+                queueCcParam (channel, data[1], data[2] / 127.0, 0, Priority::Reset);
+            else if ((data[0] & 0xF0) == 0xE0)
+                queueCcParam (channel, Vst::kPitchBend, 8192.0 / 16383.0, 0, Priority::Reset);
+            else if (bytes == 2)
+                queueCcParam (channel, Vst::kAfterTouch, 0.0, 0, Priority::Reset);
+            return true;
+        });
     impl->paramRing.drain ([&] (const Impl::ParamChange& pc)
     {
-        int32 queueIndex = 0;
-        if (auto* queue = impl->inParams.addParameterData ((Vst::ParamID) pc.id, queueIndex))
-        {
-            int32 pointIndex = 0;
-            queue->addPoint (0, pc.value, pointIndex);
-        }
+        impl->inParams.append (pc.id, 0, pc.value, parameterOrder++, Priority::Chase);
     });
 
     // Notes -> the event bus; CCs / pitch bend / channel pressure -> the
     // IMidiMapping-assigned parameters (VST3 has no CC events by design).
     if (io.midiIn != nullptr)
     {
-        auto queueCcParam = [&] (int16 channel, int16 ctrl, double normalized, int32 offset)
-        {
-            const uint32_t id = impl->ccParamId[(size_t) (channel * Vst::kCountCtrlNumber
-                                                          + ctrl)]
-                                    .load (std::memory_order_relaxed);
-            if (id == Impl::kNoCcParam) return false;
-            int32 queueIndex = 0;
-            if (auto* queue = impl->inParams.addParameterData ((Vst::ParamID) id, queueIndex))
-            {
-                int32 pointIndex = 0;
-                queue->addPoint (offset, normalized, pointIndex);
-            }
-            return true;
-        };
-
         const auto ccMapped = [&] (int channel, int ctrl) noexcept
         {
+            if ((ctrl == Vst::kCtrlAllSoundsOff || ctrl == Vst::kCtrlAllNotesOff)
+                && (failedPanicChannels & (1u << channel)) != 0) return false;
             return impl->ccParamId[(size_t) (channel * Vst::kCountCtrlNumber + ctrl)]
                        .load (std::memory_order_relaxed) != Impl::kNoCcParam;
         };
@@ -798,19 +811,22 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
             const auto channel = (int16_t) (d[0] & 0x0Fu);
             if (status == 0xB0 && meta.numBytes >= 3 && d[1] < 128)
             {
-                queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0, meta.samplePosition);
-                anyPanic = anyPanic || (isPanic (d) && ! ccMapped (channel, d[1]));
+                const bool accepted = queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0,
+                                                    meta.samplePosition, ccPriority (d[1], d[2], meta.samplePosition));
+                anyPanic = anyPanic || (isPanic (d) && ! accepted);
             }
             else if (status == 0xE0 && meta.numBytes >= 3)
             {
                 const int bend14 = (int) d[1] | ((int) d[2] << 7);
                 queueCcParam (channel, Vst::kPitchBend,
-                              (double) bend14 / 16383.0, meta.samplePosition);
+                              (double) bend14 / 16383.0, meta.samplePosition,
+                              bend14 == 8192 ? Priority::Reset : meta.samplePosition == 0 ? Priority::Chase : Priority::Modulation);
             }
             else if (status == 0xD0)
             {
                 queueCcParam (channel, Vst::kAfterTouch,
-                              (double) d[1] / 127.0, meta.samplePosition);
+                              (double) d[1] / 127.0, meta.samplePosition,
+                              d[1] == 0 ? Priority::Reset : meta.samplePosition == 0 ? Priority::Chase : Priority::Modulation);
             }
         }
 
@@ -859,10 +875,10 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
                     // The block's own controllers went to their parameters
                     // above; what comes here is a panic or, when the block
                     // gave way to the hanging reset, that reset.
-                    if (queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0, samplePosition)
-                        || ! isPanic (d))
-                        return;
                     const auto mask = (std::uint16_t) (1u << channel);
+                    const bool accepted = queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0,
+                                                        samplePosition, ccPriority (d[1], d[2], samplePosition));
+                    if (! isPanic (d) || (accepted && (failedPanicChannels & mask) == 0)) return;
                     impl->pendingMidiPanicChannels |= mask;
                     const bool complete = impl->midiNotes.releaseChannel (channel, [&] (int key)
                     {
@@ -899,6 +915,7 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
         }
     }
 
+    impl->inParams.finalize();
     if (impl->processor->process (impl->processData) != kResultOk)
         clearOutputs();
 }

@@ -13,7 +13,7 @@ namespace duskstudio::vst3::detail
 {
 constexpr std::size_t kEditorParameterRingSize = 512;
 constexpr std::size_t kParameterPointCapacity = dusk::kMidiRoutingBlockBytes / dusk::MidiBuffer::recordBytes (2)
-    + kEditorParameterRingSize - 1 + midi::kTransportStopResetMessageCount;
+    + kEditorParameterRingSize - 1 + 2 * midi::kTransportStopResetMessageCount;
 enum class ParameterPointPriority : std::uint8_t { Modulation, Chase, Reset };
 
 template <std::size_t Capacity>
