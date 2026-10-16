@@ -91,6 +91,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     std::vector<float>       sink;                    // per-channel output sink scratch
     std::vector<float*>      scratchPtrs;             // per-channel pointer scratch
     detail::MidiNoteTracker  midiNotes;
+    std::uint16_t pendingMidiPanicChannels = 0;
 
     // Parameters: snapshot at create(); UI->RT ring drained into inParams each block.
     std::vector<ParamInfo> params;
@@ -608,6 +609,7 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
 
     impl->latencySamples = (int) impl->processor->getLatencySamples();
     impl->midiNotes.reset();
+    impl->pendingMidiPanicChannels = 0;
 
     impl->processor->setProcessing (true);
     impl->processing = true;
@@ -723,6 +725,26 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
     impl->inParams.clearQueue();
     impl->outParams.clearQueue();
 
+    const bool recoveringMidi = impl->pendingMidiPanicChannels != 0;
+    if (impl->hasEventIn)
+        for (int16 channel = 0; channel < 16; ++channel)
+        {
+            const auto mask = (std::uint16_t) (1u << channel);
+            if ((impl->pendingMidiPanicChannels & mask) == 0) continue;
+            const bool complete = impl->midiNotes.releaseChannel (channel, [&] (int key) noexcept
+            {
+                Vst::Event event {};
+                event.busIndex = 0;
+                event.sampleOffset = 0;
+                event.flags = Vst::Event::kIsLive;
+                event.type = Vst::Event::kNoteOffEvent;
+                event.noteOff = { channel, (int16_t) key, 0.0f, -1, 0.0f };
+                return impl->inEvents.addEvent (event) == kResultTrue;
+            });
+            if (! complete) break;
+            impl->pendingMidiPanicChannels &= (std::uint16_t) ~mask;
+        }
+
     // Queued UI/editor parameter changes -> this block's IParameterChanges.
     // All at offset 0 - sample-accurate automation is a later step.
     impl->paramRing.drain ([&] (const Impl::ParamChange& pc)
@@ -806,13 +828,17 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
 
         if (impl->hasEventIn)
         {
-            const auto eventsFor = [&isPanic, &ccMapped, releasable]
+            const auto eventsFor = [&isPanic, &ccMapped, releasable, recoveringMidi]
                                    (const uint8_t* d, int numBytes) mutable noexcept -> std::size_t
             {
                 if (numBytes < 3) return 0;
                 const auto status = (uint8_t) (d[0] & 0xF0u);
                 auto& onChannel = releasable[d[0] & 0x0Fu];
-                if (status == 0x90 && d[2] > 0) ++onChannel;
+                if (status == 0x90 && d[2] > 0)
+                {
+                    if (recoveringMidi) return 0;
+                    ++onChannel;
+                }
                 if (status == 0x90 || status == 0x80) return 1;
                 if (isPanic (d) && ! ccMapped (d[0] & 0x0F, d[1])) return std::exchange (onChannel, 0);
                 return 0;
@@ -836,16 +862,20 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
                     if (queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0, samplePosition)
                         || ! isPanic (d))
                         return;
-                    impl->midiNotes.releaseChannel (channel, [&] (int key)
+                    const auto mask = (std::uint16_t) (1u << channel);
+                    impl->pendingMidiPanicChannels |= mask;
+                    const bool complete = impl->midiNotes.releaseChannel (channel, [&] (int key)
                     {
                         ev.type    = Vst::Event::kNoteOffEvent;
                         ev.noteOff = { channel, (int16_t) key, 0.0f, -1, 0.0f };
                         return impl->inEvents.addEvent (ev) == kResultTrue;
                     });
+                    if (complete) impl->pendingMidiPanicChannels &= (std::uint16_t) ~mask;
                     return;
                 }
                 if (status == 0x90 && d[2] > 0)
                 {
+                    if (recoveringMidi) return;
                     ev.type   = Vst::Event::kNoteOnEvent;
                     ev.noteOn = { channel, (int16_t) d[1], 0.0f,
                                   (float) d[2] / 127.0f, 0, -1 };

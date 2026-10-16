@@ -613,6 +613,36 @@ TEST_CASE ("a hosted VST3 block bigger than the host's event list still ends its
     // Past the host's 1024-event list either way.
     constexpr int kFlood = 2000;
 
+    SECTION ("a panic backlog drains without MIDI input and excludes new onsets during recovery")
+    {
+        dusk::MidiBuffer repeated;
+        for (int i = 0; i < 1024; ++i) addMidi (repeated, 0x90, 60, 100);
+        probe.run (&repeated);
+        probe.run (&repeated);
+        dusk::MidiBuffer later;
+        addMidi (later, 0x90, 61, 100);
+        probe.run (&later);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (2.0 / 16.0, 1.0e-6));
+
+        dusk::MidiBuffer stop;
+        REQUIRE (duskstudio::midi::emitTransportStopReset (stop, 0));
+        probe.run (&stop);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (1024.0, 1.0e-6));
+        probe.run (nullptr);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (2048.0, 1.0e-6));
+
+        dusk::MidiBuffer incoming;
+        addMidi (incoming, 0x90, 62, 100);
+        probe.run (&incoming);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (2049.0, 1.0e-6));
+        probe.run (&incoming);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));
+        return;
+    }
+
     SECTION ("a flood of other notes between a note's start and its end")
     {
         dusk::MidiBuffer block;

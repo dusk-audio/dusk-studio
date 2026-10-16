@@ -42,14 +42,19 @@ public:
     }
 
     template <typename Emit>
-    void releaseChannel (int channel, Emit&& emit) noexcept
+    bool releaseChannel (int channel, Emit&& emit) noexcept
     {
-        if (channel < 0 || channel >= kChannels) return;
+        if (channel < 0 || channel >= kChannels) return true;
         for (int key = 0; key < kKeys; ++key)
         {
             auto& count = noteOnCounts[index (channel, key)];
-            while (count > 0 && emit (key)) --count;
+            while (count > 0)
+            {
+                if (! emit (key)) return false;
+                --count;
+            }
         }
+        return true;
     }
 
 private:

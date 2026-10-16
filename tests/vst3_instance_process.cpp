@@ -35,11 +35,39 @@ TEST_CASE ("VST3 panic releases every sounding note when its CC is unmapped",
     tracker.noteOff (2, 72);
 
     std::vector<int> released;
-    tracker.releaseChannel (2, [&] (int key)
+    SECTION ("a refused release is retained and stops the traversal immediately")
+    {
+        tracker.noteOn (2, 72);
+        tracker.noteOn (2, 90);
+        int attempts = 0;
+        const bool complete = tracker.releaseChannel (2, [&] (int key)
+        {
+            ++attempts;
+            if (! released.empty()) return false;
+            released.push_back (key);
+            return true;
+        });
+        CHECK_FALSE (complete);
+        CHECK (attempts == 2);
+        CHECK (tracker.soundingOnChannel (2) == 2);
+        CHECK (tracker.isSounding (2, 72));
+        CHECK (tracker.isSounding (2, 90));
+        REQUIRE (tracker.releaseChannel (2, [&] (int key)
+        {
+            released.push_back (key);
+            return true;
+        }));
+        CHECK (released == std::vector<int> { 72, 72, 90 });
+        CHECK (tracker.soundingOnChannel (2) == 0);
+        CHECK (tracker.isSounding (3, 60));
+        return;
+    }
+    SECTION ("a complete release clears its channel") {}
+    REQUIRE (tracker.releaseChannel (2, [&] (int key)
     {
         released.push_back (key);
         return true;
-    });
+    }));
 
     REQUIRE (released == std::vector<int> { 72 });
     REQUIRE_FALSE (tracker.isSounding (2, 72));
