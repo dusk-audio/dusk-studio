@@ -12,6 +12,7 @@
 #include "engine/vst3/Vst3HostContext.h"
 #include "engine/vst3/Vst3Instance.h"
 #include "engine/vst3/Vst3MidiNoteTracker.h"
+#include "engine/vst3/Vst3ParameterChanges.h"
 #include "support/AllocationObserver.h"
 
 #include <pluginterfaces/vst/ivsteditcontroller.h>
@@ -20,11 +21,149 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <memory>
 #include <new>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
+
+TEST_CASE ("VST3 input parameter points stay bounded through sorting and reuse", "[vst3][allocation][midi]")
+{
+    using namespace Steinberg;
+    using namespace duskstudio::vst3::detail;
+    using Priority = ParameterPointPriority;
+    SECTION ("Queue points follow offsets and original source order")
+    {
+        FixedParameterChanges<8> changes;
+        changes.beginBlock (64);
+        REQUIRE (changes.append (7, 20, 0.2, 0, Priority::Modulation));
+        REQUIRE (changes.append (9, 5, 0.5, 1, Priority::Modulation));
+        REQUIRE (changes.append (7, 0, 0.25, 2, Priority::Chase));
+        REQUIRE (changes.append (7, 20, 0.75, 3, Priority::Modulation));
+        REQUIRE (changes.append (7, 20, 0.4, 1, Priority::Modulation));
+        changes.finalize();
+        REQUIRE (changes.getParameterCount() == 2);
+        auto* queue = changes.getParameterData (0);
+        REQUIRE (queue != nullptr);
+        REQUIRE (queue->getParameterId() == 7);
+        REQUIRE (queue->getPointCount() == 2);
+        int32 offset = -1;
+        double value = 0.0;
+        REQUIRE (queue->getPoint (0, offset, value) == kResultTrue);
+        CHECK (offset == 0);
+        CHECK_THAT (value, Catch::Matchers::WithinAbs (0.25, 1e-12));
+        REQUIRE (queue->getPoint (1, offset, value) == kResultTrue);
+        CHECK (offset == 20);
+        CHECK_THAT (value, Catch::Matchers::WithinAbs (0.75, 1e-12));
+        CHECK (queue->getPoint (-1, offset, value) == kResultFalse);
+        CHECK (queue->getPoint (2, offset, value) == kResultFalse);
+        CHECK (changes.getParameterData (-1) == nullptr);
+        CHECK (changes.getParameterData (2) == nullptr);
+        CHECK_FALSE (changes.append (7, 1, 0.0, 4, Priority::Reset));
+        int32 index = 99;
+        CHECK (queue->addPoint (0, 0.0, index) == kResultFalse);
+        CHECK (index == -1);
+    }
+    SECTION ("Full storage accepts duplicate replacement and protects resets")
+    {
+        FixedParameterChanges<2> changes;
+        changes.beginBlock (64);
+        REQUIRE (changes.append (7, 1, 0.1, 0, Priority::Modulation));
+        REQUIRE (changes.append (9, 1, 0.2, 1, Priority::Modulation));
+        REQUIRE (changes.append (7, 1, 0.7, 3, Priority::Modulation));
+        REQUIRE (changes.append (7, 1, 0.4, 2, Priority::Modulation));
+        CHECK_FALSE (changes.append (10, 1, 0.0, 4, Priority::Modulation));
+        changes.finalize();
+        REQUIRE (changes.getParameterCount() == 2);
+        int32 offset = -1;
+        double value = 0.0;
+        REQUIRE (changes.getParameterData (0)->getPoint (0, offset, value) == kResultTrue);
+        CHECK_THAT (value, Catch::Matchers::WithinAbs (0.7, 1e-12));
+        changes.beginBlock (64);
+        REQUIRE (changes.append (7, 1, 0.1, 0, Priority::Modulation));
+        REQUIRE (changes.append (9, 1, 0.2, 1, Priority::Modulation));
+        REQUIRE (changes.append (10, 0, 0.0, 2, Priority::Reset));
+        REQUIRE (changes.append (11, 0, 0.5, 3, Priority::Chase));
+        CHECK_FALSE (changes.append (12, 1, 1.0, 4, Priority::Modulation));
+        changes.finalize();
+        REQUIRE (changes.getParameterCount() == 2);
+        CHECK (changes.getParameterData (0)->getParameterId() == 10);
+        CHECK (changes.getParameterData (1)->getParameterId() == 11);
+    }
+    SECTION ("Duplicate values keep reset protection before and after capacity is reached")
+    {
+        FixedParameterChanges<2> changes;
+        for (const bool full : { false, true })
+        {
+            changes.beginBlock (64);
+            REQUIRE (changes.append (7, 0, 0.0, 0, Priority::Reset));
+            if (full) REQUIRE (changes.append (9, 0, 0.0, 1, Priority::Reset));
+            REQUIRE (changes.append (7, 0, 0.7, 2, Priority::Modulation));
+            if (! full) REQUIRE (changes.append (9, 0, 0.0, 1, Priority::Reset));
+            CHECK_FALSE (changes.append (10, 0, 0.5, 3, Priority::Chase));
+            changes.finalize();
+            REQUIRE (changes.getParameterCount() == 2);
+            int32 offset = -1;
+            double value = 0.0;
+            REQUIRE (changes.getParameterData (0)->getPoint (0, offset, value) == kResultTrue);
+            CHECK_THAT (value, Catch::Matchers::WithinAbs (0.7, 1e-12));
+        }
+    }
+    SECTION ("Eviction keeps lookup chains valid across block reuse")
+    {
+        FixedParameterChanges<2> changes;
+        for (Vst::ParamID first = 0; first < 96; first += 6)
+        {
+            changes.beginBlock (64);
+            for (Vst::ParamID i = 0; i < 6; ++i)
+            {
+                const auto priority = i < 2 ? Priority::Modulation : i < 4 ? Priority::Chase : Priority::Reset;
+                REQUIRE (changes.append (first + i, 0, 0.5, i, priority));
+            }
+            REQUIRE (changes.append (first + 4, 0, 0.75, 6, Priority::Modulation));
+            changes.finalize();
+            REQUIRE (changes.getParameterCount() == 2);
+            CHECK (changes.getParameterData (0)->getParameterId() == first + 4);
+            CHECK (changes.getParameterData (1)->getParameterId() == first + 5);
+        }
+    }
+    SECTION ("Invalid offsets and parameter IDs consume no storage")
+    {
+        FixedParameterChanges<2> changes;
+        changes.beginBlock (4);
+        CHECK_FALSE (changes.append (7, -1, 0.5, 0, Priority::Modulation));
+        CHECK_FALSE (changes.append (7, 4, 0.5, 1, Priority::Modulation));
+        CHECK_FALSE (changes.append (Vst::kNoParamId, 0, 0.5, 2, Priority::Modulation));
+        changes.finalize();
+        CHECK (changes.getParameterCount() == 0);
+    }
+    SECTION ("The complete engine envelope allocates nothing on first use or reuse")
+    {
+        auto changes = std::make_unique<BoundedParameterChanges>();
+        for (const bool distinctParameters : { false, true })
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                bool accepted = true;
+                std::size_t allocations = 0, points = 0;
+                {
+                    duskstudio::test::AllocationObserver observer;
+                    changes->beginBlock (256);
+                    for (std::size_t i = 0; i < kParameterPointCapacity; ++i)
+                        accepted = changes->append (static_cast<Vst::ParamID> (distinctParameters ? i + 1 : i % 64 + 1),
+                                                    distinctParameters ? 0 : static_cast<int> (i / 64),
+                                                    0.5, i, Priority::Modulation) && accepted;
+                    changes->finalize();
+                    for (int32 i = 0; i < changes->getParameterCount(); ++i)
+                        points += static_cast<std::size_t> (changes->getParameterData (i)->getPointCount());
+                    allocations = observer.count();
+                }
+                CHECK (accepted);
+                CHECK (allocations == 0);
+                CHECK (points == kParameterPointCapacity);
+            }
+    }
+}
 
 TEST_CASE ("VST3 SDK parameter queues grow beyond their retained capacity", "[vst3][allocation]")
 {
