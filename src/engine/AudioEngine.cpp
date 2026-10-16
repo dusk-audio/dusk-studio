@@ -2301,7 +2301,8 @@ void AudioEngine::serviceMidiRecording()
             target.timelineStart -= ticksToSamples (merged.leadingTicks,
                                                     group.capturedSampleRate, group.capturedBpm);
             target.lengthInSamples = ticksToSamples (target.lengthInTicks, sr, bpm);
-            diffs.push_back ({ captured.trackIndex, std::move (before), std::move (after) });
+            diffs.push_back ({ captured.trackIndex, std::move (before), std::move (after),
+                              { group.gestureId, group.passOrdinal } });
             committed.emplace_back (captured.trackIndex, targetIndex);
         }
         if (diffs.empty()) continue;

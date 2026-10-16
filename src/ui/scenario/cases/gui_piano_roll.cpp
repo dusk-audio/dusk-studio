@@ -738,8 +738,17 @@ std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext&
         const auto* preview = engine.getRecordManager().midiCapturePreview (0);
         return preview != nullptr && preview->passOrdinal >= ordinal;
     };
-    const auto check = [&ctx, &track, seed] (int passes)
+    auto consumed = std::make_shared<MidiCaptureStamp>();
+    const auto check = [&ctx, &track, seed, consumed] (int passes)
     {
+        const auto capture = track.midiRegions.read()->capture;
+        ctx.expect (capture.gestureId != 0 && capture.consumedThroughPass >= passes,
+                    "the published events lost their consumed capture pass");
+        ctx.expect (capture.gestureId >= consumed->gestureId
+                    && (capture.gestureId != consumed->gestureId
+                        || capture.consumedThroughPass >= consumed->consumedThroughPass),
+                    "Undo or Redo made an already consumed pass eligible for replay");
+        *consumed = capture;
         const auto& regions = track.midiRegions.current();
         if (! ctx.expect (regions.size() == 1, "MIDI Merge made extra regions")) return;
         const auto& region = regions.front();

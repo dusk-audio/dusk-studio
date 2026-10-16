@@ -416,14 +416,6 @@ private:
     std::unique_ptr<Impl> afterState;
 };
 
-// Wraps the per-track regions + midiRegions + takes diff produced by
-// RecordManager::stopRecording so a take commit (audio + midi) becomes
-// one undo step. perform() applies the after-snapshot; undo() restores
-// the before-snapshot and ends an audition of a take it removes, which
-// redo does not bring back. Only the takes the commit added or removed
-// change, so one added outside the undo history stays. WAV files on disk
-// are NOT deleted on undo - the user can redo to re-attach the take, and
-// orphaned files are reclaimed via the existing "Clean Out" menu action.
 class MidiMergePassAction final : public UndoableAction
 {
 public:
@@ -432,6 +424,7 @@ public:
         int trackIndex = -1;
         std::vector<MidiRegion> before;
         std::vector<MidiRegion> after;
+        MidiCaptureStamp capture;
     };
     MidiMergePassAction (Session& s, AudioEngine& e, std::vector<TrackDiff> d)
         : session (s), engine (e), diffs (std::move (d)) {}
@@ -446,6 +439,14 @@ private:
     std::vector<TrackDiff> diffs;
 };
 
+// Wraps the per-track regions + midiRegions + takes diff produced by
+// RecordManager::stopRecording so a take commit (audio + midi) becomes
+// one undo step. perform() applies the after-snapshot; undo() restores
+// the before-snapshot and ends an audition of a take it removes, which
+// redo does not bring back. Only the takes the commit added or removed
+// change, so one added outside the undo history stays. WAV files on disk
+// are NOT deleted on undo - the user can redo to re-attach the take, and
+// orphaned files are reclaimed via the existing "Clean Out" menu action.
 class RecordCommitAction final : public UndoableAction
 {
 public:
