@@ -102,12 +102,8 @@ TEST_CASE ("SessionSerializer stamps the current version on a session carrying b
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
 
-    // The highest format the last released reader accepts. v0.13.2 has no
-    // built-in model, ignores builtin_id / builtin_state, and rewrites
-    // session.json from its own model on save, so a session holding built-ins
-    // must carry a version that build refuses. Dropping the format back to
-    // this number trips the check below.
-    constexpr int kLastReleasedReaderMaxVersion = 6;
+    // 0.15.1 reads through format 10 and would discard managed SFZ identities.
+    constexpr int kLastReleasedReaderMaxVersion = 10;
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
@@ -165,5 +161,50 @@ TEST_CASE ("SessionSerializer refuses a future session before touching the live 
     CHECK (live.track (0).builtinUnitId == "dusk.builtin.sunset");
     CHECK (live.missingAudioFilesAfterLoad.size() == 1);
 
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("SessionSerializer explains rejected loads and clears stale errors", "[session][serializer][version]")
+{
+    using namespace duskstudio;
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+    const auto path = std::filesystem::u8path (target.getFullPathName().toStdString());
+    auto live = std::make_unique<Session>();
+    live->track (0).name = "Keep this session";
+    SessionLoadError error { SessionLoadFailure::NewerVersion, 999, 999 };
+
+    CHECK_FALSE (SessionSerializer::load (*live, path, &error));
+    CHECK (error.failure == SessionLoadFailure::FileUnavailable);
+    CHECK (error.fileVersion == 0);
+    CHECK (error.supportedVersion == 11);
+    CHECK (live->track (0).name == "Keep this session");
+
+    writeRaw (target, "not JSON");
+    CHECK_FALSE (SessionSerializer::load (*live, target, &error));
+    CHECK (error.failure == SessionLoadFailure::InvalidJson);
+    CHECK (error.fileVersion == 0);
+    CHECK (live->track (0).name == "Keep this session");
+
+    writeRaw (target, R"({"version":12,"tracks":[{"name":"Future"}]})");
+    CHECK_FALSE (SessionSerializer::load (*live, path, &error));
+    CHECK (error.failure == SessionLoadFailure::NewerVersion);
+    CHECK (error.fileVersion == 12);
+    CHECK (error.supportedVersion == 11);
+    CHECK (live->track (0).name == "Keep this session");
+
+    writeRaw (target, R"({"version":0,"tracks":[{"name":"Unsupported migration"}]})");
+    CHECK_FALSE (SessionSerializer::load (*live, target, &error));
+    CHECK (error.failure == SessionLoadFailure::MigrationFailed);
+    CHECK (error.fileVersion == 0);
+    CHECK (error.supportedVersion == 11);
+    CHECK (live->track (0).name == "Keep this session");
+
+    writeRaw (target, R"({"version":11,"tracks":[{"name":"Loaded"}]})");
+    REQUIRE (SessionSerializer::load (*live, target, &error));
+    CHECK (error.failure == SessionLoadFailure::None);
+    CHECK (error.fileVersion == 11);
+    CHECK (error.supportedVersion == 11);
+    CHECK (live->track (0).name == "Loaded");
     dir.deleteRecursively();
 }

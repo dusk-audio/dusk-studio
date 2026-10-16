@@ -2548,11 +2548,17 @@ juce::String SessionSerializer::loadNotepad (const juce::File& sessionDir)
     return source.existsAsFile() ? source.loadFileAsString() : juce::String();
 }
 
-bool SessionSerializer::load (Session& s, const File& source)
+bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* error)
 {
-    if (! source.existsAsFile()) return false;
+    if (error != nullptr) *error = { SessionLoadFailure::None, 0, kFormatVersion };
+    const auto fail = [&] (SessionLoadFailure failure)
+    {
+        if (error != nullptr) error->failure = failure;
+        return false;
+    };
+    if (! source.existsAsFile()) return fail (SessionLoadFailure::FileUnavailable);
     nlohmann::json root = nlohmann::json::parse (source.loadFileAsString().toStdString(), nullptr, false);
-    if (! root.is_object()) return false;
+    if (! root.is_object()) return fail (SessionLoadFailure::InvalidJson);
 
     // Format version gate. Missing key (pre-versioning sessions) is
     // treated as v1 - the format was effectively stable at v1 when the
@@ -2561,6 +2567,7 @@ bool SessionSerializer::load (Session& s, const File& source)
     // session saved by a newer build silently dropping new state is
     // the worst-case bug class.
     const int fileVersion = json::getInt (root, "version", 1);
+    if (error != nullptr) error->fileVersion = fileVersion;
     if (fileVersion > kFormatVersion)
     {
         std::fprintf (stderr,
@@ -2568,10 +2575,10 @@ bool SessionSerializer::load (Session& s, const File& source)
                       "than this build's max supported version %d - refusing to "
                       "load. Upgrade Dusk Studio.\n",
                       fileVersion, kFormatVersion);
-        return false;
+        return fail (SessionLoadFailure::NewerVersion);
     }
     if (fileVersion < kFormatVersion && ! migrateSession (root, fileVersion))
-        return false;
+        return fail (SessionLoadFailure::MigrationFailed);
 
     // First write to the Session, and past every return above it: a caller that
     // has to undo a failed load (the session directory moves before this runs)
@@ -3295,9 +3302,9 @@ bool SessionSerializer::load (Session& s, const File& source)
     return true;
 }
 
-bool SessionSerializer::load (Session& s, const std::filesystem::path& source)
+bool SessionSerializer::load (Session& s, const std::filesystem::path& source, SessionLoadError* error)
 {
-    return load (s, fileFromPath (source));
+    return load (s, fileFromPath (source), error);
 }
 
 namespace
