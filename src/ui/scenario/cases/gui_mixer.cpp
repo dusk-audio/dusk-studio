@@ -709,6 +709,8 @@ std::optional<ScenarioResult> runSettingsAutosave (GuiHost& host, ScenarioContex
     pushSettingsTab (*steps, host, "general");
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickAudioSettingsControl ("autosave"), "autosave dropdown is not visible"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.inputAudioSettings ("focus-out"), "autosave dropdown did not accept the focus change"); } });
     steps->push_back ({ 200, [&host] { host.inputAudioSettings ("home"); } });
     steps->push_back ({ 200, [&host] { host.inputAudioSettings ("enter"); } });
     steps->push_back ({ 200, [&ctx, &session]

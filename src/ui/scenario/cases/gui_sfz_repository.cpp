@@ -1168,7 +1168,8 @@ std::optional<ScenarioResult> runStorageMove (GuiHost& host, ScenarioContext& ct
                           "SFZ storage Move changed the fixture identity or program counts"))
         { ctx.complete (ctx.verdict()); return; }
         ctx.expect (sameFile (snapshot.locations.active.root.u8string(), storage->destination)
-                    && moved.directory == storage->destination / "packs" / PackStore::identity (storage->before->locatorFor (storage->before->instruments.front())),
+                    && sameFile (moved.directory.u8string(), storage->destination / "packs"
+                        / PackStore::identity (storage->before->locatorFor (storage->before->instruments.front()))),
                     "SFZ storage Move did not publish under the selected folder");
         ctx.expect (moved.archiveSha256 == storage->before->archiveSha256 && moved.provider.releaseId == storage->before->provider.releaseId,
                     "SFZ storage Move changed the archive digest or release identity");

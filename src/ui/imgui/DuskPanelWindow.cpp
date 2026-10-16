@@ -820,7 +820,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
     void forwardShortcuts (const dw::Context& ctx)
     {
-        if (! callbacks.shortcut || ! dw::shortcutsAvailable (ctx))
+        if (! callbacks.shortcut || ! dw::shortcutsAvailable (ctx)
+            || (view != nullptr && view->capturesKeyboard()))
             return;
 
         const auto& io = ImGui::GetIO();

@@ -41,6 +41,8 @@ canonical source.
 
 ### Fixed
 
+- **Settings dropdown keys.** Open dropdowns keep Home and End for navigating
+  their choices, preventing repeated Home events through the main window.
 - **Installed SFZ counts and programs.** Each installed pack counts once per
   category. ARIA bank declarations supply its normal program choices; internal
   SFZ mappings remain accessible through Show all SFZ files.
