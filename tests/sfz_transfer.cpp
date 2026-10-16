@@ -57,6 +57,7 @@ struct FakeReply
     std::size_t chunkBytes = 4;
     OperationStatus endStatus = OperationStatus::Complete;
     bool failBeforeHeaders = false;
+    FailureKind endFailureKind = FailureKind::None;
 };
 
 class FakeTransport final : public HttpTransport
@@ -82,7 +83,8 @@ public:
             if (! onBody (std::string_view (reply.body).substr (offset, reply.chunkBytes))) return aborted();
         }
         if (control.status() != OperationStatus::Complete) return aborted();
-        return { reply.endStatus, reply.endStatus == OperationStatus::Complete ? "" : "Scripted connection failure" };
+        return { reply.endStatus, reply.endStatus == OperationStatus::Complete ? "" : "Scripted connection failure",
+                 reply.endFailureKind };
     }
     std::vector<FakeReply> replies;
     std::vector<HttpRequest> requests;
@@ -231,12 +233,14 @@ TEST_CASE ("SFZ transfer verifies an upstream digest before completion", "[sfz][
         const auto result = downloadFile (transport, request (temp, sha256 ("abcdefgh")));
         REQUIRE (result);
         CHECK (result.sha256 == sha256 ("abcdefgh"));
+        CHECK (result.failureKind == FailureKind::None);
     }
     SECTION ("Mismatched digest preserves part and exposes actual digest")
     {
         const auto result = downloadFile (transport, request (temp, sha256 ("different")));
         CHECK_FALSE (result);
         CHECK (result.error.find ("SHA-256") != std::string::npos);
+        CHECK (result.failureKind == FailureKind::Integrity);
         CHECK (result.sha256 == sha256 ("abcdefgh"));
         CHECK (readFile (temp.part()) == "abcdefgh");
         CHECK_FALSE (result.preservePart);
@@ -248,9 +252,19 @@ TEST_CASE ("SFZ transfer rejects truncated or oversized archives", "[sfz][transf
     TemporaryDownload temp;
     FakeTransport transport;
     auto download = request (temp);
+    auto failureKind = FailureKind::None;
     SECTION ("Declared body is truncated")
     {
+        failureKind = FailureKind::Integrity;
         transport.replies.push_back ({ 200, { { "content-length", "8" } }, "abcd" });
+    }
+    SECTION ("Transport reports an early end of the declared body")
+    {
+        failureKind = FailureKind::Integrity;
+        FakeReply reply { 200, { { "content-length", "8" } }, "abcd" };
+        reply.endStatus = OperationStatus::Failed;
+        reply.endFailureKind = FailureKind::Integrity;
+        transport.replies.push_back (reply);
     }
     SECTION ("Declared size exceeds limit before writes")
     {
@@ -264,6 +278,7 @@ TEST_CASE ("SFZ transfer rejects truncated or oversized archives", "[sfz][transf
     }
     SECTION ("Body exceeds its declared length")
     {
+        failureKind = FailureKind::Integrity;
         transport.replies.push_back ({ 200, { { "content-length", "4" } }, "abcdefgh" });
     }
     SECTION ("Compressed HTTP body is rejected")
@@ -272,6 +287,7 @@ TEST_CASE ("SFZ transfer rejects truncated or oversized archives", "[sfz][transf
     }
     const auto result = downloadFile (transport, download);
     CHECK_FALSE (result);
+    CHECK (result.failureKind == failureKind);
     CHECK (std::filesystem::file_size (temp.part()) <= download.maxBytes);
 }
 

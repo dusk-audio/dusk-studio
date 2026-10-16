@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
 #include <cstdio>
@@ -343,14 +344,25 @@ bool safeFilePath (const std::filesystem::path& path)
     return true;
 }
 
-File openFile (const std::filesystem::path& path, bool readOnly = false)
+FailureKind fileFailure() noexcept
 {
+    return errno == ENOSPC ? FailureKind::DiskFull : FailureKind::None;
+}
+
+File openFile (const std::filesystem::path& path, bool readOnly = false, FailureKind* failureKind = nullptr)
+{
+    if (failureKind) *failureKind = FailureKind::None;
     if (! safeFilePath (path)) return File {};
    #if defined(_WIN32)
     const auto handle = CreateFileW (dusk::fs::nativeIOPath (path).c_str(), readOnly ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
                                     FILE_SHARE_READ, nullptr, readOnly ? OPEN_EXISTING : OPEN_ALWAYS,
                                     FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) return File {};
+    if (handle == INVALID_HANDLE_VALUE)
+    {
+        const auto error = GetLastError();
+        if (failureKind && (error == ERROR_DISK_FULL || error == ERROR_HANDLE_DISK_FULL)) *failureKind = FailureKind::DiskFull;
+        return File {};
+    }
     BY_HANDLE_FILE_INFORMATION info {};
     if (! GetFileInformationByHandle (handle, &info) || info.nNumberOfLinks != 1
         || (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0)
@@ -362,7 +374,7 @@ File openFile (const std::filesystem::path& path, bool readOnly = false)
    #else
     const auto fd = ::open (path.c_str(), (readOnly ? O_RDONLY | O_NONBLOCK : O_RDWR | O_CREAT)
                                           | O_NOFOLLOW | O_CLOEXEC, 0600);
-    if (fd == -1) return File {};
+    if (fd == -1) { if (failureKind) *failureKind = fileFailure(); return File {}; }
     struct stat info {};
     if (::fstat (fd, &info) != 0 || ! S_ISREG (info.st_mode) || info.st_nlink != 1)
     { ::close (fd); return File {}; }
@@ -372,14 +384,21 @@ File openFile (const std::filesystem::path& path, bool readOnly = false)
     return File (file);
 }
 
-bool rewindFile (std::FILE* file, bool truncate)
+bool rewindFile (std::FILE* file, bool truncate, FailureKind* failureKind = nullptr)
 {
-    if (std::fflush (file) != 0) return false;
+    if (failureKind) *failureKind = FailureKind::None;
+    errno = 0;
+    if (std::fflush (file) != 0) { if (failureKind) *failureKind = fileFailure(); return false; }
    #if defined(_WIN32)
-    if (truncate && _chsize_s (_fileno (file), 0) != 0) return false;
+    if (truncate)
+    {
+        const auto error = _chsize_s (_fileno (file), 0);
+        if (error != 0) { if (failureKind && error == ENOSPC) *failureKind = FailureKind::DiskFull; return false; }
+    }
     return _fseeki64 (file, 0, SEEK_SET) == 0;
    #else
-    if (truncate && ::ftruncate (::fileno (file), 0) != 0) return false;
+    if (truncate && ::ftruncate (::fileno (file), 0) != 0)
+    { if (failureKind) *failureKind = fileFailure(); return false; }
     return ::fseeko (file, 0, SEEK_SET) == 0;
    #endif
 }
@@ -437,8 +456,9 @@ ResumeMetadata readMetadata (const std::filesystem::path& path, bool* unavailabl
              completed, get ("actual_sha256") };
 }
 
-bool writeMetadata (const std::filesystem::path& path, const ResumeMetadata& metadata)
+bool writeMetadata (const std::filesystem::path& path, const ResumeMetadata& metadata, FailureKind* failureKind)
 {
+    *failureKind = FailureKind::None;
     auto json = dusk::json::Json {
         { "url", metadata.url }, { "digest", metadata.digest }, { "effective_url", metadata.effectiveUrl },
         { "etag", metadata.etag }, { "last_modified", metadata.lastModified }
@@ -450,10 +470,14 @@ bool writeMetadata (const std::filesystem::path& path, const ResumeMetadata& met
     }
     const auto content = json.dump();
     if (content.size() > 16384) return false;
-    auto file = openFile (path);
-    if (! file || ! rewindFile (file.get(), true)) return false;
-    return std::fwrite (content.data(), 1, content.size(), file.get()) == content.size()
-        && std::fflush (file.get()) == 0;
+    auto file = openFile (path, false, failureKind);
+    if (! file || ! rewindFile (file.get(), true, failureKind)) return false;
+    errno = 0;
+    if (std::fwrite (content.data(), 1, content.size(), file.get()) != content.size())
+    { *failureKind = fileFailure(); return false; }
+    errno = 0;
+    if (std::fflush (file.get()) != 0) { *failureKind = fileFailure(); return false; }
+    return true;
 }
 
 struct ByteRange { std::uint64_t first, last, total; };
@@ -577,7 +601,8 @@ OperationResult CurlTransport::perform (const HttpRequest& request, const HttpHe
     if (state != OperationStatus::Complete) return { state, {} };
     if (! callbacks.error.empty()) return { OperationStatus::Failed, callbacks.error };
     if (result != CURLE_OK)
-        return { OperationStatus::Failed, errorBuffer[0] != '\0' ? errorBuffer.data() : curl_easy_strerror (result) };
+        return { OperationStatus::Failed, errorBuffer[0] != '\0' ? errorBuffer.data() : curl_easy_strerror (result),
+                 result == CURLE_PARTIAL_FILE ? FailureKind::Integrity : FailureKind::None };
     return { OperationStatus::Complete, {} };
 }
 
@@ -654,8 +679,11 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
                               const OperationControl& control)
 {
     DownloadResult result;
-    const auto fail = [&] (const std::string& message)
-    { result.status = OperationStatus::Failed; result.error = message; result.preservePart = false; return result; };
+    const auto fail = [&] (const char* message, FailureKind kind = FailureKind::None)
+    {
+        result.status = OperationStatus::Failed; result.error = message;
+        result.failureKind = kind; result.preservePart = false; return result;
+    };
     const auto initialState = control.status();
     if (initialState != OperationStatus::Complete) { result.status = initialState; return result; }
     const auto url = httpsUrl (request.url);
@@ -668,7 +696,8 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     std::error_code error;
     const auto parent = request.partPath.parent_path();
     if (! parent.empty()) std::filesystem::create_directories (dusk::fs::nativeIOPath (parent), error);
-    if (error) return fail ("Cannot create download directory");
+    if (error) return fail ("Cannot create download directory",
+        error == std::errc::no_space_on_device ? FailureKind::DiskFull : FailureKind::None);
     DirectoryLease downloadLease;
     std::string ownershipError;
     const auto ownershipDirectory = parent.empty() ? std::filesystem::current_path (error) : parent;
@@ -680,20 +709,21 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
         result.preservePart = true;
         return result;
     }
-    auto file = openFile (request.partPath);
-    if (! file) return fail ("Cannot open download part safely");
+    auto file = openFile (request.partPath, false, &result.failureKind);
+    if (! file) return fail ("Cannot open download part safely", result.failureKind);
     auto offset = std::filesystem::file_size (dusk::fs::nativeIOPath (request.partPath), error);
     if (error || offset > request.maxBytes) return fail ("Existing download part exceeds the size limit");
     auto metadata = readMetadata (sidecar);
     const bool sameRequest = metadata.url == *url && metadata.digest == digest;
     const bool completed = sameRequest && metadata.completedBytes && validDigest (metadata.actualDigest);
-    if (completed && *metadata.completedBytes != offset) return fail ("Completed download part has changed size; restart the download");
+    if (completed && *metadata.completedBytes != offset)
+        return fail ("Completed download part has changed size; restart the download", FailureKind::Integrity);
     const bool resume = offset != 0 && sameRequest
         && ! metadata.validator().empty() && httpsUrl (metadata.effectiveUrl).has_value();
     result.preservePart = offset != 0 && (resume || completed);
     if (! resume && ! completed)
     {
-        if (! rewindFile (file.get(), true)) return fail ("Cannot restart download part");
+        if (! rewindFile (file.get(), true, &result.failureKind)) return fail ("Cannot restart download part", result.failureKind);
         offset = 0;
     }
     crypto_hash_sha256_state hash {};
@@ -717,7 +747,7 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
         result.bytes = offset;
         result.sha256 = hashDigest (hash);
         if (result.sha256 != metadata.actualDigest || (! digest.empty() && result.sha256 != digest))
-            return fail ("Completed download part has changed; restart the download");
+            return fail ("Completed download part has changed; restart the download", FailureKind::Integrity);
         result.status = OperationStatus::Complete;
         return result;
     }
@@ -736,8 +766,8 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     std::uint64_t received = 0;
     bool accepted = false;
     std::string failure;
-    const auto reject = [&] (const char* reason)
-    { failure = reason; result.preservePart = false; return false; };
+    const auto reject = [&] (const char* reason, FailureKind kind = FailureKind::None)
+    { failure = reason; result.failureKind = kind; result.preservePart = false; return false; };
     const auto operation = requestHttps (transport, http, [&] (const HttpResponse& response)
     {
         if (response.statusCode != 200 && response.statusCode != 206)
@@ -753,19 +783,19 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
         if (declaredLength != response.headers.end())
         {
             expectedBody = number (declaredLength->second);
-            if (! expectedBody) return reject ("Invalid download content length");
+            if (! expectedBody) return reject ("Invalid download content length", FailureKind::Integrity);
         }
         if (response.statusCode == 206)
         {
             const auto range = contentRange (header (response, "content-range"));
             if (! resume || ! range || range->first != offset || range->last != range->total - 1)
-                return reject ("Download resume range does not match the existing part");
+                return reject ("Download resume range does not match the existing part", FailureKind::Integrity);
             const auto currentValidator = ! metadata.etag.empty() && metadata.etag.substr (0, 2) != "W/"
                 ? header (response, "etag") : header (response, "last-modified");
-            if (currentValidator != metadata.validator()) return reject ("Download entity changed; restart the download");
+            if (currentValidator != metadata.validator()) return reject ("Download entity changed; restart the download", FailureKind::Integrity);
             expectedTotal = range->total;
             if (expectedBody && *expectedBody != range->last - range->first + 1)
-                return reject ("Download content length disagrees with its resume range");
+                return reject ("Download content length disagrees with its resume range", FailureKind::Integrity);
             expectedBody = range->last - range->first + 1;
         }
         else expectedTotal = expectedBody;
@@ -773,23 +803,24 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
             || (expectedBody && *expectedBody > request.maxBytes)) return reject ("Download exceeds the size limit");
         if (response.statusCode == 200)
         {
-            if (! rewindFile (file.get(), true)) return reject ("Cannot restart download part");
+            if (! rewindFile (file.get(), true, &result.failureKind)) return reject ("Cannot restart download part", result.failureKind);
             crypto_hash_sha256_init (&hash);
             result.bytes = 0;
         }
         metadata = { *url, digest, response.url, header (response, "etag"), header (response, "last-modified"), {}, {} };
-        if (! writeMetadata (sidecar, metadata)) return reject ("Cannot save download resume information");
+        if (! writeMetadata (sidecar, metadata, &result.failureKind)) return reject ("Cannot save download resume information", result.failureKind);
         accepted = true;
         result.preservePart = ! metadata.validator().empty();
         return true;
     }, [&] (std::string_view chunk)
     {
-        if (! accepted) return reject ("Download body arrived before validation");
-        if (chunk.size() > request.maxBytes - result.bytes
-            || (expectedBody && chunk.size() > *expectedBody - received))
-            return reject ("Download exceeds the size limit or declared length");
+        if (! accepted) return reject ("Download body arrived before validation", FailureKind::Integrity);
+        if (chunk.size() > request.maxBytes - result.bytes) return reject ("Download exceeds the size limit or declared length");
+        if (expectedBody && chunk.size() > *expectedBody - received)
+            return reject ("Download exceeds the size limit or declared length", FailureKind::Integrity);
+        errno = 0;
         if (std::fwrite (chunk.data(), 1, chunk.size(), file.get()) != chunk.size())
-            return reject ("Cannot write download part");
+            return reject ("Cannot write download part", fileFailure());
         crypto_hash_sha256_update (&hash, reinterpret_cast<const unsigned char*> (chunk.data()), chunk.size());
         result.bytes += chunk.size();
         received += chunk.size();
@@ -798,8 +829,10 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     }, control, resume ? metadata.effectiveUrl : std::string{});
     result.status = operation.status;
     result.error = failure.empty() ? operation.error : failure;
+    if (result.failureKind == FailureKind::None) result.failureKind = operation.failureKind;
     if (! failure.empty()) result.status = OperationStatus::Failed;
-    if (std::fflush (file.get()) != 0) return fail ("Cannot flush download part");
+    errno = 0;
+    if (std::fflush (file.get()) != 0) return fail ("Cannot flush download part", fileFailure());
     result.preservePart = result.preservePart && result.bytes != 0;
     if (! result) return result;
     if (! accepted) return fail ("Download response has no accepted body");
@@ -807,13 +840,15 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     {
         result.status = OperationStatus::Failed;
         result.error = "Truncated download";
+        result.failureKind = FailureKind::Integrity;
         return result;
     }
     result.sha256 = hashDigest (hash);
-    if (! digest.empty() && result.sha256 != digest) return fail ("Download SHA-256 does not match the expected digest");
+    if (! digest.empty() && result.sha256 != digest)
+        return fail ("Download SHA-256 does not match the expected digest", FailureKind::Integrity);
     metadata.completedBytes = result.bytes;
     metadata.actualDigest = result.sha256;
-    if (! writeMetadata (sidecar, metadata)) return fail ("Cannot save completed download information");
+    if (! writeMetadata (sidecar, metadata, &result.failureKind)) return fail ("Cannot save completed download information", result.failureKind);
     return result;
 }
 } // namespace duskstudio::sfz

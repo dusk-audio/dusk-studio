@@ -419,6 +419,7 @@ bool LibraryService::enqueue (Job job)
         job.generation = ++current.generation;
         current.busy = true;
         current.error.clear();
+        current.failureKind = FailureKind::None;
         current.cachedResponse = false;
         current.progress = {};
         if (job.kind == JobKind::ChangeLocation) movingPacks.store (job.moveExisting, std::memory_order_release);
@@ -499,6 +500,7 @@ bool LibraryService::resume()
         pending->generation = ++current.generation;
         current.busy = true;
         current.error.clear();
+        current.failureKind = FailureKind::None;
         cancelRequested.store (false, std::memory_order_release);
     }
     wake.notify_one();
@@ -711,7 +713,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         const auto downloaded = downloadFile (*transport,
             { job.pack.downloadUrl, job.part, job.pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes }, control);
         job.preserveDownload = downloaded.preservePart || static_cast<bool> (downloaded);
-        if (! downloaded) return { downloaded.status, downloaded.error };
+        if (! downloaded) return { downloaded.status, downloaded.error, downloaded.failureKind };
         if (control.status() != OperationStatus::Complete) return interrupted (control);
         setState (job.generation, LibraryState::Extracting);
         job.staging = store.createStaging (error);
@@ -731,11 +733,11 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             std::error_code ignored;
             fs::remove_all (dusk::fs::nativeIOPath (job.staging), ignored);
             job.staging.clear();
-            return { extracted.status, extracted.error };
+            return { extracted.status, extracted.error, extracted.failureKind };
         }
         if (control.status() != OperationStatus::Complete) return interrupted (control);
         const auto published = store.publish (job.pack, downloaded.sha256, job.staging, extracted.sfzPaths);
-        if (! published) return { published.status, published.error };
+        if (! published) return { published.status, published.error, published.failureKind };
         cleanInstall (job);
         const auto installed = installedLibraryPacks (locations);
         const std::lock_guard<std::mutex> lock (mutex);
@@ -902,6 +904,7 @@ void LibraryService::run()
             {
                 current.state = stateFor (result.status);
                 current.error = result.error;
+                current.failureKind = result.failureKind;
                 current.busy = false;
                 if (result.status != OperationStatus::Paused
                     && (job.kind == JobKind::ChangeLocation || job.kind == JobKind::Cleanup))

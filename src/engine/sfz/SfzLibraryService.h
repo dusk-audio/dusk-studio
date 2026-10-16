@@ -31,6 +31,7 @@ struct LibrarySnapshot
     bool cachedResponse = false;
     OperationProgress progress;
     std::string error;
+    FailureKind failureKind = FailureKind::None;
     ProviderPageResult page;
     std::optional<ProviderPack> pack;
     std::vector<InstalledPack> installed;

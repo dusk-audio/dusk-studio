@@ -7,6 +7,7 @@
 namespace duskstudio::sfz
 {
 enum class OperationStatus { Complete, Paused, Cancelled, Failed };
+enum class FailureKind { None, DiskFull, Integrity };
 
 struct OperationProgress
 {
@@ -33,6 +34,7 @@ struct OperationResult
 {
     OperationStatus status = OperationStatus::Failed;
     std::string error;
+    FailureKind failureKind = FailureKind::None;
     explicit operator bool() const noexcept { return status == OperationStatus::Complete; }
 };
 } // namespace duskstudio::sfz
