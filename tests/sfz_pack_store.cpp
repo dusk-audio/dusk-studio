@@ -71,13 +71,13 @@ fs::path stage (PackStore& store)
     const auto staging = store.createStaging (error);
     REQUIRE_FALSE (staging.empty());
     REQUIRE (error.empty());
-    REQUIRE (fs::create_directory (staging / "Programs"));
-    REQUIRE (fs::create_directory (staging / "Samples"));
+    REQUIRE (fs::create_directory (dusk::fs::nativeIOPath (staging / "Programs")));
+    REQUIRE (fs::create_directory (dusk::fs::nativeIOPath (staging / "Samples")));
     REQUIRE (dusk::fs::writeStringToFile (staging / fs::u8path (u8"Programs/Étude.sfz"),
                                           "<region> sample=../Samples/tone.wav"));
     REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/tone.wav", "fixture sample"));
     REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/LICENSE", "Samples: " + provider().license.text));
-    REQUIRE (fs::create_directories (staging / "LICENSES/nested"));
+    REQUIRE (fs::create_directories (dusk::fs::nativeIOPath (staging / "LICENSES/nested")));
     REQUIRE (dusk::fs::writeStringToFile (staging / "LICENSES/nested/audio.txt", provider().license.text));
     return staging;
 }
@@ -94,7 +94,12 @@ InstalledPack publish (PackStore& store, const ProviderPack& pack)
 TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable locators", "[sfz][store]")
 {
     StoreTree tree;
-    PackStore original (tree.root / "original");
+    auto root = tree.root / "original";
+    SECTION ("Deep library root")
+    {
+        for (int index = 0; index < 4; ++index) root /= std::string (72, char ('a' + index));
+    }
+    PackStore original (root);
     const auto staging = stage (original);
     REQUIRE (original.installed().empty());
     auto pack = provider();
@@ -143,7 +148,7 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
     const auto result = original.publish (pack, std::string (64, 'a'), staging, { u8"Programs/Étude.sfz" });
     REQUIRE (result);
     REQUIRE (result.pack);
-    REQUIRE_FALSE (fs::exists (staging));
+    REQUIRE_FALSE (fs::exists (dusk::fs::nativeIOPath (staging)));
     REQUIRE (original.installed().size() == 1);
     CHECK (original.installed().front().provider.presentation.artworkUrl == pack.presentation.artworkUrl);
     CHECK (original.installed().front().provider.presentation.categoryHint == "piano");
@@ -194,7 +199,8 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
     const auto relocatedRoot = tree.root / "relocated";
     std::error_code error;
     REQUIRE (fs::create_directory (relocatedRoot));
-    fs::copy (original.root() / "packs", relocatedRoot / "packs", fs::copy_options::recursive, error);
+    fs::copy (dusk::fs::nativeIOPath (original.root() / "packs"),
+              dusk::fs::nativeIOPath (relocatedRoot / "packs"), fs::copy_options::recursive, error);
     REQUIRE_FALSE (error);
     PackStore relocated (relocatedRoot);
     std::string message;
@@ -204,6 +210,9 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
     REQUIRE (path->parent_path().parent_path().parent_path().parent_path() == relocated.root());
     REQUIRE (dusk::fs::loadFileAsString (*path) == "<region> sample=../Samples/tone.wav");
     REQUIRE (relocated.locatorForFile (*path) == locator);
+    REQUIRE (original.remove (*result.pack, {}));
+    CHECK_FALSE (original.resolve (locator));
+    CHECK (relocated.resolve (locator));
 }
 
 TEST_CASE ("SFZ pack versions coexist without changing an older session locator", "[sfz][store]")

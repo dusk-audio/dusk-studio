@@ -2,6 +2,7 @@
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
 #include "SfzPathPolicy.h"
+#include "../../foundation/Fs.h"
 
 #include <pugixml.hpp>
 
@@ -41,13 +42,13 @@ bool plainFile (const fs::path& root, const std::string& relative)
     std::string error;
     if (! validateRelativePath (relative, error)) return false;
     std::error_code ec;
-    if (! fs::is_directory (fs::symlink_status (root, ec)) || ec) return false;
+    if (! fs::is_directory (fs::symlink_status (dusk::fs::nativeIOPath (root), ec)) || ec) return false;
     auto current = root;
     auto status = fs::file_status {};
     for (const auto& component : fs::u8path (relative))
     {
         current /= component;
-        status = fs::symlink_status (current, ec);
+        status = fs::symlink_status (dusk::fs::nativeIOPath (current), ec);
         if (ec || fs::is_symlink (status)) return false;
     }
     return fs::is_regular_file (status);
@@ -56,9 +57,10 @@ bool plainFile (const fs::path& root, const std::string& relative)
 bool findManifests (const fs::path& directory, std::vector<fs::path>& manifests)
 {
     std::error_code ec;
-    if (! fs::is_directory (fs::symlink_status (directory, ec)) || ec) return false;
+    const auto ioDirectory = dusk::fs::nativeIOPath (directory);
+    if (! fs::is_directory (fs::symlink_status (ioDirectory, ec)) || ec) return false;
     std::size_t visited = 0;
-    for (auto it = fs::recursive_directory_iterator (directory, ec);
+    for (auto it = fs::recursive_directory_iterator (ioDirectory, ec);
          ! ec && it != fs::recursive_directory_iterator(); it.increment (ec))
     {
         if (++visited > kMaxVisitedEntries) return false;
@@ -72,7 +74,7 @@ bool findManifests (const fs::path& directory, std::vector<fs::path>& manifests)
         it.disable_recursion_pending();
         if (! fs::is_regular_file (status) || ! bankFilename (it->path().filename().u8string()))
             continue;
-        manifests.push_back (it->path().lexically_relative (directory));
+        manifests.push_back (it->path().lexically_relative (ioDirectory));
         if (manifests.size() > kMaxManifests) return false;
     }
     std::sort (manifests.begin(), manifests.end());
@@ -143,11 +145,11 @@ std::vector<ProviderInstrument> indexPackPrograms (
     {
         if (! plainFile (directory, manifest.generic_u8string())) continue;
         std::error_code ec;
-        const auto size = fs::file_size (directory / manifest, ec);
+        const auto size = fs::file_size (dusk::fs::nativeIOPath (directory / manifest), ec);
         if (ec || size > kMaxManifestBytes) continue;
         if (size > kMaxTotalBytes - totalBytes) return instruments;
         totalBytes += static_cast<std::size_t> (size);
-        std::ifstream input (directory / manifest, std::ios::binary);
+        std::ifstream input (dusk::fs::nativeIOPath (directory / manifest), std::ios::binary);
         if (! input) continue;
         std::string text (static_cast<std::size_t> (size) + 1, '\0');
         input.read (text.data(), static_cast<std::streamsize> (text.size()));
