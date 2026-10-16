@@ -118,8 +118,8 @@ src/ui/MiniTimelineStrip.h	10
 src/ui/MultiImportTargetPicker.cpp	78
 src/ui/MultiImportTargetPicker.h	11
 src/ui/NativeEditorEmbedScale.h	14
-src/ui/PianoRollComponent.cpp	379
-src/ui/PianoRollComponent.h	61
+src/ui/PianoRollComponent.cpp	368
+src/ui/PianoRollComponent.h	60
 src/ui/PlatformWindowing.h	14
 src/ui/PlatformWindowing_Linux.cpp	15
 src/ui/PlatformWindowing_Mac.mm	19

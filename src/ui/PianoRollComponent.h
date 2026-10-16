@@ -363,8 +363,6 @@ private:
     int lastPlayheadX = -1;
     int  transportPlayheadX (juce::Rectangle<int> gridArea) const;
     void paintTransportPlayhead (juce::Graphics&, juce::Rectangle<int> gridArea);
-    void showColorModePopup();
-    void showCcControllerPopup();
 
     // Real widgets (not paint-only chips) so JUCE handles dispatch /
     // hover / focus / accessibility.
@@ -444,8 +442,6 @@ private:
     void toggleCcLane();
 
     void layoutStatusBar (juce::Rectangle<int> area);
-
-    juce::String formatBarBeat (std::int64_t tick) const;
 
     // -1 if nothing selected.
     int activeVelocity() const noexcept;

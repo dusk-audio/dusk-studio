@@ -848,21 +848,6 @@ void PianoRollComponent::layoutStatusBar (juce::Rectangle<int> area)
     trackLabel.setBounds (inner.removeFromRight (std::min (180, inner.getWidth())));
 }
 
-juce::String PianoRollComponent::formatBarBeat (std::int64_t tick) const
-{
-    const int beatsPerBar = std::max (1, session.beatsPerBar.load (std::memory_order_relaxed));
-    const auto ticksPerBeat = (std::int64_t) kMidiTicksPerQuarter;
-    const auto ticksPerBar  = ticksPerBeat * beatsPerBar;
-    const auto safeTick = std::max ((std::int64_t) 0, tick);
-    const auto bar  = safeTick / ticksPerBar;
-    const auto rem  = safeTick % ticksPerBar;
-    const auto beat = rem / ticksPerBeat;
-    const auto sub  = rem % ticksPerBeat;
-    return juce::String ((int) (bar + 1)) + "."
-         + juce::String ((int) (beat + 1)) + "."
-         + juce::String ((int) sub).paddedLeft ('0', 3);
-}
-
 int PianoRollComponent::activeVelocity() const noexcept
 {
     if (selectedNotes.empty()) return -1;
@@ -2166,57 +2151,6 @@ void PianoRollComponent::showScalePopup()
                 self->scale     = (Scale) s;
                 self->scaleRoot = r;
             }
-            self->repaint();
-        });
-}
-
-void PianoRollComponent::showColorModePopup()
-{
-    juce::PopupMenu m;
-    m.addItem (1, "Pitch",    true, colorMode == ColorMode::Pitch);
-    m.addItem (2, "Velocity", true, colorMode == ColorMode::Velocity);
-    m.addItem (3, "Channel",  true, colorMode == ColorMode::Channel);
-    juce::Component::SafePointer<PianoRollComponent> safe (this);
-    showContextMenu (m, *this,
-        [safe] (int chosen)
-        {
-            auto* self = safe.getComponent();
-            if (self == nullptr || chosen <= 0) return;
-            self->colorMode = chosen == 1 ? ColorMode::Pitch
-                              : chosen == 2 ? ColorMode::Velocity
-                                             : ColorMode::Channel;
-            self->repaint();
-        });
-}
-
-void PianoRollComponent::showCcControllerPopup()
-{
-    juce::PopupMenu m;
-    // Common CCs surfaced as named entries; the rest behind a numeric
-    // submenu so the chip doubles as a full controller picker.
-    struct Named { int cc; const char* name; };
-    static const Named common[] = {
-        { 1,  "1 - Mod Wheel"   }, { 7,  "7 - Volume"     },
-        { 11, "11 - Expression" }, { 64, "64 - Sustain"   },
-        { 71, "71 - Resonance"  }, { 74, "74 - Filter"    },
-        { 91, "91 - Reverb"     }, { 93, "93 - Chorus"    },
-    };
-    for (const auto& c : common)
-        m.addItem (c.cc + 1, c.name, true, activeCcController == c.cc);
-
-    juce::PopupMenu numeric;
-    for (int cc = 0; cc < 128; ++cc)
-        numeric.addItem (cc + 1, juce::String (cc), true, activeCcController == cc);
-    m.addSeparator();
-    m.addSubMenu ("All controllers (0-127)", numeric);
-
-    juce::Component::SafePointer<PianoRollComponent> safe (this);
-    showContextMenu (m, *this,
-        [safe] (int chosen)
-        {
-            auto* self = safe.getComponent();
-            if (self == nullptr || chosen <= 0) return;
-            self->activeCcController = jlimit (0, 127, chosen - 1);
             self->repaint();
         });
 }
@@ -4188,12 +4122,10 @@ void PianoRollComponent::timerCallback()
     // playhead-x match the painted layout.
     const auto bounds = getLocalBounds();
     const int  topBandH = kToolbarHeight + kHeaderHeight;
-    const int  ccBottom = bounds.getBottom() - kStatusBarH;
     const auto gridArea = juce::Rectangle<int> (
         kKeyboardWidth, topBandH,
         bounds.getWidth() - kKeyboardWidth,
         bounds.getHeight() - topBandH - velocityStripH - ccStripH - kStatusBarH);
-    juce::ignoreUnused (ccBottom);
 
     // Chase: when on + transport playing, scroll the grid so the playhead
     // stays in view. Computes the playhead's absolute pixel position
