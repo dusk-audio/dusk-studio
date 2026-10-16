@@ -91,9 +91,12 @@ public:
     SfzRepositoryView (sfz::LibraryService& s,
         std::function<void (const sfz::InstalledPack&, const sfz::ProviderInstrument&)> load,
         std::function<std::vector<sfz::ManagedSfzLocator>()> used,
-        std::function<void (std::string)> source, std::function<void()> local)
+        std::function<void (std::string)> source, std::function<void()> local,
+        std::optional<sfz::ManagedSfzLocator> missing,
+        std::function<void (const sfz::InstalledPack&, const sfz::ProviderInstrument&)> relink)
         : service (s), onLoad (std::move (load)), inUse (std::move (used)),
-          openSource (std::move (source)), openLocalFolders (std::move (local)), sources (sfz::providerSources())
+          openSource (std::move (source)), openLocalFolders (std::move (local)),
+          offlineLocator (std::move (missing)), onRelink (std::move (relink)), sources (sfz::providerSources())
     {
         sources.insert (sources.begin(), { sfz::kAllRepositoriesSourceId, "All repositories", {} });
     }
@@ -894,6 +897,18 @@ private:
                     ImGui::EndCombo();
                 }
                 ImGui::EndDisabled();
+                if (offlineLocator && selected->provider.sourceId == offlineLocator->sourceId
+                    && selected->provider.packId == offlineLocator->packId)
+                {
+                    ImGui::TextWrapped ("This slot references an unavailable version of this pack. Relinking changes its saved version and preserves its instrument controls; the sound may differ.");
+                    if (button ("relink", "Relink this slot", available && instrument && static_cast<bool> (onRelink)))
+                    {
+                        const auto callback = onRelink;
+                        const auto pack = *selected;
+                        const auto entry = *instrument;
+                        deferred = [callback, pack, entry] { callback (pack, entry); };
+                    }
+                }
                 if (button ("load", "Load", available && instrument && static_cast<bool> (onLoad), { ctx.s (140), ctx.s (40) }, true))
                 {
                     const auto callback = onLoad;
@@ -981,6 +996,8 @@ private:
     std::function<std::vector<sfz::ManagedSfzLocator>()> inUse;
     std::function<void (std::string)> openSource;
     std::function<void()> openLocalFolders;
+    std::optional<sfz::ManagedSfzLocator> offlineLocator;
+    std::function<void (const sfz::InstalledPack&, const sfz::ProviderInstrument&)> onRelink;
     std::vector<sfz::ProviderSource> sources;
     std::vector<sfz::ProviderSummary> results;
     std::vector<BrowserRow> onlineRows, installedRows;
@@ -1018,9 +1035,11 @@ std::unique_ptr<DuskPanelView> makeSfzRepositoryView (
     std::function<void (const sfz::InstalledPack&, const sfz::ProviderInstrument&)> onLoad,
     std::function<std::vector<sfz::ManagedSfzLocator>()> inUse,
     std::function<void (std::string)> openSource,
-    std::function<void()> openLocalFolders)
+    std::function<void()> openLocalFolders, std::optional<sfz::ManagedSfzLocator> offlineLocator,
+    std::function<void (const sfz::InstalledPack&, const sfz::ProviderInstrument&)> onRelink)
 {
     return std::make_unique<SfzRepositoryView> (service, std::move (onLoad), std::move (inUse),
-                                               std::move (openSource), std::move (openLocalFolders));
+                                               std::move (openSource), std::move (openLocalFolders),
+                                               std::move (offlineLocator), std::move (onRelink));
 }
 } // namespace duskstudio::imgui

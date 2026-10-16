@@ -4330,6 +4330,9 @@ void ChannelStripComponent::openSfzLibrary()
         sfzLibraryWindow->setCallbacks (std::move (callbacks));
     }
     StripSafePointer safe (this);
+    auto offlineLocator = engine.getSession().track (trackIndex).nativeMultisampleLocator;
+    if (const auto* instance = engine.getChannelStrip (trackIndex).getNativeMultisampleSlot().getInstance();
+        instance != nullptr && instance->hasLoadedRuntime()) offlineLocator.reset();
     sfzLibraryWindow->setView (imgui::makeSfzRepositoryView (engine.getSfzLibrary(),
         [safe] (const auto& pack, const auto& instrument)
         {
@@ -4388,6 +4391,28 @@ void ChannelStripComponent::openSfzLibrary()
                             }
                         });
                 });
+        }, std::move (offlineLocator),
+        [safe] (const auto& pack, const auto& instrument)
+        {
+            if (auto* self = safe.getComponent())
+            {
+                const bool queued = self->engine.requestManagedSfzRelink (self->trackIndex, pack.locatorFor (instrument),
+                    [safe] (bool success, std::string error)
+                    {
+                        if (auto* target = safe.getComponent())
+                        {
+                            if (! success) { showDuskAlert (*target, "Couldn't relink soundfont", error.c_str()); return; }
+                            target->refreshPluginSlotButton();
+                            target->closeSfzLibrary();
+                            target->openEditorForPick();
+                        }
+                    }, [safe]
+                    {
+                        if (auto* target = safe.getComponent()) target->dropPluginEditor (NativeEditorTeardown::Destroy);
+                    });
+                if (! queued) showDuskAlert (*self, "Couldn't relink soundfont",
+                    "Select an installed version of the same pack for an offline slot. Its saved instrument state must be readable.");
+            }
         }));
     const auto plate = sfzLibraryWindow->plateSize();
     const auto bounds = embedscale::centredChildBounds (*topLevel, plate.width, plate.height);

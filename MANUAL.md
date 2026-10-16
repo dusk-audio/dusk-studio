@@ -2003,7 +2003,7 @@ Library work pauses during recording, bounce or freeze. Press **Resume** afterwa
 
 Switching to Mastering or losing the audio device ends the take and releases the recording pause. Queued instrument loads can proceed when a working audio device is available; paused library work still waits for **Resume**.
 
-Installed versions coexist. A session references the exact source, pack, version, archive digest and instrument path, so another computer can resolve the same installed pack without matching the original absolute path. If that pack is missing, the slot stays offline and keeps its reference. Opening a session never downloads instruments or browses a repository. Files opened directly remain file references unless they belong to a known installed pack.
+Installed versions coexist. A session references the exact source, pack, version, archive digest and instrument path, so another computer can resolve the same installed pack without matching the original absolute path. If that pack is missing, the slot stays offline and keeps its reference. Reconnect its library drive, or open **SFZ Manager**, select an installed version of the same source and pack, choose its **Program**, then press **Relink this slot**. Relinking explicitly changes the saved version and keeps the instrument controls; the sound may differ between versions. A failed or cancelled relink preserves the old reference. Opening a session never downloads instruments or browses a repository. Files opened directly remain file references unless they belong to a known installed pack.
 
 Instrument replacement is prepared in the background while the current instrument keeps playing. A failed replacement leaves it playing, and an older request cannot replace a newer selection.
 
