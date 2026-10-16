@@ -21,9 +21,11 @@ canonical source.
   Artifacts, FreePats and Versilian Studios from the instrument library, check a
   pack's license, and download it to Installed. Only CC0, CC BY and CC BY-SA
   packs are offered; NonCommercial and NoDerivatives packs are refused.
-  Downloads can pause, resume and cancel. Installed versions coexist, and
+  Downloads can pause, resume and cancel; validated partial downloads survive
+  a connection failure or quitting. Installed versions coexist, and
   sessions find the same pack on another machine without its old absolute path.
-  Missing packs stay offline without downloading on session load.
+  Missing packs stay offline without downloading on session load. Explicit
+  relinking selects an installed version of the same pack and keeps its controls.
   A larger, responsive browser shows source stars or favorites and opens
   published demos before downloading an instrument pack. Both tabs group
   instruments by type, show repository artwork or licensed instrument cutouts,
@@ -33,12 +35,31 @@ canonical source.
   page progress and repository labels; one unavailable source leaves the others'
   results usable. Versilian offers the official VSCO 2 CE and VCSL SFZ releases.
 - **Settings tabs and SFZ storage.** Top tabs replace the long settings page.
+  Downloaded packs default to the platform's application data directory.
   Choose a download folder on an external drive, keep existing packs in place or
   move them after copying and verification. Session instrument references survive
   the move, and disconnected drives are reported.
 - **Complete MIDI channel controls.** Recording, import, session save and
   playback keep pitch bend, channel and polyphonic pressure, and program changes
   alongside notes and CCs.
+
+### Changed
+
+- **Session format 11.** New saves preserve the complete MIDI channel
+  performance and managed SFZ references. Dusk Studio 0.15.1 and earlier cannot
+  open them. Keep a copy before saving if you need an older version.
+- **Shared audio reader workers.** Three workers fill immutable playback
+  windows near the playhead and release distant sample buffers. Seeking primes
+  the new position before it becomes audible; loop and offline render paths
+  keep their read-ahead coverage.
+- **Background instrument replacement.** The current instrument keeps playing
+  while its replacement loads. Failed and stale requests leave it in place,
+  and retired instruments are destroyed after the audio swap.
+- **Exact recording offset.** Type a sample value or adjust it one sample at a
+  time with minus and plus buttons.
+- **SFZ Manager entry point.** The insert chooser opens one manager for online,
+  downloaded and local instruments. Its separate Soundfont choice is removed;
+  local SFZ, SF2 and ARIA bank files remain available through the manager.
 
 ### Fixed
 
@@ -56,11 +77,6 @@ canonical source.
   SFZ mappings remain accessible through Show all SFZ files.
 - **SFZ description search.** Search includes community catalog descriptions,
   including Swirly Drums when searching for Brushes.
-- **Exact recording offset.** Type a sample value or adjust it one sample at a
-  time with minus and plus buttons.
-- **SFZ Manager entry point.** The insert chooser opens one manager for online,
-  downloaded and local instruments. Its separate Soundfont choice is removed;
-  local SFZ, SF2 and ARIA bank files remain available through the manager.
 - **SFZ preview selection.** Generic patch names in older installed packs use
   their pack's instrument category, matching the browser list. All instruments
   has no placeholder image. Image edges no longer sample neighboring atlas pixels.
@@ -71,13 +87,6 @@ canonical source.
   including when the parent window receives the search field's keyboard input.
 - **SFZ instrument captions.** Crowded ARIA skin labels stay centred over their
   controls and fit between adjacent captions, keeping drum-kit text readable.
-- **Shared audio reader workers.** Three workers fill immutable playback
-  windows near the playhead and release distant sample buffers. Seeking primes
-  the new position before it becomes audible; loop and offline render paths
-  keep their read-ahead coverage.
-- **Background instrument replacement.** The current instrument keeps playing
-  while its replacement loads. Failed and stale requests leave it in place,
-  and retired instruments are destroyed after the audio swap.
 - **MIDI device refresh preserves audio state.** It keeps a deliberately
   detached callback detached and no longer re-prepares the whole engine,
   changing a no-device import's timeline rate or clearing a finished master
