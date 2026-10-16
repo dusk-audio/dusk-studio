@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <fstream>
 #include <system_error>
 
 #if defined(__APPLE__)
