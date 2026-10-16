@@ -1270,6 +1270,8 @@ With **MIDI Merge** off, MIDI tracks keep their own take history. Each MIDI regi
 
 Sessions saved by Dusk Studio 0.14 load with each region's old take history as takes on its track, numbered oldest first. The audio files are not touched. Sessions are now saved in format v11 to preserve the full MIDI channel performance and managed SFZ references. Dusk Studio 0.15.1 and earlier cannot open them, so keep a copy before saving if you still need an older version.
 
+Opening a newer format leaves the current session in place. The status bar reports **Session format [file version] is newer than supported format [supported version]. Upgrade Dusk Studio to open: [session name]**.
+
 ## Recording errors
 
 If Dusk Studio can't open a file for writing (full disk, permission denied, missing audio directory), the error is captured at record start and displayed as an alert before the take begins, listing the affected tracks. You don't lose a take thinking it was captured.

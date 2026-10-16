@@ -4534,10 +4534,18 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     const auto previousDir = session.getSessionDirectory();
     session.setSessionDirectory (dir);
 
-    if (! SessionSerializer::load (session, sourceJson))
+    SessionLoadError loadError;
+    if (! SessionSerializer::load (session, sourceJson, &loadError))
     {
         session.setSessionDirectory (previousDir);
-        setStatusForPath ("Load failed", sourceJson);
+        if (loadError.failure == SessionLoadFailure::NewerVersion)
+        {
+            const auto message = "Session format " + std::to_string (loadError.fileVersion)
+                + " is newer than supported format " + std::to_string (loadError.supportedVersion)
+                + ". Upgrade Dusk Studio to open";
+            setStatusForPath (message.c_str(), sourceJson);
+        }
+        else setStatusForPath ("Load failed", sourceJson);
         return false;
     }
     const auto tAfterParse = juce::Time::getMillisecondCounterHiRes();
