@@ -310,6 +310,26 @@ inline std::filesystem::path userConfigDir()
 #endif
 }
 
+inline std::filesystem::path userDataDir()
+{
+    if (const auto testPath = detail::testSpecialLocation ("Data"); ! testPath.empty())
+        return testPath;
+#if defined(_WIN32)
+    return detail::knownFolderPath (FOLDERID_LocalAppData);
+#elif defined(__APPLE__)
+    const auto home = userHomeDir();
+    return home.empty() ? std::filesystem::path {} : home / "Library" / "Application Support";
+#else
+    if (const char* value = std::getenv ("XDG_DATA_HOME"))
+    {
+        const auto path = std::filesystem::u8path (value);
+        if (path.is_absolute()) return path;
+    }
+    const auto home = userHomeDir();
+    return home.empty() ? std::filesystem::path {} : home / ".local" / "share";
+#endif
+}
+
 // JUCE File::userMusicDirectory.
 inline std::filesystem::path userMusicDir()
 {

@@ -245,7 +245,7 @@ TEST_CASE ("Special locations preserve Unicode paths end to end",
     std::error_code ec;
     stdfs::remove_all (root, ec);
     ec.clear();
-    for (const auto* child : { "Home", "Config", "Music", "Documents", "Temp" })
+    for (const auto* child : { "Home", "Config", "Data", "Music", "Documents", "Temp" })
     {
         REQUIRE (stdfs::create_directories (root / child, ec));
         REQUIRE_FALSE (ec);
@@ -265,6 +265,7 @@ TEST_CASE ("Special locations preserve Unicode paths end to end",
         const ScopedTestSpecialLocations locations (root);
         REQUIRE (fs::userHomeDir() == root / "Home");
         REQUIRE (fs::userConfigDir() == root / "Config");
+        REQUIRE (fs::userDataDir() == root / "Data");
         REQUIRE (fs::userMusicDir() == root / "Music");
         REQUIRE (fs::userDocumentsDir() == root / "Documents");
         REQUIRE (fs::tempDir() == root / "Temp");
