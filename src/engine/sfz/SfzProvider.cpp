@@ -18,7 +18,6 @@ namespace
 {
 using Json = dusk::json::Json;
 constexpr std::size_t kMaxCandidates = 4096;
-constexpr std::size_t kMaxLicenseBytes = 200000;
 
 std::string lower (std::string value)
 {
@@ -475,7 +474,7 @@ bool formalLicenseTitle (const std::string& text, const CcLicense& license)
     return title.find (name + " " + license.version) != std::string::npos;
 }
 
-std::optional<CcLicense> licenseText (const std::string& text, const std::string& hint)
+std::optional<CcLicense> licenseText (const std::string& text, const std::string& hint, bool wholePack = true)
 {
     const auto content = lower (text);
     for (const auto* conflict : { "all rights reserved", "not covered by this license", "separate license",
@@ -483,9 +482,10 @@ std::optional<CcLicense> licenseText (const std::string& text, const std::string
         if (content.find (conflict) != std::string::npos) return {};
     auto scope = content;
     scope.erase (std::remove_if (scope.begin(), scope.end(), [] (char c) { return c == '*' || c == '_'; }), scope.end());
-    for (const auto* label : { "scripts:", "code:", "source code:", "software:", "samples:", "recordings:",
-                               "scripts are licensed", "code is licensed", "software is licensed" })
-        if (scope.find (label) != std::string::npos) return {};
+    if (wholePack)
+        for (const auto* label : { "scripts:", "code:", "source code:", "software:", "samples:", "recordings:",
+                                   "scripts are licensed", "code is licensed", "software is licensed" })
+            if (scope.find (label) != std::string::npos) return {};
     const auto containsUrl = [&] (const std::string& marker)
     {
         auto offset = content.find (marker);
@@ -698,11 +698,29 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
         appendMetadataText (pack.presentation.categoryHint, summary.presentation.categoryHint);
     std::set<std::string> paths;
     std::set<std::string> regularFiles;
+    std::set<std::string> licensePaths, licenseKeys;
     for (const auto& entry : *entries)
     {
         const auto mode = string (entry, "mode", 16);
-        if (string (entry, "type", 16) != "blob" || (mode != "100644" && mode != "100755")) continue;
         const auto path = string (entry, "path", 512);
+        const auto type = string (entry, "type", 16);
+        if (type == "tree" && mode == "040000")
+        {
+            std::string error;
+            if (! validateRelativePath (path, error)) return fail ("Repository directory path is unsafe");
+            continue;
+        }
+        const bool regular = type == "blob" && (mode == "100644" || mode == "100755");
+        if (isPackLicenseDocument (path))
+        {
+            std::string error;
+            const auto key = portablePathKey (path);
+            if (! regular || ! validateRelativePath (path, error) || ! key
+                || ! licenseKeys.insert (*key).second || licensePaths.size() >= kMaxLicenseDocuments)
+                return fail ("Repository licensing paths are unsafe, ambiguous, or too numerous");
+            licensePaths.insert (path);
+        }
+        if (! regular) continue;
         regularFiles.insert (path);
         if (sfzPath (path) && ! addInstrument (pack, path, paths)) return fail ("Repository has unsafe or ambiguous SFZ paths");
     }
@@ -729,8 +747,7 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
     const bool hasLicenseFile = std::any_of (regularFiles.begin(), regularFiles.end(), [] (const std::string& path)
     {
         const auto name = lower (path);
-        return name.find ('/') == std::string::npos
-            && (name.find ("license") == 0 || name == "copying");
+        return name.find ('/') == std::string::npos && isPackLicenseDocument (name);
     });
     const bool readmeLicense = summary.sourceId == "versilian" && summary.locator == "VCSL"
         && ! hasLicenseFile && regularFiles.count ("README.md") != 0;
@@ -756,6 +773,32 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
     if (! downloadLicenseAllowed (*recognized)) return fail (kRestrictedLicense);
     pack.license = { recognized->id, text, path, sha256 (text),
         webBase + "/blob/" + revision + "/" + encode (path, true), recognized->constraints };
+    licensePaths.insert (path);
+    if (licensePaths.size() > kMaxLicenseDocuments) return fail ("Repository contains too many licensing documents");
+    std::size_t licenseBytes = text.size();
+    for (const auto& secondaryPath : licensePaths)
+    {
+        if (secondaryPath == path) continue;
+        const auto document = api (transport, base + "/contents/" + encode (secondaryPath, true) + "?ref=" + revision,
+                                   400000, control);
+        result.rateLimit = document.rateLimit;
+        if (! document) { result.status = document.status; result.error = document.error; return result; }
+        const auto encodedText = string (document.json, "content", 300000);
+        if (string (document.json, "path", 512) != secondaryPath
+            || string (document.json, "encoding", 16) != "base64" || encodedText.empty())
+            return fail ("Repository licensing document cannot be verified at the pinned revision");
+        std::string secondaryText (kMaxLicenseBytes, '\0');
+        std::size_t size = 0;
+        if (sodium_base642bin (reinterpret_cast<unsigned char*> (secondaryText.data()), secondaryText.size(),
+            encodedText.data(), encodedText.size(), " \t\r\n", &size, nullptr, sodium_base64_VARIANT_ORIGINAL) != 0)
+            return fail ("Repository licensing document is invalid or too large");
+        secondaryText.resize (size);
+        if (size > kMaxCombinedLicenseBytes - licenseBytes)
+            return fail ("Repository licensing documents exceed the combined size limit");
+        licenseBytes += size;
+        const auto checked = validatePackLicenseDocument (pack.license, secondaryPath, secondaryText);
+        if (! checked) return fail (checked.error + ": " + secondaryPath);
+    }
     std::sort (pack.instruments.begin(), pack.instruments.end(), [] (const auto& a, const auto& b)
     { return a.relativePath < b.relativePath; });
     pack.presentation.stars = popularity (repository.json, "stargazers_count");
@@ -865,6 +908,49 @@ ProviderPackResult artifactPack (HttpTransport& transport, const ProviderSummary
     return result;
 }
 } // namespace
+
+bool isPackLicenseDocument (std::string_view path)
+{
+    const auto name = lower (std::string (path));
+    std::size_t begin = 0;
+    for (;;)
+    {
+        const auto end = name.find ('/', begin);
+        const auto component = name.substr (begin, end - begin);
+        if (end != std::string::npos && (component == "licenses" || component == "licences"
+            || component == "license" || component == "licence" || component == "copying")) return true;
+        if (end == std::string::npos)
+        {
+            for (const std::string_view prefix : { "license", "licence", "copying" })
+                if (component.compare (0, prefix.size(), prefix) == 0
+                    && (component.size() == prefix.size() || component[prefix.size()] == '.'
+                        || component[prefix.size()] == '-' || component[prefix.size()] == '_')) return true;
+            for (const std::string_view suffix : { ".license", ".licence" })
+                if (component.size() >= suffix.size()
+                    && component.compare (component.size() - suffix.size(), suffix.size(), suffix) == 0) return true;
+            return false;
+        }
+        begin = end + 1;
+    }
+}
+
+OperationResult validatePackLicenseDocument (const ProviderLicense& primary, std::string_view path, std::string_view text)
+{
+    if (text.empty() || text.size() > kMaxLicenseBytes || text.find ('\0') != std::string_view::npos
+        || ! portablePathKey (text)) return { OperationStatus::Failed, "Pack licensing document is not bounded UTF-8 text" };
+    if (! primary.path.empty() && path == primary.path)
+    {
+        if (sha256 (text) != primary.sha256)
+            return { OperationStatus::Failed, "The extracted primary license differs from the resolved document" };
+    }
+    else
+    {
+        const auto license = licenseText (std::string (text), primary.id, false);
+        if (! license || ! downloadLicenseAllowed (*license))
+            return { OperationStatus::Failed, "Pack licensing document has unsupported, restricted, or conflicting terms" };
+    }
+    return { OperationStatus::Complete, {} };
+}
 
 std::vector<ProviderSource> providerSources()
 {

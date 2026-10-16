@@ -49,6 +49,21 @@ ProviderPack provider (char version = 'a')
     return pack;
 }
 
+ProviderPack pinnedProvider()
+{
+    auto pack = provider();
+    pack.sourceId = "sfzinstruments";
+    pack.releaseId = std::string (40, 'a');
+    pack.expectedSha256.clear();
+    pack.expectedRoot = "Piano-" + pack.releaseId;
+    const std::string base = "https://github.com/sfzinstruments/Piano";
+    pack.sourceUrl = base + "/tree/" + pack.releaseId;
+    pack.downloadUrl = base + "/archive/" + pack.releaseId + ".zip";
+    pack.license.path = "README.md";
+    pack.license.sourceUrl = base + "/blob/" + pack.releaseId + "/README.md";
+    return pack;
+}
+
 fs::path stage (PackStore& store)
 {
     std::string error;
@@ -60,6 +75,9 @@ fs::path stage (PackStore& store)
     REQUIRE (dusk::fs::writeStringToFile (staging / fs::u8path (u8"Programs/Étude.sfz"),
                                           "<region> sample=../Samples/tone.wav"));
     REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/tone.wav", "fixture sample"));
+    REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/LICENSE", "Samples: " + provider().license.text));
+    REQUIRE (fs::create_directories (staging / "LICENSES/nested"));
+    REQUIRE (dusk::fs::writeStringToFile (staging / "LICENSES/nested/audio.txt", provider().license.text));
     return staging;
 }
 
@@ -79,9 +97,14 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
     const auto staging = stage (original);
     REQUIRE (original.installed().empty());
     auto pack = provider();
+    SECTION ("Pinned primary license is kept byte for byte")
+    {
+        pack = pinnedProvider();
+        REQUIRE (dusk::fs::writeStringToFile (staging / "README.md", pack.license.text));
+    }
     pack.presentation.artworkUrl = "https://fixtures.example/piano.jpg";
     pack.presentation.categoryHint = "piano";
-    const auto result = original.publish (pack, pack.expectedSha256, staging, { u8"Programs/Étude.sfz" });
+    const auto result = original.publish (pack, std::string (64, 'a'), staging, { u8"Programs/Étude.sfz" });
     REQUIRE (result);
     REQUIRE (result.pack);
     REQUIRE_FALSE (fs::exists (staging));
@@ -183,10 +206,56 @@ TEST_CASE ("SFZ pack publication rejects incomplete or ambiguous extracted entry
     SECTION ("Invalid archive hash") { archiveDigest = "not a digest"; }
     SECTION ("Wrong upstream archive hash") { archiveDigest = std::string (64, 'b'); }
     SECTION ("Unverified license") { pack.license.text = "Free download"; }
+    SECTION ("Restricted sample license")
+    { REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/LICENSE.txt", "https://creativecommons.org/licenses/by-nc/4.0/")); }
+    SECTION ("Restricted sidecar license")
+    { REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/tone.wav.license", "https://creativecommons.org/licenses/by-nd/4.0/")); }
+    SECTION ("Conflicting allowed license")
+    { REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/COPYING", "https://creativecommons.org/licenses/by/4.0/")); }
+    SECTION ("Unknown license in a licensing directory")
+    {
+        REQUIRE (dusk::fs::writeStringToFile (staging / "LICENSES/audio.txt", "Free to download."));
+    }
+    SECTION ("Portable license aliases")
+    {
+        REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/LICENSE", pack.license.text));
+        REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/license", pack.license.text));
+        if (fs::equivalent (staging / "Samples/LICENSE", staging / "Samples/license"))
+            SKIP ("case-distinct filenames are unavailable");
+    }
+    SECTION ("Licensing file is a symbolic link")
+    {
+        std::error_code error;
+        fs::create_symlink ("Samples/tone.wav", staging / "LICENSE", error);
+        if (error) SKIP ("symlinks are unavailable");
+    }
+    SECTION ("Oversized license document")
+    { REQUIRE (dusk::fs::writeStringToFile (staging / "LICENSE", std::string (kMaxLicenseBytes + 1, 'x'))); }
+    SECTION ("Too many license documents")
+    {
+        for (std::size_t i = 0; i <= kMaxLicenseDocuments; ++i)
+            REQUIRE (dusk::fs::writeStringToFile (staging / ("LICENSE-" + std::to_string (i)), pack.license.text));
+    }
+    SECTION ("Combined licensing text is too large")
+    {
+        const auto text = pack.license.text + std::string (kMaxLicenseBytes - pack.license.text.size(), ' ');
+        for (int i = 0; i < 11; ++i)
+            REQUIRE (dusk::fs::writeStringToFile (staging / ("LICENSE-" + std::to_string (i)), text));
+    }
+    SECTION ("Missing pinned primary license")
+    {
+        pack = pinnedProvider();
+        REQUIRE (providerPackFromJson (providerPackToJson (pack)));
+        SECTION ("Absent") {}
+        SECTION ("Changed bytes")
+        { REQUIRE (dusk::fs::writeStringToFile (staging / "README.md", pack.license.text + "changed")); }
+    }
+    const bool receiptExisted = fs::exists (staging / ".dusk-pack.json");
     const auto result = store.publish (pack, archiveDigest, staging, entries);
     REQUIRE_FALSE (result);
     REQUIRE_FALSE (result.error.empty());
     REQUIRE (store.installed().empty());
+    REQUIRE (fs::exists (staging / ".dusk-pack.json") == receiptExisted);
 }
 
 TEST_CASE ("SFZ malformed receipts stay unavailable to offline session restoration", "[sfz][store]")

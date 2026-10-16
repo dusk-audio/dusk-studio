@@ -465,6 +465,54 @@ TEST_CASE ("SFZ Instruments resolves pinned archives with actual LICENSE bytes",
 TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching licenses", "[sfz][provider]")
 {
     FakeTransport transport;
+    bool combinedLimit = false;
+    const auto secondaryLicense = [&] (const std::string& text, const std::string& path = "Samples/LICENSE.txt")
+    {
+        transport.replies = githubReplies();
+        transport.replies[2].json["tree"].push_back (
+            { { "path", path }, { "type", "blob" }, { "mode", "100644" } });
+        transport.replies.push_back ({ { { "path", path }, { "encoding", "base64" }, { "content", base64 (text) } } });
+    };
+    SECTION ("Samples have a restricted secondary license")
+    { secondaryLicense ("https://creativecommons.org/licenses/by-nc/4.0/"); }
+    SECTION ("A sidecar declares NoDerivatives")
+    { secondaryLicense ("https://creativecommons.org/licenses/by-nd/4.0/", "Samples/a.wav.license"); }
+    SECTION ("A differently named license document conflicts")
+    { secondaryLicense ("https://creativecommons.org/licenses/by-sa/4.0/", "Samples/LICENCE-MAPPINGS"); }
+    SECTION ("A document in a licensing directory is unestablished")
+    { secondaryLicense ("Ask the author for permission.", "LICENSES/samples.txt"); }
+    SECTION ("Licensing symlinks are not skipped")
+    { secondaryLicense (kLicenseText); transport.replies[2].json["tree"].back()["mode"] = "120000"; }
+    SECTION ("Portable license aliases are ambiguous")
+    {
+        secondaryLicense (kLicenseText, "license");
+        transport.replies[2].json["tree"].push_back (
+            { { "path", "LICENSE" }, { "type", "blob" }, { "mode", "100644" } });
+    }
+    SECTION ("Secondary document responses must name the exact path")
+    { secondaryLicense (kLicenseText); transport.replies.back().json["path"] = "Other/LICENSE.txt"; }
+    SECTION ("Oversized secondary documents are refused")
+    { secondaryLicense (kLicenseText + std::string (kMaxLicenseBytes, ' ')); }
+    SECTION ("Too many licensing documents are refused")
+    {
+        secondaryLicense (kLicenseText);
+        for (std::size_t i = 0; i < kMaxLicenseDocuments; ++i)
+            transport.replies[2].json["tree"].push_back (
+                { { "path", "Samples/LICENSE-" + std::to_string (i) }, { "type", "blob" }, { "mode", "100644" } });
+    }
+    SECTION ("Combined licensing bytes are bounded")
+    {
+        combinedLimit = true;
+        transport.replies = githubReplies();
+        const auto text = kLicenseText + std::string (kMaxLicenseBytes - kLicenseText.size(), ' ');
+        for (int i = 0; i < 11; ++i)
+        {
+            const auto path = "Samples/LICENSE-" + std::to_string (10 + i);
+            transport.replies[2].json["tree"].push_back (
+                { { "path", path }, { "type", "blob" }, { "mode", "100644" } });
+            transport.replies.push_back ({ { { "path", path }, { "encoding", "base64" }, { "content", base64 (text) } } });
+        }
+    }
     SECTION ("Only hint is present") { transport.replies = githubReplies ("All rights reserved; available for free."); }
     SECTION ("Generic public domain is not CC0") { transport.replies = githubReplies ("This instrument is public domain."); }
     SECTION ("A CC0 project description without the grant is not a license")
@@ -508,7 +556,9 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     { transport.replies = githubReplies ("Code: " + kLicenseText); }
     SECTION ("An exception to the grant needs manual licensing review")
     { transport.replies = githubReplies (kLicenseText + "\nThe samples are not covered by this license."); }
-    CHECK_FALSE (resolveProviderPack (transport, githubSummary()));
+    const auto result = resolveProviderPack (transport, githubSummary());
+    CHECK_FALSE (result);
+    if (combinedLimit) CHECK (result.error.find ("combined size limit") != std::string::npos);
 }
 
 TEST_CASE ("SFZ Instruments accepts formal Creative Commons license text", "[sfz][provider]")
@@ -528,6 +578,25 @@ TEST_CASE ("SFZ Instruments accepts formal Creative Commons license text", "[sfz
     { transport.replies = githubReplies ("Creative Commons Attribution 4.0 International Public License\nTerms follow.\n"); }
     SECTION ("A matching SPDX identifier agrees with the grant")
     { transport.replies = githubReplies (kLicenseText + "\nSPDX-License-Identifier: CC-BY-4.0."); }
+    SECTION ("A matching sample-specific secondary grant is retained")
+    {
+        transport.replies = githubReplies();
+        transport.replies[2].json["tree"].push_back (
+            { { "path", "Samples/LICENCE.txt" }, { "type", "blob" }, { "mode", "100644" } });
+        transport.replies.push_back ({ { { "path", "Samples/LICENCE.txt" }, { "encoding", "base64" },
+            { "content", base64 ("Samples: " + kLicenseText) } } });
+    }
+    SECTION ("Nested licensing directories contain matching documents")
+    {
+        transport.replies = githubReplies();
+        for (const auto* path : { "LICENSES", "LICENSES/nested" })
+            transport.replies[2].json["tree"].push_back (
+                { { "path", path }, { "type", "tree" }, { "mode", "040000" } });
+        transport.replies[2].json["tree"].push_back (
+            { { "path", "LICENSES/nested/audio.txt" }, { "type", "blob" }, { "mode", "100644" } });
+        transport.replies.push_back ({ { { "path", "LICENSES/nested/audio.txt" }, { "encoding", "base64" },
+            { "content", base64 (kLicenseText) } } });
+    }
     SECTION ("Explicit CC0 dedication")
     {
         transport.replies = githubReplies ("CC0 1.0 Universal\nhttps://creativecommons.org/publicdomain/zero/1.0/\n");

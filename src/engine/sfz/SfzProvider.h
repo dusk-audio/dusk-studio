@@ -2,8 +2,9 @@
 
 #include "SfzTransfer.h"
 
-#include <optional>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -72,6 +73,12 @@ struct ProviderPackResult : OperationResult
     std::optional<ProviderPack> pack;
     ProviderRateLimit rateLimit;
 };
+
+inline constexpr std::size_t kMaxLicenseBytes = 200000;
+inline constexpr std::size_t kMaxLicenseDocuments = 32;
+inline constexpr std::size_t kMaxCombinedLicenseBytes = 2 * 1048576;
+bool isPackLicenseDocument (std::string_view path);
+OperationResult validatePackLicenseDocument (const ProviderLicense&, std::string_view path, std::string_view text);
 
 std::vector<ProviderSource> providerSources();
 ProviderPageResult browseProvider (HttpTransport&, const std::string& sourceId,

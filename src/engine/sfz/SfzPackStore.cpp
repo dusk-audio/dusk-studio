@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <fstream>
 #include <set>
 #include <system_error>
 
@@ -152,6 +153,40 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
         return failure ("The SFZ staging directory is outside its library");
     if (fs::exists (staging / kReceipt, ec) || ec)
         return failure ("The archive uses a reserved SFZ receipt name");
+    std::size_t entryCount = 0, licenseCount = 0, licenseBytes = 0;
+    bool primaryFound = provider.license.path.empty();
+    std::set<std::string> licenseKeys;
+    for (auto it = fs::recursive_directory_iterator (staging, ec);
+         ! ec && it != fs::recursive_directory_iterator(); it.increment (ec))
+    {
+        if (++entryCount > 100000) return failure ("SFZ staging tree exceeds the entry limit");
+        const auto relative = it->path().lexically_relative (staging).generic_u8string();
+        const auto status = it->symlink_status (ec);
+        if (ec || (! fs::is_directory (status) && ! fs::is_regular_file (status)))
+            return failure ("SFZ staging tree contains a link or non-regular entry");
+        if (fs::is_directory (status))
+        {
+            if (! validateRelativePath (relative, error)) return failure ("SFZ staging directory path is unsafe");
+            continue;
+        }
+        if (relative != provider.license.path && ! isPackLicenseDocument (relative)) continue;
+        const auto key = portablePathKey (relative);
+        if (++licenseCount > kMaxLicenseDocuments || ! key || ! licenseKeys.insert (*key).second
+            || ! plainPath (staging, relative)) return failure ("SFZ licensing paths are unsafe, ambiguous, or too numerous");
+        const auto size = fs::file_size (it->path(), ec);
+        if (ec || size == 0 || size > kMaxLicenseBytes || size > kMaxCombinedLicenseBytes - licenseBytes)
+            return failure ("SFZ licensing documents exceed their size limits");
+        std::ifstream stream (it->path(), std::ios::binary);
+        std::string text (static_cast<std::size_t> (size), '\0');
+        if (! stream.read (text.data(), static_cast<std::streamsize> (text.size()))
+            || stream.peek() != std::char_traits<char>::eof() || stream.bad())
+            return failure ("Cannot read complete SFZ licensing document");
+        const auto checked = validatePackLicenseDocument (provider.license, relative, text);
+        if (! checked) return failure (checked.error + ": " + relative);
+        licenseBytes += text.size();
+        if (relative == provider.license.path) primaryFound = true;
+    }
+    if (ec || ! primaryFound) return failure ("SFZ licensing documents are missing or unreadable");
     InstalledPack pack;
     pack.provider = provider;
     pack.archiveSha256 = digest;
