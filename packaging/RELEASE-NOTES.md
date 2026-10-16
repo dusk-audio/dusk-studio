@@ -1,5 +1,5 @@
 <!-- summary-start -->
-MIDI Merge layers performances into a region, with one undo step per loop pass while recording continues. The piano roll shows incoming notes live. Browse Creative Commons SFZ instruments from SFZ Instruments, Musical Artifacts, FreePats and Versilian Studios, then download them to your installed library. Sessions keep the exact installed pack reference across computers. Playback readers share three fill workers and keep sample buffers near the playhead.
+MIDI Merge layers performances into a region, with one undo step per loop pass while recording continues. The piano roll shows incoming notes live. Browse CC0, CC BY and CC BY-SA SFZ instruments from SFZ Instruments, Musical Artifacts, FreePats and Versilian Studios, then download them to your installed library. Sessions keep the exact installed pack reference across computers. Playback readers share three fill workers and keep sample buffers near the playhead.
 
 Sessions save in format 11, which Dusk Studio 0.15.1 and earlier cannot open. Keep a copy before saving if you need to use an older version.
 <!-- summary-end -->
