@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 using namespace duskstudio;
@@ -98,7 +99,22 @@ TEST_CASE ("RecordManager snapshots MIDI merge mode and previews both capture mo
     existing.notes.push_back ({ 1, 60, 70, 0, 40 });
     fixture.session.track (0).midiRegions.publish (
         std::make_unique<std::vector<MidiRegion>> (1, existing));
-    REQUIRE (fixture.manager.startRecording (kSampleRate, 1000));
+    fixture.session.tempoBpm.store (60.0f);
+    auto prepared = fixture.manager.prepareMidiCapture (false);
+    fixture.session.tempoBpm.store (120.0f);
+    REQUIRE_FALSE (fixture.manager.isActive());
+    REQUIRE (fixture.manager.getActiveCaptureTrackMask() == 0);
+    REQUIRE (fixture.session.track (0).midiRegions.current()[0].notes == existing.notes);
+    fixture.session.midiMergeEnabled.store (! merge);
+    REQUIRE_FALSE (fixture.manager.startRecording (kSampleRate, 1000, 0, {}, std::move (prepared)));
+    fixture.session.midiMergeEnabled.store (merge);
+    fixture.session.track (1).mode.store ((int) Track::Mode::Midi);
+    fixture.session.setTrackArmed (1, true);
+    REQUIRE_FALSE (fixture.manager.startRecording (kSampleRate, 1000, 0, {}, std::move (prepared)));
+    fixture.session.setTrackArmed (1, false);
+    REQUIRE_FALSE (fixture.manager.startRecording (kSampleRate, 1000, 0, loopPlan(), std::move (prepared)));
+    REQUIRE_FALSE (fixture.manager.isActive());
+    REQUIRE (fixture.manager.startRecording (kSampleRate, 1000, 0, {}, std::move (prepared)));
     fixture.session.midiMergeEnabled.store (! merge, std::memory_order_relaxed);
     REQUIRE (fixture.manager.isMidiMergeCapture() == merge);
     REQUIRE (fixture.manager.midiCaptureTimelineStart() == 1000);

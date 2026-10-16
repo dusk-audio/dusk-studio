@@ -24,6 +24,8 @@ namespace duskstudio
 // message thread at stopRecording.
 class RecordManager
 {
+    struct PerTrackMidi;
+
 public:
     explicit RecordManager (Session& s);
     ~RecordManager();
@@ -39,6 +41,25 @@ public:
         std::int64_t captureStartSample = 0;
         std::int64_t captureEndSample = 0;
     };
+
+    class PreparedMidiCapture
+    {
+    public:
+        ~PreparedMidiCapture();
+        PreparedMidiCapture (PreparedMidiCapture&&) noexcept;
+        PreparedMidiCapture& operator= (PreparedMidiCapture&&) noexcept;
+
+    private:
+        friend class RecordManager;
+        PreparedMidiCapture();
+        std::array<std::unique_ptr<PerTrackMidi>, Session::kNumTracks> captures;
+        bool merge = false;
+        bool loop = false;
+    };
+
+    // Owns unpublished storage. Keep the handle alive until processing resumes
+    // so rejected or displaced buffers are also reclaimed outside suspension.
+    PreparedMidiCapture prepareMidiCapture (bool loopCapture);
 
     // Fixed-size coordinate handed to all armed-track writes for one split
     // device callback span. transportStart passed to the coordinate method is
@@ -65,6 +86,10 @@ public:
     bool startRecording (double sampleRate, std::int64_t startSample,
                           int latencyOffsetSamples,
                           const LoopCapturePlan& loopCapturePlan);
+    bool startRecording (double sampleRate, std::int64_t startSample,
+                          int latencyOffsetSamples,
+                          const LoopCapturePlan& loopCapturePlan,
+                          PreparedMidiCapture&& prepared);
 
     LoopCaptureSpan coordinateLoopCaptureSpan (int passOrdinal,
                                                 std::int64_t transportStartSample,

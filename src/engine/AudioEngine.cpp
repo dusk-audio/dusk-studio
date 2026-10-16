@@ -2639,8 +2639,24 @@ void AudioEngine::record()
         }
     }
 
-    // The logical take starts at the effective loop/punch boundary. Snapping
-    // every loop gesture there keeps every pass and take reference range-aligned.
+    auto preparedMidi = recordManager.prepareMidiCapture (loopPlan.enabled);
+    suspendProcessing();
+    struct ResumeGuard
+    {
+        AudioEngine& engine;
+        ~ResumeGuard() { engine.resumeProcessing(); }
+    } resumeGuard { *this };
+
+    if (currentSampleRate.load (std::memory_order_relaxed) != sr)
+    {
+        if (onRecordBlocked_)
+            onRecordBlocked_ ("Recording could not start because the audio device changed.\n\n"
+                              "Check Audio Settings, then press Record again.");
+        return;
+    }
+
+    // Preparation can span rolling callbacks. Latch the take's position only
+    // after they drain, then apply the immutable loop/punch capture boundary.
     std::int64_t startSample = transport.getPlayhead();
     if (loopPlan.enabled)
         startSample = loopPlan.captureStartSample;
@@ -2651,17 +2667,11 @@ void AudioEngine::record()
         startSample = transport.getPunchIn();
     }
 
-    suspendProcessing();
-    struct ResumeGuard
-    {
-        AudioEngine& engine;
-        ~ResumeGuard() { engine.resumeProcessing(); }
-    } resumeGuard { *this };
-
     lastBlockWasLoopRecording = false;
 
     if (! recordManager.startRecording (sr, startSample,
-                                         recordingLatencyOffsetSamples_, loopPlan))
+                                         recordingLatencyOffsetSamples_, loopPlan,
+                                         std::move (preparedMidi)))
     {
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): startRecording failed; "
                               "no armed track could be set up (e.g. all frozen, or the take "

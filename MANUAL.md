@@ -1270,6 +1270,8 @@ Sessions saved by Dusk Studio 0.14 load with each region's old take history as t
 
 If Dusk Studio can't open a file for writing (full disk, permission denied, missing audio directory), the error is captured at record start and displayed as an alert before the take begins, listing the affected tracks. You don't lose a take thinking it was captured.
 
+If the audio device changes while Record starts, the take does not start. The alert says **Recording could not start because the audio device changed. Check Audio Settings, then press Record again.**
+
 If something goes wrong mid-take (ring-buffer overrun on a stressed disk, MIDI FIFO overflow), an alert appears when you press Stop. The portion of the take that was written successfully is preserved. In a loop take, a pass that hit a failed write is dropped whole, and the other passes are kept.
 
 A loop take keeps up to 1,024 passes per track. Passes past that are not recorded, and the same alert at Stop lists the track with "loop passes not recorded (past 1,024 in one take)". Every earlier pass is kept.

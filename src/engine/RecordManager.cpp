@@ -227,6 +227,32 @@ void RecordManager::waitForAudioThreadToLeave() const
     }
 }
 
+RecordManager::PreparedMidiCapture::PreparedMidiCapture() = default;
+RecordManager::PreparedMidiCapture::~PreparedMidiCapture() = default;
+RecordManager::PreparedMidiCapture::PreparedMidiCapture (PreparedMidiCapture&&) noexcept = default;
+RecordManager::PreparedMidiCapture& RecordManager::PreparedMidiCapture::operator= (PreparedMidiCapture&&) noexcept = default;
+
+RecordManager::PreparedMidiCapture RecordManager::prepareMidiCapture (bool loopCapture)
+{
+    PreparedMidiCapture prepared;
+    prepared.merge = session.midiMergeEnabled.load (std::memory_order_relaxed);
+    prepared.loop = loopCapture;
+    if (active.load (std::memory_order_acquire)) return prepared;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& track = session.track (t);
+        if (! track.recordArmed.load (std::memory_order_relaxed)
+            || track.frozen.load (std::memory_order_relaxed)
+            || track.mode.load (std::memory_order_relaxed) != (int) Track::Mode::Midi)
+            continue;
+        auto& cap = prepared.captures[(std::size_t) t];
+        cap = std::make_unique<PerTrackMidi> (prepared.merge);
+        if (prepared.merge && prepared.loop)
+            cap->pendingPlayback = std::make_unique<MidiMergePlayback>();
+    }
+    return prepared;
+}
+
 bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
                                     int latencyOffsetSamples)
 {
@@ -237,6 +263,16 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
 bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
                                     int latencyOffsetSamples,
                                     const LoopCapturePlan& loopCapturePlan)
+{
+    auto prepared = prepareMidiCapture (loopCapturePlan.enabled);
+    return startRecording (sampleRate, startSample, latencyOffsetSamples,
+                           loopCapturePlan, std::move (prepared));
+}
+
+bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
+                                    int latencyOffsetSamples,
+                                    const LoopCapturePlan& loopCapturePlan,
+                                    PreparedMidiCapture&& prepared)
 {
     if (active.load (std::memory_order_relaxed))
         return true;
@@ -259,6 +295,17 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
         return false;
     }
 
+    const bool merge = session.midiMergeEnabled.load (std::memory_order_relaxed);
+    if (prepared.merge != merge || prepared.loop != loopCapturePlan.enabled) return false;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& track = session.track (t);
+        const bool needsMidi = track.recordArmed.load (std::memory_order_relaxed)
+            && ! track.frozen.load (std::memory_order_relaxed)
+            && track.mode.load (std::memory_order_relaxed) == (int) Track::Mode::Midi;
+        if (needsMidi != (prepared.captures[(std::size_t) t] != nullptr)) return false;
+    }
+
     auto audioDir = session.getAudioDirectory();
     if (! audioDir.exists())
         audioDir.createDirectory();
@@ -266,7 +313,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     recordStartSample = startSample;
     recordSampleRate  = sampleRate;
     recordTempoBpm = session.tempoBpm.load (std::memory_order_relaxed);
-    midiMergeCapture = session.midiMergeEnabled.load (std::memory_order_relaxed);
+    midiMergeCapture = merge;
     capturedMidiTrackMask = 0;
     nextMidiGroupOrdinal = 1;
     midiCaptureGestureId = nextMidiCaptureGestureId.fetch_add (1, std::memory_order_relaxed);
@@ -311,13 +358,9 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
 
         const int trackMode = session.track (t).mode.load (std::memory_order_relaxed);
 
-        // MIDI tracks: spin up the MIDI capture FIFO and skip the WAV
-        // writer entirely. The audio thread will push events into the
-        // FIFO via writeMidiBlock; stopRecording drains it into a
-        // MidiRegion and pushes onto track.midiRegions.
         if (trackMode == (int) Track::Mode::Midi)
         {
-            auto cap = std::make_unique<PerTrackMidi> (midiMergeCapture);
+            auto& cap = prepared.captures[(std::size_t) t];
             cap->fifo.reset();
             cap->stream.configure ([sampleRate, bpm = recordTempoBpm] (std::int64_t sample)
             {
@@ -325,13 +368,11 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
             }, loopPlan.enabled ? loopPlan.captureEndSample - loopPlan.captureStartSample : 0);
             if (midiMergeCapture && loopPlan.enabled)
             {
-                cap->pendingPlayback = std::make_unique<MidiMergePlayback>();
                 cap->pendingPlayback->configure (midiCaptureGestureId,
                     loopPlan.captureEndSample - loopPlan.captureStartSample,
                     [sampleRate, bpm = recordTempoBpm] (std::int64_t sample)
                     { return samplesToTicks (sample, sampleRate, bpm); });
             }
-            midiCaptures[(size_t) t] = std::move (cap);
             captureTrackMask |= std::uint32_t { 1 } << t;
             midiCaptureTrackMask |= std::uint32_t { 1 } << t;
             continue;
@@ -408,8 +449,6 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
                     drainPool.remove (w->writer.get());
                     w.reset();
                 }
-            for (auto& cap : midiCaptures)
-                cap.reset();
             activeCaptureTrackMask.store (0, std::memory_order_relaxed);
             activeMidiCaptureTrackMask.store (0, std::memory_order_relaxed);
             activeStereoCaptureTrackMask.store (0, std::memory_order_relaxed);
@@ -439,6 +478,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
         return false;
     }
 
+    midiCaptures.swap (prepared.captures);
     activeCaptureTrackMask.store (captureTrackMask, std::memory_order_relaxed);
     capturedMidiTrackMask = midiCaptureTrackMask;
     activeMidiCaptureTrackMask.store (midiCaptureTrackMask, std::memory_order_relaxed);
