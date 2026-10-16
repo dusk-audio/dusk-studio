@@ -133,6 +133,20 @@ struct MidiRegionPlacement
     bool         muted           = false;
 };
 
+struct MidiCaptureStamp
+{
+    std::uint64_t gestureId = 0;
+    int consumedThroughPass = 0;
+
+    void include (MidiCaptureStamp other) noexcept
+    {
+        if (other.gestureId > gestureId)
+            *this = other;
+        else if (other.gestureId == gestureId)
+            consumedThroughPass = std::max (consumedThroughPass, other.consumedThroughPass);
+    }
+};
+
 // A track's MIDI timeline the way the audio thread plays it, one entry per
 // region: its events and its placement. Immutable once published; every
 // change, a drag included, publishes a new one. A region's events are shared
@@ -147,6 +161,9 @@ struct MidiTimeline
 {
     static constexpr std::size_t kRegionChunk = 64;
 
+    // Travels with the events, including across Undo, so pending capture
+    // cannot duplicate a published pass or restore one the user removed.
+    MidiCaptureStamp capture;
     std::vector<std::shared_ptr<const MidiPlaybackRegion>> playback;
     std::vector<MidiRegionPlacement>                       placement;   // playback.size() of them
 
