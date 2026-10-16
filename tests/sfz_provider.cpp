@@ -926,7 +926,7 @@ TEST_CASE ("SFZ repository artwork uses declared images and immutable repository
         const auto result = resolveProviderPack (transport, summary);
         REQUIRE (result);
         REQUIRE (result.pack);
-        CHECK (result.pack->presentation.artworkUrl == "https://sfzinstruments.github.io/assets/img/pianos/actual_cover.jpg");
+        CHECK (result.pack->presentation.artworkUrl == "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/assets/img/pianos/actual_cover.jpg");
         CHECK (result.pack->presentation.categoryHint.find ("Multisampled acoustic piano") != std::string::npos);
     }
     SECTION ("Search descriptions survive unavailable optional metadata during resolve")
@@ -939,6 +939,22 @@ TEST_CASE ("SFZ repository artwork uses declared images and immutable repository
         REQUIRE (result.pack);
         CHECK (result.pack->presentation.categoryHint == summary.presentation.categoryHint);
         CHECK (result.pack->license.text == kLicenseText);
+    }
+    SECTION ("Artifact artwork cannot direct a request outside its provider")
+    {
+        for (const auto* url : { "https://untrusted.example/piano.jpg", "https://musical-artifacts.com.evil.invalid/a.jpg",
+                                "https://user@musical-artifacts.com/a.jpg", "https://musical-artifacts.com:444/a.jpg" })
+        {
+            CAPTURE (url);
+            auto item = artifact();
+            item["image_url"] = url;
+            FakeTransport unsafe;
+            unsafe.replies = { { Json::array ({ item }) } };
+            const auto result = browseProvider (unsafe, "musical-artifacts");
+            REQUIRE (result);
+            REQUIRE (result.items.size() == 1);
+            CHECK (result.items.front().presentation.artworkUrl.empty());
+        }
     }
     SECTION ("Artifact tags and explicit HTTPS artwork survive browsing")
     {

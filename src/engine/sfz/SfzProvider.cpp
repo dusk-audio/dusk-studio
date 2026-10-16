@@ -83,7 +83,7 @@ bool https (std::string_view value)
     return ! authority.empty() && authority.find ('@') == std::string_view::npos;
 }
 
-void presentationMetadata (const Json& object, ProviderPresentation& presentation)
+void presentationMetadata (const Json& object, ProviderPresentation& presentation, std::string_view sourceId)
 {
     presentation.categoryHint = string (object, "description", 2048);
     for (const auto* field : { "tags", "topics" })
@@ -97,7 +97,7 @@ void presentationMetadata (const Json& object, ProviderPresentation& presentatio
     for (const auto* field : { "image_url", "thumbnail_url", "image" })
     {
         const auto url = string (object, field, 2048);
-        if (https (url)) { presentation.artworkUrl = url; break; }
+        if (httpsUrlOnHosts (url, artworkHostsForSource (sourceId))) { presentation.artworkUrl = url; break; }
     }
 }
 
@@ -375,7 +375,7 @@ OperationResult githubDemos (HttpTransport& transport, const std::string& reposi
                 const auto prefix = "/assets/img/" + page.substr (0, page.find ('/')) + "/";
                 if (path.compare (0, prefix.size(), prefix) == 0 && path.find ("..") == std::string::npos
                     && https ("https://sfzinstruments.github.io" + path))
-                    presentation.artworkUrl = "https://sfzinstruments.github.io" + path;
+                    presentation.artworkUrl = "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master" + path;
             }
         }
         if (tag.compare (0, 7, "<audio ") == 0
@@ -693,7 +693,7 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
     pack.downloadUrl = webBase + "/archive/" + revision + ".zip";
     pack.expectedRoot = summary.locator + "-" + revision;
     pack.versionPinned = true;
-    presentationMetadata (repository.json, pack.presentation);
+    presentationMetadata (repository.json, pack.presentation, summary.sourceId);
     if (summary.sourceId == "sfzinstruments")
         appendMetadataText (pack.presentation.categoryHint, summary.presentation.categoryHint);
     std::set<std::string> paths;
@@ -866,7 +866,7 @@ ProviderPackResult artifactPack (HttpTransport& transport, const ProviderSummary
     pack.sourceId = "musical-artifacts";
     pack.packId = summary.packId;
     pack.displayName = string (detail.json, "name", 256);
-    presentationMetadata (detail.json, pack.presentation);
+    presentationMetadata (detail.json, pack.presentation, "musical-artifacts");
     pack.author = string (detail.json, "author", 256);
     pack.sourceUrl = source;
     pack.downloadUrl = download;
@@ -960,6 +960,15 @@ std::vector<ProviderSource> providerSources()
              { "versilian", "Versilian Studios", "https://versilian-studios.com/" } };
 }
 
+std::vector<std::string> artworkHostsForSource (std::string_view source)
+{
+    if (source == "musical-artifacts") return { "musical-artifacts.com", "www.musical-artifacts.com" };
+    if (source == "sfzinstruments" || source == "freepats" || source == "versilian")
+        return { "raw.githubusercontent.com", "user-images.githubusercontent.com", "repository-images.githubusercontent.com",
+                 "avatars.githubusercontent.com" };
+    return {};
+}
+
 ProviderPageResult browseProvider (HttpTransport& transport, const std::string& sourceId,
                                    unsigned page, const std::string& query, const OperationControl& control)
 {
@@ -995,7 +1004,7 @@ ProviderPageResult browseProvider (HttpTransport& transport, const std::string& 
         summary.packId = std::to_string (id);
         summary.name = string (entry, "name", 256);
         summary.description = string (entry, "description", 4096);
-        presentationMetadata (entry, summary.presentation);
+        presentationMetadata (entry, summary.presentation, sourceId);
         if (github)
         {
             summary.presentation.stars = popularity (entry, "stargazers_count");
