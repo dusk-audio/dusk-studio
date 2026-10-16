@@ -67,7 +67,8 @@ public:
     LibrarySnapshot snapshot() const;
 
 private:
-    LibraryService (LibraryLocations, std::filesystem::path configurationFile, std::shared_ptr<HttpTransport>);
+    LibraryService (LibraryLocations, std::filesystem::path configurationFile, std::shared_ptr<HttpTransport>,
+                    std::filesystem::path cacheDirectory);
     enum class JobKind { Browse, Resolve, Install, Installed, Remove, Cleanup, ChangeLocation };
     struct Job
     {

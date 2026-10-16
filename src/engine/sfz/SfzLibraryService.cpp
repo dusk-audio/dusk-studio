@@ -1,5 +1,6 @@
 #include "SfzLibraryService.h"
 #include "SfzCatalogJson.h"
+#include "../../foundation/AppConfigDir.h"
 #include "../../foundation/Fs.h"
 
 #include <sodium.h>
@@ -292,19 +293,20 @@ std::string rateLimitError (std::string error, const ProviderRateLimit& limit)
 } // namespace
 
 LibraryService::LibraryService()
-    : LibraryService (readLibraryLocations(), libraryLocationsFile(), {}) {}
+    : LibraryService (readLibraryLocations(), libraryLocationsFile(), {}, dusk::fs::appDataDir()) {}
 
 LibraryService::LibraryService (fs::path root, std::shared_ptr<HttpTransport> supplied)
-    : LibraryService (LibraryLocations { { std::move (root), {} }, {}, {} }, {}, std::move (supplied)) {}
+    : LibraryService (LibraryLocations { { std::move (root), {} }, {}, {} }, {}, std::move (supplied), {}) {}
 
-LibraryService::LibraryService (LibraryLocations configured, fs::path file, std::shared_ptr<HttpTransport> supplied)
+LibraryService::LibraryService (LibraryLocations configured, fs::path file, std::shared_ptr<HttpTransport> supplied,
+                                fs::path cacheDirectory)
     : store (configured.active.root, configured.active.marker),
       transport (supplied ? std::move (supplied) : std::make_shared<CurlTransport>()),
       locations (std::move (configured)), configurationFile (std::move (file)),
-      cacheRoot (configurationFile.empty() ? store.root() / ".repository-cache"
-                                          : configurationFile.parent_path() / "sfz-cache" / "repository"),
-      artworkCache (configurationFile.empty() ? store.root() / ".artwork-cache"
-                                              : configurationFile.parent_path() / "sfz-cache" / "artwork", transport),
+      cacheRoot (cacheDirectory.empty() ? store.root() / ".repository-cache"
+                                        : cacheDirectory / "sfz-cache" / "repository"),
+      artworkCache (cacheDirectory.empty() ? store.root() / ".artwork-cache"
+                                            : cacheDirectory / "sfz-cache" / "artwork", transport),
       worker ([this] { run(); }) {}
 
 LibraryService::~LibraryService()

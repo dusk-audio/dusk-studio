@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/sfz/SfzLibraryService.h"
+#include "foundation/AppConfigDir.h"
 #include "foundation/Fs.h"
 
 #include <archive.h>
@@ -11,6 +12,7 @@
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -87,6 +89,41 @@ struct Tree
     Tree() : root (fs::canonical (dusk::fs::createUniqueTempDirectory ("dusk-sfz-service-"))) {}
     ~Tree() { std::error_code ignored; fs::remove_all (root, ignored); }
     fs::path root;
+};
+
+class ScopedConfigDirectory
+{
+public:
+    explicit ScopedConfigDirectory (const fs::path& directory)
+    {
+       #if defined(_WIN32)
+        const auto* existing = ::_wgetenv (L"DUSKSTUDIO_CONFIG_DIR");
+       #else
+        const auto* existing = std::getenv (dusk::fs::kConfigDirEnv);
+       #endif
+        hadPrevious = existing != nullptr;
+        if (existing != nullptr) previous = existing;
+       #if defined(_WIN32)
+        REQUIRE (::_wputenv_s (L"DUSKSTUDIO_CONFIG_DIR", directory.c_str()) == 0);
+       #else
+        REQUIRE (::setenv (dusk::fs::kConfigDirEnv, directory.c_str(), 1) == 0);
+       #endif
+    }
+    ~ScopedConfigDirectory()
+    {
+       #if defined(_WIN32)
+        ::_wputenv_s (L"DUSKSTUDIO_CONFIG_DIR", hadPrevious ? previous.c_str() : L"");
+       #else
+        if (hadPrevious) ::setenv (dusk::fs::kConfigDirEnv, previous.c_str(), 1);
+        else ::unsetenv (dusk::fs::kConfigDirEnv);
+       #endif
+    }
+    ScopedConfigDirectory (const ScopedConfigDirectory&) = delete;
+    ScopedConfigDirectory& operator= (const ScopedConfigDirectory&) = delete;
+
+private:
+    fs::path::string_type previous;
+    bool hadPrevious = false;
 };
 
 struct Reply
@@ -261,6 +298,60 @@ TEST_CASE ("SFZ library initialization and installed scans never contact a repos
     REQUIRE (settled (service).installed.empty());
     REQUIRE (transport->count() == 0);
     REQUIRE_FALSE (service.resume());
+}
+
+TEST_CASE ("SFZ library preserves saved downloads when its metadata cache is unavailable", "[sfz][service][storage][ipc]")
+{
+    Tree tree;
+    const auto configuration = tree.root / "configuration";
+    const auto library = tree.root / "library";
+    REQUIRE (fs::create_directory (configuration));
+    REQUIRE (fs::create_directory (library));
+    const ScopedConfigDirectory isolated (configuration);
+    REQUIRE (changeLibraryLocation ({}, library, false, {}, libraryLocationsFile()));
+    REQUIRE (fs::create_directory (library / ".downloads"));
+    const auto bytes = archiveBytes();
+    const auto pack = packFor (bytes);
+    const auto part = library / ".downloads" / (hash (providerPackToJson (pack)) + ".part");
+    ScriptedTransport interrupted;
+    Reply first { bytes.substr (0, 64), 200,
+        { { "content-length", std::to_string (bytes.size()) }, { "etag", "\"version1\"" } } };
+    first.endStatus = OperationStatus::Failed;
+    interrupted.append (std::move (first));
+    const auto prefix = downloadFile (interrupted, { pack.downloadUrl, part, pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes });
+    REQUIRE_FALSE (prefix);
+    REQUIRE (prefix.resumeAvailable);
+    REQUIRE (ownedInstallFiles (tree) == 2);
+    const auto cache = configuration / "sfz-cache" / "repository";
+    REQUIRE (fs::create_directory (cache.parent_path()));
+    REQUIRE (dusk::fs::writeStringToFile (cache, "blocked"));
+    const auto transport = std::make_shared<ScriptedTransport>();
+    {
+        LibraryService service;
+        REQUIRE (settled (service).state == LibraryState::Failed);
+        REQUIRE (service.setTransportForTest (transport));
+        REQUIRE (service.install (pack));
+        REQUIRE (settled (service).state == LibraryState::Failed);
+        CHECK (transport->count() == 0);
+        REQUIRE (ownedInstallFiles (tree) == 2);
+    }
+    REQUIRE (fs::remove (cache));
+    transport->append ({ bytes.substr (64), 206,
+        { { "content-length", std::to_string (bytes.size() - 64) },
+          { "content-range", "bytes 64-" + std::to_string (bytes.size() - 1) + "/" + std::to_string (bytes.size()) },
+          { "etag", "\"version1\"" } } });
+    LibraryService restored;
+    REQUIRE (settled (restored).state == LibraryState::Idle);
+    REQUIRE (fs::is_directory (cache));
+    REQUIRE (restored.setTransportForTest (transport));
+    REQUIRE (restored.install (pack));
+    const auto result = settled (restored);
+    INFO (result.error);
+    REQUIRE (result.state == LibraryState::Complete);
+    REQUIRE (result.installed.size() == 1);
+    REQUIRE (transport->count() == 1);
+    CHECK (transport->request (0).headers.at ("range") == "bytes=64-");
+    CHECK (ownedInstallFiles (tree) == 0);
 }
 
 TEST_CASE ("SFZ service changes storage without replacing its worker or portable identities", "[sfz][service][storage][ipc]")

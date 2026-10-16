@@ -1983,7 +1983,7 @@ In **Online**, **All repositories** is selected by default: enter an optional se
 
 **FreePats** offers its Creative Commons instrument repositories. **Versilian Studios** offers the official **VSCO 2 Community Edition** and **Versilian Community Sample Library** collections, using their latest stable SFZ releases. Round-robin sampling varies by instrument and articulation; a collection's inclusion does not mean every patch has round robins.
 
-Recent GitHub metadata may be reused for five minutes to reduce repository requests; community catalog descriptions may be reused for six hours. Saved repository responses are limited to 64 MiB and 256 entries. Responses older than 30 days are removed as the library updates, so **Browse cached** may require a new online search for an older listing.
+Recent GitHub metadata may be reused for five minutes to reduce repository requests; community catalog descriptions may be reused for six hours. Saved repository responses are limited to 64 MiB and 256 entries. Responses older than 30 days are removed as the library updates, so **Browse cached** may require a new online search for an older listing. Repository and artwork caches stay in the platform's Dusk Studio data directory, even when the library uses an external drive.
 
 The default downloaded library is `~/.local/share/Dusk Studio/sfz-library` on Linux (`XDG_DATA_HOME` overrides `~/.local/share`), `%LOCALAPPDATA%\Dusk Studio\sfz-library` on Windows, and `~/Library/Application Support/Dusk Studio/sfz-library` on macOS. **Settings > SFZ Library** lets you choose another folder, including an external drive.
 
