@@ -170,7 +170,8 @@ TEST_CASE ("SFZ portable paths reject escape and Windows aliases")
     for (const std::string path : { "", "/piano.sfz", "\\\\server\\piano.sfz", "C:/piano.sfz",
                                    "../piano.sfz", "a/../piano.sfz", "./piano.sfz", "a//piano.sfz",
                                    "a\\piano.sfz", "a/piano.sfz.", "a /piano.sfz", "CON.sfz",
-                                   "a/Lpt1.wav", "COM¹.wav", "piano:stream.sfz", "a/piano?.sfz" })
+                                   "a/Lpt1.wav", "COM¹.wav", "a/COM0.wav", "lpt0.sfz", "CONIN$.sfz", "a/conout$.wav",
+                                   "piano:stream.sfz", "a/piano?.sfz" })
     {
         CAPTURE (path);
         CHECK_FALSE (validateRelativePath (path, error));
@@ -179,6 +180,8 @@ TEST_CASE ("SFZ portable paths reject escape and Windows aliases")
     CHECK_FALSE (validateRelativePath (std::string ("a\0b.sfz", 7), error));
     CHECK_FALSE (validateRelativePath (std::string ("a\x1f" "b.sfz", 7), error));
     CHECK_FALSE (validateRelativePath (std::string ("a\xc0\xaf" "b.sfz", 8), error));
+    for (const std::string path : { "COM10.sfz", "LPT10.wav", "COM0X.sfz", "CONINPUT.sfz" })
+        CHECK (validateRelativePath (path, error));
     CHECK (validateRelativePath (u8"Étude/ピアノ.sfz", error));
     CHECK (error.empty());
 }
