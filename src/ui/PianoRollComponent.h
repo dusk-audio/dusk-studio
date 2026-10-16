@@ -4,6 +4,7 @@
 #include <functional>
 #include <array>
 #include "DuskComboBox.h"
+#include "PianoRollEdit.h"
 #include "WheelScroll.h"
 #include "../foundation/MessageThread.h"
 #include "../session/Session.h"
@@ -115,7 +116,7 @@ public:
     // The note clipboard outlives every roll instance, so a scenario that
     // copied notes hands them to the next one unless the suite runner empties
     // it between cases.
-    static void clearClipboardForScenario() { sNoteClipboard.clear(); }
+    static void clearClipboardForScenario() { PianoRollEdit::clipboard.clear(); }
     static constexpr int kNumKeys           = 128;
     static constexpr int kFullGridHeight    = kNumKeys * kNoteHeight;
     // Strip heights are runtime-mutable (drag top edge / wheel zoom).
@@ -160,33 +161,9 @@ private:
     int scrollX = 0;
     wheel::Accumulator wheelX, wheelY, wheelStrip;
 
-    // Sorted/dedup'd so set ops (toggle/contains) are O(log n). Mutating
-    // ops iterate descending so earlier indices stay valid.
-    std::vector<int> selectedNotes;
-
-    // Note under the cursor at mouseDown. Drag deltas computed against
-    // this; every selected note follows the same delta. Resize applies
-    // only to the anchor (multi-resize ambiguous).
-    int dragAnchor = -1;
-
-    // Parallel to selectedNotes. Snapshot at mouseDown so MoveNote can
-    // apply a consistent delta even after notes get clamped at the
-    // region boundary.
-    struct DragSnapshot
-    {
-        std::int64_t startTick     = 0;
-        int         noteNumber    = 0;
-        std::int64_t lengthInTicks = 0;
-        int         velocity      = 100;
-    };
-    std::vector<DragSnapshot> dragSnapshots;
+    PianoRollEdit edit;
 
     juce::Rectangle<int> rubberBand;
-
-    // App-wide so a Cmd+C in one piano-roll instance is visible to
-    // Cmd+V in another (cross-region paste). Stored ticks are RELATIVE
-    // to the earliest note's tick so paste lands at editCursorTick.
-    static std::vector<MidiNote> sNoteClipboard;
 
     enum class DragMode { None, MoveNote, ResizeNote, CreateNote, EditVelocity, BoxSelect,
                            EditCcValue, EditNoteVelocity,
@@ -415,7 +392,7 @@ public:
                 + (int) std::round ((1.0 - value / 127.0) * ccStripH));
     }
     int ccControllerForScenario() const { return activeCcController; }
-    const auto& selectionForScenario() const { return selectedNotes; }
+    const auto& selectionForScenario() const { return edit.selectedNotes; }
     std::int64_t editCursorForScenario() const { return editCursorTick; }
 
 private:
