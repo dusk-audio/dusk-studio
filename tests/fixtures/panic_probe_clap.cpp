@@ -26,6 +26,11 @@ enum ParamId : clap_id
     kParamNoteOnsSeen,
     kParamLastNoteOnOffset,
     kParamLastNoteOffOffset,
+    kParamCc121Seen,
+    kParamPitchCentersSeen,
+    kParamPressureZerosSeen,
+    kParamBentChannels,
+    kParamPressedChannels,
     kParamCount
 };
 
@@ -50,6 +55,11 @@ struct PluginData
     std::uint32_t noteOnsSeen = 0;
     std::uint32_t lastNoteOnOffset = 0;
     std::uint32_t lastNoteOffOffset = 0;
+    std::uint32_t cc121Seen = 0;
+    std::uint32_t pitchCentersSeen = 0;
+    std::uint32_t pressureZerosSeen = 0;
+    std::uint32_t bentChannels = 0;
+    std::uint32_t pressedChannels = 0;
     std::uint32_t latencySamples = 0;
 
     // A voice is per note port: the same key and channel on two ports are two
@@ -163,7 +173,8 @@ bool CLAP_ABI paramGetInfo (const clap_plugin_t*, uint32_t index,
     if (index >= (uint32_t) kParamCount || info == nullptr) return false;
     static const char* const names[kParamCount] = {
         "voicesHeld", "chokesSeen", "cc120Seen", "cc123Seen", "noteOffsSeen",
-        "noteOnsSeen", "lastNoteOnOffset", "lastNoteOffOffset"
+        "noteOnsSeen", "lastNoteOnOffset", "lastNoteOffOffset", "cc121Seen",
+        "pitchCentersSeen", "pressureZerosSeen", "bentChannels", "pressedChannels"
     };
     *info = {};
     info->id = (clap_id) index;
@@ -190,6 +201,11 @@ bool CLAP_ABI paramGetValue (const clap_plugin_t* plugin, clap_id id, double* ou
         case kParamNoteOnsSeen: *out = (double) data->noteOnsSeen; return true;
         case kParamLastNoteOnOffset: *out = (double) data->lastNoteOnOffset; return true;
         case kParamLastNoteOffOffset: *out = (double) data->lastNoteOffOffset; return true;
+        case kParamCc121Seen: *out = (double) data->cc121Seen; return true;
+        case kParamPitchCentersSeen: *out = (double) data->pitchCentersSeen; return true;
+        case kParamPressureZerosSeen: *out = (double) data->pressureZerosSeen; return true;
+        case kParamBentChannels: *out = (double) data->bentChannels; return true;
+        case kParamPressedChannels: *out = (double) data->pressedChannels; return true;
         default: return false;
     }
 }
@@ -262,6 +278,28 @@ void handleMidiEvent (PluginData& data, const clap_event_header_t* header)
     {
         data.clearVoices();
         ++data.cc123Seen;
+    }
+    else if (status == 0xB0 && d1 == 121)
+        ++data.cc121Seen;
+    else if (status == 0xE0)
+    {
+        const auto mask = std::uint32_t { 1 } << channel;
+        if (d1 == 0 && d2 == 64)
+        {
+            data.bentChannels &= ~mask;
+            ++data.pitchCentersSeen;
+        }
+        else data.bentChannels |= mask;
+    }
+    else if (status == 0xD0)
+    {
+        const auto mask = std::uint32_t { 1 } << channel;
+        if (d1 == 0)
+        {
+            data.pressedChannels &= ~mask;
+            ++data.pressureZerosSeen;
+        }
+        else data.pressedChannels |= mask;
     }
     else if (status == 0x90 && d2 > 0)
     {

@@ -183,10 +183,11 @@ TEST_CASE ("panic-probe CLAP fixture loads as an instrument with read-only count
     REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH, pluginId));
     REQUIRE (probe.slot.isLoadedInstrument());
     REQUIRE (probe.slot.getLatencySamples() == latency);
-    REQUIRE (probe.slot.paramCount() == 8);
+    REQUIRE (probe.slot.paramCount() == 13);
 
     for (const char* name : { "voicesHeld", "chokesSeen", "cc120Seen", "cc123Seen",
-                              "noteOffsSeen", "noteOnsSeen", "lastNoteOnOffset", "lastNoteOffOffset" })
+                              "noteOffsSeen", "noteOnsSeen", "lastNoteOnOffset", "lastNoteOffOffset",
+                              "cc121Seen", "pitchCentersSeen", "pressureZerosSeen", "bentChannels", "pressedChannels" })
     {
         INFO ("counter: " << name);
         REQUIRE_THAT (probe.counter (name), WithinAbs (0.0, 1.0e-9));
@@ -333,6 +334,33 @@ TEST_CASE ("panic-probe CLAP fixture counts raw MIDI on its MIDI-dialect port",
         REQUIRE_THAT (probe.counter ("noteOffsSeen"), WithinAbs (2.0, 1.0e-9));
         REQUIRE_THAT (probe.counter ("lastNoteOffOffset"), WithinAbs (15.0, 1.0e-9));
         REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (0.0, 1.0e-9));
+    }
+
+    SECTION ("expression values and neutral messages are observed on every channel")
+    {
+        ClapEventList expression;
+        for (int channel = 0; channel < 16; ++channel)
+        {
+            expression.addMidi (1, (std::uint8_t) (0xE0 | channel), 127, 127);
+            expression.addMidi (1, (std::uint8_t) (0xD0 | channel), 90, 0);
+        }
+        probe.runRaw (expression);
+        REQUIRE_THAT (probe.counter ("bentChannels"), WithinAbs (65535.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressedChannels"), WithinAbs (65535.0, 1.0e-9));
+
+        ClapEventList reset;
+        for (int channel = 0; channel < 16; ++channel)
+        {
+            reset.addMidi (1, (std::uint8_t) (0xB0 | channel), 121, 0);
+            reset.addMidi (1, (std::uint8_t) (0xE0 | channel), 0, 64);
+            reset.addMidi (1, (std::uint8_t) (0xD0 | channel), 0, 0);
+        }
+        probe.runRaw (reset);
+        REQUIRE_THAT (probe.counter ("cc121Seen"), WithinAbs (16.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pitchCentersSeen"), WithinAbs (16.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressureZerosSeen"), WithinAbs (16.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("bentChannels"), WithinAbs (0.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressedChannels"), WithinAbs (0.0, 1.0e-9));
     }
 }
 
