@@ -1983,7 +1983,7 @@ GitHub stars and Musical Artifacts favorites appear when supplied by the source.
 
 **Version and download details** shows the source revision and archive verification information. The library adapts to the main window's available space, with separate scrolling for the pack list and details. Download progress and pause, resume or error messages appear in its status bar.
 
-Downloads use HTTPS. SFZ Instruments, FreePats and Versilian Studios archives are pinned to a GitHub commit; GitHub does not supply an archive SHA-256, so Dusk Studio computes one for the local installation receipt. Musical Artifacts downloads are checked against the published SHA-256 when one is available. Archives are unpacked into a staging folder with path and size checks, and appear in **Installed** only after installation finishes.
+Downloads use HTTPS. SFZ Instruments, FreePats and Versilian Studios archives are pinned to a GitHub commit; GitHub does not supply an archive SHA-256, so Dusk Studio computes one for the local installation receipt. Musical Artifacts downloads are checked against the published SHA-256 when one is available. ZIP packs must use stored or deflate compression on every platform. Archives are unpacked into a staging folder with path and size checks, and appear in **Installed** only after installation finishes.
 
 Library work pauses during recording, bounce or freeze. Press **Resume** afterwards to continue; it does not resume by itself. **Cancel** removes the unfinished download. In **Installed**, select an instrument and press **Load** to put it on the track. **Remove** deletes a pack only when the current session and pending loads are not using it.
 

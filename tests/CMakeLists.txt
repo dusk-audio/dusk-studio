@@ -978,9 +978,8 @@ catch_discover_tests(dusk-studio-tests
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[host-limits]"
     EXTRA_ARGS --allow-running-no-tests)
-# [ipc] cases start the plug-in host process and several assert on timing windows
-# (the park-timeout stub parks against a 250 ms block). Under ctest --parallel the
-# runner's cores are shared, so those windows close; run them serially.
+# [ipc] cases start plug-in hosts and assert on bounded response times. Run
+# them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "~[alsa]~[ipc]~[host-limits]")
 catch_discover_tests(dusk-studio-tests
@@ -1022,6 +1021,11 @@ if(UNIX)
                 COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
                         "${CMAKE_CURRENT_SOURCE_DIR}/install_linux.sh"
                         "${CMAKE_SOURCE_DIR}")
+            add_test(NAME regression-runner-contract
+                COMMAND "${Python3_EXECUTABLE}"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/regress_orchestration.py"
+                        "${CMAKE_SOURCE_DIR}")
+            set_tests_properties(regression-runner-contract PROPERTIES TIMEOUT 30)
         endif()
         add_test(NAME release-mechanics-contract
             COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"

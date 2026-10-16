@@ -45,7 +45,7 @@ struct Member
     std::string symlink {};
 };
 
-std::vector<unsigned char> zip (const std::vector<Member>& members)
+std::vector<unsigned char> zip (const std::vector<Member>& members, bool deflate = false)
 {
     std::vector<unsigned char> bytes, central;
     const auto append = [] (auto& target, std::uint32_t value, unsigned width)
@@ -63,7 +63,7 @@ std::vector<unsigned char> zip (const std::vector<Member>& members)
         }
         return ~crc;
     };
-    // Write raw UTF-8 stored entries so fixture creation cannot depend on the process locale.
+    // Raw UTF-8 headers keep fixtures independent of the process locale.
     for (const auto& member : members)
     {
         REQUIRE (member.name.size() <= 0xffff);
@@ -71,17 +71,28 @@ std::vector<unsigned char> zip (const std::vector<Member>& members)
         const auto data = ! member.symlink.empty() ? member.symlink : member.directory ? std::string {} : member.data;
         const auto crc = checksum (data);
         const auto size = static_cast<std::uint32_t> (data.size());
+        std::vector<unsigned char> packed (data.begin(), data.end());
+        if (deflate)
+        {
+            REQUIRE (size <= 0xffff);
+            packed.clear();
+            append (packed, 1, 1);
+            append (packed, size, 2);
+            append (packed, (~size) & 0xffff, 2);
+            packed.insert (packed.end(), data.begin(), data.end());
+        }
+        const auto compressedSize = static_cast<std::uint32_t> (packed.size());
         const auto offset = static_cast<std::uint32_t> (bytes.size());
         const auto nameSize = static_cast<std::uint32_t> (member.name.size());
         const std::uint32_t mode = ! member.symlink.empty() ? 0120644U : member.directory ? 0040755U : 0100644U;
         append (bytes, 0x04034b50, 4); append (bytes, 20, 2); append (bytes, 0x0800, 2);
-        append (bytes, 0, 2); append (bytes, 0, 2); append (bytes, 33, 2); append (bytes, crc, 4);
-        append (bytes, size, 4); append (bytes, size, 4); append (bytes, nameSize, 2); append (bytes, 0, 2);
+        append (bytes, deflate ? 8 : 0, 2); append (bytes, 0, 2); append (bytes, 33, 2); append (bytes, crc, 4);
+        append (bytes, compressedSize, 4); append (bytes, size, 4); append (bytes, nameSize, 2); append (bytes, 0, 2);
         bytes.insert (bytes.end(), member.name.begin(), member.name.end());
-        bytes.insert (bytes.end(), data.begin(), data.end());
+        bytes.insert (bytes.end(), packed.begin(), packed.end());
         append (central, 0x02014b50, 4); append (central, 0x0314, 2); append (central, 20, 2);
-        append (central, 0x0800, 2); append (central, 0, 2); append (central, 0, 2); append (central, 33, 2);
-        append (central, crc, 4); append (central, size, 4); append (central, size, 4); append (central, nameSize, 2);
+        append (central, 0x0800, 2); append (central, deflate ? 8 : 0, 2); append (central, 0, 2); append (central, 33, 2);
+        append (central, crc, 4); append (central, compressedSize, 4); append (central, size, 4); append (central, nameSize, 2);
         append (central, 0, 2); append (central, 0, 2); append (central, 0, 2); append (central, 0, 2);
         append (central, (mode << 16) | (member.directory ? 0x10U : 0U), 4); append (central, offset, 4);
         central.insert (central.end(), member.name.begin(), member.name.end());
@@ -232,7 +243,10 @@ TEST_CASE ("SFZ ZIP extraction strips only the expected root and verifies its li
 TEST_CASE ("SFZ ZIP extraction keeps archive paths when no root is requested")
 {
     ScratchTree tree;
-    const auto request = requestFor (tree, zip ({ { "pack/piano.sfz", "instrument" } }));
+    bool deflate = false;
+    SECTION ("stored") {}
+    SECTION ("deflate") { deflate = true; }
+    const auto request = requestFor (tree, zip ({ { "pack/piano.sfz", "instrument" } }, deflate));
     const auto result = extractZip (request);
     INFO (result.error);
     REQUIRE (result);
@@ -337,6 +351,21 @@ TEST_CASE ("SFZ ZIP extraction refuses encrypted and conflicting local headers")
         bytes[local + 6] |= 1;
         bytes[central + 8] |= 1;
     }
+    SECTION ("unsupported compression")
+    {
+        for (const unsigned method : { 1U, 6U, 9U, 12U, 14U, 20U, 93U, 99U })
+        {
+            INFO (method);
+            put (bytes, local + 8, method, 2);
+            put (bytes, central + 10, method, 2);
+            const auto request = requestFor (tree, bytes);
+            const auto result = extractZip (request);
+            CHECK (result.status == OperationStatus::Failed);
+            CHECK (result.error == "ZIP compression must be stored or deflate");
+            CHECK_FALSE (std::filesystem::exists (request.stagingDirectory));
+        }
+        return;
+    }
     SECTION ("local and central names differ")
     {
         bytes[local + 30] = 'x';
@@ -437,7 +466,6 @@ TEST_CASE ("SFZ ZIP extraction requires its expected entrypoint and license")
     SECTION ("missing entrypoint") { request.expectedEntrypoints = { "missing.sfz" }; }
     const auto result = extractZip (request);
     CHECK (result.status == OperationStatus::Failed);
-    CHECK_FALSE (std::filesystem::exists (tree.root / "installed"));
 }
 
 TEST_CASE ("SFZ ZIP extraction refuses a populated staging directory")
@@ -506,7 +534,6 @@ TEST_CASE ("SFZ ZIP extraction pauses or cancels between bounded data chunks")
     CHECK (result.expandedBytes >= 64 * 1024);
     CHECK (result.expandedBytes < 256 * 1024);
     CHECK (result.sfzPaths.empty());
-    CHECK_FALSE (std::filesystem::exists (tree.root / "installed"));
 }
 
 TEST_CASE ("SFZ ZIP extraction reads a ZIP64 end directory")

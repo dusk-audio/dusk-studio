@@ -41,6 +41,10 @@ canonical source.
 
 ### Fixed
 
+- **Sampler shutdown.** File-loading workers use atomic stop flags, removing a
+  race when an instrument is replaced or destroyed.
+- **Portable SFZ ZIP compression.** Stored and deflate entries install on every
+  platform; packs using other compression methods are refused before extraction.
 - **Settings dropdown keys.** Open dropdowns keep Home and End for navigating
   their choices, preventing repeated Home events through the main window.
 - **Installed SFZ counts and programs.** Each installed pack counts once per

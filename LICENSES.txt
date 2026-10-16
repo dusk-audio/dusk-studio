@@ -176,7 +176,7 @@ Dusk Audio plugins (donor DSP cores)
 
 dusk-fizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
   Version  : 1.2.3 lineage, submodule rev
-             0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+             5299ff7058f4356d1d43180628b6708302662970
   License  : BSD-2-Clause (external/dusk-fizz/LICENSE)
   Path     : external/dusk-fizz/ (git submodule, built as a static library)
   Fork home: https://github.com/dusk-audio/dusk-fizz (Dusk-maintained hard
@@ -3088,7 +3088,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 --------------------------------------------------------------------------------
 sfizz 1.2.3 — BSD-2-Clause
 external/dusk-fizz/LICENSE, submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 BSD 2-Clause License
@@ -3147,7 +3147,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 st_audiofile — BSD-2-Clause
 external/dusk-fizz/external/st_audiofile/LICENSE.md at sfizz submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 BSD 2-Clause License
@@ -3179,7 +3179,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 atomic_queue — MIT
 external/dusk-fizz/external/atomic_queue/LICENSE at sfizz submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 MIT License
@@ -3233,7 +3233,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 jsl — Boost Software License 1.0
 external/dusk-fizz/external/jsl/LICENSE.md at sfizz submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 # Boost Software License - Version 1.0 - August 17th, 2003
@@ -3301,7 +3301,7 @@ freely, subject to the following restrictions:
 --------------------------------------------------------------------------------
 kiss_fft — BSD-3-Clause
 external/dusk-fizz/src/external/kiss_fft/COPYING at sfizz submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 Copyright (c) 2003-2010 Mark Borgerding
@@ -3319,7 +3319,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 --------------------------------------------------------------------------------
 pugixml — MIT
 external/dusk-fizz/src/external/pugixml/LICENSE.md at sfizz submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 MIT License
@@ -3359,7 +3359,7 @@ Copyright (C) 2003, by Kristen Wegner (kristen@tima.net)
 --------------------------------------------------------------------------------
 spline — BSD-3-Clause repository license / Beer-Ware source notice
 external/dusk-fizz/src/external/spline/LICENSE at sfizz submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 BSD 3-Clause License
@@ -3400,7 +3400,7 @@ For more information visit www.rabiensoftware.com
 
 The compiled external/dusk-fizz/src/external/spline/spline/spline.cpp carries the
 same attribution and this distinct complete Beer-Ware permission notice at
-sfizz rev 0bb8aae364dc648c7c55438d17c7564a5d5eaef5:
+sfizz rev 5299ff7058f4356d1d43180628b6708302662970:
 
 "THE BEER-WARE LICENSE" (Revision 42): Devin Lane wrote this file. As long as you retain
 this notice you can do whatever you want with this stuff. If we meet some day, and you
@@ -3409,7 +3409,7 @@ think this stuff is worth it, you can buy me a beer in return.
 --------------------------------------------------------------------------------
 tunings — MIT
 external/dusk-fizz/src/external/tunings/LICENSE.md at sfizz submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 Copyright 2019-2020, Paul Walker
@@ -3423,7 +3423,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 --------------------------------------------------------------------------------
 cpuid — BSD-3-Clause
 external/dusk-fizz/src/external/cpuid/LICENSE.rst at sfizz submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 cpuid license
@@ -3461,7 +3461,7 @@ cpuid is provided under the "BSD (3-clause) License"::
 --------------------------------------------------------------------------------
 cpuid platform — BSD-3-Clause
 external/dusk-fizz/src/external/cpuid/platform/LICENSE.rst at sfizz submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 platform license
@@ -3499,7 +3499,7 @@ platform is provided under the "BSD (3-clause) License"::
 --------------------------------------------------------------------------------
 hiir — WTFPL version 2
 external/dusk-fizz/src/external/hiir/license.txt at sfizz submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
         DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
@@ -3577,7 +3577,7 @@ SPDX-License-Identifier: CC0-1.0
 --------------------------------------------------------------------------------
 cephes — redistribution permission (excerpt) and BSD-3-Clause wrapper
 external/dusk-fizz/external/cephes/LICENSE.txt at sfizz submodule rev
-0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 ==== NOTE ====
@@ -3736,7 +3736,7 @@ nested submodule rev 78864a4a2e769e426be8cfd78ae7f5f72e236c33
 --------------------------------------------------------------------------------
 stb_vorbis 1.22 — MIT / public domain dual license
 external/dusk-fizz/external/st_audiofile/thirdparty/stb_vorbis/LICENSE at sfizz
-submodule rev 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
+submodule rev 5299ff7058f4356d1d43180628b6708302662970
 --------------------------------------------------------------------------------
 
 This software is available under 2 licenses -- choose whichever you prefer.

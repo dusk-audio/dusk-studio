@@ -42,6 +42,7 @@ constexpr ImageResource kImages[] {
     { "sfz_collection_png", "Photo: © Copyright Steinway & Sons; Cornergraf; Mfaiiazi; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
     { "sfz_collection_png", "Photo: © Copyright Steinway & Sons; Cornergraf; Mfaiiazi; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." }
 };
+static_assert (sizeof (kImages) / sizeof (kImages[0]) == sfz::kInstrumentCategories.size());
 } // namespace
 
 std::string_view instrumentArtwork (sfz::InstrumentCategory category)

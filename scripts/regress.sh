@@ -24,7 +24,7 @@ REGRESS_DIR="${REPO_ROOT}/scripts/regress"
 
 usage() {
     cat <<'EOF'
-usage: scripts/regress.sh [linux|mac|windows|all] [options]
+usage: scripts/regress.sh [linux|mac|windows|all|prepush] [options]
 
   linux    (default) build, tests, ctest, JUCE gate, self-test, IPC and
            scenario legs
@@ -250,6 +250,8 @@ rc=0
 run_platform() {
     local platform="$1" status=0
     shift
+    # Keep the wrapper alive until its runner finishes signal cleanup.
+    if [[ "$TARGET" == prepush ]]; then trap ':' INT TERM; fi
     bash "${REGRESS_DIR}/${platform}.sh" "$@" || status=$?
     if ((status != 0)); then
         rc=1
@@ -264,10 +266,40 @@ if [[ "$TARGET" == prepush ]]; then
     # outlives the run; run_platform's rc is lost in the background, but a
     # failing runner always leaves a FAIL row, which the check below reads.
     LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dusk-prepush.XXXXXX")"
+    stop_runners() {
+        trap '' INT TERM
+        local -a runner_pids=($(jobs -pr)) targets=()
+        local caller_group
+        caller_group=$(ps -o pgid= -p "$$")
+        # timeout creates separate groups. Snapshot the whole tree before
+        # signalling, while the parent links still identify its descendants.
+        targets=($(ps -eo pid=,ppid=,pgid= | awk -v roots="${runner_pids[*]}" -v caller="$caller_group" '
+            BEGIN { n = split(roots, ids, " "); for (i = 1; i <= n; ++i) root[ids[i]] = 1 }
+            { parent[$1] = $2; group[$1] = $3 }
+            END {
+                for (pid in parent) {
+                    ancestor = pid
+                    while (ancestor in parent && !root[ancestor]) ancestor = parent[ancestor]
+                    if (root[ancestor]) {
+                        target[pid] = 1
+                        if (group[pid] != caller + 0) groups[group[pid]] = 1
+                    }
+                }
+                for (pgid in groups) print "-" pgid
+                for (pid in target) print pid
+            }'))
+        kill -TERM -- "${targets[@]}" 2>/dev/null || true
+        wait
+        exit 130
+    }
+    trap stop_runners INT TERM
+    set -m
     run_platform linux ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"} >"${LOG_DIR}/linux.log" 2>&1 &
     run_platform mac ${MAC_ARGS[@]+"${MAC_ARGS[@]}"} >"${LOG_DIR}/mac.log" 2>&1 &
     echo "prepush: linux and mac running; logs in ${LOG_DIR}"
     wait
+    set +m
+    trap - INT TERM
 else
     run_platform linux ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"}
     run_platform mac ${MAC_ARGS[@]+"${MAC_ARGS[@]}"}

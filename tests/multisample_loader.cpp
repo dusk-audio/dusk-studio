@@ -336,7 +336,11 @@ TEST_CASE ("Multisample loader destroys superseded prepared occupants after unlo
         std::condition_variable condition;
         std::thread probe;
         bool entered = false, finished = false, blockedByQueue = false;
-        ~DestructionProbe() { if (probe.joinable()) probe.join(); }
+    };
+    struct JoinProbeAtExit
+    {
+        std::shared_ptr<DestructionProbe> observation;
+        ~JoinProbeAtExit() { if (observation->probe.joinable()) observation->probe.join(); }
     };
     struct OwnedObserver
     {
@@ -363,6 +367,7 @@ TEST_CASE ("Multisample loader destroys superseded prepared occupants after unlo
     };
     PrimeGate gate;
     auto observation = std::make_shared<DestructionProbe>();
+    JoinProbeAtExit joinProbe { observation };
     MultisampleLoader* owner = nullptr;
     MultisampleLoader loader ([&] (MultisampleLoader::Request input)
     {
@@ -390,6 +395,7 @@ TEST_CASE ("Multisample loader destroys superseded prepared occupants after unlo
             { return observation->finished && observation->entered; }));
         REQUIRE_FALSE (observation->blockedByQueue);
     }
+    observation->probe.join();
     REQUIRE_FALSE (results[0].primed);
     REQUIRE (results[0].error == "Soundfont load superseded by a newer request");
     REQUIRE (results[1].request.requestGeneration == 2);

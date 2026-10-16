@@ -74,13 +74,13 @@ jobs:
         uses: ./.github/actions/apt-deps
         with:
           packages: >-
-            build-essential cmake ninja-build pkg-config ccache
+            build-essential g++-12 cmake ninja-build pkg-config ccache
             llvm
             libasound2-dev libjack-jackd2-dev libmp3lame-dev libsndfile1-dev libsodium-dev
             libpipewire-0.3-dev
             liblilv-dev libsuil-dev lv2-dev
             ladspa-sdk
-            libcurl4-openssl-dev libarchive-dev libutf8proc-dev
+            libcurl4-openssl-dev libarchive-dev
             libfreetype-dev libfontconfig1-dev
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev
@@ -127,6 +127,7 @@ jobs:
         uses: ./.github/actions/clone-daf-stack
 
       - name: Configure tests (TSan, RelWithDebInfo)
+        # GCC 11's runtime cannot observe pthread_cond_clockwait in timed C++ waits.
         # RelWithDebInfo preserves -O2 (so the optimiser-driven memory
         # ordering the engine relies on is the one TSan inspects) plus
         # -g (so race reports resolve to file:line). Debug would be
@@ -135,6 +136,8 @@ jobs:
         run: |
           cmake -S . -B build-tsan -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=gcc-12 \
+            -DCMAKE_CXX_COMPILER=g++-12 \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DDUSKSTUDIO_ENABLE_TSAN=ON \
             -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
@@ -214,7 +217,7 @@ jobs:
             libpipewire-0.3-dev
             liblilv-dev libsuil-dev lv2-dev
             ladspa-sdk
-            libcurl4-openssl-dev libarchive-dev libutf8proc-dev
+            libcurl4-openssl-dev libarchive-dev
             libfreetype-dev libfontconfig1-dev
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev

@@ -618,6 +618,9 @@ bool preflight (Input& input, const ArchiveRequest& request,
             return fail ("Invalid ZIP entry directory");
         const auto flags = little16 (header.data() + 8);
         if ((flags & (1 | 0x40 | 0x2000)) != 0) return fail ("Encrypted ZIP entries are not allowed");
+        const auto compression = little16 (header.data() + 10);
+        if (compression != 0 && compression != 8)
+            return fail ("ZIP compression must be stored or deflate");
         const auto nameBytes = little16 (header.data() + 28);
         const auto extraBytes = little16 (header.data() + 30);
         const auto commentBytes = little16 (header.data() + 32);

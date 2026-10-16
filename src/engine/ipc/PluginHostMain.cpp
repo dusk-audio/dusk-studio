@@ -663,17 +663,18 @@ int runIpcLoadStub (int argc, const char* const* argv, bool ackHandshake,
 
 // Test-only child shape used by the cross-platform regression suite. It runs
 // the real shared-memory worker/control topology with a processor that remains
-// inside processBlock longer than the production park deadline. The mutation
-// callback aborts if it is ever entered while processing, so receiving the
+// inside processBlock until teardown. The mutation callback aborts if it is
+// ever entered while processing, so receiving the
 // explicit park-timeout reply proves the callback was not touched first.
 struct ParkTimeoutTestProcessor
 {
     std::atomic<bool> processing { false };
 
-    void processBlock()
+    void processBlock (const std::atomic<bool>& shouldQuit)
     {
         processing.store (true, std::memory_order_release);
-        std::this_thread::sleep_for (std::chrono::milliseconds (250));
+        while (! shouldQuit.load (std::memory_order_acquire))
+            std::this_thread::sleep_for (std::chrono::milliseconds (1));
         processing.store (false, std::memory_order_release);
     }
 
@@ -725,7 +726,7 @@ int runIpcParkTimeoutStub (int argc, const char* const* argv) noexcept
             }
 
             if (auto* current = currentProcessor.load (std::memory_order_acquire))
-                current->processBlock();
+                current->processBlock (shouldQuit);
 
             lastSequence = command;
             block->replySeq.store (command, std::memory_order_release);

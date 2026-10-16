@@ -20,20 +20,6 @@ mutex:juce::Thread::notify
 deadlock:juce::WaitableEvent::signal
 deadlock:juce::Thread::notify
 
-# dusk::AutoResetEvent replaced juce::WaitableEvent in the DSP worker pool
-# (de-JUCE threading migration). It is a mutex + condition_variable auto-reset
-# event; EVERY access to its `signalled` flag is under the mutex (signal() sets
-# it and notifies while holding the lock; both wait() overloads read/clear it
-# under the lock), so there is no real data race or recursive lock. TSan does
-# not model the condition_variable predicate handoff precisely and false-flags
-# the locked flag access as a data race / double lock / lock-order inversion
-# under contention — the same class of report the juce::WaitableEvent and
-# juce::AbstractFifo entries suppress. Worker-pool correctness is covered by the
-# join/quiesce protocol tests and the Parallel-Matches-Serial self-test.
-mutex:dusk::AutoResetEvent::signal
-deadlock:dusk::AutoResetEvent::signal
-race:dusk::AutoResetEvent
-
 # JUCE's TimeSliceThread + ThreadedWriter pairing (used by Record
 # Manager) ride the same notify path and trip the same warning. The
 # RT-safety of Dusk Studio's own RecordManager code is verified by
@@ -49,27 +35,3 @@ deadlock:juce::TimeSliceThread
 # and TSan's happens-before model doesn't recognise the algorithmic
 # guarantee. Suppress + rely on the IPC self-test for correctness.
 race:juce::AbstractFifo
-
-# dusk::SpscIndexFifo uses the same single-producer/single-consumer ownership
-# contract, but publishes each completed span with release stores and observes
-# the other thread's index with acquire loads. TSan can still report the ring
-# storage access because it does not infer ownership from the separate atomic
-# index. The 100,000-item concurrent FIFO stress test verifies ordering and
-# wraparound while the sanitizer build remains fully instrumented.
-race:dusk::SpscIndexFifo
-
-# RemotePluginConnection's control RPC waits for its reply on a
-# std::condition_variable with a steady_clock deadline. libstdc++ routes that
-# through pthread_cond_clockwait, which the Ubuntu 22.04 TSan runtime does not
-# intercept (its libtsan exports interceptors for pthread_cond_wait and
-# pthread_cond_timedwait only). The unlock and relock the wait performs are
-# therefore invisible: TSan still believes the caller owns controlMutex when the
-# reader thread parks a reply, and it never draws the release/acquire edge that
-# hands the parked reply back to the caller. That surfaces as a double lock on
-# controlMutex - the reader does acquire it, which proves no thread held it -
-# and as a race on the reply slot, which only these two functions touch and
-# only under that mutex. Same modelling gap as the dusk::AutoResetEvent entries
-# above. Verified against a local build that stubs out the interceptor: these
-# two entries silence both reports, and no lock-order-inversion report appears.
-mutex:duskstudio::ipc::RemotePluginConnection::readerLoop
-race:duskstudio::ipc::RemotePluginConnection::sendAndAwaitReply

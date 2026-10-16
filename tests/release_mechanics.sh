@@ -1349,10 +1349,11 @@ assert '--metadata=subject:"Dusk Studio ${VERSION} User Manual"' in manual_build
 tsan_suppressions = (source_root / "tools" / "tsan_suppressions.txt").read_text(
     encoding="utf-8"
 )
-spsc_rationale, separator, _ = tsan_suppressions.partition("race:dusk::SpscIndexFifo")
-assert separator and "release stores" in spsc_rationale.rsplit("\n\n", 1)[-1], (
-    "the SpscIndexFifo TSan suppression must retain its memory-order rationale"
-)
+assert not any(
+    re.search(r"\bdusk(?:studio)?::", line)
+    for line in tsan_suppressions.splitlines()
+    if line.strip() and not line.lstrip().startswith("#")
+), "Dusk code must remain checked by TSan without project-specific suppressions"
 
 macos_job = release_job("macos")
 for required in (

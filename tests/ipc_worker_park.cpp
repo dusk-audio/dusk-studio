@@ -62,6 +62,8 @@ ParkTimeoutResult runParkTimeoutCase (MutationRpc rpc)
 
     if (result.observedProcessBlock)
     {
+        // Processing must remain active while the parent's control thread is delayed.
+        std::this_thread::sleep_for (300ms);
         switch (rpc)
         {
         case MutationRpc::Prepare:

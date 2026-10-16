@@ -1040,7 +1040,7 @@ scenarios_gui_sharded_leg() {
     mkdir -p "${GUI_TIMES_FILE%/*}" 2>/dev/null || true
     {
         sed -n 's/^\[\(PASS\|FAIL\|SKIP\)\] \(gui\.[A-Za-z0-9_.]*\).*(\([0-9]*\) ms)$/\2\t\3/p' "$dir"/shard*.log
-        [[ -f "$GUI_TIMES_FILE" ]] && cat "$GUI_TIMES_FILE"
+        if [[ -f "$GUI_TIMES_FILE" ]]; then cat "$GUI_TIMES_FILE"; fi
     } 2>/dev/null | awk -F'\t' '!seen[$1]++' >"$dir/times" && mv "$dir/times" "$GUI_TIMES_FILE" 2>/dev/null || true
     rm -rf "$dir"
     return 0
