@@ -3,8 +3,16 @@
 #endif
 
 #include "SfzTransfer.h"
+#include "SfzNetworkPolicy.h"
 #include "../../foundation/Json.h"
 
+#if defined(_WIN32)
+ #include <winsock2.h>
+ #include <ws2tcpip.h>
+#else
+ #include <netinet/in.h>
+ #include <sys/socket.h>
+#endif
 #include <curl/curl.h>
 #include <sodium.h>
 
@@ -13,6 +21,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <memory>
 #include <optional>
@@ -39,6 +48,36 @@ bool curlReady()
 {
     static const auto initialization = curl_global_init (CURL_GLOBAL_DEFAULT);
     return initialization == CURLE_OK;
+}
+
+curl_socket_t openPublicSocket (void*, curlsocktype purpose, struct curl_sockaddr* address) noexcept
+{
+    if (purpose != CURLSOCKTYPE_IPCXN) return CURL_SOCKET_BAD;
+    if (address->family == AF_INET && address->addrlen >= sizeof (sockaddr_in))
+    {
+        std::array<std::uint8_t, 4> bytes {};
+        std::memcpy (bytes.data(), &reinterpret_cast<const sockaddr_in*> (&address->addr)->sin_addr, bytes.size());
+        if (! publicIpv4 (bytes)) return CURL_SOCKET_BAD;
+    }
+    else if (address->family == AF_INET6 && address->addrlen >= sizeof (sockaddr_in6))
+    {
+        std::array<std::uint8_t, 16> bytes {};
+        std::memcpy (bytes.data(), &reinterpret_cast<const sockaddr_in6*> (&address->addr)->sin6_addr, bytes.size());
+        if (! publicIpv6 (bytes)) return CURL_SOCKET_BAD;
+    }
+    else return CURL_SOCKET_BAD;
+#if defined(_WIN32)
+    return WSASocketW (address->family, address->socktype, address->protocol, nullptr, 0,
+                       WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+#else
+    const auto opened = ::socket (address->family, address->socktype, address->protocol);
+    if (opened != CURL_SOCKET_BAD && ::fcntl (opened, F_SETFD, FD_CLOEXEC) != 0)
+    {
+        ::close (opened);
+        return CURL_SOCKET_BAD;
+    }
+    return opened;
+#endif
 }
 
 std::string lower (std::string value)
@@ -81,7 +120,7 @@ bool validDigest (std::string_view digest)
 std::optional<std::string> httpsUrl (const std::string& source, const std::string& base = {})
 {
     if (! curlReady() || source.empty() || source.size() > 8192
-        || source.find_first_of ("\r\n\t") != std::string::npos) return {};
+        || source.find_first_of ("\r\n\t") != std::string::npos || source.find ('\0') != std::string::npos) return {};
     using Url = std::unique_ptr<CURLU, decltype (&curl_url_cleanup)>;
     Url url (curl_url(), &curl_url_cleanup);
     if (! url || (! base.empty() && curl_url_set (url.get(), CURLUPART_URL, base.c_str(), 0) != CURLUE_OK)
@@ -446,6 +485,8 @@ OperationResult CurlTransport::perform (const HttpRequest& request, const HttpHe
     set (CURLOPT_URL, request.url.c_str());
     set (CURLOPT_USERAGENT, "DuskStudio-SFZ/1");
     set (CURLOPT_FOLLOWLOCATION, 0L);
+    set (CURLOPT_PROXY, "");
+    set (CURLOPT_OPENSOCKETFUNCTION, &openPublicSocket);
    #if LIBCURL_VERSION_NUM >= 0x075500
     const auto protocols = curl_easy_setopt (handle.get(), CURLOPT_PROTOCOLS_STR, "https");
     if (protocols == CURLE_UNKNOWN_OPTION)

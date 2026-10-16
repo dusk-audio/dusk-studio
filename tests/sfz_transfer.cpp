@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/sfz/SfzTransfer.h"
+#include "engine/sfz/SfzNetworkPolicy.h"
 
 #include <sodium.h>
 
@@ -438,4 +439,66 @@ TEST_CASE ("SFZ transfer refuses unsafe existing parts", "[sfz][transfer]")
         else SUCCEED ("Host does not permit symlink creation");
     }
     CHECK (transport.requests.empty());
+}
+
+TEST_CASE ("SFZ connections exclude private and special-purpose IP destinations", "[sfz][transfer]")
+{
+    SECTION ("IPv4")
+    {
+        for (const std::array<std::uint8_t, 4> ip : {
+            std::array<std::uint8_t, 4> { 8, 8, 8, 8 },
+            { 1, 1, 1, 1 }, { 100, 63, 255, 255 }, { 100, 128, 0, 1 },
+            { 172, 15, 255, 255 }, { 172, 32, 0, 1 }, { 223, 255, 255, 254 } })
+        {
+            CAPTURE (ip);
+            CHECK (publicIpv4 (ip));
+        }
+        for (const std::array<std::uint8_t, 4> ip : {
+            std::array<std::uint8_t, 4> { 0, 0, 0, 0 },
+            { 0, 12, 34, 56 }, { 10, 255, 255, 255 }, { 127, 0, 0, 1 },
+            { 100, 64, 0, 0 }, { 100, 127, 255, 255 }, { 169, 254, 1, 1 },
+            { 172, 16, 0, 1 }, { 172, 31, 255, 255 }, { 192, 0, 0, 170 },
+            { 192, 0, 2, 1 }, { 192, 88, 99, 1 }, { 192, 168, 1, 1 },
+            { 198, 18, 0, 1 }, { 198, 19, 255, 255 }, { 198, 51, 100, 1 },
+            { 203, 0, 113, 1 }, { 224, 0, 0, 1 }, { 240, 0, 0, 1 }, { 255, 255, 255, 255 } })
+        {
+            CAPTURE (ip);
+            CHECK_FALSE (publicIpv4 (ip));
+        }
+    }
+    SECTION ("IPv6 and embedded IPv4")
+    {
+        const auto bytes = [] (std::array<std::uint16_t, 8> words)
+        {
+            std::array<std::uint8_t, 16> result {};
+            for (std::size_t i = 0; i < words.size(); ++i)
+            {
+                result[2 * i] = static_cast<std::uint8_t> (words[i] >> 8);
+                result[2 * i + 1] = static_cast<std::uint8_t> (words[i]);
+            }
+            return result;
+        };
+        for (const auto words : {
+            std::array<std::uint16_t, 8> { 0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888 },
+            { 0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111 },
+            { 0, 0, 0, 0, 0, 0xffff, 0x0808, 0x0808 },
+            { 0x64, 0xff9b, 0, 0, 0, 0, 0x0808, 0x0808 } })
+        {
+            CAPTURE (words);
+            CHECK (publicIpv6 (bytes (words)));
+        }
+        for (const auto words : {
+            std::array<std::uint16_t, 8> {}, { 0, 0, 0, 0, 0, 0, 0, 1 },
+            { 0xfc00, 0, 0, 0, 0, 0, 0, 1 }, { 0xfe80, 0, 0, 0, 0, 0, 0, 1 },
+            { 0xff02, 0, 0, 0, 0, 0, 0, 1 }, { 0x2001, 0x0db8, 0, 0, 0, 0, 0, 1 },
+            { 0x2001, 0, 0, 0, 0, 0, 0, 1 }, { 0x2002, 0x7f00, 1, 0, 0, 0, 0, 1 },
+            { 0x3fff, 0x0fff, 0, 0, 0, 0, 0, 1 },
+            { 0, 0, 0, 0, 0, 0xffff, 0x7f00, 1 },
+            { 0, 0, 0, 0, 0, 0xffff, 0x0a00, 1 },
+            { 0x64, 0xff9b, 0, 0, 0, 0, 0xc0a8, 1 } })
+        {
+            CAPTURE (words);
+            CHECK_FALSE (publicIpv6 (bytes (words)));
+        }
+    }
 }
