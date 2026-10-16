@@ -10,6 +10,7 @@
 namespace
 {
 constexpr const char* kPluginId = "studio.dusk.test.panic-probe";
+constexpr const char* kLatencyPluginId = "studio.dusk.test.panic-probe-latency-400";
 constexpr const char* kFeatures[] = { CLAP_PLUGIN_FEATURE_INSTRUMENT,
                                       CLAP_PLUGIN_FEATURE_STEREO, nullptr };
 constexpr uint32_t kNotePortCount = 2;
@@ -22,6 +23,9 @@ enum ParamId : clap_id
     kParamCc120Seen,
     kParamCc123Seen,
     kParamNoteOffsSeen,
+    kParamNoteOnsSeen,
+    kParamLastNoteOnOffset,
+    kParamLastNoteOffOffset,
     kParamCount
 };
 
@@ -43,6 +47,10 @@ struct PluginData
     std::uint32_t cc120Seen = 0;
     std::uint32_t cc123Seen = 0;
     std::uint32_t noteOffsSeen = 0;
+    std::uint32_t noteOnsSeen = 0;
+    std::uint32_t lastNoteOnOffset = 0;
+    std::uint32_t lastNoteOffOffset = 0;
+    std::uint32_t latencySamples = 0;
 
     // A voice is per note port: the same key and channel on two ports are two
     // voices, so a choke that reaches only one port leaves the other held.
@@ -86,6 +94,14 @@ const clap_plugin_descriptor_t kDescriptor {
     "Counts the note, choke and controller events a transport panic delivers",
     kFeatures
 };
+
+const auto kLatencyDescriptor = []
+{
+    auto descriptor = kDescriptor;
+    descriptor.id = kLatencyPluginId;
+    descriptor.name = "Dusk fixed-latency MIDI probe fixture";
+    return descriptor;
+}();
 
 uint32_t CLAP_ABI audioPortCount (const clap_plugin_t*, bool isInput)
 {
@@ -146,7 +162,8 @@ bool CLAP_ABI paramGetInfo (const clap_plugin_t*, uint32_t index,
 {
     if (index >= (uint32_t) kParamCount || info == nullptr) return false;
     static const char* const names[kParamCount] = {
-        "voicesHeld", "chokesSeen", "cc120Seen", "cc123Seen", "noteOffsSeen"
+        "voicesHeld", "chokesSeen", "cc120Seen", "cc123Seen", "noteOffsSeen",
+        "noteOnsSeen", "lastNoteOnOffset", "lastNoteOffOffset"
     };
     *info = {};
     info->id = (clap_id) index;
@@ -154,7 +171,7 @@ bool CLAP_ABI paramGetInfo (const clap_plugin_t*, uint32_t index,
     info->cookie = nullptr;
     std::snprintf (info->name, sizeof (info->name), "%s", names[index]);
     info->min_value = 0.0;
-    info->max_value = 4096.0;
+    info->max_value = 4294967295.0;
     info->default_value = 0.0;
     return true;
 }
@@ -170,6 +187,9 @@ bool CLAP_ABI paramGetValue (const clap_plugin_t* plugin, clap_id id, double* ou
         case kParamCc120Seen:    *out = (double) data->cc120Seen;    return true;
         case kParamCc123Seen:    *out = (double) data->cc123Seen;    return true;
         case kParamNoteOffsSeen: *out = (double) data->noteOffsSeen; return true;
+        case kParamNoteOnsSeen: *out = (double) data->noteOnsSeen; return true;
+        case kParamLastNoteOnOffset: *out = (double) data->lastNoteOnOffset; return true;
+        case kParamLastNoteOffOffset: *out = (double) data->lastNoteOffOffset; return true;
         default: return false;
     }
 }
@@ -178,7 +198,7 @@ bool CLAP_ABI paramValueToText (const clap_plugin_t*, clap_id, double value,
                                 char* buffer, uint32_t capacity)
 {
     if (buffer == nullptr || capacity == 0) return false;
-    std::snprintf (buffer, capacity, "%d", (int) value);
+    std::snprintf (buffer, capacity, "%.0f", value);
     return true;
 }
 
@@ -186,7 +206,7 @@ bool CLAP_ABI paramTextToValue (const clap_plugin_t*, clap_id, const char* text,
                                 double* out)
 {
     if (text == nullptr || out == nullptr) return false;
-    *out = (double) std::atoi (text);
+    *out = std::strtod (text, nullptr);
     return true;
 }
 
@@ -206,9 +226,12 @@ void handleNoteEvent (PluginData& data, const clap_event_header_t* header)
     switch (header->type)
     {
         case CLAP_EVENT_NOTE_ON:
+            ++data.noteOnsSeen;
+            data.lastNoteOnOffset = header->time;
             data.addVoice (note->port_index, note->key, note->channel);
             break;
         case CLAP_EVENT_NOTE_OFF:
+            data.lastNoteOffOffset = header->time;
             data.removeVoices (note->port_index, note->key, note->channel);
             ++data.noteOffsSeen;
             break;
@@ -242,10 +265,13 @@ void handleMidiEvent (PluginData& data, const clap_event_header_t* header)
     }
     else if (status == 0x90 && d2 > 0)
     {
+        ++data.noteOnsSeen;
+        data.lastNoteOnOffset = header->time;
         data.addVoice (port, (int16_t) d1, channel);
     }
     else if (status == 0x80 || (status == 0x90 && d2 == 0))
     {
+        data.lastNoteOffOffset = header->time;
         data.removeVoices (port, (int16_t) d1, channel);
         ++data.noteOffsSeen;
     }
@@ -309,11 +335,18 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
     return CLAP_PROCESS_CONTINUE;
 }
 
+uint32_t CLAP_ABI latencyGet (const clap_plugin_t* plugin)
+{
+    return static_cast<const PluginData*> (plugin->plugin_data)->latencySamples;
+}
+const clap_plugin_latency_t kLatency { latencyGet };
+
 const void* CLAP_ABI pluginExtension (const clap_plugin_t*, const char* id)
 {
     if (std::strcmp (id, CLAP_EXT_AUDIO_PORTS) == 0) return &kAudioPorts;
     if (std::strcmp (id, CLAP_EXT_NOTE_PORTS) == 0) return &kNotePorts;
     if (std::strcmp (id, CLAP_EXT_PARAMS) == 0) return &kParams;
+    if (std::strcmp (id, CLAP_EXT_LATENCY) == 0) return &kLatency;
     return nullptr;
 }
 void CLAP_ABI pluginMainThread (const clap_plugin_t*) {}
@@ -324,7 +357,7 @@ const clap_plugin_t* CLAP_ABI createPlugin (const clap_plugin_factory_t*,
 {
     if (host == nullptr || pluginId == nullptr
         || ! clap_version_is_compatible (host->clap_version)
-        || std::strcmp (pluginId, kPluginId) != 0)
+        || (std::strcmp (pluginId, kPluginId) != 0 && std::strcmp (pluginId, kLatencyPluginId) != 0))
         return nullptr;
 
     auto* plugin = new (std::nothrow) clap_plugin_t {};
@@ -336,7 +369,9 @@ const clap_plugin_t* CLAP_ABI createPlugin (const clap_plugin_factory_t*,
         return nullptr;
     }
 
-    plugin->desc = &kDescriptor;
+    const bool latency = std::strcmp (pluginId, kLatencyPluginId) == 0;
+    data->latencySamples = latency ? 400 : 0;
+    plugin->desc = latency ? &kLatencyDescriptor : &kDescriptor;
     plugin->plugin_data = data;
     plugin->init = pluginInit;
     plugin->destroy = pluginDestroy;
@@ -351,11 +386,11 @@ const clap_plugin_t* CLAP_ABI createPlugin (const clap_plugin_factory_t*,
     return plugin;
 }
 
-uint32_t CLAP_ABI pluginCount (const clap_plugin_factory_t*) { return 1; }
+uint32_t CLAP_ABI pluginCount (const clap_plugin_factory_t*) { return 2; }
 const clap_plugin_descriptor_t* CLAP_ABI pluginDescriptor (const clap_plugin_factory_t*,
                                                            uint32_t index)
 {
-    return index == 0 ? &kDescriptor : nullptr;
+    return index == 0 ? &kDescriptor : (index == 1 ? &kLatencyDescriptor : nullptr);
 }
 const clap_plugin_factory_t kFactory { pluginCount, pluginDescriptor, createPlugin };
 

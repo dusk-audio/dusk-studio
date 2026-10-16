@@ -104,10 +104,10 @@ struct ClapProbe
     duskstudio::clap::NativeClapSlot slot;
     std::array<float, kBlock> inL {}, inR {}, outL {}, outR {};
 
-    bool load (const char* bundle)
+    bool load (const char* bundle, const char* pluginId = "")
     {
         std::string error;
-        return slot.load (std::filesystem::u8path (bundle), 48000.0, kBlock, error);
+        return slot.load (std::filesystem::u8path (bundle), 48000.0, kBlock, error, pluginId);
     }
 
     const clap_plugin_t* plugin()
@@ -176,12 +176,17 @@ TEST_CASE ("panic-probe CLAP fixture loads as an instrument with read-only count
            "[clap][fixture][panic]")
 {
     ClapProbe probe;
-    REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH));
+    const char* pluginId = "";
+    int latency = 0;
+    SECTION ("default zero-latency probe") {}
+    SECTION ("immutable latency probe") { pluginId = "studio.dusk.test.panic-probe-latency-400"; latency = 400; }
+    REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH, pluginId));
     REQUIRE (probe.slot.isLoadedInstrument());
-    REQUIRE (probe.slot.paramCount() == 5);
+    REQUIRE (probe.slot.getLatencySamples() == latency);
+    REQUIRE (probe.slot.paramCount() == 8);
 
     for (const char* name : { "voicesHeld", "chokesSeen", "cc120Seen", "cc123Seen",
-                              "noteOffsSeen" })
+                              "noteOffsSeen", "noteOnsSeen", "lastNoteOnOffset", "lastNoteOffOffset" })
     {
         INFO ("counter: " << name);
         REQUIRE_THAT (probe.counter (name), WithinAbs (0.0, 1.0e-9));
@@ -204,20 +209,31 @@ TEST_CASE ("panic-probe CLAP fixture tracks voices on both note ports",
 
     ClapEventList on;
     on.addNote (CLAP_EVENT_NOTE_ON, 0, 0, 60);
+    on.events[0].note.header.time = 5;
     REQUIRE_THAT (probe.runRaw (on), WithinAbs (0.1, 1.0e-6));
     REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (1.0, 1.0e-9));
 
     ClapEventList onSecondPort;
     onSecondPort.addNote (CLAP_EVENT_NOTE_ON, 1, 0, 64);
+    onSecondPort.events[0].note.header.time = 7;
     REQUIRE_THAT (probe.runRaw (onSecondPort), WithinAbs (0.2, 1.0e-6));
     REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (2.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("noteOnsSeen"), WithinAbs (2.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnOffset"), WithinAbs (7.0, 1.0e-9));
+    onSecondPort.events[0].note.header.time = 9;
+    REQUIRE_THAT (probe.runRaw (onSecondPort), WithinAbs (0.2, 1.0e-6));
+    REQUIRE_THAT (probe.counter ("noteOnsSeen"), WithinAbs (3.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnOffset"), WithinAbs (9.0, 1.0e-9));
 
     ClapEventList off;
     off.addNote (CLAP_EVENT_NOTE_OFF, 0, 0, 60);
     off.addNote (CLAP_EVENT_NOTE_OFF, 1, 0, 64);
+    off.events[0].note.header.time = 10;
+    off.events[1].note.header.time = 12;
     REQUIRE_THAT (probe.runRaw (off), WithinAbs (0.0, 1.0e-6));
     REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (0.0, 1.0e-9));
     REQUIRE_THAT (probe.counter ("noteOffsSeen"), WithinAbs (2.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOffOffset"), WithinAbs (12.0, 1.0e-9));
     REQUIRE_THAT (probe.counter ("chokesSeen"), WithinAbs (0.0, 1.0e-9));
 }
 
@@ -282,7 +298,10 @@ TEST_CASE ("panic-probe CLAP fixture counts raw MIDI on its MIDI-dialect port",
     ClapEventList notes;
     notes.addMidi (1, 0x90, 60, 100);
     notes.addMidi (1, 0x90, 64, 100);
+    notes.events[1].midi.header.time = 9;
     REQUIRE_THAT (probe.runRaw (notes), WithinAbs (0.2, 1.0e-6));
+    REQUIRE_THAT (probe.counter ("noteOnsSeen"), WithinAbs (2.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnOffset"), WithinAbs (9.0, 1.0e-9));
 
     SECTION ("CC 120 silences every voice")
     {
@@ -309,8 +328,10 @@ TEST_CASE ("panic-probe CLAP fixture counts raw MIDI on its MIDI-dialect port",
         ClapEventList off;
         off.addMidi (1, 0x80, 60, 0);
         off.addMidi (1, 0x90, 64, 0);
+        off.events[1].midi.header.time = 15;
         REQUIRE_THAT (probe.runRaw (off), WithinAbs (0.0, 1.0e-6));
         REQUIRE_THAT (probe.counter ("noteOffsSeen"), WithinAbs (2.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("lastNoteOffOffset"), WithinAbs (15.0, 1.0e-9));
         REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (0.0, 1.0e-9));
     }
 }
