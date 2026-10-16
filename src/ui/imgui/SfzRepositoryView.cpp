@@ -94,7 +94,7 @@ const char* failureGuidance (const sfz::LibrarySnapshot& snapshot)
     if (snapshot.failureKind == sfz::FailureKind::DiskFull)
         return "Free disk space, then retry. If library initialization failed, restart Dusk Studio first.";
     if (snapshot.failureKind == sfz::FailureKind::Integrity)
-        return "Download this version again. If verification fails again, check the pack's source.";
+        return "During a library move, keep the originals and choose another destination. For a download, try again; check the pack's source if verification fails again.";
     return "";
 }
 
