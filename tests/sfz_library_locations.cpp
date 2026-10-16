@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "engine/sfz/SfzLibraryLocations.h"
 #include "foundation/Fs.h"
@@ -148,6 +149,29 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
     bool cancelled = false;
     bool removedDestination = false, replacedDestination = false;
     fs::path replacedStaging, removedStaging;
+   #if defined(_WIN32)
+    const bool betweenFiles = true;
+   #else
+    const bool betweenFiles = GENERATE (false, true);
+   #endif
+    const auto stagingDirectory = [&]
+    {
+        std::error_code error;
+        for (fs::directory_iterator it (tree.destination, error), end; ! error && it != end; it.increment (error))
+            if (it->path().filename().u8string().rfind (".install-", 0) == 0) return it->path();
+        return fs::path {};
+    };
+    const auto atTransferCheckpoint = [&] (auto action)
+    {
+        // Windows cannot rename the simulated drive while a copied file is open.
+        if (betweenFiles)
+            control.cancelled = [&, action]
+            {
+                if (! stagingDirectory().empty()) action();
+                return false;
+            };
+        else control.progress = [action] (const auto&) { action(); };
+    };
     SECTION ("Cancellation during copying removes destination-owned staging")
     {
         control.cancelled = [&] { return cancelled; };
@@ -177,66 +201,48 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
         fs::create_symlink (tree.configuration, tree.pack.directory / "linked.json", error);
         if (error) SKIP ("symlink creation is unavailable");
     }
-    SECTION ("A destination disconnected during progress is never recreated")
+    SECTION ("A destination disconnected during transfer is never recreated")
     {
-        control.progress = [&] (const auto&)
+        atTransferCheckpoint ([&]
         {
             if (removedDestination) return;
-            std::error_code error;
-            fs::rename (tree.destination, tree.root / "disconnected destination", error);
-            if (error) SKIP ("the filesystem cannot disconnect a folder with open files");
+            fs::rename (tree.destination, tree.root / "disconnected destination");
             removedDestination = true;
-        };
+        });
     }
     SECTION ("A replacement mount with a copied marker is rejected")
     {
-        control.progress = [&] (const auto&)
+        atTransferCheckpoint ([&]
         {
             if (replacedDestination) return;
             const auto offline = tree.root / "disconnected destination";
-            std::error_code error;
-            fs::rename (tree.destination, offline, error);
-            if (error) SKIP ("the filesystem cannot disconnect a folder with open files");
+            fs::rename (tree.destination, offline);
             REQUIRE (fs::create_directory (tree.destination));
             REQUIRE (fs::create_directory (tree.destination / "packs"));
             REQUIRE (fs::copy_file (offline / ".dusk-sfz-library", tree.destination / ".dusk-sfz-library"));
             replacedDestination = true;
-        };
+        });
     }
     SECTION ("A missing staging directory is never recreated")
     {
-        control.progress = [&] (const auto&)
+        atTransferCheckpoint ([&]
         {
             if (! removedStaging.empty()) return;
-            for (const auto& entry : fs::directory_iterator (tree.destination))
-                if (entry.path().filename().u8string().rfind (".install-", 0) == 0)
-                {
-                    removedStaging = entry.path();
-                    std::error_code error;
-                    fs::rename (removedStaging, tree.root / "disconnected staging", error);
-                    if (error) SKIP ("the filesystem cannot disconnect staging with open files");
-                    break;
-                }
+            removedStaging = stagingDirectory();
             REQUIRE_FALSE (removedStaging.empty());
-        };
+            fs::rename (removedStaging, tree.root / "disconnected staging");
+        });
     }
     SECTION ("A replacement staging directory is retained without writes")
     {
-        control.progress = [&] (const auto&)
+        atTransferCheckpoint ([&]
         {
             if (! replacedStaging.empty()) return;
-            for (const auto& entry : fs::directory_iterator (tree.destination))
-                if (entry.path().filename().u8string().rfind (".install-", 0) == 0)
-                {
-                    replacedStaging = entry.path();
-                    std::error_code error;
-                    fs::rename (replacedStaging, tree.root / "disconnected staging", error);
-                    if (error) SKIP ("the filesystem cannot disconnect staging with open files");
-                    REQUIRE (fs::create_directory (replacedStaging));
-                    break;
-                }
+            replacedStaging = stagingDirectory();
             REQUIRE_FALSE (replacedStaging.empty());
-        };
+            fs::rename (replacedStaging, tree.root / "disconnected staging");
+            REQUIRE (fs::create_directory (replacedStaging));
+        });
     }
     const auto result = changeLibraryLocation (tree.before, tree.destination, true, control, file);
     REQUIRE_FALSE (result);
