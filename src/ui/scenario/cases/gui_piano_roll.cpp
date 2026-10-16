@@ -948,6 +948,7 @@ std::optional<ScenarioResult> runPianoLiveRecordingPreview (GuiHost& host, Scena
                     "live recording preview or virtual keyboard step recording changed the committed model");
     };
     const auto heldLength = std::make_shared<std::int64_t> (0);
+    const auto releasedProgress = std::make_shared<std::int64_t> (0);
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 200, [&ctx, &host]
     {
@@ -976,15 +977,36 @@ std::optional<ScenarioResult> runPianoLiveRecordingPreview (GuiHost& host, Scena
         unchanged();
         const std::uint8_t message[] { 0x80, (std::uint8_t) heldPitch, 0 };
         engine.postVirtualKeyboardMidi (message, 3);
+        const std::uint8_t marker[] { 0xb0, 113, 37 };
+        engine.postVirtualKeyboardMidi (marker, 3);
     }, [length, heldLength] { return length() >= *heldLength + 120; }, "the held-note length stopped growing", {}, 3000 });
-    steps->push_back ({ 200, [heldLength, length, unchanged] { *heldLength = length(); unchanged(); } });
+    steps->push_back ({ 0, [&engine, heldLength, releasedProgress, length, unchanged]
+    {
+        *heldLength = length();
+        *releasedProgress = engine.getRecordManager().midiCapturePreview (0)->lengthInTicks;
+        unchanged();
+    }, [&engine]
+    {
+        engine.serviceMidiRecording();
+        const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+        return preview != nullptr && std::any_of (preview->ccs.begin(), preview->ccs.end(), [] (const auto& cc)
+        {
+            return cc.kind == MidiCc::Kind::ControlChange && cc.channel == 1
+                && cc.controller == 113 && cc.value == 37;
+        });
+    }, "the note-off marker did not reach the capture preview", {}, 3000 });
     steps->push_back ({ 300, [&ctx, &host, scratch, heldPitch, heldLength, length, unchanged, &engine]
     {
         ctx.expect (length() == *heldLength, "the preview kept extending the note after note-off");
         ctx.expect (host.pianoRowOnScreen (heldPitch, scratch) == 1, "the released note vanished before Stop");
         unchanged();
         engine.pressStop();
-    } });
+    }, [&engine, releasedProgress]
+    {
+        engine.serviceMidiRecording();
+        const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+        return preview != nullptr && preview->lengthInTicks >= *releasedProgress + 120;
+    }, "the capture preview stopped advancing after note-off", {}, 3000 });
     steps->push_back ({ 300, [&ctx, &host, &session, &transport, heldPitch, typedPitch, heldLength, scratch]
     {
         ctx.expect (transport.isStopped(), "Stop did not finish MIDI recording");
