@@ -18,7 +18,7 @@
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
 # ceiling gap 0
-# ceiling partial 22
+# ceiling partial 21
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -509,7 +509,7 @@ Hardware inserts > Latency compensation	a native VST3 plugin that changes its in
 Hardware inserts > Latency compensation	a plugin that changes them again after six restarts in a row is taken offline, passes the dry signal and raises Plug-in unavailable once; it comes back after a quiet second, or when the take ends, unless it changes them again at once	auto	test:Vst3RestartPolicy takes a plug-in that keeps changing its buses offline instead of restarting it without end;test:Vst3RestartPolicy brings an offline plug-in back once it stops changing its buses;scenario:vst3.io_restart_storm_goes_offline
 Hardware inserts > Latency compensation	each track moves to its new compensation at its next silence, so the change never clicks	partial	test:PDC: every track compensates to the deepest latency		the compensation each track moves to is tested; that a playing track keeps its old delay until its next silence, and so never clicks, has no test
 Hardware inserts > Latency compensation	aux-lane plugin latency is compensated at the master: the dry mix waits for the deepest lane so wet returns land aligned	auto	scenario:engine.aux_return_at_pdc_limit
-Hardware inserts > Latency compensation	the master's wait for the aux lanes changes only while the transport is stopped	partial	scenario:engine.aux_return_at_pdc_limit		the master targets are applied and measured with the transport stopped; a change made while rolling that holds until Stop has no test
+Hardware inserts > Latency compensation	the master's wait for the aux lanes changes only while the transport is stopped	auto	scenario:engine.aux_return_at_pdc_limit;scenario:engine.aux_pdc_waits_for_stop		dry-master output and aux-return impulses keep their old delay through latency increases and decreases in Playing and Recording states, then use the new delay after Stop
 
 Sync to external gear > MIDI Clock	chase tempo from F8 averaged over 24 ticks; big jumps skipped	auto	test:MidiSyncReceiver chases the tempo of the incoming clock;test:MidiSyncReceiver averages jitter out of the reported tempo;test:MidiSyncReceiver skips a clock interval that jumps;test:MidiSyncReceiver follows the transport bytes
 Sync to external gear > MIDI Clock	emit 24 PPQN clock with Start and Stop	auto	test:MidiClockEmitter: integer samples-per-clock has no drift;test:MidiClockEmitter: fractional samples-per-clock has no systematic drift;test:MidiClockEmitter: transport edges emit Start / Stop
