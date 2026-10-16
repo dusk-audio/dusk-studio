@@ -126,6 +126,7 @@ public:
         if (now >= nextSnapshotPoll)
         {
             cachedSnapshot = service.snapshot();
+            cachedInUse = inUse ? inUse() : std::vector<sfz::ManagedSfzLocator> {};
             nextSnapshotPoll = now + std::chrono::milliseconds (100);
         }
         const auto& snapshot = cachedSnapshot;
@@ -698,7 +699,7 @@ private:
             if (resolved)
             {
                 ImGui::TextColored (ImGui::ColorConvertU32ToFloat4 (consolePalette().eqAccent),
-                                    "Verified license: %s", resolved->license.id.c_str());
+                                    "Declared license: %s", resolved->license.id.c_str());
                 muted (sizeLabel (resolved->advertisedBytes) + (resolutionCached ? "  |  Cached details" : ""));
                 bool installed = false;
                 for (const auto& pack : snapshot.installed)
@@ -860,7 +861,7 @@ private:
                 heading (ctx, displayTitle (selected->provider.displayName, selected->provider.sourceId));
                 muted (sourceName (selected->provider.sourceId));
                 ImGui::TextColored (ImGui::ColorConvertU32ToFloat4 (consolePalette().eqAccent),
-                                    "Verified license: %s", selected->provider.license.id.c_str());
+                                    "Declared license: %s", selected->provider.license.id.c_str());
                 if (selected->programs.size() < selected->instruments.size())
                 {
                     ImGui::Checkbox ("Show all SFZ files", &showAllFiles);
@@ -917,14 +918,13 @@ private:
                     deferred = [callback, pack, entry] { callback (pack, entry); };
                 }
                 if (ImGui::GetContentRegionAvail().x >= ctx.s (280)) ImGui::SameLine();
-                const auto used = inUse ? inUse() : std::vector<sfz::ManagedSfzLocator>{};
-                const bool referenced = std::any_of (used.begin(), used.end(), [&] (const auto& locator)
+                const bool referenced = std::any_of (cachedInUse.begin(), cachedInUse.end(), [&] (const auto& locator)
                 {
                     return locator.sourceId == selected->provider.sourceId && locator.packId == selected->provider.packId
                         && locator.releaseId == selected->provider.releaseId && locator.archiveSha256 == selected->archiveSha256;
                 });
                 if (button ("remove", "Remove", available && ! referenced && static_cast<bool> (inUse)))
-                    start (Intent::Remove, [&] { return service.remove (*selected, used); });
+                    start (Intent::Remove, [&] { return service.remove (*selected, inUse()); });
                 if (referenced) ImGui::TextWrapped ("This version is used by the current session. Unload its instruments before removing it.");
                 if (! inUse) ImGui::TextWrapped ("Session use cannot be checked, so Remove is unavailable.");
                 if (showAllFiles && instrument && instrument->candidateOnly)
@@ -1008,6 +1008,7 @@ private:
     bool onlineRowsDirty = true, installedWasBusy = false;
     std::uint64_t installedGeneration = UINT64_MAX;
     sfz::LibrarySnapshot cachedSnapshot;
+    std::vector<sfz::ManagedSfzLocator> cachedInUse;
     std::chrono::steady_clock::time_point nextSnapshotPoll {};
     AtlasImage preview;
     std::vector<unsigned char> previewCanvas = std::vector<unsigned char> (512 * 320 * 4);
