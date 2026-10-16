@@ -820,8 +820,8 @@ std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext&
                 engine.suspendProcessing();
                 const auto voicesHeld = midiprobe::counter (ctx, 0, "voicesHeld");
                 engine.resumeProcessing();
-                ctx.expect (std::abs (voicesHeld - 1.0) < 1.0e-6,
-                            "IN-off Merge did not keep the seed accompaniment alone while the live note was held");
+                ctx.expect (std::abs (voicesHeld - 2.0) < 1.0e-6,
+                            "IN-off Merge did not audition the live note alongside its accompaniment");
             }
            #else
             (void) ctx; (void) engine; (void) index; (void) hasProbe;

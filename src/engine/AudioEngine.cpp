@@ -2269,18 +2269,8 @@ void AudioEngine::serviceMidiRecording()
             auto& track = session.track (captured.trackIndex);
             auto before = track.midiRegions.current();
             auto after = before;
-            int targetIndex = -1;
             const auto passEnd = group.timelineStart + captured.pass.lengthInSamples;
-            for (int i = (int) after.size() - 1; i >= 0; --i)
-            {
-                const auto& region = after[(std::size_t) i];
-                if (! region.locked && group.timelineStart <= region.timelineStart + region.lengthInSamples
-                    && passEnd >= region.timelineStart)
-                {
-                    targetIndex = i;
-                    break;
-                }
-            }
+            int targetIndex = findMidiMergeTarget (after, group.timelineStart, passEnd);
             if (targetIndex < 0)
             {
                 targetIndex = (int) after.size();
@@ -6182,7 +6172,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         const bool willReadFromDisk = isPlaying || (isRecording
             && (isFrozen || ! armed || (midiTrack && recordManager.isMidiMergeCapture())));
 
-        // Live-input monitor gate. IN is the ONLY control over live-input
+        // Audio-input monitor gate. IN is the ONLY control over live-input
         // monitoring. ARM is purely a recorder-enable; it does NOT gate
         // monitor passthrough. Safety against feedback comes from IN
         // defaulting to false - the user must explicitly click IN to
@@ -6378,14 +6368,14 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // The audible route excludes capture-only input: changing that input
         // must not reset the instrument's timeline voices. A MIDI track
         // takes live input except in an offline render, which must stay
-        // deterministic. A track playing its timeline takes it only with IN
-        // on; otherwise the input is what the instrument plays, whatever IN
-        // says. A record-armed track also auditions the on-screen keyboard,
+        // deterministic. Recording auditions live MIDI as well as any merged
+        // timeline. Outside recording, timeline playback needs IN for live
+        // input. A record-armed track also auditions the on-screen keyboard,
         // so it plays from the keyboard however the instrument was loaded,
         // unless its input already is the keyboard and events would double.
-        const bool pullsLiveMidi = midiTrack && ! offlineRender
-                                && (monitorEnabled || ! (willReadFromDisk && ! isFrozen));
         const bool capturesLiveMidi = isRecording && armed && midiTrack && ! offlineRender;
+        const bool pullsLiveMidi = midiTrack && ! offlineRender
+                                && (capturesLiveMidi || monitorEnabled || ! (willReadFromDisk && ! isFrozen));
         midi::LiveMidiRoute inputRoute;
         if (pullsLiveMidi || capturesLiveMidi)
         {
