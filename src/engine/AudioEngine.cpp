@@ -4798,6 +4798,17 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     };
     const InFlightGuard inFlightGuard { callbacksInFlight };
 
+    if ((int) mixL.size() < numSamples)
+    {
+        silentDims.store (((std::uint64_t) (std::uint32_t) mixL.size() << 32)
+                          | (std::uint32_t) numSamples, std::memory_order_relaxed);
+        silentBlocks.fetch_add (1, std::memory_order_relaxed);
+        clearOutputs();
+        return;
+    }
+    const auto transportBlockState = transport.getState();
+    const auto transportBlockStart = transport.beginAudioBlock();
+
     // Every session snapshot this block reads, on this thread or a worker lane,
     // stays alive until the block returns, however often the message thread
     // publishes meanwhile.
@@ -4997,7 +5008,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 // 1024 samples) and the window collapses to ~80 ms.
                 if (mtcFrames != lastSeenMtcFrames)
                 {
-                    const auto transportSamples = transport.getPlayhead();
+                    const auto transportSamples = transportBlockStart;
                     const auto mtcSamples =
                         (std::int64_t) ((double) mtcFrames * sPerFrame);
                     const auto deltaSamples = transportSamples - mtcSamples;
@@ -5101,7 +5112,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // Rolling state from the engine's transport - the bytes drive
         // SLAVES, so they need to mirror Dusk Studio's local state, not the
         // external master's.
-        const bool rolling = transport.isPlaying() || transport.isRecording();
+        const bool rolling = transportBlockState != Transport::State::Stopped;
         midiClockOutScratch.clear();
 
         if (emitClock)
@@ -5119,7 +5130,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 session.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed);
             midiTimeCodeEmitter.generateBlock (midiSyncSampleClock - numSamples,
                                                   numSamples,
-                                                  transport.getPlayhead(),
+                                                  transportBlockStart,
                                                   rolling, rate,
                                                   midiClockOutScratch);
         }
@@ -5882,18 +5893,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         }
     }
 
-    if ((int) mixL.size() < numSamples)
-    {
-        silentDims.store (((std::uint64_t) (std::uint32_t) mixL.size() << 32)
-                          | (std::uint32_t) numSamples, std::memory_order_relaxed);
-        silentBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
-        if (outputChannelData != nullptr)
-            for (int ch = 0; ch < numOutputChannels; ++ch)
-                if (auto* out = outputChannelData[ch])
-                    std::memset (out, 0, sizeof (float) * (size_t) numSamples);
-        return;
-    }
-
     // Mastering stage runs an entirely different signal flow: stereo file ->
     // MasteringChain -> output. No track processing, no aux/master, no
     // recorder. We share `mixL/mixR` as scratch so we don't allocate on
@@ -5968,10 +5967,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         auxLanePtrsR[(size_t) a] = auxLaneR[(size_t) a].data();
     }
 
-    const auto state = transport.getState();
+    const auto state = transportBlockState;
     const bool isPlaying   = (state == Transport::State::Playing);
     const bool isRecording = (state == Transport::State::Recording);
-    std::int64_t blockStartSamples = transport.beginAudioBlock();
+    std::int64_t blockStartSamples = transportBlockStart;
 
     // Offline renders must be deterministic - live input never prints. An offline
     // bounce/stem/freeze drives this callback from a worker thread while the MIDI

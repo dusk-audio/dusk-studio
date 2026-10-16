@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "engine/Transport.h"
+#include "engine/TransportSnapshot.h"
 
 // Transport is a thin atomic wrapper without explicit transition
 // rejection - any state can be set from any other. These tests pin the
@@ -55,6 +55,18 @@ TEST_CASE ("Transport: playhead advance accumulates across calls", "[transport]"
 
     t.finishAudioBlock (t.beginAudioBlock() + 50);
     REQUIRE (t.getPlayhead() == 150);
+
+    t.setState (Transport::State::Playing);
+    t.requestLocate (5000);
+    REQUIRE (t.getPlayhead() == 5000);
+    REQUIRE (duskstudio::snapshotTransport (t, 120.0, 48000.0).timeInSamples == 150);
+    REQUIRE (t.beginAudioBlock() == 5000);
+    t.requestLocate (7000);
+    REQUIRE (duskstudio::snapshotTransport (t, 120.0, 48000.0).timeInSamples == 5000);
+    t.finishAudioBlock (5256);
+    REQUIRE (duskstudio::snapshotTransport (t, 120.0, 48000.0).timeInSamples == 5256);
+    REQUIRE (t.getPlayhead() == 7000);
+    REQUIRE (t.beginAudioBlock() == 7000);
 }
 
 TEST_CASE ("Transport: setPlayhead accepts negative for pre-roll cases", "[transport]")
