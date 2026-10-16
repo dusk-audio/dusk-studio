@@ -13,7 +13,6 @@
  #define DUSKSTUDIO_HAS_BINARY_ICON 0
 #endif
 #include "DuskFileBrowser.h"
-#include "../engine/sfz/SfzLibraryService.h"
 #include "SaveTargetChecks.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
@@ -45,7 +44,6 @@
 #include "TunerOverlay.h"
 #include "../session/SessionTemplates.h"
 #include "MasteringView.h"
-#include "UpdateChecker.h"
 #include "SystemStatusBar.h"
 #include "TapeStrip.h"
 #include "TrackMoveUndo.h"
