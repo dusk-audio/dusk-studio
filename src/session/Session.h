@@ -820,7 +820,7 @@ struct MidiRegion
 
 inline MidiRegionPlacement placementOf (const MidiRegion& region) noexcept
 {
-    return { region.timelineStart, region.lengthInSamples, region.lengthInTicks, region.muted };
+    return { region.timelineStart, region.lengthInSamples, region.lengthInTicks, region.muted, region.locked };
 }
 
 // A timeline for `regions`: each region's events copied out and sorted, unless

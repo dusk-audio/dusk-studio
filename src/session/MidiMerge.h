@@ -3,11 +3,28 @@
 #include "MidiEvents.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 
 namespace duskstudio
 {
+template <typename Regions>
+int findMidiMergeTarget (const Regions& regions, std::int64_t start, std::int64_t end) noexcept
+{
+    if (end <= start) return -1;
+    for (int i = (int) regions.size() - 1; i >= 0; --i)
+    {
+        const auto& region = regions[(std::size_t) i];
+        if (! region.locked && region.lengthInSamples > 0 && end > region.timelineStart
+            && (start < region.timelineStart
+                || (std::uint64_t) start - (std::uint64_t) region.timelineStart
+                     < (std::uint64_t) region.lengthInSamples))
+            return i;
+    }
+    return -1;
+}
+
 struct MidiMergeResult
 {
     bool changed = false;

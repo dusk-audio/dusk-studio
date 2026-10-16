@@ -187,3 +187,41 @@ TEST_CASE ("MIDI merge includes a trailing control inside the region's half-open
     REQUIRE (target.ccs == before);
     REQUIRE (target.lengthInTicks == 1441);
 }
+
+TEST_CASE ("MIDI merge target selection agrees with immutable lock and mute placement",
+           "[midi][merge][snapshot]")
+{
+    std::vector<MidiRegion> regions (3);
+    regions[0].timelineStart = 0;
+    regions[0].lengthInSamples = 100;
+    regions[1].timelineStart = 100;
+    regions[1].lengthInSamples = 100;
+    regions[1].locked = true;
+    regions[2].timelineStart = 110;
+    regions[2].lengthInSamples = 100;
+    std::int64_t start = 100, end = 110;
+    int expected = -1;
+    SECTION ("touching boundaries are not overlaps") {}
+    SECTION ("an unlocked overlap is selected") { regions[1].locked = false; expected = 1; }
+    SECTION ("the last overlap retains its mute policy")
+    { regions[2].timelineStart = 105; regions[2].muted = true; expected = 2; }
+    SECTION ("positive endpoints cannot overflow")
+    {
+        regions[2].timelineStart = std::numeric_limits<std::int64_t>::max() - 10;
+        start = regions[2].timelineStart + 5;
+        end = std::numeric_limits<std::int64_t>::max();
+        expected = 2;
+    }
+    SECTION ("negative timeline coordinates are retained")
+    {
+        regions[2].timelineStart = std::numeric_limits<std::int64_t>::min();
+        start = regions[2].timelineStart + 10;
+        end = start + 20;
+        expected = 2;
+    }
+    const auto timeline = buildMidiTimeline (regions);
+    CHECK (findMidiMergeTarget (regions, start, end) == expected);
+    CHECK (findMidiMergeTarget (timeline->placement, start, end) == expected);
+    CHECK (timeline->placement[1].locked == regions[1].locked);
+    CHECK (timeline->placement[2].muted == regions[2].muted);
+}

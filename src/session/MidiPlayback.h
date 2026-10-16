@@ -131,6 +131,7 @@ struct MidiRegionPlacement
     std::int64_t lengthInSamples = 0;
     std::int64_t lengthInTicks   = 0;
     bool         muted           = false;
+    bool         locked          = false;
 };
 
 struct MidiCaptureStamp
