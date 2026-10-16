@@ -1,6 +1,5 @@
 #include "AudioSettingsView.h"
 #include "AudioDeviceSelector.h"
-#include "DuskTheme.h"
 #include "PanelControls.h"
 #include "../AppConfig.h"
 #include "../../dsp/OutputPairRouting.h"
