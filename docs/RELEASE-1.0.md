@@ -242,7 +242,7 @@ How it runs in CI:
 - `linux-sanitizer.yml` runs the same suite twice, once under TSan and once
   under ASan and UBSan.
 - `raspberry-pi-build.yml` runs it on `ubuntu-22.04-arm`.
-- `macos-build.yml` runs it on `macos-14`.
+- `macos-build.yml` runs it on `macos-15`.
 - `windows-tests.yml` runs it on `windows-2022`, and before running it greps
   the `ctest -N` inventory for four named `ipc-stub` cases and eight named
   `FileImporter` cases, so a build that silently drops those Windows
