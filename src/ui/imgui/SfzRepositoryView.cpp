@@ -337,7 +337,14 @@ private:
 
     void remember (const std::string& name)
     {
-        if (ImGui::IsItemVisible()) controls[name] = { ImGui::GetItemRectMin(), ImGui::GetItemRectMax() };
+        if (! ImGui::IsItemVisible()) return;
+        const auto itemMin = ImGui::GetItemRectMin(), itemMax = ImGui::GetItemRectMax();
+        const auto clipMin = ImGui::GetWindowDrawList()->GetClipRectMin();
+        const auto clipMax = ImGui::GetWindowDrawList()->GetClipRectMax();
+        const ImVec2 visibleMin { std::max (itemMin.x, clipMin.x), std::max (itemMin.y, clipMin.y) };
+        const ImVec2 visibleMax { std::min (itemMax.x, clipMax.x), std::min (itemMax.y, clipMax.y) };
+        if (visibleMin.x < visibleMax.x && visibleMin.y < visibleMax.y)
+            controls[name] = { visibleMin, visibleMax };
     }
 
     void heading (const dw::Context& ctx, const std::string& text, float fontSize = 20)

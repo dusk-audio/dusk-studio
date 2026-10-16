@@ -385,7 +385,7 @@ void pushWorkClick (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ct
     {
         const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
         return ! snapshot.busy && snapshot.generation > state->generation;
-    }, "SFZ worker did not finish the panel request", {}, kSettleBoundMs });
+    }, "SFZ worker did not finish the panel request: " + std::string (control), {}, kSettleBoundMs });
 }
 
 void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, const std::shared_ptr<CaseState>& state,
