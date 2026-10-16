@@ -23,6 +23,23 @@ const std::string kArchiveHash (64, 'c');
 const std::string kLicenseText = "Creative Commons Attribution 4.0 International Public License\n"
     "https://creativecommons.org/licenses/by/4.0/\n";
 
+struct LicenseExample
+{
+    const char* artifactName;
+    const char* id;
+    const char* title;
+    bool allowed;
+};
+constexpr LicenseExample kLicenseExamples[] {
+    { "cc-zero", "CC0-1.0", "Creative Commons CC0 1.0 Universal", true },
+    { "by", "CC-BY-4.0", "Creative Commons Attribution 4.0", true },
+    { "by-sa-3", "CC-BY-SA-3.0", "Creative Commons Attribution-ShareAlike 3.0", true },
+    { "by-nc", "CC-BY-NC-4.0", "Creative Commons Attribution-NonCommercial 4.0", false },
+    { "by-nd", "CC-BY-ND-4.0", "Creative Commons Attribution-NoDerivs 4.0", false },
+    { "by-nc-sa", "CC-BY-NC-SA-4.0", "Creative Commons Attribution-NonCommercial-ShareAlike 4.0", false },
+    { "by-nc-nd", "CC-BY-NC-ND-4.0", "Creative Commons Attribution-NonCommercial-NoDerivs 4.0", false }
+};
+
 struct Reply
 {
     Json json;
@@ -458,6 +475,39 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     { transport.replies = githubReplies ("https://creativecommons.org/licenses/by-nc/4.0/"); }
     SECTION ("Ambiguous CC licenses")
     { transport.replies = githubReplies (kLicenseText + "\nhttps://creativecommons.org/licenses/by-sa/4.0/"); }
+    SECTION ("An SPDX identifier alone is not a grant")
+    { transport.replies = githubReplies ("SPDX-License-Identifier: CC-BY-4.0"); }
+    SECTION ("Plain commercial restrictions conflict with the grant")
+    { transport.replies = githubReplies (kLicenseText + "\nFor non-commercial\nuse only."); }
+    SECTION ("Plain modification restrictions conflict with the grant")
+    { transport.replies = githubReplies (kLicenseText + "\nNo derivative works are permitted."); }
+    SECTION ("A separate restricted SPDX declaration conflicts with CC0")
+    {
+        transport.replies = githubReplies ("Mapping files use CC0 1.0 Universal.\nAudio recordings use CC-BY-NC-4.0.");
+        transport.replies.back().json["license"]["spdx_id"] = "CC0-1.0";
+    }
+    SECTION ("A separate NoDerivatives SPDX declaration conflicts with BY")
+    { transport.replies = githubReplies (kLicenseText + "\nAudio recordings use CC-BY-ND-4.0."); }
+    SECTION ("A wrapped NonCommercial SPDX declaration conflicts with BY")
+    { transport.replies = githubReplies (kLicenseText + "\nAudio recordings use CC-\nBY-NC-4.0."); }
+    SECTION ("A wrapped NoDerivatives SPDX declaration conflicts with BY")
+    { transport.replies = githubReplies (kLicenseText + "\nAudio recordings use CC-BY-\nND-4.0."); }
+    SECTION ("An unknown SPDX declaration is not ignored")
+    { transport.replies = githubReplies (kLicenseText + "\nAudio recordings use CC-BY-9.0."); }
+    SECTION ("CC grant does not override a reservation for the samples")
+    {
+        transport.replies = githubReplies ("Scripts: CC0 1.0 Universal. Samples: all rights reserved.");
+        transport.replies.back().json["license"]["spdx_id"] = "CC0-1.0";
+    }
+    SECTION ("A grant scoped only to scripts does not license the instrument pack")
+    {
+        transport.replies = githubReplies ("**Scripts:** CC0 1.0 Universal.\nSamples have a separate license.");
+        transport.replies.back().json["license"]["spdx_id"] = "CC0-1.0";
+    }
+    SECTION ("A grant scoped only to code is not a pack license")
+    { transport.replies = githubReplies ("Code: " + kLicenseText); }
+    SECTION ("An exception to the grant needs manual licensing review")
+    { transport.replies = githubReplies (kLicenseText + "\nThe samples are not covered by this license."); }
     CHECK_FALSE (resolveProviderPack (transport, githubSummary()));
 }
 
@@ -476,6 +526,8 @@ TEST_CASE ("SFZ Instruments accepts formal Creative Commons license text", "[sfz
     SECTION ("Complete CC BY-SA 3.0 legal code") { completeLicense ("cc-by-sa-3.0.txt", "CC-BY-SA-3.0"); }
     SECTION ("Formal attribution title")
     { transport.replies = githubReplies ("Creative Commons Attribution 4.0 International Public License\nTerms follow.\n"); }
+    SECTION ("A matching SPDX identifier agrees with the grant")
+    { transport.replies = githubReplies (kLicenseText + "\nSPDX-License-Identifier: CC-BY-4.0."); }
     SECTION ("Explicit CC0 dedication")
     {
         transport.replies = githubReplies ("CC0 1.0 Universal\nhttps://creativecommons.org/publicdomain/zero/1.0/\n");
@@ -511,10 +563,10 @@ TEST_CASE ("Musical Artifacts browsing excludes generic free and gray-area items
                                            artifact (80, "gpl-v3"), artifact (81, "by-nc-nd") }) } };
     const auto result = browseProvider (transport, "musical-artifacts");
     REQUIRE (result);
-    REQUIRE (result.items.size() == 2);
+    REQUIRE (result.items.size() == 1);
     CHECK (result.items.front().presentation.favorites == favorites);
     CHECK_FALSE (result.items.front().presentation.stars);
-    CHECK (result.items.back().licenseHint == "CC-BY-NC-ND-4.0");
+    CHECK (result.items.front().licenseHint == "CC-BY-4.0");
 }
 
 TEST_CASE ("Musical Artifacts resolves declared CC packs and retains upstream SHA-256", "[sfz][provider]")
@@ -557,26 +609,85 @@ TEST_CASE ("Musical Artifacts resolves declared CC packs and retains upstream SH
 
 TEST_CASE ("Musical Artifacts preserves license constraints and version distinctions", "[sfz][provider]")
 {
-    FakeTransport transport;
-    auto item = artifact();
-    SECTION ("CC3.0 is not silently treated as CC4.0")
+    for (const auto& license : kLicenseExamples)
     {
-        item["license"] = "by-nc-sa-3";
-        transport.replies = { { item }, { artifactLicenses ("by-nc-sa-3", "Creative Commons Attribution-NonCommercial-ShareAlike 3.0") } };
+        CAPTURE (license.id);
+        FakeTransport transport;
+        transport.replies = { { artifact (77, license.artifactName) },
+                              { artifactLicenses (license.artifactName, license.title) } };
         const auto result = resolveProviderPack (transport, artifactSummary());
-        REQUIRE (result);
-        CHECK (result.pack->license.id == "CC-BY-NC-SA-3.0");
-        CHECK (result.pack->license.constraints.find ("NonCommercial") != std::string::npos);
-        CHECK (result.pack->license.constraints.find ("ShareAlike") != std::string::npos);
+        REQUIRE (static_cast<bool> (result) == license.allowed);
+        if (license.allowed)
+        {
+            REQUIRE (result.pack);
+            CHECK (result.pack->license.id == license.id);
+            if (std::string_view (license.id).find ("BY") != std::string_view::npos)
+                CHECK (result.pack->license.constraints.find ("Attribution") != std::string::npos);
+            if (std::string_view (license.id).find ("SA") != std::string_view::npos)
+                CHECK (result.pack->license.constraints.find ("ShareAlike") != std::string::npos);
+            CHECK (providerPackFromJson (providerPackToJson (*result.pack)));
+        }
+        else
+        {
+            CHECK_FALSE (result.pack);
+            CHECK (result.error.find ("NonCommercial and NoDerivatives") != std::string::npos);
+        }
+        FakeTransport listing;
+        listing.replies = { { Json::array ({ artifact (77, license.artifactName) }) } };
+        const auto page = browseProvider (listing, "musical-artifacts");
+        REQUIRE (page);
+        CHECK (page.items.size() == (license.allowed ? 1 : 0));
     }
-    SECTION ("ND constraint is displayed")
-    {
-        item["license"] = "by-nd";
-        transport.replies = { { item }, { artifactLicenses ("by-nd", "Creative Commons Attribution-NoDerivs 4.0") } };
-        const auto result = resolveProviderPack (transport, artifactSummary());
-        REQUIRE (result);
-        CHECK (result.pack->license.constraints.find ("NoDerivatives") != std::string::npos);
-    }
+}
+
+TEST_CASE ("GitHub SFZ sources refuse restricted licenses in listings and resolved packs", "[sfz][provider]")
+{
+    for (const std::string source : { "sfzinstruments", "freepats", "versilian" })
+        for (const auto& license : kLicenseExamples)
+        {
+            CAPTURE (source, license.id);
+            const std::string owner = source == "versilian" ? "sgossner" : source;
+            const std::string name = source == "versilian" ? "VSCO-2-CE" : "Grand-Piano";
+            auto item = repository (42, name, license.id);
+            item["owner"]["login"] = owner;
+            FakeTransport listing;
+            listing.replies = { { Json::array ({ item }) } };
+            const auto page = browseProvider (listing, source);
+            REQUIRE (page);
+            CHECK (page.items.size() == (license.allowed ? 1 : 0));
+
+            FakeTransport transport;
+            transport.replies = githubReplies (license.title);
+            transport.replies.front().json = item;
+            transport.replies.back().json["license"]["spdx_id"] = license.id;
+            if (source == "versilian")
+                transport.replies.insert (transport.replies.begin() + 1,
+                    Reply { Json { { "tag_name", "SFZ-v1" }, { "draft", false }, { "prerelease", false } } });
+            ProviderSummary summary { source, "42", name, name, owner, {},
+                "https://github.com/" + owner + "/" + name, "NOASSERTION" };
+            const auto result = resolveProviderPack (transport, summary);
+            REQUIRE (static_cast<bool> (result) == license.allowed);
+            if (license.allowed)
+            {
+                REQUIRE (result.pack);
+                CHECK (result.pack->license.id == license.id);
+                CHECK (providerPackFromJson (providerPackToJson (*result.pack)));
+                for (const auto& restricted : kLicenseExamples)
+                    if (! restricted.allowed)
+                    {
+                        auto cached = *result.pack;
+                        cached.license.id = restricted.id;
+                        const auto refused = providerPackFromJson (providerPackToJson (cached));
+                        CHECK_FALSE (refused);
+                        CHECK (refused.error.find ("NonCommercial and NoDerivatives") != std::string::npos);
+                    }
+            }
+            else
+            {
+                CHECK_FALSE (result.pack);
+                CHECK (result.error.find ("NonCommercial and NoDerivatives") != std::string::npos);
+            }
+        }
 }
 
 TEST_CASE ("Musical Artifacts does not invent missing checksums or archive entrypoints", "[sfz][provider]")
@@ -601,6 +712,15 @@ TEST_CASE ("Musical Artifacts rejects inconsistent declarations and download met
     auto item = artifact(), licenses = artifactLicenses();
     SECTION ("Unrecognized license") { item["license"] = "gray"; }
     SECTION ("License definition has a different variant") { licenses[0]["name"] = "Creative Commons Attribution-NonCommercial 4.0"; }
+    SECTION ("License definition adds a commercial restriction")
+    { licenses[0]["name"] = "Creative Commons Attribution 4.0. For non-commercial use only."; }
+    SECTION ("License definition adds a restricted SPDX identifier")
+    { licenses[0]["name"] = "Creative Commons Attribution 4.0. Samples: CC-BY-ND-4.0."; }
+    SECTION ("Conflicting duplicate license definitions")
+    {
+        licenses.push_back (licenses[0]);
+        licenses[1]["name"] = "Creative Commons Attribution-NonCommercial 4.0";
+    }
     SECTION ("Unsafe declared SFZ path") { item["file_list"] = Json::array ({ "../Piano.sfz" }); }
     SECTION ("Unsupported archive") { item["file"] = "https://musical-artifacts.com/artifacts/77/piano.7z"; }
     SECTION ("HTTP download") { item["file"] = "http://musical-artifacts.com/artifacts/77/piano.zip"; }
@@ -679,6 +799,31 @@ TEST_CASE ("SFZ cached descriptors validate paths, pins, and license receipts of
         CHECK (result.pack->presentation.demos.empty());
         return;
     }
+    SECTION ("Installed receipts retain licensing admitted before stricter download rules")
+    {
+        auto installed = pack;
+        SECTION ("GitHub") {}
+        SECTION ("Musical Artifacts")
+        {
+            FakeTransport transport;
+            transport.replies = { { artifact() }, { artifactLicenses() } };
+            const auto result = resolveProviderPack (transport, artifactSummary());
+            REQUIRE (result);
+            installed = *result.pack;
+        }
+        installed.license.text += "\nSamples have a separate license.\n";
+        REQUIRE (sodium_init() >= 0);
+        std::array<unsigned char, crypto_hash_sha256_BYTES> hash {};
+        crypto_hash_sha256 (hash.data(), reinterpret_cast<const unsigned char*> (installed.license.text.data()),
+                            installed.license.text.size());
+        std::array<char, crypto_hash_sha256_BYTES * 2 + 1> hex {};
+        sodium_bin2hex (hex.data(), hex.size(), hash.data(), hash.size());
+        installed.license.sha256 = hex.data();
+        const auto serialized = providerPackToJson (installed);
+        REQUIRE (providerPackFromJson (serialized, PackDescriptorUse::InstalledReceipt));
+        CHECK_FALSE (providerPackFromJson (serialized));
+        return;
+    }
     SECTION ("Traversal path") { cached["instruments"][0]["path"] = "../Piano.sfz"; }
     SECTION ("Mutable Git branch") { cached["release_id"] = "main"; }
     SECTION ("Tampered license text") { cached["license"]["text"] = "MIT License"; }
@@ -687,6 +832,7 @@ TEST_CASE ("SFZ cached descriptors validate paths, pins, and license receipts of
     SECTION ("Unsafe instrument identity") { cached["instruments"][0]["id"] = "../id"; }
     SECTION ("Invalid field type") { cached["version_pinned"] = 1; }
     CHECK_FALSE (providerPackFromJson (cached.dump()));
+    CHECK_FALSE (providerPackFromJson (cached.dump(), PackDescriptorUse::InstalledReceipt));
 }
 
 TEST_CASE ("SFZ repository artwork uses declared images and immutable repository paths", "[sfz][provider][artwork]")

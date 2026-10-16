@@ -19,10 +19,11 @@ canonical source.
   alone, and the roll follows the region a merge updates.
 - **Creative Commons SFZ repositories.** Browse SFZ Instruments, Musical
   Artifacts, FreePats and Versilian Studios from the instrument library, check a
-  pack's license, and download it to Installed. Downloads can pause, resume and
-  cancel. Installed versions coexist, and sessions find the same pack on another
-  machine without its old absolute path. Missing packs stay offline without
-  downloading on session load.
+  pack's license, and download it to Installed. Only CC0, CC BY and CC BY-SA
+  packs are offered; NonCommercial and NoDerivatives packs are refused.
+  Downloads can pause, resume and cancel. Installed versions coexist, and
+  sessions find the same pack on another machine without its old absolute path.
+  Missing packs stay offline without downloading on session load.
   A larger, responsive browser shows source stars or favorites and opens
   published demos before downloading an instrument pack. Both tabs group
   instruments by type, show repository artwork or licensed instrument cutouts,

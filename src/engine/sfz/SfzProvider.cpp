@@ -478,6 +478,14 @@ bool formalLicenseTitle (const std::string& text, const CcLicense& license)
 std::optional<CcLicense> licenseText (const std::string& text, const std::string& hint)
 {
     const auto content = lower (text);
+    for (const auto* conflict : { "all rights reserved", "not covered by this license", "separate license",
+                                  "licensed separately", "mit license", "gnu general public license" })
+        if (content.find (conflict) != std::string::npos) return {};
+    auto scope = content;
+    scope.erase (std::remove_if (scope.begin(), scope.end(), [] (char c) { return c == '*' || c == '_'; }), scope.end());
+    for (const auto* label : { "scripts:", "code:", "source code:", "software:", "samples:", "recordings:",
+                               "scripts are licensed", "code is licensed", "software is licensed" })
+        if (scope.find (label) != std::string::npos) return {};
     const auto containsUrl = [&] (const std::string& marker)
     {
         auto offset = content.find (marker);
@@ -504,11 +512,51 @@ std::optional<CcLicense> licenseText (const std::string& text, const std::string
             const auto marker = std::string ("//creativecommons.org/licenses/") + type + "/" + version;
             if (containsUrl (marker) || formalLicenseTitle (text, *license)) found.insert (license->id);
         }
-    if (found.size() != 1 || content.find ("mit license") != std::string::npos
-        || content.find ("gnu general public license") != std::string::npos) return {};
+    if (found.size() != 1) return {};
     const auto actual = ccLicense (*found.begin());
     const auto claimed = ccLicense (hint);
     if (claimed && claimed->id != actual->id) return {};
+    const auto identifierChar = [] (char c)
+    { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.'; };
+    for (std::size_t begin = 0; begin < content.size();)
+    {
+        if (! identifierChar (content[begin])) { ++begin; continue; }
+        auto end = begin + 1;
+        while (end < content.size() && identifierChar (content[end])) ++end;
+        auto identifier = content.substr (begin, end - begin);
+        if (identifier.compare (0, 3, "cc-") == 0 || identifier.compare (0, 4, "cc0-") == 0)
+            while (! identifier.empty() && identifier.back() == '-')
+            {
+                auto next = content.find_first_not_of (" \t\r\n", end);
+                if (next == std::string::npos || ! identifierChar (content[next])) break;
+                auto nextEnd = next;
+                while (nextEnd < content.size() && identifierChar (content[nextEnd])) ++nextEnd;
+                identifier += content.substr (next, nextEnd - next);
+                end = nextEnd;
+            }
+        while (! identifier.empty() && identifier.back() == '.') identifier.pop_back();
+        if (identifier.compare (0, 5, "cc-by") == 0
+            || (identifier.size() > 4 && identifier.compare (0, 4, "cc0-") == 0))
+        {
+            const auto declared = ccLicense (identifier);
+            if (! declared || declared->id != actual->id) return {};
+        }
+        begin = end;
+    }
+    if (downloadLicenseAllowed (*actual))
+    {
+        std::string wording;
+        wording.reserve (content.size());
+        for (const auto c : content)
+        {
+            const bool space = c == '-' || c == '\r' || c == '\n' || c == '\t' || c == ' ';
+            if (! space || wording.empty() || wording.back() != ' ') wording += space ? ' ' : c;
+        }
+        for (const auto* restriction : { "noncommercial", "non commercial", "noderivatives", "noderivs",
+                                        "no derivatives", "no derivative works", "no modifications",
+                                        "no commercial use", "not for commercial", "personal use only" })
+            if (wording.find (restriction) != std::string::npos) return {};
+    }
     return actual;
 }
 
@@ -705,6 +753,7 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
     if (text.find ('\0') != std::string::npos || ! portablePathKey (text)) return fail ("Repository LICENSE is not valid text");
     const auto recognized = licenseText (text, hint);
     if (! recognized) return fail ("Repository LICENSE does not establish one supported Creative Commons license");
+    if (! downloadLicenseAllowed (*recognized)) return fail (kRestrictedLicense);
     pack.license = { recognized->id, text, path, sha256 (text),
         webBase + "/blob/" + revision + "/" + encode (path, true), recognized->constraints };
     std::sort (pack.instruments.begin(), pack.instruments.end(), [] (const auto& a, const auto& b)
@@ -745,6 +794,7 @@ ProviderPackResult artifactPack (HttpTransport& transport, const ProviderSummary
     const auto shortName = string (detail.json, "license", 100);
     const auto recognized = artifactLicense (shortName);
     if (! recognized) return fail ("Artifact does not declare a supported Creative Commons license");
+    if (! downloadLicenseAllowed (*recognized)) return fail (kRestrictedLicense);
     const auto licenses = api (transport, "https://musical-artifacts.com/licenses.json", 262144, control);
     result.rateLimit = licenses.rateLimit;
     if (! licenses) { result.status = licenses.status; result.error = licenses.error; return result; }
@@ -755,7 +805,11 @@ ProviderPackResult artifactPack (HttpTransport& transport, const ProviderSummary
             && string (license, "license_type", 100) == "cc")
         {
             const auto name = string (license, "name", 512);
-            if (formalLicenseTitle (name, *recognized)) declaration = name;
+            if (! licenseText (name, recognized->id))
+                return fail ("Artifact license definition contains unsupported or conflicting terms");
+            if (! declaration.empty() && declaration != name)
+                return fail ("Artifact license definitions are ambiguous");
+            declaration = name;
         }
     if (declaration.empty()) return fail ("Artifact Creative Commons declaration cannot be verified from the provider's license definitions");
     const auto download = string (detail.json, "file");
@@ -867,9 +921,10 @@ ProviderPageResult browseProvider (HttpTransport& transport, const std::string& 
                 || (privateRepo != entry.end() && privateRepo->is_boolean() && privateRepo->get<bool>())) continue;
             summary.sourceUrl = "https://github.com/" + std::string (owner) + "/" + summary.locator;
             summary.licenseHint = string (dusk::json::child (entry, "license"), "spdx_id", 100);
+            const auto license = ccLicense (summary.licenseHint);
             if (! summary.licenseHint.empty() && summary.licenseHint != "NOASSERTION"
-                && ! ccLicense (summary.licenseHint)) continue;
-            if (sourceId != "sfzinstruments" && ! ccLicense (summary.licenseHint)) continue;
+                && (! license || ! downloadLicenseAllowed (*license))) continue;
+            if (sourceId != "sfzinstruments" && ! license) continue;
             if (! catalog.empty())
             {
                 const auto metadata = catalogMetadata (catalog, summary.locator);
@@ -894,7 +949,7 @@ ProviderPageResult browseProvider (HttpTransport& transport, const std::string& 
             summary.locator = summary.packId;
             summary.author = string (entry, "author", 256);
             const auto license = artifactLicense (string (entry, "license", 100));
-            if (! license || ! declaresSfz (entry)) continue;
+            if (! license || ! downloadLicenseAllowed (*license) || ! declaresSfz (entry)) continue;
             summary.licenseHint = license->id;
             summary.sourceUrl = "https://musical-artifacts.com/artifacts/" + summary.packId;
         }
@@ -1024,7 +1079,8 @@ ProviderPackResult providerPackFromJson (std::string_view source, PackDescriptor
             || pack.expectedRoot != repository + "-" + pack.releaseId
             || pack.sourceUrl != prefix + repository + "/tree/" + pack.releaseId
             || pack.license.sourceUrl != prefix + repository + "/blob/" + pack.releaseId + "/" + encode (pack.license.path, true)
-            || ! licenseText (pack.license.text, pack.license.id)) return fail ("Cached GitHub SFZ version is not pinned and licensed");
+            || (use == PackDescriptorUse::Download && ! licenseText (pack.license.text, pack.license.id)))
+            return fail ("Cached GitHub SFZ version is not pinned and licensed");
     }
     else if (pack.sourceId == "musical-artifacts")
     {
@@ -1035,6 +1091,7 @@ ProviderPackResult providerPackFromJson (std::string_view source, PackDescriptor
             || ! pack.license.path.empty() || ! pack.expectedRoot.empty() || pack.releaseId.empty()
             || pack.license.text.find (recognized->id) == std::string::npos
             || pack.license.text.find (recognized->url) == std::string::npos
+            || (use == PackDescriptorUse::Download && ! licenseText (pack.license.text, pack.license.id))
             || archiveUrl.size() < 4 || archiveUrl.substr (archiveUrl.size() - 4) != ".zip")
             return fail ("Cached Musical Artifacts version is invalid");
         if ((! pack.expectedSha256.empty() && (pack.releaseId != pack.expectedSha256 || ! pack.versionPinned))
