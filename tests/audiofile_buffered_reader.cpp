@@ -186,6 +186,13 @@ TEST_CASE ("BufferedFileReader prefetch warms a span the audio thread has not as
 
     auto r = manualReader (path);
     REQUIRE (r != nullptr);
+    SECTION ("Manual filling stays manual") { r->setFillMode (BufferedFileReader::Fill::Manual); }
+    SECTION ("Background filling hands ownership to the caller")
+    {
+        r->setFillMode (BufferedFileReader::Fill::Background);
+        r->setFillMode (BufferedFileReader::Fill::Manual);
+    }
+    REQUIRE (r->isManual());
 
     const std::int64_t lastWindow = kFrames - kWindow;
     r->prefetch (lastWindow);

@@ -42,6 +42,10 @@ public:
     // Non-RT: prefetch also wakes the owned Background worker.
     void prefetch (std::int64_t startFrame) noexcept;
 
+    // Non-RT, serialized with all external filling and prefetch calls. Switching
+    // to Manual joins the owned worker before returning its filling ownership.
+    void setFillMode (Fill);
+
     // Exactly one filling owner. Manual callers/pools serialize these methods.
     // Each fillOnce reads at most kFillChunkFrames; fillNow primes a full window.
     bool fillOnce();
@@ -73,7 +77,7 @@ private:
     FileInfo fileInfo;
     const int channels;
     const std::int64_t capacity;
-    const Fill fillMode;
+    Fill fillMode;
 
     std::unique_ptr<Window> currentWindow;
     std::unique_ptr<Window> stagingWindow;

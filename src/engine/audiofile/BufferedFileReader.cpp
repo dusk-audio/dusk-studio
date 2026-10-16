@@ -42,6 +42,18 @@ BufferedFileReader::~BufferedFileReader()
     releaseResidency();
 }
 
+void BufferedFileReader::setFillMode (Fill next)
+{
+    if (fillMode == next) return;
+    stop.store (true, std::memory_order_release);
+    wake.signal();
+    if (worker.joinable()) worker.join();
+    fillMode = next;
+    stop.store (false, std::memory_order_release);
+    if (next == Fill::Background && channels > 0 && fileInfo.numFrames > 0)
+        worker = std::thread ([this] { run(); });
+}
+
 const BufferedFileReader::Window* BufferedFileReader::acquireWindow() const noexcept
 {
     // A lease precedes the pointer load in the same total order as retirement.
