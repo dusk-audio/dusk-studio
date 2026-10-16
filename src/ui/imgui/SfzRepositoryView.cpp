@@ -579,6 +579,7 @@ private:
         const auto sourceAt = ImGui::GetCursorScreenPos();
         const float sourceWidth = wide ? ctx.s (250) : width;
         controls["source"] = { sourceAt, { sourceAt.x + sourceWidth, sourceAt.y + ImGui::GetFrameHeight() } };
+        if (available && ! frameMutation) controls["enabled-source"] = controls["source"];
         if (ImGui::BeginCombo ("##sfz-source", sourceLabel))
         {
             for (std::size_t i = 0; i < sources.size(); ++i)

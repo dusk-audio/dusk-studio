@@ -528,7 +528,7 @@ void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, c
     for (const std::string source : { "freepats", "versilian" })
     {
         steps.push_back ({ 0, [state] { state->requests = state->transport->requests.load(); } });
-        pushClick (steps, host, ctx, "source");
+        pushClick (steps, host, ctx, "enabled-source");
         pushClick (steps, host, ctx, "source-" + source);
         steps.push_back ({ 0, [&ctx, state]
         { ctx.expect (state->transport->requests.load() == state->requests, "choosing a source started HTTP before Search"); } });
@@ -540,7 +540,7 @@ void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, c
                         "the selected additional repository did not narrow the search");
         } });
     }
-    pushClick (steps, host, ctx, "source");
+    pushClick (steps, host, ctx, "enabled-source");
     pushClick (steps, host, ctx, "source-all");
     pushWorkClick (steps, host, ctx, state, "browse", LibraryState::Complete);
     pushWorkClick (steps, host, ctx, state, "online-item-0", LibraryState::Complete);
