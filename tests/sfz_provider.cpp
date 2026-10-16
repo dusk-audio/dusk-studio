@@ -1,11 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/sfz/SfzProvider.h"
+#include "foundation/Fs.h"
 
 #include <nlohmann/json.hpp>
 #include <sodium.h>
 
 #include <array>
+#include <filesystem>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -462,6 +464,16 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
 TEST_CASE ("SFZ Instruments accepts formal Creative Commons license text", "[sfz][provider]")
 {
     FakeTransport transport;
+    const auto completeLicense = [&] (const char* file, const char* id)
+    {
+        const auto text = dusk::fs::loadFileAsString (
+            std::filesystem::u8path (DUSKSTUDIO_SFZ_LICENSE_FIXTURES) / file);
+        REQUIRE (text.size() > 10000);
+        transport.replies = githubReplies (text);
+        transport.replies.back().json["license"]["spdx_id"] = id;
+    };
+    SECTION ("Complete CC BY 4.0 legal code") { completeLicense ("cc-by-4.0.txt", "CC-BY-4.0"); }
+    SECTION ("Complete CC BY-SA 3.0 legal code") { completeLicense ("cc-by-sa-3.0.txt", "CC-BY-SA-3.0"); }
     SECTION ("Formal attribution title")
     { transport.replies = githubReplies ("Creative Commons Attribution 4.0 International Public License\nTerms follow.\n"); }
     SECTION ("Explicit CC0 dedication")

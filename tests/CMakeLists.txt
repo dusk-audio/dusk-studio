@@ -854,7 +854,9 @@ if (_duskstudio_ipc_test_enabled)
     add_dependencies(dusk-studio-tests dusk-studio-plugin-host)
 endif()
 
-target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_TESTS=1)
+target_compile_definitions(dusk-studio-tests PRIVATE
+    DUSKSTUDIO_TESTS=1
+    DUSKSTUDIO_SFZ_LICENSE_FIXTURES=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/licenses\")
 
 # UniversalCompressor (multi-comp donor) tests — gated on the donor being
 # available. Mirrors the main app's DUSK_PLUGINS_PATH wiring exactly so the
