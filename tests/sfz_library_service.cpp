@@ -97,6 +97,7 @@ struct Reply
     std::size_t chunkBytes = 32768;
     std::function<void (std::size_t)> afterChunk {};
     bool hold = false;
+    OperationStatus endStatus = OperationStatus::Complete;
 };
 
 class ScriptedTransport final : public HttpTransport
@@ -131,7 +132,7 @@ public:
             if (reply.afterChunk) reply.afterChunk (offset + chunk.size());
         }
         if (control.status() != OperationStatus::Complete) return aborted();
-        return { OperationStatus::Complete, {} };
+        return { reply.endStatus, reply.endStatus == OperationStatus::Complete ? "" : "Connection interrupted" };
     }
 
     bool waitEntered (std::size_t count)
@@ -626,11 +627,14 @@ TEST_CASE ("SFZ library removal forwards session usage and refreshes installed s
     REQUIRE (transport->count() == 1);
 }
 
-TEST_CASE ("SFZ library destruction cancels a paused install and releases its owned files", "[sfz][service][ipc]")
+TEST_CASE ("SFZ library shutdown preserves paused downloads unless explicitly cancelled", "[sfz][service][ipc]")
 {
     Tree tree;
     const auto bytes = archiveBytes();
     const auto transport = std::make_shared<ScriptedTransport>();
+    bool cancelBeforeShutdown = false;
+    SECTION ("Quit retains the validated prefix") {}
+    SECTION ("Cancel followed immediately by quit removes it") { cancelBeforeShutdown = true; }
     {
         LibraryService service (tree.root, transport);
         settled (service);
@@ -640,9 +644,114 @@ TEST_CASE ("SFZ library destruction cancels a paused install and releases its ow
         REQUIRE (service.install (packFor (bytes)));
         REQUIRE (settled (service).state == LibraryState::Paused);
         REQUIRE (ownedInstallFiles (tree) == 2);
+        if (cancelBeforeShutdown) service.cancel();
     }
-    REQUIRE (ownedInstallFiles (tree) == 0);
+    REQUIRE (ownedInstallFiles (tree) == (cancelBeforeShutdown ? 0 : 2));
     REQUIRE (transport->count() == 1);
+    const auto resumed = std::make_shared<ScriptedTransport>();
+    if (cancelBeforeShutdown) resumed->append ({ bytes, 200, {} });
+    else resumed->append ({ bytes.substr (64), 206,
+        { { "content-length", std::to_string (bytes.size() - 64) },
+          { "content-range", "bytes 64-" + std::to_string (bytes.size() - 1) + "/" + std::to_string (bytes.size()) },
+          { "etag", "\"version1\"" } } });
+    LibraryService restored (tree.root, resumed);
+    settled (restored);
+    REQUIRE (restored.install (packFor (bytes)));
+    const auto result = settled (restored);
+    INFO (result.error);
+    REQUIRE (result.state == LibraryState::Complete);
+    REQUIRE (result.installed.size() == 1);
+    REQUIRE (resumed->count() == 1);
+    if (cancelBeforeShutdown) CHECK (resumed->request (0).headers.count ("range") == 0);
+    else
+    {
+        CHECK (resumed->request (0).headers.at ("range") == "bytes=64-");
+        CHECK (resumed->request (0).headers.at ("if-range") == "\"version1\"");
+    }
+    CHECK (dusk::fs::loadFileAsString (result.installed.front().directory / "Samples/tone.wav") == std::string (4096, 'x'));
+    CHECK (ownedInstallFiles (tree) == 0);
+}
+
+TEST_CASE ("SFZ library retries failed downloads using their saved validators", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto bytes = archiveBytes();
+    const auto transport = std::make_shared<ScriptedTransport>();
+    Reply first { bytes.substr (0, 64), 200,
+        { { "content-length", std::to_string (bytes.size()) }, { "etag", "\"version1\"" } } };
+    first.endStatus = OperationStatus::Failed;
+    transport->append (std::move (first));
+    auto service = std::make_unique<LibraryService> (tree.root, transport);
+    settled (*service);
+    REQUIRE (service->install (packFor (bytes)));
+    REQUIRE (settled (*service).state == LibraryState::Failed);
+    REQUIRE (ownedInstallFiles (tree) == 2);
+    bool restartFresh = false;
+    SECTION ("Retry in the same service") {}
+    SECTION ("Retry after shutdown")
+    {
+        service.reset();
+        REQUIRE (ownedInstallFiles (tree) == 2);
+        service = std::make_unique<LibraryService> (tree.root, transport);
+        settled (*service);
+    }
+    SECTION ("Quit a paused retry before HTTP preserves the existing prefix")
+    {
+        service->setHeavyWork (true);
+        REQUIRE (service->install (packFor (bytes)));
+        REQUIRE (settled (*service).state == LibraryState::Paused);
+        REQUIRE (transport->count() == 1);
+        service.reset();
+        REQUIRE (ownedInstallFiles (tree) == 2);
+        service = std::make_unique<LibraryService> (tree.root, transport);
+        settled (*service);
+    }
+    SECTION ("Cancel a paused retry before HTTP and quit")
+    {
+        service->setHeavyWork (true);
+        REQUIRE (service->install (packFor (bytes)));
+        REQUIRE (settled (*service).state == LibraryState::Paused);
+        REQUIRE (transport->count() == 1);
+        service->cancel();
+        service.reset();
+        REQUIRE (ownedInstallFiles (tree) == 0);
+        service = std::make_unique<LibraryService> (tree.root, transport);
+        settled (*service);
+        restartFresh = true;
+    }
+    SECTION ("A mismatched resume validator discards the saved pair")
+    {
+        transport->append ({ bytes.substr (64), 206,
+            { { "content-length", std::to_string (bytes.size() - 64) },
+              { "content-range", "bytes 64-" + std::to_string (bytes.size() - 1) + "/" + std::to_string (bytes.size()) },
+              { "etag", "\"version2\"" } } });
+        REQUIRE (service->install (packFor (bytes)));
+        const auto rejected = settled (*service);
+        REQUIRE (rejected.state == LibraryState::Failed);
+        CHECK (rejected.error == "Download entity changed; restart the download");
+        REQUIRE (transport->count() == 2);
+        CHECK (transport->request (1).headers.at ("range") == "bytes=64-");
+        REQUIRE (ownedInstallFiles (tree) == 0);
+        restartFresh = true;
+    }
+    const auto retryRequest = transport->count();
+    if (restartFresh) transport->append ({ bytes, 200, {} });
+    else transport->append ({ bytes.substr (64), 206,
+        { { "content-length", std::to_string (bytes.size() - 64) },
+          { "content-range", "bytes 64-" + std::to_string (bytes.size() - 1) + "/" + std::to_string (bytes.size()) },
+          { "etag", "\"version1\"" } } });
+    REQUIRE (service->install (packFor (bytes)));
+    const auto result = settled (*service);
+    INFO (result.error);
+    REQUIRE (result.state == LibraryState::Complete);
+    REQUIRE (result.installed.size() == 1);
+    if (restartFresh) CHECK (transport->request (retryRequest).headers.count ("range") == 0);
+    else
+    {
+        CHECK (transport->request (retryRequest).headers.at ("range") == "bytes=64-");
+        CHECK (transport->request (retryRequest).headers.at ("if-range") == "\"version1\"");
+    }
+    CHECK (ownedInstallFiles (tree) == 0);
 }
 
 TEST_CASE ("SFZ library shutdown joins an idle worker after acknowledged jobs", "[sfz][service][ipc][sfz-shutdown]")

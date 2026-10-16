@@ -218,7 +218,6 @@ LibraryService::~LibraryService()
     {
         const std::lock_guard<std::mutex> lock (mutex);
         stopping.store (true, std::memory_order_release);
-        cancelRequested.store (true, std::memory_order_release);
     }
     wake.notify_one();
     if (worker.joinable()) worker.join();
@@ -244,6 +243,14 @@ bool LibraryService::enqueue (Job job)
     {
         const std::lock_guard<std::mutex> lock (mutex);
         if (current.busy || paused || stopping.load (std::memory_order_acquire)) return false;
+        if (job.kind == JobKind::Install)
+        {
+            const auto key = digest (providerPackToJson (job.pack));
+            if (key.empty()) return false;
+            const auto downloads = configurationFile.empty() ? cacheRoot : store.root() / ".downloads";
+            job.part = downloads / (key + ".part");
+            job.preserveDownload = true;
+        }
         job.generation = ++current.generation;
         current.busy = true;
         current.error.clear();
@@ -357,19 +364,21 @@ void LibraryService::setState (std::uint64_t generation, LibraryState state)
     if (current.generation == generation) current.state = state;
 }
 
-void LibraryService::cleanInstall (Job& job) noexcept
+void LibraryService::cleanInstall (Job& job, bool removeDownload) noexcept
 {
+    if ((! job.staging.empty() || ! job.part.empty()) && ! libraryLocationAvailable (locations.active)) return;
     std::error_code error;
     if (! job.staging.empty()) fs::remove_all (job.staging, error);
     job.staging.clear();
-    if (! job.part.empty())
+    if (removeDownload && ! job.part.empty())
     {
+        if (! fs::is_directory (fs::symlink_status (job.part.parent_path(), error)) || error) return;
         fs::remove (job.part, error);
         auto sidecar = job.part;
         sidecar += ".resume.json";
         fs::remove (sidecar, error);
+        job.part.clear();
     }
-    job.part.clear();
 }
 
 OperationResult LibraryService::browseAll (const Job& job, const OperationControl& control)
@@ -521,16 +530,11 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         std::string error;
         if (! store.initialize (error)) return { OperationStatus::Failed, error };
         setState (job.generation, LibraryState::Downloading);
-        if (job.part.empty())
-        {
-            const auto key = digest (providerPackToJson (job.pack));
-            if (key.empty()) return { OperationStatus::Failed, "Cannot identify SFZ download" };
-            const auto downloads = configurationFile.empty() ? cacheRoot : store.root() / ".downloads";
-            if (! plainDirectory (downloads)) return { OperationStatus::Failed, "Cannot open the SFZ download directory" };
-            job.part = downloads / (key + ".part");
-        }
+        if (! plainDirectory (job.part.parent_path()))
+            return { OperationStatus::Failed, "Cannot open the SFZ download directory" };
         const auto downloaded = downloadFile (*transport,
             { job.pack.downloadUrl, job.part, job.pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes }, control);
+        job.preserveDownload = downloaded.resumeAvailable || static_cast<bool> (downloaded);
         if (! downloaded) return { downloaded.status, downloaded.error };
         if (control.status() != OperationStatus::Complete) return interrupted (control);
         setState (job.generation, LibraryState::Extracting);
@@ -547,6 +551,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         const auto extracted = extractZip (request, control);
         if (! extracted)
         {
+            if (extracted.status == OperationStatus::Failed) job.preserveDownload = false;
             std::error_code ignored;
             fs::remove_all (job.staging, ignored);
             job.staging.clear();
@@ -637,7 +642,7 @@ void LibraryService::run()
                 if (paused) { job = std::move (*paused); paused.reset(); }
                 else if (pending) { job = std::move (*pending); pending.reset(); }
                 lock.unlock();
-                cleanInstall (job);
+                cleanInstall (job, cancelRequested.load (std::memory_order_acquire) || job.kind == JobKind::Cleanup);
                 break;
             }
             job = std::move (*pending);
@@ -663,23 +668,24 @@ void LibraryService::run()
         {
             result = { OperationStatus::Failed, std::string ("SFZ library operation failed: ") + exception.what() };
         }
-        if (result.status == OperationStatus::Paused)
-        {
-            std::error_code ignored;
-            if (! job.staging.empty()) fs::remove_all (job.staging, ignored);
-            job.staging.clear();
-        }
-        else if (result.status != OperationStatus::Complete) cleanInstall (job);
+        if (result.status != OperationStatus::Complete) cleanInstall (job, false);
         {
             std::unique_lock<std::mutex> lock (mutex);
-            if (result.status == OperationStatus::Paused
-                && (cancelRequested.load (std::memory_order_acquire)
-                    || stopping.load (std::memory_order_acquire)))
+            if (result.status != OperationStatus::Complete)
             {
-                result = { OperationStatus::Cancelled, {} };
-                lock.unlock();
-                cleanInstall (job);
-                lock.lock();
+                const bool cancelled = cancelRequested.load (std::memory_order_acquire);
+                const bool shuttingDown = stopping.load (std::memory_order_acquire);
+                if (cancelled || (result.status == OperationStatus::Paused && shuttingDown))
+                    result = { OperationStatus::Cancelled, {} };
+                if (! job.part.empty() && (cancelled || (result.status != OperationStatus::Paused
+                                                       && ! shuttingDown && ! job.preserveDownload)))
+                {
+                    lock.unlock();
+                    cleanInstall (job);
+                    lock.lock();
+                    if (cancelRequested.load (std::memory_order_acquire))
+                        result = { OperationStatus::Cancelled, {} };
+                }
             }
             if (current.generation == job.generation)
             {

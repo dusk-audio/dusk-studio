@@ -77,6 +77,7 @@ private:
         unsigned page = 1;
         bool offlineOnly = false;
         bool moveExisting = false;
+        bool preserveDownload = false;
         ProviderSummary summary;
         ProviderPack pack;
         InstalledPack installed;
@@ -96,7 +97,7 @@ private:
     OperationResult execute (Job&, const OperationControl&);
     OperationResult browseAll (const Job&, const OperationControl&);
     void setState (std::uint64_t generation, LibraryState);
-    void cleanInstall (Job&) noexcept;
+    void cleanInstall (Job&, bool removeDownload = true) noexcept;
 
     PackStore store;
     std::shared_ptr<HttpTransport> transport;
