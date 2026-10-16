@@ -1065,9 +1065,18 @@ bool DuskPanelWindow::keyboardFocusForScenario (bool focused)
     impl->panelWidget->focusForScenario (focused);
     return true;
 }
+bool DuskPanelWindow::hasKeyboardForScenario() const noexcept
+{
+    return isOpen() && impl->panelWidget != nullptr && impl->panelWidget->hasKeyboard();
+}
 int DuskPanelWindow::keyboardRequestsForScenario() const noexcept
 {
     return impl->keyboardRequests;
+}
+std::uintptr_t DuskPanelWindow::nativeWindowHandleForScenario() const noexcept
+{
+    const auto* window = impl->host.window();
+    return window != nullptr ? window->getNativeWindowHandle() : 0;
 }
 void DuskPanelWindow::expectInputForScenario()
 {

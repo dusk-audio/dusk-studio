@@ -489,6 +489,11 @@ public:
     virtual int pianoCcHeight() const = 0;
     virtual void closePianoRoll() = 0;
     virtual bool pressPianoRollKey (const std::string& description) = 0;
+    // Queued into the native child; pressPianoRollKey applies edits synchronously.
+    virtual bool inputPianoRoll (const std::string& description) = 0;
+    virtual bool pianoKeyboardFocus (bool focused) = 0;
+    // Includes the deferred close, until the native child is gone.
+    virtual bool pianoNativeWindowOpen() const = 0;
     virtual bool doubleClickAudioRegion (int track, int region) = 0;
     // Modifiers as pianoNotePointer takes them: 1 Shift, 2 Cmd/Ctrl.
     virtual bool clickAudioRegion (int track, int region, bool right = false, int modifiers = 0) = 0;

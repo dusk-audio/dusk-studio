@@ -521,7 +521,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool pressKey (const std::string& description, char text) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
-        if (owner.pianoRollShowing() && owner.pianoRoll->capturesKeyboard())
+        if (owner.pianoRollShowing() && owner.pianoRoll->capturesKeyboard()
+            && owner.pianoRollWindow->hasKeyboardForScenario())
             return owner.pianoRollWindow->inputForScenario (description);
        #endif
         const bool handled = dispatchKey (owner, &MainComponent::keyPressed, description, text);
@@ -830,7 +831,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool holdPeerKey (const std::string& description, char text) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
-        if (owner.pianoRollShowing() && owner.pianoRoll->capturesKeyboard())
+        if (owner.pianoRollShowing() && owner.pianoRoll->capturesKeyboard()
+            && owner.pianoRollWindow->hasKeyboardForScenario())
             return owner.pianoRollWindow->inputForScenario (description);
        #endif
         auto* peer = owner.getPeer();
@@ -2662,16 +2664,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
         auto* piano = owner.pianoRoll;
-        auto* peer = owner.getPeer();
-        if (! owner.pianoRollShowing() || piano == nullptr || peer == nullptr) return -1;
+        if (! owner.pianoRollShowing() || piano == nullptr) return -1;
+        const auto nativeWindow = owner.pianoRollWindow->nativeWindowHandleForScenario();
         const auto file = scratch.string();
-        if (! platform::captureNativeWindowToPpm (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()), file))
+        if (! platform::captureNativeWindowToPpm (nativeWindow, file))
             return -1;
         std::FILE* in = std::fopen (file.c_str(), "rb");
         if (in == nullptr) return -1;
         int width = 0, height = 0, maxValue = 0;
         const bool header = std::fscanf (in, "P6 %d %d %d", &width, &height, &maxValue) == 3
-                         && std::fgetc (in) != EOF && width > 0 && height > 0;
+                         && std::fgetc (in) != EOF && width > 0 && height > 0 && maxValue == 255;
         std::vector<unsigned char> pixels (header ? (std::size_t) width * (std::size_t) height * 3 : 0);
         const bool read = header && std::fread (pixels.data(), 1, pixels.size(), in) == pixels.size();
         std::fclose (in);
@@ -2682,10 +2684,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto grid = piano->gridBoundsForScenario();
         if (row.y < grid[1] || row.y >= grid[1] + grid[3]) return -1;
         const auto scale = piano->scaleForScenario();
-        const int y = owner.pianoRollChildY + static_cast<int> (std::lround (row.y));
-        const int x0 = std::max (0, owner.pianoRollChildX + static_cast<int> (std::lround (grid[0] + 2 * scale)));
-        const int x1 = std::min (width, owner.pianoRollChildX + static_cast<int> (std::lround (grid[0] + grid[2] - 4 * scale)));
-        if (y < 0 || y >= height) return -1;
+        const int y = static_cast<int> (std::lround (row.y));
+        const int x0 = std::max (0, static_cast<int> (std::lround (grid[0] + 2 * scale)));
+        const int x1 = std::min (width, static_cast<int> (std::lround (grid[0] + grid[2] - 4 * scale)));
+        if (y < 0 || y >= height || x0 >= x1) return -1;
 
         // Note fills are saturated hues; the grid, its lines and the 1 px
         // cursors are grey or too thin to count.
@@ -2742,6 +2744,35 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return handled;
        #else
         (void) description; return false;
+       #endif
+    }
+
+    bool inputPianoRoll (const std::string& description) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() && owner.pianoRollWindow->inputForScenario (description);
+       #else
+        (void) description;
+        return false;
+       #endif
+    }
+    bool pianoKeyboardFocus (bool focused) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing()) return false;
+        owner.pianoRollWindow->expectInputForScenario();
+        return owner.pianoRollWindow->keyboardFocusForScenario (focused);
+       #else
+        (void) focused;
+        return false;
+       #endif
+    }
+    bool pianoNativeWindowOpen() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollWindow != nullptr && owner.pianoRollWindow->isOpen();
+       #else
+        return false;
        #endif
     }
 

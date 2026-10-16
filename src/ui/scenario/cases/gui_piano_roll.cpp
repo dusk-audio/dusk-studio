@@ -46,23 +46,26 @@ std::optional<ScenarioResult> runPianoSelection (GuiHost& host, ScenarioContext&
     session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::initializer_list<MidiRegion> { region }));
     session.midiEditorSnap = true;
     if (! host.openPiano (0, 0)) return ScenarioResult::fail ("piano roll did not open");
-    const auto select = [&host, &ctx] (std::int64_t tick, int pitch, int modifiers, std::vector<int> expected)
-    {
-        ctx.expect (host.pianoNotePointer (tick, pitch, true, modifiers), "note click failed");
-        host.pianoNotePointer (tick, pitch, false, modifiers);
-        auto actual = host.pianoSelection();
-        std::sort (actual.begin(), actual.end());
-        ctx.expect (actual == expected, "note click produced the wrong selection");
-    };
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 300, [&host, &ctx]
     { ctx.expect (host.pressPeerKey ("G", 'g'), "Grab key was not handled"); } });
-    steps->push_back ({ 150, [select] { select (1320, 60, 0, { 0 }); } });
-    steps->push_back ({ 150, [select] { select (2520, 64, 1, { 0, 1 }); } });
-    steps->push_back ({ 150, [select] { select (2520, 64, 1, { 0 }); } });
-    steps->push_back ({ 150, [select] { select (2520, 64, 2, { 0, 1 }); } });
-    steps->push_back ({ 150, [select] { select (1320, 60, 2, { 1 }); } });
-    steps->push_back ({ 150, [select] { select (1320, 60, 0, { 0 }); } });
+    struct Click { std::int64_t tick; int pitch, modifiers; std::vector<int> expected; };
+    for (const auto& click : std::vector<Click> {
+             { 1320, 60, 0, { 0 } }, { 2520, 64, 1, { 0, 1 } }, { 2520, 64, 1, { 0 } },
+             { 2520, 64, 2, { 0, 1 } }, { 1320, 60, 2, { 1 } }, { 1320, 60, 0, { 0 } } })
+    {
+        steps->push_back ({ 150, [&host, &ctx, click]
+        {
+            ctx.expect (host.pianoNotePointer (click.tick, click.pitch, true, click.modifiers), "note click failed");
+            ctx.expect (host.pianoNotePointer (click.tick, click.pitch, false, click.modifiers), "note release failed");
+        } });
+        steps->push_back ({ 0, [&host, &ctx, click]
+        {
+            auto actual = host.pianoSelection();
+            std::sort (actual.begin(), actual.end());
+            ctx.expect (actual == click.expected, "note click produced the wrong selection");
+        } });
+    }
     steps->push_back ({ 150, [&host] { host.pianoNotePointer (1320, 60, true); } });
     steps->push_back ({ 150, [&host] { host.pianoNotePointer (1700, 62, true); } });
     steps->push_back ({ 150, [&host] { host.pianoNotePointer (1700, 62, false); } });
@@ -1550,6 +1553,307 @@ const ScenarioRegistrar pianoStepRecordWhileRecording { Scenario {
     "gui.piano_step_record_while_recording", { "gui", "piano", "midi", "recording" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoStepRecordWhileRecording (host, ctx); }
+} };
+
+std::optional<ScenarioResult> beginNativePianoCase (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native piano roll");
+   #else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    auto& track = session.track (0);
+    if (! transport.isStopped() || ! host.modalStackEmpty() || host.virtualKeyboardOpen()
+        || host.pianoRollOpen() || host.audioEditorOpen())
+        return ScenarioResult::skip ("requires stopped transport and no open panels");
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&host, &engine, &session, &transport, &track,
+                  regions = track.midiRegions.current(), stage = engine.getStage(),
+                  editMode = session.editMode, snap = session.midiEditorSnap,
+                  position = transport.getPlayhead(), loop = transport.isLoopEnabled(),
+                  loopIn = transport.getLoopStart(), loopOut = transport.getLoopEnd(),
+                  punch = transport.isPunchEnabled(), punchIn = transport.getPunchIn(), punchOut = transport.getPunchOut()]
+    {
+        engine.stop();
+        host.closeVirtualKeyboard();
+        host.closeRegionEditors();
+        drainModals (host);
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+        engine.getUndoManager().clearUndoHistory();
+        session.editMode = editMode;
+        session.midiEditorSnap = snap;
+        transport.setPlayhead (position);
+        transport.setLoopRange (loopIn, loopOut);
+        transport.setLoopEnabled (loop);
+        transport.setPunchRange (punchIn, punchOut);
+        transport.setPunchEnabled (punch);
+        host.switchToStage (guiStage (stage));
+    });
+    const auto rate = engine.getTimelineSampleRate();
+    MidiRegion first;
+    first.lengthInTicks = 7680;
+    first.lengthInSamples = session.ticksToSamples (first.lengthInTicks, rate);
+    first.notes = { { 1, 60, 100, 960, 480 }, { 2, 64, 90, 2400, 480 } };
+    first.ccs = { { 1, 1, 32, 240 }, { 1, 1, 96, 960 } };
+    MidiTakeRef earlier;
+    earlier.lengthInTicks = first.lengthInTicks;
+    earlier.notes = first.notes;
+    for (auto& note : earlier.notes) note.noteNumber += 5;
+    earlier.ccs = first.ccs;
+    first.previousTakes.push_back (earlier);
+    MidiRegion second;
+    second.timelineStart = session.ticksToSamples (9600, rate);
+    second.lengthInTicks = first.lengthInTicks;
+    second.lengthInSamples = first.lengthInSamples;
+    second.notes = { { 1, 67, 100, 960, 480 } };
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (
+        std::vector<MidiRegion> { first, second }));
+    engine.getUndoManager().clearUndoHistory();
+    session.midiEditorSnap = true;
+    session.editMode = EditMode::Grab;
+    transport.setPlayhead (session.ticksToSamples (480, rate));
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    host.switchToStage (GuiHost::Stage::Recording);
+    host.openPianoRoll (0, 0);
+    if (! host.pianoNativeWindowOpen()) return ScenarioResult::fail ("the native piano roll did not open");
+    return std::nullopt;
+   #endif
+}
+
+std::optional<ScenarioResult> runPianoNativeShortcuts (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto initial = beginNativePianoCase (host, ctx)) return initial;
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (0);
+    auto& transport = engine.getTransport();
+    const auto original = track.midiRegions.current().front().notes;
+    const auto pitch = [&track]
+    {
+        const auto& regions = track.midiRegions.current();
+        return ! regions.empty() && ! regions.front().notes.empty() ? regions.front().notes.front().noteNumber : -1;
+    };
+    const auto position = transport.getPlayhead();
+    const int centre = std::clamp (appconfig::getVkbCentreNote(), 0, 120);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.focusPiano(), "the native piano child could not receive focus");
+        ctx.expect (host.inputPianoRoll (commandChord ('A')), "Select All did not reach the native child");
+    }, [&host] { return host.pianoViewport()[3] > 0; }, "the native piano roll did not draw" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoSelection() == std::vector<int> { 0, 1 }, "native Select All missed notes");
+        ctx.expect (host.inputPianoRoll ("alt + T"), "Alt+T did not reach the native child");
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoRollRegion() == 0 && host.pianoSelection().empty(), "take cycling lost the region or kept its selection");
+        ctx.expect (host.inputPianoRoll (commandChord ('Z')), "native Undo was unavailable");
+    }, [pitch] { return pitch() == 65; }, "native Alt+T did not advance exactly one take" });
+    steps->push_back ({ 0, [&host, &ctx, &engine]
+    {
+        ctx.expect (! engine.getUndoManager().canUndo(), "native take cycling created more than one undo step");
+        ctx.expect (host.inputPianoRoll (commandChord ('Y')), "native Redo was unavailable");
+    }, [pitch] { return pitch() == 60; }, "native Undo did not restore the original take" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.inputPianoRoll ("alt + shift + T"), "Alt+Shift+T did not reach the native child"); },
+    [pitch] { return pitch() == 65; }, "native Redo did not restore the cycled take" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.inputPianoRoll ("home"), "Home did not reach the native child"); },
+    [pitch] { return pitch() == 60; }, "native Alt+Shift+T did not return to the original take" });
+    steps->push_back ({ 0, [&host, &ctx, &transport, position]
+    {
+        ctx.expect (transport.getPlayhead() == position, "Home escaped the roll and moved the transport");
+        ctx.expect (host.inputPianoRoll ("."), "the stop-and-rewind key did not reach the native child");
+    } });
+    steps->push_back ({ 0, [&host, &ctx, &transport, position]
+    {
+        transport.setPlayhead (position);
+        ctx.expect (host.inputPianoRoll ("K"), "K did not reach the native child");
+    }, [&transport] { return transport.getPlayhead() == 0; }, "the native child did not forward stop-and-rewind" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoNativeWindowOpen() && host.pianoRollOpen(), "K closed the roll instead of covering it");
+        ctx.expect (host.inputPianoRoll (commandChord ('Z')), "the covered piano child did not receive the keyboard note");
+    }, [&host] { return host.virtualKeyboardOpen(); }, "native K did not open the virtual keyboard" });
+    steps->push_back ({ 0, [&host, &ctx, &track, original, centre]
+    {
+        const auto& regions = track.midiRegions.current();
+        if (ctx.expect (regions.size() == 2, "the covering keyboard changed the region count"))
+        {
+            const auto& notes = regions.front().notes;
+            if (ctx.expect (notes.size() == original.size() + 1, "the covering keyboard did not keep Cmd/Ctrl+Z as one note"))
+            {
+                ctx.expect (std::equal (original.begin(), original.end(), notes.begin()), "Cmd/Ctrl+Z undid the take behind the keyboard");
+                ctx.expect (notes.back().noteNumber == centre && notes.back().startTick == 480,
+                            "the keyboard note has the wrong pitch or step position");
+            }
+        }
+        ctx.expect (host.inputVirtualKeyboard ("K"), "the native keyboard did not receive its close key");
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoNativeWindowOpen(), "closing the keyboard destroyed the piano child");
+        ctx.expect (host.inputPianoRoll (commandChord ('A')), "the uncovered piano child did not receive Select All");
+    }, [&host] { return ! host.virtualKeyboardOpen(); }, "the keyboard did not finish closing" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoSelection() == std::vector<int> { 0, 1, 2 }, "the uncovered piano child did not select its notes");
+        ctx.expect (host.inputPianoRoll ("cursor up"), "the uncovered piano child did not receive Up");
+    } });
+    steps->push_back ({ 0, [&ctx, &track, original, centre]
+    {
+        auto expected = original;
+        for (auto& note : expected) ++note.noteNumber;
+        expected.push_back ({ 1, centre + 1, 100, 480, 120 });
+        const auto& regions = track.midiRegions.current();
+        ctx.expect (regions.size() == 2 && regions.front().notes == expected,
+                    "native Up did not transpose every selected note exactly once");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoNativeShortcuts { Scenario {
+    "gui.piano_native_shortcuts", { "gui", "piano", "midi", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 45000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoNativeShortcuts (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runPianoNativeEscapeStack (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto initial = beginNativePianoCase (host, ctx)) return initial;
+    auto& track = ctx.session().track (0);
+    auto& undo = ctx.engine().getUndoManager();
+    const auto original = track.midiRegions.current().front();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.focusPiano(), "the piano child could not receive focus");
+        ctx.expect (host.inputPianoRoll (commandChord ('A')), "native Select All was unavailable");
+    }, [&host] { return host.pianoViewport()[3] > 0; }, "the native piano roll did not draw" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoSelection() == std::vector<int> { 0, 1 }, "native Select All missed notes");
+        ctx.expect (host.inputPianoRoll ("V"), "the native velocity key was unavailable");
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoKeyboardFocus (false), "the child could not yield keyboard focus");
+        ctx.expect (host.pressKey ("escape"), "parent Escape was not replayed to the popup");
+    }, [&host] { return ! host.contextMenuItems().empty(); }, "the velocity popup did not open" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoNativeWindowOpen() && host.pianoSelection() == std::vector<int> { 0, 1 },
+                    "parent Escape dismissed the roll or cleared selection behind its popup");
+        ctx.expect (host.pianoKeyboardFocus (true) && host.inputPianoRoll ("V"), "the native velocity popup could not reopen");
+    }, [&host] { return host.modalStackEmpty(); }, "parent Escape did not close the velocity popup" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.inputPianoRoll ("escape"), "native Escape was unavailable in the popup"); },
+    [&host] { return ! host.contextMenuItems().empty(); }, "the native velocity popup did not reopen" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoNativeWindowOpen() && host.pianoSelection() == std::vector<int> { 0, 1 },
+                    "native Escape dismissed the roll or cleared selection behind its popup");
+        ctx.expect (host.inputPianoRoll ("escape"), "native selection Escape was unavailable");
+    }, [&host] { return host.modalStackEmpty(); }, "native Escape did not close the velocity popup" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoNativeWindowOpen() && host.pianoSelection().empty(), "selection Escape closed the roll or left selected notes");
+        ctx.expect (host.inputPianoRoll ("escape"), "native close Escape was unavailable");
+    } });
+    steps->push_back ({ 0, [&host, &ctx, &track, &undo, original]
+    {
+        ctx.expect (! host.pianoRollOpen() && host.canvasHasKeyboardFocus(), "closing the child did not restore canvas focus");
+        const auto& regions = track.midiRegions.current();
+        ctx.expect (regions.size() == 2 && regions.front().notes == original.notes
+                    && regions.front().ccs == original.ccs, "the Escape stack changed MIDI events");
+        ctx.expect (! undo.canUndo() && ! undo.canRedo(), "the Escape stack created undo history");
+        host.openPianoRoll (0, 0);
+    }, [&host] { return ! host.pianoNativeWindowOpen(); }, "the piano child did not finish closing" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoRollRegion() == 0 && host.pianoSelection().empty(), "the reopened child retained a stale target or selection");
+        ctx.expect (host.pianoKeyboardFocus (true) && host.inputPianoRoll ("escape"), "the reopened child did not receive Escape");
+    }, [&host] { return host.pianoNativeWindowOpen() && host.pianoViewport()[3] > 0; }, "the piano child did not reopen" });
+    steps->push_back ({ 0, [] {}, [&host] { return ! host.pianoNativeWindowOpen(); }, "the reopened child did not finish closing" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoNativeEscapeStack { Scenario {
+    "gui.piano_native_escape_stack", { "gui", "piano", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoNativeEscapeStack (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runPianoNativeNavigationReopen (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto initial = beginNativePianoCase (host, ctx)) return initial;
+    auto& track = ctx.session().track (0);
+    const auto original = track.midiRegions.current();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.focusPiano(), "the piano child could not receive focus");
+        ctx.expect (host.inputPianoRoll ("command + ]"), "native next-region input was unavailable");
+    }, [&host] { return host.pianoViewport()[3] > 0; }, "the native piano roll did not draw" });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+       #if defined (__linux__)
+        ctx.expect (host.pianoRowOnScreen (67, ctx.tempDir() / "second-67.ppm") == 1
+                    && host.pianoRowOnScreen (60, ctx.tempDir() / "second-60.ppm") == 0,
+                    "the replacement child did not display the second region's notes");
+       #endif
+        ctx.expect (host.inputPianoRoll ("command + ["), "native previous-region input was unavailable");
+    }, [&host] { return host.pianoRollRegion() == 1 && host.pianoViewport()[3] > 0; }, "native next-region did not replace the child" });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+       #if defined (__linux__)
+        ctx.expect (host.pianoRowOnScreen (60, ctx.tempDir() / "first-60.ppm") == 1
+                    && host.pianoRowOnScreen (67, ctx.tempDir() / "first-67.ppm") == 0,
+                    "the replacement child did not display the first region's notes");
+       #endif
+        // The old child's queued key must die with it, before it has drawn a frame.
+        ctx.expect (host.inputPianoRoll ("command + ]"), "the old child did not queue navigation");
+        host.closePianoRoll();
+        host.openPianoRoll (0, 0);
+        ctx.expect (host.pianoKeyboardFocus (true) && host.inputPianoRoll (commandChord ('A')),
+                    "the replacement child did not queue Select All");
+    }, [&host] { return host.pianoRollRegion() == 0 && host.pianoViewport()[3] > 0; }, "native previous-region did not replace the child" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoNativeWindowOpen() && host.pianoRollRegion() == 0,
+                    "a discarded child's queued navigation changed its replacement");
+        ctx.expect (host.pianoSelection() == std::vector<int> { 0, 1 }, "the replacement child did not draw its own input");
+        ctx.expect (host.inputPianoRoll ("cursor up"), "the replacement child did not receive Up");
+    } });
+    steps->push_back ({ 0, [&ctx, &track, original]
+    {
+        const auto& regions = track.midiRegions.current();
+        if (! ctx.expect (regions.size() == original.size(), "native navigation changed the region count")) return;
+        auto expected = original.front().notes;
+        for (auto& note : expected) ++note.noteNumber;
+        ctx.expect (regions.front().notes == expected && regions.back().notes == original.back().notes,
+                    "a native edit after replacement changed the wrong region");
+        ctx.expect (regions.front().ccs == original.front().ccs && regions.back().ccs == original.back().ccs,
+                    "native navigation changed controllers");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoNativeNavigationReopen { Scenario {
+    "gui.piano_native_navigation_reopen", { "gui", "piano", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoNativeNavigationReopen (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runPianoRollNoteKeys (GuiHost& host, ScenarioContext& ctx)
