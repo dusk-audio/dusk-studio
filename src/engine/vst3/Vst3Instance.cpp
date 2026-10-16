@@ -817,9 +817,12 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
                 if (isPanic (d) && ! ccMapped (d[0] & 0x0F, d[1])) return std::exchange (onChannel, 0);
                 return 0;
             };
-            const auto addEvent = [&] (const uint8_t* d, int, int samplePosition) noexcept
+            const auto addEvent = [&] (const uint8_t* d, int numBytes, int samplePosition) noexcept
             {
+                if (numBytes < 3) return;
                 const auto status  = (uint8_t) (d[0] & 0xF0u);
+                // Bend and pressure have already gone through parameter mapping.
+                if (status != 0xB0 && status != 0x80 && status != 0x90) return;
                 const auto channel = (int16_t) (d[0] & 0x0Fu);
                 Vst::Event ev {};
                 ev.busIndex     = 0;

@@ -554,6 +554,17 @@ struct Vst3Probe
         slot.getParamValue (heldNotesId, value);
         return value;
     }
+
+    double noteOffsSeen()
+    {
+        for (int i = 0; i < slot.paramCount(); ++i)
+            if (const auto* info = slot.paramInfo (i); info != nullptr && info->name == "Note Offs Seen")
+            {
+                double value = -1.0;
+                if (slot.getParamValue (info->id, value)) return value * 65535.0;
+            }
+        return -1.0;
+    }
 };
 } // namespace
 
@@ -615,6 +626,9 @@ TEST_CASE ("a hosted VST3 block bigger than the host's event list still ends its
 
     SECTION ("more note-offs than the host can carry")
     {
+        bool stopPacket = false;
+        SECTION ("hanging-note fallback") {}
+        SECTION ("Stop expression fallback") { stopPacket = true; }
         dusk::MidiBuffer start;
         addMidiAt (start, 0x90, 60, 100, 0);
         probe.run (&start);
@@ -622,11 +636,13 @@ TEST_CASE ("a hosted VST3 block bigger than the host's event list still ends its
 
         // Keys other than the held one, then its own note-off last.
         dusk::MidiBuffer block;
+        if (stopPacket) REQUIRE (duskstudio::midi::emitTransportStopReset (block, 0));
         for (int i = 0; i < kFlood; ++i)
             addMidiAt (block, 0x80, (std::uint8_t) (61 + i % 60), 0, i * (kBlock - 1) / kFlood);
         addMidiAt (block, 0x80, 60, 0, kBlock - 1);
         probe.run (&block);
         REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (1.0, 1.0e-6));
     }
 }
 

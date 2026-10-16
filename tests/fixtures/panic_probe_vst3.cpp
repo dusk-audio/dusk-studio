@@ -10,7 +10,9 @@ namespace Steinberg::Vst
 namespace
 {
 constexpr ParamID kHeldNotes = 200;
+constexpr ParamID kNoteOffsSeen = 201;
 constexpr int32 kMaxHeldNotes = 16;
+constexpr int32 kMaxNoteOffsSeen = 65535;
 
 class PanicProbeInstrument final : public SingleComponentEffect
 {
@@ -30,7 +32,10 @@ public:
         addAudioOutput (STR16 ("Output"), SpeakerArr::kStereo);
         parameters.addParameter (STR16 ("Held Notes"), nullptr, kMaxHeldNotes, 0.0,
                                  ParameterInfo::kIsReadOnly, kHeldNotes);
+        parameters.addParameter (STR16 ("Note Offs Seen"), nullptr, kMaxNoteOffsSeen, 0.0,
+                                 ParameterInfo::kIsReadOnly, kNoteOffsSeen);
         held = 0;
+        noteOffsSeen = 0;
         return kResultOk;
     }
 
@@ -53,11 +58,16 @@ public:
                 if (event.type == Event::kNoteOnEvent)
                     addNote (event.noteOn.channel, event.noteOn.pitch);
                 else if (event.type == Event::kNoteOffEvent)
+                {
+                    noteOffsSeen = std::min (kMaxNoteOffsSeen, noteOffsSeen + 1);
                     removeNote (event.noteOff.channel, event.noteOff.pitch);
+                }
             }
         }
         EditController::setParamNormalized (kHeldNotes,
                                             (ParamValue) held / (ParamValue) kMaxHeldNotes);
+        EditController::setParamNormalized (kNoteOffsSeen,
+                                            (ParamValue) noteOffsSeen / (ParamValue) kMaxNoteOffsSeen);
 
         auto& out = data.outputs[0];
         if (out.numChannels != 2 || out.channelBuffers32 == nullptr
@@ -100,6 +110,7 @@ private:
 
     std::array<Note, (size_t) kMaxHeldNotes> notes {};
     int32 held = 0;
+    int32 noteOffsSeen = 0;
 };
 } // namespace
 } // namespace Steinberg::Vst
