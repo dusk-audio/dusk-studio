@@ -128,11 +128,8 @@ jobs:
 
       - name: Configure tests (TSan, RelWithDebInfo)
         # GCC 11's runtime cannot observe pthread_cond_clockwait in timed C++ waits.
-        # RelWithDebInfo preserves -O2 (so the optimiser-driven memory
-        # ordering the engine relies on is the one TSan inspects) plus
-        # -g (so race reports resolve to file:line). Debug would be
-        # easier to read but inhibits the inlining + reordering that's
-        # the actual production codegen.
+        # RelWithDebInfo checks optimized GCC 12 code with line information.
+        # Release Linux jobs separately build with Ubuntu 22.04's GCC 11.
         run: |
           cmake -S . -B build-tsan -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
