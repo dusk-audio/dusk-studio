@@ -12,16 +12,111 @@
 #include "engine/vst3/Vst3HostContext.h"
 #include "engine/vst3/Vst3Instance.h"
 #include "engine/vst3/Vst3MidiNoteTracker.h"
+#include "support/AllocationObserver.h"
 
 #include <pluginterfaces/vst/ivsteditcontroller.h>
+#include <public.sdk/source/vst/hosting/parameterchanges.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <new>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
+
+TEST_CASE ("VST3 SDK parameter queues grow beyond their retained capacity", "[vst3][allocation]")
+{
+    using namespace Steinberg;
+    using duskstudio::test::AllocationObserver;
+    SECTION ("Allocation observation covers scalar and aligned storage")
+    {
+        std::size_t observed = 0;
+        {
+            AllocationObserver observer;
+            auto* scalar = ::operator new (17);
+            auto* array = ::operator new[] (17);
+            auto* aligned = ::operator new (64, std::align_val_t { 64 });
+            auto* alignedArray = ::operator new[] (64, std::align_val_t { 64 });
+            auto* scalarNoThrow = ::operator new (17, std::nothrow);
+            auto* arrayNoThrow = ::operator new[] (17, std::nothrow);
+            auto* alignedNoThrow = ::operator new (64, std::align_val_t { 64 }, std::nothrow);
+            auto* alignedArrayNoThrow = ::operator new[] (64, std::align_val_t { 64 }, std::nothrow);
+            ::operator delete (scalar);
+            ::operator delete[] (array);
+            ::operator delete (aligned, std::align_val_t { 64 });
+            ::operator delete[] (alignedArray, std::align_val_t { 64 });
+            ::operator delete (scalarNoThrow, std::nothrow);
+            ::operator delete[] (arrayNoThrow, std::nothrow);
+            ::operator delete (alignedNoThrow, std::align_val_t { 64 }, std::nothrow);
+            ::operator delete[] (alignedArrayNoThrow, std::align_val_t { 64 }, std::nothrow);
+            observed = observer.count();
+        }
+        CHECK (observed == 8);
+    }
+    SECTION ("A parameter queue grows only past its actual capacity")
+    {
+        struct Queue final : Vst::ParameterValueQueue
+        {
+            Queue() : ParameterValueQueue (7) {}
+            std::size_t capacity() const noexcept { return values.capacity(); }
+        } queue;
+        const auto initialCapacity = queue.capacity();
+        std::size_t growth = 0, reuse = 0;
+        bool accepted = true;
+        {
+            AllocationObserver observer;
+            for (std::size_t i = 0; i <= initialCapacity; ++i)
+            {
+                int32 index = -1;
+                accepted = (queue.addPoint (static_cast<int32> (i), 0.5, index) == kResultTrue) && accepted;
+            }
+            growth = observer.count();
+        }
+        REQUIRE (accepted);
+        CHECK (growth > 0);
+        const auto retainedCapacity = queue.capacity();
+        queue.clear();
+        {
+            AllocationObserver observer;
+            for (std::size_t i = 0; i < retainedCapacity; ++i)
+            {
+                int32 index = -1;
+                accepted = (queue.addPoint (static_cast<int32> (i), 0.5, index) == kResultTrue) && accepted;
+            }
+            int32 index = -1;
+            accepted = (queue.addPoint (0, 0.25, index) == kResultTrue) && accepted;
+            reuse = observer.count();
+        }
+        CHECK (accepted);
+        CHECK (reuse == 0);
+        CHECK (queue.getPointCount() == static_cast<int32> (retainedCapacity));
+        int32 offset = -1;
+        Vst::ParamValue value = 0.0;
+        REQUIRE (queue.getPoint (0, offset, value) == kResultTrue);
+        CHECK (offset == 0);
+        CHECK_THAT (value, Catch::Matchers::WithinAbs (0.25, 1e-12));
+    }
+    SECTION ("A queue-count hint does not bound parameter growth")
+    {
+        Vst::ParameterChanges changes (1);
+        std::size_t growth = 0;
+        bool accepted = true;
+        {
+            AllocationObserver observer;
+            for (Vst::ParamID id = 0; id < 2; ++id)
+            {
+                int32 index = -1;
+                accepted = (changes.addParameterData (id, index) != nullptr) && accepted;
+            }
+            growth = observer.count();
+        }
+        CHECK (accepted);
+        CHECK (growth > 0);
+        CHECK (changes.getParameterCount() == 2);
+    }
+}
 
 TEST_CASE ("VST3 panic releases every sounding note when its CC is unmapped",
            "[vst3][midi][regression][issue-460]")

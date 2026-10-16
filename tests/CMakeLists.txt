@@ -738,6 +738,7 @@ if(DUSKSTUDIO_NATIVE_VST3)
         vst3_bundle_load.cpp
         vst3_hostcontext_lifetime.cpp
         vst3_instance_process.cpp
+        support/AllocationObserver.cpp
         vst3_native_slot.cpp
         vst3_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3Bundle.cpp
