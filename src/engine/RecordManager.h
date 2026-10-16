@@ -14,6 +14,7 @@
 #include "audiofile/ThreadedFileWriter.h"
 #include "audiofile/WriterDrainPool.h"
 #include "MidiCaptureStream.h"
+#include "MidiMergePlayback.h"
 
 namespace duskstudio
 {
@@ -105,6 +106,26 @@ public:
                           std::int64_t blockStartFromRecord,
                           const LoopCaptureSpan* explicitLoopSpan = nullptr,
                           int numSamples = 0) noexcept;
+
+    // The callback must not retain the pointer: its guard keeps capture
+    // teardown out until reclamation and scheduling have both finished.
+    template <typename Fn>
+    void withPendingMidiPlayback (int trackIndex, Fn&& fn) noexcept
+    {
+        const AudioInFlightScope reading (audioInFlight);
+        MidiMergePlayback* pending = nullptr;
+        double sr = 0.0;
+        float bpm = 0.0f;
+        if (active.load (std::memory_order_seq_cst)
+            && trackIndex >= 0 && trackIndex < Session::kNumTracks)
+        {
+            const auto& capture = midiCaptures[(std::size_t) trackIndex];
+            if (capture) pending = capture->pendingPlayback.get();
+            sr = recordSampleRate;
+            bpm = recordTempoBpm;
+        }
+        fn (pending, sr, bpm);
+    }
 
     // The mode is fixed for a gesture and remains available after stop.
     bool isMidiMergeCapture() const noexcept { return midiMergeCapture; }
@@ -279,6 +300,7 @@ private:
         dusk::SpscIndexFifo    fifo { kCapacity };
         std::atomic<std::uint64_t> overflowCount { 0 };
         MidiCaptureStream stream;
+        std::unique_ptr<MidiMergePlayback> pendingPlayback;
         int lastPassOrdinal = 0;
         std::int64_t lastEndSample = 0;
         explicit PerTrackMidi (bool merge) : events (merge ? 0 : (size_t) kCapacity) {}

@@ -329,6 +329,14 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
             {
                 return samplesToTicks (sample, sampleRate, bpm);
             }, loopPlan.enabled ? loopPlan.captureEndSample - loopPlan.captureStartSample : 0);
+            if (midiMergeCapture && loopPlan.enabled)
+            {
+                cap->pendingPlayback = std::make_unique<MidiMergePlayback>();
+                cap->pendingPlayback->configure (midiCaptureGestureId,
+                    loopPlan.captureEndSample - loopPlan.captureStartSample,
+                    [sampleRate, bpm = recordTempoBpm] (std::int64_t sample)
+                    { return samplesToTicks (sample, sampleRate, bpm); });
+            }
             midiCaptures[(size_t) t] = std::move (cap);
             captureTrackMask |= std::uint32_t { 1 } << t;
             midiCaptureTrackMask |= std::uint32_t { 1 } << t;
@@ -1272,8 +1280,16 @@ void RecordManager::writeMidiBlockImpl (int trackIndex,
                + meta.samplePosition - selectedLoopSpan.inputOffset)
             : (blockStartFromRecord + meta.samplePosition);
         if (samplePos < 0) continue;
-        cap->stream.pushEvent (passOrdinal, samplePos, status,
-                               (std::uint8_t) raw[1], sz == 3 ? (std::uint8_t) raw[2] : 0);
+        const auto second = sz == 3 ? (std::uint8_t) raw[2] : std::uint8_t { 0 };
+        const bool retained = cap->stream.pushEvent (passOrdinal, samplePos, status,
+                                                      (std::uint8_t) raw[1], second);
+        if (cap->pendingPlayback)
+        {
+            if (retained)
+                cap->pendingPlayback->pushEvent (passOrdinal, samplePos, status, (std::uint8_t) raw[1], second);
+            else
+                cap->pendingPlayback->recoverGap();
+        }
         if (midiMergeCapture) continue;
 
         int needed = 1;
@@ -1319,7 +1335,13 @@ void RecordManager::writeMidiBlockImpl (int trackIndex,
     const auto end = loopPlan.enabled
         ? selectedLoopSpan.timelineStart - loopPlan.captureStartSample + selectedLoopSpan.numSamples
         : blockStartFromRecord + std::max (0, numSamples);
-    cap->stream.publishProgress (passOrdinal, end, loopPlan.enabled && selectedLoopSpan.endsPass);
+    const bool complete = loopPlan.enabled && selectedLoopSpan.endsPass;
+    const bool retained = cap->stream.publishProgress (passOrdinal, end, complete);
+    if (cap->pendingPlayback)
+    {
+        if (retained) cap->pendingPlayback->publishProgress (passOrdinal, end, complete);
+        else          cap->pendingPlayback->recoverGap();
+    }
     cap->lastPassOrdinal = passOrdinal;
     cap->lastEndSample = std::max<std::int64_t> (0, end);
 }

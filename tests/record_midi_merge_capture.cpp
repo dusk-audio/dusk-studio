@@ -102,6 +102,8 @@ TEST_CASE ("RecordManager snapshots MIDI merge mode and previews both capture mo
     fixture.session.midiMergeEnabled.store (! merge, std::memory_order_relaxed);
     REQUIRE (fixture.manager.isMidiMergeCapture() == merge);
     REQUIRE (fixture.manager.midiCaptureTimelineStart() == 1000);
+    fixture.manager.withPendingMidiPlayback (0, [] (auto* pending, double, float)
+    { CHECK (pending == nullptr); });
     dusk::MidiBuffer held;
     addMessage (held, 0x90, 64, 100, 10);
     fixture.manager.writeMidiBlock (0, held, 0, nullptr, 40);
@@ -161,6 +163,22 @@ TEST_CASE ("RecordManager waits for every captured MIDI track before publishing 
     REQUIRE (groups[0].tracks[1].trackIndex == 1);
     REQUIRE (groups[0].tracks[0].pass.notes[0].noteNumber == 60);
     REQUIRE (groups[0].tracks[1].pass.notes[0].noteNumber == 64);
+    fixture.manager.withPendingMidiPlayback (0, [gesture] (auto* pending, double sr, float bpm)
+    {
+        REQUIRE (pending != nullptr);
+        CHECK_THAT (sr, WithinAbs (kSampleRate, 1.0e-9));
+        CHECK_THAT ((double) bpm, WithinAbs (120.0, 1.0e-9));
+        std::vector<MidiNote> notes;
+        int scans = 100;
+        REQUIRE (pending->forEachNote ({}, 3, scans, [&notes] (const auto& note)
+        { notes.push_back (note); return true; }));
+        CHECK (notes == std::vector<MidiNote> { { 1, 60, 100, 10, 20 }, { 1, 62, 100, 10, 20 } });
+        pending->discardConsumed ({ gesture, 1 });
+        notes.clear();
+        REQUIRE (pending->forEachNote ({ gesture, 1 }, 3, scans, [&notes] (const auto& note)
+        { notes.push_back (note); return true; }));
+        CHECK (notes == std::vector<MidiNote> { { 1, 62, 100, 10, 20 } });
+    });
     dusk::MidiBuffer empty;
     writeLoop (fixture.manager, 1, 2, empty);
     groups = fixture.manager.takeMidiPassGroups();
@@ -178,6 +196,13 @@ TEST_CASE ("RecordManager waits for every captured MIDI track before publishing 
     REQUIRE (groups[0].tracks.empty());
     fixture.manager.stopRecording (200);
     REQUIRE (fixture.manager.takeMidiPassGroups().empty());
+    bool stoppedVisited = false;
+    fixture.manager.withPendingMidiPlayback (0, [&stoppedVisited] (auto* pending, double, float)
+    {
+        stoppedVisited = true;
+        CHECK (pending == nullptr);
+    });
+    CHECK (stoppedVisited);
     REQUIRE (fixture.manager.startRecording (kSampleRate, 100, 0, loopPlan()));
     writeLoop (fixture.manager, 0, 1, note (67));
     writeLoop (fixture.manager, 1, 1, empty);
