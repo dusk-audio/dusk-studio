@@ -84,6 +84,7 @@ private:
         InstalledPack installed;
         std::vector<ManagedSfzLocator> inUse;
         std::filesystem::path part, staging, destination;
+        DirectoryLease partLease;
     };
 
     struct BrowseSession

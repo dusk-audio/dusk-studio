@@ -300,6 +300,132 @@ TEST_CASE ("SFZ library initialization and installed scans never contact a repos
     REQUIRE_FALSE (service.resume());
 }
 
+TEST_CASE ("SFZ library sweeps abandoned work without losing reusable downloads", "[sfz][service][storage][ipc]")
+{
+    Tree tree;
+    REQUIRE (fs::create_directory (tree.root / "packs"));
+    const auto cache = tree.root / ".repository-cache";
+    REQUIRE (fs::create_directory (cache));
+    const auto bytes = archiveBytes();
+    const auto pack = packFor (bytes);
+    const auto part = cache / (hash (providerPackToJson (pack)) + ".part");
+    ScriptedTransport interrupted;
+    Reply prefix { bytes.substr (0, 64), 200,
+        { { "content-length", std::to_string (bytes.size()) }, { "etag", "\"version1\"" } } };
+    prefix.endStatus = OperationStatus::Failed;
+    interrupted.append (std::move (prefix));
+    REQUIRE (downloadFile (interrupted, { pack.downloadUrl, part, pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes }).preservePart);
+    const auto staging = tree.root / (".install-" + std::string (32, 'a'));
+    const auto rollback = tree.root / (".install-" + std::string (32, 'b') + ".replaced");
+    const auto unrelated = tree.root / ".install-unrelated";
+    const auto uppercaseStage = tree.root / (".install-" + std::string (32, 'A'));
+    for (const auto& directory : { staging, rollback, unrelated, uppercaseStage })
+    {
+        REQUIRE (fs::create_directory (directory));
+        REQUIRE (dusk::fs::writeStringToFile (directory / "keep-or-sweep", "contents"));
+    }
+    const auto temporary = cache / (".cache-" + std::string (32, 'c'));
+    const auto invalid = cache / (std::string (64, 'd') + ".part");
+    const auto orphan = cache / (std::string (64, 'e') + ".part.resume.json");
+    const auto foreign = cache / ".cache-unrelated";
+    const auto uppercaseCache = cache / (".cache-" + std::string (32, 'C'));
+    for (const auto& file : { temporary, invalid, orphan, foreign, uppercaseCache })
+        REQUIRE (dusk::fs::writeStringToFile (file, "keep-or-sweep"));
+    const auto directoryPretendingToBeFile = cache / (".cache-" + std::string (32, 'f'));
+    REQUIRE (fs::create_directory (directoryPretendingToBeFile));
+    const auto uncertain = cache / (std::string (64, 'f') + ".part");
+    REQUIRE (fs::copy_file (part, uncertain));
+    auto sidecar = part; sidecar += ".resume.json";
+    auto uncertainSidecar = uncertain; uncertainSidecar += ".resume.json";
+    REQUIRE (fs::copy_file (sidecar, uncertainSidecar));
+    std::error_code linkError;
+    fs::create_hard_link (uncertainSidecar, cache / "unrelated-sidecar-link", linkError);
+    if (! linkError) REQUIRE (inspectDownloadPart (uncertain, ArchiveLimits{}.maxArchiveBytes) == DownloadPartState::Unavailable);
+    const auto outside = tree.root / "unrelated-target";
+    REQUIRE (fs::create_directory (outside));
+    REQUIRE (dusk::fs::writeStringToFile (outside / "keep", "contents"));
+    const auto symbolicStage = tree.root / (".install-" + std::string (32, '0'));
+    fs::create_directory_symlink (outside, symbolicStage, linkError);
+    const bool madeSymbolicStage = ! linkError;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    LibraryService service (tree.root, transport);
+    REQUIRE (settled (service).state == LibraryState::Idle);
+    CHECK (transport->count() == 0);
+    CHECK_FALSE (fs::exists (staging));
+    CHECK_FALSE (fs::exists (temporary));
+    CHECK_FALSE (fs::exists (invalid));
+    CHECK_FALSE (fs::exists (orphan));
+    CHECK (fs::exists (rollback / "keep-or-sweep"));
+    CHECK (fs::exists (unrelated / "keep-or-sweep"));
+    CHECK (fs::exists (uppercaseStage / "keep-or-sweep"));
+    CHECK (fs::exists (foreign));
+    CHECK (fs::exists (uppercaseCache));
+    CHECK (fs::is_directory (directoryPretendingToBeFile));
+    CHECK (dusk::fs::loadFileAsString (uncertain) == bytes.substr (0, 64));
+    CHECK (fs::exists (uncertainSidecar));
+    CHECK (fs::exists (outside / "keep"));
+    if (madeSymbolicStage) CHECK (fs::is_symlink (fs::symlink_status (symbolicStage)));
+    CHECK (dusk::fs::loadFileAsString (part) == bytes.substr (0, 64));
+    transport->append ({ bytes.substr (64), 206,
+        { { "content-length", std::to_string (bytes.size() - 64) },
+          { "content-range", "bytes 64-" + std::to_string (bytes.size() - 1) + "/" + std::to_string (bytes.size()) },
+          { "etag", "\"version1\"" } } });
+    REQUIRE (service.install (pack));
+    REQUIRE (settled (service).state == LibraryState::Complete);
+    REQUIRE (transport->count() == 1);
+    CHECK (transport->request (0).headers.at ("range") == "bytes=64-");
+    CHECK (transport->request (0).headers.at ("if-range") == "\"version1\"");
+    CHECK (service.snapshot().installed.size() == 1);
+}
+
+TEST_CASE ("SFZ library startup cannot sweep directories with an active owner", "[sfz][service][storage][ipc]")
+{
+    Tree tree;
+    const auto cache = tree.root / ".repository-cache";
+    const auto temporary = cache / (".cache-" + std::string (32, 'a'));
+    const auto partial = cache / (std::string (64, 'b') + ".part");
+    fs::path staging;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    {
+        PackStore active (tree.root);
+        std::string error;
+        staging = active.createStaging (error);
+        REQUIRE_FALSE (staging.empty());
+        REQUIRE (fs::create_directory (cache));
+        DirectoryLease repositoryOwner;
+        REQUIRE (repositoryOwner.acquire (cache, DirectoryLease::Access::Shared, error));
+        REQUIRE (dusk::fs::writeStringToFile (temporary, "active write"));
+        REQUIRE (dusk::fs::writeStringToFile (partial, "active download"));
+        LibraryService second (tree.root, transport);
+        REQUIRE (settled (second).state == LibraryState::Idle);
+        CHECK (fs::is_directory (staging));
+        CHECK (dusk::fs::loadFileAsString (temporary) == "active write");
+        CHECK (dusk::fs::loadFileAsString (partial) == "active download");
+        CHECK (transport->count() == 0);
+    }
+    LibraryService restarted (tree.root, transport);
+    REQUIRE (settled (restarted).state == LibraryState::Idle);
+    CHECK_FALSE (fs::exists (staging));
+    CHECK_FALSE (fs::exists (temporary));
+    CHECK_FALSE (fs::exists (partial));
+    CHECK (transport->count() == 0);
+   #if ! defined(_WIN32)
+    SECTION ("Repository work reacquires ownership after its directory is replaced")
+    {
+        fs::rename (cache, tree.root / "moved-cache");
+        REQUIRE (fs::create_directory (cache));
+        transport->append ({ listing });
+        REQUIRE (restarted.browse ("musical-artifacts"));
+        REQUIRE (settled (restarted).state == LibraryState::Complete);
+        DirectoryLease maintenance;
+        std::string error;
+        CHECK_FALSE (maintenance.acquire (cache, DirectoryLease::Access::Exclusive, error));
+        CHECK (error.empty());
+        CHECK (transport->count() == 1);
+    }
+   #endif
+}
+
 TEST_CASE ("SFZ library preserves saved downloads when its metadata cache is unavailable", "[sfz][service][storage][ipc]")
 {
     Tree tree;

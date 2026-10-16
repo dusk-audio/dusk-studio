@@ -45,6 +45,73 @@ bool plainDirectory (const fs::path& path)
     return fs::is_directory (fs::symlink_status (path, error)) && ! error;
 }
 
+bool lowerHex (std::string_view name)
+{
+    return std::all_of (name.begin(), name.end(), [] (char c)
+    { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+}
+
+void removePlainFile (const fs::path& path)
+{
+    std::error_code error;
+    if (! fs::is_regular_file (fs::symlink_status (path, error)) || error) return;
+    if (fs::hard_link_count (path, error) != 1 || error) return;
+    fs::remove (path, error);
+}
+
+void sweepWorkDirectory (const fs::path& directory) noexcept
+{
+    try
+    {
+        DirectoryLease maintenance;
+        std::string ownershipError;
+        if (! maintenance.acquire (directory, DirectoryLease::Access::Exclusive, ownershipError)) return;
+        std::error_code error;
+        for (fs::directory_iterator it (directory, error), end; ! error && it != end; it.increment (error))
+        {
+            const auto name = it->path().filename().u8string();
+            if (name.size() == 39 && name.compare (0, 7, ".cache-") == 0 && lowerHex (std::string_view (name).substr (7)))
+            {
+                removePlainFile (it->path());
+                continue;
+            }
+            const bool part = name.size() == 69 && name.compare (64, 5, ".part") == 0;
+            const bool sidecar = name.size() == 81 && name.compare (64, 17, ".part.resume.json") == 0;
+            if ((! part && ! sidecar) || ! lowerHex (std::string_view (name).substr (0, 64))) continue;
+            const auto path = directory / fs::u8path (name.substr (0, 69));
+            if (inspectDownloadPart (path, ArchiveLimits{}.maxArchiveBytes) != DownloadPartState::Invalid) continue;
+            removePlainFile (path);
+            auto metadata = path;
+            metadata += ".resume.json";
+            removePlainFile (metadata);
+        }
+    }
+    catch (...) {}
+}
+
+void sweepLibraryStaging (const LibraryLocation& location) noexcept
+{
+    try
+    {
+        if (! libraryLocationAvailable (location)) return;
+        DirectoryLease maintenance;
+        std::string ownershipError;
+        if (! maintenance.acquire (location.root, DirectoryLease::Access::Exclusive, ownershipError)
+            || ! libraryLocationAvailable (location)) return;
+        std::error_code error;
+        for (fs::directory_iterator it (location.root, error), end; ! error && it != end; it.increment (error))
+        {
+            const auto name = it->path().filename().u8string();
+            if (name.size() != 41 || name.compare (0, 9, ".install-") != 0
+                || ! lowerHex (std::string_view (name).substr (9))) continue;
+            std::error_code entryError;
+            if (fs::is_directory (it->symlink_status (entryError)) && ! entryError)
+                fs::remove_all (it->path(), entryError);
+        }
+    }
+    catch (...) {}
+}
+
 bool atomicCacheWrite (const fs::path& target, const std::string& text)
 {
     if (sodium_init() < 0) return false;
@@ -470,6 +537,13 @@ void LibraryService::cleanInstall (Job& job, bool removeDownload) noexcept
     if (removeDownload && ! job.part.empty())
     {
         if (! fs::is_directory (fs::symlink_status (job.part.parent_path(), error)) || error) return;
+        DirectoryLease cleanupLease;
+        std::string ownershipError;
+        try
+        {
+            if (! cleanupLease.acquire (job.part.parent_path(), DirectoryLease::Access::Shared, ownershipError)) return;
+        }
+        catch (...) { return; }
         fs::remove (job.part, error);
         auto sidecar = job.part;
         sidecar += ".resume.json";
@@ -629,6 +703,10 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         setState (job.generation, LibraryState::Downloading);
         if (! plainDirectory (job.part.parent_path()))
             return { OperationStatus::Failed, "Cannot open the SFZ download directory" };
+        DirectoryLease next;
+        if (! next.acquire (job.part.parent_path(), DirectoryLease::Access::Shared, error))
+            return { OperationStatus::Failed, error };
+        job.partLease = std::move (next);
         const auto downloaded = downloadFile (*transport,
             { job.pack.downloadUrl, job.part, job.pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes }, control);
         job.preserveDownload = downloaded.preservePart || static_cast<bool> (downloaded);
@@ -707,13 +785,32 @@ void LibraryService::run()
     setpriority (PRIO_PROCESS, 0, 10);
 #endif
     std::string initializationError = locations.error;
+    const auto sweepLocation = [] (const LibraryLocation& location)
+    {
+        sweepLibraryStaging (location);
+        if (! libraryLocationAvailable (location)) return;
+        sweepWorkDirectory (location.root / ".repository-cache");
+        sweepWorkDirectory (location.root / ".downloads");
+    };
+    if (initializationError.empty())
+    {
+        sweepLocation (locations.active);
+        for (const auto& previous : locations.previous) sweepLocation (previous);
+    }
     const bool initialized = initializationError.empty() && store.initialize (initializationError);
     bool cacheReady = false;
+    DirectoryLease repositoryLease;
     if (initialized || ! configurationFile.empty())
     {
         std::error_code error;
         fs::create_directories (cacheRoot.parent_path(), error);
         cacheReady = plainDirectory (cacheRoot);
+        if (cacheReady)
+        {
+            sweepWorkDirectory (cacheRoot);
+            std::string ownershipError;
+            cacheReady = repositoryLease.acquire (cacheRoot, DirectoryLease::Access::Shared, ownershipError);
+        }
         if (! cacheReady) initializationError = "Cannot open the SFZ repository cache directory";
     }
     const auto installed = installedLibraryPacks (locations);
@@ -757,9 +854,19 @@ void LibraryService::run()
         OperationResult result;
         try
         {
-            result = cacheReady || job.kind == JobKind::ChangeLocation
-                ? execute (job, control)
-                : OperationResult { OperationStatus::Failed, initializationError };
+            DirectoryLease nextRepository;
+            std::string ownershipError;
+            const bool usesRepository = job.kind == JobKind::Browse || job.kind == JobKind::Resolve;
+            if (cacheReady && usesRepository
+                && ! nextRepository.acquire (cacheRoot, DirectoryLease::Access::Shared, ownershipError))
+                result = { OperationStatus::Failed, ownershipError };
+            else
+            {
+                if (nextRepository) repositoryLease = std::move (nextRepository);
+                result = cacheReady || job.kind == JobKind::ChangeLocation
+                    ? execute (job, control)
+                    : OperationResult { OperationStatus::Failed, initializationError };
+            }
         }
         catch (const std::exception& exception)
         {
