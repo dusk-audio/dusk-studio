@@ -1016,6 +1016,13 @@ endif()
 # script is Unix-only.
 if(UNIX)
     find_program(DUSKSTUDIO_BASH_EXECUTABLE bash)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND DUSKSTUDIO_BASH_EXECUTABLE)
+        add_test(NAME sfz-disk-full
+            COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/sfz_disk_full.sh"
+                    "$<TARGET_FILE:dusk-studio-tests>")
+        set_tests_properties(sfz-disk-full PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    endif()
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(DUSKSTUDIO_BASH_EXECUTABLE AND Python3_Interpreter_FOUND)
         add_test(NAME package-contents-checker

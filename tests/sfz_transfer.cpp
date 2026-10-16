@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/sfz/SfzTransfer.h"
+#include "engine/sfz/SfzDirectoryLease.h"
 #include "engine/sfz/SfzNetworkPolicy.h"
 #include "foundation/Fs.h"
 #include "foundation/Json.h"
@@ -8,6 +9,7 @@
 #include <sodium.h>
 
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -124,6 +126,51 @@ TEST_CASE ("SFZ transfer streams and hashes a bounded archive", "[sfz][transfer]
     CHECK (readFile (temp.part()) == "abcdefgh");
     CHECK (transport.requests.front().timeoutSeconds == 0);
     CHECK (transport.requests.front().lowSpeedSeconds == 30);
+}
+
+TEST_CASE ("SFZ downloads report real filesystem capacity failures", "[sfz][transfer][sfz-disk-full]")
+{
+   #if defined(__linux__)
+    const auto* rootSetting = std::getenv ("DUSK_SFZ_CAPACITY_ROOT");
+    const auto* modeSetting = std::getenv ("DUSK_SFZ_CAPACITY_MODE");
+    if (! rootSetting || ! modeSetting) SKIP ("Requires the private tmpfs fixture from sfz_disk_full.sh");
+    const auto root = std::filesystem::canonical (rootSetting);
+    const std::string mode = modeSetting;
+    REQUIRE ((mode == "inodes" || mode == "bytes"));
+    REQUIRE (std::filesystem::is_empty (root));
+    REQUIRE (std::filesystem::space (root).capacity <= 64 * 1024);
+    FakeTransport transport;
+    DownloadRequest download { "https://example.test/archive.zip", root / "archive.part", {}, 1024 * 1024 };
+    if (mode == "inodes")
+    {
+        DirectoryLease lease;
+        std::string error;
+        std::error_code nativeError;
+        CHECK_FALSE (lease.acquire (root, DirectoryLease::Access::Shared, error, &nativeError));
+        CHECK (nativeError == std::errc::no_space_on_device);
+        CHECK_FALSE (error.empty());
+        const auto result = downloadFile (transport, download);
+        CHECK (result.status == OperationStatus::Failed);
+        CHECK (result.failureKind == FailureKind::DiskFull);
+        CHECK (result.preservePart);
+        CHECK (transport.requests.empty());
+        CHECK (std::filesystem::is_empty (root));
+    }
+    else
+    {
+        const std::string body (256 * 1024, 'a');
+        transport.replies.push_back ({ 200, { { "content-length", std::to_string (body.size()) },
+                                              { "etag", "\"v1\"" } }, body, 4096 });
+        const auto result = downloadFile (transport, download);
+        CHECK (result.status == OperationStatus::Failed);
+        CHECK (result.failureKind == FailureKind::DiskFull);
+        CHECK ((result.error == "Cannot write download part" || result.error == "Cannot flush download part"));
+        CHECK (transport.requests.size() == 1);
+        CHECK (result.bytes < body.size());
+    }
+   #else
+    SKIP ("The bounded tmpfs fixture requires Linux user and mount namespaces");
+   #endif
 }
 
 TEST_CASE ("SFZ download inspection preserves usable state without writing", "[sfz][transfer]")
