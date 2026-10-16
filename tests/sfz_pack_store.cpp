@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/sfz/SfzPackStore.h"
+#include "engine/sfz/SfzPackIntegrity.h"
 #include "foundation/Fs.h"
 
 #include <sodium.h>
@@ -454,4 +455,139 @@ TEST_CASE ("SFZ publication reuses the identical version without exposing leftov
     REQUIRE (result.pack->directory == installed.directory);
     REQUIRE (store.installed().size() == 1);
     REQUIRE_FALSE (fs::exists (staging));
+}
+
+TEST_CASE ("SFZ installed tree digests include paths and contents without receipt metadata", "[sfz][store]")
+{
+    StoreTree tree;
+    REQUIRE (fs::create_directory (tree.root / "Samples"));
+    const std::string entrypoint = "<region> sample=Samples/tone.wav";
+    REQUIRE (dusk::fs::writeStringToFile (tree.root / "Piano.sfz", entrypoint));
+    REQUIRE (dusk::fs::writeStringToFile (tree.root / "Samples/tone.wav", "original samples"));
+    REQUIRE (dusk::fs::writeStringToFile (tree.root / fs::u8path (u8"Samples/Étude.wav"), "unicode samples"));
+    const auto baseline = hashPackContents (tree.root);
+    REQUIRE (baseline);
+    REQUIRE (isSha256 (baseline.sha256));
+    bool unchanged = false;
+    SECTION ("Receipt metadata is excluded")
+    {
+        REQUIRE (dusk::fs::writeStringToFile (tree.root / ".dusk-pack.json", "receipt metadata"));
+        unchanged = true;
+    }
+    SECTION ("Canonical Unicode filename spellings have the same digest")
+    {
+        fs::rename (tree.root / fs::u8path (u8"Samples/Étude.wav"),
+                    tree.root / fs::u8path (u8"Samples/E\u0301tude.wav"));
+        unchanged = true;
+    }
+   #if defined(_WIN32)
+    SECTION ("A restored last-write time cannot hide an edit to an already hashed file")
+    {
+        const auto first = tree.root / "Piano.sfz";
+        const auto modified = fs::last_write_time (first);
+        bool edited = false;
+        OperationControl control;
+        control.progress = [&] (const OperationProgress& progress)
+        {
+            if (edited || progress.completedBytes <= entrypoint.size()) return;
+            REQUIRE (dusk::fs::writeStringToFile (first, std::string (entrypoint.size(), 'x')));
+            fs::last_write_time (first, modified);
+            edited = true;
+        };
+        const auto result = hashPackContents (tree.root, control);
+        REQUIRE (edited);
+        CHECK (result.status == OperationStatus::Failed);
+        CHECK (result.failureKind == FailureKind::Integrity);
+        CHECK (result.sha256.empty());
+        return;
+    }
+   #endif
+    SECTION ("The absolute library path is excluded")
+    {
+        StoreTree copy;
+        fs::copy (tree.root, copy.root, fs::copy_options::recursive);
+        REQUIRE (hashPackContents (copy.root).sha256 == baseline.sha256);
+        unchanged = true;
+    }
+    SECTION ("Equal-length sample corruption")
+    { REQUIRE (dusk::fs::writeStringToFile (tree.root / "Samples/tone.wav", "modified samples")); }
+    SECTION ("A missing sample") { REQUIRE (fs::remove (tree.root / "Samples/tone.wav")); }
+    SECTION ("An added file") { REQUIRE (dusk::fs::writeStringToFile (tree.root / "extra.txt", "extra")); }
+    SECTION ("A renamed sample") { fs::rename (tree.root / "Samples/tone.wav", tree.root / "Samples/other.wav"); }
+    SECTION ("An empty directory") { REQUIRE (fs::create_directory (tree.root / "Empty")); }
+    const auto current = hashPackContents (tree.root);
+    REQUIRE (current);
+    CHECK ((current.sha256 == baseline.sha256) == unchanged);
+}
+
+TEST_CASE ("SFZ installed tree hashing bounds and refuses unsafe entries", "[sfz][store]")
+{
+    StoreTree tree;
+    REQUIRE (fs::create_directory (tree.root / "Samples"));
+    REQUIRE (dusk::fs::writeStringToFile (tree.root / "Piano.sfz", "<region>"));
+    REQUIRE (dusk::fs::writeStringToFile (tree.root / "Samples/tone.wav", "samples"));
+    ArchiveLimits limits;
+    SECTION ("Entry count") { limits.maxFiles = 2; }
+    SECTION ("Combined bytes") { limits.maxExpandedBytes = 4; }
+    SECTION ("Path depth") { limits.paths.maxDepth = 1; }
+    SECTION ("Path length") { limits.paths.maxBytes = 8; }
+    SECTION ("Symbolic file")
+    {
+        std::error_code error;
+        fs::create_symlink (tree.root / "Piano.sfz", tree.root / "alias.sfz", error);
+        if (error) SKIP ("The filesystem cannot create the symbolic-file fixture");
+    }
+    SECTION ("Hard-linked file")
+    {
+        std::error_code error;
+        fs::create_hard_link (tree.root / "Piano.sfz", tree.root / "alias.sfz", error);
+        if (error) SKIP ("The filesystem cannot create the hard-link fixture");
+    }
+    SECTION ("Symbolic directory")
+    {
+        std::error_code error;
+        fs::create_directory_symlink (tree.root / "Samples", tree.root / "alias", error);
+        if (error) SKIP ("The filesystem cannot create the symbolic-directory fixture");
+    }
+    SECTION ("Portable aliases")
+    {
+        REQUIRE (dusk::fs::writeStringToFile (tree.root / "PIANO.sfz", "<region>"));
+        if (fs::equivalent (tree.root / "Piano.sfz", tree.root / "PIANO.sfz"))
+            SKIP ("The filesystem cannot create case-distinct names");
+    }
+    const auto result = hashPackContents (tree.root, {}, limits);
+    CHECK (result.status == OperationStatus::Failed);
+    CHECK (result.failureKind == FailureKind::Integrity);
+    CHECK (result.sha256.empty());
+}
+
+TEST_CASE ("SFZ installed tree hashing yields to pause and cancellation", "[sfz][store]")
+{
+    StoreTree tree;
+    const std::string bytes (3 * 65536, 'a');
+    REQUIRE (dusk::fs::writeStringToFile (tree.root / "Piano.sfz", bytes));
+    bool interrupted = false;
+    auto expected = OperationStatus::Cancelled;
+    OperationControl control;
+    SECTION ("Cancellation") { control.cancelled = [&] { return interrupted; }; }
+    SECTION ("Pause") { expected = OperationStatus::Paused; control.paused = [&] { return interrupted; }; }
+    SECTION ("A short pause cannot turn into an empty successful digest")
+    {
+        int polls = 0;
+        control.paused = [&] { return ++polls == 1; };
+        const auto result = hashPackContents (tree.root, control);
+        CHECK (result.status == OperationStatus::Paused);
+        CHECK (result.sha256.empty());
+        return;
+    }
+    std::uint64_t completed = 0;
+    control.progress = [&] (const OperationProgress& progress)
+    { completed = progress.completedBytes; interrupted = true; };
+    const auto result = hashPackContents (tree.root, control);
+    CHECK (result.status == expected);
+    CHECK (result.failureKind == FailureKind::None);
+    CHECK (result.sha256.empty());
+    CHECK (completed > 0);
+    CHECK (completed <= 65536);
+    CHECK (dusk::fs::loadFileAsString (tree.root / "Piano.sfz") == bytes);
 }

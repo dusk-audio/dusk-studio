@@ -55,6 +55,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPathPolicy.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzProvider.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPackStore.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPackIntegrity.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPackIndex.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibraryLocations.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibraryService.cpp
