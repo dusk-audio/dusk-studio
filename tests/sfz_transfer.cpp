@@ -2,6 +2,7 @@
 
 #include "engine/sfz/SfzTransfer.h"
 #include "engine/sfz/SfzNetworkPolicy.h"
+#include "foundation/Json.h"
 
 #include <sodium.h>
 
@@ -118,6 +119,91 @@ TEST_CASE ("SFZ transfer streams and hashes a bounded archive", "[sfz][transfer]
     CHECK (readFile (temp.part()) == "abcdefgh");
     CHECK (transport.requests.front().timeoutSeconds == 0);
     CHECK (transport.requests.front().lowSpeedSeconds == 30);
+}
+
+TEST_CASE ("SFZ download inspection preserves usable state without writing", "[sfz][transfer]")
+{
+    TemporaryDownload temp;
+    FakeTransport transport;
+    const auto download = request (temp);
+    pauseAfterPrefix (transport, download);
+    auto sidecar = temp.part();
+    sidecar += ".resume.json";
+    const auto original = readFile (sidecar);
+    const auto partTime = std::filesystem::last_write_time (temp.part());
+    const auto metadataTime = std::filesystem::last_write_time (sidecar);
+    REQUIRE (inspectDownloadPart (temp.part(), download.maxBytes) == DownloadPartState::Reusable);
+    CHECK (readFile (temp.part()) == "abcd");
+    CHECK (readFile (sidecar) == original);
+    CHECK (std::filesystem::last_write_time (temp.part()) == partTime);
+    CHECK (std::filesystem::last_write_time (sidecar) == metadataTime);
+    CHECK (transport.requests.size() == 1);
+    const auto parsed = dusk::json::Json::parse (original);
+    SECTION ("Malformed and inconsistent metadata is invalid")
+    {
+        auto missingUrl = parsed; missingUrl.erase ("url");
+        auto insecureUrl = parsed; insecureUrl["url"] = "http://example.test/archive.zip";
+        auto badDigest = parsed; badDigest["digest"] = "incomplete";
+        auto weak = parsed; weak["etag"] = "W/\"v1\""; weak["last_modified"] = "";
+        auto badEffective = parsed; badEffective["effective_url"] = "file:///archive.zip";
+        auto wrongSize = parsed; wrongSize["completed_bytes"] = 8; wrongSize["actual_sha256"] = sha256 ("abcd");
+        auto badActual = parsed; badActual["completed_bytes"] = 4; badActual["actual_sha256"] = "broken";
+        auto mismatch = parsed; mismatch["completed_bytes"] = 4; mismatch["actual_sha256"] = sha256 ("abcd");
+        mismatch["digest"] = sha256 ("abcdefgh");
+        for (const auto& metadata : { missingUrl, insecureUrl, badDigest, weak, badEffective, wrongSize, badActual, mismatch })
+        {
+            const auto text = metadata.dump();
+            CAPTURE (text);
+            std::ofstream (sidecar, std::ios::binary | std::ios::trunc) << text;
+            CHECK (inspectDownloadPart (temp.part(), download.maxBytes) == DownloadPartState::Invalid);
+            CHECK (readFile (sidecar) == text);
+            CHECK (readFile (temp.part()) == "abcd");
+        }
+        for (const auto& text : { std::string ("{"), std::string (16385, 'x') })
+        {
+            std::ofstream (sidecar, std::ios::binary | std::ios::trunc) << text;
+            CHECK (inspectDownloadPart (temp.part(), download.maxBytes) == DownloadPartState::Invalid);
+            CHECK (readFile (sidecar) == text);
+        }
+    }
+    SECTION ("Completed metadata needs no entity validator but content is still rehashed")
+    {
+        auto completed = parsed;
+        completed["etag"] = completed["last_modified"] = "";
+        completed["completed_bytes"] = 4;
+        completed["actual_sha256"] = sha256 ("abcd");
+        std::ofstream (sidecar, std::ios::binary | std::ios::trunc) << completed.dump();
+        CHECK (inspectDownloadPart (temp.part(), download.maxBytes) == DownloadPartState::Reusable);
+        std::ofstream (temp.part(), std::ios::binary | std::ios::trunc) << "wxyz";
+        CHECK (inspectDownloadPart (temp.part(), download.maxBytes) == DownloadPartState::Reusable);
+        CHECK_FALSE (downloadFile (transport, download));
+        CHECK (transport.requests.size() == 1);
+    }
+    SECTION ("Missing paths and oversized or empty parts stay untouched")
+    {
+        CHECK (inspectDownloadPart (temp.part(), 3) == DownloadPartState::Invalid);
+        REQUIRE (std::filesystem::remove (sidecar));
+        CHECK (inspectDownloadPart (temp.part(), download.maxBytes) == DownloadPartState::Invalid);
+        CHECK_FALSE (std::filesystem::exists (sidecar));
+        std::ofstream (temp.part(), std::ios::binary | std::ios::trunc);
+        CHECK (inspectDownloadPart (temp.part(), download.maxBytes) == DownloadPartState::Invalid);
+        REQUIRE (std::filesystem::remove (temp.part()));
+        CHECK (inspectDownloadPart (temp.part(), download.maxBytes) == DownloadPartState::Invalid);
+        CHECK_FALSE (std::filesystem::exists (temp.part()));
+        CHECK (inspectDownloadPart (temp.root / "absent" / "archive.part", download.maxBytes) == DownloadPartState::Invalid);
+        CHECK_FALSE (std::filesystem::exists (temp.root / "absent"));
+    }
+    SECTION ("Uninspectable metadata is preserved")
+    {
+        const auto linked = temp.root / "metadata-link";
+        std::error_code error;
+        std::filesystem::create_hard_link (sidecar, linked, error);
+        if (error) SKIP ("This filesystem cannot create the metadata hard-link fixture");
+        CHECK (inspectDownloadPart (temp.part(), download.maxBytes) == DownloadPartState::Unavailable);
+        CHECK (readFile (sidecar) == original);
+        CHECK (readFile (linked) == original);
+        CHECK (readFile (temp.part()) == "abcd");
+    }
 }
 
 TEST_CASE ("SFZ transfer verifies an upstream digest before completion", "[sfz][transfer]")

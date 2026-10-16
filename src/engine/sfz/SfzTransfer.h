@@ -79,6 +79,11 @@ struct DownloadResult : OperationResult
     bool resumeAvailable = false;
 };
 
+enum class DownloadPartState { Reusable, Invalid, Unavailable };
+
+// Inspects metadata only; downloadFile rehashes completed content before reuse.
+DownloadPartState inspectDownloadPart (const std::filesystem::path&, std::uint64_t maxBytes);
+
 DownloadResult downloadFile (HttpTransport&, const DownloadRequest&,
                               const OperationControl& = {});
 } // namespace duskstudio::sfz

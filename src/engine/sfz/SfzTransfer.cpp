@@ -22,7 +22,6 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -336,28 +335,30 @@ bool safeFilePath (const std::filesystem::path& path)
     return true;
 }
 
-File openFile (const std::filesystem::path& path)
+File openFile (const std::filesystem::path& path, bool readOnly = false)
 {
     if (! safeFilePath (path)) return File {};
    #if defined(_WIN32)
-    const auto handle = CreateFileW (path.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
-                                    nullptr, OPEN_ALWAYS, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    const auto handle = CreateFileW (path.c_str(), readOnly ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
+                                    FILE_SHARE_READ, nullptr, readOnly ? OPEN_EXISTING : OPEN_ALWAYS,
+                                    FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
     if (handle == INVALID_HANDLE_VALUE) return File {};
     BY_HANDLE_FILE_INFORMATION info {};
     if (! GetFileInformationByHandle (handle, &info) || info.nNumberOfLinks != 1
         || (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0)
     { CloseHandle (handle); return File {}; }
-    const auto fd = _open_osfhandle (reinterpret_cast<intptr_t> (handle), _O_BINARY | _O_RDWR);
+    const auto fd = _open_osfhandle (reinterpret_cast<intptr_t> (handle), _O_BINARY | (readOnly ? _O_RDONLY : _O_RDWR));
     if (fd == -1) { CloseHandle (handle); return File {}; }
-    auto* file = _fdopen (fd, "r+b");
+    auto* file = _fdopen (fd, readOnly ? "rb" : "r+b");
     if (file == nullptr) _close (fd);
    #else
-    const auto fd = ::open (path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+    const auto fd = ::open (path.c_str(), (readOnly ? O_RDONLY | O_NONBLOCK : O_RDWR | O_CREAT)
+                                          | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd == -1) return File {};
     struct stat info {};
     if (::fstat (fd, &info) != 0 || ! S_ISREG (info.st_mode) || info.st_nlink != 1)
     { ::close (fd); return File {}; }
-    auto* file = ::fdopen (fd, "r+b");
+    auto* file = ::fdopen (fd, readOnly ? "rb" : "r+b");
     if (file == nullptr) ::close (fd);
    #endif
     return File (file);
@@ -394,17 +395,26 @@ std::filesystem::path metadataPath (const std::filesystem::path& part)
     return result;
 }
 
-ResumeMetadata readMetadata (const std::filesystem::path& path)
+ResumeMetadata readMetadata (const std::filesystem::path& path, bool* unavailable = nullptr)
 {
+    if (unavailable) *unavailable = true;
     if (! safeFilePath (path)) return {};
     std::error_code error;
-    if (! std::filesystem::is_regular_file (path, error)
-        || std::filesystem::file_size (path, error) > 16384 || error) return {};
-    std::ifstream stream (path, std::ios::binary);
+    const auto status = std::filesystem::symlink_status (path, error);
+    if (error == std::errc::no_such_file_or_directory || (! error && ! std::filesystem::is_regular_file (status)))
+    { if (unavailable) *unavailable = false; return {}; }
+    if (error) return {};
+    const auto sizeBytes = std::filesystem::file_size (path, error);
+    if (error) return {};
+    if (sizeBytes > 16384) { if (unavailable) *unavailable = false; return {}; }
+    auto file = openFile (path, true);
+    if (! file) return {};
     std::array<char, 16385> bytes {};
-    stream.read (bytes.data(), static_cast<std::streamsize> (bytes.size()));
-    if (stream.gcount() == static_cast<std::streamsize> (bytes.size()) || stream.bad()) return {};
-    const std::string content (bytes.data(), static_cast<std::size_t> (stream.gcount()));
+    const auto count = std::fread (bytes.data(), 1, bytes.size(), file.get());
+    if (std::ferror (file.get())) return {};
+    if (unavailable) *unavailable = false;
+    if (count == bytes.size()) return {};
+    const std::string content (bytes.data(), count);
     const auto json = dusk::json::Json::parse (content, nullptr, false);
     if (! json.is_object()) return {};
     const auto get = [&] (const char* key)
@@ -603,6 +613,33 @@ HttpTextResult fetchHttpText (HttpTransport& transport, const std::string& url,
     HttpRequest request;
     request.url = url;
     return fetchHttpText (transport, request, maxBytes, control);
+}
+
+DownloadPartState inspectDownloadPart (const std::filesystem::path& path, std::uint64_t maxBytes)
+{
+    if (! safeFilePath (path) || ! curlReady()) return DownloadPartState::Unavailable;
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status (path, error);
+    if (error == std::errc::no_such_file_or_directory || (! error && ! std::filesystem::is_regular_file (status)))
+        return DownloadPartState::Invalid;
+    if (error) return DownloadPartState::Unavailable;
+    const auto size = std::filesystem::file_size (path, error);
+    if (error) return DownloadPartState::Unavailable;
+    if (size == 0 || size > maxBytes) return DownloadPartState::Invalid;
+    auto file = openFile (path, true);
+    if (! file) return DownloadPartState::Unavailable;
+    bool unavailable = false;
+    const auto metadata = readMetadata (metadataPath (path), &unavailable);
+    if (unavailable) return DownloadPartState::Unavailable;
+    if (! httpsUrl (metadata.url) || (! metadata.digest.empty() && ! validDigest (metadata.digest)))
+        return DownloadPartState::Invalid;
+    if (metadata.completedBytes)
+        return *metadata.completedBytes == size && validDigest (metadata.actualDigest)
+            && (metadata.digest.empty() || lower (metadata.digest) == lower (metadata.actualDigest))
+            ? DownloadPartState::Reusable : DownloadPartState::Invalid;
+    const auto validator = metadata.validator();
+    return ! validator.empty() && validator.find_first_of ("\r\n\0", 0, 3) == std::string::npos
+        && httpsUrl (metadata.effectiveUrl) ? DownloadPartState::Reusable : DownloadPartState::Invalid;
 }
 
 DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& request,
