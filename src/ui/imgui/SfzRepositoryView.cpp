@@ -270,13 +270,13 @@ private:
     }
 
     void drawPreview (dw::Context& ctx, float height, const std::string& key, const std::string& title,
-                      sfz::InstrumentCategory category, const std::string& url, bool allowNetwork)
+                      sfz::InstrumentCategory category, const std::string& url, bool allowNetwork, const std::string& sourceId)
     {
-        const auto request = key + "|" + std::to_string (static_cast<int> (category)) + "|" + url + (allowNetwork ? "|online" : "|cached");
+        const auto request = key + "|" + sourceId + "|" + std::to_string (static_cast<int> (category)) + "|" + url + (allowNetwork ? "|online" : "|cached");
         if (request != artworkRequest)
         {
             artworkRequest = request;
-            service.artwork().request (request, url, instrumentArtwork (category), decodeInstrumentArtwork, allowNetwork);
+            service.artwork().request (request, url, instrumentArtwork (category), decodeInstrumentArtwork, allowNetwork, sourceId);
         }
         const auto artwork = service.artwork().snapshot();
         const bool ready = artwork.key == request && artwork.pixels;
@@ -633,7 +633,8 @@ private:
             }
             if (selectedSummary || onlineCategory >= 0)
                 drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
-                    selectedSummary ? summaryKey (*selectedSummary) : "online-category", title, category, imageUrl, ! pageCached);
+                    selectedSummary ? summaryKey (*selectedSummary) : "online-category", title, category, imageUrl, ! pageCached,
+                    selectedSummary ? selectedSummary->sourceId : std::string {});
             else clearPreview (std::min (ctx.s (164), bodyHeight * 0.30f));
             beginCategoryList (ctx, onlineCategory, onlineCounts, results.size());
             filterRows (onlineRows, onlineCategory, visibleOnline, onlineFilterDirty);
@@ -803,7 +804,8 @@ private:
             }
             if (selectedRow || installedCategory >= 0)
                 drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
-                    selectedRow ? packKey (*selected) + "/" + selectedInstrument : "installed-category", title, category, imageUrl, false);
+                    selectedRow ? packKey (*selected) + "/" + selectedInstrument : "installed-category", title, category, imageUrl, false,
+                    selectedRow ? selected->provider.sourceId : std::string {});
             else clearPreview (std::min (ctx.s (164), bodyHeight * 0.30f));
             beginCategoryList (ctx, installedCategory, installedCounts, snapshot.installed.size());
             filterRows (installedRows, installedCategory, visibleInstalled, installedFilterDirty, installedQuery.data());

@@ -32,6 +32,7 @@ struct Transport final : HttpTransport
     std::atomic<unsigned> calls { 0 };
     std::string bytes = "source";
     int status = 200;
+    std::string location;
     std::shared_future<void> barrier;
     OperationResult perform (const HttpRequest& request, const HttpHeadersCallback& headers,
                              const HttpBodyCallback& body, const OperationControl& control) override
@@ -43,7 +44,7 @@ struct Transport final : HttpTransport
             std::this_thread::yield();
         }
         if (control.status() != OperationStatus::Complete) return { control.status(), {} };
-        if (! headers ({ status, request.url, {} }) || ! body (bytes)) return { OperationStatus::Failed, "rejected" };
+        if (! headers ({ status, request.url, location.empty() ? HttpHeaders {} : HttpHeaders {{ "location", location }} }) || ! body (bytes)) return { OperationStatus::Failed, "rejected" };
         return { OperationStatus::Complete, {} };
     }
 };
@@ -57,7 +58,7 @@ void until (Predicate predicate)
 }
 
 constexpr std::string_view fallback = "fallback";
-constexpr const char* url = "https://fixtures.example/piano.jpg";
+constexpr const char* url = "https://raw.githubusercontent.com/piano.jpg";
 } // namespace
 
 TEST_CASE ("SFZ categories recognize instrument names before collection context", "[sfz][categories]")
@@ -86,18 +87,18 @@ TEST_CASE ("SFZ artwork cache survives restart and never fetches for offline sel
     auto online = std::make_shared<Transport>();
     {
         ArtworkCache cache (tree.root, online);
-        cache.request ("piano", url, fallback, decode, true);
+        cache.request ("piano", url, fallback, decode, true, "sfzinstruments");
         until ([&] { return cache.snapshot().sourceImage; });
         REQUIRE (cache.snapshot().pixels->rgba.front() == 's');
         REQUIRE (online->calls == 1);
     }
     auto offline = std::make_shared<Transport>();
     ArtworkCache cached (tree.root, offline);
-    cached.request ("installed-piano", url, fallback, decode, false);
+    cached.request ("installed-piano", url, fallback, decode, false, "sfzinstruments");
     until ([&] { return cached.snapshot().sourceImage; });
     CHECK (cached.snapshot().pixels->rgba.front() == 's');
     CHECK (offline->calls == 0);
-    cached.request ("uncached", "https://fixtures.example/other.jpg", fallback, decode, false);
+    cached.request ("uncached", "https://raw.githubusercontent.com/other.jpg", fallback, decode, false, "sfzinstruments");
     until ([&] { return cached.snapshot().pixels != nullptr; });
     CHECK_FALSE (cached.snapshot().sourceImage);
     CHECK (cached.snapshot().pixels->rgba.front() == 'f');
@@ -106,11 +107,11 @@ TEST_CASE ("SFZ artwork cache survives restart and never fetches for offline sel
         if (file.path().extension() == ".image") REQUIRE (dusk::fs::writeStringToFile (file.path(), "invalid"));
     auto repair = std::make_shared<Transport>();
     ArtworkCache repaired (tree.root, repair);
-    repaired.request ("repaired", url, fallback, decode, true);
+    repaired.request ("repaired", url, fallback, decode, true, "sfzinstruments");
     until ([&] { const auto state = repaired.snapshot(); return state.sourceImage && ! state.busy; });
     CHECK (repair->calls == 1);
     ArtworkCache reloaded (tree.root, offline);
-    reloaded.request ("reloaded", url, fallback, decode, false);
+    reloaded.request ("reloaded", url, fallback, decode, false, "sfzinstruments");
     until ([&] { const auto state = reloaded.snapshot(); return state.pixels && ! state.busy; });
     CHECK (reloaded.snapshot().sourceImage);
     CHECK (offline->calls == 0);
@@ -124,19 +125,55 @@ TEST_CASE ("SFZ artwork failures retain the category image and do not fetch unsa
     SECTION ("oversized image") { transport->bytes.assign (4 * 1024 * 1024 + 1, 'x'); }
     SECTION ("HTTP error") { transport->status = 503; }
     ArtworkCache cache (tree.root, transport);
-    cache.request ("piano", url, fallback, decode, true);
+    cache.request ("piano", url, fallback, decode, true, "sfzinstruments");
     until ([&] { const auto state = cache.snapshot(); return transport->calls == 1 && state.pixels && ! state.busy; });
     CHECK_FALSE (cache.snapshot().sourceImage);
     CHECK (cache.snapshot().pixels->rgba.front() == 'f');
     cache.cancel();
     const auto before = transport->calls.load();
-    for (const auto* unsafe : { "http://fixtures.example/a.jpg", "file:///tmp/a.jpg", "https://user@fixtures.example/a.jpg", "https://" })
+    for (const auto* unsafe : { "http://raw.githubusercontent.com/a.jpg", "file:///tmp/a.jpg", "https://user@raw.githubusercontent.com/a.jpg", "https://",
+                                "https://raw.githubusercontent.com.evil.invalid/a.jpg", "https://raw.githubusercontent.com:444/a.jpg",
+                                "https://elsewhere.example/a.jpg", "https://musical-artifacts.com/a.jpg" })
     {
-        cache.request (unsafe, unsafe, fallback, decode, true);
-        until ([&] { return cache.snapshot().pixels != nullptr; });
+        cache.request (unsafe, unsafe, fallback, decode, true, "sfzinstruments");
+        until ([&] { const auto state = cache.snapshot(); return state.pixels && ! state.busy; });
         CHECK_FALSE (cache.snapshot().sourceImage);
     }
     CHECK (transport->calls == before);
+}
+
+TEST_CASE ("SFZ artwork restricts every redirect to its provider hosts", "[sfz][artwork][ipc]")
+{
+    Tree tree;
+    auto transport = std::make_shared<Transport>();
+    transport->status = 302;
+    transport->location = "https://untrusted.example/cover.jpg";
+    ArtworkCache cache (tree.root, transport);
+    cache.request ("redirect", url, fallback, decode, true, "sfzinstruments");
+    until ([&] { const auto state = cache.snapshot(); return state.pixels && ! state.busy; });
+    CHECK_FALSE (cache.snapshot().sourceImage);
+    CHECK (transport->calls == 1);
+}
+
+TEST_CASE ("SFZ artwork uses only hosts belonging to the selected provider", "[sfz][artwork][ipc]")
+{
+    Tree tree;
+    auto transport = std::make_shared<Transport>();
+    ArtworkCache cache (tree.root, transport);
+    cache.request ("artifact", "https://musical-artifacts.com/cover.jpg", fallback, decode, true, "musical-artifacts");
+    until ([&] { const auto state = cache.snapshot(); return state.pixels && ! state.busy; });
+    REQUIRE (cache.snapshot().sourceImage);
+    REQUIRE (transport->calls == 1);
+    cache.request ("wrong-provider", "https://musical-artifacts.com/cover.jpg", fallback, decode, false, "freepats");
+    until ([&] { const auto state = cache.snapshot(); return state.pixels && ! state.busy; });
+    CHECK_FALSE (cache.snapshot().sourceImage);
+    for (const auto* source : { "sfzinstruments", "freepats", "versilian" })
+    {
+        cache.request (source, url, fallback, decode, true, source);
+        until ([&] { const auto state = cache.snapshot(); return state.pixels && ! state.busy; });
+        CHECK (cache.snapshot().sourceImage);
+    }
+    CHECK (transport->calls == 2);
 }
 
 TEST_CASE ("SFZ artwork ignores stale selections and pauses network work during recording", "[sfz][artwork][ipc]")
@@ -146,20 +183,20 @@ TEST_CASE ("SFZ artwork ignores stale selections and pauses network work during 
     std::promise<void> release;
     transport->barrier = release.get_future().share();
     ArtworkCache cache (tree.root, transport);
-    cache.request ("old", url, fallback, decode, true);
+    cache.request ("old", url, fallback, decode, true, "sfzinstruments");
     until ([&] { return transport->calls == 1; });
-    cache.request ("current", {}, fallback, decode, false);
+    cache.request ("current", {}, fallback, decode, false, "sfzinstruments");
     release.set_value();
     until ([&] { const auto state = cache.snapshot(); return state.key == "current" && state.pixels; });
     CHECK_FALSE (cache.snapshot().sourceImage);
     CHECK (cache.snapshot().pixels->rgba.front() == 'f');
     cache.setHeavyWork (true);
-    cache.request ("recording", "https://fixtures.example/recording.jpg", fallback, decode, true);
+    cache.request ("recording", "https://raw.githubusercontent.com/recording.jpg", fallback, decode, true, "sfzinstruments");
     until ([&] { const auto state = cache.snapshot(); return state.pixels && ! state.busy; });
     CHECK (transport->calls == 1);
     cache.setHeavyWork (false);
     CHECK (transport->calls == 1);
-    cache.request ("resumed", "https://fixtures.example/recording.jpg", fallback, decode, true);
+    cache.request ("resumed", "https://raw.githubusercontent.com/recording.jpg", fallback, decode, true, "sfzinstruments");
     until ([&] { return cache.snapshot().sourceImage; });
     CHECK (transport->calls == 2);
 }

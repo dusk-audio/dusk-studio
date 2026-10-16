@@ -1,4 +1,5 @@
 #include "SfzArtworkCache.h"
+#include "SfzProvider.h"
 #include "../../foundation/Fs.h"
 
 #include <sodium.h>
@@ -40,12 +41,6 @@ bool validPixels (const std::shared_ptr<const ArtworkPixels>& pixels)
 {
     return pixels && pixels->width > 0 && pixels->width <= 512 && pixels->height > 0 && pixels->height <= 512
         && pixels->rgba.size() == static_cast<std::size_t> (pixels->width) * static_cast<std::size_t> (pixels->height) * 4;
-}
-
-bool imageUrl (const std::string& url)
-{
-    return url.size() > 8 && url.size() <= 2048 && url.compare (0, 8, "https://") == 0 && url[8] != '/'
-        && url.find_first_of ("\r\n\t @\\") == std::string::npos && url.find ('\0') == std::string::npos;
 }
 
 void trimDiskCache (const fs::path& root)
@@ -90,13 +85,13 @@ ArtworkCache::~ArtworkCache()
 }
 
 void ArtworkCache::request (std::string key, std::string url, std::string_view fallback,
-                            ArtworkDecoder decode, bool allowNetwork)
+                            ArtworkDecoder decode, bool allowNetwork, std::string sourceId)
 {
     const std::lock_guard<std::mutex> lock (mutex);
     if (stopping.load (std::memory_order_acquire)) return;
     const auto next = generation.fetch_add (1, std::memory_order_acq_rel) + 1;
     current = { next, key, {}, false, true };
-    pending = Request { next, std::move (key), std::move (url), fallback, decode, allowNetwork };
+    pending = Request { next, std::move (key), std::move (url), std::move (sourceId), fallback, decode, allowNetwork };
     wake.notify_one();
 }
 
@@ -180,7 +175,8 @@ void ArtworkCache::run()
             };
             const auto fallbackKey = "fallback:" + std::to_string (reinterpret_cast<std::uintptr_t> (request.fallback.data()));
             publish (request, decode (fallbackKey, request.fallback), false);
-            if (! imageUrl (request.url)) continue;
+            const auto hosts = artworkHostsForSource (request.sourceId);
+            if (request.url.size() > 2048 || ! httpsUrlOnHosts (request.url, hosts)) continue;
             const auto key = imageKey (request.url);
             if (key.empty()) continue;
             const auto memory = decoded.find (key);
@@ -210,6 +206,7 @@ void ArtworkCache::run()
             if (! request.allowNetwork || ! http || control.status() != OperationStatus::Complete) continue;
             HttpRequest transfer;
             transfer.url = request.url;
+            transfer.allowedHosts = hosts;
             transfer.connectTimeoutSeconds = 2; transfer.timeoutSeconds = 5; transfer.lowSpeedSeconds = 2;
             const auto response = fetchHttpText (*http, transfer, kMaxImageBytes, control);
             if (! response || response.response.statusCode != 200 || control.status() != OperationStatus::Complete) continue;
