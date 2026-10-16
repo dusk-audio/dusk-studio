@@ -761,6 +761,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/lv2_large_store_timing_bound.cpp
     src/engine/scenario/cases/lv2_params_numbering_stable.cpp
     src/engine/scenario/cases/lv2_worker_bounce.cpp
+    src/engine/scenario/cases/managed_sfz_relink.cpp
     src/engine/scenario/cases/markers.cpp
     src/engine/scenario/cases/midi_bindings.cpp
     src/engine/scenario/cases/midi_dropped_block_releases.cpp
