@@ -93,7 +93,9 @@ void PlaybackEngine::beginAudioBlock (std::int64_t playhead, std::int64_t loopSt
     AudioInFlightScope guard (audioInFlight);
     if (! streamsActive.load (std::memory_order_seq_cst)) return;
     fillPool.setPositionRt (playhead);
-    fillPool.setLoopRt (loopStart >= 0 && loopEnd > loopStart, loopStart, loopEnd);
+    const bool looping = loopStart >= 0 && loopEnd > loopStart;
+    effectiveLoopStart.store (looping ? loopStart : -1, std::memory_order_release);
+    fillPool.setLoopRt (looping, loopStart, loopEnd);
 }
 
 void PlaybackEngine::primeAt (std::int64_t playhead)
@@ -146,14 +148,21 @@ void PlaybackEngine::preparePlayback (Audition audition)
     auditionedTake.store (0, std::memory_order_relaxed);
 
     const std::int64_t warmAt = transport != nullptr ? transport->getPlayhead() : 0;
+    const auto loopStart = transport != nullptr ? transport->getLoopStart() : -1;
+    const auto loopEnd = transport != nullptr ? transport->getLoopEnd() : -1;
+    const bool looping = transport != nullptr && transport->isLoopEnabled()
+        && loopStart >= 0 && loopEnd > loopStart;
+    cachedLoopStart = looping ? loopStart : -1;
+    effectiveLoopStart.store (cachedLoopStart, std::memory_order_release);
+    nextLoopCacheAttempt = {};
+    requestedAudition.fill (audition);
     fillPool.setPositionRt (warmAt);
-    fillPool.setLoopRt (transport != nullptr && transport->isLoopEnabled(),
-                       transport != nullptr ? transport->getLoopStart() : 0,
-                       transport != nullptr ? transport->getLoopEnd() : 0);
+    fillPool.setLoopRt (looping, loopStart, loopEnd);
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         TakeId auditioned = 0;
         auto stream = buildTrackStream (t, audition, warmAt, auditioned);
+        if (stream != nullptr && ! stream->loopCacheReady) cachedLoopStart = -1;
         if (auditioned != 0)
         {
             auditionedTrack.store (t, std::memory_order_relaxed);
@@ -292,14 +301,14 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
 
     if (stream->regions.empty())
         return nullptr;
-    if (transport != nullptr && transport->isLoopEnabled())
-        primeLoopCache (*stream, transport->getLoopStart(), transport->getLoopEnd());
+    stream->loopCacheReady = primeLoopCache (*stream, effectiveLoopStart.load (std::memory_order_acquire));
     return stream;
 }
 
-void PlaybackEngine::primeLoopCache (PerTrackStream& stream, std::int64_t loopStart, std::int64_t loopEnd)
+bool PlaybackEngine::primeLoopCache (PerTrackStream& stream, std::int64_t loopStart)
 {
-    if (loopEnd <= loopStart || loopStart < 0) return;
+    if (loopStart < 0) return true;
+    bool complete = true;
 
     for (auto& rs : stream.regions)
     {
@@ -316,18 +325,21 @@ void PlaybackEngine::primeLoopCache (PerTrackStream& stream, std::int64_t loopSt
         // reader would return silence on a cold window, and bumping its
         // window here would fight the audio thread's forward prefetch.
         auto fillReader = dusk::audio::FileReader::open (rs.sourcePath);
-        if (fillReader == nullptr) continue;
+        if (fillReader == nullptr) { complete = false; continue; }
 
-        const int len = (int) (cacheEnd - cacheStart);
+        const auto sourceStart = rs.sourceOffset + (cacheStart - rs.timelineStart);
+        const int len = static_cast<int> (std::min (cacheEnd - cacheStart,
+            std::max<std::int64_t> (0, fillReader->info().numFrames - sourceStart)));
+        if (len == 0) continue;
         // A region can claim two channels over a mono file (hand-edited
         // session, file replaced on disk). Reading one channel and letting
         // the audio path duplicate it keeps that case center-panned instead
         // of silencing the right side.
         const bool stereo = (rs.numChannels == 2) && fillReader->info().numChannels >= 2;
         dusk::audio::PlanarBuffer tmp;
-        if (! tmp.setSize (2, len)) continue;
-        fillReader->read (tmp.data(), stereo ? 2 : 1,
-                           rs.sourceOffset + (cacheStart - rs.timelineStart), len);
+        if (! tmp.setSize (2, len)) { complete = false; continue; }
+        if (fillReader->read (tmp.data(), stereo ? 2 : 1, sourceStart, len) != len)
+        { complete = false; continue; }
 
         rs.loopCacheL.assign (tmp.channel (0), tmp.channel (0) + len);
         if (stereo)
@@ -337,6 +349,7 @@ void PlaybackEngine::primeLoopCache (PerTrackStream& stream, std::int64_t loopSt
         rs.loopCacheTimelineStart = cacheStart;
         rs.loopCacheLen           = len;
     }
+    return complete;
 }
 
 void PlaybackEngine::stopPlayback()
@@ -384,6 +397,7 @@ void PlaybackEngine::refreshTrackPlayback (int trackIndex, Audition audition)
 {
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks || ! streamsActive.load (std::memory_order_acquire))
         return;
+    requestedAudition[(size_t) trackIndex] = audition;
     ++rebuilds;
     const std::int64_t playhead = transport != nullptr ? transport->getPlayhead() : 0;
     auto& swap = pending[(size_t) trackIndex];
@@ -391,6 +405,7 @@ void PlaybackEngine::refreshTrackPlayback (int trackIndex, Audition audition)
     // A track left with nothing to play still swaps, to silence.
     if (swap.stream == nullptr)
         swap.stream = std::make_unique<PerTrackStream>();
+    if (! swap.stream->loopCacheReady) cachedLoopStart = -1;
     swap.deadline = std::chrono::steady_clock::now() + kSwapWarmWait;
 }
 
@@ -399,6 +414,31 @@ void PlaybackEngine::service()
     const bool live = streamsActive.load (std::memory_order_acquire);
     const std::int64_t playhead = transport != nullptr ? transport->getPlayhead() : 0;
     const auto now = std::chrono::steady_clock::now();
+    const auto loopStart = effectiveLoopStart.load (std::memory_order_acquire);
+    if (live && loopStart != cachedLoopStart && now >= nextLoopCacheAttempt)
+    {
+        bool complete = true;
+        if (loopStart >= 0)
+            for (int t = 0; t < Session::kNumTracks; ++t)
+            {
+                auto& swap = pending[(size_t) t];
+                if (swap.stream != nullptr)
+                    swap.stream->loopCacheReady = primeLoopCache (*swap.stream, loopStart);
+                else
+                {
+                    const auto& track = session.track (t);
+                    if (track.regions.empty() && ! track.frozen.load (std::memory_order_acquire)
+                        && ! (requestedAudition[(size_t) t] == Audition::Honour
+                              && session.takeAudition.trackIdx == t && session.takeAudition.takeId != 0))
+                        continue;
+                    refreshTrackPlayback (t, requestedAudition[(size_t) t]);
+                }
+                complete = complete && swap.stream->loopCacheReady;
+            }
+        if (complete) cachedLoopStart = loopStart;
+        nextLoopCacheAttempt = complete ? std::chrono::steady_clock::time_point {}
+                                       : now + std::chrono::milliseconds (100);
+    }
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& swap = pending[(size_t) t];
@@ -513,6 +553,7 @@ void PlaybackEngine::readForTrack (int trackIndex,
     {
         float* fadeL = nullptr;
         float* fadeR = nullptr;
+        int oldAvailable = numSamples;
         if (slot.fadingFrom != nullptr && numSamples <= fadeScratch.numSamples())
         {
             fadeL = fadeScratch.channel (0);
@@ -520,18 +561,20 @@ void PlaybackEngine::readForTrack (int trackIndex,
             std::memset (fadeL, 0, sizeof (float) * (size_t) numSamples);
             if (fadeR != nullptr)
                 std::memset (fadeR, 0, sizeof (float) * (size_t) numSamples);
-            readStream (*slot.fadingFrom, playheadSamples, fadeL, fadeR, numSamples, loopStart, loopEnd);
+            oldAvailable = readStream (*slot.fadingFrom, playheadSamples, fadeL, fadeR, numSamples, loopStart, loopEnd);
         }
         const int fading = std::min (numSamples, kSwapFadeSamples - slot.fadePos);
         for (int i = 0; i < fading; ++i)
         {
-            const float in = 0.5f - 0.5f * std::cos (kPi * (float) (slot.fadePos + i) / (float) kSwapFadeSamples);
+            // A missing old span cannot contribute to the transition.
+            const float in = i >= oldAvailable ? 1.0f
+                : 0.5f - 0.5f * std::cos (kPi * (float) (slot.fadePos + i) / (float) kSwapFadeSamples);
             const float out = 1.0f - in;
             outL[i] = outL[i] * in + (fadeL != nullptr ? fadeL[i] * out : 0.0f);
             if (outR != nullptr)
                 outR[i] = outR[i] * in + (fadeR != nullptr ? fadeR[i] * out : 0.0f);
         }
-        slot.fadePos += fading;
+        slot.fadePos = oldAvailable < fading ? kSwapFadeSamples : slot.fadePos + fading;
     }
 
     // Faded out: the old streams go back to the message thread to be freed. With
@@ -557,7 +600,7 @@ void PlaybackEngine::readForTrack (int trackIndex,
     }
 }
 
-void PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSamples, float* outL, float* outR,
+int PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSamples, float* outL, float* outR,
                                  int numSamples, std::int64_t loopStart, std::int64_t loopEnd) noexcept
 {
     const std::int64_t loopLen = loopEnd - loopStart;
@@ -565,8 +608,7 @@ void PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSa
                               && playheadSamples < loopEnd;
     if (! splitAtLoop)
     {
-        readSpanForTrack (stream, playheadSamples, outL, outR, 0, numSamples);
-        return;
+        return readSpanForTrack (stream, playheadSamples, outL, outR, 0, numSamples);
     }
 
     // Loop-aware read: fill the block piecewise, wrapping the read position
@@ -576,6 +618,7 @@ void PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSa
     int seamOffsets[8];
     int numSeams = 0;
     int done = 0;
+    int firstMissing = numSamples;
     std::int64_t pos = playheadSamples;
     while (done < numSamples)
     {
@@ -586,7 +629,8 @@ void PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSa
         }
         const int span = (int) std::min ((std::int64_t) (numSamples - done),
                                             loopEnd - pos);
-        readSpanForTrack (stream, pos, outL, outR, done, span);
+        const int missing = readSpanForTrack (stream, pos, outL, outR, done, span);
+        if (missing < done + span) firstMissing = std::min (firstMissing, missing);
         done += span;
         pos  += span;
     }
@@ -616,9 +660,10 @@ void PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSa
             if (outR != nullptr) outR[idx] *= g;
         }
     }
+    return firstMissing;
 }
 
-void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
+int PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
                                        std::int64_t playheadSamples,
                                        float* outL,
                                        float* outR,
@@ -629,6 +674,7 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
     if (outR != nullptr) outR += outBase;
 
     const std::int64_t blockEnd = playheadSamples + numSamples;
+    int firstMissing = outBase + numSamples;
 
     for (auto& r : slotRef.regions)
     {
@@ -651,7 +697,11 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         // the host's actual block size. Skip silently in release so we don't
         // crash, but make the misconfiguration visible in debug.
         assert (withinSamples <= readScratch.numSamples());
-        if (withinSamples > readScratch.numSamples()) continue;
+        if (withinSamples > readScratch.numSamples())
+        {
+            firstMissing = std::min (firstMissing, outBase + outOffset);
+            continue;
+        }
 
         const std::int64_t readStart = r.sourceOffset + (firstWithin - r.timelineStart);
         // For mono regions, read L only. For stereo, read both. readScratch is
@@ -659,7 +709,11 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         // over a mono file reads one channel and duplicates below, rather than
         // taking the reader's zero-filled second channel as silence.
         const bool readStereo = (r.numChannels == 2) && r.reader->info().numChannels >= 2;
-        r.reader->readRt (readScratch.data(), readStereo ? 2 : 1, readStart, withinSamples);
+        dusk::audio::BufferedFileReader::ReadCoverage coverage;
+        const bool resident = r.reader->readRt (readScratch.data(), readStereo ? 2 : 1,
+                                                readStart, withinSamples, &coverage);
+        auto cached = coverage;
+        cached.endFrame = cached.startFrame;
 
         // Serve the loop-start window from the pre-cache: the forward-only
         // reader misses (returns silence) right after a wrap's backward
@@ -676,11 +730,24 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
             const int dstOff = (int) (ovStart - firstWithin);
             const int srcOff = (int) (ovStart - r.loopCacheTimelineStart);
             const int n      = (int) (ovEnd - ovStart);
+            cached = { readStart + dstOff, readStart + dstOff + n };
             std::memcpy (readScratch.channel (0) + dstOff,
                           r.loopCacheL.data() + srcOff, sizeof (float) * (size_t) n);
             if (readStereo && ! r.loopCacheR.empty())
                 std::memcpy (readScratch.channel (1) + dstOff,
                               r.loopCacheR.data() + srcOff, sizeof (float) * (size_t) n);
+        }
+        if (! resident)
+        {
+            if (cached.startFrame < coverage.startFrame) std::swap (cached, coverage);
+            auto availableUntil = std::max<std::int64_t> (0, readStart);
+            if (coverage.startFrame <= availableUntil)
+                availableUntil = std::max (availableUntil, coverage.endFrame);
+            if (cached.startFrame <= availableUntil)
+                availableUntil = std::max (availableUntil, cached.endFrame);
+            const auto wantedEnd = std::min (readStart + withinSamples, r.reader->info().numFrames);
+            if (availableUntil < wantedEnd)
+                firstMissing = std::min (firstMissing, outBase + outOffset + (int) (availableUntil - readStart));
         }
 
         // SUM (instead of REPLACE) into the output buffer(s) under the
@@ -721,5 +788,6 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
                 dstR[i] += srcR[i] * regionGain;
         faded (last, withinSamples);
     }
+    return firstMissing;
 }
 } // namespace duskstudio

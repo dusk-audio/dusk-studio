@@ -2244,7 +2244,7 @@ void AudioEngine::servicePlayback()
     playbackEngine.service();
     // A swap the audio thread has taken is still fading for a few milliseconds
     // before it hands the old streams back, so the timer outlasts the last work.
-    bool workPending = recordManager.isActive() || playbackEngine.hasPendingWork();
+    bool workPending = ! transport.isStopped() || recordManager.isActive() || playbackEngine.hasPendingWork();
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     workPending = workPending || hasPendingMultisampleLoads();
 #endif
@@ -2345,6 +2345,7 @@ void AudioEngine::play (PlaybackEngine::Audition audition)
     transport.setRollStart (transport.getPlayhead());
     playbackEngine.preparePlayback (audition);
     transport.setState (Transport::State::Playing);
+    schedulePlaybackService();
 }
 
 void AudioEngine::stop()

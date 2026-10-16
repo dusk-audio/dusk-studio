@@ -36,24 +36,25 @@ constexpr float kLevelA = 0.5f;
 constexpr float kLevelB = -0.25f;
 constexpr float kLevelC = 0.25f;
 
-juce::File writeConstantMono (const std::filesystem::path& dir, const char* name, float level)
+juce::File writeConstantMono (const std::filesystem::path& dir, const char* name, float level,
+                              int frames = kFrames)
 {
     const auto path = dir / "audio" / name;
     std::filesystem::create_directories (path.parent_path());
     auto writer = dusk::audio::FileWriter::create (path, { 48000.0, 1, 32 });
     REQUIRE (writer != nullptr);
-    const std::vector<float> samples ((std::size_t) kFrames, level);
+    const std::vector<float> samples ((std::size_t) frames, level);
     const float* channels[] { samples.data() };
-    REQUIRE (writer->write (channels, 1, kFrames));
+    REQUIRE (writer->write (channels, 1, frames));
     writer.reset();
     return juce::File (juce::String::fromUTF8 (path.u8string().c_str()));
 }
 
-AudioRegion wholeRegion (const juce::File& file)
+AudioRegion wholeRegion (const juce::File& file, int frames = kFrames)
 {
     AudioRegion r;
     r.file = file;
-    r.lengthInSamples = kFrames;
+    r.lengthInSamples = frames;
     return r;
 }
 
@@ -62,18 +63,23 @@ AudioRegion wholeRegion (const juce::File& file)
 struct Rig
 {
     test::TempDirectory dir { "dusk-live-swap-" };
-    juce::File a = writeConstantMono (dir.path(), "a.wav", kLevelA);
-    juce::File b = writeConstantMono (dir.path(), "b.wav", kLevelB);
-    juce::File c = writeConstantMono (dir.path(), "c.wav", kLevelC);
+    int frames;
+    juce::File a = writeConstantMono (dir.path(), "a.wav", kLevelA, frames);
+    juce::File b = writeConstantMono (dir.path(), "b.wav", kLevelB, frames);
+    juce::File c = writeConstantMono (dir.path(), "c.wav", kLevelC, frames);
     std::unique_ptr<Session> session = std::make_unique<Session>();
     Transport transport;
     PlaybackEngine engine { *session };
     std::int64_t playhead = 0;
 
-    Rig()
+    Rig (int frameCount = kFrames, std::int64_t start = 0, bool looping = false)
+        : frames (frameCount), playhead (start)
     {
         session->setSessionDirectory (a.getParentDirectory().getParentDirectory());
-        session->track (kTrack).regions = { wholeRegion (a) };
+        session->track (kTrack).regions = { wholeRegion (a, frames) };
+        transport.setPlayhead (start);
+        transport.setLoopRange (1000, frames - 1000);
+        transport.setLoopEnabled (looping);
         engine.bindTransport (transport);
         engine.setSynchronousReadersForTest (true);
         engine.prepare (kBlock);
@@ -99,7 +105,7 @@ struct Rig
     void rebuildOnly (const juce::File& file)
     {
         transport.setPlayhead (playhead);
-        session->track (kTrack).regions = { wholeRegion (file) };
+        session->track (kTrack).regions = { wholeRegion (file, frames) };
         engine.refreshTrackPlayback (kTrack, PlaybackEngine::Audition::Honour);
     }
 
@@ -131,12 +137,26 @@ void requireFade (const std::vector<float>& out, std::size_t at, float from, flo
 TEST_CASE ("A track rebuilt while playing crossfades from its old audio to its new",
            "[playback][live-swap]")
 {
-    Rig rig;
+    bool loopRefresh = false, jointCoverage = false;
+    SECTION ("A region switches files") {}
+    SECTION ("A loop-cache refresh reloads a changed source") { loopRefresh = true; }
+    SECTION ("The old cache and reader jointly cover a fade") { jointCoverage = true; }
+    Rig rig (jointCoverage ? 128000 : kFrames, jointCoverage ? 33700 : 0, jointCoverage);
     const auto before = rig.play (1);
     CHECK_THAT (before.front(), WithinAbs (kLevelA, 1e-4));
     const int streams = PlaybackEngine::liveStreamCountForTest();
 
-    rig.rebuildWith (rig.b);
+    if (jointCoverage) rig.playhead = 33640;
+    if (loopRefresh)
+    {
+        writeConstantMono (rig.dir.path(), "a.wav", kLevelB);
+        rig.transport.setLoopRange (1000, 6000);
+        rig.transport.setLoopEnabled (true);
+        rig.engine.beginAudioBlock (rig.playhead, 1000, 6000);
+        rig.engine.service();
+    }
+    else
+        rig.rebuildWith (rig.b);
     const auto out = rig.play (4);
     requireFade (out, 0, kLevelA, kLevelB);
     CHECK_THAT (out.back(), WithinAbs (kLevelB, 1e-4));

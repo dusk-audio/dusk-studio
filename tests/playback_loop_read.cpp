@@ -10,16 +10,21 @@
 using namespace duskstudio;
 using Catch::Matchers::WithinAbs;
 
-// A block that crosses the loop end must play source material up to loopEnd,
-// then continue from loopStart — no bleed past the loop point, no skipped
-// downbeat — and the wrapped span must produce real samples even though the
-// forward-only BufferingAudioReader is cold at that position (served from the
-// loop-start pre-cache primed in preparePlayback).
+// The head must survive independently of a tail-resident rolling window,
+// including when the loop is enabled or moved after playback starts.
 TEST_CASE ("loop-aware readForTrack wraps at the loop boundary",
            "[playback][loop]")
 {
     constexpr double kSampleRate = 48000.0;
-    constexpr int    kFileLen    = 48000;
+    constexpr int    kFileLen    = 240000;
+    constexpr std::int64_t kLoopStart = 1000, kLoopEnd = 180000;
+    constexpr float kSlope = 1.0e-6f;
+    bool initiallyEnabled = true, keepCaptureRange = false;
+    std::int64_t initialStart = kLoopStart;
+    SECTION ("Loop enabled before playback") {}
+    SECTION ("Loop enabled while rolling") { initiallyEnabled = false; }
+    SECTION ("Loop head moved while rolling") { initialStart = 50000; }
+    SECTION ("Capture keeps its effective range") { keepCaptureRange = true; }
 
     const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                         .getChildFile ("dusk-loop-read-"
@@ -27,7 +32,6 @@ TEST_CASE ("loop-aware readForTrack wraps at the loop boundary",
     dir.createDirectory();
     const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
 
-    // Ramp WAV: sample n = n * 1e-5, mono 24-bit.
     const auto wav = dir.getChildFile ("audio/ramp.wav");
     wav.getParentDirectory().createDirectory();
     {
@@ -38,7 +42,7 @@ TEST_CASE ("loop-aware readForTrack wraps at the loop boundary",
         REQUIRE (writer != nullptr);
         juce::AudioBuffer<float> buf (1, kFileLen);
         for (int n = 0; n < kFileLen; ++n)
-            buf.setSample (0, n, (float) n * 1e-5f);
+            buf.setSample (0, n, (float) n * kSlope);
         REQUIRE (writer->writeFromAudioSampleBuffer (buf, 0, kFileLen));
     }
 
@@ -53,28 +57,36 @@ TEST_CASE ("loop-aware readForTrack wraps at the loop boundary",
     }
 
     Transport transport;
-    transport.setLoopRange (1000, 9000);
-    transport.setLoopEnabled (true);
+    transport.setLoopRange (initialStart, kLoopEnd);
+    transport.setLoopEnabled (initiallyEnabled);
+    transport.setPlayhead (kLoopEnd - 200);
+    transport.setState (Transport::State::Playing);
 
     PlaybackEngine pe (session);
     pe.bindTransport (transport);
+    pe.setSynchronousReadersForTest (true);
     pe.prepare (512);
     pe.preparePlayback();
 
-    // Block of 400 at playhead 8800: spans [8800, 9000) then wraps to
-    // [1000, 1200). Seam lands at output offset 200.
+    std::vector<float> tail (128);
+    pe.readForTrack (0, kLoopEnd - 400, tail.data(), nullptr, 128);
+    transport.setLoopRange (keepCaptureRange ? 50000 : kLoopStart, kLoopEnd);
+    transport.setLoopEnabled (true);
+    pe.beginAudioBlock (kLoopEnd - 200, kLoopStart, kLoopEnd);
+    pe.service();
+
     std::vector<float> out (400, -1.0f);
-    pe.readForTrack (0, 8800, out.data(), nullptr, 400, 1000, 9000);
+    pe.readForTrack (0, kLoopEnd - 200, out.data(), nullptr, 400, kLoopStart, kLoopEnd);
 
     // Pre-seam, outside the 64-sample fade-out window (which covers
     // offsets 136..199): raw pre-wrap source values.
-    REQUIRE_THAT (out[0],   WithinAbs (8800.0f * 1e-5f, 2e-4f));
-    REQUIRE_THAT (out[100], WithinAbs (8900.0f * 1e-5f, 2e-4f));
+    REQUIRE_THAT (out[0],   WithinAbs ((kLoopEnd - 200) * kSlope, 2e-4f));
+    REQUIRE_THAT (out[100], WithinAbs ((kLoopEnd - 100) * kSlope, 2e-4f));
 
     // Post-seam, outside the fade-in window (offsets 200..263): wrapped
     // source values from loopStart — NOT the pre-wrap continuation.
-    REQUIRE_THAT (out[300], WithinAbs (1100.0f * 1e-5f, 2e-4f));
-    REQUIRE_THAT (out[399], WithinAbs (1199.0f * 1e-5f, 2e-4f));
+    REQUIRE_THAT (out[300], WithinAbs ((kLoopStart + 100) * kSlope, 2e-4f));
+    REQUIRE_THAT (out[399], WithinAbs ((kLoopStart + 199) * kSlope, 2e-4f));
 
     // Seam declick: the first wrapped sample is fully faded in by +64.
     REQUIRE (std::abs (out[200]) < 1e-4f);
@@ -84,10 +96,9 @@ TEST_CASE ("loop-aware readForTrack wraps at the loop boundary",
     // 64-sample window (offset 136) keeps full level, and every step in
     // between attenuates monotonically. An inverted ramp leaves the seam
     // discontinuity intact and swells backwards instead. Monotonicity holds
-    // for the product of ramp source and gain: the source rises ~0.01% per
-    // sample while the raised-cosine falls faster everywhere in the window.
+    // because the ramp changes little while the raised-cosine gain falls.
     REQUIRE (std::abs (out[199]) < 1e-3f);
-    REQUIRE_THAT (out[136], WithinAbs (8936.0f * 1e-5f, 2e-3f));
+    REQUIRE_THAT (out[136], WithinAbs ((kLoopEnd - 64) * kSlope, 2e-3f));
     for (int idx = 136; idx < 199; ++idx)
         REQUIRE (std::abs (out[idx + 1]) < std::abs (out[idx]));
 
